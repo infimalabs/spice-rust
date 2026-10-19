@@ -1,10 +1,13 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
+#[cfg(unix)]
+use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStringExt as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
+use sill::authority;
 
 use super::*;
 
@@ -241,8 +244,7 @@ fn malformed_existing_home_config_is_retained_instead_of_repaired() {
     let prepared = fixture.prepare(None).expect("prepare owned home");
     let config = prepared.home().join("config.toml");
     let original = fs::read(&config).expect("read admitted home config");
-    fs::set_permissions(&config, fs::Permissions::from_mode(0o644))
-        .expect("malform home config permissions");
+    authority::set_owner_mode(&config, 0o400).expect("malform home config permissions");
     fs::write(fixture.repository.join("Cargo.lock"), lockfile("refreshed"))
         .expect("advance lockfile for refused repair");
 
@@ -250,7 +252,7 @@ fn malformed_existing_home_config_is_retained_instead_of_repaired() {
         .prepare(None)
         .expect_err("malformed existing config must not be repaired");
     assert_eq!(error.reason(), "cargo-isolation::permission-mismatch");
-    assert_eq!(mode(&config), 0o644);
+    assert_eq!(mode(&config), 0o400);
     assert_eq!(fs::read(&config).expect("reread retained config"), original);
 }
 
@@ -271,7 +273,7 @@ fn native_cargo_inside_the_owned_store_is_refused() {
         (&fixture.rustdoc, &rustdoc),
     ] {
         fs::copy(source, destination).expect("copy recursive toolchain fixture");
-        fs::set_permissions(destination, fs::Permissions::from_mode(0o700))
+        authority::set_owner_mode(destination, 0o700)
             .expect("make recursive native tool executable");
     }
 
@@ -571,16 +573,12 @@ fn malformed_links_and_uncertain_home_liveness_are_reported_and_retained() {
         .expect("one package link")
         .expect("read package link")
         .path();
-    fs::set_permissions(&generation, fs::Permissions::from_mode(0o700))
-        .expect("open generation for corruption fixture");
-    fs::set_permissions(&vendor, fs::Permissions::from_mode(0o700))
-        .expect("open vendor view for corruption fixture");
-    fs::remove_file(&link).expect("remove admitted package link");
-    std::os::unix::fs::symlink(&fixture.root, &link).expect("install escaping package link");
-    fs::set_permissions(&vendor, fs::Permissions::from_mode(0o500))
-        .expect("restore vendor permissions");
-    fs::set_permissions(&generation, fs::Permissions::from_mode(0o500))
-        .expect("restore generation permissions");
+    authority::set_owner_mode(&generation, 0o700).expect("open generation for corruption fixture");
+    authority::set_owner_mode(&vendor, 0o700).expect("open vendor view for corruption fixture");
+    remove_link(&link);
+    authority::link_directory(&fixture.root, &link).expect("install escaping package link");
+    authority::set_owner_mode(&vendor, 0o500).expect("restore vendor permissions");
+    authority::set_owner_mode(&generation, 0o500).expect("restore generation permissions");
     fs::write(prepared.home().join("owner.json"), b"{}").expect("malform owner record");
 
     let inspection = store::inspect(&host).expect("inspect malformed owned state");
@@ -622,8 +620,7 @@ fn package_files_preserve_cargo_copy_semantics_and_permission_drift_is_retained(
     assert_eq!(mode(&package), 0o500, "package entries are sealed");
     assert_eq!(mode(&manifest), 0o600, "Cargo may copy source modes");
 
-    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o400))
-        .expect("introduce package permission drift");
+    authority::set_owner_mode(&manifest, 0o400).expect("introduce package permission drift");
     let inspection = store::inspect(&host).expect("inspect package permission drift");
     assert!(
         inspection
@@ -682,8 +679,7 @@ fn manual_reader_pins_coexist_and_unlocked_crash_residue_is_reclaimed() {
 
     let abandoned = pins.join("reader-00000000000040008000000000000000.lock");
     fs::copy(&active[0], &abandoned).expect("copy a valid crashed-reader record");
-    fs::set_permissions(&abandoned, fs::Permissions::from_mode(0o600))
-        .expect("seal crashed-reader record");
+    authority::set_owner_mode(&abandoned, 0o600).expect("seal crashed-reader record");
     let cleanup = store::cleanup_with_grace(&host, std::time::Duration::ZERO)
         .expect("cleanup probes reader pins");
     assert_eq!(cleanup.removed_pins(), 1);
@@ -723,9 +719,11 @@ fn uncertain_reader_pin_is_not_followed_and_retains_every_generation() {
     fs::remove_dir_all(&home).expect("remove the generation's home reference");
 
     let outside = fixture.root.join("unowned-pin-target");
-    fs::write(&outside, b"outside stays untouched").expect("write unowned pin target");
+    fs::create_dir(&outside).expect("create unowned pin target");
+    let witness = outside.join("witness");
+    fs::write(&witness, b"outside stays untouched").expect("write unowned pin witness");
     let uncertain = pins.join("reader-00000000000040008000000000000000.lock");
-    std::os::unix::fs::symlink(&outside, &uncertain).expect("install uncertain reader pin");
+    authority::link_directory(&outside, &uncertain).expect("install uncertain reader pin");
 
     let cleanup = store::cleanup_with_grace(&host, std::time::Duration::ZERO)
         .expect("cleanup retains generations under uncertain pin liveness");
@@ -733,13 +731,18 @@ fn uncertain_reader_pin_is_not_followed_and_retains_every_generation() {
     assert_eq!(cleanup.removed_generations(), 0);
     assert!(!cleanup.retained_uncertain().is_empty());
     assert_eq!(
-        fs::read(&outside).expect("read unowned pin target"),
+        fs::read(&witness).expect("read unowned pin witness"),
         b"outside stays untouched",
         "cleanup never follows the unowned pin path",
     );
-    assert!(uncertain.is_symlink(), "uncertain pin itself is retained");
+    let pin = fs::symlink_metadata(&uncertain).expect("observe uncertain pin");
+    assert!(
+        authority::is_link_like(&pin),
+        "uncertain pin itself is retained"
+    );
 }
 
+#[cfg(unix)]
 #[test]
 fn non_utf8_worktree_identity_is_encoded_without_aliasing() {
     let mut name = b"worktree-".to_vec();
@@ -785,32 +788,36 @@ fn copy_tree(source: &Path, destination: &Path) {
 
 fn write_executable(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write executable fixture");
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("make fixture executable");
+    authority::set_owner_mode(path, 0o700).expect("make fixture executable");
 }
 
 fn mode(path: &Path) -> u32 {
-    fs::symlink_metadata(path)
-        .expect("read fixture mode")
-        .permissions()
-        .mode()
-        & 0o777
+    authority::owner_mode(path).expect("read fixture mode")
+}
+
+fn remove_link(path: &Path) {
+    if cfg!(windows) {
+        fs::remove_dir(path).expect("remove directory junction");
+    } else {
+        fs::remove_file(path).expect("remove symbolic link");
+    }
 }
 
 fn make_writable(path: &Path) {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return;
     };
-    if metadata.file_type().is_symlink() {
+    if authority::is_link_like(&metadata) {
         return;
     }
     if metadata.is_dir() {
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+        let _ = authority::set_owner_mode(path, 0o700);
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 make_writable(&entry.path());
             }
         }
     } else {
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        let _ = authority::set_owner_mode(path, 0o600);
     }
 }

@@ -1,8 +1,6 @@
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-#[cfg(unix)]
-use std::fs::OpenOptions;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -87,7 +85,7 @@ impl LockFile {
     /// Block on a caller-opened descriptor until the kernel grants possession.
     #[cfg(unix)]
     pub(crate) fn acquire_opened(&self, file: File) -> io::Result<Possession> {
-        acquire_opened(self, file, platform::LOCK_EX)
+        acquire_opened(self, file, Operation::Exclusive)
     }
 
     /// Observe whether the kernel would grant this existing lock now.
@@ -247,18 +245,24 @@ pub(crate) fn replacement_record(mut record: Vec<u8>, spanned: u64) -> Vec<u8> {
     record
 }
 
-#[cfg(unix)]
+/// One kernel lock request.
+#[derive(Clone, Copy)]
+enum Operation {
+    Exclusive,
+    TryExclusive,
+    TryShared,
+}
+
 fn try_acquire(lock: &LockFile) -> io::Result<Acquisition> {
     try_acquire_with(lock, || {})
 }
 
-#[cfg(unix)]
 fn try_acquire_with(
     lock: &LockFile,
     mut after_contention: impl FnMut(),
 ) -> io::Result<Acquisition> {
     loop {
-        match acquire_with(lock, platform::LOCK_EX | platform::LOCK_NB) {
+        match acquire_with(lock, Operation::TryExclusive) {
             Ok(possession) => return Ok(Acquisition::Acquired(possession)),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => after_contention(),
             Err(error) => return Err(error),
@@ -270,14 +274,9 @@ fn try_acquire_with(
     }
 }
 
-#[cfg(unix)]
 fn try_acquire_opened(lock: &LockFile, file: File) -> io::Result<Acquisition> {
     loop {
-        match acquire_opened(
-            lock,
-            file.try_clone()?,
-            platform::LOCK_EX | platform::LOCK_NB,
-        ) {
+        match acquire_opened(lock, file.try_clone()?, Operation::TryExclusive) {
             Ok(possession) => return Ok(Acquisition::Acquired(possession)),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => return Err(error),
@@ -289,62 +288,33 @@ fn try_acquire_opened(lock: &LockFile, file: File) -> io::Result<Acquisition> {
     }
 }
 
-#[cfg(unix)]
 fn acquire(lock: &LockFile) -> io::Result<Possession> {
-    acquire_with(lock, platform::LOCK_EX)
+    acquire_with(lock, Operation::Exclusive)
 }
 
-#[cfg(unix)]
-fn acquire_with(lock: &LockFile, operation: std::os::raw::c_int) -> io::Result<Possession> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW)
-        .open(&lock.path)?;
+fn acquire_with(lock: &LockFile, operation: Operation) -> io::Result<Possession> {
+    let file = platform::open(&lock.path, true)?;
     acquire_opened(lock, file, operation)
 }
 
-#[cfg(unix)]
-fn acquire_opened(
-    lock: &LockFile,
-    file: File,
-    operation: std::os::raw::c_int,
-) -> io::Result<Possession> {
-    use std::os::fd::AsRawFd;
-
+fn acquire_opened(lock: &LockFile, file: File, operation: Operation) -> io::Result<Possession> {
     require_regular(&file)?;
-    ensure_cloexec(&file)?;
-
-    let result = unsafe { platform::flock(file.as_raw_fd(), operation) };
-    if result == 0 {
-        return Ok(Possession {
-            lock: lock.clone(),
-            file,
-            unlock_on_drop: true,
-        });
-    }
-    Err(io::Error::last_os_error())
+    platform::admit(&file)?;
+    platform::lock(&file, operation)?;
+    Ok(Possession {
+        lock: lock.clone(),
+        file,
+        #[cfg(unix)]
+        unlock_on_drop: true,
+    })
 }
 
-#[cfg(unix)]
 fn availability(lock: &LockFile) -> io::Result<Availability> {
     availability_with(lock, || {})
 }
 
-#[cfg(unix)]
 fn availability_with(lock: &LockFile, while_held: impl FnOnce()) -> io::Result<Availability> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let file = match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW)
-        .open(&lock.path)
-    {
+    let file = match platform::open(&lock.path, false) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(Availability::Available);
@@ -354,51 +324,32 @@ fn availability_with(lock: &LockFile, while_held: impl FnOnce()) -> io::Result<A
     availability_opened_with(file, while_held)
 }
 
-#[cfg(unix)]
 fn availability_opened(file: File) -> io::Result<Availability> {
     availability_opened_with(file, || {})
 }
 
-#[cfg(unix)]
-fn availability_opened_with(file: File, while_held: impl FnOnce()) -> io::Result<Availability> {
-    use std::os::fd::AsRawFd;
-
-    require_regular(&file)?;
-    ensure_cloexec(&file)?;
-    let result =
-        unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_SH | platform::LOCK_NB) };
-    if result == 0 {
-        while_held();
-        release_probe(&file)?;
-        return Ok(Availability::Available);
-    }
-    let error = io::Error::last_os_error();
-    if error.kind() == io::ErrorKind::WouldBlock {
-        Ok(Availability::Held)
-    } else {
-        Err(error)
-    }
-}
-
-/// Give back the possession a probe took in order to answer its question.
+/// Probe with a shared request, then give back what the probe took.
 ///
 /// Dropping `file` is not enough. Callers probe with a `try_clone` while the
 /// original descriptor stays open, and a lock lives on the open file
-/// description both share, so closing one copy releases nothing. An unlock on
-/// any copy releases it for all of them, which also closes the window against a
-/// child that already inherited the description across a `fork` with no `exec`.
-#[cfg(unix)]
-fn release_probe(file: &File) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-
-    if unsafe { platform::flock(file.as_raw_fd(), platform::LOCK_UN) } == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+/// description (Windows: file object) both share, so closing one copy
+/// releases nothing. An unlock on any copy releases it for all of them, which
+/// also closes the window against a child that already inherited the
+/// description across a `fork` with no `exec`.
+fn availability_opened_with(file: File, while_held: impl FnOnce()) -> io::Result<Availability> {
+    require_regular(&file)?;
+    platform::admit(&file)?;
+    match platform::lock(&file, Operation::TryShared) {
+        Ok(()) => {
+            while_held();
+            platform::unlock(&file)?;
+            Ok(Availability::Available)
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Availability::Held),
+        Err(error) => Err(error),
     }
 }
 
-#[cfg(unix)]
 fn require_regular(file: &File) -> io::Result<()> {
     if file.metadata()?.is_file() {
         Ok(())
@@ -410,118 +361,210 @@ fn require_regular(file: &File) -> io::Result<()> {
     }
 }
 
-#[cfg(unix)]
-fn ensure_cloexec(file: &File) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-
-    let flags = unsafe { platform::fcntl(file.as_raw_fd(), platform::F_GETFD) };
-    if flags == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    if flags & platform::FD_CLOEXEC == 0 {
-        return Err(io::Error::other(
-            "lock descriptor was opened without CLOEXEC",
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn try_acquire(_lock: &LockFile) -> io::Result<Acquisition> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock possession requires a Unix target",
-    ))
-}
-
-#[cfg(not(unix))]
-fn try_acquire_with(_lock: &LockFile, _after_contention: impl FnMut()) -> io::Result<Acquisition> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock possession requires a Unix target",
-    ))
-}
-
-#[cfg(not(unix))]
-fn try_acquire_opened(_lock: &LockFile, _file: File) -> io::Result<Acquisition> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock possession requires a Unix target",
-    ))
-}
-
-#[cfg(not(unix))]
-fn acquire(_lock: &LockFile) -> io::Result<Possession> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock possession requires a Unix target",
-    ))
-}
-
-#[cfg(not(unix))]
-fn availability(_lock: &LockFile) -> io::Result<Availability> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock observation requires a Unix target",
-    ))
-}
-
-#[cfg(not(unix))]
-fn availability_with(_lock: &LockFile, _while_held: impl FnOnce()) -> io::Result<Availability> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock observation requires a Unix target",
-    ))
-}
-
-#[cfg(not(unix))]
-fn availability_opened(_file: File) -> io::Result<Availability> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "flock observation requires a Unix target",
-    ))
-}
-
-#[cfg(unix)]
 impl Drop for Possession {
     fn drop(&mut self) {
-        use std::os::fd::AsRawFd;
-
-        if self.unlock_on_drop {
-            let _result = unsafe { platform::flock(self.file.as_raw_fd(), platform::LOCK_UN) };
+        #[cfg(unix)]
+        if !self.unlock_on_drop {
+            return;
         }
+        let _result = platform::unlock(&self.file);
     }
-}
-
-#[cfg(not(unix))]
-impl Drop for Possession {
-    fn drop(&mut self) {}
 }
 
 #[cfg(unix)]
 mod platform {
+    use std::fs::{File, OpenOptions};
+    use std::io;
+    use std::os::fd::AsRawFd as _;
     use std::os::raw::c_int;
+    use std::path::Path;
+
+    use super::Operation;
 
     pub const F_GETFD: c_int = 1;
     pub const F_SETFD: c_int = 2;
     pub const FD_CLOEXEC: c_int = 1;
-    pub const LOCK_SH: c_int = 1;
-    pub const LOCK_EX: c_int = 2;
-    pub const LOCK_NB: c_int = 4;
-    pub const LOCK_UN: c_int = 8;
+    const LOCK_SH: c_int = 1;
+    const LOCK_EX: c_int = 2;
+    const LOCK_NB: c_int = 4;
+    const LOCK_UN: c_int = 8;
 
     #[cfg(target_os = "macos")]
-    pub const O_CLOEXEC: c_int = 0x01_00_00_00;
+    const O_CLOEXEC: c_int = 0x01_00_00_00;
     #[cfg(target_os = "linux")]
-    pub const O_CLOEXEC: c_int = 0x8_00_00;
+    const O_CLOEXEC: c_int = 0x8_00_00;
     #[cfg(target_os = "macos")]
-    pub const O_NOFOLLOW: c_int = 0x100;
+    const O_NOFOLLOW: c_int = 0x100;
     #[cfg(target_os = "linux")]
-    pub const O_NOFOLLOW: c_int = 0x2_00_00;
+    const O_NOFOLLOW: c_int = 0x2_00_00;
 
     unsafe extern "C" {
         pub fn fcntl(descriptor: c_int, command: c_int, ...) -> c_int;
-        pub fn flock(descriptor: c_int, operation: c_int) -> c_int;
+        fn flock(descriptor: c_int, operation: c_int) -> c_int;
+    }
+
+    /// Open the lock file without following a final symlink.
+    pub(super) fn open(path: &Path, create: bool) -> io::Result<File> {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .custom_flags(O_CLOEXEC | O_NOFOLLOW);
+        if create {
+            options.create(true).mode(0o600);
+        }
+        options.open(path)
+    }
+
+    /// A lock descriptor never leaks into an executed child by default.
+    pub(super) fn admit(file: &File) -> io::Result<()> {
+        // SAFETY: `fcntl(F_GETFD)` only reads flags of a descriptor `file` owns.
+        let flags = unsafe { fcntl(file.as_raw_fd(), F_GETFD) };
+        if flags == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if flags & FD_CLOEXEC == 0 {
+            return Err(io::Error::other(
+                "lock descriptor was opened without CLOEXEC",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn lock(file: &File, operation: Operation) -> io::Result<()> {
+        let operation = match operation {
+            Operation::Exclusive => LOCK_EX,
+            Operation::TryExclusive => LOCK_EX | LOCK_NB,
+            Operation::TryShared => LOCK_SH | LOCK_NB,
+        };
+        flock_result(file, operation)
+    }
+
+    pub(super) fn unlock(file: &File) -> io::Result<()> {
+        flock_result(file, LOCK_UN)
+    }
+
+    fn flock_result(file: &File, operation: c_int) -> io::Result<()> {
+        // SAFETY: `flock` acts only on a descriptor `file` owns.
+        if unsafe { flock(file.as_raw_fd(), operation) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+}
+
+#[cfg(windows)]
+mod platform {
+    use std::fs::{File, OpenOptions};
+    use std::io;
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_OPEN_REPARSE_POINT, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+        LockFileEx, UnlockFileEx,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    use super::Operation;
+
+    /// Windows byte-range locks are mandatory: a locked byte refuses reads and
+    /// writes through every other handle. Possession therefore locks one byte
+    /// far beyond any holder record, so readers keep reading the record.
+    const LOCK_OFFSET: u64 = u64::MAX - 1;
+
+    /// Open the lock file itself, never the target of a final reparse point.
+    ///
+    /// The standard library opens Windows handles non-inheritable.
+    pub(super) fn open(path: &Path, create: bool) -> io::Result<File> {
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        if create {
+            options.create(true);
+        }
+        options.open(path)
+    }
+
+    pub(super) fn admit(_file: &File) -> io::Result<()> {
+        Ok(())
+    }
+
+    pub(super) fn lock(file: &File, operation: Operation) -> io::Result<()> {
+        let flags = match operation {
+            Operation::Exclusive => LOCKFILE_EXCLUSIVE_LOCK,
+            Operation::TryExclusive => LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            Operation::TryShared => LOCKFILE_FAIL_IMMEDIATELY,
+        };
+        let mut overlapped = lock_range();
+        // SAFETY: `file` owns the synchronous handle for the call, and the
+        // range descriptor outlives the call, which completes before return.
+        if unsafe { LockFileEx(file.as_raw_handle(), flags, 0, 1, 0, &raw mut overlapped) } != 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == i32::try_from(ERROR_LOCK_VIOLATION).ok() {
+            Err(io::Error::new(io::ErrorKind::WouldBlock, error))
+        } else {
+            Err(error)
+        }
+    }
+
+    pub(super) fn unlock(file: &File) -> io::Result<()> {
+        let mut overlapped = lock_range();
+        // SAFETY: as for `LockFileEx`, over the same one-byte range.
+        if unsafe { UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &raw mut overlapped) } != 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn lock_range() -> OVERLAPPED {
+        let mut overlapped = OVERLAPPED::default();
+        overlapped.Anonymous.Anonymous.Offset = LOCK_OFFSET as u32;
+        overlapped.Anonymous.Anonymous.OffsetHigh = (LOCK_OFFSET >> 32) as u32;
+        overlapped
+    }
+}
+
+/// Wasm builds check contracts only; they own no kernel file locks.
+#[cfg(not(any(unix, windows)))]
+mod platform {
+    use std::fs::File;
+    use std::io;
+    use std::path::Path;
+
+    use super::Operation;
+
+    fn unsupported() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "file locks require a Unix or Windows target",
+        )
+    }
+
+    pub(super) fn open(_path: &Path, _create: bool) -> io::Result<File> {
+        Err(unsupported())
+    }
+
+    pub(super) fn admit(_file: &File) -> io::Result<()> {
+        Err(unsupported())
+    }
+
+    pub(super) fn lock(_file: &File, _operation: Operation) -> io::Result<()> {
+        Err(unsupported())
+    }
+
+    pub(super) fn unlock(_file: &File) -> io::Result<()> {
+        Err(unsupported())
     }
 }
 

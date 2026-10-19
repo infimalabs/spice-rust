@@ -1,17 +1,14 @@
 //! Pinned Windows MSVC C toolchain materialization and target-scoped admission.
 
-#[cfg(windows)]
-use super::platform::PermissionsExt as _;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use sill::authority;
 
 use super::IsolationError;
 
@@ -20,7 +17,7 @@ const STORE: &str = "spice/windows-msvc-v1";
 const RECEIPT: &str = "receipt.json";
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 const SCHEMA: u64 = 2;
-const LAYOUT_VERSION: u64 = 5;
+const LAYOUT_VERSION: u64 = 6;
 const SHA256_HEX_LENGTH: usize = 64;
 const HOST_CLOSURE_REASON: &str = "cargo-isolation::windows-msvc-host-closure-altered";
 const LICENSE_ACCEPTANCE_PHRASES: [&str; 3] = [
@@ -248,20 +245,8 @@ fn populate(
             error,
         )
     })?;
-    fs::set_permissions(&receipt_path, fs::Permissions::from_mode(0o444)).map_err(|error| {
-        IsolationError::io(
-            "cargo-isolation::windows-msvc-publication-failed",
-            &receipt_path,
-            error,
-        )
-    })?;
-    fs::set_permissions(staging, fs::Permissions::from_mode(0o555)).map_err(|error| {
-        IsolationError::io(
-            "cargo-isolation::windows-msvc-publication-failed",
-            staging,
-            error,
-        )
-    })?;
+    seal(&receipt_path, 0o400)?;
+    seal(staging, 0o500)?;
     debug_assert_eq!(receipt.generation, generation);
     Ok(())
 }
@@ -383,13 +368,7 @@ fn write_wrappers(declaration: &Declaration, directory: &Path) -> Result<(), Iso
                 error,
             )
         })?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(|error| {
-            IsolationError::io(
-                "cargo-isolation::windows-msvc-publication-failed",
-                &path,
-                error,
-            )
-        })?;
+        seal(&path, 0o700)?;
     }
     Ok(())
 }
@@ -890,7 +869,7 @@ fn tree_digest(root: &Path) -> Result<String, IsolationError> {
             hasher.update(target.as_os_str().as_encoded_bytes());
         } else if metadata.is_file() {
             hasher.update(b"\0file\0");
-            hasher.update(metadata.permissions().mode().to_le_bytes());
+            hasher.update(owner_mode(&path)?.to_le_bytes());
             hasher.update(sha256_file(&path)?.as_bytes());
         } else {
             return Err(IsolationError::new(
@@ -945,7 +924,7 @@ fn make_immutable(path: &Path) -> Result<(), IsolationError> {
             error,
         )
     })?;
-    if metadata.file_type().is_symlink() {
+    if authority::is_link_like(&metadata) {
         return Ok(());
     }
     if metadata.is_dir() {
@@ -968,18 +947,28 @@ fn make_immutable(path: &Path) -> Result<(), IsolationError> {
                     .path(),
             )?;
         }
-        fs::set_permissions(path, fs::Permissions::from_mode(0o555))
+        seal(path, 0o500)
+    } else if owner_mode(path)? & 0o111 == 0 {
+        seal(path, 0o400)
     } else {
-        let mode = if metadata.permissions().mode() & 0o111 == 0 {
-            0o444
-        } else {
-            0o555
-        };
-        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        seal(path, 0o500)
     }
-    .map_err(|error| {
+}
+
+fn seal(path: &Path, mode: u32) -> Result<(), IsolationError> {
+    authority::set_owner_mode(path, mode).map_err(|error| {
         IsolationError::io(
             "cargo-isolation::windows-msvc-publication-failed",
+            path,
+            error,
+        )
+    })
+}
+
+fn owner_mode(path: &Path) -> Result<u32, IsolationError> {
+    authority::owner_mode(path).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::windows-msvc-toolchain-unavailable",
             path,
             error,
         )
@@ -1043,7 +1032,7 @@ mod tests {
         let first = tree_digest(&root).unwrap();
         fs::write(&file, "other").unwrap();
         assert_ne!(tree_digest(&root).unwrap(), first);
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+        authority::set_owner_mode(&file, 0o700).unwrap();
         let executable = tree_digest(&root).unwrap();
         assert_ne!(executable, first);
         fs::remove_dir_all(root).unwrap();

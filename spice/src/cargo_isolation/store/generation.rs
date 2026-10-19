@@ -2,10 +2,6 @@
 
 use std::fs::File;
 use std::io::Read as _;
-#[cfg(unix)]
-use std::os::unix::fs::symlink;
-#[cfg(windows)]
-use std::os::windows::fs::symlink_dir as symlink;
 
 use super::*;
 
@@ -211,7 +207,8 @@ fn publish_package(
     } else {
         rename_noreplace(&package_temp, &final_path)?;
     }
-    symlink(PathBuf::from("../../../packages").join(&identity), source).map_err(|error| {
+    let target = package_link_target(layout, &identity)?;
+    authority::link_directory(&target, &source).map_err(|error| {
         IsolationError::io(
             "cargo-isolation::generation-link-failed",
             &final_path,
@@ -226,6 +223,22 @@ fn publish_package(
         source: locked.source.clone(),
         checksum: locked.checksum.clone(),
         tree_digest: source_digest,
+    })
+}
+
+/// The target a generation's vendor link records for one package, in the form
+/// [`authority::read_directory_link`] reports.
+///
+/// Unix keeps the relative target so a store can move as a whole. A Windows
+/// directory junction records an absolute local path.
+fn package_link_target(layout: &Layout, identity: &str) -> Result<PathBuf, IsolationError> {
+    let target = if cfg!(windows) {
+        layout.packages.join(identity)
+    } else {
+        PathBuf::from("../../../packages").join(identity)
+    };
+    authority::directory_link_form(&target).map_err(|error| {
+        IsolationError::io("cargo-isolation::generation-link-invalid", &target, error)
     })
 }
 
@@ -301,7 +314,9 @@ pub(super) fn verify_checksum_files(
         ));
     }
     for (relative, expected) in &checksum.files {
-        let path = root.join(relative);
+        let path = relative
+            .split('/')
+            .fold(root.to_path_buf(), |path, segment| path.join(segment));
         let bytes = fs::read(&path).map_err(|error| {
             IsolationError::io(
                 "cargo-isolation::package-checksum-unavailable",
@@ -343,7 +358,7 @@ fn collect_package_files(
                 IsolationError::new("cargo-isolation::package-path-invalid", error.to_string())
             })?;
             if relative != Path::new(".cargo-checksum.json") {
-                files.insert(path_text(relative)?);
+                files.insert(checksum_key(relative)?);
             }
         } else {
             return Err(IsolationError::new(
@@ -353,6 +368,19 @@ fn collect_package_files(
         }
     }
     Ok(())
+}
+
+/// Cargo's checksum key for a package-relative path: `/`-separated on every
+/// host.
+fn checksum_key(relative: &Path) -> Result<String, IsolationError> {
+    let mut key = String::new();
+    for component in relative.components() {
+        if !key.is_empty() {
+            key.push('/');
+        }
+        key.push_str(&path_text(Path::new(component.as_os_str()))?);
+    }
+    Ok(key)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -414,10 +442,10 @@ pub(super) fn validate_generation(
     }
     for package in &manifest.packages {
         let link = root.join("vendor").join(&package.directory);
-        let target = fs::read_link(&link).map_err(|error| {
+        let target = authority::read_directory_link(&link).map_err(|error| {
             IsolationError::io("cargo-isolation::generation-link-invalid", &link, error)
         })?;
-        let expected = PathBuf::from("../../../packages").join(&package.identity);
+        let expected = package_link_target(layout, &package.identity)?;
         let package_root = layout.packages.join(&package.identity);
         if target != expected || !package_root.is_dir() {
             return Err(IsolationError::new(

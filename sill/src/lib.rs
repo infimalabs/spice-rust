@@ -1,5 +1,5 @@
-//! Process, advisory-lock, and interface-address floor with typed lock
-//! configuration.
+//! Process, advisory-lock, filesystem-authority, and interface-address floor
+//! with typed lock configuration.
 
 #[cfg(not(any(
     target_os = "linux",
@@ -11,6 +11,8 @@ compile_error!(
     "sill supports the Linux, macOS, and Windows release targets plus wasm contract checks"
 );
 
+#[cfg(any(unix, windows))]
+pub mod authority;
 pub mod config;
 #[cfg(any(unix, windows))]
 mod interface;

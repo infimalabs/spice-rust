@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
@@ -49,6 +50,7 @@ fn write(path: &Path, bytes: &[u8]) {
     fs::create_dir_all(path.parent().expect("fixture file has a parent"))
         .expect("fixture parent creates");
     fs::write(path, bytes).expect("fixture bytes write");
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(DATA_MODE)).expect("fixture mode writes");
 }
 
