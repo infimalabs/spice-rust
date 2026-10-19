@@ -312,6 +312,31 @@ pub fn designs(tasks: &[BoardTask]) -> impl Iterator<Item = &BoardTask> {
     })
 }
 
+/// Distinct lanes holding live claims on work associated with one Design.
+///
+/// One lane can reach the Design through more than one claimed row over time;
+/// the pip and group controls still count that worker once.
+#[must_use]
+pub fn design_claimants(
+    board: &crate::runtime::BoardView,
+    design: &TaskStamp,
+) -> BTreeSet<CanonicalUuid> {
+    board
+        .tasks
+        .iter()
+        .filter_map(|row| {
+            let claim = row
+                .claim
+                .as_ref()
+                .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)?;
+            row.statement
+                .body
+                .is_associated_with_design(design)
+                .then_some(claim.body.lane)
+        })
+        .collect()
+}
+
 /// The lanes holding live claims on work associated with each working group's
 /// Design anchors. Association survives output selection through the task's
 /// persistent preparation controller.
@@ -324,20 +349,10 @@ pub fn claimants(
         .groups
         .iter()
         .map(|group| {
-            let lanes = board
-                .tasks
+            let lanes = group
+                .anchors
                 .iter()
-                .filter_map(|row| {
-                    let claim = row
-                        .claim
-                        .as_ref()
-                        .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)?;
-                    group
-                        .anchors
-                        .iter()
-                        .any(|design| row.statement.body.is_associated_with_design(design))
-                        .then_some(claim.body.lane)
-                })
+                .flat_map(|design| design_claimants(board, design))
                 .collect();
             (group.group.clone(), lanes)
         })
@@ -390,6 +405,14 @@ mod tests {
         });
         activate(&mut other_selected, lane(4));
 
+        let mut duplicate_selected = task(7, "work.duplicate");
+        duplicate_selected.statement.body.preparation = Some(wire::TaskPreparation {
+            parent: first.clone(),
+            controller: first.clone(),
+            construction: stamp(7),
+        });
+        activate(&mut duplicate_selected, lane(2));
+
         let mut unrelated = task(6, "work.unrelated");
         activate(&mut unrelated, lane(5));
 
@@ -400,33 +423,42 @@ mod tests {
             groups: vec![
                 wire::rooms::WorkingGroup {
                     group: first_group.clone(),
-                    anchors: vec![first],
+                    anchors: vec![first.clone()],
                     stance: wire::rooms::WorkingGroupStance::Explore,
                 },
                 wire::rooms::WorkingGroup {
                     group: second_group.clone(),
-                    anchors: vec![second],
+                    anchors: vec![second.clone()],
                     stance: wire::rooms::WorkingGroupStance::Explore,
                 },
             ],
             fast: Vec::new(),
         };
-        let workers = claimants(
-            &partition,
-            &board(vec![
-                first_design,
-                selected,
-                gated,
-                unavailable_anchor,
-                other_selected,
-                unrelated,
-            ]),
-        );
+        let board = board(vec![
+            first_design,
+            selected,
+            gated,
+            unavailable_anchor,
+            other_selected,
+            unrelated,
+            duplicate_selected,
+        ]);
+        let workers = claimants(&partition, &board);
 
         assert_eq!(
             workers.get(&first_group),
             Some(&BTreeSet::from([lane(1), lane(2), lane(3)]))
         );
         assert_eq!(workers.get(&second_group), Some(&BTreeSet::from([lane(4)])));
+        assert_eq!(
+            design_claimants(&board, &first),
+            BTreeSet::from([lane(1), lane(2), lane(3)]),
+            "the Design, selected work, and gated work contribute each distinct lane once",
+        );
+        assert_eq!(
+            design_claimants(&board, &second),
+            BTreeSet::from([lane(4)]),
+            "another Design selects only its own worker",
+        );
     }
 }

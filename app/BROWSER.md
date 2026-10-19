@@ -504,7 +504,10 @@ camel-case elements such as `clipPath` only by their exact case, so the trace
 writes those as dynamic tags (`<@{"clipPath"}>`).
 
 A working group's pips are the same traced wells, one per Design, with the
-Design's standing on the rail. A Design's trace reads its room's events as a
-lane's activity: an agent's words are prose, a lane's contribution is work, a
-human's words are direction, a coordination opens a turn, and a lane's
-departure divides the room as a compaction divides a lane.
+Design's standing on the rail. Each Design trace pools retained activity from
+the distinct lanes currently claiming the Design itself, work gated by it, or
+selected work that retains it as preparation controller. The shared trace
+calculation therefore shows the sum of those workers' reasoning, tool, and
+prose rates on the same fixed scale as an individual lane; one lane contributes
+once even if multiple associated paths name it, and unrelated workers
+contribute nothing.

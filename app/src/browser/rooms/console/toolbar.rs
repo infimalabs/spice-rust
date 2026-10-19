@@ -154,8 +154,8 @@ fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Htm
     }
 }
 
-/// One Design's pip, a team pip's twin: its standing on the rail and its room's
-/// recent activity traced inside.
+/// One Design's pip, a team pip's twin: its standing on the rail and the
+/// aggregate activity of its current workers traced inside.
 fn render_light(render: &GroupRender<'_, '_>, channel: &Channel, standing: DesignStanding) -> Html {
     let label = format!("{}: {}", channel.label, standing.label());
     let activities = crate::browser::watchband::design_activities(render.runtime, &channel.stamp);

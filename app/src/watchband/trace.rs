@@ -1,15 +1,16 @@
-//! What one lane has been doing lately, as its team pip draws it.
+//! What one lane, or a pooled set of lanes, has been doing lately.
 //!
 //! A trace is a fixed window of wall time ending at the instant it is drawn,
-//! shared by every lane so neighbouring pips compare honestly; activity moves
+//! shared by every pip so neighbouring pips compare honestly; activity moves
 //! left as time passes and leaves once it is a whole window old. Work becomes
 //! one curve per kind, reasoning, tool, and prose, whose height is that kind's
-//! recent rate on one fixed scale; lifecycle activity becomes markers. The
-//! curves are sampled at evenly spaced instants through a kernel that slides
-//! with time, so a redraw moves them smoothly instead of jumping between
-//! buckets. Positions and levels are fractions; the browser owns every pixel.
-//! Intervals the lane was off become gaps the curves do not cross, once they
-//! last at least the spacing between two samples.
+//! recent rate on one fixed scale; lifecycle activity becomes markers. Pooling
+//! lane events before this calculation adds their rates without introducing a
+//! second scale. The curves are sampled at evenly spaced instants through a
+//! kernel that slides with time, so a redraw moves them smoothly instead of
+//! jumping between buckets. Positions and levels are fractions; the browser
+//! owns every pixel. Intervals one lane was off become gaps in that lane's pip
+//! once they last at least the spacing between two samples.
 
 use wire::AgentActivityKind;
 
@@ -141,48 +142,6 @@ const fn placement(kind: AgentActivityKind) -> Placement {
         AgentActivityKind::Session => Placement::Marker(TraceMarkerKind::Session),
         AgentActivityKind::SignOut => Placement::Marker(TraceMarkerKind::SignOut),
     }
-}
-
-/// Map one Design-room event onto the same activity vocabulary as a team pip.
-///
-/// Publication authorship matters: a lane's publication is agent prose, while
-/// operator and human publications are direction. Resident-authored
-/// bookkeeping carries neither kind of authored activity.
-#[must_use]
-pub fn room_activity(event: &crate::runtime::RoomEventKind) -> Option<(AgentActivityKind, usize)> {
-    use crate::runtime::RoomEventKind;
-
-    match event {
-        RoomEventKind::Messaged { source, .. } => {
-            Some((AgentActivityKind::Prose, hunk_bytes(source)))
-        }
-        RoomEventKind::Contributed { text, .. } => Some((AgentActivityKind::Tool, text.len())),
-        RoomEventKind::Published { author, content } => match author {
-            wire::Actor::Lane(_) => Some((AgentActivityKind::Prose, publication_bytes(content))),
-            wire::Actor::Operator | wire::Actor::Human(_) => {
-                Some((AgentActivityKind::Direction, 0))
-            }
-            wire::Actor::Spice => None,
-        },
-        RoomEventKind::Posted { .. } => Some((AgentActivityKind::Direction, 0)),
-        RoomEventKind::Coordination { .. } => Some((AgentActivityKind::Turn, 0)),
-        RoomEventKind::Left { .. } => Some((AgentActivityKind::Compaction, 0)),
-        RoomEventKind::PutAside { .. } => None,
-    }
-}
-
-fn publication_bytes(content: &wire::rooms::RoomPublicationContent) -> usize {
-    match content {
-        wire::rooms::RoomPublicationContent::Authored { text } => text.len(),
-        wire::rooms::RoomPublicationContent::Linked {
-            link: wire::rooms::RoomSource::Transcript(source),
-        } => hunk_bytes(source),
-        wire::rooms::RoomPublicationContent::Linked { .. } => 0,
-    }
-}
-
-fn hunk_bytes(source: &wire::rooms::TranscriptHunk) -> usize {
-    usize::try_from(source.text.end.saturating_sub(source.text.start)).unwrap_or(usize::MAX)
 }
 
 /// Trace one lane's activities, given in any order, through the window ending
@@ -445,35 +404,13 @@ mod tests {
     }
 
     #[test]
-    fn room_publication_authorship_preserves_prose_and_direction_semantics() {
-        let lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
-            .parse()
-            .expect("lane");
-        let human = "018f82d4-6f59-7d06-92e3-bce9131163e6"
-            .parse()
-            .expect("human");
-        let lane_text = "A lane-authored room observation.".to_owned();
-        let lane_publication = crate::runtime::RoomEventKind::Published {
-            author: wire::Actor::Lane(lane),
-            content: wire::rooms::RoomPublicationContent::Authored {
-                text: lane_text.clone(),
-            },
-        };
-        let human_publication = crate::runtime::RoomEventKind::Published {
-            author: wire::Actor::Human(human),
-            content: wire::rooms::RoomPublicationContent::Authored {
-                text: "Operator observation.".to_owned(),
-            },
-        };
-
-        assert_eq!(
-            room_activity(&lane_publication),
-            Some((AgentActivityKind::Prose, lane_text.len())),
-        );
-        assert_eq!(
-            room_activity(&human_publication),
-            Some((AgentActivityKind::Direction, 0)),
-        );
+    fn pooled_activity_adds_rates_on_the_shared_scale() {
+        let activity = at(AgentActivityKind::Tool, 300);
+        let single = trace(&[activity], NOW, SAMPLES);
+        let pooled = trace(&[activity, activity], NOW, SAMPLES);
+        let single = levels(&single, TraceKind::Tool)[SAMPLES / 2];
+        let pooled = levels(&pooled, TraceKind::Tool)[SAMPLES / 2];
+        assert!((pooled - single * 2.0).abs() < 1e-9);
     }
 
     #[test]
