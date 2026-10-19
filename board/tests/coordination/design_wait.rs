@@ -340,6 +340,97 @@ fn decided_rejections_end_selection_wait_without_releasing_outputs() {
     );
 }
 
+#[test]
+fn a_passive_design_in_any_cycle_is_a_neutral_wait_for_the_work_behind_it() {
+    let behind = |design: Entry, extra: Vec<Entry>| {
+        let mut downstream = statement("WAIT-downstream");
+        downstream.dependencies = vec![stamp("WAIT-output")];
+        let mut entries = vec![
+            design,
+            named_output("WAIT-output", "WAIT-design", "WAIT-design"),
+            admitted(downstream, workflow("todo"), None, None).expect("downstream"),
+        ];
+        entries.extend(extra);
+        entries
+    };
+    let proposed = DesignCycleFacts {
+        proposal: Some(seq(12)),
+        ..passed()
+    };
+    let steeped = DesignCycleFacts {
+        steeped: true,
+        ..DesignCycleFacts::default()
+    };
+    for (cycle, facts, extra) in [
+        (
+            wire::rooms::DesignCycle::GatheringInput,
+            DesignCycleFacts::default(),
+            Vec::new(),
+        ),
+        (
+            wire::rooms::DesignCycle::ReadyForProposal,
+            steeped,
+            Vec::new(),
+        ),
+        (
+            wire::rooms::DesignCycle::AwaitingDecision,
+            proposed,
+            Vec::new(),
+        ),
+        (
+            wire::rooms::DesignCycle::WaitingOnSelectedWork,
+            passed(),
+            vec![selected("WAIT-selected", workflow("todo"))],
+        ),
+    ] {
+        let entries = behind(design_with("WAIT-design", false, facts), extra);
+        assert_eq!(cycle_of(&entries), Some(cycle));
+        assert_eq!(
+            wait_of(&entries, "WAIT-design"),
+            None,
+            "{cycle:?}: a passive Design keeps its own standing"
+        );
+        for name in ["WAIT-output", "WAIT-downstream"] {
+            assert_eq!(
+                wait_of(&entries, name),
+                Some(board::WorkWait::Workflow),
+                "{cycle:?}: {name} needs no human act while its Design is open"
+            );
+        }
+    }
+
+    let feedback = DesignCycleFacts {
+        input: Some(seq(11)),
+        ..passed()
+    };
+    let after_rejection = [
+        design_with("WAIT-design", false, feedback),
+        rejected_output("WAIT-rejected", "WAIT-design"),
+    ];
+    assert_eq!(wait_of(&after_rejection, "WAIT-design"), None);
+    assert_eq!(
+        wait_of(&after_rejection, "WAIT-rejected"),
+        Some(board::WorkWait::Workflow),
+        "a rejected output carries no attention of its own"
+    );
+
+    let walled = [
+        design_with("WAIT-design", false, DesignCycleFacts::default()),
+        named_output_with(
+            "WAIT-walled",
+            "WAIT-design",
+            "WAIT-design",
+            vec![stamp("WAIT-missing")],
+            false,
+        ),
+    ];
+    assert_eq!(
+        wait_of(&walled, "WAIT-walled"),
+        Some(board::WorkWait::Blocked),
+        "a missing prerequisite beside the Design still needs a human act"
+    );
+}
+
 /// A filed output `name` under `controller`'s control: selected by that Design
 /// when it is the preparing `parent`, otherwise prepared by `parent`.
 fn released_output(name: &str, parent: &str, controller: &str, workflow: WorkflowHead) -> Entry {

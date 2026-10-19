@@ -1,12 +1,13 @@
 //! Which unsatisfied dependencies only the operator can move.
 //!
 //! A dependency on work an agent can claim or is already working resolves
-//! organically, so it is an ordinary wait. A lapsed claim is transparent:
-//! the task's own stale standing remains, while its underlying gate decides the
-//! dependency path. A chain is a wall only when every path forward needs the
-//! operator: a deferral, an internal parked row, a cycle, a prerequisite that
-//! can never complete, an environment requirement only the operator can satisfy,
-//! or a passive Design.
+//! organically, so it is an ordinary wait. A lapsed claim and a passive Design
+//! are transparent: the task keeps its own stale or passive standing, while its
+//! underlying gate decides the dependency path, so an open Design gathering
+//! input never reads as a wall. A chain is a wall only when every path forward
+//! needs the operator: a deferral, an internal parked row, a cycle, a
+//! prerequisite that can never complete, or an environment requirement only the
+//! operator can satisfy.
 
 use wire::TaskStamp;
 
@@ -28,8 +29,6 @@ pub enum DependencyWall<'a> {
     Unreachable(&'a TaskStamp),
     /// The task needs an environment requirement only the operator can satisfy.
     Environment(&'a TaskStamp),
-    /// The task is a Design outside every working group.
-    Passive(&'a TaskStamp),
     /// The task is a Design awaiting the operator's decision on its candidate.
     Selection(&'a TaskStamp),
 }
@@ -105,9 +104,8 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             | WorkAvailability::Review
             | WorkAvailability::Waiting
             | WorkAvailability::Selection => return None,
-            WorkAvailability::Stale => return self.stale(index),
+            WorkAvailability::Stale | WorkAvailability::Passive => return self.underlying(index),
             WorkAvailability::Held => DependencyWall::Environment(born),
-            WorkAvailability::Passive => DependencyWall::Passive(born),
             WorkAvailability::Deferred => DependencyWall::Deferred(born),
             WorkAvailability::Parked | WorkAvailability::Draft => DependencyWall::Parked(born),
             WorkAvailability::Terminal => DependencyWall::Unreachable(born),
@@ -124,10 +122,10 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         Some((index, wall))
     }
 
-    /// A lapsed claim changes only the row's own standing. Follow the task's
-    /// underlying gate so its dependents see the same wall they would if the
-    /// stale claim evidence were absent.
-    fn stale(&mut self, index: usize) -> Option<(usize, DependencyWall<'a>)> {
+    /// A lapsed claim or passive Design changes only the row's own standing.
+    /// Follow the task's underlying gate so its dependents see the same wall
+    /// they would if that standing were absent.
+    fn underlying(&mut self, index: usize) -> Option<(usize, DependencyWall<'a>)> {
         let work = self.work;
         let task = &work.tasks()[index];
         let born = &task.row().statement.body.born;

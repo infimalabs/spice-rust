@@ -170,12 +170,13 @@ pub enum WorkWait {
 /// This is presentation evidence only: allocation continues to use
 /// [`dependencies_satisfied`]. Any dependency sequence is a normal workflow
 /// wait while every unresolved edge reaches active, ready, review, selection,
-/// or another normal wait. Missing authority, missing prerequisites, cycles,
-/// and distinct parked states terminate the chain as human-actionable blocked
-/// work.
-/// A lapsed claim is transparent while walking a dependency path: its own
-/// stale standing stays outside this partition, while its underlying gate
-/// decides whether a dependent waits neutrally or is blocked.
+/// an open Design in any pass cycle, or another normal wait. Missing authority,
+/// missing prerequisites, cycles, and distinct parked states terminate the
+/// chain as human-actionable blocked work.
+/// A lapsed claim and a passive Design are transparent while walking a
+/// dependency path: their own stale or passive standing stays outside this
+/// partition, while the underlying gate decides whether a dependent waits
+/// neutrally or is blocked.
 #[must_use]
 pub fn work_waits<'a>(
     entries: &'a [Entry],
@@ -207,6 +208,7 @@ pub fn work_waits_resolved<'a>(
             if entry
                 .claim()
                 .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
+                || passive_design(entry)
             {
                 return None;
             }
@@ -277,10 +279,7 @@ fn progress(
         states[task] = Progress::Moving;
         return Progress::Moving;
     }
-    if !entry.is_filed()
-        || entry.project().visibility().is_hidden()
-        || workflow.deferral.is_some()
-        || passive_design(entry)
+    if !entry.is_filed() || entry.project().visibility().is_hidden() || workflow.deferral.is_some()
     {
         states[task] = Progress::Distinct;
         return Progress::Distinct;
