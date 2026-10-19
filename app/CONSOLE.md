@@ -392,6 +392,11 @@ Each member heading resolves from that lane's newest eligible authored prose.
 When a history page has none, header demand continues to a newly exposed older
 frontier but never reissues the same frontier without fresh viewport demand.
 
+Message and quote signoffs baseline-align the fixed-width monospace age with
+the speaker's sans-serif name. The age uses its glyph-height line box so mixed
+font metrics never enlarge the signoff or its attribution beyond one prose
+line height.
+
 ## Input history
 
 Each lane keeps one history of the text sent from its composers, its primary

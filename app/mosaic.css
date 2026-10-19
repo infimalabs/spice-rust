@@ -1287,6 +1287,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
+  /* Mixed monospace/sans baselines must not make the flex line taller than 1lh. */
+  line-height: 1;
   text-overflow: clip;
   white-space: pre;
 }
