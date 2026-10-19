@@ -202,19 +202,36 @@ execution. A cached host check therefore cannot conceal a new Unix-only API in
 shared source.
 
 The final command writes and verifies
-`target/x86_64-pc-windows-msvc/release/spice.exe`. It hands the staged archive's
-COFF object only to that final link through `cargo rustc`; the plain Cargo
-command remains the fast source and linker integration check. The object's name
-carries the archive digest, so a new archive relinks the executable and rebuilds
-nothing else. Final-image admission locates the section through Mach-O, ELF, or
-PE metadata and refuses absent, repeated, truncated, or wrong bytes. No
-persisted build-time offset participates.
+`target/x86_64-pc-windows-msvc/release/spice.exe`; a native release stage also
+requires the adjacent `spice.pdb`. It hands the staged archive's COFF object
+only to that final link through `cargo rustc`; the plain Cargo command remains
+the fast source and linker integration check. The object's name carries the
+archive digest, so a new archive relinks the executable and rebuilds nothing
+else. Final-image admission locates the section through Mach-O, ELF, or PE
+metadata and refuses absent, repeated, truncated, or wrong bytes. Windows
+release policy also refuses an embedded Authenticode certificate: the final
+public GitHub Sigstore proof is the detached signature after all executable
+bytes are fixed. No persisted build-time offset participates.
 [`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
 once. An installed resident without one refuses with
 `serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does
 not admit. The installed executable is the only app carrier. Install publishes
 no app file and binds the generation G that its linked archive names. The same
 receipt and archive check admits it to `xtask report`.
+
+The release stage is:
+
+```sh
+spice dev xtask -- stage-target x86_64-pc-windows-msvc
+```
+
+It packages `bin/spice.exe`, `symbols/spice.pdb`, the target payload, and the
+detached proof receipt. While `infimalabs/spice-rust` is private, Windows proof
+refuses at the typed public hosted-attestation prerequisite before dispatch;
+the Windows 11 ARM VM, Wine, and the macOS cross-build are development evidence
+only. Making the repository public is the wake condition for
+`DIST-dWLh7gXP1`; no Enterprise-plan change or self-hosted signing key is a
+substitute.
 Install schema 18 published app sidecars. It is a one-crossing
 boundary: `spice install` alone reads a complete schema-18 receipt and
 discards the sidecars it owned. Owners:

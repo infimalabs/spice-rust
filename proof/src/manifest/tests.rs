@@ -518,7 +518,7 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         proof_container: format!("registry.example/spice-proof@sha256:{}", "0".repeat(64)),
     };
     let mut inventory = vec![InventoryEntry {
-        path: "bin/spice".to_owned(),
+        path: target.executable_path().to_owned(),
         mode: 0o755,
         bytes: target.as_str().len() as u64,
         digest: native.clone(),

@@ -34,6 +34,7 @@ fn source_digest() -> Digest {
 struct RecordingBuilder {
     calls: Vec<String>,
     symbols: Option<Vec<u8>>,
+    windows_debug: Option<Vec<u8>>,
     linked: Option<&'static [u8]>,
     report: Option<String>,
 }
@@ -70,6 +71,9 @@ impl Builder for RecordingBuilder {
                 .expect("symbol fixture encodes"),
             );
         }
+        if target == ReleaseTarget::X86_64PcWindowsMsvc {
+            self.windows_debug = Some(b"fixture PDB".to_vec());
+        }
         self.report = Some(format!("spice 1.2.3 app {}\n", canvas.generation()));
         Ok(native)
     }
@@ -81,6 +85,10 @@ impl Builder for RecordingBuilder {
 
     fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
         self.symbols.take()
+    }
+
+    fn take_windows_debug_artifact(&mut self) -> Option<Vec<u8>> {
+        self.windows_debug.take()
     }
 }
 
@@ -367,12 +375,34 @@ fn target_payload_pointers_and_native_identities_do_not_alias() {
     let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
     let darwin = run_stage(&pipeline, &required, ReleaseTarget::Aarch64AppleDarwin);
     let linux = run_stage(&pipeline, &required, ReleaseTarget::X86_64UnknownLinuxMusl);
+    let windows = run_stage(&pipeline, &required, ReleaseTarget::X86_64PcWindowsMsvc);
 
     assert_ne!(darwin.staged.payload_path, linux.staged.payload_path);
+    assert_ne!(linux.staged.payload_path, windows.staged.payload_path);
     assert_ne!(darwin.staged.payload.native, linux.staged.payload.native);
+    assert_ne!(linux.staged.payload.native, windows.staged.payload.native);
     assert_ne!(darwin.staged.payload_digest, linux.staged.payload_digest);
+    assert_ne!(linux.staged.payload_digest, windows.staged.payload_digest);
     assert_eq!(darwin.staged.payload.app, linux.staged.payload.app);
+    assert_eq!(linux.staged.payload.app, windows.staged.payload.app);
     assert_eq!(darwin.staged.payload.canvas, linux.staged.payload.canvas);
+    assert_eq!(linux.staged.payload.canvas, windows.staged.payload.canvas);
+    assert!(
+        windows
+            .staged
+            .payload
+            .inventory
+            .iter()
+            .any(|entry| { entry.path == "bin/spice.exe" && entry.mode == 0o755 })
+    );
+    assert!(
+        windows
+            .staged
+            .payload
+            .inventory
+            .iter()
+            .any(|entry| { entry.path == "symbols/spice.pdb" && entry.mode == 0o644 })
+    );
 }
 
 #[test]

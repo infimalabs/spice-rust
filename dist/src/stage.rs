@@ -16,7 +16,8 @@ use crate::pins::{PinError, RequiredPins};
 
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
-const SYMBOL_PATH: &str = "symbols/spice.dSYM.json";
+const MAC_SYMBOL_PATH: &str = "symbols/spice.dSYM.json";
+const WINDOWS_DEBUG_PATH: &str = "symbols/spice.pdb";
 
 /// Build work occurs in this fixed order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,6 +57,10 @@ pub trait Builder {
     fn report_version(&mut self) -> Result<String, BuildError>;
 
     fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    /// Take the raw PDB produced beside a Windows release executable.
+    fn take_windows_debug_artifact(&mut self) -> Option<Vec<u8>> {
         None
     }
 }
@@ -232,6 +237,11 @@ fn build_artifacts<B: Builder>(
             source,
         })?;
     canvas.verify_linked(&native).map_err(native_build_error)?;
+    if target == ReleaseTarget::X86_64PcWindowsMsvc {
+        canvas
+            .verify_windows_authenticode(&native)
+            .map_err(native_build_error)?;
+    }
     let report = builder
         .report_version()
         .map_err(|source| StageError::Build {
@@ -240,8 +250,9 @@ fn build_artifacts<B: Builder>(
         })?;
     canvas.verify_report(&report).map_err(native_build_error)?;
     let symbols = builder.take_symbol_artifact();
+    let windows_debug = builder.take_windows_debug_artifact();
     let mut artifacts = Vec::new();
-    let native = artifact("bin/spice", EXECUTABLE_MODE, native);
+    let native = artifact(target.executable_path(), EXECUTABLE_MODE, native);
     let symbols = match (target, symbols) {
         (ReleaseTarget::Aarch64AppleDarwin, Some(bytes)) => {
             let (artifact, metadata) = symbol_artifact(bytes, &native.digest)?;
@@ -259,10 +270,27 @@ fn build_artifacts<B: Builder>(
         }
         (ReleaseTarget::X86_64PcWindowsMsvc, Some(_)) => {
             return Err(native_build_error(
-                "Windows build produced a symbol artifact",
+                "Windows build produced a macOS symbol artifact",
             ));
         }
     };
+    match (target, windows_debug) {
+        (ReleaseTarget::X86_64PcWindowsMsvc, Some(bytes)) if !bytes.is_empty() => {
+            artifacts.push(artifact(WINDOWS_DEBUG_PATH, DATA_MODE, bytes));
+        }
+        (ReleaseTarget::X86_64PcWindowsMsvc, Some(_)) => {
+            return Err(native_build_error("Windows build produced an empty PDB"));
+        }
+        (ReleaseTarget::X86_64PcWindowsMsvc, None) => {
+            return Err(native_build_error("Windows build produced no PDB"));
+        }
+        (ReleaseTarget::Aarch64AppleDarwin | ReleaseTarget::X86_64UnknownLinuxMusl, None) => {}
+        (_, Some(_)) => {
+            return Err(native_build_error(
+                "non-Windows build produced a Windows debug artifact",
+            ));
+        }
+    }
     artifacts.push(native);
     Ok(BuiltArtifacts {
         canvas,
@@ -285,7 +313,7 @@ fn symbol_artifact(
             "symbol artifact is noncanonical or has stale executable binding",
         ));
     }
-    let artifact = artifact(SYMBOL_PATH, DATA_MODE, bytes);
+    let artifact = artifact(MAC_SYMBOL_PATH, DATA_MODE, bytes);
     let metadata = MacSymbolMetadata {
         path: artifact.path.clone(),
         mode: artifact.mode,
@@ -337,7 +365,7 @@ fn make_payload(
         canvas: canvas.archive().clone(),
         native: artifacts
             .iter()
-            .find(|artifact| artifact.path == "bin/spice")
+            .find(|artifact| artifact.path == target.executable_path())
             .expect("the built inventory carries the native executable")
             .digest
             .clone(),

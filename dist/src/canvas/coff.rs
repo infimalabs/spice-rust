@@ -108,6 +108,56 @@ pub(super) fn pe_archive(image: &[u8]) -> Result<&[u8], CanvasError> {
     archive.ok_or(CanvasError::Absent)
 }
 
+pub(super) fn require_unsigned(image: &[u8]) -> Result<(), CanvasError> {
+    const SECURITY_DIRECTORY: usize = 4;
+    const DIRECTORY_BYTES: usize = 8;
+
+    if field(image, 0, 2, "DOS header")? != b"MZ" {
+        return Err(CanvasError::Format);
+    }
+    let pe = usize::try_from(read_u32(image, 0x3c, "DOS header")?)
+        .map_err(|_| CanvasError::Malformed("PE header offset"))?;
+    if field(image, pe, 4, "PE signature")? != b"PE\0\0" {
+        return Err(CanvasError::Malformed("PE signature"));
+    }
+    let coff = pe
+        .checked_add(4)
+        .ok_or(CanvasError::Malformed("PE header offset"))?;
+    if read_u16(image, coff, "PE file header")? != IMAGE_FILE_MACHINE_AMD64 {
+        return Err(CanvasError::Format);
+    }
+    let optional_bytes = usize::from(read_u16(image, coff + 16, "PE file header")?);
+    pe_optional_table(image, coff, optional_bytes)?;
+    let optional = coff
+        .checked_add(COFF_HEADER_BYTES)
+        .ok_or(CanvasError::Malformed("PE optional header offset"))?;
+    let directories = usize::try_from(read_u32(
+        image,
+        optional + 108,
+        "PE32+ data directory count",
+    )?)
+    .map_err(|_| CanvasError::Malformed("PE32+ data directory count"))?;
+    if directories <= SECURITY_DIRECTORY {
+        return Ok(());
+    }
+    let entry = optional
+        .checked_add(PE32_PLUS_OPTIONAL_HEADER_BYTES)
+        .and_then(|offset| offset.checked_add(SECURITY_DIRECTORY * DIRECTORY_BYTES))
+        .ok_or(CanvasError::Malformed("Authenticode directory"))?;
+    let offset = usize::try_from(read_u32(image, entry, "Authenticode directory")?)
+        .map_err(|_| CanvasError::Malformed("Authenticode directory"))?;
+    let bytes = usize::try_from(read_u32(image, entry + 4, "Authenticode directory")?)
+        .map_err(|_| CanvasError::Malformed("Authenticode directory"))?;
+    match (offset, bytes) {
+        (0, 0) => Ok(()),
+        (0, _) | (_, 0) => Err(CanvasError::Malformed("Authenticode directory")),
+        _ => {
+            field(image, offset, bytes, "Authenticode certificate table")?;
+            Err(CanvasError::Authenticode)
+        }
+    }
+}
+
 fn pe_section_table(image: &[u8]) -> Result<(usize, usize), CanvasError> {
     if field(image, 0, 2, "DOS header")? != b"MZ" {
         return Err(CanvasError::Format);
@@ -321,6 +371,33 @@ mod tests {
         assert_eq!(
             pe_archive(&virtual_overrun),
             Err(CanvasError::Malformed("app ZIP section range"))
+        );
+    }
+
+    #[test]
+    fn windows_release_policy_refuses_embedded_authenticode() {
+        const PE_HEADER: usize = 0x80;
+        const OPTIONAL: usize = PE_HEADER + 4 + COFF_HEADER_BYTES;
+        const SECURITY_DIRECTORY: usize = OPTIONAL + PE32_PLUS_OPTIONAL_HEADER_BYTES + 4 * 8;
+
+        let unsigned = pe(&[(SECTION, ARCHIVE)]);
+        assert_eq!(require_unsigned(&unsigned), Ok(()));
+
+        let mut signed = unsigned;
+        let certificate = signed.len();
+        signed.extend_from_slice(b"WIN_CERTIFICATE");
+        put_u32(&mut signed, SECURITY_DIRECTORY, certificate as u32);
+        put_u32(
+            &mut signed,
+            SECURITY_DIRECTORY + 4,
+            b"WIN_CERTIFICATE".len() as u32,
+        );
+        assert_eq!(require_unsigned(&signed), Err(CanvasError::Authenticode));
+
+        put_u32(&mut signed, SECURITY_DIRECTORY, 0);
+        assert_eq!(
+            require_unsigned(&signed),
+            Err(CanvasError::Malformed("Authenticode directory"))
         );
     }
 

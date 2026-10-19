@@ -95,7 +95,7 @@ impl SealedEnvironment {
     pub(crate) fn battery(
         &self,
         commands: &[HostedCommand],
-    ) -> Result<BatteryEnvironment<'_>, String> {
+    ) -> Result<BatteryEnvironment<'_>, BatteryStartError> {
         let (identity, kind) = match &self.kind {
             EnvironmentKind::Oci(container) => (
                 ProofEnvironment::Oci {
@@ -104,15 +104,17 @@ impl SealedEnvironment {
                 container
                     .battery()
                     .map(BatteryEnvironmentKind::Oci)
-                    .map_err(|source| source.to_string())?,
+                    .map_err(|source| BatteryStartError::Execution(source.to_string()))?,
             ),
             EnvironmentKind::Native(runner) => (
                 ProofEnvironment::native(runner.identity().clone()),
                 BatteryEnvironmentKind::Native(runner),
             ),
             EnvironmentKind::HostedWindows => {
+                hosted_windows::client::require_public_attestation_repository()
+                    .map_err(BatteryStartError::from_hosted)?;
                 let execution = hosted_windows::client::windows_hosted_commands(commands.to_vec())
-                    .map_err(|source| source.to_string())?;
+                    .map_err(BatteryStartError::from_hosted)?;
                 let identity = ProofEnvironment::hosted_windows(execution.result.identity.clone());
                 let protocol_outputs = &execution.result.outputs;
                 let outputs = execution
@@ -167,6 +169,30 @@ impl SealedEnvironment {
         Self {
             target: ReleaseTarget::Aarch64AppleDarwin,
             kind: EnvironmentKind::Native(runner),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum BatteryStartError {
+    HostedAttestationPrerequisite {
+        repository: String,
+        visibility: String,
+    },
+    Execution(String),
+}
+
+impl BatteryStartError {
+    fn from_hosted(error: hosted_windows::client::WindowsHostedError) -> Self {
+        match error {
+            hosted_windows::client::WindowsHostedError::PublicAttestationRequired {
+                repository,
+                visibility,
+            } => Self::HostedAttestationPrerequisite {
+                repository,
+                visibility,
+            },
+            error => Self::Execution(error.to_string()),
         }
     }
 }

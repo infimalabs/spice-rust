@@ -33,7 +33,7 @@ pub struct PackageTargetInput {
     executable: PackageMember,
     payload: PackageMember,
     proof: PackageMember,
-    symbols: Option<PackageMember>,
+    debug: Option<PackageMember>,
 }
 
 impl PackageTargetInput {
@@ -49,13 +49,13 @@ impl PackageTargetInput {
             executable,
             payload,
             proof,
-            symbols: None,
+            debug: None,
         }
     }
 
     #[must_use]
-    pub fn with_symbols(mut self, symbols: Option<PackageMember>) -> Self {
-        self.symbols = symbols;
+    pub fn with_debug(mut self, symbols: Option<PackageMember>) -> Self {
+        self.debug = symbols;
         self
     }
 }
@@ -536,9 +536,17 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
     let notes = exact_member(members, NOTES_PATH, DATA_MODE)?;
     let mut targets = Vec::with_capacity(TARGETS.len());
     for target in TARGETS {
-        let symbols = (target == ReleaseTarget::Aarch64AppleDarwin)
-            .then(|| exact_member(members, &symbol_path(target), DATA_MODE).cloned())
-            .transpose()?;
+        let debug = target
+            .debug_path()
+            .map(|_| {
+                exact_member(
+                    members,
+                    &debug_path(target).expect("debug path exists"),
+                    DATA_MODE,
+                )
+            })
+            .transpose()?
+            .cloned();
         targets.push(
             PackageTargetInput::new(
                 target,
@@ -546,7 +554,7 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
                 exact_member(members, &payload_path(target), DATA_MODE)?.clone(),
                 exact_member(members, &proof_path(target), DATA_MODE)?.clone(),
             )
-            .with_symbols(symbols),
+            .with_debug(debug),
         );
     }
     let rebuilt = assemble_package(PackageInput::new(
@@ -580,7 +588,7 @@ fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError
             target.payload.clone(),
             target.proof.clone(),
         ]);
-        if let Some(symbols) = &target.symbols {
+        if let Some(symbols) = &target.debug {
             members.push(symbols.clone());
         }
     }
@@ -633,6 +641,8 @@ fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, P
             executable: admitted.executable,
             payload: admitted.payload,
             proof: admitted.proof,
+            debug_path: debug_path(expected),
+            signature_path: proof_path(expected),
         });
     }
     let document = ReleasePackage {
@@ -689,19 +699,41 @@ fn admit_target(
     let payload_identity = admitted_payload.digest().clone();
     let proof_identity = admitted_proof.digest().clone();
     let executable = input.executable.digest.clone();
-    let symbol_binding = match (&payload.symbols, &input.symbols) {
-        (Some(metadata), Some(member)) => {
-            require_member(member, &symbol_path(input.target), DATA_MODE)?;
+    let debug_inventory = input
+        .target
+        .debug_path()
+        .and_then(|path| payload.inventory.iter().find(|entry| entry.path == path));
+    let debug_binding = match (input.target.debug_path(), &input.debug, debug_inventory) {
+        (Some(_), Some(member), Some(entry)) => {
+            require_member(
+                member,
+                &debug_path(input.target).expect("debug path exists"),
+                DATA_MODE,
+            )?;
             member.revalidate()?;
-            metadata.bytes == member.length && metadata.digest == member.digest
+            entry.mode == DATA_MODE
+                && entry.bytes == member.length
+                && entry.digest == member.digest
+                && match (&payload.symbols, input.target) {
+                    (Some(metadata), ReleaseTarget::Aarch64AppleDarwin) => {
+                        metadata.bytes == member.length
+                            && metadata.digest == member.digest
+                            && metadata.path
+                                == ReleaseTarget::Aarch64AppleDarwin
+                                    .debug_path()
+                                    .expect("Darwin debug path exists")
+                    }
+                    (None, ReleaseTarget::X86_64PcWindowsMsvc) => true,
+                    _ => false,
+                }
         }
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
+        (None, None, None) => payload.symbols.is_none(),
+        _ => false,
     };
     let executable_inventory = payload
         .inventory
         .iter()
-        .find(|entry| entry.path == "bin/spice")
+        .find(|entry| entry.path == input.target.executable_path())
         .ok_or(PackageError::Binding {
             index,
             field: "executable inventory",
@@ -725,7 +757,7 @@ fn admit_target(
         ),
         (sealed.inventory == payload.inventory, "manifest inventory"),
         (sealed.symbols == payload.symbols, "manifest symbols"),
-        (symbol_binding, "package symbols"),
+        (debug_binding, "package debug artifact"),
         (sealed.receipt == proof_identity, "manifest proof"),
         (
             sealed.receipt_bytes == input.proof.length,
@@ -771,7 +803,11 @@ fn admit_package_document(document: &ReleasePackage) -> Result<(), PackageError>
         return Err(PackageError::TargetCount(document.targets.len()));
     }
     for (index, (entry, expected)) in document.targets.iter().zip(TARGETS).enumerate() {
-        if entry.target != expected || entry.executable_path != executable_path(expected) {
+        if entry.target != expected
+            || entry.executable_path != executable_path(expected)
+            || entry.debug_path != debug_path(expected)
+            || entry.signature_path != proof_path(expected)
+        {
             return Err(PackageError::PackageTarget { index });
         }
     }
@@ -845,7 +881,7 @@ fn exact_member<'a>(
 }
 
 fn executable_path(target: ReleaseTarget) -> String {
-    format!("targets/{target}/bin/spice")
+    format!("targets/{target}/{}", target.executable_path())
 }
 
 fn payload_path(target: ReleaseTarget) -> String {
@@ -856,8 +892,15 @@ fn proof_path(target: ReleaseTarget) -> String {
     format!("targets/{target}/proof.json")
 }
 
+fn debug_path(target: ReleaseTarget) -> Option<String> {
+    target
+        .debug_path()
+        .map(|path| format!("targets/{target}/{path}"))
+}
+
+#[cfg(test)]
 fn symbol_path(target: ReleaseTarget) -> String {
-    format!("targets/{target}/symbols/spice.dSYM.json")
+    debug_path(target).expect("symbol fixture target has a debug path")
 }
 
 /// Why an external release package was refused.
@@ -947,7 +990,8 @@ impl fmt::Display for PackageError {
             Self::TargetCount(count) => {
                 write!(
                     formatter,
-                    "release package has {count} targets, expected two"
+                    "release package has {count} targets, expected {}",
+                    TARGETS.len()
                 )
             }
             Self::TargetOrder {
@@ -964,7 +1008,7 @@ impl fmt::Display for PackageError {
             }
             Self::PackageTarget { index } => write!(
                 formatter,
-                "release package target {index} has a noncanonical target or executable path"
+                "release package target {index} has noncanonical target artifact paths"
             ),
             Self::Missing(path) => write!(formatter, "release package member is missing: {path}"),
             Self::Duplicate(path) => {
@@ -1048,16 +1092,14 @@ mod tests {
                                 Domain::ProofReceiptV3,
                             ),
                         )
-                        .with_symbols(
-                            (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
-                                member(
-                                    &symbol_path(target),
-                                    DATA_MODE,
-                                    b"symbol fixture",
-                                    Domain::DistArtifact,
-                                )
-                            }),
-                        )
+                        .with_debug(target.debug_path().map(|_| {
+                            member(
+                                &debug_path(target).expect("debug path exists"),
+                                DATA_MODE,
+                                debug_bytes(target),
+                                Domain::DistArtifact,
+                            )
+                        }))
                     })
                     .collect(),
             )
@@ -1178,12 +1220,12 @@ mod tests {
 
         for (index, body) in [
             (0, b"moved symbols".as_slice()),
-            (1, b"symbol fixture".as_slice()),
+            (2, b"moved Windows PDB".as_slice()),
         ] {
             let fixture = fixture();
             let mut input = fixture.input();
-            input.targets[index].symbols = Some(member(
-                &symbol_path(TARGETS[index]),
+            input.targets[index].debug = Some(member(
+                &debug_path(TARGETS[index]).expect("fixture target has debug"),
                 DATA_MODE,
                 body,
                 Domain::DistArtifact,
@@ -1191,7 +1233,7 @@ mod tests {
             assert!(matches!(
                 build_package(input),
                 Err(PackageError::Binding {
-                    field: "package symbols",
+                    field: "package debug artifact",
                     ..
                 })
             ));
@@ -1263,12 +1305,25 @@ mod tests {
                 proof_container: format!("registry.example/proof@sha256:{}", "1".repeat(64)),
             };
             let mut inventory = vec![InventoryEntry {
-                path: "bin/spice".to_owned(),
+                path: target.executable_path().to_owned(),
                 mode: EXECUTABLE_MODE,
                 bytes: executable.len() as u64,
                 digest: native.clone(),
             }];
-            let symbols = crate::test_support::symbols(target, &native, &mut inventory);
+            let symbols = if target == ReleaseTarget::Aarch64AppleDarwin {
+                crate::test_support::symbols(target, &native, &mut inventory)
+            } else {
+                None
+            };
+            if target == ReleaseTarget::X86_64PcWindowsMsvc {
+                let debug = debug_bytes(target);
+                inventory.push(InventoryEntry {
+                    path: target.debug_path().expect("Windows debug path").to_owned(),
+                    mode: DATA_MODE,
+                    bytes: debug.len() as u64,
+                    digest: Digest::compute(Domain::DistArtifact, debug),
+                });
+            }
             inventory.sort_by(|left, right| left.path.cmp(&right.path));
             let payload = TargetPayload {
                 version: TARGET_PAYLOAD_VERSION,
@@ -1330,6 +1385,16 @@ mod tests {
             executables,
             payloads,
             proofs,
+        }
+    }
+
+    fn debug_bytes(target: ReleaseTarget) -> &'static [u8] {
+        match target {
+            ReleaseTarget::Aarch64AppleDarwin => b"symbol fixture",
+            ReleaseTarget::X86_64PcWindowsMsvc => b"PDB fixture",
+            ReleaseTarget::X86_64UnknownLinuxMusl => {
+                panic!("Linux has no separate debug artifact")
+            }
         }
     }
 

@@ -443,7 +443,7 @@ mod tests {
         let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let native = Digest::compute(Domain::DistArtifact, b"native");
         let mut inventory = vec![InventoryEntry {
-            path: "bin/spice".to_owned(),
+            path: target.executable_path().to_owned(),
             mode: 0o755,
             bytes: 6,
             digest: native.clone(),

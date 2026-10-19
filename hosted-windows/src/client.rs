@@ -82,6 +82,46 @@ pub fn windows_hosted_commands(
     windows_hosted_commands_into(commands, None)
 }
 
+/// Require the configured repository to be public before a release proof can
+/// dispatch work whose authority is a public GitHub Sigstore attestation.
+///
+/// Ordinary private hosted development remains available through
+/// [`windows_hosted_commands`]. Release proof calls this boundary first so a
+/// private repository cannot be mistaken for an attestation-capable one.
+pub fn require_public_attestation_repository() -> Result<(), WindowsHostedError> {
+    let policy: Policy = toml::from_str(POLICY).map_err(WindowsHostedError::Policy)?;
+    policy.admit()?;
+    let root = workspace_root()?;
+    let visibility = successful_text(
+        "repository visibility",
+        command(
+            &root,
+            "gh",
+            [
+                OsString::from("api"),
+                OsString::from(format!("repos/{}", policy.repository)),
+                OsString::from("--jq"),
+                OsString::from(".visibility"),
+            ],
+        )?,
+    )?;
+    admit_public_attestation_visibility(&policy.repository, visibility.trim())
+}
+
+fn admit_public_attestation_visibility(
+    repository: &str,
+    visibility: &str,
+) -> Result<(), WindowsHostedError> {
+    if visibility == "public" {
+        Ok(())
+    } else {
+        Err(WindowsHostedError::PublicAttestationRequired {
+            repository: repository.to_owned(),
+            visibility: visibility.to_owned(),
+        })
+    }
+}
+
 /// Dispatch a hosted batch and publish its signed artifact files when requested.
 pub fn windows_hosted_commands_into(
     commands: Vec<HostedCommand>,
@@ -1064,6 +1104,10 @@ pub enum WindowsHostedError {
         stderr: String,
     },
     ProviderResponse(String),
+    PublicAttestationRequired {
+        repository: String,
+        visibility: String,
+    },
     RunIdentity {
         dispatched: u64,
         signed: u64,
@@ -1126,6 +1170,13 @@ impl fmt::Display for WindowsHostedError {
                 "{operation} failed with exit {code:?}: stdout={stdout:?} stderr={stderr:?}"
             ),
             Self::ProviderResponse(detail) => formatter.write_str(detail),
+            Self::PublicAttestationRequired {
+                repository,
+                visibility,
+            } => write!(
+                formatter,
+                "public hosted-attestation prerequisite is unsatisfied: repository {repository} has visibility {visibility:?}"
+            ),
             Self::RunIdentity { dispatched, signed } => write!(
                 formatter,
                 "signed provider run {signed} does not match dispatched run {dispatched}"
@@ -1177,9 +1228,21 @@ impl Error for WindowsHostedError {
 mod tests {
     use super::{
         Artifact, ArtifactCleanupAction, ArtifactInventory, WatchAction, WatchObservation,
-        WindowsHostedError, artifact_cleanup_action, finish_artifact_cleanup, finish_run_cleanup,
-        watch_action,
+        WindowsHostedError, admit_public_attestation_visibility, artifact_cleanup_action,
+        finish_artifact_cleanup, finish_run_cleanup, watch_action,
     };
+
+    #[test]
+    fn release_attestation_requires_public_repository_visibility() {
+        assert!(admit_public_attestation_visibility("owner/repo", "public").is_ok());
+        assert!(matches!(
+            admit_public_attestation_visibility("owner/repo", "private"),
+            Err(WindowsHostedError::PublicAttestationRequired {
+                repository,
+                visibility,
+            }) if repository == "owner/repo" && visibility == "private"
+        ));
+    }
 
     #[test]
     fn cancellation_preempts_every_provider_watch_observation() {

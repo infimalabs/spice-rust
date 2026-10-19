@@ -58,7 +58,7 @@ pub struct JournalBackupManifest {
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
-pub const TARGET_PAYLOAD_VERSION: u16 = 4;
+pub const TARGET_PAYLOAD_VERSION: u16 = 5;
 /// The sole current deterministic macOS symbol artifact schema.
 pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 2;
 const MACHO_UUID_LENGTH: usize = 36;
@@ -102,7 +102,7 @@ pub const RELEASE_MANIFEST_VERSION: u16 = 3;
 /// The sole current deterministic release-note document schema.
 pub const RELEASE_NOTES_VERSION: u16 = 1;
 /// The sole current externally installable release-package schema.
-pub const RELEASE_PACKAGE_VERSION: u16 = 1;
+pub const RELEASE_PACKAGE_VERSION: u16 = 2;
 
 /// An OCI image identity that is pinned by one canonical SHA-256 digest.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -369,6 +369,25 @@ impl ReleaseTarget {
             Self::Aarch64AppleDarwin => "aarch64-apple-darwin",
             Self::X86_64UnknownLinuxMusl => "x86_64-unknown-linux-musl",
             Self::X86_64PcWindowsMsvc => "x86_64-pc-windows-msvc",
+        }
+    }
+
+    /// Canonical path of this target's executable within its target stage.
+    #[must_use]
+    pub const fn executable_path(self) -> &'static str {
+        match self {
+            Self::Aarch64AppleDarwin | Self::X86_64UnknownLinuxMusl => "bin/spice",
+            Self::X86_64PcWindowsMsvc => "bin/spice.exe",
+        }
+    }
+
+    /// Canonical path of this target's separately packaged debug artifact.
+    #[must_use]
+    pub const fn debug_path(self) -> Option<&'static str> {
+        match self {
+            Self::Aarch64AppleDarwin => Some("symbols/spice.dSYM.json"),
+            Self::X86_64UnknownLinuxMusl => None,
+            Self::X86_64PcWindowsMsvc => Some("symbols/spice.pdb"),
         }
     }
 }
@@ -721,7 +740,7 @@ pub struct ReleaseManifestTarget {
     pub standing: ProofStanding,
 }
 
-/// The canonical complete release assembled from both supported targets.
+/// The canonical complete release assembled from all supported targets.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseManifest {
@@ -729,7 +748,7 @@ pub struct ReleaseManifest {
     pub version: u16,
     /// One exact source identity shared by every target payload.
     pub source: Digest,
-    /// Both supported targets in [`ReleaseTarget`] declaration order.
+    /// All supported targets in [`ReleaseTarget`] declaration order.
     pub targets: Vec<ReleaseManifestTarget>,
 }
 /// One externally installable executable and its sealed provenance.
@@ -746,6 +765,15 @@ pub struct ReleasePackageTarget {
     pub payload: Digest,
     /// Detached proof receipt that admitted the payload.
     pub proof: Digest,
+    /// Fixed package-tree path of the target's debug artifact, when present.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub debug_path: Option<String>,
+    /// Fixed package-tree path of the detached signed proof receipt.
+    pub signature_path: String,
 }
 
 /// Canonical index of one externally installable Rust Spice release.
@@ -766,6 +794,6 @@ pub struct ReleasePackage {
     pub notes: Digest,
     /// Identity of the exact operator-facing note bytes in the package tree.
     pub notes_content: Digest,
-    /// Both supported targets in [`ReleaseTarget`] declaration order.
+    /// All supported targets in [`ReleaseTarget`] declaration order.
     pub targets: Vec<ReleasePackageTarget>,
 }
