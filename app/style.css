@@ -1300,7 +1300,7 @@ tbody tr:last-child td { border-bottom: 0; }
   display: inline-flex;
   max-width: min(24ch, 100%);
   min-width: 0;
-  min-height: 17px;
+  min-height: auto;
   align-items: center;
   vertical-align: baseline;
   padding: 0 4px;
