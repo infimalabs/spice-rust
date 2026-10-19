@@ -38,6 +38,8 @@ use windows_sys::Win32::System::Pipes::{
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+pub mod handoff;
+
 const PIPE_PREFIX: &str = r"\\.\pipe\spice-door-";
 /// An endpoint file holds one pipe name, far shorter than this.
 const ENDPOINT_BYTES: u64 = 128;
@@ -274,6 +276,13 @@ struct Handle(HANDLE);
 
 // SAFETY: a kernel handle may be used and closed from any thread.
 unsafe impl Send for Handle {}
+
+impl Handle {
+    /// Give up ownership without closing.
+    fn into_raw(self) -> HANDLE {
+        std::mem::ManuallyDrop::new(self).0
+    }
+}
 
 impl Drop for Handle {
     fn drop(&mut self) {

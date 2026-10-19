@@ -348,9 +348,10 @@ spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/d
 spice dev xtask -- windows-guest run -- bin/sill-HASH.exe spawn
 
 # Local IPC with daemon handoff (PLATFOR-dWJhWMJFc)
-spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --lib
-spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe
-spice dev xtask -- windows-guest run -- bin/spice-HASH.exe resident::
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p door
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --bin spice
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/door-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe
+spice dev xtask -- windows-guest run -- bin/door-HASH.exe
 spice dev xtask -- windows-guest run -- bin/spice-HASH.exe supervisor::
 
 spice dev xtask -- windows-guest stop

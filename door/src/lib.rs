@@ -25,7 +25,7 @@ mod windows;
 #[cfg(windows)]
 use windows as platform;
 #[cfg(windows)]
-pub use windows::Listener;
+pub use windows::{Listener, handoff};
 
 /// The bound end of one door.
 pub struct Door {

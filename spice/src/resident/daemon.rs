@@ -4,19 +4,19 @@ use super::*;
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::TcpStream;
 use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(unix)]
 pub(crate) mod observer;
 
-#[cfg(unix)]
 use observer::{DirectObserver, Signal, wait_for_change, wait_for_exit};
 
+#[cfg(unix)]
+use std::net::Shutdown;
 #[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 #[cfg(unix)]
@@ -25,8 +25,20 @@ use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt as _;
 
+/// The launcher's and the child's end of the one-shot launch channel.
+#[cfg(unix)]
+type Channel = UnixStream;
+#[cfg(windows)]
+type Channel = File;
+
+#[cfg(unix)]
 const HANDOFF_FD: i32 = 9;
+/// Names the launch channel the launcher granted its detached child.
+#[cfg(windows)]
+const HANDOFF_VARIABLE: &str = wire::SpiceVariable::DaemonHandoff.as_str();
 const HANDOFF_MAGIC: &[u8] = b"SPICE-RS-DAEMON\0";
 const MAX_HANDOFF_BYTES: usize = 16 * 1024;
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
@@ -54,8 +66,7 @@ struct HandoffRequest {
 /// The detached child's half of the launch channel.
 #[derive(Clone)]
 pub(crate) struct ChildStatus {
-    #[cfg(unix)]
-    stream: Arc<Mutex<Option<UnixStream>>>,
+    stream: Arc<Mutex<Option<Channel>>>,
 }
 
 /// Authentication and status state captured by the controlled foreground child.
@@ -67,82 +78,87 @@ pub(crate) struct ChildLaunch {
 impl ChildLaunch {
     /// Capture a launcher-created handoff, if this is a detached child.
     pub(crate) fn capture() -> Result<Option<Self>, Outcome<()>> {
-        #[cfg(not(unix))]
-        {
+        let Some(mut stream) = inherited_channel()? else {
             return Ok(None);
-        }
+        };
+        let request = read_framed(&mut stream)?;
+        let request: HandoffRequest = wire::decode(&request).map_err(|error| {
+            environment_fault("resident::daemon-handoff-invalid", &error.to_string())
+        })?;
         #[cfg(unix)]
-        {
-            if !handoff_present(HANDOFF_FD)? {
-                return Ok(None);
-            }
-            // SAFETY: the launcher exclusively transfers ownership of this
-            // inherited descriptor to the controlled child.
-            let mut stream = unsafe { UnixStream::from_raw_fd(HANDOFF_FD) };
-            stream
-                .set_read_timeout(Some(PROBE_BOUND))
-                .map_err(|error| {
-                    environment_fault("resident::daemon-handoff-unavailable", &error.to_string())
-                })?;
-            let request = read_framed(&mut stream)?;
-            let request: HandoffRequest = wire::decode(&request).map_err(|error| {
-                environment_fault("resident::daemon-handoff-invalid", &error.to_string())
-            })?;
-            let _ = stream.shutdown(Shutdown::Read);
-            Ok(Some(Self {
-                token: request.token,
-                status: ChildStatus {
-                    stream: Arc::new(Mutex::new(Some(stream))),
-                },
-            }))
-        }
+        let _ = stream.shutdown(Shutdown::Read);
+        Ok(Some(Self {
+            token: request.token,
+            status: ChildStatus {
+                stream: Arc::new(Mutex::new(Some(stream))),
+            },
+        }))
     }
+}
+
+/// Take the launch channel the launcher passed on descriptor
+/// [`HANDOFF_FD`], if this is a detached child.
+#[cfg(unix)]
+fn inherited_channel() -> Result<Option<Channel>, Outcome<()>> {
+    if !handoff_present(HANDOFF_FD)? {
+        return Ok(None);
+    }
+    // SAFETY: the launcher exclusively transfers ownership of this inherited
+    // descriptor to the controlled child.
+    let stream = unsafe { UnixStream::from_raw_fd(HANDOFF_FD) };
+    stream
+        .set_read_timeout(Some(PROBE_BOUND))
+        .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))?;
+    Ok(Some(stream))
+}
+
+/// Join the launch channel the launcher named in [`HANDOFF_VARIABLE`], if
+/// this is a detached child.
+///
+/// The launcher writes the request as soon as it accepts this process, and
+/// its exit breaks the pipe, so the request read needs no deadline of its own.
+#[cfg(windows)]
+fn inherited_channel() -> Result<Option<Channel>, Outcome<()>> {
+    let Some(name) = crate::bootstrap_environment(HANDOFF_VARIABLE) else {
+        return Ok(None);
+    };
+    let name = name.into_string().map_err(|_| {
+        environment_fault(
+            "resident::daemon-handoff-invalid",
+            "the launch channel name is not Unicode",
+        )
+    })?;
+    door::handoff::join(&name)
+        .map(Some)
+        .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))
 }
 
 impl ChildStatus {
     /// Close the last launcher channel as soon as discovery is published.
     pub(crate) fn published(self) {
-        #[cfg(unix)]
         drop(self.stream.lock().expect("daemon status mutex").take());
     }
 
     /// Return an exact typed startup outcome when publication never happened.
     pub(crate) fn failed(self, outcome: &Outcome<()>) {
-        #[cfg(unix)]
         if let Some(mut stream) = self.stream.lock().expect("daemon status mutex").take() {
             if let Ok(bytes) = wire::encode(outcome) {
                 let _ = write_framed(&mut stream, &bytes);
             }
+            #[cfg(unix)]
             let _ = stream.shutdown(Shutdown::Both);
         }
-        #[cfg(not(unix))]
-        let _ = outcome;
     }
 }
 
 /// Start this exact executable as a detached resident and prove it is ready.
 pub(crate) fn launch(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
-    #[cfg(not(unix))]
-    {
-        let _ = leaf;
-        return map_failure(environment_fault(
-            "resident::daemon-unsupported",
-            "detached resident launch requires Unix process groups and descriptor inheritance",
-        ));
-    }
-    #[cfg(unix)]
-    launch_unix(leaf)
-}
-
-#[cfg(unix)]
-fn launch_unix(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
     match PreparedLaunch::admit(leaf).and_then(|launch| launch.spawn(leaf)) {
         Ok(launch) => launch.wait(),
         Err(outcome) => map_failure(outcome),
     }
 }
 
-#[cfg(unix)]
 struct PreparedLaunch {
     listen: SocketAddr,
     token: Option<String>,
@@ -153,11 +169,9 @@ struct PreparedLaunch {
     executable: PathBuf,
     log: File,
     log_offset: u64,
-    parent_handoff: UnixStream,
-    child_handoff: UnixStream,
+    handoff: Handoff,
 }
 
-#[cfg(unix)]
 impl PreparedLaunch {
     fn admit(leaf: &clap::ArgMatches) -> Result<Self, Outcome<()>> {
         let listen = requested_listen(leaf)?;
@@ -181,7 +195,7 @@ impl PreparedLaunch {
             .and_then(|()| open_log(state.resident_log()))
             .map_err(|error| daemon_fault("resident::log-unavailable", error))?;
         let log_offset = log.metadata().map(|metadata| metadata.len()).unwrap_or(0);
-        let (parent_handoff, child_handoff) = prepare_handoff(token.clone())?;
+        let handoff = prepare_handoff(token.clone())?;
         Ok(Self {
             listen,
             token,
@@ -192,8 +206,7 @@ impl PreparedLaunch {
             executable,
             log,
             log_offset,
-            parent_handoff,
-            child_handoff,
+            handoff,
         })
     }
 
@@ -208,8 +221,7 @@ impl PreparedLaunch {
             executable,
             log,
             log_offset,
-            parent_handoff,
-            child_handoff,
+            handoff,
         } = self;
         let stdout = log
             .try_clone()
@@ -228,19 +240,24 @@ impl PreparedLaunch {
             .current_dir(&current)
             .stdin(Stdio::null())
             .stdout(stdout)
-            .stderr(log)
-            .process_group(0);
+            .stderr(log);
         if leaf.get_flag("allow-insecure-bind") {
             command.arg("--allow-insecure-bind");
         }
         if leaf.get_flag("open") {
             command.arg("--open");
         }
-        inherit_handoff(&mut command, child_handoff.as_raw_fd());
-        let child = command
+        handoff.grant(&mut command);
+        let mut child = command
             .spawn()
             .map_err(|error| daemon_fault("resident::daemon-launch-failed", error))?;
-        drop(child_handoff);
+        let parent_handoff = match handoff.connect(&child) {
+            Ok(channel) => channel,
+            Err(outcome) => {
+                terminate_group(&mut child);
+                return Err(outcome);
+            }
+        };
         Ok(SpawnedLaunch {
             token,
             state,
@@ -253,18 +270,16 @@ impl PreparedLaunch {
     }
 }
 
-#[cfg(unix)]
 struct SpawnedLaunch {
     token: Option<String>,
     state: spice::repository::StatePaths,
     baseline: Option<Vec<u8>>,
     observer: DirectObserver,
     log_offset: u64,
-    parent_handoff: UnixStream,
+    parent_handoff: Channel,
     child: Child,
 }
 
-#[cfg(unix)]
 impl SpawnedLaunch {
     fn wait(mut self) -> Outcome<wire::AppOpen> {
         let ready = wait_for_ready(
@@ -301,13 +316,26 @@ impl SpawnedLaunch {
     }
 }
 
-#[cfg(unix)]
 fn daemon_fault(reason: &str, error: impl std::fmt::Display) -> Outcome<()> {
     environment_fault(reason, &error.to_string())
 }
 
+/// The launcher's half of the launch channel before the child exists.
 #[cfg(unix)]
-fn prepare_handoff(token: Option<String>) -> Result<(UnixStream, UnixStream), Outcome<()>> {
+struct Handoff {
+    parent: UnixStream,
+    child: UnixStream,
+}
+
+/// The launcher's half of the launch channel before the child exists.
+#[cfg(windows)]
+struct Handoff {
+    offer: door::handoff::Offer,
+    request: Vec<u8>,
+}
+
+#[cfg(unix)]
+fn prepare_handoff(token: Option<String>) -> Result<Handoff, Outcome<()>> {
     let (mut parent, child) = UnixStream::pair()
         .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))?;
     let request = HandoffRequest { token };
@@ -315,7 +343,62 @@ fn prepare_handoff(token: Option<String>) -> Result<(UnixStream, UnixStream), Ou
     write_framed(&mut parent, &encoded)
         .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))?;
     let _ = parent.shutdown(Shutdown::Write);
-    Ok((parent, child))
+    Ok(Handoff { parent, child })
+}
+
+#[cfg(windows)]
+fn prepare_handoff(token: Option<String>) -> Result<Handoff, Outcome<()>> {
+    let offer = door::handoff::Offer::open()
+        .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))?;
+    let request = wire::encode(&HandoffRequest { token }).expect("daemon handoff request encodes");
+    Ok(Handoff { offer, request })
+}
+
+#[cfg(unix)]
+impl Handoff {
+    /// Detach the child into its own process group holding the channel on
+    /// [`HANDOFF_FD`].
+    fn grant(&self, command: &mut ProcessCommand) {
+        command.process_group(0);
+        inherit_handoff(command, self.child.as_raw_fd());
+    }
+
+    /// The launcher's channel once the child holds its own end.
+    fn connect(self, _child: &Child) -> Result<Channel, Outcome<()>> {
+        drop(self.child);
+        Ok(self.parent)
+    }
+}
+
+#[cfg(windows)]
+impl Handoff {
+    /// Detach the child into its own process group and windowless console,
+    /// naming the channel through [`HANDOFF_VARIABLE`].
+    fn grant(&self, command: &mut ProcessCommand) {
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
+
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        self.offer.grant(command, HANDOFF_VARIABLE);
+    }
+
+    /// Accept the channel only from `child` within [`PROBE_BOUND`], then hand
+    /// it the request.
+    fn connect(self, child: &Child) -> Result<Channel, Outcome<()>> {
+        let mut channel = self
+            .offer
+            .accept(child.id(), PROBE_BOUND)
+            .map_err(|error| {
+                let reason = if error.kind() == io::ErrorKind::PermissionDenied {
+                    "resident::daemon-handoff-refused"
+                } else {
+                    "resident::daemon-handoff-unavailable"
+                };
+                daemon_fault(reason, error)
+            })?;
+        write_framed(&mut channel, &self.request)
+            .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))?;
+        Ok(channel)
+    }
 }
 
 #[cfg(unix)]
@@ -342,7 +425,6 @@ fn inherit_handoff(command: &mut ProcessCommand, source: RawFd) {
 ///
 /// A missed write here must not fail the wait itself: this is an operator
 /// aid for a still-running launch, not a condition the caller can act on.
-#[cfg(unix)]
 fn warn_readiness_pending(log_path: &Path, warn_horizon: Duration, horizon: Duration) {
     let Ok(mut log) = open_log(log_path) else {
         return;
@@ -353,7 +435,6 @@ fn warn_readiness_pending(log_path: &Path, warn_horizon: Duration, horizon: Dura
     );
 }
 
-#[cfg(unix)]
 /// Set an oversized log aside under [`LOG_ROTATED_SUFFIX`] before a resident
 /// starts appending to a fresh one; a missing or small log is left alone.
 fn rotate_log(path: &Path) -> io::Result<()> {
@@ -367,17 +448,16 @@ fn rotate_log(path: &Path) -> io::Result<()> {
 }
 
 fn open_log(path: &Path) -> io::Result<File> {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .read(true)
-        .mode(0o600)
-        .open(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true).read(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(file)
 }
 
-#[cfg(unix)]
 #[allow(
     clippy::too_many_arguments,
     reason = "the waiter owns one fixed launch observation"
@@ -390,7 +470,7 @@ fn wait_for_ready(
     baseline: Option<&[u8]>,
     token: Option<&str>,
     log_path: &Path,
-    status: &mut UnixStream,
+    status: &mut Channel,
 ) -> Result<serve::Discovery, Option<Outcome<()>>> {
     let horizon = arrival_horizon(watched);
     let started = Instant::now();
@@ -479,7 +559,6 @@ fn wait_for_ready(
     }
 }
 
-#[cfg(unix)]
 fn arrival_horizon(runtime: &Path) -> Duration {
     // The feature only makes the selected negative fixture marker legible. A
     // shared featured appliance with no marker retains production readiness.
@@ -492,7 +571,6 @@ fn arrival_horizon(runtime: &Path) -> Duration {
     ARRIVAL_HORIZON
 }
 
-#[cfg(unix)]
 fn candidate(
     serve: &Path,
     baseline: Option<&[u8]>,
@@ -528,7 +606,6 @@ fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
     }
 }
 
-#[cfg(unix)]
 fn probe(discovery: &serve::Discovery, token: Option<&str>) -> CommandResult<()> {
     let authority = discovery.endpoint.strip_prefix("http://").ok_or_else(|| {
         environment_fault(
@@ -619,7 +696,16 @@ fn terminate_group(child: &mut Child) {
     let _ = child.wait();
 }
 
-#[cfg(unix)]
+/// End a child that never became ready.
+#[cfg(windows)]
+fn terminate_group(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_some() {
+        return;
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn child_diagnostic(path: &Path, offset: u64) -> String {
     let bytes = fs::read(path).unwrap_or_default();
     let start = usize::try_from(offset)
@@ -687,8 +773,7 @@ fn read_framed(stream: &mut impl Read) -> Result<Vec<u8>, Outcome<()>> {
     Ok(bytes)
 }
 
-#[cfg(unix)]
-fn read_status(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
+fn read_status(stream: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut magic = vec![0; HANDOFF_MAGIC.len()];
     match stream.read_exact(&mut magic) {
         Ok(()) => {}
