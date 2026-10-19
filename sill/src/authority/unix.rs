@@ -248,6 +248,23 @@ pub(super) fn replace_entry(
     status(result)
 }
 
+pub(super) fn link_entry(
+    directory: &File,
+    _path: &Path,
+    existing: &OsStr,
+    new: &OsStr,
+) -> io::Result<()> {
+    let existing = c_name(existing)?;
+    let new = c_name(new)?;
+    let descriptor = directory.as_raw_fd();
+    // SAFETY: the descriptor is open for the call, and both names are
+    // NUL-terminated single components that outlive it. Without
+    // `AT_SYMLINK_FOLLOW`, a final link is itself linked, never followed.
+    let result =
+        unsafe { libc::linkat(descriptor, existing.as_ptr(), descriptor, new.as_ptr(), 0) };
+    status(result)
+}
+
 pub(super) fn remove_entry(directory: &File, _path: &Path, name: &OsStr) -> io::Result<()> {
     let name = c_name(name)?;
     // SAFETY: the descriptor is open for the call, and `name` is a

@@ -80,25 +80,26 @@ is the app's only carrier.
 
 **Invariant —** Every appliance executable produced by a current build path
 links its app ZIP. The Darwin, Linux, and Windows release builds, and
-`spice dev xtask -- install` on supported macOS and Linux hosts, read the
-staged `generations/G.zip` once and admit it as G. They link it as one retained
-read-only section: `__TEXT,__spice_app_zip` on Mach-O, `spice_app_zip` on ELF,
-and `spiceapp` on PE32+. Mach-O and ELF follow their platform naming
-conventions: Mach-O sections are lowercase after two underscores, and the
-System V gABI reserves dot-prefixed ELF section names for the system.
+`spice dev xtask -- install` on supported macOS, Linux, and x86-64 Windows
+hosts, read the staged `generations/G.zip` once and admit it as G. Worktree
+dSYMs exist only on macOS, so elsewhere that command publishes without them.
+Each links it as one retained read-only section: `__TEXT,__spice_app_zip` on
+Mach-O, `spice_app_zip` on ELF, and `spiceapp` on PE32+. Mach-O and ELF follow
+their platform naming conventions: Mach-O sections are lowercase after two
+underscores, and the System V gABI reserves dot-prefixed ELF section names for
+the system.
 
 The Windows release build's COFF object defines `spice_app_zip` and
 `spice_app_zip_len`; its PE32+ final-image reader locates exactly one
 `spiceapp` section using the header's virtual and raw lengths. The section name
-fits PE's eight-byte limit. Windows installation remains outside the current
-installer's supported-host contract.
+fits PE's eight-byte limit.
 
 The Windows release executable exposes `--version` and `--json version`, the
-identity surface exercised by sealed proof. Unix process supervision,
-resident, and handle-bound installation commands are not silently emulated:
-they remain absent until they have native Windows contracts. Disposable
-repository commands run through `hosted-windows`, not through this release
-entry point.
+identity surface exercised by sealed proof, the repository installer described
+under Windows installation, and the resident `up` that serves the linked app.
+Unix process supervision commands are not silently emulated: they remain absent
+until they have native Windows contracts. Disposable repository commands run
+through `hosted-windows`, not through this release entry point.
 
 The current Mach-O and ELF builds then derive symbols, strip, and sign where
 applicable. No step appends bytes after signing. The final image's section
@@ -415,6 +416,13 @@ spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sil
 spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe
 spice dev xtask -- windows-guest run -- bin/sill-HASH.exe
 
+# Repository appliance install (DIST-dWJhYqnct). The skipped test reads dSYM
+# identity from metadata, which on Windows carries no file ID.
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice -p sill --lib
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe install:: resident:: --skip install::symbols::tests::a_read_settles_only_on_one_unmoved_regular_file
+spice dev xtask -- windows-guest run -- bin/sill-HASH.exe authority
+
 spice dev xtask -- windows-guest stop
 spice dev xtask -- windows-guest reset
 ```
@@ -426,7 +434,13 @@ root plus descendant at its runtime bound, cancels a second tree, and independen
 opens each descendant PID after completion to prove the Job reaped it. The
 lifecycle consumer launches a two-process tree in a new group, reaches it only by
 group id to interrupt and then force it, waits for the root's forced status, and
-proves the emptied and an unknown group both refuse as not found. The other port
+proves the emptied and an unknown group both refuse as not found. The
+repository-install consumer needs Git for Windows under Program Files and the
+`spice dev xtask -- windows-appliance` image. It installs into a fresh
+repository, runs the wrapper and hooks under Git's shell, reinstalls
+convergently, and upgrades under a running resident that keeps serving the app.
+It then reclaims the deferred image, resumes an apply killed mid-flight, and
+proves an operator occupant is refused or restored exactly. The other port
 smokes cover one prepare/select/cleanup cycle and the resident start,
 lane-control round trip, and shutdown.
 
@@ -553,6 +567,51 @@ activated by redirecting the host tool there, never by writing into the location
 the repository already uses. Every generated artifact carries an ownership
 digest, so an untouched installation is distinguishable from a locally modified
 one and from a newer generated shape.
+
+### Windows installation keeps the same contract under Windows names
+
+**Invariant —** The Windows installer keeps the plan, receipt, and recovery
+contract above. The executable publishes to `.spice-install\bin\spice.exe`.
+Receipt destinations and introduced parents use `\`-separated relative names;
+plan asset paths keep their logical `/` spelling. Modes are owner-only DACLs:
+an executable image is `0o700`, every other file `0o600`, and a mode granting
+group or other access refuses rather than being approximated. The same limit
+binds prior state: a preview refuses, before anything is touched, an existing
+target whose access reaches beyond its owner, because reversal could capture
+its bytes but never restore that access.
+
+**Invariant —** A receipt generation is the volume serial and file ID of the
+object a name held. An identifier wider than 64 bits, as ReFS may assign,
+refuses rather than truncating into another object's identity.
+
+**Invariant —** Every directory from the Git common root to a destination's
+parent is held without delete sharing for the whole operation, so none can be
+renamed or removed beneath it. A new name is admitted by a no-replace move. An
+expected destination is replaced without a gap: a second hard link first holds
+the prior object and is proved to be the expected image, the staged image then
+atomically replaces the destination, and a failed post-replacement proof moves
+the prior object back. Every crash point leaves the destination holding the
+prior or the staged image, which resume already distinguishes.
+
+**Invariant —** Windows refuses to unlink an image a running process maps, or
+a file opened without delete sharing. Removal and retirement then move that
+object to a fresh canonical `.spice-install-<pid>-<counter>.tmp` name in the
+same directory instead of failing. Maintenance scans the runtime directory and
+the installed executable's directory. It reclaims such a file once it is
+owner-only, owned by the current principal, older than the grace period, and
+its minting process has exited; a file still in use stays for a later pass.
+
+**Invariant —** Hook activation runs Git for Windows from the system Program
+Files folder (`Git\cmd\git.exe`), never one found on `PATH`. `core.hooksPath`
+and the generated hook launchers name local-drive paths in Git's `C:/...`
+form; a common directory outside a local drive refuses.
+
+**Invariant —** A file belongs to the current principal when its owner is a SID
+the process token may assign as owner: the token user or an enabled owner
+group, such as Administrators in an elevated token. Files an elevated install
+creates therefore stay owner-only to every later process of that principal,
+including hooks under Git for Windows' shell, whatever default owner the
+launching runtime selected.
 
 ### Reversal is a claim about identity
 

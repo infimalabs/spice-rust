@@ -52,6 +52,8 @@ fn write(path: &Path, bytes: &[u8]) {
     fs::write(path, bytes).expect("fixture bytes write");
     #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(DATA_MODE)).expect("fixture mode writes");
+    #[cfg(windows)]
+    sill::authority::set_owner_mode(path, DATA_MODE).expect("fixture mode writes");
 }
 
 /// The sidecar files schema 18 published for `current`, retaining `older`.
@@ -168,9 +170,11 @@ fn retained(repository: &Repository) -> RetainedRecord {
         hook_activation: None,
         symbols: None,
     };
-    let installed = Generation::observe(
+    let installed = Generation::observe_at(
+        repository.common_dir(),
         &fs::metadata(repository.common_dir()).expect("common directory metadata reads"),
-    );
+    )
+    .expect("common directory generation reads");
     let (operations, retirements) = (plan.operations.len(), plan.retirements.len());
     let mut record = RetainedRecord {
         version: SCHEMA,
@@ -311,10 +315,11 @@ fn sidecar_discards_follow_the_receipt_and_withdraw_only_owned_empty_directories
 
     let drifted = common.join(generation_file(&generation("current"), "app.html"));
     write(&drifted, b"operator html");
-    assert!(matches!(
-        apply_discards(&repository),
-        Err(InstallError::Drift { .. })
-    ));
+    let refused = apply_discards(&repository).err();
+    assert!(
+        matches!(refused, Some(InstallError::Drift { .. })),
+        "{refused:?}"
+    );
     assert!(!common.join(RECORD_PATH).exists());
     assert!(common.join(POINTER).exists());
     write(&drifted, b"current html");

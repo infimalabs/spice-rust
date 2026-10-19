@@ -301,5 +301,5 @@ pub(super) fn process_exists_raw(pid: u32) -> io::Result<bool> {
 
 #[cfg(windows)]
 pub(super) fn process_exists_raw(pid: u32) -> io::Result<bool> {
-    crate::resident::daemon::observer::process_running(pid)
+    sill::process_running(pid)
 }

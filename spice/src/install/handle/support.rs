@@ -1,7 +1,6 @@
 use super::*;
 
 /// Mint the publication name shared by the handle and file-maintenance layers.
-#[cfg(unix)]
 pub(in super::super) fn temporary_name() -> OsString {
     OsString::from(format!(
         ".spice-install-{}-{}.tmp",

@@ -77,8 +77,6 @@ mod windows;
 pub(crate) use windows::DirectObserver;
 #[cfg(windows)]
 pub(crate) use windows::ProcessExitObserver;
-#[cfg(windows)]
-pub(crate) use windows::process_running;
 
 #[cfg(unix)]
 pub(crate) struct DirectObserver {

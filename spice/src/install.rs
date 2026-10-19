@@ -21,10 +21,6 @@ mod fold;
 mod git_hooks;
 mod handle;
 mod hook_activation;
-#[cfg(unix)]
-mod maintenance;
-#[cfg(windows)]
-#[path = "install/maintenance_windows.rs"]
 mod maintenance;
 mod model;
 mod path;
@@ -118,8 +114,16 @@ const REVERSAL_PATH: &str = ".spice-rs/install-reversals";
 const RECORD_MODE: u32 = 0o600;
 #[cfg(unix)]
 const DIRECTORY_MODE: u32 = 0o700;
+// Windows grants files to their owner alone: its protected owner-only DACL
+// has no group or other principals to carry Unix's read-only grants.
+#[cfg(not(windows))]
 const DATA_MODE: u32 = 0o644;
+#[cfg(windows)]
+const DATA_MODE: u32 = 0o600;
+#[cfg(not(windows))]
 const EXECUTABLE_MODE: u32 = 0o755;
+#[cfg(windows)]
+const EXECUTABLE_MODE: u32 = 0o700;
 
 // The receipt materializes `.spice-rs` before applying operations. Appliance
 // assets use a sibling namespace so that publication cannot invalidate the
@@ -134,7 +138,10 @@ const ZSH_HOOK_PATH: &str = ".spice-install/hooks/shell/.zshenv";
 const BASH_HOOK_PATH: &str = ".spice-install/hooks/shell/bash_env";
 const WRAPPER_SPICE_PATH: &str = ".spice-install/hooks/wrappers/spice";
 const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
+#[cfg(not(windows))]
 const BINARY_PATH: &str = ".spice-install/bin/spice";
+#[cfg(windows)]
+const BINARY_PATH: &str = ".spice-install/bin/spice.exe";
 const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
 const RETIRED_FOLD_STORE_PATH: &str = ".spice-rs/data/spicefolds.sqlite3";
@@ -760,6 +767,14 @@ fn destination_state(
     let bound = bind_destination(location.root(repository), path)?;
     let (previous, _) =
         observe_bound(location.root(repository), &bound.destination, &bound.parent)?;
+    if let Some(observed) = &previous
+        && !files::restorable_mode(observed.image.mode)
+    {
+        return Err(InstallError::OccupantUnrestorable {
+            path: location.root(repository).join(&bound.destination),
+            mode: observed.image.mode,
+        });
+    }
     Ok((bound, previous))
 }
 

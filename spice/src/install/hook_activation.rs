@@ -9,7 +9,21 @@ use serde::{Deserialize, Serialize};
 use super::{BINARY_PATH, InstallError, InstallPlan, Repository, installed_git_hooks};
 
 const HOOK_KEY: &str = "core.hooksPath";
-const GIT: &str = "/usr/bin/git";
+
+/// The system Git activation runs, never one found on `PATH`.
+#[cfg(not(windows))]
+fn git_command(_operation: &'static str) -> Result<Command, InstallError> {
+    Ok(Command::new("/usr/bin/git"))
+}
+
+/// Git for Windows' command entry in the system Program Files folder, never
+/// one found on `PATH`.
+#[cfg(windows)]
+fn git_command(operation: &'static str) -> Result<Command, InstallError> {
+    let program_files =
+        sill::program_files().map_err(|source| InstallError::GitLaunch { operation, source })?;
+    Ok(Command::new(program_files.join(r"Git\cmd\git.exe")))
+}
 
 /// Git configuration scope changed by one activation mutation.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -283,13 +297,7 @@ pub(super) fn plan(
     migration: bool,
 ) -> Result<HookActivationPlan, InstallError> {
     let hooks = installed_git_hooks(repository);
-    let hooks_path = hooks
-        .to_str()
-        .ok_or_else(|| InstallError::HookPathUnrepresentable {
-            path: hooks.clone(),
-            reason: "is not UTF-8",
-        })?
-        .to_owned();
+    let hooks_path = super::git_hooks::git_spelling(&hooks)?;
     valid_value(&hooks_path).map_err(|_| InstallError::HookPathUnrepresentable {
         path: hooks,
         reason: "contains a line separator",
@@ -626,7 +634,7 @@ fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
 }
 
 fn worktree_config_enabled(worktree: &Path) -> Result<bool, InstallError> {
-    let output = Command::new(GIT)
+    let output = git_command("read Git worktree configuration mode")?
         .args(["config", "--local", "--get", "extensions.worktreeConfig"])
         .current_dir(worktree)
         .output()
@@ -653,7 +661,7 @@ fn config_values(
     worktree: &Path,
     scope: Option<HookConfigurationScope>,
 ) -> Result<Vec<String>, InstallError> {
-    let mut command = Command::new(GIT);
+    let mut command = git_command("read Git hook selection")?;
     command.arg("config");
     if let Some(scope) = scope {
         command.arg(scope.option());
@@ -737,7 +745,7 @@ fn git<const N: usize>(
     arguments: [&str; N],
     operation: &'static str,
 ) -> Result<Output, InstallError> {
-    let output = Command::new(GIT)
+    let output = git_command(operation)?
         .args(arguments)
         .current_dir(root)
         .output()

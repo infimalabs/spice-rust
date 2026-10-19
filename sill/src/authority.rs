@@ -212,6 +212,21 @@ pub struct FileObject {
     index: [u8; 16],
 }
 
+impl FileObject {
+    /// The Unix device or Windows volume serial number holding the object.
+    #[must_use]
+    pub const fn volume(&self) -> u64 {
+        self.volume
+    }
+
+    /// The object's index within its volume: a Unix inode or a Windows
+    /// 128-bit file ID, little-endian.
+    #[must_use]
+    pub const fn index(&self) -> [u8; 16] {
+        self.index
+    }
+}
+
 /// One filesystem object and the state it was observed in.
 ///
 /// Equality means the same object, unchanged: same [`FileObject`], same
@@ -262,8 +277,9 @@ pub fn path_identity(path: &Path) -> io::Result<FileIdentity> {
 /// Whether the current user owns the object at `path`, without following a
 /// final link.
 ///
-/// Unix compares the effective user. Windows accepts the token user or the
-/// default owner that token assigns to new objects.
+/// Unix compares the effective user. Windows accepts any SID the token may
+/// assign as owner: its user or an enabled owner group, such as
+/// Administrators in an elevated token.
 ///
 /// # Errors
 ///
@@ -441,6 +457,24 @@ impl Directory {
             &self.path,
             entry_name(source)?,
             entry_name(destination)?,
+        )
+    }
+
+    /// Give the file `existing` names the additional name `new`, refusing
+    /// when `new` already names an entry.
+    ///
+    /// Both names then name one object; removing either leaves the other.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a name that is not one plain path component, or returns the
+    /// operating-system refusal of the link.
+    pub fn link(&self, existing: &OsStr, new: &OsStr) -> io::Result<()> {
+        platform::link_entry(
+            &self.handle,
+            &self.path,
+            entry_name(existing)?,
+            entry_name(new)?,
         )
     }
 

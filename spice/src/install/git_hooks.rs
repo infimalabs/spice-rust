@@ -25,12 +25,10 @@ impl GitHook {
 /// Render one repository-bound launcher for the installed Spice.
 pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, InstallError> {
     let installed = common_git.join(BINARY_PATH);
-    let spelling = installed
-        .to_str()
-        .ok_or_else(|| unrepresentable(&installed, "is not UTF-8"))?;
     if !installed.is_absolute() {
         return Err(unrepresentable(&installed, "is not absolute"));
     }
+    let spelling = git_spelling(&installed)?;
     if spelling.chars().any(is_line_separator) {
         return Err(unrepresentable(&installed, "contains a line separator"));
     }
@@ -40,10 +38,49 @@ pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, Inst
     };
     Ok(format!(
         "#!/bin/sh -eu\n{prelude}exec {} gate {} \"$@\"\n",
-        quote(spelling),
+        quote(&spelling),
         hook.command(),
     )
     .into_bytes())
+}
+
+/// `path` as Git and the hooks' shell name it.
+#[cfg(not(windows))]
+pub(super) fn git_spelling(path: &Path) -> Result<String, InstallError> {
+    path.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| unrepresentable(path, "is not UTF-8"))
+}
+
+/// `path` as Git for Windows and its MSYS hook shell name it: a local drive
+/// path with `/` separators. Neither reliably resolves verbatim `\\?\C:\`
+/// paths, and a UNC share is no repository-local install.
+#[cfg(windows)]
+pub(super) fn git_spelling(path: &Path) -> Result<String, InstallError> {
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    let drive = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => char::from(drive),
+            _ => return Err(unrepresentable(path, "is not on a local drive")),
+        },
+        _ => return Err(unrepresentable(path, "is not on a local drive")),
+    };
+    let mut spelling = format!("{drive}:");
+    for component in components {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                spelling.push('/');
+                spelling.push_str(
+                    name.to_str()
+                        .ok_or_else(|| unrepresentable(path, "is not UTF-8"))?,
+                );
+            }
+            _ => return Err(unrepresentable(path, "is not a normalized path")),
+        }
+    }
+    Ok(spelling)
 }
 
 const PRE_COMMIT_ENVIRONMENT: &str = concat!(
@@ -104,7 +141,8 @@ mod tests {
         for separator in [
             '\n', '\r', '\u{000b}', '\u{000c}', '\u{0085}', '\u{2028}', '\u{2029}',
         ] {
-            let path = PathBuf::from(format!("/git{separator}common"));
+            let root = if cfg!(windows) { "C:/git" } else { "/git" };
+            let path = PathBuf::from(format!("{root}{separator}common"));
             let error = launcher(&path, GitHook::PreCommit).unwrap_err();
             assert!(matches!(
                 error,
