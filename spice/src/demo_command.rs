@@ -16,6 +16,8 @@ use wire::{
     ReplyPosition, ResidencyHead, ResidentState, TaskHead, WorkflowHead, body,
 };
 
+use crate::control_signal::ControlRelay;
+
 mod recovery;
 
 use recovery::{preserve_environment_failure, preserve_failure, require_utf8, shell_quote};
@@ -143,49 +145,13 @@ struct Environment {
 enum Event {
     Changed(Result<(), String>),
     Resident(Outcome<()>),
-    Signal(i32),
-}
-
-struct SignalRelay {
-    handle: signal_hook::iterator::Handle,
-    worker: Option<JoinHandle<()>>,
+    Signal,
 }
 
 #[derive(Clone, Copy)]
 struct RunControl {
     signals: bool,
     interrupt_after_launch: bool,
-}
-
-impl SignalRelay {
-    fn install(events: Sender<Event>) -> io::Result<Self> {
-        use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
-
-        let mut signals = signal_hook::iterator::Signals::new([SIGHUP, SIGINT, SIGTERM])?;
-        let handle = signals.handle();
-        let worker = std::thread::Builder::new()
-            .name("spice-demo-signals".to_owned())
-            .spawn(move || {
-                for signal in signals.forever() {
-                    if events.send(Event::Signal(signal)).is_err() {
-                        break;
-                    }
-                }
-            })?;
-        Ok(Self {
-            handle,
-            worker: Some(worker),
-        })
-    }
-}
-
-impl Drop for SignalRelay {
-    fn drop(&mut self) {
-        self.handle.close();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
 }
 
 /// Seed or run one isolated native app environment.
