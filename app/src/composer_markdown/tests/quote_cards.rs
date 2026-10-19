@@ -986,7 +986,7 @@ fn a_card_that_only_sent_an_msg_leads_it_with_the_cards_age() {
         &[],
         &sends,
         &[],
-        QuoteRenderContext::new(&QuoteAgents::new(), &QuoteSources::new(), &card),
+        QuoteRenderContext::new(&QuoteAgents::new(), &QuoteSources::new(), &card, None),
         &[],
     )
     .html;

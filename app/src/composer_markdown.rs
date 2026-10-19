@@ -106,13 +106,14 @@ impl QuoteSource {
 
 pub(crate) type QuoteSources = BTreeMap<String, QuoteSource>;
 
-/// Borrowed identity and source authority used while presenting quotes, and
-/// the presented card's own source.
+/// Borrowed identity and source authority used while presenting quotes, the
+/// presented card's own source, and the lane that card speaks for.
 #[derive(Clone, Copy)]
 pub(crate) struct QuoteRenderContext<'a> {
     agents: &'a QuoteAgents,
     sources: &'a QuoteSources,
     card: &'a QuoteSource,
+    speaker: Option<wire::CanonicalUuid>,
 }
 
 impl<'a> QuoteRenderContext<'a> {
@@ -120,11 +121,13 @@ impl<'a> QuoteRenderContext<'a> {
         agents: &'a QuoteAgents,
         sources: &'a QuoteSources,
         card: &'a QuoteSource,
+        speaker: Option<wire::CanonicalUuid>,
     ) -> Self {
         Self {
             agents,
             sources,
             card,
+            speaker,
         }
     }
 }
@@ -421,7 +424,7 @@ pub(crate) fn render_prose_card(
         directives,
         sends,
         quotes,
-        QuoteRenderContext::new(quote_agents, quote_sources, &PROSE_CARD_FIXTURE),
+        QuoteRenderContext::new(quote_agents, quote_sources, &PROSE_CARD_FIXTURE, None),
         &[],
     )
 }
@@ -447,6 +450,7 @@ pub(crate) fn render_prose_card_with_media_quotes(
         media_quotes,
         Finish::ProseCard {
             card: quote_context.card,
+            speaker: quote_context.speaker,
         },
     )
 }
@@ -458,8 +462,7 @@ fn render_quote_card_body(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     media_quotes: &[wire::MediaQuote],
-    attribution: image_flow::Attribution,
-    quote_depth: usize,
+    finish: Finish<'_>,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -470,31 +473,46 @@ fn render_quote_card_body(
         quote_agents,
         quote_sources,
         media_quotes,
-        Finish::QuoteCard {
-            attribution,
-            quote_depth,
-        },
+        finish,
     )
 }
 
 /// How a rendering presents its body.
+///
+/// A prose card's or quote card's `speaker` is the lane its own signoff
+/// already names, so a quote inside it whose sole recipient is that lane
+/// leaves the receiver implied rather than repeating it.
 enum Finish<'r> {
     /// Received text as written.
     Received,
     /// Assistant prose split into attributed hunks around every quote, led
     /// where it sent an MSG by `card`, its own source.
-    ProseCard { card: &'r QuoteSource },
+    ProseCard {
+        card: &'r QuoteSource,
+        speaker: Option<wire::CanonicalUuid>,
+    },
     /// A quote card split into hunks attributed to its authenticated source.
     QuoteCard {
         attribution: image_flow::Attribution,
         /// Quote shells around this card's hunks, raw and authenticated alike.
         quote_depth: usize,
+        speaker: Option<wire::CanonicalUuid>,
     },
     /// Authored task text nested under a detail's own headings, whose chips
     /// name only the tasks `resolves` admits.
     TaskText {
         resolves: &'r dyn Fn(&wire::TaskHandle) -> bool,
     },
+}
+
+impl Finish<'_> {
+    /// The lane this rendering's surrounding signoff names, if any.
+    const fn speaker(&self) -> Option<wire::CanonicalUuid> {
+        match self {
+            Self::ProseCard { speaker, .. } | Self::QuoteCard { speaker, .. } => *speaker,
+            Self::Received | Self::TaskText { .. } => None,
+        }
+    }
 }
 
 /// Headings in task text nest under the detail's own section headings.
@@ -518,10 +536,6 @@ fn render(
     let math = math::normalize(markdown, classifications, directives, sends, OPTIONS);
     let markdown = math.markdown;
     let mut media_quotes = media_quotes::Matcher::new(media_quotes, &math.directives);
-    let card = match &finish {
-        Finish::ProseCard { card } => Some(*card),
-        Finish::Received | Finish::QuoteCard { .. } | Finish::TaskText { .. } => None,
-    };
     let (events, outer_quotes) = parse_events(
         &markdown,
         math.classifications,
@@ -529,7 +543,7 @@ fn render(
         math.sends,
         quote_agents,
         quote_sources,
-        card,
+        &finish,
     );
     let events = coalesce_text_events(events);
     let quote_depth = match &finish {
@@ -541,7 +555,14 @@ fn render(
         Finish::Received | Finish::ProseCard { .. } | Finish::QuoteCard { .. } => &|_| true,
     };
     let heading = matches!(finish, Finish::TaskText { .. }).then_some(TASK_TEXT_HEADING);
-    let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_depth);
+    let events = quotes::expand(
+        events,
+        quotes,
+        quote_agents,
+        quote_sources,
+        quote_depth,
+        finish.speaker(),
+    );
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_count = markdown_image_only_count(&events, has_diagrams);
@@ -629,7 +650,8 @@ struct OuterQuote {
 
 /// Parse sanitized Markdown, inline each exact classification as its pill, and
 /// record every outermost directive context's and sent MSG's hunk attribution.
-/// `card` is the prose card whose age leads each MSG it sent.
+/// A prose card's own source leads each MSG it sent, and its speaker is the
+/// lane each directive context's receiver may already be implied by.
 fn parse_events<'m>(
     markdown: &'m str,
     classifications: Vec<MessageClassification>,
@@ -637,8 +659,12 @@ fn parse_events<'m>(
     sends: Vec<MessageSend>,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    card: Option<&QuoteSource>,
+    finish: &Finish<'_>,
 ) -> (Vec<MarkdownEvent<'m>>, Vec<OuterQuote>) {
+    let card = match finish {
+        Finish::ProseCard { card, .. } => Some(*card),
+        Finish::Received | Finish::QuoteCard { .. } | Finish::TaskText { .. } => None,
+    };
     let mut remaining = classifications
         .into_iter()
         .map(|classification| (classification.start, classification))
@@ -680,6 +706,7 @@ fn parse_events<'m>(
                                 &context,
                                 quote_agents,
                                 quote_sources,
+                                finish.speaker(),
                             )),
                         }
                     } else if let Some(send) = sends.remove(&source.start) {
