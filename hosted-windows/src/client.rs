@@ -38,10 +38,7 @@ pub struct HostedExecution {
 impl HostedExecution {
     #[must_use]
     pub fn exit_code(&self) -> i32 {
-        match self.outputs[0].completion {
-            Completion::Exited { code } => code,
-            Completion::TimedOut => 124,
-        }
+        self.outputs[0].completion.exit_code()
     }
 }
 

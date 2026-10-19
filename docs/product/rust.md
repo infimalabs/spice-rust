@@ -125,6 +125,10 @@ the admitted CRT and SDK import libraries. Missing or changed bytes refuse
 instead of falling back to Apple's compiler, ambient headers, or another
 toolchain.
 
+Those x64 executables run on the development host only inside the persistent
+Windows 11 ARM developer guest, as non-authoritative developer evidence; see
+[Persistent Windows 11 ARM developer guest](planes/distribution.md#persistent-windows-11-arm-developer-guest).
+
 Owners: [`spice/src/cargo_isolation/windows_msvc.rs`](../../spice/src/cargo_isolation/windows_msvc.rs)
 for recorded-acceptance admission, materialization, verification, and Cargo
 binding, and [`xtask/src/windows_msvc.rs`](../../xtask/src/windows_msvc.rs) for
