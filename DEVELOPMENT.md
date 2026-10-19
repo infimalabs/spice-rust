@@ -12,7 +12,7 @@ dependency edges, and Cargo metadata the resolved graph.
 
 | Layer | Crates and ownership |
 | --- | --- |
-| Floors | `wire` owns crossing DTOs; `atomic` owns durable file replacement; `sill` owns process groups and advisory locks. |
+| Floors | `wire` owns crossing DTOs; `atomic` owns durable file replacement; `sill` owns process groups and advisory locks; `door` owns bounded one-message local doors between processes of one user and the Windows launch channel from a parent to its exact child. |
 | Durable domain | `journal` is the sole SQLite authority; `tape` preserves vendor bytes; `dialect` classifies task documents without I/O; `board` derives task/claim views; `bus` is the resident's sole writer and timer rim. |
 | Agent control | `listen` decodes preserved records; `consent` decides pre-action policy; `steer` owns durable direction and acknowledgment; `taste` selects prose reminders; `vendor` declares launch contracts; `lane` owns durable seats and supervised occupants. |
 | Product and artifacts | `app` is the WASM browser body and depends only on `wire`; `serve` serves the loopback surface and app generations; `artifact` stores task evidence outside the journal; `dist` stages releases; `proof` verifies sealed appliances. |

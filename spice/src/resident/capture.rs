@@ -1,8 +1,10 @@
 //! Bounded bridge from lane capture workers into the resident event loop.
 
 use std::collections::{BTreeSet, VecDeque};
+#[cfg(unix)]
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,6 +24,7 @@ const NOTICE_BYTES: usize = 4 * 1024;
 /// queue is full the kernel refuses the send outright. Darwin's default receive
 /// space is 4 KiB, seventeen record notices, and one journal commit outlasts
 /// that on a busy lane, so most notices were refused before this queue grew.
+#[cfg(unix)]
 const NOTICE_QUEUE_BYTES: usize = 1024 * 1024;
 /// Notices one loop turn takes from the drained queue before it sweeps.
 pub(super) const NOTICE_BATCH: usize = 1024;
@@ -39,25 +42,46 @@ pub(super) const NOTICE_BATCH: usize = 1024;
 /// drained. [`Self::pull`] empties both queues without a scheduler turn, and
 /// [`Self::noticed_endings`] stages what it pulls, so the sweep asks the door
 /// and leaves every seat whose ending is waiting there to the notice arm.
+///
+/// On Windows the door acknowledges a notice only once it waits in the
+/// in-process queue, so the supervisor's send returning already means the
+/// notice is there and no kernel queue sits behind it.
 pub(super) struct SupervisorReports {
-    #[cfg(unix)]
-    socket: Arc<tokio::net::UnixDatagram>,
     notices: mpsc::UnboundedReceiver<io::Result<Notice>>,
     staged: VecDeque<io::Result<Notice>>,
+    #[cfg(unix)]
+    socket: Arc<tokio::net::UnixDatagram>,
+    #[cfg(unix)]
     drain: tokio::task::JoinHandle<()>,
+    #[cfg(unix)]
     path: PathBuf,
+    #[cfg(windows)]
+    _door: door::Listener,
 }
 
 impl SupervisorReports {
     /// Bind the notice door and start draining it. Requires a live runtime.
     pub(super) fn bind(paths: &super::RuntimePaths) -> super::CommandResult<Self> {
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let _ = paths;
-            return Err(super::environment_fault(
-                "lane::supervisor-capture-unsupported",
-                "detached supervisor capture requires Unix datagrams",
-            ));
+            let path = super::supervisor::capture_path(paths);
+            let (sender, notices) = mpsc::unbounded_channel();
+            let door = door::Listener::bind(&path, NOTICE_BYTES, move |message| {
+                let _ = sender.send(decode(&message));
+            })
+            .map_err(|error| {
+                let code = if error.kind() == io::ErrorKind::AlreadyExists {
+                    "lane::supervisor-capture-invalid"
+                } else {
+                    "lane::supervisor-capture-unavailable"
+                };
+                super::environment_fault(code, &error.to_string())
+            })?;
+            Ok(Self {
+                notices,
+                staged: VecDeque::new(),
+                _door: door,
+            })
         }
         #[cfg(unix)]
         {
@@ -105,9 +129,9 @@ impl SupervisorReports {
             let (sender, notices) = mpsc::unbounded_channel();
             let drain = tokio::spawn(drain_notices(Arc::clone(&socket), sender));
             Ok(Self {
-                socket,
                 notices,
                 staged: VecDeque::new(),
+                socket,
                 drain,
                 path,
             })
@@ -210,6 +234,7 @@ impl SupervisorReports {
     }
 }
 
+#[cfg(unix)]
 impl Drop for SupervisorReports {
     fn drop(&mut self) {
         self.drain.abort();
@@ -218,6 +243,7 @@ impl Drop for SupervisorReports {
 }
 
 /// Read datagrams for as long as the resident loop keeps its receiver.
+#[cfg(unix)]
 async fn drain_notices(
     socket: Arc<tokio::net::UnixDatagram>,
     notices: mpsc::UnboundedSender<io::Result<Notice>>,

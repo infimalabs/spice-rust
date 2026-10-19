@@ -1,6 +1,7 @@
 //! Direct filesystem and process-exit observers for detached startup.
 
 use std::io;
+#[cfg(unix)]
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
@@ -70,12 +71,21 @@ impl ExitSender for mpsc::SyncSender<()> {
     }
 }
 
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub(crate) use windows::DirectObserver;
+#[cfg(windows)]
+use windows::ProcessExitObserver;
+
+#[cfg(unix)]
 pub(crate) struct DirectObserver {
     descriptor: libc::c_int,
     #[cfg(target_os = "macos")]
     watched: libc::c_int,
 }
 
+#[cfg(unix)]
 impl DirectObserver {
     pub(crate) fn arm(watched: &Path) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
@@ -107,6 +117,7 @@ impl DirectObserver {
     }
 }
 
+#[cfg(unix)]
 impl Drop for DirectObserver {
     fn drop(&mut self) {
         // SAFETY: this observer exclusively owns these descriptors.
@@ -255,11 +266,13 @@ fn wait_macos_event(descriptor: libc::c_int) -> io::Result<()> {
     }
 }
 
+#[cfg(unix)]
 enum ProcessExitObserver {
     Watching(libc::c_int),
     Ended,
 }
 
+#[cfg(unix)]
 impl ProcessExitObserver {
     fn or_ended(pid: u32) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
@@ -317,6 +330,7 @@ impl ProcessExitObserver {
     }
 }
 
+#[cfg(unix)]
 impl Drop for ProcessExitObserver {
     fn drop(&mut self) {
         if let Self::Watching(descriptor) = self {

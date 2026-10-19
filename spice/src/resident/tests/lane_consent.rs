@@ -2,8 +2,6 @@
 //! lane's origin, and answered through the lane's kick door; what is still
 //! pending lapses only at an explicit break.
 
-use std::os::unix::net::UnixDatagram;
-
 use super::*;
 use supervisor::command::Kick;
 
@@ -18,7 +16,7 @@ struct LaneFixture {
     policy: consent::Policy,
     reads: read_materializations::CurrentReads,
     residency: journal::JournalHead<wire::ResidencyHead>,
-    door: UnixDatagram,
+    door: door::Door,
 }
 
 impl LaneFixture {
@@ -47,9 +45,7 @@ impl LaneFixture {
         let reads = read_materializations::CurrentReads::start(&bus, &paths, &policy)
             .expect("consent materializer starts");
         let door_path = supervisor::command::kick_path(&paths, lane);
-        let _ = fs::remove_file(&door_path);
-        let door = UnixDatagram::bind(&door_path).expect("the lane's kick door binds");
-        door.set_nonblocking(true).expect("a door that never waits");
+        let door = door::Door::bind(&door_path, 256).expect("the lane's kick door binds");
         let residency = current_residency(&bus, epoch).expect("current residency");
         Self {
             root,
@@ -87,11 +83,10 @@ impl LaneFixture {
 
     /// The kick waiting at the door, if any.
     fn answered(&self) -> Option<Kick> {
-        let mut kick = [0u8; 256];
         self.door
-            .recv(&mut kick)
+            .recv(Some(std::time::Duration::ZERO))
             .ok()
-            .map(|length| serde_json::from_slice(&kick[..length]).expect("a kick"))
+            .map(|kick| serde_json::from_slice(&kick).expect("a kick"))
     }
 
     fn consent_facts(&self) -> Vec<wire::Envelope<wire::AnyFact>> {
@@ -105,9 +100,7 @@ impl LaneFixture {
     }
 
     fn stop(self) {
-        let door_path = supervisor::command::kick_path(&self.paths, self.lane);
         drop(self.door);
-        let _ = fs::remove_file(&door_path);
         drop(self.reads);
         self.bus.shutdown().expect("fixture bus stops");
         fs::remove_dir_all(self.root).expect("lane consent fixture cleanup");

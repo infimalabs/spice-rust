@@ -234,21 +234,19 @@ mod tests {
         let state = directory.join("state.json");
         publish_json(&state, &live).expect("running state publishes");
         let door_path = command::kick_path(&paths, lane);
-        let door = std::os::unix::net::UnixDatagram::bind(&door_path).expect("door binds");
+        let door = door::Door::bind(&door_path, 256).expect("door binds");
 
         let launch = super::super::state_launch(&paths, state, live).expect("live adopts");
         launch
             .process
             .terminate()
             .expect("the door takes the interrupt, so no signal is sent");
-        let mut kick = [0u8; 256];
-        let length = door.recv(&mut kick).expect("the interrupt arrives");
+        let kick = door.recv(None).expect("the interrupt arrives");
         assert_eq!(
-            serde_json::from_slice::<command::Kick>(&kick[..length]).expect("a kick"),
+            serde_json::from_slice::<command::Kick>(&kick).expect("a kick"),
             command::Kick::Abort
         );
         drop(door);
-        fs::remove_file(door_path).expect("door cleanup");
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

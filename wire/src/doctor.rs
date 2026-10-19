@@ -32,6 +32,9 @@ pub enum SpiceVariable {
     /// Original Cargo home used to seed the immutable source store.
     #[serde(rename = "SPICE_RS_BOOTSTRAP_CARGO_HOME")] // env-policy: allow
     BootstrapCargoHome,
+    /// Launch channel a detached `spice up` granted its resident child.
+    #[serde(rename = "SPICE_RS_DAEMON_HANDOFF")] // env-policy: allow
+    DaemonHandoff,
     /// Installed Rust shell-hook directory.
     #[serde(rename = "SPICE_RS_HOOKS")] // env-policy: allow
     Hooks,
@@ -83,6 +86,7 @@ impl SpiceVariable {
         Self::MutationSeed,
         Self::NativePins,
         Self::BootstrapCargoHome,
+        Self::DaemonHandoff,
         Self::Hooks,
         Self::Lane,
         Self::NativeCargo,
@@ -104,6 +108,7 @@ impl SpiceVariable {
             Self::AgentVendor => "SPICE_AGENT_VENDOR", // env-policy: allow
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
             Self::BootstrapCargoHome => "SPICE_RS_BOOTSTRAP_CARGO_HOME", // env-policy: allow
+            Self::DaemonHandoff => "SPICE_RS_DAEMON_HANDOFF", // env-policy: allow
             Self::Hooks => "SPICE_RS_HOOKS",           // env-policy: allow
             Self::InstallTestExecutable => {
                 "SPICE_INSTALL_TEST_EXECUTABLE" // env-policy: allow
