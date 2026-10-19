@@ -166,14 +166,14 @@ digest, not on ZIP CRC fields. Owners:
 admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
 
 The `canvas` crate declares the two symbols a relocatable object defines:
-`spice_app_zip` at the archive's first byte and `spice_app_zip_len` at its
-length. Every current appliance target resolves the first to a mapped address,
-so the process reads its app as a direct static slice without storing a file
-offset or parsing its own image.
+`spiceapp` at the archive's first byte and `spiceapp_len` at its length. Every
+current appliance target resolves the first to a mapped address, so the process
+reads its app as a direct static slice without storing a file offset or parsing
+its own image.
 
-At the object-format boundary, `dist` writes an x86-64 COFF object with the same
-symbols and locates the archive in a final PE32+ image's `spiceapp` section. The
-name fits PE's eight-byte section-name limit. The Windows development build
+At the object-format boundary, `dist` locates that archive under the same
+`spiceapp` section name in final Mach-O, ELF, and PE32+ images. The eight-byte
+name fits PE's section-name limit. The Windows development build
 enables the same ordinary `spice` binary and modules as macOS and Linux; only
 the filesystem, process, and local-IPC adapters vary by target.
 

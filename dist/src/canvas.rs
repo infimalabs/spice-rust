@@ -14,14 +14,14 @@ use wire::{Digest, Domain};
 const MACHO_SEGMENT: &[u8] = b"__TEXT";
 /// App ZIP section on Mach-O: lowercase after two underscores, as Apple's
 /// Mach-O File Format Reference names sections.
-const MACHO_SECTION: &[u8] = b"__spice_app_zip";
+const MACHO_SECTION: &[u8] = b"__spiceapp";
 /// App ZIP section on ELF: undotted, since the System V gABI reserves
 /// dot-prefixed section names for the system.
-const ELF_SECTION: &[u8] = b"spice_app_zip";
+const ELF_SECTION: &[u8] = b"spiceapp";
 /// First ZIP byte, as the `canvas` crate declares it.
-const ARCHIVE_SYMBOL: &[u8] = b"spice_app_zip";
+const ARCHIVE_SYMBOL: &[u8] = b"spiceapp";
 /// The ZIP length as a little-endian `u64`, as the `canvas` crate declares it.
-const LENGTH_SYMBOL: &[u8] = b"spice_app_zip_len";
+const LENGTH_SYMBOL: &[u8] = b"spiceapp_len";
 
 const MACHO_MAGIC_64: u32 = 0xfeed_facf;
 const MACHO_HEADER_BYTES: usize = 32;
@@ -172,7 +172,7 @@ fn macho_object(archive: &[u8], cpu: u32, subtype: u32, minos: u32) -> Vec<u8> {
 fn elf_object(archive: &[u8], machine: u16) -> Vec<u8> {
     let (section_names, section_offsets) = string_table(&[
         ELF_SECTION,
-        b".rodata.spice_app_zip_len",
+        b".rodata.spiceapp_len",
         b".note.GNU-stack",
         b".symtab",
         b".strtab",
