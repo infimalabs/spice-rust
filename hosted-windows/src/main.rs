@@ -13,7 +13,7 @@ mod windows {
     use std::io::{self, Read, Write};
     use std::os::windows::io::AsRawHandle;
     use std::path::{Path, PathBuf};
-    use std::process::{Child, Command as ProcessCommand, ExitCode, Stdio};
+    use std::process::{Command as ProcessCommand, ExitCode, Stdio};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
@@ -24,12 +24,7 @@ mod windows {
     };
     use sha2::{Digest as _, Sha256};
     use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, TerminateJobObject,
-    };
+    use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Registry::{
         HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RegGetValueW,
     };
@@ -566,24 +561,10 @@ mod windows {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("hosted command did not start: {error}"))?;
-        let job = match Job::assign(&child) {
-            Ok(job) => job,
-            Err(assign) => {
-                let teardown = child
-                    .kill()
-                    .and_then(|()| child.wait().map(|_| ()))
-                    .map_err(|error| error.to_string());
-                return match teardown {
-                    Ok(()) => Err(assign),
-                    Err(teardown) => Err(format!(
-                        "{assign}; unassigned process teardown also failed: {teardown}"
-                    )),
-                };
-            }
-        };
+        let mut child =
+            sill::spawn_owned_command(&mut command, sill::ProcessGroup::New).map_err(|error| {
+                format!("hosted command did not start inside its process-tree boundary: {error}")
+            })?;
         let stdout = child
             .stdout
             .take()
@@ -595,8 +576,8 @@ mod windows {
         let budget = Arc::new(AtomicUsize::new(output_limit));
         let stdout = capture(stdout, Arc::clone(&budget));
         let stderr = capture(stderr, budget);
-        let completion = job.wait(&mut child, runtime_seconds)?;
-        drop(job);
+        let completion = wait_for_owned(&mut child, runtime_seconds)?;
+        drop(child);
         let stdout = stdout
             .join()
             .map_err(|_| "stdout capture panicked".to_owned())??;
@@ -643,81 +624,31 @@ mod windows {
         })
     }
 
-    struct Job(HANDLE);
-
-    impl Job {
-        fn assign(child: &Child) -> Result<Self, String> {
-            unsafe {
-                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if handle.is_null() {
-                    return Err(format!(
-                        "cannot create Windows Job Object: {}",
-                        io::Error::last_os_error()
-                    ));
-                }
-                let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-                information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                let configured = SetInformationJobObject(
-                    handle,
-                    JobObjectExtendedLimitInformation,
-                    std::ptr::from_ref(&information).cast(),
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
-                if configured == 0 {
-                    let error = io::Error::last_os_error();
-                    CloseHandle(handle);
-                    return Err(format!("cannot bound Windows Job Object: {error}"));
-                }
-                let process = child.as_raw_handle() as HANDLE;
-                if AssignProcessToJobObject(handle, process) == 0 {
-                    let error = io::Error::last_os_error();
-                    CloseHandle(handle);
-                    return Err(format!(
-                        "cannot assign process tree to Windows Job Object: {error}"
-                    ));
-                }
-                Ok(Self(handle))
+    fn wait_for_owned(child: &mut sill::OwnedChild, seconds: u32) -> Result<Completion, String> {
+        let milliseconds = seconds.saturating_mul(1_000);
+        let waited = unsafe { WaitForSingleObject(child.as_raw_handle() as HANDLE, milliseconds) };
+        match waited {
+            WAIT_OBJECT_0 => {
+                let status = child
+                    .wait()
+                    .map_err(|error| format!("cannot reap hosted command: {error}"))?;
+                Ok(Completion::Exited {
+                    code: status.code().unwrap_or(-1),
+                })
             }
-        }
-
-        fn wait(&self, child: &mut Child, seconds: u32) -> Result<Completion, String> {
-            let milliseconds = seconds.saturating_mul(1_000);
-            let waited =
-                unsafe { WaitForSingleObject(child.as_raw_handle() as HANDLE, milliseconds) };
-            match waited {
-                WAIT_OBJECT_0 => {
-                    let status = child
-                        .wait()
-                        .map_err(|error| format!("cannot reap hosted command: {error}"))?;
-                    Ok(Completion::Exited {
-                        code: status.code().unwrap_or(-1),
-                    })
-                }
-                WAIT_TIMEOUT => {
-                    if unsafe { TerminateJobObject(self.0, 70) } == 0 {
-                        return Err(format!(
-                            "cannot terminate timed-out process tree: {}",
-                            io::Error::last_os_error()
-                        ));
-                    }
-                    let _status = child
-                        .wait()
-                        .map_err(|error| format!("cannot reap timed-out command: {error}"))?;
-                    Ok(Completion::TimedOut)
-                }
-                other => Err(format!(
-                    "Windows process wait returned {other}: {}",
-                    io::Error::last_os_error()
-                )),
+            WAIT_TIMEOUT => {
+                child
+                    .terminate_tree()
+                    .map_err(|error| format!("cannot terminate timed-out process tree: {error}"))?;
+                let _status = child
+                    .wait()
+                    .map_err(|error| format!("cannot reap timed-out command: {error}"))?;
+                Ok(Completion::TimedOut)
             }
-        }
-    }
-
-    impl Drop for Job {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0);
-            }
+            other => Err(format!(
+                "Windows process wait returned {other}: {}",
+                io::Error::last_os_error()
+            )),
         }
     }
 

@@ -246,6 +246,11 @@ impl OwnedChild {
             .expect("an owned child yields its process exactly once");
         (child, Arc::clone(&self.job))
     }
+
+    /// Terminate every process owned by this child's kill-on-close Job Object.
+    pub fn terminate_tree(&self) -> io::Result<()> {
+        self.job.terminate()
+    }
 }
 
 impl Deref for OwnedChild {
