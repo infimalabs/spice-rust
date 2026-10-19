@@ -231,13 +231,17 @@ Dependency graphs, detail standings, counts, operator attention, and tab marks
 consume that same partition. **Blocked** means no path reaches work an agent
 can advance: missing authority or prerequisites, cycles, and walls at closed,
 parked, deferred, or environment-held work require a human act.
-Ordinary dependency chains that still reach active, ready, review, awaiting-decision,
-or other neutral work are **Waiting** and carry no danger mark. An open Design,
-active or passive and in any pass cycle, is such a wait for its outputs and the
-work behind them; only the Design itself, while awaiting a decision, needs the
-operator. A lapsed claim remains **Stale** and a passive Design remains
-**Passive** on its own row, but each is transparent to this walk: its underlying
-gate decides whether dependents are Waiting or Blocked. A tab marks only when
+Ordinary dependency chains that still reach active, ready, review,
+awaiting-decision, or other neutral work are **Waiting** and carry no danger
+mark. An open Design, active or passive and in any pass cycle, is such a wait
+for its outputs and the work behind them only when its own dependency path has
+no true wall. A Design cycle never hides a wall beneath it: that wall makes
+every dependent Blocked. The Design's own row remains **Awaiting decision**
+when that action is available, is Blocked in another active cycle, or remains
+**Passive** outside the partition. A lapsed claim is likewise **Stale** on its
+own row. Stale, Passive, and Awaiting-decision rows are transparent to the
+dependency walk, so their underlying gates decide whether dependents are
+Waiting or Blocked. A tab marks only when
 its own partition holds work only the operator can move now: human-actionable
 blocked work, environment-held work, or an unclaimed, undeferred Design
 awaiting the operator's decision on its candidate, which marks only a Design

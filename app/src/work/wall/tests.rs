@@ -108,27 +108,37 @@ fn only_chains_agents_cannot_move_are_walls() {
 }
 
 #[test]
-fn a_passive_design_is_no_wall_and_exposes_the_wall_beneath_it() {
+fn design_standings_expose_the_true_wall_beneath_them() {
     let gathering = design(1, "wall.design");
     let mut output = task(2, "wall.design");
     output.statement.body.dependencies = vec![stamp(1)];
     let mut deferred = task(3, "wall.design");
     deferred.workflow.body.deferral = Some("2026-09-24T06:00:00.000Z".parse().expect("deferral"));
-    let mut walled_design = design(4, "wall.design");
-    walled_design.statement.body.dependencies = vec![stamp(3)];
-    let mut behind_walled = task(5, "wall.design");
-    behind_walled.statement.body.dependencies = vec![stamp(4)];
+    let mut passive_walled_design = design(4, "wall.design");
+    passive_walled_design.statement.body.dependencies = vec![stamp(3)];
+    let mut behind_passive = task(5, "wall.design");
+    behind_passive.statement.body.dependencies = vec![stamp(4)];
+    let mut selecting_walled_design = design(6, "wall.design");
+    selecting_walled_design.statement.body.dependencies = vec![stamp(3)];
+    let mut behind_selection = task(7, "wall.design");
+    behind_selection.statement.body.dependencies = vec![stamp(6)];
     let mut board = board(vec![
         gathering,
         output,
         deferred,
-        walled_design,
-        behind_walled,
+        passive_walled_design,
+        behind_passive,
+        selecting_walled_design,
+        behind_selection,
     ]);
     board.workflow_waiting.insert(stamp(2));
-    board.blocked.insert(stamp(5));
+    board.blocked.extend([stamp(5), stamp(7)]);
+    board
+        .design_cycles
+        .insert(stamp(6), wire::rooms::DesignCycle::AwaitingDecision);
     let work = WorkProjection::from_board(&board);
     assert_eq!(work.tasks()[0].availability(), WorkAvailability::Passive);
+    assert_eq!(work.tasks()[5].availability(), WorkAvailability::Selection);
     let mut walls = DependencyWalls::new(&work);
 
     assert_eq!(
@@ -136,9 +146,11 @@ fn a_passive_design_is_no_wall_and_exposes_the_wall_beneath_it() {
         None,
         "a passive Design gathering input needs no human act from its output"
     );
-    assert_eq!(
-        walls.wall(4, &work.tasks()[4].dependencies()[0]),
-        Some((2, DependencyWall::Deferred(&stamp(3)))),
-        "the wall beneath a passive Design is named, not the Design"
-    );
+    for dependent in [4, 6] {
+        assert_eq!(
+            walls.wall(dependent, &work.tasks()[dependent].dependencies()[0]),
+            Some((2, DependencyWall::Deferred(&stamp(3)))),
+            "the wall beneath a Design is named, not the Design standing"
+        );
+    }
 }

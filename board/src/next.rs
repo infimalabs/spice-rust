@@ -172,7 +172,9 @@ pub enum WorkWait {
 /// wait while every unresolved edge reaches active, ready, review, selection,
 /// an open Design in any pass cycle, or another normal wait. Missing authority,
 /// missing prerequisites, cycles, and distinct parked states terminate the
-/// chain as human-actionable blocked work.
+/// chain as human-actionable blocked work. A Design cycle never masks such a
+/// terminating wall beneath it. Awaiting decision retains selection on the
+/// Design's own row while the wall blocks its dependents.
 /// A lapsed claim and a passive Design are transparent while walking a
 /// dependency path: their own stale or passive standing stays outside this
 /// partition, while the underlying gate decides whether a dependent waits
@@ -215,7 +217,7 @@ pub fn work_waits_resolved<'a>(
             let wait = match state {
                 Progress::Neutral => WorkWait::Workflow,
                 Progress::Blocked => WorkWait::Blocked,
-                Progress::Selection => WorkWait::Selection,
+                Progress::Selection | Progress::SelectionOverBlocked => WorkWait::Selection,
                 Progress::Unknown | Progress::Visiting | Progress::Moving | Progress::Distinct => {
                     return None;
                 }
@@ -246,6 +248,7 @@ enum Progress {
     Neutral,
     Blocked,
     Selection,
+    SelectionOverBlocked,
     Distinct,
 }
 
@@ -284,42 +287,36 @@ fn progress(
         states[task] = Progress::Distinct;
         return Progress::Distinct;
     }
-    match design_cycle(entry, resolved) {
-        Some(DesignCycle::AwaitingDecision) => {
-            states[task] = Progress::Selection;
-            return Progress::Selection;
+    let cycle = design_cycle(entry, resolved);
+    let dependencies_satisfied = dependencies_satisfied(entry, resolved);
+    let blocked_below = !dependencies_satisfied
+        && entry
+            .statement()
+            .dependencies
+            .iter()
+            .filter(|dependency| !resolved.settled(dependency))
+            .any(|dependency| {
+                let Some(dependency) = index.get(dependency).copied() else {
+                    return true;
+                };
+                !matches!(
+                    progress(dependency, entries, index, resolved, environment, states),
+                    Progress::Moving | Progress::Neutral | Progress::Selection
+                )
+            });
+    let state = match cycle {
+        Some(DesignCycle::AwaitingDecision) if blocked_below => Progress::SelectionOverBlocked,
+        Some(DesignCycle::AwaitingDecision) => Progress::Selection,
+        Some(DesignCycle::GatheringInput | DesignCycle::WaitingOnSelectedWork) if blocked_below => {
+            Progress::Blocked
         }
-        Some(DesignCycle::GatheringInput | DesignCycle::WaitingOnSelectedWork) => {
-            states[task] = Progress::Neutral;
-            return Progress::Neutral;
-        }
-        Some(DesignCycle::ReadyForProposal) | None => {}
-    }
-    if dependencies_satisfied(entry, resolved) {
-        states[task] = Progress::Moving;
-        return Progress::Moving;
-    }
-
-    let unresolved_dependencies = entry
-        .statement()
-        .dependencies
-        .iter()
-        .filter(|dependency| !resolved.settled(dependency));
-    for dependency in unresolved_dependencies {
-        let Some(dependency) = index.get(dependency).copied() else {
-            states[task] = Progress::Blocked;
-            return Progress::Blocked;
-        };
-        if !matches!(
-            progress(dependency, entries, index, resolved, environment, states),
-            Progress::Moving | Progress::Neutral | Progress::Selection
-        ) {
-            states[task] = Progress::Blocked;
-            return Progress::Blocked;
-        }
-    }
-    states[task] = Progress::Neutral;
-    Progress::Neutral
+        Some(DesignCycle::GatheringInput | DesignCycle::WaitingOnSelectedWork) => Progress::Neutral,
+        Some(DesignCycle::ReadyForProposal) | None if dependencies_satisfied => Progress::Moving,
+        Some(DesignCycle::ReadyForProposal) | None if blocked_below => Progress::Blocked,
+        Some(DesignCycle::ReadyForProposal) | None => Progress::Neutral,
+    };
+    states[task] = state;
+    state
 }
 
 /// Deterministic answer from the board's sole allocation query.

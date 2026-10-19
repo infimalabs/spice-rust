@@ -32,6 +32,104 @@ fn cycle_of(entries: &[Entry]) -> Option<wire::rooms::DesignCycle> {
     board::design_cycle(&entries[0], &board::resolved_tasks(entries))
 }
 
+fn design_with_dependencies(
+    name: &str,
+    active: bool,
+    cycle: DesignCycleFacts,
+    dependencies: Vec<TaskStamp>,
+) -> Entry {
+    let mut head = statement(name);
+    head.intent = Some(wire::TaskIntent::Design);
+    head.dependencies = dependencies;
+    admitted(
+        head,
+        WorkflowHead {
+            flow: vec![phase("design")],
+            ..workflow("design")
+        },
+        None,
+        None,
+    )
+    .expect("Design heads")
+    .with_grouped(true)
+    .with_design(DesignFacts { active, cycle })
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DesignWall {
+    Deferred,
+    Missing,
+}
+
+fn design_cycle_cases() -> [(wire::rooms::DesignCycle, DesignCycleFacts, Vec<Entry>); 4] {
+    [
+        (
+            wire::rooms::DesignCycle::GatheringInput,
+            DesignCycleFacts::default(),
+            Vec::new(),
+        ),
+        (
+            wire::rooms::DesignCycle::ReadyForProposal,
+            DesignCycleFacts {
+                steeped: true,
+                ..DesignCycleFacts::default()
+            },
+            Vec::new(),
+        ),
+        (
+            wire::rooms::DesignCycle::AwaitingDecision,
+            DesignCycleFacts {
+                proposal: Some(seq(12)),
+                ..passed()
+            },
+            Vec::new(),
+        ),
+        (
+            wire::rooms::DesignCycle::WaitingOnSelectedWork,
+            passed(),
+            vec![selected("WAIT-selected", workflow("todo"))],
+        ),
+    ]
+}
+
+fn design_wall_entries(
+    active: bool,
+    facts: DesignCycleFacts,
+    mut extra: Vec<Entry>,
+    wall: Option<DesignWall>,
+) -> Vec<Entry> {
+    let dependencies = wall
+        .map(|wall| match wall {
+            DesignWall::Deferred => stamp("WAIT-deferred"),
+            DesignWall::Missing => stamp("WAIT-missing"),
+        })
+        .into_iter()
+        .collect();
+    let mut downstream = statement("WAIT-downstream");
+    downstream.dependencies = vec![stamp("WAIT-output")];
+    let mut entries = vec![
+        design_with_dependencies("WAIT-design", active, facts, dependencies),
+        named_output("WAIT-output", "WAIT-design", "WAIT-design"),
+        admitted(downstream, workflow("todo"), None, None).expect("downstream"),
+    ];
+    if matches!(wall, Some(DesignWall::Deferred)) {
+        entries.push(
+            admitted(
+                statement("WAIT-deferred"),
+                WorkflowHead {
+                    deferral: Some(instant("2026-09-01T00:00:00.000Z")),
+                    ..workflow("todo")
+                },
+                None,
+                None,
+            )
+            .expect("deferred prerequisite"),
+        );
+    }
+    entries.append(&mut extra);
+    entries
+}
+
 #[test]
 fn a_first_pass_waits_for_steeped_maturity_or_a_nudge() {
     let fresh = [design_with(
@@ -338,6 +436,66 @@ fn decided_rejections_end_selection_wait_without_releasing_outputs() {
         Some(board::WorkWait::Workflow),
         "a clean acceptance waits on the work it released"
     );
+}
+
+#[test]
+fn a_design_cycle_never_masks_a_true_wall_beneath_it() {
+    for active in [false, true] {
+        for (cycle, facts, extra) in design_cycle_cases() {
+            let entries = design_wall_entries(active, facts, extra, None);
+            assert_eq!(cycle_of(&entries), Some(cycle));
+            let design_wait = if !active {
+                None
+            } else {
+                match cycle {
+                    wire::rooms::DesignCycle::GatheringInput
+                    | wire::rooms::DesignCycle::WaitingOnSelectedWork => {
+                        Some(board::WorkWait::Workflow)
+                    }
+                    wire::rooms::DesignCycle::AwaitingDecision => Some(board::WorkWait::Selection),
+                    wire::rooms::DesignCycle::ReadyForProposal => None,
+                }
+            };
+            assert_eq!(
+                wait_of(&entries, "WAIT-design"),
+                design_wait,
+                "{active:?} {cycle:?}: Design with no wall"
+            );
+            for name in ["WAIT-output", "WAIT-downstream"] {
+                assert_eq!(
+                    wait_of(&entries, name),
+                    Some(board::WorkWait::Workflow),
+                    "{active:?} {cycle:?}: {name} with no wall"
+                );
+            }
+        }
+
+        for wall in [DesignWall::Deferred, DesignWall::Missing] {
+            for (cycle, facts, extra) in design_cycle_cases() {
+                let entries = design_wall_entries(active, facts, extra, Some(wall));
+                assert_eq!(cycle_of(&entries), Some(cycle));
+                let design_wait = if !active {
+                    None
+                } else if cycle == wire::rooms::DesignCycle::AwaitingDecision {
+                    Some(board::WorkWait::Selection)
+                } else {
+                    Some(board::WorkWait::Blocked)
+                };
+                assert_eq!(
+                    wait_of(&entries, "WAIT-design"),
+                    design_wait,
+                    "{active:?} {cycle:?}: Design above {wall:?} wall"
+                );
+                for name in ["WAIT-output", "WAIT-downstream"] {
+                    assert_eq!(
+                        wait_of(&entries, name),
+                        Some(board::WorkWait::Blocked),
+                        "{active:?} {cycle:?}: {name} above {wall:?} wall"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]
