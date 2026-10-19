@@ -417,9 +417,9 @@ A quote whose sole recipient is the lane already named around it leaves that
 receiver implied. Around a quote means the prose card that lane spoke, or the
 quote card it spoke for a nested quote. The signoff then shows only the age and
 sender. The arrow and receiver stay in its accessible name, and its hover title
-names the receiver. Several recipients, another lane, or a context with no
-speaker, such as a direction card in the team plane, keep the arrow and
-receivers visible.
+names both ends, speaker → receiver. Several recipients, another lane, or a
+context with no speaker, such as a direction card in the team plane, keep the
+arrow and receivers visible.
 
 A directive that an MSG, ASK, or ANS delivered, quoted as the context an
 acknowledgment answers, shows the packet body without its header. ASK and ANS

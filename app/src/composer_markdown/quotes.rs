@@ -194,7 +194,8 @@ const fn author_lane(author: &QuoteAuthor) -> Option<wire::CanonicalUuid> {
 /// appears: source age, author name, then every recipient its record proves.
 /// Where `speaker`, the lane the surrounding signoff names, is the sole
 /// recipient, the arrow and receiver are left to that context: they stay in
-/// the accessible name and the hover title but take no visible space.
+/// the accessible name, and the hover title names both ends, but they take no
+/// visible space.
 pub(super) fn signoff_html(
     attribution: &QuoteAttribution,
     target: &str,
@@ -206,14 +207,19 @@ pub(super) fn signoff_html(
         return String::new();
     };
     let age = quote_age_slot_html(&attribution.author, agents, source);
-    let name = quote_author_name_html(&attribution.author, agents, source);
+    let (name, author) = quote_author_name_html(&attribution.author, agents, source);
     let mut destination = String::new();
     for recipient in &attribution.recipients {
         push_recipient_separator(&mut destination);
         destination.push_str(&recipient_html(recipient, agents));
     }
-    let implied = speaker.and_then(|lane| implied_recipient(attribution, lane, agents));
-    packet_signoff_html(&age, &name, &destination, "incoming", implied)
+    let implied = speaker
+        .and_then(|lane| implied_recipient(attribution, lane, agents))
+        .map(|receiver| match author {
+            Some(author) => format!("{author} → {receiver}"),
+            None => format!("→ {receiver}"),
+        });
+    packet_signoff_html(&age, &name, &destination, "incoming", implied.as_deref())
 }
 
 /// The sole recipient's name when it is `lane` under the name that lane's
@@ -257,9 +263,9 @@ pub(super) fn recipient_accent(
     }
 }
 
-/// A signoff whose `implied` receiver is already named around it keeps the
-/// arrow and recipients for assistive technology and names the receiver in
-/// its hover title, but shows only the age and sender.
+/// A signoff whose receiver is already named around it keeps the arrow and
+/// recipients for assistive technology, shows only the age and sender, and
+/// carries the full direction, `implied`, as its hover title.
 fn packet_signoff_html(
     age: &str,
     sender: &str,
@@ -274,7 +280,7 @@ fn packet_signoff_html(
         "<span class=\"message-quote-direction\" role=\"img\" aria-label=\"sent to\">→</span>\
          <span class=\"message-quote-recipients\">{recipients}</span>"
     );
-    let Some(receiver) = implied else {
+    let Some(implied) = implied else {
         return format!(
             "<span class=\"message-quote-signoff\" data-quote-direction=\"{direction}\">\
              {age}{sender}{destination}</span>"
@@ -282,9 +288,9 @@ fn packet_signoff_html(
     };
     format!(
         "<span class=\"message-quote-signoff\" data-quote-direction=\"{direction}\" \
-         data-quote-receiver=\"implied\" title=\"Sent to {}\">{age}{sender}\
+         data-quote-receiver=\"implied\" title=\"{}\">{age}{sender}\
          <span class=\"visually-hidden\">{destination}</span></span>",
-        super::escape_html_attribute(receiver)
+        super::escape_html_attribute(implied)
     )
 }
 
@@ -725,24 +731,27 @@ fn render(
     }
 }
 
-fn quote_author_name_html(
+/// The author's name element, and the plain name assistive technology hears
+/// for it; a human principal with no recorded initials has neither.
+fn quote_author_name_html<'a>(
     author: &QuoteAuthor,
-    agents: &super::QuoteAgents,
-    source: &super::QuoteSource,
-) -> String {
+    agents: &'a super::QuoteAgents,
+    source: &'a super::QuoteSource,
+) -> (String, Option<Cow<'a, str>>) {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
             let (agent, state) = agent_author(agents, source, *lane, *occupant)
                 .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
             let label = agent.map_or(UNAVAILABLE, |agent| agent.label.as_str());
-            quote_name_html(
+            let html = quote_name_html(
                 label,
                 &format!(
                     " data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
                      data-quote-author-state=\"{state}\""
                 ),
                 author_accent(author, agents, source),
-            )
+            );
+            (html, Some(Cow::Borrowed(label)))
         }
         // A human directive names its author by the initials of the
         // principal profile it was authored as, and by nothing before that
@@ -755,7 +764,7 @@ fn quote_author_name_html(
             .and_then(|identity| {
                 let initials = identity.initials.as_deref()?;
                 let name = identity.name.as_deref().unwrap_or(initials);
-                Some(quote_name_html(
+                let html = quote_name_html(
                     initials,
                     &format!(
                         " data-quote-author=\"directive\" data-quote-actor=\"human\" \
@@ -763,15 +772,19 @@ fn quote_author_name_html(
                         super::escape_html_attribute(name),
                     ),
                     None,
-                ))
+                );
+                Some((html, Some(Cow::Borrowed(name))))
             })
             .unwrap_or_default(),
         QuoteAuthor::Directive {
             actor: wire::Actor::Spice,
-        } => quote_name_html(
-            "🌶️",
-            " data-quote-author=\"directive\" data-quote-actor=\"spice\" aria-label=\"Spice\"",
-            None,
+        } => (
+            quote_name_html(
+                "🌶️",
+                " data-quote-author=\"directive\" data-quote-actor=\"spice\" aria-label=\"Spice\"",
+                None,
+            ),
+            Some(Cow::Borrowed("Spice")),
         ),
         QuoteAuthor::Directive {
             actor: wire::Actor::Lane(lane),
@@ -789,14 +802,15 @@ fn quote_author_name_html(
                 },
                 |agent| (Cow::Borrowed(agent.label.as_str()), "current"),
             );
-            quote_name_html(
+            let html = quote_name_html(
                 &label,
                 &format!(
                     " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
                      data-quote-author-state=\"{state}\""
                 ),
                 author_accent(author, agents, source),
-            )
+            );
+            (html, Some(label))
         }
     }
 }

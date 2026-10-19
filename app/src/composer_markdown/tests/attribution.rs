@@ -339,7 +339,8 @@ fn a_quoted_direct_direction_names_the_same_two_ends_as_its_card() {
 /// The direction both implied-receiver tests quote.
 const IMPLIED_BODY: &str = "> Cover the design controller.";
 
-/// Hiro's lane and seat, another lane, and a roster naming both.
+/// Hiro's lane and seat, another lane, and a roster naming both and an
+/// operator principal whose name needs attribute escaping.
 fn implied_roster() -> ([wire::CanonicalUuid; 3], QuoteAgents) {
     let id = |suffix: &str| -> wire::CanonicalUuid {
         format!("018f82d4-6f59-7d06-92e3-bce9131169{suffix}")
@@ -351,12 +352,22 @@ fn implied_roster() -> ([wire::CanonicalUuid; 3], QuoteAgents) {
         accent,
         label: label.to_owned(),
     };
-    let roster = QuoteAgents::from_iter([
+    let mut roster = QuoteAgents::from_iter([
         ((hiro, Some(hiro_seat)), agent(1, "Hiro")),
         ((other, Some(id("1b"))), agent(2, "Other")),
     ]);
+    roster.principals = serde_json::from_value(serde_json::json!([{
+        "principal": id("f1"),
+        "code": "6wB",
+        "identity": {"name": "C \"Ace\" & Co", "initials": "CA"},
+    }]))
+    .expect("fixture principal directory decodes");
     ([hiro, hiro_seat, other], roster)
 }
+
+/// The hover title an implied-receiver signoff from the fixture operator to
+/// Hiro wears: both ends, escaped.
+const IMPLIED_TITLE: &str = "title=\"C &quot;Ace&quot; &amp; Co → Hiro\"";
 
 /// The operator's direction to `recipients`, as a card quotes it.
 fn direction_to(recipients: &[wire::CanonicalUuid]) -> MessageDirective {
@@ -414,8 +425,8 @@ fn a_quote_to_the_card_speaker_leaves_its_receiver_implied() {
 
     let implied = render(&[hiro], hiro);
     let (_, hidden) = implied
-        .split_once("data-quote-receiver=\"implied\" title=\"Sent to Hiro\"")
-        .expect("the implied receiver names itself in the hover title");
+        .split_once(&format!("data-quote-receiver=\"implied\" {IMPLIED_TITLE}"))
+        .expect("the implied signoff's hover title names its speaker and receiver");
     let (_, hidden) = hidden
         .split_once("<span class=\"visually-hidden\"><span class=\"message-quote-direction\"")
         .expect("the arrow stays for assistive technology only");
@@ -424,6 +435,7 @@ fn a_quote_to_the_card_speaker_leaves_its_receiver_implied() {
         let shown = render(recipients, speaker);
         assert!(!shown.contains("data-quote-receiver"), "{shown}");
         assert!(!shown.contains("visually-hidden"), "{shown}");
+        assert!(!shown.contains(" → Hiro\""), "{shown}");
         assert!(shown.contains(">Hiro</span>"), "{shown}");
     }
 }
@@ -489,7 +501,7 @@ fn a_quote_nested_in_its_receivers_quote_leaves_that_receiver_implied() {
         .find("data-quote-direction=\"incoming\">")
         .unwrap_or_else(|| panic!("the top-level quote names its receiver: {html}"));
     let implied = html
-        .find("data-quote-receiver=\"implied\"")
+        .find(&format!("data-quote-receiver=\"implied\" {IMPLIED_TITLE}"))
         .unwrap_or_else(|| panic!("the nested quote leaves its receiver implied: {html}"));
     assert!(visible < implied, "{html}");
     assert_eq!(html.matches("data-quote-receiver").count(), 1, "{html}");
