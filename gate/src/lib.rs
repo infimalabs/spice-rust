@@ -241,4 +241,5 @@ pub use workspace_tests::{
     run_at as run_workspace_tests_at, run_cargo_gate_shard_at, run_prebuilt_shared_at,
     run_selected_at as run_selected_workspace_tests_at,
     run_selected_with_budget_at as run_selected_workspace_tests_with_budget_at,
+    windows_typechecks_declared_at,
 };
