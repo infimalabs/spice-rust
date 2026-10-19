@@ -370,10 +370,7 @@ fn windows_typecheck_shards(
     source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<Vec<CargoGateShard>, WorkspaceTestError> {
-    if !selected_paths
-        .iter()
-        .any(|path| path == WINDOWS_TOOLCHAIN_PIN)
-    {
+    if !root.join(WINDOWS_TOOLCHAIN_PIN).is_file() {
         return Ok(Vec::new());
     }
     WINDOWS_TYPECHECKS
@@ -1025,7 +1022,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_pin_adds_complete_appliance_cross_checks() {
+    fn rust_reach_adds_complete_appliance_cross_checks() {
         let fixture = crate::test_repository::Fixture::repository("cargo-windows-typecheck");
         fixture.write(
             "Cargo.toml",
@@ -1077,14 +1074,11 @@ mod tests {
             .filter(|path| path.as_str() != WINDOWS_TOOLCHAIN_PIN)
             .cloned()
             .collect::<Vec<_>>();
-        assert!(
-            plan(&without_pin)
-                .expect("plan ordinary workspace")
-                .is_empty()
-        );
-
-        let shards = plan(&selected_paths).expect("plan Windows cross-target checks");
+        let shards = plan(&without_pin).expect("plan ordinary Rust cross-target checks");
         assert_windows_typecheck_contract(&shards);
+
+        let pin_shards = plan(&selected_paths).expect("plan Windows pin cross-target checks");
+        assert_eq!(pin_shards, shards);
     }
 
     #[test]
