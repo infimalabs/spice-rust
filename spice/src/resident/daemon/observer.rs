@@ -76,7 +76,7 @@ mod windows;
 #[cfg(windows)]
 pub(crate) use windows::DirectObserver;
 #[cfg(windows)]
-use windows::ProcessExitObserver;
+pub(crate) use windows::ProcessExitObserver;
 #[cfg(windows)]
 pub(crate) use windows::process_running;
 
@@ -268,15 +268,34 @@ fn wait_macos_event(descriptor: libc::c_int) -> io::Result<()> {
     }
 }
 
+/// One process's exit, armed while the process can still be named.
 #[cfg(unix)]
-enum ProcessExitObserver {
+pub(crate) enum ProcessExitObserver {
     Watching(libc::c_int),
     Ended,
 }
 
 #[cfg(unix)]
 impl ProcessExitObserver {
-    fn or_ended(pid: u32) -> io::Result<Self> {
+    /// This process's parent, or `Ended` once this process has been
+    /// reparented by the time the parent's exit is armed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel's refusal to arm the observer, or the parent this
+    /// process was already orphaned to.
+    pub(crate) fn parent() -> io::Result<Self> {
+        let parent = current_parent()?;
+        let observer = Self::or_ended(parent)?;
+        // A parent that ended before the observer was armed may already
+        // have handed this process to another, whose id then differs.
+        if current_parent()? != parent {
+            return Ok(Self::Ended);
+        }
+        Ok(observer)
+    }
+
+    pub(crate) fn or_ended(pid: u32) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         {
             // SAFETY: pidfd_open observes the named process without changing it.
@@ -302,7 +321,7 @@ impl ProcessExitObserver {
         ))
     }
 
-    fn wait(self) -> io::Result<()> {
+    pub(crate) fn wait(self) -> io::Result<()> {
         let Self::Watching(descriptor) = &self else {
             return Ok(());
         };
@@ -340,6 +359,16 @@ impl Drop for ProcessExitObserver {
             unsafe { libc::close(*descriptor) };
         }
     }
+}
+
+#[cfg(unix)]
+fn current_parent() -> io::Result<u32> {
+    // SAFETY: getppid has no preconditions and observes this process only.
+    let parent = unsafe { libc::getppid() };
+    u32::try_from(parent)
+        .ok()
+        .filter(|parent| *parent > 1)
+        .ok_or_else(|| io::Error::other(format!("parent process is unavailable: {parent}")))
 }
 
 #[cfg(target_os = "macos")]

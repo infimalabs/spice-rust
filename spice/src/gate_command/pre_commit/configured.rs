@@ -1116,8 +1116,7 @@ fn classify_wait(waited: &WaitOutcome) -> Vec<StepFinding> {
             ),
         )),
         Completion::Exited(status) if !status.success() => {
-            use std::os::unix::process::ExitStatusExt as _;
-            let (kind, completion) = status.signal().map_or_else(
+            let (kind, completion) = ended_by_signal(status).map_or_else(
                 || (StepFindingKind::Exit, format!("code={:?}", status.code())),
                 |signal| (StepFindingKind::Signal, format!("signal={signal}")),
             );
@@ -1136,11 +1135,25 @@ fn classify_wait(waited: &WaitOutcome) -> Vec<StepFinding> {
 }
 
 fn status_text(status: &std::process::ExitStatus) -> String {
-    use std::os::unix::process::ExitStatusExt as _;
-    status.signal().map_or_else(
+    ended_by_signal(status).map_or_else(
         || format!("code={:?}", status.code()),
         |signal| format!("signal={signal}"),
     )
+}
+
+/// The signal that ended `status`. Only Unix ends processes by signal; a
+/// Windows process always leaves an exit code, even when it was killed.
+fn ended_by_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        status.signal()
+    }
+    #[cfg(windows)]
+    {
+        let _ = status;
+        None
+    }
 }
 
 fn captured(output: Option<&sill::CapturedOutput>) -> String {

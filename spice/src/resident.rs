@@ -203,6 +203,7 @@ mod capture;
 mod command_surface;
 mod consent_surface;
 mod daemon;
+pub(crate) use daemon::observer::ProcessExitObserver;
 pub(crate) mod design_awareness;
 mod design_input;
 mod lane_recovery;
