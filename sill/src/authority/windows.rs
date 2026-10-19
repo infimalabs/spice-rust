@@ -318,26 +318,21 @@ pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
     Ok(directory)
 }
 
-pub(super) fn create_private_entry(
-    _directory: &File,
-    path: &Path,
-    name: &OsStr,
-) -> io::Result<File> {
-    let entry = path.join(name);
+pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
     let created = OpenOptions::new()
         .write(true)
         .create_new(true)
         .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(&entry);
+        .open(path);
     let file = match created {
         Ok(file) => file,
         // An existing directory or directory link refuses `CREATE_NEW` as
         // access denied rather than as a collision.
         Err(error)
             if error.kind() == io::ErrorKind::PermissionDenied
-                && fs::symlink_metadata(&entry).is_ok() =>
+                && fs::symlink_metadata(path).is_ok() =>
         {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, error));
         }
@@ -345,6 +340,14 @@ pub(super) fn create_private_entry(
     };
     protect(&file, 0o600)?;
     Ok(file)
+}
+
+pub(super) fn create_private_entry(
+    _directory: &File,
+    path: &Path,
+    name: &OsStr,
+) -> io::Result<File> {
+    create_private_file(&path.join(name))
 }
 
 pub(super) fn open_entry(

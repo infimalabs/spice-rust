@@ -348,11 +348,13 @@ spice dev xtask -- windows-guest start
 
 # Filesystem and Cargo isolation (PLATFOR-dWJhTHGms)
 spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --lib
-spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill --lib
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill -p atomic -p serve --lib
 spice dev cargo -- build --locked --target x86_64-pc-windows-msvc -p spice
-spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/spice.exe
-spice dev xtask -- windows-guest run -- bin/spice-HASH.exe config:: cargo_isolation
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/atomic-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/serve-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/spice.exe
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe config:: cargo_isolation agent_wrapper
 spice dev xtask -- windows-guest run -- bin/sill-HASH.exe authority lock
+spice dev xtask -- windows-guest run -- bin/atomic-HASH.exe
+spice dev xtask -- windows-guest run -- bin/serve-HASH.exe discovery
 
 # Job Object process ownership (PLATFOR-dWJhVJ7Sd)
 spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill

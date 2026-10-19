@@ -28,6 +28,16 @@ pub(super) fn create_private_directory(path: &Path) -> io::Result<()> {
     DirBuilder::new().mode(0o700).create(path)
 }
 
+pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(PRIVATE_FILE)
+        .custom_flags(libc::O_CLOEXEC)
+        .open(path)
+}
+
 pub(super) fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
     let source = c_path(source)?;
     let destination = c_path(destination)?;

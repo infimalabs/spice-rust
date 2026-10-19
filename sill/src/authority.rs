@@ -70,6 +70,21 @@ pub fn create_private_directory(path: &Path) -> io::Result<()> {
     platform::create_private_directory(path)
 }
 
+/// Create `path` exclusively as an owner-only (`0o600`) file open for reading
+/// and writing.
+///
+/// The file is private from its creation, whatever its parent directory would
+/// otherwise grant, so no byte written to it is ever reachable by another
+/// principal.
+///
+/// # Errors
+///
+/// Returns `AlreadyExists` when `path` names any existing entry, including a
+/// link, or another operating-system refusal creating it.
+pub fn create_private_file(path: &Path) -> io::Result<File> {
+    platform::create_private_file(path)
+}
+
 /// Atomically rename `source` to `destination` unless `destination` exists.
 ///
 /// # Errors

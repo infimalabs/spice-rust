@@ -141,6 +141,9 @@ dependencies = [
 [[package]]
 name = "atomic"
 version = "0.0.0"
+dependencies = [
+ "sill",
+]
 
 [[package]]
 name = "atomic-waker"

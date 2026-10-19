@@ -5,9 +5,9 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
-    Directory, Entry, create_private_directory, directory_link_form, file_identity, is_link_like,
-    link_directory, open_unfollowed, owned_by_current_user, owner_mode, path_identity,
-    read_directory_link, rename_no_replace, set_owner_mode,
+    Directory, Entry, create_private_directory, create_private_file, directory_link_form,
+    file_identity, is_link_like, link_directory, open_unfollowed, owned_by_current_user,
+    owner_mode, path_identity, read_directory_link, rename_no_replace, set_owner_mode,
 };
 
 struct Scratch(PathBuf);
@@ -89,6 +89,30 @@ fn private_directories_are_owner_only_and_never_reused() {
     fs::write(&file, b"").expect("create file");
     let over_file = create_private_directory(&file).expect_err("name exists");
     assert_eq!(over_file.kind(), io::ErrorKind::AlreadyExists);
+}
+
+#[test]
+fn private_files_are_owner_only_from_creation_and_never_reuse_an_entry() {
+    let scratch = Scratch::new("private-file");
+    fs::create_dir(scratch.path("outside")).expect("create outside");
+    link_directory(&scratch.path("outside"), &scratch.path("link")).expect("create link");
+    let path = scratch.path("file");
+
+    let mut created = create_private_file(&path).expect("create private file");
+    assert_eq!(owner_mode(&path).expect("created mode"), 0o600);
+    io::Write::write_all(&mut created, b"secret").expect("write private file");
+    drop(created);
+    for existing in [&path, &scratch.path("link")] {
+        let refused = create_private_file(existing).expect_err("existing entry refused");
+        assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{existing:?}");
+    }
+    assert_eq!(fs::read(&path).expect("read private file"), b"secret");
+    assert!(
+        fs::read_dir(scratch.path("outside"))
+            .expect("list outside")
+            .next()
+            .is_none()
+    );
 }
 
 #[test]
