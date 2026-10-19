@@ -120,21 +120,22 @@ pub fn windows_hosted_commands_into(
     request.admit().map_err(WindowsHostedError::Admission)?;
 
     let cancellation = Cancellation::install()?;
-    push_source(&root, &commit, &source_ref)?;
-    let operation = if cancellation.requested() {
-        Err(WindowsHostedError::Cancelled { run_id: None })
-    } else {
-        dispatch(
-            &root,
-            scratch.path(),
-            &policy.repository,
-            &source_ref,
-            &commit,
-            &request,
-            destination.as_deref(),
-            &cancellation,
-        )
-    };
+    let operation = push_source(&root, &commit, &source_ref).and_then(|()| {
+        if cancellation.requested() {
+            Err(WindowsHostedError::Cancelled { run_id: None })
+        } else {
+            dispatch(
+                &root,
+                scratch.path(),
+                &policy.repository,
+                &source_ref,
+                &commit,
+                &request,
+                destination.as_deref(),
+                &cancellation,
+            )
+        }
+    });
     let cleanup = delete_source(&root, &source_ref);
     match (operation, cleanup) {
         (Ok(execution), Ok(())) => Ok(execution),
@@ -582,8 +583,7 @@ fn watch_run(
     run_id: u64,
     cancellation: &Cancellation,
 ) -> Result<(), WindowsHostedError> {
-    let mut child = Command::new("gh")
-        .current_dir(root)
+    let mut child = provider_command(root, "gh")
         .args([
             OsString::from("run"),
             OsString::from("watch"),
@@ -601,7 +601,6 @@ fn watch_run(
             source,
         })?;
     loop {
-        let cancel_requested = cancellation.requested();
         let observation = match child
             .try_wait()
             .map_err(|source| WindowsHostedError::Launch {
@@ -614,7 +613,9 @@ fn watch_run(
                 code: status.code(),
             },
         };
-        match watch_action(cancel_requested, observation) {
+        // Read after observing the watcher, so a signal racing its exit still
+        // cancels the run.
+        match watch_action(cancellation.requested(), observation) {
             WatchAction::Wait => thread::sleep(WATCH_POLL),
             WatchAction::Complete => return Ok(()),
             WatchAction::Cancel => {
@@ -789,14 +790,35 @@ fn command<I>(root: &Path, program: &str, arguments: I) -> Result<Output, Window
 where
     I: IntoIterator<Item = OsString>,
 {
-    Command::new(program)
-        .current_dir(root)
+    provider_command(root, program)
         .args(arguments)
         .output()
         .map_err(|source| WindowsHostedError::Launch {
             program: program.to_owned(),
             source,
         })
+}
+
+/// Starts a provider subprocess in its own process group, so a terminal
+/// interrupt reaches only this client, which cancels at its typed
+/// checkpoints. Prompts are disabled because a background group cannot read
+/// the terminal.
+fn provider_command(root: &Path, program: &str) -> Command {
+    let mut command = Command::new(program);
+    command
+        .current_dir(root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ConnectTimeout=5",
+        )
+        .env("GH_PROMPT_DISABLED", "1");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    command
 }
 
 fn command_with_input<I>(
@@ -808,8 +830,7 @@ fn command_with_input<I>(
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut child = Command::new(program)
-        .current_dir(root)
+    let mut child = provider_command(root, program)
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
