@@ -118,8 +118,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $sourceRef = $env:GITHUB_REF_NAME
-          if (-not $sourceRef.StartsWith('spice-hosted-')) {
-            throw "refusing to retire non-hosted source ref $sourceRef"
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or -not $sourceRef.StartsWith('spice-hosted-')) {
+            throw "refusing to retire non-hosted source ref $env:GITHUB_REF"
           }
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"

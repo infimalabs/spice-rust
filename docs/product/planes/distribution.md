@@ -175,8 +175,11 @@ read, and Metadata read for this repository; the workflow's short-lived
 `GITHUB_TOKEN` gets Attestations write for signing and Contents write only so
 its `always` cleanup can retire the exact one-use `spice-hosted-*` tag, plus
 OIDC identity-token write. The client cancels the exact dispatched run on
-`SIGINT` or `SIGTERM`; provider cleanup is the backstop when the client
-disappears before it can act. Tokens, mutable endpoints, and provider account
+`SIGINT` or `SIGTERM`; its non-interactive provider subprocesses run in their
+own process group, so a terminal interrupt reaches only the client, and the
+one-use tag is retired whenever a push was attempted. Provider cleanup accepts
+only that tag and is the backstop when the client disappears before it can
+act. Tokens, mutable endpoints, and provider account
 configuration are never tracked policy. Rotate or revoke GitHub credentials in
 the provider, then run `gh auth logout --hostname github.com`; delete or rotate
 the corresponding SSH key through GitHub and the local keychain.
