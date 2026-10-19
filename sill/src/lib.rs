@@ -41,6 +41,8 @@ pub use spawn::{
     CapturedOutput, Completion, ProcessUsage, Running, WaitError, WaitOutcome, WaitStep, spawn,
     spawn_observed,
 };
+#[cfg(windows)]
+pub use spawn::{OwnedChild, spawn_owned_command};
 #[cfg(unix)]
 pub use spec::CancellationRegistration;
 pub use spec::{

@@ -381,8 +381,8 @@ pub(crate) fn footprint() -> Outcome<cargo_output::Footprint> {
     }
 }
 
-/// Native Cargo over the private home, leading its own process group so a
-/// relayed signal reaches every descendant.
+/// Native Cargo over the private home, using the platform's shared descendant
+/// ownership boundary.
 fn native_command(
     cargo: &Path,
     home: &Path,
@@ -412,6 +412,10 @@ fn native_command(
 
 /// Run the child with inherited streams, as a supervising worker expects.
 fn run_verbatim(command: &mut Command) -> Result<ExitStatus, (Outcome<()>, i32)> {
+    #[cfg(windows)]
+    let mut child = sill::spawn_owned_command(command, sill::ProcessGroup::Inherit)
+        .map_err(|error| launch_rejection(&error))?;
+    #[cfg(not(windows))]
     let mut child = command.spawn().map_err(|error| launch_rejection(&error))?;
     let guard = match relay(&child) {
         Ok(guard) => guard,

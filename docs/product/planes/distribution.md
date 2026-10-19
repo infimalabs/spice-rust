@@ -357,11 +357,13 @@ spice dev xtask -- windows-guest stop
 spice dev xtask -- windows-guest reset
 ```
 
-Each port adds its end-to-end smoke by syncing its built `spice.exe` or
-`sill` consumer next to the tests and running that argv the same way:
-- one prepare/select/cleanup cycle;
-- the descendant, console-interrupt, forced-tree, and reap cycle;
-- the resident start, lane-control round trip, and shutdown.
+Each port uses a throwaway end-to-end consumer beside its in-process tests; the
+consumer is not retained in the permanent suite. The process-ownership consumer
+starts a suspended child, proves `CTRL_BREAK` grace, forces an interrupt-ignoring
+root plus descendant at its runtime bound, cancels a second tree, and independently
+opens each descendant PID after completion to prove the Job reaped it. The other
+port smokes cover one prepare/select/cleanup cycle and the resident start,
+lane-control round trip, and shutdown.
 
 `reset` between ports keeps each run starting from the same clean state.
 

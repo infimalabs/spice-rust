@@ -210,6 +210,13 @@ pub(super) fn run<R>(
         }),
     });
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    let mut child =
+        sill::spawn_owned_command(command, sill::ProcessGroup::Inherit).map_err(|error| {
+            let _ = fs::remove_file(&staged);
+            Stage::Spawn(error)
+        })?;
+    #[cfg(not(windows))]
     let mut child = command.spawn().map_err(|error| {
         let _ = fs::remove_file(&staged);
         Stage::Spawn(error)
