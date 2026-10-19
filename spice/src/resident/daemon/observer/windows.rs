@@ -6,7 +6,8 @@ use std::os::windows::ffi::OsStrExt as _;
 use std::path::Path;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
@@ -103,6 +104,32 @@ impl Drop for ProcessExitObserver {
             // SAFETY: this observer exclusively owns the process handle.
             unsafe { CloseHandle(*process) };
         }
+    }
+}
+
+/// Whether process `pid` is still running. A process this user may not open
+/// belongs to someone, so it counts as running.
+pub(crate) fn process_running(pid: u32) -> io::Result<bool> {
+    // SAFETY: synchronize access only observes the named process.
+    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if process.is_null() {
+        let error = io::Error::last_os_error();
+        return match error.raw_os_error() {
+            // Windows names a process that no longer exists an invalid parameter.
+            Some(code) if code == ERROR_INVALID_PARAMETER as i32 => Ok(false),
+            Some(code) if code == ERROR_ACCESS_DENIED as i32 => Ok(true),
+            _ => Err(error),
+        };
+    }
+    // SAFETY: `process` is the handle opened above; a zero timeout only polls.
+    let waited = unsafe { WaitForSingleObject(process, 0) };
+    let failure = io::Error::last_os_error();
+    // SAFETY: this probe exclusively owns the process handle.
+    unsafe { CloseHandle(process) };
+    match waited {
+        WAIT_TIMEOUT => Ok(true),
+        WAIT_OBJECT_0 => Ok(false),
+        _ => Err(failure),
     }
 }
 

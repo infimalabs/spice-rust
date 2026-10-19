@@ -395,6 +395,11 @@ spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/d
 spice dev xtask -- windows-guest run -- bin/door-HASH.exe
 spice dev xtask -- windows-guest run -- bin/spice-HASH.exe supervisor::
 
+# Supervisor and keeper lifecycle on the Job boundary (PLATFOR-dWRdJ8yG9)
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe
+spice dev xtask -- windows-guest run -- bin/sill-HASH.exe
+
 spice dev xtask -- windows-guest stop
 spice dev xtask -- windows-guest reset
 ```
@@ -403,8 +408,11 @@ Each port uses a throwaway end-to-end consumer beside its in-process tests; the
 consumer is not retained in the permanent suite. The process-ownership consumer
 starts a suspended child, proves `CTRL_BREAK` grace, forces an interrupt-ignoring
 root plus descendant at its runtime bound, cancels a second tree, and independently
-opens each descendant PID after completion to prove the Job reaped it. The other
-port smokes cover one prepare/select/cleanup cycle and the resident start,
+opens each descendant PID after completion to prove the Job reaped it. The
+lifecycle consumer launches a two-process tree in a new group, reaches it only by
+group id to interrupt and then force it, waits for the root's forced status, and
+proves the emptied and an unknown group both refuse as not found. The other port
+smokes cover one prepare/select/cleanup cycle and the resident start,
 lane-control round trip, and shutdown.
 
 `reset` between ports keeps each run starting from the same clean state.

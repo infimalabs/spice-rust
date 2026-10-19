@@ -2,8 +2,8 @@
 //! Long startup and media cases live in child modules to keep this root bounded.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant as Monotonic};
 
 use sill::{ObservationFailure, OutputStream};

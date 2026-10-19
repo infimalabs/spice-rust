@@ -427,17 +427,17 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, worktree: &OsString)
 mod tests {
     use super::*;
 
-    fn image(inode: u64) -> Image {
+    fn image(bytes: u64) -> Image {
         Image {
             #[cfg(unix)]
             device: 1,
             #[cfg(unix)]
-            inode,
+            inode: 1,
             #[cfg(unix)]
             changed_seconds: 1,
             #[cfg(unix)]
             changed_nanoseconds: 0,
-            bytes: 10,
+            bytes,
             modified: None,
         }
     }

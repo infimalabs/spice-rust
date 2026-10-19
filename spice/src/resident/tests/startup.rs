@@ -307,8 +307,8 @@ fn resident_start_survives_an_overlapping_liveness_probe() {
         LockName::new("resident").expect("resident lock name"),
         &paths.resident,
     );
-    let (probe_held, probe_landed) = mpsc::sync_channel(0);
-    let (release_probe, released) = mpsc::sync_channel(0);
+    let (probe_held, probe_landed) = std::sync::mpsc::sync_channel(0);
+    let (release_probe, released) = std::sync::mpsc::sync_channel(0);
 
     std::thread::scope(|scope| {
         let observed_lock = lock.clone();
