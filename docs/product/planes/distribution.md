@@ -176,13 +176,16 @@ read, and Metadata read for this repository; the workflow's short-lived
 its `always` cleanup can retire the exact one-use `spice-hosted-*` tag, plus
 OIDC identity-token write. The client cancels the exact dispatched run on
 `SIGINT` or `SIGTERM`; its non-interactive provider subprocesses run in their
-own process group, so a terminal interrupt reaches only the client, and the
+own process group, so a terminal interrupt reaches only the client. After the
+provider returns an exact run identity, every failure first confirms that run
+is terminal, cancelling it if necessary; success, failure, cancellation, and
+verification refusal then retire any result artifact for that exact run. The
 one-use tag is retired whenever a push was attempted. Provider cleanup accepts
-only that tag and is the backstop when the client disappears before it can
-act. Tokens, mutable endpoints, and provider account
-configuration are never tracked policy. Rotate or revoke GitHub credentials in
-the provider, then run `gh auth logout --hostname github.com`; delete or rotate
-the corresponding SSH key through GitHub and the local keychain.
+only that tag and is the backstop when the client disappears before it can act.
+Tokens, mutable endpoints, and provider account configuration are never tracked
+policy. Rotate or revoke GitHub credentials in the provider, then run
+`gh auth logout --hostname github.com`; delete or rotate the corresponding SSH
+key through GitHub and the local keychain.
 
 `dist/windows-hosted.toml` is the tracked trust policy. Its `provider`,
 `repository`, and `workflow` keys bind dispatch; `[image]` pins the

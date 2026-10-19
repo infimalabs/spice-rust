@@ -185,6 +185,37 @@ fn dispatch(
             WindowsHostedError::ProviderResponse(format!("dispatch returned no run URL: {url:?}"))
         })?;
 
+    let operation = complete_dispatched_run(
+        root,
+        scratch,
+        repository,
+        source_ref,
+        source_commit,
+        request,
+        run_id,
+        destination,
+        cancellation,
+    );
+    let operation = match operation {
+        Err(error @ WindowsHostedError::Cancelled { .. }) => Err(error),
+        Err(error) => finish_run_cleanup(Err(error), cancel_run(root, repository, run_id)),
+        success => success,
+    };
+    let cleanup = delete_artifact(root, repository, run_id);
+    finish_artifact_cleanup(operation, cleanup)
+}
+
+fn complete_dispatched_run(
+    root: &Path,
+    scratch: &Path,
+    repository: &str,
+    source_ref: &str,
+    source_commit: &str,
+    request: &Request,
+    run_id: u64,
+    destination: Option<&Path>,
+    cancellation: &Cancellation,
+) -> Result<HostedExecution, WindowsHostedError> {
     watch_run(root, repository, run_id, cancellation)?;
     let (artifact_dir, runner_path, result_path) = download_attested_artifact(
         root,
@@ -243,8 +274,37 @@ fn dispatch(
             "hosted execution returned unrequested artifacts".to_owned(),
         ));
     }
-    delete_artifact(root, repository, run_id)?;
     Ok(HostedExecution { result, outputs })
+}
+
+fn finish_artifact_cleanup<T>(
+    operation: Result<T, WindowsHostedError>,
+    cleanup: Result<(), WindowsHostedError>,
+) -> Result<T, WindowsHostedError> {
+    match (operation, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
+        (Err(operation), Err(cleanup)) => Err(WindowsHostedError::ArtifactOperationAndCleanup {
+            operation: Box::new(operation),
+            cleanup: Box::new(cleanup),
+        }),
+    }
+}
+
+fn finish_run_cleanup<T>(
+    operation: Result<T, WindowsHostedError>,
+    cleanup: Result<(), WindowsHostedError>,
+) -> Result<T, WindowsHostedError> {
+    match (operation, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
+        (Err(operation), Err(cleanup)) => Err(WindowsHostedError::RunOperationAndCleanup {
+            operation: Box::new(operation),
+            cleanup: Box::new(cleanup),
+        }),
+    }
 }
 
 fn download_attested_artifact(
@@ -352,6 +412,21 @@ fn publish_artifacts(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArtifactCleanupAction {
+    Complete,
+    Delete(u64),
+    Refuse(usize),
+}
+
+fn artifact_cleanup_action(inventory: &ArtifactInventory) -> ArtifactCleanupAction {
+    match inventory.artifacts.as_slice() {
+        [] => ArtifactCleanupAction::Complete,
+        [artifact] => ArtifactCleanupAction::Delete(artifact.id),
+        artifacts => ArtifactCleanupAction::Refuse(artifacts.len()),
+    }
+}
+
 fn delete_artifact(root: &Path, repository: &str, run_id: u64) -> Result<(), WindowsHostedError> {
     let listed = command(
         root,
@@ -366,12 +441,15 @@ fn delete_artifact(root: &Path, repository: &str, run_id: u64) -> Result<(), Win
     let listed = successful_text("artifact inventory", listed)?;
     let inventory: ArtifactInventory =
         serde_json::from_str(&listed).map_err(WindowsHostedError::Decode)?;
-    if inventory.artifacts.len() != 1 {
-        return Err(WindowsHostedError::ProviderResponse(format!(
-            "run {run_id} published {} artifacts instead of one",
-            inventory.artifacts.len()
-        )));
-    }
+    let artifact_id = match artifact_cleanup_action(&inventory) {
+        ArtifactCleanupAction::Complete => return Ok(()),
+        ArtifactCleanupAction::Delete(artifact_id) => artifact_id,
+        ArtifactCleanupAction::Refuse(count) => {
+            return Err(WindowsHostedError::ProviderResponse(format!(
+                "run {run_id} published {count} artifacts instead of one"
+            )));
+        }
+    };
     successful(
         "artifact deletion",
         command(
@@ -382,8 +460,7 @@ fn delete_artifact(root: &Path, repository: &str, run_id: u64) -> Result<(), Win
                 OsString::from("--method"),
                 OsString::from("DELETE"),
                 OsString::from(format!(
-                    "repos/{repository}/actions/artifacts/{}",
-                    inventory.artifacts[0].id
+                    "repos/{repository}/actions/artifacts/{artifact_id}"
                 )),
             ],
         )?,
@@ -670,31 +747,50 @@ fn cancel_run(root: &Path, repository: &str, run_id: u64) -> Result<(), WindowsH
         ],
     )?;
     if cancelled.status.success() {
-        Ok(())
-    } else {
-        let status = successful_text(
-            "workflow state after cancellation",
-            command(
-                root,
-                "gh",
-                [
-                    OsString::from("run"),
-                    OsString::from("view"),
-                    OsString::from(run_id.to_string()),
-                    OsString::from("--repo"),
-                    OsString::from(repository),
-                    OsString::from("--json"),
-                    OsString::from("status"),
-                    OsString::from("--jq"),
-                    OsString::from(".status"),
-                ],
-            )?,
+        // The cancellation request is asynchronous. Wait until the provider
+        // reaches a terminal state before inventorying artifacts, otherwise a
+        // late upload can race a currently empty inventory.
+        let _observed = command(
+            root,
+            "gh",
+            [
+                OsString::from("run"),
+                OsString::from("watch"),
+                OsString::from(run_id.to_string()),
+                OsString::from("--repo"),
+                OsString::from(repository),
+                OsString::from("--compact"),
+                OsString::from("--exit-status"),
+            ],
         )?;
-        if status.trim() == "completed" {
-            Ok(())
-        } else {
-            successful("workflow cancellation", cancelled).map(|_| ())
-        }
+    }
+
+    let status = successful_text(
+        "workflow state after cancellation",
+        command(
+            root,
+            "gh",
+            [
+                OsString::from("run"),
+                OsString::from("view"),
+                OsString::from(run_id.to_string()),
+                OsString::from("--repo"),
+                OsString::from(repository),
+                OsString::from("--json"),
+                OsString::from("status"),
+                OsString::from("--jq"),
+                OsString::from(".status"),
+            ],
+        )?,
+    )?;
+    if status.trim() == "completed" {
+        Ok(())
+    } else if cancelled.status.success() {
+        Err(WindowsHostedError::ProviderResponse(format!(
+            "cancelled provider run {run_id} did not reach a terminal state"
+        )))
+    } else {
+        successful("workflow cancellation", cancelled).map(|_| ())
     }
 }
 
@@ -976,6 +1072,14 @@ pub enum WindowsHostedError {
         run_id: Option<u64>,
     },
     Output(io::Error),
+    RunOperationAndCleanup {
+        operation: Box<WindowsHostedError>,
+        cleanup: Box<WindowsHostedError>,
+    },
+    ArtifactOperationAndCleanup {
+        operation: Box<WindowsHostedError>,
+        cleanup: Box<WindowsHostedError>,
+    },
     OperationAndCleanup {
         operation: Box<WindowsHostedError>,
         cleanup: Box<WindowsHostedError>,
@@ -1035,6 +1139,14 @@ impl fmt::Display for WindowsHostedError {
                 formatter.write_str("hosted execution was cancelled before provider dispatch")
             }
             Self::Output(source) => write!(formatter, "hosted output failed: {source}"),
+            Self::RunOperationAndCleanup { operation, cleanup } => write!(
+                formatter,
+                "hosted operation failed: {operation}; provider run cleanup also failed: {cleanup}"
+            ),
+            Self::ArtifactOperationAndCleanup { operation, cleanup } => write!(
+                formatter,
+                "hosted operation failed: {operation}; result artifact retirement also failed: {cleanup}"
+            ),
             Self::OperationAndCleanup { operation, cleanup } => write!(
                 formatter,
                 "hosted operation failed: {operation}; source retirement also failed: {cleanup}"
@@ -1053,7 +1165,9 @@ impl Error for WindowsHostedError {
             | Self::Launch { source, .. }
             | Self::Output(source)
             | Self::Signal(source) => Some(source),
-            Self::OperationAndCleanup { operation, .. } => Some(operation),
+            Self::OperationAndCleanup { operation, .. }
+            | Self::RunOperationAndCleanup { operation, .. }
+            | Self::ArtifactOperationAndCleanup { operation, .. } => Some(operation),
             _ => None,
         }
     }
@@ -1061,7 +1175,11 @@ impl Error for WindowsHostedError {
 
 #[cfg(test)]
 mod tests {
-    use super::{WatchAction, WatchObservation, watch_action};
+    use super::{
+        Artifact, ArtifactCleanupAction, ArtifactInventory, WatchAction, WatchObservation,
+        WindowsHostedError, artifact_cleanup_action, finish_artifact_cleanup, finish_run_cleanup,
+        watch_action,
+    };
 
     #[test]
     fn cancellation_preempts_every_provider_watch_observation() {
@@ -1106,5 +1224,73 @@ mod tests {
             ),
             WatchAction::Failed(Some(23))
         );
+    }
+
+    #[test]
+    fn artifact_inventory_selects_only_one_exact_artifact() {
+        let inventory = |ids: &[u64]| ArtifactInventory {
+            artifacts: ids.iter().map(|id| Artifact { id: *id }).collect(),
+        };
+
+        assert_eq!(
+            artifact_cleanup_action(&inventory(&[])),
+            ArtifactCleanupAction::Complete
+        );
+        assert_eq!(
+            artifact_cleanup_action(&inventory(&[42])),
+            ArtifactCleanupAction::Delete(42)
+        );
+        assert_eq!(
+            artifact_cleanup_action(&inventory(&[42, 43])),
+            ArtifactCleanupAction::Refuse(2)
+        );
+    }
+
+    #[test]
+    fn artifact_cleanup_preserves_operation_and_cleanup_failures() {
+        let completed = finish_artifact_cleanup(Ok(7_u8), Ok(()));
+        assert_eq!(completed.expect("successful cleanup retains result"), 7);
+
+        let operation_failed = finish_artifact_cleanup::<()>(
+            Err(WindowsHostedError::Cancelled { run_id: Some(42) }),
+            Ok(()),
+        );
+        assert!(matches!(
+            operation_failed,
+            Err(WindowsHostedError::Cancelled { run_id: Some(42) })
+        ));
+
+        let cleanup_failed =
+            finish_artifact_cleanup(Ok(()), Err(WindowsHostedError::PolicyIdentity));
+        assert!(matches!(
+            cleanup_failed,
+            Err(WindowsHostedError::PolicyIdentity)
+        ));
+
+        let both_failed = finish_artifact_cleanup::<()>(
+            Err(WindowsHostedError::Cancelled { run_id: Some(42) }),
+            Err(WindowsHostedError::PolicyIdentity),
+        );
+        assert!(matches!(
+            both_failed,
+            Err(WindowsHostedError::ArtifactOperationAndCleanup {
+                operation,
+                cleanup,
+            }) if matches!(*operation, WindowsHostedError::Cancelled { run_id: Some(42) })
+                && matches!(*cleanup, WindowsHostedError::PolicyIdentity)
+        ));
+
+        let run_and_cleanup_failed = finish_run_cleanup::<()>(
+            Err(WindowsHostedError::Cancelled { run_id: Some(42) }),
+            Err(WindowsHostedError::PolicyIdentity),
+        );
+        assert!(matches!(
+            run_and_cleanup_failed,
+            Err(WindowsHostedError::RunOperationAndCleanup {
+                operation,
+                cleanup,
+            }) if matches!(*operation, WindowsHostedError::Cancelled { run_id: Some(42) })
+                && matches!(*cleanup, WindowsHostedError::PolicyIdentity)
+        ));
     }
 }
