@@ -317,12 +317,6 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
             "It can never complete, so each dependency on it must change.",
             "Unreachable",
         ),
-        DependencyWall::Passive(_) => (
-            "passive",
-            "Passive Design",
-            "It is ungrouped or its working group is Passive; no lane can acquire it until the group is in Explore or Converge.",
-            "Operator required",
-        ),
         DependencyWall::Selection(_) => (
             "selection",
             "Awaiting your decision",

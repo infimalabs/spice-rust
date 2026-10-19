@@ -151,14 +151,16 @@ queue merely for waiting; it enters only when a Blocked dependency chain
 reaches it. Every task that marks a tab is listed here or holds behind a listed
 wall, so the rail reads **Needs attention** whenever any tab is marked. Each
 queue item appears once, in board order, however many reasons or held tasks
-reach it. A dependency on work an agent can claim or is working is ordinary
-**Waiting** and never counts. This includes claimable stale prerequisites; when
-stale work has a real wall, the queue names that underlying task and reason
-instead of blaming its dependent. A waiting board pairs the danger-styled `!`
-with **Needs attention**; otherwise a quiet `✓` pairs with **Ready to proceed**,
-even while tasks wait on peers. Both states share one geometry, and detail
-reads do not own the rail's data; an item leaves on the board update that
-records the operator's act.
+reach it. A dependency on work an agent can claim or is working, or on an open
+Design in any pass cycle, is ordinary **Waiting** and never counts; a Design
+awaiting your decision counts once as itself, never through its outputs. This
+includes claimable stale prerequisites and passive Designs; when stale work or
+a passive Design has a real wall beneath it, the queue names that underlying
+task and reason instead of blaming its dependent. A waiting board pairs the
+danger-styled `!` with **Needs attention**; otherwise a quiet `✓` pairs with
+**Ready to proceed**, even while tasks wait on peers. Both states share one
+geometry, and detail reads do not own the rail's data; an item leaves on the
+board update that records the operator's act.
 
 **Next** opens the next waiting task's own overview in board order, stepping
 from the task the overview currently shows and wrapping after the last; it is

@@ -230,10 +230,13 @@ blocked work, neutral workflow waiting, or an open Design's pass cycle state.
 Dependency graphs, detail standings, counts, operator attention, and tab marks
 consume that same partition. **Blocked** means no path reaches work an agent
 can advance: missing authority or prerequisites, cycles, and walls at closed,
-parked, passive, deferred, or environment-held work require a human act.
+parked, deferred, or environment-held work require a human act.
 Ordinary dependency chains that still reach active, ready, review, awaiting-decision,
-or other neutral work are **Waiting** and carry no danger mark. A lapsed claim
-remains **Stale** on its own row but is transparent to this walk: its underlying
+or other neutral work are **Waiting** and carry no danger mark. An open Design,
+active or passive and in any pass cycle, is such a wait for its outputs and the
+work behind them; only the Design itself, while awaiting a decision, needs the
+operator. A lapsed claim remains **Stale** and a passive Design remains
+**Passive** on its own row, but each is transparent to this walk: its underlying
 gate decides whether dependents are Waiting or Blocked. A tab marks only when
 its own partition holds work only the operator can move now: human-actionable
 blocked work, environment-held work, or an unclaimed, undeferred Design

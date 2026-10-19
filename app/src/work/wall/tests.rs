@@ -1,5 +1,5 @@
 use super::*;
-use crate::work::tests::{board, claim, stamp, task};
+use crate::work::tests::{board, claim, design, stamp, task};
 use wire::EnvironmentRequirement;
 use wire::head::ClaimDisposition;
 
@@ -104,5 +104,41 @@ fn only_chains_agents_cannot_move_are_walls() {
         walls.wall(15, &work.tasks()[15].dependencies()[0]),
         Some((14, DependencyWall::Deferred(&stamp(15)))),
         "a stale prerequisite exposes its human-actionable wall"
+    );
+}
+
+#[test]
+fn a_passive_design_is_no_wall_and_exposes_the_wall_beneath_it() {
+    let gathering = design(1, "wall.design");
+    let mut output = task(2, "wall.design");
+    output.statement.body.dependencies = vec![stamp(1)];
+    let mut deferred = task(3, "wall.design");
+    deferred.workflow.body.deferral = Some("2026-09-24T06:00:00.000Z".parse().expect("deferral"));
+    let mut walled_design = design(4, "wall.design");
+    walled_design.statement.body.dependencies = vec![stamp(3)];
+    let mut behind_walled = task(5, "wall.design");
+    behind_walled.statement.body.dependencies = vec![stamp(4)];
+    let mut board = board(vec![
+        gathering,
+        output,
+        deferred,
+        walled_design,
+        behind_walled,
+    ]);
+    board.workflow_waiting.insert(stamp(2));
+    board.blocked.insert(stamp(5));
+    let work = WorkProjection::from_board(&board);
+    assert_eq!(work.tasks()[0].availability(), WorkAvailability::Passive);
+    let mut walls = DependencyWalls::new(&work);
+
+    assert_eq!(
+        walls.wall(1, &work.tasks()[1].dependencies()[0]),
+        None,
+        "a passive Design gathering input needs no human act from its output"
+    );
+    assert_eq!(
+        walls.wall(4, &work.tasks()[4].dependencies()[0]),
+        Some((2, DependencyWall::Deferred(&stamp(3)))),
+        "the wall beneath a passive Design is named, not the Design"
     );
 }
