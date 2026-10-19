@@ -558,6 +558,14 @@ fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
         .expect_err("missing payload refused");
     assert_eq!(missing.class(), ErrorClass::Corrupt);
 
+    fs::remove_dir_all(object_dir(&fixture.store.task_dir(&task), &artifact.digest))
+        .expect("remove cited object directory");
+    let missing = fixture
+        .store
+        .capture()
+        .expect_err("missing object directory refused");
+    assert_eq!(missing.class(), ErrorClass::Corrupt);
+
     assert!(within_member_bound(4096));
     assert!(!within_member_bound(4097));
 
