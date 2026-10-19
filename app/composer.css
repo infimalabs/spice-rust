@@ -650,14 +650,14 @@
   margin-block-start: calc(2 * var(--mosaic-quote-pad-block));
 }
 /* A zero-width presentational prop holds the hunk's first two real lines plus
-   the image row's leading gap open. It also retains the control island's
-   former minimum footprint, so clearing only this prop cannot move the image.
-   The row carries no top margin, and taller attribution, pills, or inline code
-   keep both lines full-width without changing the image's top edge. */
+   the image row's leading gap open. The image row clears only this prop, so it
+   alone positions the image; the action island never does. The row carries no
+   top margin, and taller attribution, pills, or inline code keep both lines
+   full-width without changing the image's top edge. */
 .markdown-body .message-hunk::before {
   float: inline-start;
   width: 0;
-  height: calc(max(2lh, var(--message-control-size)) + .325em);
+  height: calc(2lh + .325em);
   content: "";
 }
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
@@ -671,8 +671,9 @@
    reaches above into text it cannot reflow, such as an inner quote's last
    line. Its flow footprint is two lines of the hunk's prose (line-height 1.25)
    or the pair's own height where quoted type makes two lines shorter, so text
-   below always reflows beside it. The image row never clears this island; the
-   zero-width start prop retains its footprint and reserves the first two lines. */
+   below always reflows beside it. The image row never clears this island, so
+   the island never positions the image; the start prop holds two lines plus
+   the image row's gap. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
