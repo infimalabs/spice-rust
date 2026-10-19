@@ -43,7 +43,7 @@ use prebuild::*;
 pub use proof::{
     CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlan,
     CargoGateShardPlanning, CargoGateShardResult, plan_cargo_gate_shards_at,
-    run_cargo_gate_shard_at,
+    run_cargo_gate_shard_at, windows_typechecks_declared_at,
 };
 use selection::{package_inventory, selection_plan};
 use source_reach::{FileMacroCrateContext, declared_path_sources};

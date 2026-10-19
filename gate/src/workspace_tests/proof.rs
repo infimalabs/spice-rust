@@ -35,6 +35,11 @@ struct WindowsTypecheck {
     identity: &'static str,
     selectors: &'static [&'static str],
 }
+/// Whether one complete staged tree declares the repository Windows toolchain.
+#[must_use]
+pub fn windows_typechecks_declared_at(root: &Path) -> bool {
+    root.join(WINDOWS_TOOLCHAIN_PIN).is_file()
+}
 
 /// Logical Cargo work represented by one independently reusable receipt.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
@@ -172,6 +177,7 @@ pub struct CargoGateShardPlanning<'a> {
     pub source: wire::Digest,
     pub changed_sources: &'a [String],
     pub selected_paths: &'a [String],
+    pub include_windows_typechecks: bool,
     pub environment: Environment,
     pub cargo: &'a OsStr,
     pub external_source: Option<CargoExternalSourceAuthority>,
@@ -226,6 +232,7 @@ fn plan_cargo_gate_shards(
         source,
         changed_sources,
         selected_paths,
+        include_windows_typechecks,
         environment: _,
         cargo: _,
         external_source,
@@ -251,14 +258,16 @@ fn plan_cargo_gate_shards(
         &mut source_analysis,
         external_source.as_ref(),
     )?;
-    typechecks.extend(windows_typecheck_shards(
-        &inventory,
-        root,
-        changed_sources,
-        selected_paths,
-        &mut source_analysis,
-        external_source.as_ref(),
-    )?);
+    if include_windows_typechecks {
+        typechecks.extend(windows_typecheck_shards(
+            &inventory,
+            root,
+            changed_sources,
+            selected_paths,
+            &mut source_analysis,
+            external_source.as_ref(),
+        )?);
+    }
 
     let mut tests = if include_tests {
         let report = selection_plan(&inventory, root, source, changed_sources)?.into_report();
@@ -370,9 +379,6 @@ fn windows_typecheck_shards(
     source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<Vec<CargoGateShard>, WorkspaceTestError> {
-    if !root.join(WINDOWS_TOOLCHAIN_PIN).is_file() {
-        return Ok(Vec::new());
-    }
     WINDOWS_TYPECHECKS
         .iter()
         .map(|check| {
@@ -1074,6 +1080,7 @@ mod tests {
             .filter(|path| path.as_str() != WINDOWS_TOOLCHAIN_PIN)
             .cloned()
             .collect::<Vec<_>>();
+        assert!(windows_typechecks_declared_at(&root));
         let shards = plan(&without_pin).expect("plan ordinary Rust cross-target checks");
         assert_windows_typecheck_contract(&shards);
 
@@ -1119,6 +1126,7 @@ mod tests {
                     cargo: OsStr::new("cargo"),
                     external_source: None,
                     include_tests: false,
+                    include_windows_typechecks: false,
                 },
                 |selected| {
                     let metadata = serde_json::from_value(metadata.clone())

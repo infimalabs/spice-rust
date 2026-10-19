@@ -51,6 +51,7 @@ pub(super) fn prepare(
             "Cargo tests were selected without the canonical Rust toolchain arm",
         ));
     }
+    let include_windows_typechecks = gate::windows_typechecks_declared_at(staged.anchor().root());
 
     let arm = staged
         .anchor()
@@ -74,6 +75,7 @@ pub(super) fn prepare(
         source: staged.selection().source().clone(),
         changed_sources: staged.selection().changed_sources(),
         selected_paths: arm.paths(),
+        include_windows_typechecks,
         environment: environment.clone(),
         cargo: authority.cargo.as_os_str(),
         external_source: Some(external_source),
