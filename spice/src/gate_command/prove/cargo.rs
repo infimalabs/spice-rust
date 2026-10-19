@@ -96,7 +96,6 @@ pub(super) fn prepare(
                 gate_set,
                 declaration,
                 writable_root,
-                &authority.action_environment,
                 environment.clone(),
                 &authority.cargo,
                 source_execution.clone(),
@@ -136,15 +135,22 @@ fn prepare_action(
     gate_set: &Digest,
     typecheck_declaration: &str,
     writable_root: &Path,
-    cargo_environment: &[(OsString, OsString)],
     execution_environment: Environment,
     cargo: &Path,
     source: SourceExecution,
     shard: CargoGateShard,
 ) -> Result<PreparedAction, ProveFailure> {
     require_reusable_shard(&shard)?;
+    let execution_environment = spice::cargo_isolation::bind_windows_msvc_environment(
+        arm.root(),
+        source.host.bootstrap_home(),
+        shard.argv(),
+        execution_environment,
+    )
+    .map_err(ProveFailure::cargo_isolation)?;
+    let cargo_environment = normalized_action_environment(execution_environment.entries());
     let tools = action_tools(context.tools())?;
-    let (environment_names, environment) = environment(cargo_environment)?;
+    let (environment_names, environment) = environment(&cargo_environment)?;
     let tool_authority = digest_encoded(Domain::GateTool, &context.tools())?;
     let inventory = digest_encoded(Domain::GateInventory, &shard)?;
     let declaration = match shard.kind() {

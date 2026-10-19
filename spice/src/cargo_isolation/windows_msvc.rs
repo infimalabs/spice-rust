@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use sill::authority;
+use sill::{Environment, authority};
 
 use super::IsolationError;
 
@@ -401,6 +401,47 @@ pub fn bind_if_selected(
     if !selects_windows_target(arguments, std::env::var_os("CARGO_BUILD_TARGET").as_deref()) {
         return Ok(());
     }
+    let bin = admitted_bin(repository, bootstrap_home)?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let bindings = toolchain_bindings(&bin, path)?;
+    command.envs(bindings);
+    Ok(())
+}
+
+/// Bind the verified Windows toolchain into one already admitted Cargo
+/// environment when its argument vector selects the Windows target.
+pub fn environment_if_selected(
+    repository: &Path,
+    bootstrap_home: &Path,
+    arguments: &[String],
+    environment: Environment,
+) -> Result<Environment, IsolationError> {
+    let ambient = environment
+        .entries()
+        .iter()
+        .find(|(name, _)| name == OsStr::new("CARGO_BUILD_TARGET"))
+        .map(|(_, value)| value.as_os_str());
+    let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
+    if !selects_windows_target(&arguments, ambient) {
+        return Ok(environment);
+    }
+    let bin = admitted_bin(repository, bootstrap_home)?;
+    let mut entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let path = entries.remove(OsStr::new("PATH")).unwrap_or_default();
+    entries.extend(toolchain_bindings(&bin, path)?);
+    Environment::new(entries).map_err(|error| {
+        IsolationError::new(
+            "cargo-isolation::windows-msvc-environment-invalid",
+            error.to_string(),
+        )
+    })
+}
+
+fn admitted_bin(repository: &Path, bootstrap_home: &Path) -> Result<PathBuf, IsolationError> {
     let (declaration, generation) = read_declaration(repository)?;
     verify_tools(&declaration)?;
     let root = bootstrap_home
@@ -408,23 +449,42 @@ pub fn bind_if_selected(
         .join("generations")
         .join(&generation);
     let admitted = admit_at(&declaration, &generation, &root)?;
-    let bin = admitted.root.join("payload/bin");
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let mut bound_path = bin.as_os_str().to_owned();
-    if !path.is_empty() {
-        bound_path.push(OsStr::new(":"));
-        bound_path.push(path);
-    }
-    command
-        .env("PATH", bound_path)
-        .env("CC_x86_64_pc_windows_msvc", "cl.exe")
-        .env("CXX_x86_64_pc_windows_msvc", "cl.exe")
-        .env("AR_x86_64_pc_windows_msvc", "lib.exe")
-        .env(
-            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER",
-            bin.join("link.exe"),
-        );
-    Ok(())
+    Ok(admitted.root.join("payload/bin"))
+}
+
+fn toolchain_bindings(
+    bin: &Path,
+    path: OsString,
+) -> Result<std::collections::BTreeMap<OsString, OsString>, IsolationError> {
+    let mut paths = vec![bin.to_path_buf()];
+    paths.extend(std::env::split_paths(&path));
+    let path = std::env::join_paths(paths).map_err(|error| {
+        IsolationError::new(
+            "cargo-isolation::windows-msvc-environment-invalid",
+            error.to_string(),
+        )
+    })?;
+    Ok([
+        (OsString::from("PATH"), path),
+        (
+            OsString::from("CC_x86_64_pc_windows_msvc"),
+            OsString::from("cl.exe"),
+        ),
+        (
+            OsString::from("CXX_x86_64_pc_windows_msvc"),
+            OsString::from("cl.exe"),
+        ),
+        (
+            OsString::from("AR_x86_64_pc_windows_msvc"),
+            OsString::from("lib.exe"),
+        ),
+        (
+            OsString::from("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"),
+            bin.join("link.exe").into_os_string(),
+        ),
+    ]
+    .into_iter()
+    .collect())
 }
 
 fn selects_windows_target(arguments: &[OsString], ambient: Option<&OsStr>) -> bool {

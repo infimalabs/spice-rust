@@ -186,6 +186,21 @@ spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p s
 spice dev xtask -- windows-appliance
 ```
 
+Every Gate selection reached by Rust source, a Cargo manifest, `Cargo.lock`, or
+`rust-toolchain.toml` also plans these three cacheable cross-target checks:
+
+```sh
+cargo check --locked --package spice --bin spice --target x86_64-pc-windows-msvc
+cargo check --locked --package spice --tests --target x86_64-pc-windows-msvc
+cargo check --locked --package sill --tests --target x86_64-pc-windows-msvc
+```
+
+Their proof inputs include `dist/windows-msvc.toml`, the complete package
+closure, and the changed paths. They use Gate's admitted Cargo home and pinned
+toolchain, produce typed compiler diagnostics, and perform no link or guest
+execution. A cached host check therefore cannot conceal a new Unix-only API in
+shared source.
+
 The final command writes and verifies
 `target/x86_64-pc-windows-msvc/release/spice.exe`. It hands the staged archive's
 COFF object only to that final link through `cargo rustc`; the plain Cargo
