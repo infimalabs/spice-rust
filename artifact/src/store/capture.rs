@@ -1,20 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
-use sill::authority;
+use sill::authority::{self, Directory, Entry, EntryKind};
 use wire::manifest::{JOURNAL_BACKUP_MAX_BYTES, JOURNAL_BACKUP_MAX_MEMBERS};
 use wire::{Digest, Domain, TaskStamp};
 
 use crate::model::{Artifact, Manifest, ObjectMetadata};
 
 use super::{
-    Error, METADATA, PAYLOAD, admitted_directory, admitted_relative, create_private_directories,
-    create_replacement_directory, decode_canonical, manifest_path, object_dir, open_regular_file,
-    parse_task_key, read_manifest, read_regular, task_directories_with_limit,
-    validate_manifest_shape, validate_object,
+    Error, MANIFEST, MAX_ARTIFACT_BYTES, METADATA, PAYLOAD, admitted_directory, admitted_relative,
+    create_private_directories, create_replacement_directory, decode_canonical, open_regular_file,
+    parse_task_key, read_regular, validate_manifest_shape, validate_object,
 };
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
@@ -293,6 +292,162 @@ impl PartialEq for BackupGeneration {
 
 impl Eq for BackupGeneration {}
 
+struct CaptureAuthority {
+    root: PathBuf,
+    directory: Directory,
+}
+
+impl CaptureAuthority {
+    fn open(root: &Path) -> Result<Self, Error> {
+        let directory = Directory::open(root)
+            .map_err(|source| Error::io("hold artifact root", root, source))?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            directory,
+        })
+    }
+
+    fn task_directories(&self, limit: Option<usize>) -> Result<Vec<TaskStamp>, Error> {
+        let mut tasks = Vec::new();
+        let entries = self
+            .directory
+            .entries()
+            .map_err(|source| Error::io("read artifact root", &self.root, source))?;
+        for entry in entries {
+            let (name, kind) = entry
+                .map_err(|source| Error::io("read artifact root entry", &self.root, source))?;
+            let path = self.root.join(&name);
+            if kind != EntryKind::Directory {
+                return Err(Error::corrupt(
+                    path.display().to_string(),
+                    "artifact root entry is not a real directory",
+                ));
+            }
+            let text = name.into_string().map_err(|_| {
+                Error::corrupt(
+                    path.display().to_string(),
+                    "task directory name is not UTF-8",
+                )
+            })?;
+            let task = parse_task_key(&text, &path.display().to_string())?;
+            let manifest = PathBuf::from(&text).join(MANIFEST);
+            if self.regular_exists(&manifest)? {
+                if let Some(maximum) = limit
+                    && tasks.len() >= maximum
+                {
+                    return Err(Error::corrupt(
+                        "artifact backup inventory",
+                        format!("capture exceeds {maximum} members"),
+                    ));
+                }
+                tasks.push(task);
+            }
+        }
+        tasks.sort();
+        Ok(tasks)
+    }
+
+    fn read_manifest(&self, relative: &Path) -> Result<Manifest, Error> {
+        let path = self.root.join(relative);
+        let file = self.open_regular(relative)?;
+        let mut bytes = Vec::new();
+        file.take(MAX_ARTIFACT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|source| Error::io("read artifact manifest", &path, source))?;
+        decode_canonical(&bytes, &path.display().to_string())
+    }
+
+    fn regular_exists(&self, relative: &Path) -> Result<bool, Error> {
+        let path = self.root.join(relative);
+        match self.open_entry(relative)? {
+            Entry::Missing => Ok(false),
+            Entry::Link => Err(Error::corrupt(
+                path.display().to_string(),
+                "artifact backup member is a link or reparse point",
+            )),
+            Entry::Opened(file) => {
+                let metadata = file
+                    .metadata()
+                    .map_err(|source| Error::io("inspect artifact backup member", &path, source))?;
+                if metadata.is_file() && !authority::is_link_like(&metadata) {
+                    Ok(true)
+                } else {
+                    Err(Error::corrupt(
+                        path.display().to_string(),
+                        "artifact backup member is not a regular file",
+                    ))
+                }
+            }
+        }
+    }
+
+    fn open_regular(&self, relative: &Path) -> Result<File, Error> {
+        let path = self.root.join(relative);
+        match self.open_entry(relative)? {
+            Entry::Missing => Err(Error::corrupt(
+                path.display().to_string(),
+                "referenced artifact member is missing",
+            )),
+            Entry::Link => Err(Error::corrupt(
+                path.display().to_string(),
+                "artifact backup member is a link or reparse point",
+            )),
+            Entry::Opened(file) => {
+                let metadata = file
+                    .metadata()
+                    .map_err(|source| Error::io("inspect artifact backup member", &path, source))?;
+                if metadata.is_file() && !authority::is_link_like(&metadata) {
+                    Ok(file)
+                } else {
+                    Err(Error::corrupt(
+                        path.display().to_string(),
+                        "artifact backup member is not a regular file",
+                    ))
+                }
+            }
+        }
+    }
+
+    fn open_entry(&self, relative: &Path) -> Result<Entry, Error> {
+        let path = self.root.join(relative);
+        let name = relative.file_name().ok_or_else(|| {
+            Error::corrupt(
+                path.display().to_string(),
+                "artifact backup member has no file name",
+            )
+        })?;
+        let mut parent = None;
+        for component in relative.parent().into_iter().flat_map(Path::components) {
+            let Component::Normal(component) = component else {
+                return Err(Error::corrupt(
+                    path.display().to_string(),
+                    "artifact backup member path is not canonical and relative",
+                ));
+            };
+            let held = parent.as_ref().unwrap_or(&self.directory);
+            let child = held.open_directory(component).map_err(|source| {
+                if matches!(
+                    source.kind(),
+                    io::ErrorKind::InvalidInput | io::ErrorKind::NotADirectory
+                ) {
+                    Error::corrupt(
+                        path.display().to_string(),
+                        "artifact backup path crosses a link, reparse point, or non-directory",
+                    )
+                } else {
+                    Error::io("open artifact backup directory", &path, source)
+                }
+            })?;
+            parent = Some(child);
+        }
+        parent
+            .as_ref()
+            .unwrap_or(&self.directory)
+            .open_entry(name, false)
+            .map_err(|source| Error::io("open artifact backup member", path, source))
+    }
+}
+
 pub(super) fn capture(root: &Path) -> Result<BackupGeneration, Error> {
     let parent = root
         .parent()
@@ -301,33 +456,41 @@ pub(super) fn capture(root: &Path) -> Result<BackupGeneration, Error> {
     let generation = CapturedGeneration::create(parent)?;
     let mut plans = Vec::new();
     let mut preflight_bytes = 0_u64;
-    if admitted_directory(root, true)? {
-        for task in task_directories_with_limit(root, Some(JOURNAL_BACKUP_MAX_MEMBERS))? {
-            let task_dir = root.join(task.as_str());
-            let manifest = read_manifest(&task_dir, &task)?;
+    let authority = if admitted_directory(root, true)? {
+        Some(CaptureAuthority::open(root)?)
+    } else {
+        None
+    };
+    if let Some(authority) = &authority {
+        for task in authority.task_directories(Some(JOURNAL_BACKUP_MAX_MEMBERS))? {
+            let task_relative = PathBuf::from(task.as_str());
+            let manifest_relative = task_relative.join(MANIFEST);
+            let manifest = authority.read_manifest(&manifest_relative)?;
             validate_manifest_shape(
                 &task,
                 &manifest,
-                &manifest_path(&task_dir).display().to_string(),
+                &root.join(&manifest_relative).display().to_string(),
             )?;
             preflight_capture_member(
-                root,
-                &manifest_path(&task_dir),
+                authority,
+                &manifest_relative,
                 &mut plans,
                 &mut preflight_bytes,
             )?;
             let mut digests = BTreeSet::new();
             for artifact in &manifest.artifacts {
                 if digests.insert(artifact.digest.clone()) {
-                    let object = object_dir(&task_dir, &artifact.digest);
+                    let object = task_relative
+                        .join("objects")
+                        .join(artifact.digest.to_string());
                     preflight_capture_member(
-                        root,
+                        authority,
                         &object.join(METADATA),
                         &mut plans,
                         &mut preflight_bytes,
                     )?;
                     preflight_capture_member(
-                        root,
+                        authority,
                         &object.join(PAYLOAD),
                         &mut plans,
                         &mut preflight_bytes,
@@ -340,6 +503,9 @@ pub(super) fn capture(root: &Path) -> Result<BackupGeneration, Error> {
     let mut members = Vec::with_capacity(plans.len());
     for (index, plan) in plans.into_iter().enumerate() {
         members.push(capture_member(
+            authority
+                .as_ref()
+                .expect("capture plans require an artifact root authority"),
             &plan,
             &generation,
             index,
@@ -366,7 +532,7 @@ pub(super) fn capture(root: &Path) -> Result<BackupGeneration, Error> {
 
 #[derive(Debug)]
 pub(super) struct CapturePlan {
-    source: PathBuf,
+    relative: PathBuf,
     path: String,
     identity: FileIdentity,
 }
@@ -385,8 +551,8 @@ pub(super) fn admit_backup_bytes(aggregate: u64, bytes: u64) -> Option<u64> {
 }
 
 fn preflight_capture_member(
-    root: &Path,
-    path: &Path,
+    authority: &CaptureAuthority,
+    relative: &Path,
     plans: &mut Vec<CapturePlan>,
     aggregate: &mut u64,
 ) -> Result<(), Error> {
@@ -396,31 +562,11 @@ fn preflight_capture_member(
             format!("capture exceeds {JOURNAL_BACKUP_MAX_MEMBERS} members"),
         ));
     }
-    let relative = path
-        .strip_prefix(root)
-        .expect("captured artifact is below root");
     let spelling = super::relative_spelling(relative)?;
-    let file = match open_regular_file(path) {
-        Ok(file) => file,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => {
-            return Err(Error::corrupt(
-                path.display().to_string(),
-                "referenced artifact member is missing",
-            ));
-        }
-        Err(source) => return Err(Error::io("open artifact backup member", path, source)),
-    };
-    let metadata = file
-        .metadata()
-        .map_err(|source| Error::io("inspect artifact backup member", path, source))?;
-    if !metadata.file_type().is_file() {
-        return Err(Error::corrupt(
-            path.display().to_string(),
-            "artifact backup member is not a regular file",
-        ));
-    }
+    let file = authority.open_regular(relative)?;
+    let path = authority.root.join(relative);
     let identity = FileIdentity::observe(&file)
-        .map_err(|source| Error::io("inspect artifact backup member", path, source))?;
+        .map_err(|source| Error::io("inspect artifact backup member", &path, source))?;
     *aggregate = admit_backup_bytes(*aggregate, identity.len()).ok_or_else(|| {
         Error::corrupt(
             "artifact backup inventory",
@@ -428,7 +574,7 @@ fn preflight_capture_member(
         )
     })?;
     plans.push(CapturePlan {
-        source: path.to_path_buf(),
+        relative: relative.to_path_buf(),
         path: spelling,
         identity,
     });
@@ -436,27 +582,28 @@ fn preflight_capture_member(
 }
 
 fn capture_member(
+    authority: &CaptureAuthority,
     plan: &CapturePlan,
     generation: &CapturedGeneration,
     index: usize,
     aggregate: &mut u64,
 ) -> Result<BackupMember, Error> {
-    let mut source = open_regular_file(&plan.source)
-        .map_err(|error| Error::io("open artifact backup member", &plan.source, error))?;
+    let source_path = authority.root.join(&plan.relative);
+    let mut source = authority.open_regular(&plan.relative)?;
     let opened = FileIdentity::observe(&source)
-        .map_err(|error| Error::io("inspect artifact backup member", &plan.source, error))?;
+        .map_err(|error| Error::io("inspect artifact backup member", &source_path, error))?;
     if opened != plan.identity {
-        return Err(changed_capture_source(&plan.source));
+        return Err(changed_capture_source(&source_path));
     }
     let (captured, mut target) = generation.create_member(index)?;
     let (bytes, digest) = if plan.identity.len() == 0 {
         let mut probe = [0_u8; 1];
         if source
             .read(&mut probe)
-            .map_err(|error| Error::io("read artifact backup member", &plan.source, error))?
+            .map_err(|error| Error::io("read artifact backup member", &source_path, error))?
             != 0
         {
-            return Err(changed_capture_source(&plan.source));
+            return Err(changed_capture_source(&source_path));
         }
         (0, Digest::compute(Domain::TaskArtifactPayload, &[]))
     } else {
@@ -468,9 +615,9 @@ fn capture_member(
         )
         .map_err(|error| {
             if error.kind() == io::ErrorKind::InvalidData {
-                changed_capture_source(&plan.source)
+                changed_capture_source(&source_path)
             } else {
-                Error::io("capture artifact backup member", &plan.source, error)
+                Error::io("capture artifact backup member", &source_path, error)
             }
         })?
     };
@@ -480,7 +627,7 @@ fn capture_member(
             format!("capture crossed {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
         )
     })?;
-    require_unchanged_capture_source(&plan.source, &source, &plan.identity, bytes)?;
+    require_unchanged_capture_source(authority, &plan.relative, &source, &plan.identity, bytes)?;
     target
         .sync_all()
         .map_err(|error| Error::io("synchronize captured artifact member", &captured, error))?;
@@ -496,20 +643,23 @@ fn capture_member(
 }
 
 fn require_unchanged_capture_source(
-    path: &Path,
+    authority: &CaptureAuthority,
+    relative: &Path,
     source: &File,
     expected: &FileIdentity,
     observed: u64,
 ) -> Result<(), Error> {
+    let path = authority.root.join(relative);
     let handle = FileIdentity::observe(source)
-        .map_err(|error| Error::io("inspect captured artifact member", path, error))?;
-    let reopened = open_regular_file(path)
-        .and_then(|file| FileIdentity::observe(&file))
-        .map_err(|error| Error::io("reopen captured artifact member", path, error))?;
+        .map_err(|error| Error::io("inspect captured artifact member", &path, error))?;
+    let reopened = authority.open_regular(relative).and_then(|file| {
+        FileIdentity::observe(&file)
+            .map_err(|error| Error::io("inspect captured artifact member", &path, error))
+    })?;
     if handle == *expected && reopened == *expected && observed == expected.len() {
         Ok(())
     } else {
-        Err(changed_capture_source(path))
+        Err(changed_capture_source(&path))
     }
 }
 
