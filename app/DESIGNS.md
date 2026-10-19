@@ -72,12 +72,20 @@ authorization. Each work output
 shows its current title, handle, status, and acceptance. A referenced task or
 question result absent from the current projection is shown as unavailable;
 an exact source identity is shown as an unresolved link rather than being
-called available. Concluded Designs keep the same cards read-only.
+called available. Concluded Designs keep the same cards read-only. Output cards
+identify declared Plans and Designs by intent, and undeclared work as a task
+with its authored flow. A version its author withdrew leaves the open list and
+open count for a separate **Withdrawn versions** history naming its author,
+age, reason, and withdrawal fact, with no decision control; the view never
+picks among open versions by recency.
 
 On an open Design, an operator chooses one action for an exact undecided
 version:
 
-- **Resolve outputs** assigns **Accept** or **Reject** to every output. Each
+- **Resolve outputs** assigns **Accept** or **Reject** to every output with
+  native radios. Every work output starts visibly **Rejected**, the
+  conservative default that grants no authorization until the operator selects
+  **Accept**. Each
   output may carry its own comment, and the version may carry an optional
   overall comment. Only accepted outputs are released; rejected outputs stay
   gated, and the Design remains open. Rejecting every output releases nothing,
@@ -214,7 +222,25 @@ time, text, and every cited source, while room history keeps them in journal
 order among the ordinary conversation. The resident resolves each cited
 source for the shown Design, and the card says whether it is available or
 why not (missing, hidden, changed, unreadable, or retained in an unsupported
-shape), the same states any actor's `spice room history` prints.
+shape), the same states any actor's `spice room history` prints. Availability
+comes from the `room::contribution-sources` read, which any authenticated
+session may issue and the app issues once per cited contribution of a shown
+Design, at most eight in flight, and again after a reconnect; it resolves
+through the same resident path as `spice room history`. This read-only surface
+never creates or answers the session-profile Design requests delivered through
+a lane's own session.
+
+The read view's **Design maturity** panel derives from the bounded per-Design
+measure the room projection folds incrementally from streamed requests and
+contributions, never by folding rendered room history. It shows contribution
+kinds and distinct lanes, requested reach, recent statement-head request
+yield, folded older-head and unattributed historical totals, and every missing
+substantive dimension. Fresh has no contributions; steeped requires
+reason-for, reason-against, evidence, and three contributing lanes. Questions
+and broad requested reach cannot satisfy it. Steeped maturity makes the
+Design's first pass ready for a lane, which the standing's pass cycle shows;
+it is not a danger or workflow state, and maturity never blocks or authorizes
+a Design decision.
 
 An open Design's view says what a contribution is and offers the reader no
 contribution control. A lane learns of an open Design matching its claimed
