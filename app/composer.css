@@ -849,6 +849,14 @@
 ) {
   font-size: 1em;
 }
+/* A pill group spans exactly one line of the signoff's scale, centred on its
+   text, so a pill never makes an attribution line taller than the hunk's line
+   pitch; its pills stretch to that height and keep their segmented silhouette. */
+.markdown-body .message-attribution .message-classification-group {
+  align-self: center;
+  block-size: 1lh;
+}
+.markdown-body .message-attribution .message-classification-group > * { min-height: 0; }
 /* The age keeps a natural word space before the name it dates. */
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
