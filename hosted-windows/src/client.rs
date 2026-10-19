@@ -6,8 +6,13 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command, Output, Stdio};
+#[cfg(unix)]
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
     Command as HostedCommand, Completion, GITHUB_PROVIDER, ImagePin, Limits, MAX_OUTPUT_BYTES,
@@ -19,6 +24,7 @@ use wire::{Digest, Domain};
 const POLICY: &str = ::std::include_str!("../../dist/windows-hosted.toml");
 const REMOTE: &str = "origin";
 const WORKFLOW_PATH: &str = ".github/workflows/windows-hosted.yml";
+const WATCH_POLL: Duration = Duration::from_millis(250);
 
 /// Complete observed outcome of one provider-authenticated command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -113,16 +119,22 @@ pub fn windows_hosted_commands_into(
     };
     request.admit().map_err(WindowsHostedError::Admission)?;
 
+    let cancellation = Cancellation::install()?;
     push_source(&root, &commit, &source_ref)?;
-    let operation = dispatch(
-        &root,
-        scratch.path(),
-        &policy.repository,
-        &source_ref,
-        &commit,
-        &request,
-        destination.as_deref(),
-    );
+    let operation = if cancellation.requested() {
+        Err(WindowsHostedError::Cancelled { run_id: None })
+    } else {
+        dispatch(
+            &root,
+            scratch.path(),
+            &policy.repository,
+            &source_ref,
+            &commit,
+            &request,
+            destination.as_deref(),
+            &cancellation,
+        )
+    };
     let cleanup = delete_source(&root, &source_ref);
     match (operation, cleanup) {
         (Ok(execution), Ok(())) => Ok(execution),
@@ -143,6 +155,7 @@ fn dispatch(
     source_commit: &str,
     request: &Request,
     destination: Option<&Path>,
+    cancellation: &Cancellation,
 ) -> Result<HostedExecution, WindowsHostedError> {
     let request_json = serde_json::to_string(request).map_err(WindowsHostedError::Encode)?;
     let dispatch_input = serde_json::json!({ "request": request_json });
@@ -171,22 +184,7 @@ fn dispatch(
             WindowsHostedError::ProviderResponse(format!("dispatch returned no run URL: {url:?}"))
         })?;
 
-    successful(
-        "workflow execution",
-        command(
-            root,
-            "gh",
-            [
-                OsString::from("run"),
-                OsString::from("watch"),
-                OsString::from(run_id.to_string()),
-                OsString::from("--repo"),
-                OsString::from(repository),
-                OsString::from("--compact"),
-                OsString::from("--exit-status"),
-            ],
-        )?,
-    )?;
+    watch_run(root, repository, run_id, cancellation)?;
     let (artifact_dir, runner_path, result_path) = download_attested_artifact(
         root,
         scratch,
@@ -521,19 +519,241 @@ fn push_source(root: &Path, commit: &str, source_ref: &str) -> Result<(), Window
 }
 
 fn delete_source(root: &Path, source_ref: &str) -> Result<(), WindowsHostedError> {
-    successful(
-        "source retirement",
-        command(
-            root,
-            "git",
-            [
-                OsString::from("push"),
-                OsString::from(REMOTE),
-                OsString::from(format!(":refs/tags/{source_ref}")),
-            ],
-        )?,
+    let deletion = command(
+        root,
+        "git",
+        [
+            OsString::from("push"),
+            OsString::from(REMOTE),
+            OsString::from(format!(":refs/tags/{source_ref}")),
+        ],
     )?;
+    if deletion.status.success() {
+        return Ok(());
+    }
+    let observed = command(
+        root,
+        "git",
+        [
+            OsString::from("ls-remote"),
+            OsString::from("--tags"),
+            OsString::from(REMOTE),
+            OsString::from(format!("refs/tags/{source_ref}")),
+        ],
+    )?;
+    if observed.status.success() && observed.stdout.is_empty() {
+        return Ok(());
+    }
+    successful("source retirement", deletion)?;
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WatchObservation {
+    Running,
+    Exited { success: bool, code: Option<i32> },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WatchAction {
+    Wait,
+    Complete,
+    Cancel,
+    Failed(Option<i32>),
+}
+
+fn watch_action(cancel_requested: bool, observation: WatchObservation) -> WatchAction {
+    if cancel_requested {
+        return WatchAction::Cancel;
+    }
+    match observation {
+        WatchObservation::Running => WatchAction::Wait,
+        WatchObservation::Exited { success: true, .. } => WatchAction::Complete,
+        WatchObservation::Exited {
+            success: false,
+            code,
+        } => WatchAction::Failed(code),
+    }
+}
+
+fn watch_run(
+    root: &Path,
+    repository: &str,
+    run_id: u64,
+    cancellation: &Cancellation,
+) -> Result<(), WindowsHostedError> {
+    let mut child = Command::new("gh")
+        .current_dir(root)
+        .args([
+            OsString::from("run"),
+            OsString::from("watch"),
+            OsString::from(run_id.to_string()),
+            OsString::from("--repo"),
+            OsString::from(repository),
+            OsString::from("--compact"),
+            OsString::from("--exit-status"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|source| WindowsHostedError::Launch {
+            program: "gh".to_owned(),
+            source,
+        })?;
+    loop {
+        let cancel_requested = cancellation.requested();
+        let observation = match child
+            .try_wait()
+            .map_err(|source| WindowsHostedError::Launch {
+                program: "gh".to_owned(),
+                source,
+            })? {
+            None => WatchObservation::Running,
+            Some(status) => WatchObservation::Exited {
+                success: status.success(),
+                code: status.code(),
+            },
+        };
+        match watch_action(cancel_requested, observation) {
+            WatchAction::Wait => thread::sleep(WATCH_POLL),
+            WatchAction::Complete => return Ok(()),
+            WatchAction::Cancel => {
+                stop_watch(&mut child)?;
+                cancel_run(root, repository, run_id)?;
+                return Err(WindowsHostedError::Cancelled {
+                    run_id: Some(run_id),
+                });
+            }
+            WatchAction::Failed(code) => {
+                return Err(WindowsHostedError::Command {
+                    operation: "workflow execution",
+                    code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+        }
+    }
+}
+
+fn stop_watch(child: &mut Child) -> Result<(), WindowsHostedError> {
+    match child.kill() {
+        Ok(()) => {}
+        Err(source) if source.kind() == io::ErrorKind::InvalidInput => {}
+        Err(source) => {
+            return Err(WindowsHostedError::Launch {
+                program: "gh".to_owned(),
+                source,
+            });
+        }
+    }
+    child
+        .wait()
+        .map(|_| ())
+        .map_err(|source| WindowsHostedError::Launch {
+            program: "gh".to_owned(),
+            source,
+        })
+}
+
+fn cancel_run(root: &Path, repository: &str, run_id: u64) -> Result<(), WindowsHostedError> {
+    let cancelled = command(
+        root,
+        "gh",
+        [
+            OsString::from("run"),
+            OsString::from("cancel"),
+            OsString::from(run_id.to_string()),
+            OsString::from("--repo"),
+            OsString::from(repository),
+        ],
+    )?;
+    if cancelled.status.success() {
+        Ok(())
+    } else {
+        let status = successful_text(
+            "workflow state after cancellation",
+            command(
+                root,
+                "gh",
+                [
+                    OsString::from("run"),
+                    OsString::from("view"),
+                    OsString::from(run_id.to_string()),
+                    OsString::from("--repo"),
+                    OsString::from(repository),
+                    OsString::from("--json"),
+                    OsString::from("status"),
+                    OsString::from("--jq"),
+                    OsString::from(".status"),
+                ],
+            )?,
+        )?;
+        if status.trim() == "completed" {
+            Ok(())
+        } else {
+            successful("workflow cancellation", cancelled).map(|_| ())
+        }
+    }
+}
+
+struct Cancellation {
+    #[cfg(unix)]
+    requested: Arc<AtomicBool>,
+    #[cfg(unix)]
+    registrations: Vec<signal_hook::SigId>,
+}
+
+impl Cancellation {
+    fn install() -> Result<Self, WindowsHostedError> {
+        #[cfg(unix)]
+        {
+            let requested = Arc::new(AtomicBool::new(false));
+            let interrupt = signal_hook::flag::register(
+                signal_hook::consts::signal::SIGINT,
+                Arc::clone(&requested),
+            )
+            .map_err(WindowsHostedError::Signal)?;
+            let terminate = match signal_hook::flag::register(
+                signal_hook::consts::signal::SIGTERM,
+                Arc::clone(&requested),
+            ) {
+                Ok(registration) => registration,
+                Err(source) => {
+                    signal_hook::low_level::unregister(interrupt);
+                    return Err(WindowsHostedError::Signal(source));
+                }
+            };
+            Ok(Self {
+                requested,
+                registrations: vec![interrupt, terminate],
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {})
+        }
+    }
+
+    fn requested(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.requested.load(Ordering::Relaxed)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+}
+
+impl Drop for Cancellation {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        for registration in self.registrations.drain(..) {
+            signal_hook::low_level::unregister(registration);
+        }
+    }
 }
 
 fn workspace_root() -> Result<PathBuf, WindowsHostedError> {
@@ -704,6 +924,7 @@ struct Artifact {
 pub enum WindowsHostedError {
     MissingProgram,
     NonUnicode(&'static str),
+    Signal(io::Error),
     Policy(toml::de::Error),
     PolicyIdentity,
     Admission(crate::AdmissionError),
@@ -730,6 +951,9 @@ pub enum WindowsHostedError {
         dispatched: u64,
         signed: u64,
     },
+    Cancelled {
+        run_id: Option<u64>,
+    },
     Output(io::Error),
     OperationAndCleanup {
         operation: Box<WindowsHostedError>,
@@ -744,6 +968,10 @@ impl fmt::Display for WindowsHostedError {
                 formatter.write_str("windows-hosted requires PROGRAM [ARG...] after --")
             }
             Self::NonUnicode(kind) => write!(formatter, "hosted {kind} is not Unicode"),
+            Self::Signal(source) => write!(
+                formatter,
+                "cannot install hosted cancellation handler: {source}"
+            ),
             Self::Policy(source) => {
                 write!(formatter, "hosted Windows policy does not decode: {source}")
             }
@@ -777,6 +1005,14 @@ impl fmt::Display for WindowsHostedError {
                 formatter,
                 "signed provider run {signed} does not match dispatched run {dispatched}"
             ),
+            Self::Cancelled {
+                run_id: Some(run_id),
+            } => {
+                write!(formatter, "hosted provider run {run_id} was cancelled")
+            }
+            Self::Cancelled { run_id: None } => {
+                formatter.write_str("hosted execution was cancelled before provider dispatch")
+            }
             Self::Output(source) => write!(formatter, "hosted output failed: {source}"),
             Self::OperationAndCleanup { operation, cleanup } => write!(
                 formatter,
@@ -792,11 +1028,62 @@ impl Error for WindowsHostedError {
             Self::Policy(source) => Some(source),
             Self::Admission(source) => Some(source),
             Self::Encode(source) | Self::Decode(source) => Some(source),
-            Self::Io { source, .. } | Self::Launch { source, .. } | Self::Output(source) => {
-                Some(source)
-            }
+            Self::Io { source, .. }
+            | Self::Launch { source, .. }
+            | Self::Output(source)
+            | Self::Signal(source) => Some(source),
             Self::OperationAndCleanup { operation, .. } => Some(operation),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WatchAction, WatchObservation, watch_action};
+
+    #[test]
+    fn cancellation_preempts_every_provider_watch_observation() {
+        for observation in [
+            WatchObservation::Running,
+            WatchObservation::Exited {
+                success: true,
+                code: Some(0),
+            },
+            WatchObservation::Exited {
+                success: false,
+                code: Some(1),
+            },
+        ] {
+            assert_eq!(watch_action(true, observation), WatchAction::Cancel);
+        }
+    }
+
+    #[test]
+    fn provider_watch_outcomes_remain_typed_without_cancellation() {
+        assert_eq!(
+            watch_action(false, WatchObservation::Running),
+            WatchAction::Wait
+        );
+        assert_eq!(
+            watch_action(
+                false,
+                WatchObservation::Exited {
+                    success: true,
+                    code: Some(0),
+                }
+            ),
+            WatchAction::Complete
+        );
+        assert_eq!(
+            watch_action(
+                false,
+                WatchObservation::Exited {
+                    success: false,
+                    code: Some(23),
+                }
+            ),
+            WatchAction::Failed(Some(23))
+        );
     }
 }

@@ -170,10 +170,13 @@ another workflow.
 The supported provider repository is `github.com/infimalabs/spice-rust`.
 Authenticate the machine-local `gh` client and Git transport separately.
 The Git credential needs Contents write permission to create and delete tags.
-The GitHub CLI credential needs Actions read/write, Contents read,
-Attestations read, and Metadata read for this repository; the workflow's own
-short-lived `GITHUB_TOKEN` gets only Contents read, OIDC identity-token write,
-and Attestations write. Tokens, mutable endpoints, and provider account
+The GitHub CLI credential needs Actions read/write, Attestations read, Contents
+read, and Metadata read for this repository; the workflow's short-lived
+`GITHUB_TOKEN` gets Attestations write for signing and Contents write only so
+its `always` cleanup can retire the exact one-use `spice-hosted-*` tag, plus
+OIDC identity-token write. The client cancels the exact dispatched run on
+`SIGINT` or `SIGTERM`; provider cleanup is the backstop when the client
+disappears before it can act. Tokens, mutable endpoints, and provider account
 configuration are never tracked policy. Rotate or revoke GitHub credentials in
 the provider, then run `gh auth logout --hostname github.com`; delete or rotate
 the corresponding SSH key through GitHub and the local keychain.
