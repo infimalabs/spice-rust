@@ -38,13 +38,10 @@ fn a_pending_launch_survives_refused_wakes_and_commits_before_dark() {
         &reads,
     );
     let door_path = crate::resident::supervisor::command::kick_path(&fixture.paths, fixture.lane);
-    let _ = std::fs::remove_file(&door_path);
-    let door = std::os::unix::net::UnixDatagram::bind(&door_path).expect("the lane's door binds");
-    door.set_nonblocking(true).expect("a door that never waits");
+    let door = door::Door::bind(&door_path, 1024).expect("the lane's door binds");
     let kicked = || {
-        let mut kick = [0u8; 1024];
-        door.recv(&mut kick).ok().map(|length| {
-            serde_json::from_slice::<crate::resident::supervisor::command::Kick>(&kick[..length])
+        door.recv(Some(std::time::Duration::ZERO)).ok().map(|kick| {
+            serde_json::from_slice::<crate::resident::supervisor::command::Kick>(&kick)
                 .expect("a kick")
         })
     };
@@ -118,7 +115,6 @@ fn a_pending_launch_survives_refused_wakes_and_commits_before_dark() {
     );
     crate::resident::steering::remove_lane_surface(&fixture.paths, fixture.lane);
     drop(door);
-    let _ = std::fs::remove_file(&door_path);
     drop(command_surface);
     drop(reads);
     bus.verify().expect("dark settlement authority verifies");

@@ -976,16 +976,32 @@ fn written(stream: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
     stream.flush()
 }
 
-/// Where this lane's driver listens for republished-inbox kicks.
-///
-/// `sockaddr_un.sun_path` is only 104 bytes on Darwin, so the door is one
-/// content-addressed leaf beneath the short system temporary path, exactly
-/// as the capture socket is.
+/// Where this lane's driver listens for republished-inbox kicks: one
+/// content-addressed leaf beneath the door root.
 pub(in crate::resident) fn kick_path(paths: &RuntimePaths, lane: CanonicalUuid) -> PathBuf {
     let mut identity = blake3::Hasher::new();
     identity.update(paths.common.as_os_str().as_encoded_bytes());
     identity.update(lane.to_string().as_bytes());
-    kick_path_beneath(Path::new("/tmp"), &identity.finalize().to_string())
+    kick_path_beneath(door_root(paths), &identity.finalize().to_string())
+}
+
+/// Where ephemeral command doors live, each as one content-addressed leaf.
+///
+/// `sockaddr_un.sun_path` is only 104 bytes on Darwin, and repository and
+/// worktree roots are not bounded that tightly, so Unix doors sit beneath the
+/// canonical short system temporary path. A Windows door endpoint is an
+/// ordinary file naming its pipe, so it stays in the private runtime
+/// directory. Durable state remains repository-local either way.
+fn door_root(paths: &RuntimePaths) -> &Path {
+    #[cfg(unix)]
+    {
+        let _ = paths;
+        Path::new("/tmp")
+    }
+    #[cfg(windows)]
+    {
+        &paths.runtime
+    }
 }
 
 fn kick_path_beneath(root: &Path, identity: &str) -> PathBuf {
@@ -1075,65 +1091,41 @@ pub(in crate::resident) fn retune(
     occupant: CanonicalUuid,
     retune: LiveRetune,
 ) -> io::Result<LiveRetuneResult> {
-    #[cfg(unix)]
-    {
-        let request = format!(
-            "{}{}",
-            listen::OMP_RETUNE_REQUEST_ID_PREFIX,
-            super::super::new_uuid()
-        );
-        let mut identity = blake3::Hasher::new();
-        identity.update(paths.common.as_os_str().as_encoded_bytes());
-        identity.update(request.as_bytes());
-        let reply = Path::new("/tmp").join(format!("spice-r-{}.sock", identity.finalize()));
-        let _ = fs::remove_file(&reply);
-        let socket = std::os::unix::net::UnixDatagram::bind(&reply)?;
-        socket.set_read_timeout(Some(RETUNE_TIMEOUT))?;
-        let kick = Kick::Retune {
-            occupant,
-            request: request.clone(),
-            retune,
-            reply: reply.clone(),
-        };
-        let result = send_to(&kick_path(paths, lane), &kick).and_then(|()| {
-            let mut bytes = [0u8; CALLBACK_REPLY_BYTES];
-            let length = socket.recv(&mut bytes)?;
-            let answer: RetuneReply = serde_json::from_slice(&bytes[..length])
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-            if answer.request != request {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "live retune callback named another request",
-                ));
-            }
-            Ok(match answer.result {
-                RetuneReplyResult::Applied => LiveRetuneResult::Applied,
-                RetuneReplyResult::Refused { .. } => LiveRetuneResult::Refused,
-            })
-        });
-        drop(socket);
-        let _ = fs::remove_file(reply);
-        result
+    let request = format!(
+        "{}{}",
+        listen::OMP_RETUNE_REQUEST_ID_PREFIX,
+        super::super::new_uuid()
+    );
+    let mut identity = blake3::Hasher::new();
+    identity.update(paths.common.as_os_str().as_encoded_bytes());
+    identity.update(request.as_bytes());
+    let reply = door_root(paths).join(format!("spice-r-{}.sock", identity.finalize()));
+    let callback = door::Door::bind(&reply, CALLBACK_REPLY_BYTES)?;
+    let kick = Kick::Retune {
+        occupant,
+        request: request.clone(),
+        retune,
+        reply,
+    };
+    send_to(&kick_path(paths, lane), &kick)?;
+    let bytes = callback.recv(Some(RETUNE_TIMEOUT))?;
+    let answer: RetuneReply = serde_json::from_slice(&bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if answer.request != request {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "live retune callback named another request",
+        ));
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (paths, lane, occupant, retune);
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "live retuning requires Unix command doors",
-        ))
-    }
+    Ok(match answer.result {
+        RetuneReplyResult::Applied => LiveRetuneResult::Applied,
+        RetuneReplyResult::Refused { .. } => LiveRetuneResult::Refused,
+    })
 }
 
 fn answer_retune(reply: &Path, answer: RetuneReply) {
-    #[cfg(unix)]
-    {
-        let bytes = serde_json::to_vec(&answer).expect("a retune reply is representable as JSON");
-        let _sent = std::os::unix::net::UnixDatagram::unbound()
-            .and_then(|socket| socket.send_to(&bytes, reply));
-    }
-    #[cfg(not(unix))]
-    let _ = (reply, answer);
+    let bytes = serde_json::to_vec(&answer).expect("a retune reply is representable as JSON");
+    let _sent = door::send(reply, &bytes);
 }
 
 fn background_accepted<W: Write + Send + 'static>(
@@ -1161,29 +1153,17 @@ fn send(paths: &RuntimePaths, lane: CanonicalUuid, kick: &Kick) {
     let _sent = send_to(&kick_path(paths, lane), kick);
 }
 
-fn send_to(door: &Path, kick: &Kick) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let bytes = serde_json::to_vec(kick).expect("a kick is representable as JSON");
-        std::os::unix::net::UnixDatagram::unbound()?.send_to(&bytes, door)?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (door, kick);
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "kick doors require Unix",
-        ))
-    }
+fn send_to(path: &Path, kick: &Kick) -> io::Result<()> {
+    let bytes = serde_json::to_vec(kick).expect("a kick is representable as JSON");
+    door::send(path, &bytes)
 }
 
 /// Bind this lane's kick door and let every kick reach the driver.
 ///
 /// A stale door from an earlier supervisor is replaced. The listening thread
-/// lives as long as the supervisor process; the door is removed once the
-/// child has exited. A datagram that says nothing this door understands is
-/// dropped, since the sender never waits for it.
+/// lives as long as the supervisor process; the door closes once the child
+/// has exited. A message that says nothing this door understands is dropped,
+/// since the sender never waits for its effect.
 ///
 /// # Errors
 ///
@@ -1194,94 +1174,85 @@ pub(in crate::resident) fn listen_for_kicks(
     occupant: CanonicalUuid,
     driver: Arc<Driver>,
 ) -> io::Result<KickDoor> {
-    let path = kick_path(paths, lane);
-    #[cfg(unix)]
     let room_catch_up = crate::resident::room_catch_up::notice_path(paths, lane);
-    #[cfg(unix)]
     let room_catch_up_landed = crate::resident::room_catch_up::landed_notice_path(paths, lane);
-    #[cfg(unix)]
-    {
-        let _ = fs::remove_file(&path);
-        let socket = std::os::unix::net::UnixDatagram::bind(&path)?;
-        std::thread::Builder::new()
-            .name("spice-kick".to_owned())
-            .spawn(move || {
-                driver.configure_room_catch_up(room_catch_up, room_catch_up_landed, occupant);
-                driver.catch_up();
-                let mut kick = [0u8; KICK_BYTES];
-                while let Ok(length) = socket.recv(&mut kick) {
-                    match serde_json::from_slice(&kick[..length]) {
-                        Ok(Kick::Inbox) => driver.deliver_inbox(),
-                        Ok(Kick::RoomCatchUp) => driver.deliver_room_catch_up(false),
-                        Ok(Kick::Answer { request, confirmed }) => {
-                            driver.answer(request, confirmed);
-                        }
-                        Ok(Kick::Narration(prod)) if prod.occupant == occupant => {
-                            driver.deliver_narration(&prod);
-                        }
-                        Ok(Kick::Narration(_)) => {}
-                        Ok(Kick::TaskGeneration(notice)) if notice.occupant == occupant => {
-                            driver.deliver_task_generation(&notice);
-                        }
-                        Ok(Kick::TaskGeneration(_)) => {}
-                        Ok(Kick::TaskAssignment(notice)) if notice.occupant == occupant => {
-                            driver.deliver_task_assignment(&notice);
-                        }
-                        Ok(Kick::TaskAssignment(_)) => {}
-                        Ok(Kick::TaskAssignmentEnded(ended)) if ended.occupant == occupant => {
-                            driver.withdraw_task_assignment(&ended);
-                        }
-                        Ok(Kick::TaskAssignmentEnded(_)) => {}
-                        Ok(Kick::BackgroundConfirmed {
-                            notice,
-                            request,
-                            reply,
-                        }) => {
-                            let accepted = background_accepted(&driver, occupant, &notice);
-                            confirmed_background::answer(&reply, request, accepted);
-                        }
-                        Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
-                            driver.deliver_claim_lapse(&notice);
-                        }
-                        Ok(Kick::ClaimLapse(_)) => {}
-                        Ok(Kick::MessageRefused(notice)) if notice.occupant == occupant => {
-                            driver.deliver_message_refusal(&notice);
-                        }
-                        Ok(Kick::MessageRefused(_)) => {}
-                        Ok(Kick::MessageRecorded(notice)) if notice.occupant == occupant => {
-                            driver.deliver_message_recorded(&notice);
-                        }
-                        Ok(Kick::MessageRecorded(_)) => {}
-                        Ok(Kick::Renewal(notice)) if notice.occupant == occupant => {
-                            driver.deliver_renewal(notice);
-                        }
-                        Ok(Kick::Renewal(_)) => {}
-                        Ok(Kick::Retune {
-                            occupant: target,
-                            request,
-                            retune,
-                            reply,
-                        }) if target == occupant => driver.retune(request, retune, reply),
-                        Ok(Kick::Retune { .. }) => {}
-                        Ok(Kick::Abort) => driver.abort(),
-                        Err(_) => {}
+    let door = Arc::new(door::Door::bind(&kick_path(paths, lane), KICK_BYTES)?);
+    let listening = Arc::clone(&door);
+    std::thread::Builder::new()
+        .name("spice-kick".to_owned())
+        .spawn(move || {
+            driver.configure_room_catch_up(room_catch_up, room_catch_up_landed, occupant);
+            driver.catch_up();
+            while let Ok(kick) = listening.recv(None) {
+                match serde_json::from_slice(&kick) {
+                    Ok(Kick::Inbox) => driver.deliver_inbox(),
+                    Ok(Kick::RoomCatchUp) => driver.deliver_room_catch_up(false),
+                    Ok(Kick::Answer { request, confirmed }) => {
+                        driver.answer(request, confirmed);
                     }
+                    Ok(Kick::Narration(prod)) if prod.occupant == occupant => {
+                        driver.deliver_narration(&prod);
+                    }
+                    Ok(Kick::Narration(_)) => {}
+                    Ok(Kick::TaskGeneration(notice)) if notice.occupant == occupant => {
+                        driver.deliver_task_generation(&notice);
+                    }
+                    Ok(Kick::TaskGeneration(_)) => {}
+                    Ok(Kick::TaskAssignment(notice)) if notice.occupant == occupant => {
+                        driver.deliver_task_assignment(&notice);
+                    }
+                    Ok(Kick::TaskAssignment(_)) => {}
+                    Ok(Kick::TaskAssignmentEnded(ended)) if ended.occupant == occupant => {
+                        driver.withdraw_task_assignment(&ended);
+                    }
+                    Ok(Kick::TaskAssignmentEnded(_)) => {}
+                    Ok(Kick::BackgroundConfirmed {
+                        notice,
+                        request,
+                        reply,
+                    }) => {
+                        let accepted = background_accepted(&driver, occupant, &notice);
+                        confirmed_background::answer(&reply, request, accepted);
+                    }
+                    Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
+                        driver.deliver_claim_lapse(&notice);
+                    }
+                    Ok(Kick::ClaimLapse(_)) => {}
+                    Ok(Kick::MessageRefused(notice)) if notice.occupant == occupant => {
+                        driver.deliver_message_refusal(&notice);
+                    }
+                    Ok(Kick::MessageRefused(_)) => {}
+                    Ok(Kick::MessageRecorded(notice)) if notice.occupant == occupant => {
+                        driver.deliver_message_recorded(&notice);
+                    }
+                    Ok(Kick::MessageRecorded(_)) => {}
+                    Ok(Kick::Renewal(notice)) if notice.occupant == occupant => {
+                        driver.deliver_renewal(notice);
+                    }
+                    Ok(Kick::Renewal(_)) => {}
+                    Ok(Kick::Retune {
+                        occupant: target,
+                        request,
+                        retune,
+                        reply,
+                    }) if target == occupant => driver.retune(request, retune, reply),
+                    Ok(Kick::Retune { .. }) => {}
+                    Ok(Kick::Abort) => driver.abort(),
+                    Err(_) => {}
                 }
-            })?;
-    }
-    #[cfg(not(unix))]
-    let _ = (driver, occupant);
-    Ok(KickDoor { path })
+            }
+        })?;
+    Ok(KickDoor { door })
 }
 
-/// The bound kick door, removed when the supervisor is done with it.
+/// The bound kick door, closed when the supervisor is done with it.
 pub(in crate::resident) struct KickDoor {
-    path: PathBuf,
+    door: Arc<door::Door>,
 }
 
 impl Drop for KickDoor {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        self.door.close();
     }
 }
 

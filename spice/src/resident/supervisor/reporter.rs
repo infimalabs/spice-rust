@@ -18,8 +18,7 @@ use super::super::RuntimePaths;
 use super::{Notice, capture_path, command};
 
 pub(super) struct DurableReporter {
-    #[cfg(unix)]
-    socket: std::os::unix::net::UnixDatagram,
+    sender: door::Sender,
     path: PathBuf,
     driver: Mutex<Option<Arc<command::Driver>>>,
     driving: AtomicBool,
@@ -27,23 +26,12 @@ pub(super) struct DurableReporter {
 
 impl DurableReporter {
     pub(super) fn new(paths: &RuntimePaths) -> io::Result<Self> {
-        #[cfg(not(unix))]
-        {
-            Ok(Self {
-                path: capture_path(paths),
-                driver: Mutex::new(None),
-                driving: AtomicBool::new(false),
-            })
-        }
-        #[cfg(unix)]
-        {
-            Ok(Self {
-                socket: std::os::unix::net::UnixDatagram::unbound()?,
-                path: capture_path(paths),
-                driver: Mutex::new(None),
-                driving: AtomicBool::new(false),
-            })
-        }
+        Ok(Self {
+            sender: door::Sender::new()?,
+            path: capture_path(paths),
+            driver: Mutex::new(None),
+            driving: AtomicBool::new(false),
+        })
     }
 
     /// Let every decoded record reach the command driver of a child that is
@@ -59,10 +47,7 @@ impl DurableReporter {
         let Ok(bytes) = serde_json::to_vec(notice) else {
             return;
         };
-        #[cfg(unix)]
-        let _sent = self.socket.send_to(&bytes, &self.path);
-        #[cfg(not(unix))]
-        let _ = (&bytes, &self.path);
+        let _sent = self.sender.send(&self.path, &bytes);
     }
 }
 

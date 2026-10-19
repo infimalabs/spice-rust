@@ -232,33 +232,38 @@ fn failed_landed_evidence_write_preserves_and_retries_the_exact_page() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-#[cfg(unix)]
+/// A short directory for test doors: Darwin bounds socket paths to 104 bytes.
+fn door_directory() -> PathBuf {
+    if cfg!(unix) {
+        PathBuf::from("/tmp")
+    } else {
+        std::env::temp_dir()
+    }
+}
+
 fn confirmed_background_round_trip<W: Write + Send + 'static>(
     driver: Arc<Driver<W>>,
     occupant: CanonicalUuid,
     notice: crate::resident::design_input::BackgroundNotice,
 ) -> io::Result<bool> {
     let identity = crate::resident::new_uuid();
-    let door = Path::new("/tmp").join(format!("spice-background-test-{identity}.sock"));
-    let _ = fs::remove_file(&door);
-    let socket = std::os::unix::net::UnixDatagram::bind(&door)?;
+    let path = door_directory().join(format!("spice-background-test-{identity}.sock"));
+    let door = door::Door::bind(&path, KICK_BYTES)?;
     let responder = std::thread::spawn(move || {
-        let mut bytes = [0u8; KICK_BYTES];
-        let length = socket.recv(&mut bytes).expect("background kick arrives");
+        let kick = door.recv(None).expect("background kick arrives");
         let Kick::BackgroundConfirmed {
             notice,
             request,
             reply,
-        } = serde_json::from_slice(&bytes[..length]).expect("background kick decodes")
+        } = serde_json::from_slice(&kick).expect("background kick decodes")
         else {
             panic!("confirmed delivery sends a confirmed background kick");
         };
         let accepted = background_accepted(&driver, occupant, &notice);
         confirmed_background::answer(&reply, request, accepted);
     });
-    let result = confirmed_background::send_to_door(&door, Path::new("/tmp"), notice);
+    let result = confirmed_background::send_to_door(&path, &door_directory(), notice);
     responder.join().expect("background responder joins");
-    fs::remove_file(door).expect("background kick door cleans up");
     result
 }
 
@@ -278,7 +283,6 @@ impl Write for RefusingSink {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn confirmed_background_delivery_requires_the_exact_occupant_and_a_successful_write() {
     let occupant = crate::resident::new_uuid();
@@ -319,12 +323,12 @@ fn confirmed_background_delivery_requires_the_exact_occupant_and_a_successful_wr
         "a failed driver write refuses consumption"
     );
 
-    let missing = Path::new("/tmp").join(format!(
+    let missing = door_directory().join(format!(
         "spice-background-missing-{}.sock",
         crate::resident::new_uuid()
     ));
     assert!(
-        confirmed_background::send_to_door(&missing, Path::new("/tmp"), notice).is_err(),
+        confirmed_background::send_to_door(&missing, &door_directory(), notice).is_err(),
         "a missing supervisor door is a transport failure"
     );
 }
