@@ -425,19 +425,19 @@ impl CaptureAuthority {
                 ));
             };
             let held = parent.as_ref().unwrap_or(&self.directory);
-            let child = held.open_directory(component).map_err(|source| {
-                if matches!(
-                    source.kind(),
-                    io::ErrorKind::InvalidInput | io::ErrorKind::NotADirectory
-                ) {
-                    Error::corrupt(
+            let child = held
+                .open_directory(component)
+                .map_err(|source| match source.kind() {
+                    io::ErrorKind::NotFound => Error::corrupt(
+                        path.display().to_string(),
+                        "referenced artifact member is missing",
+                    ),
+                    io::ErrorKind::InvalidInput | io::ErrorKind::NotADirectory => Error::corrupt(
                         path.display().to_string(),
                         "artifact backup path crosses a link, reparse point, or non-directory",
-                    )
-                } else {
-                    Error::io("open artifact backup directory", &path, source)
-                }
-            })?;
+                    ),
+                    _ => Error::io("open artifact backup directory", &path, source),
+                })?;
             parent = Some(child);
         }
         parent
