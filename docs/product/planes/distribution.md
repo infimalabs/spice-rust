@@ -221,11 +221,13 @@ artifact bytes refuse. A successful Windows stage copies content-addressed
 objects first and the mutable target payload pointer last.
 
 The guest gives the command batch a read-only source tree, one fresh Cargo home
-and target directory, bounded output per member, bounded member runtimes, a
-Windows Job Object that kills descendants, and a machine-wide guest-firewall
-rule covering every non-loopback IPv4 and IPv6 destination. It passes each argv
-directly through `CreateProcess`, clears ambient environment, and names every
-executable by an admitted path. Result publication happens only after the rule
+and target directory, bounded output per member, bounded member runtimes, and a
+machine-wide guest-firewall rule covering every non-loopback IPv4 and IPv6
+destination. Each command root is created suspended, assigned to a kill-on-close
+Windows Job Object, and resumed only after assignment, so no descendant can run
+outside the owned tree. The guest passes each argv directly through
+`CreateProcess`, clears ambient environment, and names every executable by an
+admitted path. Result publication happens only after the rule
 is removed and scratch teardown succeeds. Provider cancellation or the
 75-minute workflow limit destroys the ephemeral VM. GitHub-hosted concurrency
 and billing limits are the account's cost boundary; the repository requests
