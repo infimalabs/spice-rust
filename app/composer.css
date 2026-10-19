@@ -649,13 +649,15 @@
 .team-surface .mosaic-message-card .markdown-body > :is(blockquote, .message-quote-card) + .message-hunk {
   margin-block-start: calc(2 * var(--mosaic-quote-pad-block));
 }
-/* A zero-width presentational prop holds the hunk's first two lines open
-   independent of the action island: the image row clears it, so the heading
-   and the start of the prose always keep the upper-left corner. */
+/* A zero-width presentational prop holds the hunk's first two real lines plus
+   the image row's leading gap open. It also retains the control island's
+   former minimum footprint, so clearing only this prop cannot move the image.
+   The row carries no top margin, and taller attribution, pills, or inline code
+   keep both lines full-width without changing the image's top edge. */
 .markdown-body .message-hunk::before {
   float: inline-start;
   width: 0;
-  height: 2lh;
+  height: calc(max(2lh, var(--message-control-size)) + .325em);
   content: "";
 }
 .markdown-body .message-hunk + .message-hunk { margin-block-start: .45em; }
@@ -669,9 +671,8 @@
    reaches above into text it cannot reflow, such as an inner quote's last
    line. Its flow footprint is two lines of the hunk's prose (line-height 1.25)
    or the pair's own height where quoted type makes two lines shorter, so text
-   below always reflows beside it. The renderer records raw/authenticated quote
-   depth so the inline offset stays exact at arbitrary nesting. The zero-width
-   start prop still keeps image rows below the first two lines. */
+   below always reflows beside it. The image row never clears this island; the
+   zero-width start prop retains its footprint and reserves the first two lines. */
 @property --message-control-size {
   syntax: "<length>";
   inherits: true;
@@ -793,11 +794,11 @@
 .markdown-body .message-hunk > p.message-image-stack {
   display: flex;
   float: inline-start;
-  clear: both;
+  clear: inline-start;
   max-width: 100%;
   align-items: flex-end;
   gap: var(--message-image-gap);
-  margin: 0.325em 8px 0.125em 0;
+  margin: 0 8px 0.125em 0;
 }
 /* A shared row floats shrink-to-fit like a single image, so prose flows beside
    it wherever it leaves room. Each image keeps its definite preferred width,
