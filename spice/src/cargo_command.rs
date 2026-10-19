@@ -417,7 +417,7 @@ fn run_verbatim(command: &mut Command) -> Result<ExitStatus, (Outcome<()>, i32)>
         .map_err(|error| launch_rejection(&error))?;
     #[cfg(not(windows))]
     let mut child = command.spawn().map_err(|error| launch_rejection(&error))?;
-    let guard = match relay(&child) {
+    let _guard = match relay(&child) {
         Ok(guard) => guard,
         Err(error) => {
             let _ = child.kill();
@@ -426,7 +426,6 @@ fn run_verbatim(command: &mut Command) -> Result<ExitStatus, (Outcome<()>, i32)>
         }
     };
     let status = child.wait().map_err(|error| wait_rejection(&error))?;
-    drop(guard);
     Ok(status)
 }
 

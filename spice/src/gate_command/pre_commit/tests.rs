@@ -2,7 +2,6 @@
 
 use super::*;
 use std::cell::Cell;
-use std::os::unix::fs::PermissionsExt as _;
 
 #[test]
 fn commit_dispatch_refuses_only_active_planning_claims() {
@@ -90,11 +89,7 @@ fn run_enters_supervision_with_only_private_worker_artifacts() {
         assert_eq!(phase.get(), 0);
         for path in [&files.progress, &files.terminal] {
             assert_eq!(
-                fs::metadata(path)
-                    .expect("worker artifact metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
+                sill::authority::owner_mode(path).expect("worker artifact mode"),
                 0o600
             );
         }
@@ -140,20 +135,12 @@ fn selected_test_refusal_renders_its_stage_and_output_evidence() {
 fn worker_artifact_directory_is_private() {
     let files = WorkerFiles::create().expect("create private worker files");
     assert_eq!(
-        fs::metadata(&files.root)
-            .expect("worker root metadata")
-            .permissions()
-            .mode()
-            & 0o777,
+        sill::authority::owner_mode(&files.root).expect("worker root mode"),
         0o700
     );
     for path in [&files.progress, &files.terminal] {
         assert_eq!(
-            fs::metadata(path)
-                .expect("worker artifact metadata")
-                .permissions()
-                .mode()
-                & 0o777,
+            sill::authority::owner_mode(path).expect("worker artifact mode"),
             0o600
         );
     }

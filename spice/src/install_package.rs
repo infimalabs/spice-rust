@@ -1,8 +1,9 @@
 //! Verified local release-package acquisition for the installed appliance.
 
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
+use std::fs::{self, File};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -180,7 +181,7 @@ fn collect(
         members.push(
             proof::PackageMember::admit_file(
                 relative.replace(std::path::MAIN_SEPARATOR, "/"),
-                metadata.permissions().mode() & 0o7777,
+                package_mode(&path)?,
                 file,
                 MAX_MEMBER_BYTES,
             )
@@ -199,9 +200,14 @@ fn current_target() -> Result<ReleaseTarget, Error> {
     {
         Ok(ReleaseTarget::X86_64UnknownLinuxMusl)
     }
+    #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+    {
+        Ok(ReleaseTarget::X86_64PcWindowsMsvc)
+    }
     #[cfg(not(any(
         all(target_arch = "aarch64", target_os = "macos"),
-        all(target_arch = "x86_64", target_os = "linux")
+        all(target_arch = "x86_64", target_os = "linux"),
+        all(target_arch = "x86_64", target_os = "windows")
     )))]
     {
         Err(Error::input(format!(
@@ -209,6 +215,21 @@ fn current_target() -> Result<ReleaseTarget, Error> {
             std::env::consts::ARCH,
             std::env::consts::OS
         )))
+    }
+}
+
+fn package_mode(path: &Path) -> Result<u32, Error> {
+    #[cfg(unix)]
+    {
+        fs::symlink_metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o7777)
+            .map_err(|source| Error::environment("read package member mode", path, source))
+    }
+    #[cfg(windows)]
+    {
+        sill::authority::owner_mode(path)
+            .map(|mode| if mode & 0o100 == 0 { 0o644 } else { 0o755 })
+            .map_err(|source| Error::environment("read package member mode", path, source))
     }
 }
 
@@ -225,9 +246,7 @@ impl StagedPackage {
                 std::process::id(),
                 uuid::Uuid::new_v4()
             ));
-            let mut builder = fs::DirBuilder::new();
-            builder.mode(0o700);
-            match builder.create(&root) {
+            match sill::authority::create_private_directory(&root) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(source) => {
@@ -261,23 +280,24 @@ impl StagedPackage {
 
     fn publish(&self, member: &proof::PackageMember) -> Result<(), Error> {
         let path = self.root.join(member.path());
-        fs::create_dir_all(path.parent().expect("a package member has a parent")).map_err(
-            |source| Error::environment("create package staging directory", &path, source),
-        )?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(member.mode())
-            .open(&path)
+        let parent = path.parent().expect("a package member has a parent");
+        sill::authority::create_private_directories(parent).map_err(|source| {
+            Error::environment("create package staging directory", parent, source)
+        })?;
+        let mut file = sill::authority::create_private_file(&path)
             .map_err(|source| Error::environment("create staged package member", &path, source))?;
         member
             .copy_to(&mut file)
             .map_err(|error| Error::input(error.to_string()))?;
-        file.set_permissions(fs::Permissions::from_mode(member.mode()))
+        set_staged_mode(&file, member.mode())
             .map_err(|source| Error::environment("mode staged package member", &path, source))?;
         file.sync_all()
             .map_err(|source| Error::environment("sync staged package member", &path, source))
     }
+}
+
+fn set_staged_mode(file: &File, mode: u32) -> std::io::Result<()> {
+    sill::authority::set_file_mode(file, mode & 0o700)
 }
 
 impl Drop for StagedPackage {
@@ -376,17 +396,10 @@ mod tests {
             fs::read(staged.executable()).expect("staged executable reads"),
             platform_executable(current_target().unwrap()),
         );
+        assert_eq!(sill::authority::owner_mode(&staged_root).unwrap(), 0o700,);
         assert_eq!(
-            fs::metadata(&staged_root).unwrap().permissions().mode() & 0o777,
-            0o700,
-        );
-        assert_eq!(
-            fs::metadata(staged.executable())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            acquired.member(&acquired.executable_path).unwrap().mode(),
+            sill::authority::owner_mode(staged.executable()).unwrap(),
+            acquired.member(&acquired.executable_path).unwrap().mode() & 0o700,
         );
         assert!(staged_root.join(PACKAGE_DOCUMENT_PATH).is_file());
         assert!(staged_root.join(&acquired.payload_path).is_file());
@@ -402,12 +415,8 @@ mod tests {
                 b"symbol fixture"
             );
             assert_eq!(
-                fs::metadata(staged_root.join(symbol_path))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o644,
+                sill::authority::owner_mode(&staged_root.join(symbol_path)).unwrap(),
+                0o600,
             );
         }
 
@@ -426,9 +435,10 @@ mod tests {
             let path = root.join(member.path());
             fs::create_dir_all(path.parent().expect("package member has a parent"))
                 .expect("package parent creates");
-            let mut file = File::create(&path).expect("package member creates");
+            let mut file =
+                sill::authority::create_private_file(&path).expect("package member creates");
             member.copy_to(&mut file).expect("package member writes");
-            fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
+            sill::authority::set_file_mode(&file, member.mode())
                 .expect("package member mode writes");
         }
     }

@@ -20,11 +20,7 @@ pub(super) fn cargo_arguments(
         ReleaseTarget::X86_64UnknownLinuxMusl => dist::ObjectTarget::LinuxX86_64,
         ReleaseTarget::X86_64PcWindowsMsvc => dist::ObjectTarget::WindowsX86_64,
     };
-    let binary = if target == ReleaseTarget::X86_64PcWindowsMsvc {
-        "spice-windows"
-    } else {
-        "spice"
-    };
+    let binary = "spice";
     let mut arguments = vec![
         OsString::from("rustc"),
         OsString::from("--locked"),
@@ -34,13 +30,6 @@ pub(super) fn cargo_arguments(
         OsString::from("--bin"),
         OsString::from(binary),
     ];
-    if target == ReleaseTarget::X86_64PcWindowsMsvc {
-        arguments.extend([
-            OsString::from("--no-default-features"),
-            OsString::from("--features"),
-            OsString::from("windows-appliance"),
-        ]);
-    }
     arguments.extend([
         OsString::from("--target"),
         OsString::from(target.as_str()),

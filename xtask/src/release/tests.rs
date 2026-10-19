@@ -421,20 +421,12 @@ fn assert_native_build(
         .windows(2)
         .find_map(|pair| (pair[0] == "--bin").then_some(pair[1].as_os_str()))
         .expect("the native build selects one binary");
-    assert_eq!(
-        binary,
-        if target == ReleaseTarget::X86_64PcWindowsMsvc {
-            OsStr::new("spice-windows")
-        } else {
-            OsStr::new("spice")
-        }
-    );
-    assert_eq!(
-        record
+    assert_eq!(binary, OsStr::new("spice"));
+    assert!(
+        !record
             .arguments
             .iter()
-            .any(|argument| argument == "--no-default-features"),
-        target == ReleaseTarget::X86_64PcWindowsMsvc
+            .any(|argument| argument == "--no-default-features")
     );
     let link = record
         .arguments

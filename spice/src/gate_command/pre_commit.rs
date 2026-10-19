@@ -2,9 +2,8 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead as _, BufReader, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -294,7 +293,7 @@ impl WorkerFiles {
             uuid::Uuid::new_v4().simple(),
         );
         let root = temporary.join(&stem);
-        DirBuilder::new().mode(0o700).create(&root)?;
+        sill::authority::create_private_directory(&root)?;
         let progress = root.join("progress.jsonl");
         let terminal = root.join("terminal.bin");
         // The private worker directory is removed before the command returns.
@@ -321,11 +320,7 @@ impl WorkerFiles {
 }
 
 fn create_private_file(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
+    sill::authority::create_private_file(path)
 }
 
 impl Drop for WorkerFiles {

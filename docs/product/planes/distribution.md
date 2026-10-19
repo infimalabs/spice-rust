@@ -316,6 +316,21 @@ paths `git ls-files` tracks. Every sync also installs the guest executor, which
 is built by
 `spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p windows-guest`.
 
+The host owns every Cargo build. A complete appliance cycle is:
+
+```sh
+spice dev xtask -- windows-msvc
+spice dev xtask -- windows-appliance
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/release/spice.exe
+```
+
+Only the x64 PE crosses into the guest; the initial guest needs neither Rust nor
+Visual Studio, and Windows 11 ARM executes it through Microsoft x64 emulation.
+Keep the one qcow2 disk thin-provisioned and retain no VM snapshots. Use
+`spice dev xtask -- windows-guest reset` to discard smoke state and
+`spice dev xtask -- build-cache --apply` when repository-owned host build roots
+need reclamation.
+
 **Shared protocol with the hosted runner.** `run` reuses the hosted
 boundary's types and bounds: the program-plus-arguments `Command`, the 3600 s
 and 8 MiB defaults (also the maxima), the 256-argument limit, the base64

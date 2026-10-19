@@ -21,7 +21,7 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
-    "stage-target TARGET|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
+    "stage-target TARGET|windows-appliance|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
     "windows-guest <provision [--replace]|start|stop|status|reset|",
     "sync [--artifact PATH]... [--source PATH]...|",
     "run [--timeout SECONDS] [--output-bytes BYTES] -- PROGRAM [ARG...]>>"
@@ -89,6 +89,9 @@ fn main() -> ExitCode {
         Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
             run_stage_target(arguments.next(), &mut output, &mut io::stderr().lock())
         }
+        Some(value) if is_exact_command(value, "windows-appliance", arguments.len(), 0) => {
+            run_windows_appliance(&mut output)
+        }
         Some(value) if is_exact_command(value, "windows-msvc", arguments.len(), 0) => {
             run_windows_msvc(&mut output)
         }
@@ -154,6 +157,13 @@ fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResu
             Err(usage_error().into())
         }
     }
+}
+
+fn run_windows_appliance(output: &mut impl io::Write) -> CommandResult {
+    let ambient = ambient_environment()?;
+    xtask::build_windows_appliance(release_environment(), ambient, output)
+        .map(|_| ())
+        .map_err(Into::into)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

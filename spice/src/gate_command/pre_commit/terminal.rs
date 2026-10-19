@@ -107,11 +107,7 @@ fn refusal_evidence(report: &Report, artifact: &Path) -> Result<String, Fault> {
         reason: "gate::pre-commit-report-artifact-unavailable".to_owned(),
         detail: format!("report artifact path is not UTF-8: {artifact:?}"),
     })?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(artifact)
+    let mut file = sill::authority::create_private_file(artifact)
         .map_err(|error| report_artifact_fault(artifact_text, error))?;
     file.write_all(&bytes)
         .and_then(|()| file.sync_all())

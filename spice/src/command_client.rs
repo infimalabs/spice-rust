@@ -29,7 +29,7 @@ mod session;
 mod steering;
 mod typed;
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use browser::browser_command;
 pub(crate) use browser::{open_app_result_with, open_app_with, system_browser};
 use deadline_stream::{DeadlineStream, IoDirection, IoFailure, remaining};

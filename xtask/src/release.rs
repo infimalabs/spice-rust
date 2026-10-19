@@ -23,6 +23,9 @@ use wire::{Digest, Domain};
 
 mod native;
 
+mod windows_appliance;
+pub use windows_appliance::build_windows_appliance;
+
 #[cfg(unix)]
 mod symbols;
 #[cfg(unix)]
@@ -1175,6 +1178,14 @@ impl SystemExecutor {
             records: RefCell::new(Vec::new()),
         })
     }
+
+    fn ambient(root: &Path, environment: Environment) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            environment,
+            records: RefCell::new(Vec::new()),
+        }
+    }
 }
 
 impl Executor for SystemExecutor {
@@ -1386,6 +1397,8 @@ pub enum TargetBuildError {
     },
     Output(io::Error),
     Spec(sill::SpecError),
+    Application(crate::app::AppBuildError),
+    Build(dist::BuildError),
     Pins(dist::PinError),
     Stage(dist::StageError),
 }
@@ -1448,6 +1461,8 @@ impl fmt::Display for TargetBuildError {
                 formatter,
                 "release process specification is invalid: {source}"
             ),
+            Self::Application(error) => write!(formatter, "app build failed: {error}"),
+            Self::Build(error) => write!(formatter, "native build failed: {error}"),
             Self::Pins(source) => write!(formatter, "release pin refused: {source}"),
             Self::Stage(source) => write!(formatter, "release stage failed: {source}"),
         }
@@ -1462,6 +1477,8 @@ impl Error for TargetBuildError {
             }
             Self::Wait { source, .. } => Some(source),
             Self::Spec(source) => Some(source),
+            Self::Application(source) => Some(source),
+            Self::Build(source) => Some(source),
             Self::Pins(source) => Some(source),
             Self::Stage(source) => Some(source),
             _ => None,
