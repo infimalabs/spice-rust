@@ -1294,9 +1294,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   text-overflow: clip;
   white-space: pre;
 }
+/* The fixed age clips overflow to three characters. Keep its underline inside
+   the glyph-height line box so the link affordance survives that clip. */
 a.relative-age {
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: 0;
 }
 .team-surface :is(.message-ack-pill, .message-taste-pill, .message-broadcast-pill, .message-review-pill, .message-final-pill, .message-room-pill) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
