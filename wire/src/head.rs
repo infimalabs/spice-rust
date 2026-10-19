@@ -519,6 +519,31 @@ pub struct TaskHead {
     pub revision: Seq,
 }
 
+impl TaskHead {
+    /// Whether this task is the Design itself, currently waits on it, or
+    /// retains it as the preparation controller after selection.
+    #[must_use]
+    pub fn is_associated_with_design(&self, design: &TaskStamp) -> bool {
+        design_associated(
+            &self.born,
+            &self.dependencies,
+            self.preparation.as_ref(),
+            design,
+        )
+    }
+}
+
+pub(crate) fn design_associated(
+    born: &TaskStamp,
+    dependencies: &[TaskStamp],
+    preparation: Option<&TaskPreparation>,
+    design: &TaskStamp,
+) -> bool {
+    born == design
+        || dependencies.contains(design)
+        || preparation.is_some_and(|preparation| preparation.controller == *design)
+}
+
 /// Current disposition of the most recent winning claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

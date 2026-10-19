@@ -738,30 +738,36 @@ fn shelve(
 }
 
 /// Lanes a fast-flagged working group runs fast: each holder of an active
-/// claim on one of its Design tasks.
+/// claim on a task associated with one of its Design anchors.
 pub(crate) fn group_fast_lanes(
     read: &JournalRead<'_>,
 ) -> Result<std::collections::BTreeSet<wire::CanonicalUuid>, GuardError> {
     let partition = current_partition(read)?;
-    let mut lanes = std::collections::BTreeSet::new();
+    let mut designs = std::collections::BTreeSet::new();
     for group in &partition.groups {
         if !partition.is_fast(&group.group) {
             continue;
         }
-        for born in &group.anchors {
-            let task = read.task_head(born)?;
-            let workflow = read.workflow_head(born)?;
-            let design = task.zip(workflow).is_some_and(|(task, workflow)| {
-                wire::intent::is_open_design(task.body().intent, workflow.body())
-            });
-            if !design {
-                continue;
-            }
-            if let Some(claim) = read.claim_head(born)?
-                && claim.body().disposition == wire::ClaimDisposition::Active
-            {
-                lanes.insert(claim.body().lane);
-            }
+        designs.extend(group.anchors.iter().cloned());
+    }
+    if designs.is_empty() {
+        return Ok(std::collections::BTreeSet::new());
+    }
+
+    let mut lanes = std::collections::BTreeSet::new();
+    let active_lanes = read
+        .actively_claimed_lanes()?
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    for lane in active_lanes {
+        let Some(active) = read.active_claim_for_actor(&wire::Actor::Lane(lane))? else {
+            continue;
+        };
+        if designs
+            .iter()
+            .any(|design| active.statement().body().is_associated_with_design(design))
+        {
+            lanes.insert(lane);
         }
     }
     Ok(lanes)

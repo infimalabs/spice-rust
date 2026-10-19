@@ -809,7 +809,7 @@ impl<'a> WorkProjection<'a> {
                 task.working_claimant().is_some()
                     && designs
                         .iter()
-                        .any(|design| crate::runtime::associated(statement, design))
+                        .any(|design| statement.is_associated_with_design(design))
             }
         }
     }

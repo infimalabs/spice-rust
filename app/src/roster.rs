@@ -312,9 +312,9 @@ pub fn designs(tasks: &[BoardTask]) -> impl Iterator<Item = &BoardTask> {
     })
 }
 
-/// The lanes holding a live claim on each working group's Design tasks: the
-/// lanes making its proposals. A claim on a Plan or other task a Design
-/// controls is not a claim on the group's designs.
+/// The lanes holding live claims on work associated with each working group's
+/// Design anchors. Association survives output selection through the task's
+/// persistent preparation controller.
 #[must_use]
 pub fn claimants(
     partition: &WorkingGroupPartition,
@@ -324,18 +324,109 @@ pub fn claimants(
         .groups
         .iter()
         .map(|group| {
-            let lanes = group
-                .anchors
+            let lanes = board
+                .tasks
                 .iter()
-                .filter_map(|design| board.row(design))
-                .filter(|row| {
-                    wire::intent::is_open_design(row.statement.body.intent, &row.workflow.body)
+                .filter_map(|row| {
+                    let claim = row
+                        .claim
+                        .as_ref()
+                        .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)?;
+                    group
+                        .anchors
+                        .iter()
+                        .any(|design| row.statement.body.is_associated_with_design(design))
+                        .then_some(claim.body.lane)
                 })
-                .filter_map(|row| row.claim.as_ref())
-                .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
-                .map(|claim| claim.body.lane)
                 .collect();
             (group.group.clone(), lanes)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::work::tests::{board, claim, design, stamp, task};
+    use wire::ClaimDisposition;
+
+    fn lane(value: u64) -> CanonicalUuid {
+        format!("00000000-0000-4000-8000-{value:012}")
+            .parse()
+            .expect("fixture lane")
+    }
+
+    fn activate(row: &mut BoardTask, lane: CanonicalUuid) {
+        let mut active = claim(row, ClaimDisposition::Active);
+        active.body.lane = lane;
+        row.claim = Some(active);
+    }
+
+    #[test]
+    fn group_claimants_cover_gated_and_selected_work_across_anchor_standing() {
+        let first = stamp(1);
+        let second = stamp(4);
+        let mut first_design = design(1, "design.first");
+        activate(&mut first_design, lane(1));
+
+        let mut selected = task(2, "work.selected");
+        selected.statement.body.preparation = Some(wire::TaskPreparation {
+            parent: first.clone(),
+            controller: first.clone(),
+            construction: stamp(2),
+        });
+        activate(&mut selected, lane(2));
+
+        let mut gated = task(3, "work.gated");
+        gated.statement.body.dependencies = vec![first.clone()];
+        activate(&mut gated, lane(3));
+
+        let unavailable_anchor = task(4, "design.unavailable");
+        let mut other_selected = task(5, "work.other");
+        other_selected.statement.body.preparation = Some(wire::TaskPreparation {
+            parent: second.clone(),
+            controller: second.clone(),
+            construction: stamp(5),
+        });
+        activate(&mut other_selected, lane(4));
+
+        let mut unrelated = task(6, "work.unrelated");
+        activate(&mut unrelated, lane(5));
+
+        let first_group = RoomAuthorityStamp::for_micros(100).expect("fixture first group");
+        let second_group = RoomAuthorityStamp::for_micros(200).expect("fixture second group");
+        let partition = WorkingGroupPartition {
+            revision: 1,
+            groups: vec![
+                wire::rooms::WorkingGroup {
+                    group: first_group.clone(),
+                    anchors: vec![first],
+                    stance: wire::rooms::WorkingGroupStance::Explore,
+                },
+                wire::rooms::WorkingGroup {
+                    group: second_group.clone(),
+                    anchors: vec![second],
+                    stance: wire::rooms::WorkingGroupStance::Explore,
+                },
+            ],
+            fast: Vec::new(),
+        };
+        let workers = claimants(
+            &partition,
+            &board(vec![
+                first_design,
+                selected,
+                gated,
+                unavailable_anchor,
+                other_selected,
+                unrelated,
+            ]),
+        );
+
+        assert_eq!(
+            workers.get(&first_group),
+            Some(&BTreeSet::from([lane(1), lane(2), lane(3)]))
+        );
+        assert_eq!(workers.get(&second_group), Some(&BTreeSet::from([lane(4)])));
+    }
 }

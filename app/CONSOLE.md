@@ -99,22 +99,24 @@ none:
   durable resident fast-mode flag, off until engaged, and a press sends the
   admitted `group::fast` command naming the group at the partition revision it
   read, showing the request until the resident answers. While the flag is on,
-  every lane holding a live claim on one of the group's Design tasks runs in
-  fast mode; a claim on a Plan or other task a Design controls does not count.
+  every lane holding a live claim on work associated with one of the group's
+  Design anchors runs in fast mode. Association covers the Design task, a task
+  currently depending on it, and selected work that retains it as preparation
+  controller.
   Fast mode stays additive: a lane is fast when its own, its team's, or the
   global flag is on, or a flagged group covers it, and no level switches
   another off. A claim starting or ending, a design moving into or out of the
   group, or the flag changing takes effect at the next occupant launch and
   live for a running OMP occupant, exactly as team TURBO does, and only when
   the lane's effective fast mode changes. Its title names the lanes it runs fast
-  or says no lane holds a claim on the group's designs, and it is disabled when
-  the resident cannot configure the group.
+  or says no lane works on the group's Design-associated tasks, and it is
+  disabled when the resident cannot configure the group.
 - **The speech slider** reads Quiet / Speak / Narrate with the team rules,
   browser-local and stored per group, applied in the input that selects it. It
-  covers each lane holding a live claim on one of the group's designs: that
-  lane's live agent prose, drawn in its team's console, is voiced at the louder
-  of its team's mode and every covering group's mode, each line at most once.
-  Room publications stay records and are never voiced.
+  covers the same Design-associated workers as group TURBO: each lane's live
+  agent prose, drawn in its team's console, is voiced at the louder of its
+  team's mode and every covering group's mode, each line at most once. Room
+  publications stay records and are never voiced.
 - **The allocation slider** becomes the group's shared stance control with
   Passive / Explore / Converge stops. It reads the stance from the shared
   working-group partition and sends one guarded `group::stance` command at the

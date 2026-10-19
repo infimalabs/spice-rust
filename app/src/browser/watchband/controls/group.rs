@@ -207,7 +207,7 @@ pub(in crate::browser) struct GroupPanel<'a> {
     /// Shows a refused request's reason.
     pub(in crate::browser) report: Callback<String>,
     pub(in crate::browser) group: &'a RoomAuthorityStamp,
-    /// The lanes holding a live claim on the group's designs.
+    /// The lanes holding live claims on Design-associated work.
     pub(in crate::browser) claimants: &'a BTreeSet<CanonicalUuid>,
     /// Their display names, in the same order.
     pub(in crate::browser) names: &'a [String],
@@ -265,10 +265,10 @@ impl GroupPanel<'_> {
         let can_configure = standing && self.runtime.offers(wire::CommandKind::WorkingGroupFast);
         let title = match (engaged, self.names.join(", ")) {
             (true, lanes) if lanes.is_empty() => {
-                "Turbo: no lane holds a claim on this group's designs".to_owned()
+                "Turbo: no lane works on this group's Design-associated tasks".to_owned()
             }
             (false, lanes) if lanes.is_empty() => {
-                "Turbo off: no lane holds a claim on this group's designs".to_owned()
+                "Turbo off: no lane works on this group's Design-associated tasks".to_owned()
             }
             (true, lanes) => format!("Turbo: {lanes} run in fast mode"),
             (false, lanes) => format!("Turbo off: press to run {lanes} in fast mode"),
@@ -326,8 +326,8 @@ impl GroupPanel<'_> {
         }
     }
 
-    /// The group's speech mode, covering each claimant with the team rules
-    /// and applied in the input turn that selects it.
+    /// The group's speech mode, covering each Design-associated worker with
+    /// the team rules and applied in the input turn that selects it.
     fn speech_slider(&self, speech: SpeechMode) -> Html {
         let admissions = SpeechMode::ALL.map(|mode| {
             self.controls
@@ -359,7 +359,7 @@ impl GroupPanel<'_> {
                     step="1"
                     value={speech.index().to_string()}
                     aria-label={format!("Group speech mode: {}", speech.label())}
-                    title="Voices the lanes holding a claim on this group's designs"
+                    title="Voices the lanes working on this group's Design-associated tasks"
                     {oninput}
                 />
                 {slider_words(SpeechMode::ALL.map(SpeechMode::label), speech.index())}
