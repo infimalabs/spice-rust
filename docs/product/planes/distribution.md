@@ -131,8 +131,9 @@ the new complete seal, never a pointer to missing proof.
 ### Ephemeral native Windows execution
 
 The repository's Windows execution boundary is a fresh GitHub-hosted
-`windows-2025` x86-64 machine running Windows Server 2025 Datacenter. No
-dedicated Windows host is owned, kept running, or administered. Wine, the
+`windows-2025` x86-64 machine running Windows Server 2025 Datacenter on the
+provider's Visual Studio 2026 image. No dedicated Windows host is owned, kept
+running, or administered. Wine, the
 Darwin-to-MSVC cross-toolchain, Linux containers, and synthetic PE fixtures
 remain useful format/build checks but never substitute for this native
 execution.
