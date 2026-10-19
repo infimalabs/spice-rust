@@ -12,6 +12,13 @@ const CURRENT_BUILD_EXCLUDES: &[&str] = &[
     ".venv/**",
     "vendor/**",
 ];
+const RUST_TYPECHECK_EXCLUDES: &[&str] = &[
+    ".git/**",
+    "target/**",
+    "node_modules/**",
+    ".venv/**",
+    "vendor/**",
+];
 /// Release-packaged path-part exclusions retained by scanner declarations.
 pub const PACKAGED_SCANNER_EXCLUDES: &[&str] = &[
     "any path component equal to .git",
@@ -265,8 +272,14 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
             roots: &["."],
             // Every Rust source, not just `**/src/**`, because the analysis
             // builds test targets and a crate's tests live outside `src`.
-            includes: &["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/*.rs"],
-            excludes: CURRENT_BUILD_EXCLUDES,
+            includes: &[
+                "Cargo.toml",
+                "Cargo.lock",
+                "**/Cargo.toml",
+                "**/*.rs",
+                "dist/windows-msvc.toml",
+            ],
+            excludes: RUST_TYPECHECK_EXCLUDES,
             applicability: "workspace Cargo.toml is selected",
         },
         configuration: ConfigurationSource {
@@ -276,6 +289,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         tools: RUST_TYPECHECK_TOOLS,
         analysis: &[
             "cargo <test for a test-enabled target or check> --locked --package <one reached package> <one exact reached target flag> <--features exact package-qualified required features> <--no-run for a test-enabled target>",
+            "cargo check --locked --package <spice or sill> <--bin spice or --tests> --target x86_64-pc-windows-msvc --message-format=json-render-diagnostics when dist/windows-msvc.toml is selected",
         ],
     },
     ToolchainDeclaration {

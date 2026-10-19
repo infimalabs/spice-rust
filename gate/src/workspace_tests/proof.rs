@@ -10,6 +10,32 @@ const PROOF_CARGO_JOBS: usize = 1;
 const PROOF_TEST_THREADS: usize = 1;
 const DIGEST_HEX_LENGTH: usize = 64;
 
+const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+const WINDOWS_TOOLCHAIN_PIN: &str = "dist/windows-msvc.toml";
+const WINDOWS_TYPECHECKS: [WindowsTypecheck; 3] = [
+    WindowsTypecheck {
+        package: "spice",
+        identity: "windows-x86_64-pc-windows-msvc-bin:spice",
+        selectors: &["--bin", "spice"],
+    },
+    WindowsTypecheck {
+        package: "spice",
+        identity: "windows-x86_64-pc-windows-msvc-tests",
+        selectors: &["--tests"],
+    },
+    WindowsTypecheck {
+        package: "sill",
+        identity: "windows-x86_64-pc-windows-msvc-tests",
+        selectors: &["--tests"],
+    },
+];
+
+struct WindowsTypecheck {
+    package: &'static str,
+    identity: &'static str,
+    selectors: &'static [&'static str],
+}
+
 /// Logical Cargo work represented by one independently reusable receipt.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -225,6 +251,14 @@ fn plan_cargo_gate_shards(
         &mut source_analysis,
         external_source.as_ref(),
     )?;
+    typechecks.extend(windows_typecheck_shards(
+        &inventory,
+        root,
+        changed_sources,
+        selected_paths,
+        &mut source_analysis,
+        external_source.as_ref(),
+    )?);
 
     let mut tests = if include_tests {
         let report = selection_plan(&inventory, root, source, changed_sources)?.into_report();
@@ -326,6 +360,68 @@ fn typecheck_shards(
         }
     }
     Ok(shards)
+}
+
+fn windows_typecheck_shards(
+    inventory: &Inventory,
+    root: &Path,
+    changed_sources: &[String],
+    selected_paths: &[String],
+    source_analysis: &mut CompileTimeSourceAnalysis,
+    external_source: Option<&CargoExternalSourceAuthority>,
+) -> Result<Vec<CargoGateShard>, WorkspaceTestError> {
+    if !selected_paths
+        .iter()
+        .any(|path| path == WINDOWS_TOOLCHAIN_PIN)
+    {
+        return Ok(Vec::new());
+    }
+    WINDOWS_TYPECHECKS
+        .iter()
+        .map(|check| {
+            let mut argv = vec![
+                "check".to_owned(),
+                "--locked".to_owned(),
+                "--package".to_owned(),
+                check.package.to_owned(),
+            ];
+            argv.extend(
+                check
+                    .selectors
+                    .iter()
+                    .map(|selector| (*selector).to_owned()),
+            );
+            argv.extend([
+                "--target".to_owned(),
+                WINDOWS_TARGET.to_owned(),
+                "--message-format=json-render-diagnostics".to_owned(),
+            ]);
+            let mut authority = package_input_authority(
+                inventory,
+                root,
+                check.package,
+                selected_paths,
+                changed_sources,
+                source_analysis,
+                external_source,
+            )?;
+            authority.input_paths.push(WINDOWS_TOOLCHAIN_PIN.to_owned());
+            authority.input_paths.sort();
+            authority.input_paths.dedup();
+            Ok(CargoGateShard {
+                kind: CargoGateShardKind::Typecheck,
+                action_id: format!("cargo:typecheck:{}::{}", check.package, check.identity),
+                package: check.package.to_owned(),
+                targets: vec![check.identity.to_owned()],
+                argv,
+                input_paths: authority.input_paths,
+                compile_time_producers: authority.producers,
+                compile_time_authorities: authority.compile_time,
+                external_source: authority.external_source,
+                reuse: authority.reuse,
+            })
+        })
+        .collect()
 }
 
 fn typecheck_provenance(
@@ -811,6 +907,184 @@ mod tests {
                 "version = \"0.1.0\"\n",
             ),
         );
+    }
+
+    fn windows_fixture_metadata(root: &Path) -> serde_json::Value {
+        let path = |relative: &str| root.join(relative);
+        let spice = format!("path+file://{}/spice#spice@0.0.0", root.display());
+        let sill = format!("path+file://{}/sill#sill@0.0.0", root.display());
+        serde_json::json!({
+            "packages": [
+                {
+                    "id": spice,
+                    "name": "spice",
+                    "version": "0.0.0",
+                    "edition": "2024",
+                    "source": null,
+                    "dependencies": [],
+                    "targets": [
+                        {"kind": ["lib"], "name": "spice", "test": true,
+                         "src_path": path("spice/src/lib.rs")},
+                        {"kind": ["bin"], "name": "spice", "test": true,
+                         "src_path": path("spice/src/main.rs")},
+                    ],
+                    "features": {},
+                    "manifest_path": path("spice/Cargo.toml"),
+                    "metadata": {"spice": {"cargo-proof": {"version": 1, "complete": true}}},
+                },
+                {
+                    "id": sill,
+                    "name": "sill",
+                    "version": "0.0.0",
+                    "edition": "2024",
+                    "source": null,
+                    "dependencies": [],
+                    "targets": [
+                        {"kind": ["lib"], "name": "sill", "test": true,
+                         "src_path": path("sill/src/lib.rs")},
+                    ],
+                    "features": {},
+                    "manifest_path": path("sill/Cargo.toml"),
+                    "metadata": {"spice": {"cargo-proof": {"version": 1, "complete": true}}},
+                },
+            ],
+            "workspace_members": [spice, sill],
+            "resolve": {"nodes": [
+                {"id": spice, "dependencies": []},
+                {"id": sill, "dependencies": []},
+            ]},
+            "target_directory": path("target"),
+            "build_directory": path("target"),
+        })
+    }
+
+    fn assert_windows_typecheck_contract(shards: &[CargoGateShard]) {
+        assert_eq!(shards.len(), 3);
+        assert_eq!(
+            shards[0].action_id(),
+            "cargo:typecheck:spice::windows-x86_64-pc-windows-msvc-bin:spice"
+        );
+        assert_eq!(
+            shards[0].argv(),
+            [
+                "check",
+                "--locked",
+                "--package",
+                "spice",
+                "--bin",
+                "spice",
+                "--target",
+                "x86_64-pc-windows-msvc",
+                "--message-format=json-render-diagnostics",
+            ]
+        );
+        assert_eq!(
+            shards[1].action_id(),
+            "cargo:typecheck:spice::windows-x86_64-pc-windows-msvc-tests"
+        );
+        assert_eq!(
+            shards[1].argv(),
+            [
+                "check",
+                "--locked",
+                "--package",
+                "spice",
+                "--tests",
+                "--target",
+                "x86_64-pc-windows-msvc",
+                "--message-format=json-render-diagnostics",
+            ]
+        );
+        assert_eq!(
+            shards[2].action_id(),
+            "cargo:typecheck:sill::windows-x86_64-pc-windows-msvc-tests"
+        );
+        assert_eq!(
+            shards[2].argv(),
+            [
+                "check",
+                "--locked",
+                "--package",
+                "sill",
+                "--tests",
+                "--target",
+                "x86_64-pc-windows-msvc",
+                "--message-format=json-render-diagnostics",
+            ]
+        );
+        assert!(shards.iter().all(|shard| {
+            shard
+                .input_paths()
+                .iter()
+                .any(|path| path == WINDOWS_TOOLCHAIN_PIN)
+                && shard
+                    .input_paths()
+                    .iter()
+                    .any(|path| path == "spice/src/lib.rs")
+        }));
+    }
+
+    #[test]
+    fn windows_pin_adds_complete_appliance_cross_checks() {
+        let fixture = crate::test_repository::Fixture::repository("cargo-windows-typecheck");
+        fixture.write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"sill\", \"spice\"]\nresolver = \"3\"\n",
+        );
+        fixture.write("Cargo.lock", "version = 4\n");
+        fixture.write(WINDOWS_TOOLCHAIN_PIN, "version = 1\n");
+        fixture.write(
+            "spice/Cargo.toml",
+            "[package]\nname = \"spice\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        );
+        fixture.write("spice/src/lib.rs", "pub fn library() {}\n");
+        fixture.write("spice/src/main.rs", "fn main() {}\n");
+        fixture.write(
+            "sill/Cargo.toml",
+            "[package]\nname = \"sill\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        );
+        fixture.write("sill/src/lib.rs", "pub fn library() {}\n");
+        let selected_paths = [
+            "Cargo.lock",
+            "Cargo.toml",
+            WINDOWS_TOOLCHAIN_PIN,
+            "sill/Cargo.toml",
+            "sill/src/lib.rs",
+            "spice/Cargo.toml",
+            "spice/src/lib.rs",
+            "spice/src/main.rs",
+        ]
+        .map(str::to_owned);
+        let changed_sources = ["spice/src/lib.rs".to_owned()];
+        let root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
+        let metadata = serde_json::from_value(windows_fixture_metadata(&root))
+            .expect("fixture metadata has Cargo's shape");
+        let inventory =
+            inventory_from_metadata(metadata, &root, true).expect("resolve fixture inventory");
+        let plan = |paths: &[String]| {
+            windows_typecheck_shards(
+                &inventory,
+                &root,
+                &changed_sources,
+                paths,
+                &mut CompileTimeSourceAnalysis::default(),
+                None,
+            )
+        };
+
+        let without_pin = selected_paths
+            .iter()
+            .filter(|path| path.as_str() != WINDOWS_TOOLCHAIN_PIN)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            plan(&without_pin)
+                .expect("plan ordinary workspace")
+                .is_empty()
+        );
+
+        let shards = plan(&selected_paths).expect("plan Windows cross-target checks");
+        assert_windows_typecheck_contract(&shards);
     }
 
     #[test]

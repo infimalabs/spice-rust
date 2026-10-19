@@ -27,6 +27,7 @@ mod windows_msvc;
 
 pub use windows_msvc::{
     WindowsMsvcReport, bind_if_selected as bind_windows_msvc,
+    environment_if_selected as bind_windows_msvc_environment,
     materialize as materialize_windows_msvc,
 };
 
