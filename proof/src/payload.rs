@@ -39,8 +39,8 @@ impl AdmittedPayload {
 ///
 /// Refuses malformed or noncanonical bytes, a stale schema, an unpinned proof
 /// environment, inconsistent subordinate digests, or any inventory other than
-/// the native executable, which links the app, and its symbols in exact order
-/// and mode.
+/// the target's canonical executable and required debug artifact in exact
+/// order and mode.
 pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
     let payload: TargetPayload =
         wire::decode(bytes).map_err(|source| PayloadError::Decode(source.to_string()))?;
@@ -162,6 +162,9 @@ fn verify_artifact(
             observed: entry.mode,
         });
     }
+    if entry.bytes == 0 {
+        return Err(PayloadError::EmptyArtifact(artifact.path.clone()));
+    }
     if artifact
         .digest
         .is_some_and(|field| entry.digest != *field.from(payload))
@@ -172,17 +175,17 @@ fn verify_artifact(
 }
 
 fn expected_artifacts(payload: &TargetPayload) -> Vec<Artifact> {
-    let mut artifacts = Vec::new();
-    artifacts.push(Artifact {
-        path: "bin/spice".to_owned(),
+    let mut artifacts = vec![Artifact {
+        path: payload.target.executable_path().to_owned(),
         mode: 0o755,
         digest: Some(DigestField::Native),
-    });
-    if payload.target == wire::manifest::ReleaseTarget::Aarch64AppleDarwin {
+    }];
+    if let Some(path) = payload.target.debug_path() {
         artifacts.push(Artifact {
-            path: "symbols/spice.dSYM.json".to_owned(),
+            path: path.to_owned(),
             mode: 0o644,
-            digest: Some(DigestField::Symbols),
+            digest: (payload.target == wire::manifest::ReleaseTarget::Aarch64AppleDarwin)
+                .then_some(DigestField::Symbols),
         });
     }
     artifacts.sort_by(|left, right| left.path.cmp(&right.path));
@@ -261,6 +264,8 @@ pub enum PayloadError {
     },
     /// One inventory digest disagrees with the payload field it names.
     ArtifactDigest(String),
+    /// A canonical artifact declares no bytes.
+    EmptyArtifact(String),
 }
 
 impl fmt::Display for PayloadError {
@@ -320,6 +325,9 @@ impl fmt::Display for PayloadError {
                 formatter,
                 "target payload artifact {path} disagrees with its named digest"
             ),
+            Self::EmptyArtifact(path) => {
+                write!(formatter, "target payload artifact {path} is empty")
+            }
         }
     }
 }
@@ -468,6 +476,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn windows_payload_requires_its_executable_and_nonempty_pdb() {
+        let windows = windows();
+        admit(&encode(&windows)).expect("canonical Windows payload admits");
+
+        let mut missing_pdb = windows.clone();
+        missing_pdb
+            .inventory
+            .retain(|entry| entry.path != "symbols/spice.pdb");
+        refresh_inventory(&mut missing_pdb);
+        assert_refuses_before_proof(
+            &encode(&missing_pdb),
+            PayloadError::MissingArtifact("symbols/spice.pdb".to_owned()),
+        );
+
+        let mut empty_pdb = windows;
+        let pdb = empty_pdb
+            .inventory
+            .iter_mut()
+            .find(|entry| entry.path == "symbols/spice.pdb")
+            .expect("Windows PDB entry");
+        pdb.bytes = 0;
+        refresh_inventory(&mut empty_pdb);
+        assert_refuses_before_proof(
+            &encode(&empty_pdb),
+            PayloadError::EmptyArtifact("symbols/spice.pdb".to_owned()),
+        );
+    }
+
     fn darwin() -> TargetPayload {
         let mut darwin = payload();
         darwin.target = ReleaseTarget::Aarch64AppleDarwin;
@@ -478,6 +515,18 @@ mod tests {
             .sort_by(|left, right| left.path.cmp(&right.path));
         refresh_inventory(&mut darwin);
         darwin
+    }
+
+    fn windows() -> TargetPayload {
+        let mut windows = payload();
+        windows.target = ReleaseTarget::X86_64PcWindowsMsvc;
+        windows.inventory[0].path = windows.target.executable_path().to_owned();
+        crate::test_support::symbols(windows.target, &windows.native, &mut windows.inventory);
+        windows
+            .inventory
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        refresh_inventory(&mut windows);
+        windows
     }
 
     fn payload() -> TargetPayload {

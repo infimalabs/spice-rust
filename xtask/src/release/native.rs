@@ -5,9 +5,9 @@ use std::path::Path;
 
 use wire::manifest::ReleaseTarget;
 
-/// Ask Cargo for the exact linked binary carrying `canvas`, and retain line
-/// tables only for the macOS build whose dSYM consumes them. Keeping the
-/// profile override on this target-specific command leaves the Linux
+/// Ask Cargo for the exact linked binary carrying `canvas`, retaining line
+/// tables for targets whose declared debug artifact consumes them. Keeping the
+/// profile override on this target-specific command leaves the stripped Linux
 /// executable bytes unchanged. `cargo rustc` hands the link argument to the
 /// final executable alone, so no dependency rebuilds when the archive changes.
 pub(super) fn cargo_arguments(
@@ -37,7 +37,7 @@ pub(super) fn cargo_arguments(
     ]);
     arguments.push(target_dir.as_os_str().to_owned());
     arguments.push(OsString::from("--message-format=json-render-diagnostics"));
-    if target == ReleaseTarget::Aarch64AppleDarwin {
+    if target.debug_path().is_some() {
         arguments.extend([
             OsString::from("--config"),
             OsString::from("profile.release.debug=\"line-tables-only\""),

@@ -51,7 +51,7 @@ fn admitted_executables_are_read_from_their_admitted_generation() {
                 .root
                 .join("dist/stage/targets")
                 .join(target.as_str())
-                .join("bin/spice")
+                .join(target.executable_path())
                 .exists()
         );
     }
@@ -139,11 +139,12 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
     let mut manifest: ReleaseManifest =
         wire::decode(&fixture.manifest).expect("fixture manifest decodes");
     for (target, executable) in manifest.targets.iter_mut().zip(&fixture.executables) {
-        inventory_entry(&target.inventory, "bin/spice").expect("fixture executable exists");
+        let executable_path = target.target.executable_path();
+        inventory_entry(&target.inventory, executable_path).expect("fixture executable exists");
         target
             .inventory
             .iter_mut()
-            .find(|entry| entry.path == "bin/spice")
+            .find(|entry| entry.path == executable_path)
             .expect("fixture executable is mutable")
             .bytes = MAX_RELEASE_MEMBER_BYTES;
         fs::OpenOptions::new()
@@ -287,7 +288,7 @@ fn stage_target(
     battery: &Digest,
 ) -> StagedFixtureTarget {
     let executable = format!("native:{target}").into_bytes();
-    let mut inventory = stage_inventory(stage, &executable);
+    let mut inventory = stage_inventory(stage, target, &executable);
     let native = Digest::compute(Domain::DistArtifact, &executable);
     let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
         let metadata = MacSymbolMetadata {
@@ -306,9 +307,19 @@ fn stage_target(
         };
         write_object_file(stage, &entry, b"symbol fixture");
         inventory.push(entry);
-        inventory.sort_by(|left, right| left.path.cmp(&right.path));
         metadata
     });
+    if target == ReleaseTarget::X86_64PcWindowsMsvc {
+        let entry = InventoryEntry {
+            path: target.debug_path().expect("Windows debug path").to_owned(),
+            mode: 0o644,
+            bytes: b"Windows PDB fixture".len() as u64,
+            digest: Digest::compute(Domain::DistArtifact, b"Windows PDB fixture"),
+        };
+        write_object_file(stage, &entry, b"Windows PDB fixture");
+        inventory.push(entry);
+    }
+    inventory.sort_by(|left, right| left.path.cmp(&right.path));
     let manifest_inventory = inventory.clone();
     let payload = TargetPayload {
         version: wire::manifest::TARGET_PAYLOAD_VERSION,
@@ -348,9 +359,12 @@ fn stage_target(
         &proof,
     )
     .expect("write proof object");
-    let symbol_path = symbols
-        .as_ref()
-        .map(|metadata| stage.join(format!("objects/{}-{:04o}", metadata.digest, metadata.mode)));
+    let symbol_path = target.debug_path().and_then(|path| {
+        manifest_inventory
+            .iter()
+            .find(|entry| entry.path == path)
+            .map(|entry| stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode)))
+    });
     StagedFixtureTarget {
         executable: stage.join(format!(
             "objects/{}-0755",
@@ -423,9 +437,9 @@ fn proof_environment(target: ReleaseTarget, pins: &BuildPins) -> ProofEnvironmen
     }
 }
 
-fn stage_inventory(stage: &Path, executable: &[u8]) -> Vec<InventoryEntry> {
+fn stage_inventory(stage: &Path, target: ReleaseTarget, executable: &[u8]) -> Vec<InventoryEntry> {
     let entry = InventoryEntry {
-        path: "bin/spice".to_owned(),
+        path: target.executable_path().to_owned(),
         mode: 0o755,
         bytes: executable.len() as u64,
         digest: Digest::compute(Domain::DistArtifact, executable),

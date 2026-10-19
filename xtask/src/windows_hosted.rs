@@ -18,6 +18,7 @@ pub fn windows_hosted_stage(
     output: &mut impl Write,
     error_output: &mut impl Write,
 ) -> Result<HostedExecution, WindowsHostedError> {
+    hosted_windows::client::require_public_attestation_repository()?;
     let command = hosted_windows::Command {
         program: "@cargo".to_owned(),
         arguments: [

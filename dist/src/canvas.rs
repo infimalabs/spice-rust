@@ -364,6 +364,18 @@ impl Canvas {
             Err(CanvasError::Report(report.to_owned()))
         }
     }
+
+    /// Enforce the Windows release policy: the PE image carries no embedded
+    /// Authenticode certificate. Release authenticity is supplied by the
+    /// detached public GitHub Sigstore proof after all image bytes are final.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a non-x86-64 PE32+ image, malformed certificate directory, or
+    /// any embedded Authenticode certificate.
+    pub fn verify_windows_authenticode(&self, executable: &[u8]) -> Result<(), CanvasError> {
+        coff::require_unsigned(executable)
+    }
 }
 
 /// Why a final executable's app ZIP section was refused.
@@ -379,6 +391,8 @@ pub enum CanvasError {
     Repeated,
     #[error("executable app ZIP section {observed} differs from the staged archive {expected}")]
     Mismatch { expected: Digest, observed: Digest },
+    #[error("Windows release policy forbids an embedded Authenticode certificate")]
+    Authenticode,
     #[error("executable version report does not name its app generation: {0:?}")]
     Report(String),
 }

@@ -64,23 +64,35 @@ pub(crate) mod test_support {
         native: &Digest,
         inventory: &mut Vec<InventoryEntry>,
     ) -> Option<MacSymbolMetadata> {
-        (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
-            let metadata = MacSymbolMetadata {
-                path: "symbols/spice.dSYM.json".to_owned(),
-                mode: 0o644,
-                bytes: 14,
-                digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
-                uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
-                executable: native.clone(),
-            };
-            inventory.push(InventoryEntry {
-                path: metadata.path.clone(),
-                mode: metadata.mode,
-                bytes: metadata.bytes,
-                digest: metadata.digest.clone(),
-            });
-            metadata
-        })
+        match target {
+            ReleaseTarget::Aarch64AppleDarwin => {
+                let metadata = MacSymbolMetadata {
+                    path: "symbols/spice.dSYM.json".to_owned(),
+                    mode: 0o644,
+                    bytes: 14,
+                    digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+                    uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+                    executable: native.clone(),
+                };
+                inventory.push(InventoryEntry {
+                    path: metadata.path.clone(),
+                    mode: metadata.mode,
+                    bytes: metadata.bytes,
+                    digest: metadata.digest.clone(),
+                });
+                Some(metadata)
+            }
+            ReleaseTarget::X86_64UnknownLinuxMusl => None,
+            ReleaseTarget::X86_64PcWindowsMsvc => {
+                inventory.push(InventoryEntry {
+                    path: target.debug_path().expect("Windows debug path").to_owned(),
+                    mode: 0o644,
+                    bytes: b"Windows PDB fixture".len() as u64,
+                    digest: Digest::compute(Domain::DistArtifact, b"Windows PDB fixture"),
+                });
+                None
+            }
+        }
     }
 }
 
@@ -120,6 +132,6 @@ pub use payload::{AdmittedPayload, PayloadError, admit};
 pub use rederive::{RederiveError, rederive};
 pub use replay::{
     Battery, Check, CheckKind, CheckStanding, CheckVerdict, ReceiptError, ReplayError,
-    ReplayVerdict, replay,
+    ReplayFailure, ReplayVerdict, replay,
 };
 pub use seal::{ReplayRefusal, SealError, seal};

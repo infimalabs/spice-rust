@@ -103,8 +103,8 @@ impl ManifestPublisher for FileManifestPublisher {
 /// Admit the current fixed manifest pointer and every object it names.
 ///
 /// The caller supplies the executable identities observed at the binary rim.
-/// Both target payloads must carry the complete app generation, and the payload matching
-/// `native_target` must carry the invoking executable itself.
+/// Every target payload must carry the complete app generation, and the payload
+/// matching `native_target` must carry the invoking executable itself.
 ///
 /// # Errors
 ///

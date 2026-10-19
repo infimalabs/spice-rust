@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use proof::{
     CheckStanding, ContainerError, EnvironmentError, EvidenceError, EvidencePublishError,
-    InputError, NativeError, PayloadError, RederiveError, ReplayRefusal, SealError,
+    InputError, NativeError, PayloadError, RederiveError, ReplayError, ReplayFailure,
+    ReplayRefusal, SealError,
 };
 use sill::Deadlines;
 use wire::{Fault, FaultClass, Outcome, ProofEvidence, Refusal, Reply, ReplyPosition};
@@ -198,11 +199,7 @@ impl Failure {
                 "stage the payload under its exact compiled-target layout and retry",
             ),
             SealError::Environment(error) => Self::environment(error),
-            SealError::Replay(error) => Self::fault(
-                FaultClass::Environment,
-                "proof::process-failed",
-                error.to_string(),
-            ),
+            SealError::Replay(error) => Self::replay(error),
             SealError::Refused(refusal) => Self::battery(refusal),
             SealError::Receipt(error) => Self::refusal(
                 "proof::verification-refused",
@@ -243,13 +240,25 @@ impl Failure {
             RederiveError::ReadReceipt(error) => Self::input(error, InputKind::Receipt),
             RederiveError::AdmitReceipt(error) => Self::receipt(error),
             RederiveError::Environment(error) => Self::environment(error),
-            RederiveError::Replay(error) => Self::fault(
+            RederiveError::Replay(error) => Self::replay(error),
+            RederiveError::Refused(refusal) => Self::battery(refusal),
+            RederiveError::Evidence(error) => Self::evidence(error),
+        }
+    }
+
+    fn replay(error: ReplayError) -> Self {
+        match error.failure() {
+            ReplayFailure::HostedAttestationPrerequisite => Self::refusal(
+                "proof::hosted-attestation-prerequisite",
+                "a public infimalabs/spice-rust repository eligible for public Sigstore attestation",
+                error.to_string(),
+                "publish the repository before executing the Windows release proof; private hosted runs, cross-builds, Wine, and local emulation are not release proof",
+            ),
+            ReplayFailure::Execution => Self::fault(
                 FaultClass::Environment,
                 "proof::process-failed",
                 error.to_string(),
             ),
-            RederiveError::Refused(refusal) => Self::battery(refusal),
-            RederiveError::Evidence(error) => Self::evidence(error),
         }
     }
 

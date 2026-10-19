@@ -90,17 +90,12 @@ fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
         .iter()
         .find(|candidate| candidate.target == target)
         .ok_or_else(|| Error::input(format!("package has no executable for {target}")))?;
-    // Admission already bound the symbol member to the payload metadata, so
-    // its presence alone decides whether the staged tree carries a dSYM.
-    let symbols_path = format!("targets/{}/symbols/spice.dSYM.json", target.as_str());
-    let symbols_path = members
-        .iter()
-        .any(|member| member.path() == symbols_path)
-        .then_some(symbols_path);
+    // Package admission already bound the optional debug member to the target
+    // payload inventory, so the package document selects the exact staged path.
     let acquired = AcquiredPackage {
         executable_path: selected.executable_path.clone(),
         payload_path: format!("targets/{}/payload.json", target.as_str()),
-        symbols_path,
+        debug_path: selected.debug_path.clone(),
         members,
     };
     acquired.member(&acquired.executable_path)?;
@@ -112,7 +107,7 @@ fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
 struct AcquiredPackage {
     executable_path: String,
     payload_path: String,
-    symbols_path: Option<String>,
+    debug_path: Option<String>,
     members: Vec<proof::PackageMember>,
 }
 
@@ -264,7 +259,7 @@ impl StagedPackage {
             staged.publish(acquired.member(PACKAGE_DOCUMENT_PATH)?)?;
             staged.publish(acquired.member(&acquired.payload_path)?)?;
             staged.publish(acquired.member(&acquired.executable_path)?)?;
-            if let Some(symbols_path) = &acquired.symbols_path {
+            if let Some(symbols_path) = &acquired.debug_path {
                 staged.publish(acquired.member(symbols_path)?)?;
             }
             return Ok(staged);
@@ -403,19 +398,25 @@ mod tests {
         );
         assert!(staged_root.join(PACKAGE_DOCUMENT_PATH).is_file());
         assert!(staged_root.join(&acquired.payload_path).is_file());
-        let darwin = current_target().unwrap() == ReleaseTarget::Aarch64AppleDarwin;
+        let target = current_target().unwrap();
+        let debug_path = target
+            .debug_path()
+            .map(|path| format!("targets/{target}/{path}"));
+        assert_eq!(acquired.debug_path, debug_path);
         assert_eq!(
-            acquired.symbols_path.as_deref(),
-            darwin.then_some(symbol_path)
+            debug_path
+                .as_deref()
+                .map(|path| staged_root.join(path).is_file()),
+            target.debug_path().map(|_| true),
         );
-        assert_eq!(staged_root.join(symbol_path).is_file(), darwin);
-        if darwin {
+        if target == ReleaseTarget::Aarch64AppleDarwin {
+            let symbol_path = debug_path.expect("Darwin debug path");
             assert_eq!(
-                fs::read(staged_root.join(symbol_path)).unwrap(),
+                fs::read(staged_root.join(&symbol_path)).unwrap(),
                 b"symbol fixture"
             );
             assert_eq!(
-                sill::authority::owner_mode(&staged_root.join(symbol_path)).unwrap(),
+                sill::authority::owner_mode(&staged_root.join(&symbol_path)).unwrap(),
                 0o600,
             );
         }
@@ -495,7 +496,7 @@ mod tests {
                     proof::PackageTargetInput::new(
                         target,
                         inline(
-                            &format!("targets/{target}/bin/spice"),
+                            &format!("targets/{target}/{}", target.executable_path()),
                             0o755,
                             &executables[index],
                         ),
@@ -510,15 +511,17 @@ mod tests {
                             &proofs[index],
                         ),
                     )
-                    .with_symbols(
-                        (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
-                            inline(
-                                &format!("targets/{target}/symbols/spice.dSYM.json"),
-                                0o644,
-                                b"symbol fixture",
-                            )
-                        }),
-                    )
+                    .with_debug(target.debug_path().map(|path| {
+                        inline(
+                            &format!("targets/{target}/{path}"),
+                            0o644,
+                            if target == ReleaseTarget::Aarch64AppleDarwin {
+                                b"symbol fixture".as_slice()
+                            } else {
+                                b"Windows PDB fixture".as_slice()
+                            },
+                        )
+                    }))
                 })
                 .collect(),
         ))
@@ -553,7 +556,7 @@ mod tests {
             proof_container: format!("spice/proof@sha256:{}", "1".repeat(64)),
         };
         let mut inventory = vec![InventoryEntry {
-            path: "bin/spice".to_owned(),
+            path: target.executable_path().to_owned(),
             mode: 0o755,
             bytes: executable.len() as u64,
             digest: native.clone(),
@@ -575,6 +578,14 @@ mod tests {
             });
             metadata
         });
+        if target == ReleaseTarget::X86_64PcWindowsMsvc {
+            inventory.push(InventoryEntry {
+                path: target.debug_path().expect("Windows debug path").to_owned(),
+                mode: 0o644,
+                bytes: b"Windows PDB fixture".len() as u64,
+                digest: Digest::compute(Domain::DistArtifact, b"Windows PDB fixture"),
+            });
+        }
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
         let manifest_inventory = inventory.clone();
         let payload = TargetPayload {

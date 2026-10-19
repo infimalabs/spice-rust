@@ -92,7 +92,19 @@ the system.
 The Windows release build's COFF object defines `spice_app_zip` and
 `spice_app_zip_len`; its PE32+ final-image reader locates exactly one
 `spiceapp` section using the header's virtual and raw lengths. The section name
-fits PE's eight-byte limit.
+fits PE's eight-byte limit. Its target inventory names `bin/spice.exe` and the
+matching `symbols/spice.pdb`; both are package members, while `proof.json` is
+the package's detached signature artifact.
+
+Windows deliberately admits no embedded Authenticode certificate. The
+executable, PDB, payload, linked app archive, build pins, provider run, runner
+image, and toolchain are instead bound by the public GitHub Sigstore
+attestation over the hosted result. The PE image is re-admitted after the
+link—the only byte-changing Windows step—and its content digest is re-admitted
+when packaged, so neither symbol capture nor detached signing can mutate the
+image. The same complete Windows appliance exposes ordinary commands,
+resident, journal, board, app serving, and distribution surfaces through their
+native filesystem, process, and local-IPC adapters.
 
 The Windows release executable exposes `--version` and `--json version`, the
 identity surface exercised by sealed proof, the repository installer described
@@ -119,6 +131,12 @@ batch to one attested ephemeral GitHub-hosted runner. Replay is bound to
 payload, environment, and battery, but does not prove that the checkout equals
 the payload's source digest. Unsupported hosts, drift, infrastructure failure,
 or a non-clean replay publish no receipt; a refused replay is a typed refusal.
+
+The Windows proof boundary requires the configured repository visibility to be
+`public` before it dispatches the release battery. A private repository returns
+the typed hosted-attestation prerequisite and publishes no proof receipt;
+cross-builds, Wine, the Windows 11 ARM developer VM, and self-hosted keys cannot
+replace this boundary.
 
 **Invariant —** A proof receipt is detached and canonical. Admission requires
 target, payload digest, environment, battery digest, replay digest, and clean

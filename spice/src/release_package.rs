@@ -45,7 +45,7 @@ struct LoadedTarget {
     executable: proof::PackageMember,
     payload: proof::PackageMember,
     proof: proof::PackageMember,
-    symbols: Option<proof::PackageMember>,
+    debug: Option<proof::PackageMember>,
 }
 
 struct Loaded {
@@ -175,7 +175,7 @@ impl ReleaseIndex {
         &self,
         target: ReleaseTarget,
     ) -> Result<ReleaseMember, PackageFailure> {
-        let path = format!("targets/{target}/bin/spice");
+        let path = target_package_path(target, target.executable_path());
         let member = self
             .tree
             .members()
@@ -218,7 +218,7 @@ fn package_input<'a>(
                 target.payload.clone(),
                 target.proof.clone(),
             )
-            .with_symbols(target.symbols.clone())
+            .with_debug(target.debug.clone())
         })
         .collect();
     proof::PackageInput::new(
@@ -254,24 +254,22 @@ fn load(
                 target.target
             )));
         }
-        let executable = take_member(&mut files, &format!("targets/{}/bin/spice", target.target))?;
+        let executable = take_member(
+            &mut files,
+            &target_package_path(target.target, target.target.executable_path()),
+        )?;
         let proof = take_member(&mut files, &format!("targets/{}/proof.json", target.target))?;
-        let symbols = target
-            .symbols
-            .as_ref()
-            .map(|_| {
-                take_member(
-                    &mut files,
-                    &format!("targets/{}/symbols/spice.dSYM.json", target.target),
-                )
-            })
+        let debug = target
+            .target
+            .debug_path()
+            .map(|path| take_member(&mut files, &target_package_path(target.target, path)))
             .transpose()?;
         targets.push(LoadedTarget {
             target: target.target,
             executable,
             payload,
             proof,
-            symbols,
+            debug,
         });
     }
     if let Some(path) = files.keys().next() {
@@ -534,34 +532,50 @@ fn add_targets(
                 limit: proof::PACKAGE_DOCUMENT_LIMIT,
             },
         )?;
+        let executable_path = target.target.executable_path();
         add_artifact(
             stage,
             pending,
             shapes,
             total,
-            inventory_entry(&target.inventory, "bin/spice")?,
-            &format!("targets/{}/bin/spice", target.target),
+            inventory_entry(&target.inventory, executable_path)?,
+            &target_package_path(target.target, executable_path),
             &format!("staged {} executable", target.target),
         )?;
-        if let Some(symbols) = &target.symbols {
-            let entry = inventory_entry(&target.inventory, &symbols.path)?;
-            if (entry.mode, entry.bytes, &entry.digest)
-                != (symbols.mode, symbols.bytes, &symbols.digest)
-            {
+        match (target.target.debug_path(), &target.symbols) {
+            (Some(path), symbols) => {
+                let entry = inventory_entry(&target.inventory, path)?;
+                if let Some(symbols) = symbols {
+                    if (entry.mode, entry.bytes, &entry.digest)
+                        != (symbols.mode, symbols.bytes, &symbols.digest)
+                    {
+                        return Err(PackageFailure::Moved(format!(
+                            "staged {} symbol metadata disagrees with its inventory",
+                            target.target
+                        )));
+                    }
+                } else if target.target == ReleaseTarget::Aarch64AppleDarwin {
+                    return Err(PackageFailure::Moved(
+                        "staged macOS target has no symbol metadata".to_owned(),
+                    ));
+                }
+                add_artifact(
+                    stage,
+                    pending,
+                    shapes,
+                    total,
+                    entry,
+                    &target_package_path(target.target, path),
+                    &format!("staged {} debug artifact", target.target),
+                )?;
+            }
+            (None, None) => {}
+            (None, Some(_)) => {
                 return Err(PackageFailure::Moved(format!(
-                    "staged {} symbol metadata disagrees with its inventory",
+                    "staged {} target unexpectedly carries symbol metadata",
                     target.target
                 )));
             }
-            add_artifact(
-                stage,
-                pending,
-                shapes,
-                total,
-                entry,
-                &format!("targets/{}/symbols/spice.dSYM.json", target.target),
-                &format!("staged {} symbols", target.target),
-            )?;
         }
         add_pending(
             pending,
@@ -774,19 +788,36 @@ fn package_bytes(
                     target.target
                 )));
             }
-            let executable = inventory_entry(&target.inventory, "bin/spice")?;
+            let executable = inventory_entry(&target.inventory, target.target.executable_path())?;
             if executable.mode != 0o755 {
                 return Err(PackageFailure::Moved(format!(
                     "staged {} executable has mode {:o}",
                     target.target, executable.mode
                 )));
             }
+            let debug_path = target.target.debug_path().map(|path| {
+                inventory_entry(&target.inventory, path).map(|entry| {
+                    if entry.mode != 0o644 {
+                        return Err(PackageFailure::Moved(format!(
+                            "staged {} debug artifact has mode {:o}",
+                            target.target, entry.mode
+                        )));
+                    }
+                    Ok(target_package_path(target.target, path))
+                })
+            });
+            let debug_path = debug_path.transpose()?.transpose()?;
             Ok(ReleasePackageTarget {
                 target: target.target,
-                executable_path: format!("targets/{}/bin/spice", target.target),
+                executable_path: target_package_path(
+                    target.target,
+                    target.target.executable_path(),
+                ),
                 executable: executable.digest.clone(),
                 payload: target.payload.clone(),
                 proof: target.receipt.clone(),
+                debug_path,
+                signature_path: format!("targets/{}/proof.json", target.target),
             })
         })
         .collect::<Result<Vec<_>, PackageFailure>>()?;
@@ -801,6 +832,10 @@ fn package_bytes(
         targets,
     })
     .map_err(|error| PackageFailure::Moved(error.to_string()))
+}
+
+fn target_package_path(target: ReleaseTarget, path: &str) -> String {
+    format!("targets/{target}/{path}")
 }
 
 #[derive(Default)]

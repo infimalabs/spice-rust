@@ -144,15 +144,15 @@ impl Executor for FakeExecutor {
     fn execute(&self, command: CommandSpec) -> Result<CommandRecord, TargetBuildError> {
         let refused = self.refusing.get() == Some(command.label);
         if command.label == "native-build" && !refused {
-            let destination = self
-                .root
-                .join("target/release-appliance")
-                .join(self.target.as_str())
-                .join("release/spice");
+            let destination = native_path(&self.root, self.target);
             fs::create_dir_all(destination.parent().expect("native parent"))
                 .expect("native directory");
-            fs::write(&destination, linked(&self.archive, b"linked"))
+            fs::write(&destination, linked(self.target, &self.archive, b"linked"))
                 .expect("link fixture executable");
+            if self.target == ReleaseTarget::X86_64PcWindowsMsvc {
+                fs::write(destination.with_extension("pdb"), b"fixture PDB")
+                    .expect("write fixture PDB");
+            }
             self.native_ran.set(true);
         }
         if command.label == "dsym-generate" && !refused {
@@ -169,7 +169,7 @@ impl Executor for FakeExecutor {
         if command.label == "native-strip" && !refused {
             fs::write(
                 PathBuf::from(&command.arguments[1]),
-                linked(&self.archive, b"stripped"),
+                linked(self.target, &self.archive, b"stripped"),
             )
             .expect("strip exact linked executable fixture");
             if self.moved_symbols_after_uuid.get() {
@@ -194,11 +194,7 @@ impl Executor for FakeExecutor {
             "trunk-version" => format!("{}\n", self.trunk.borrow()).into_bytes(),
             "mutants-version" => format!("{PINNED_MUTANTS}\n").into_bytes(),
             "native-build" => {
-                let executable = self
-                    .root
-                    .join("target/release-appliance")
-                    .join(self.target.as_str())
-                    .join("release/spice");
+                let executable = native_path(&self.root, self.target);
                 format!(
                     "{{\"reason\":\"compiler-artifact\",\"target\":{{\"name\":\"spice\",\"kind\":[\"bin\"]}},\"executable\":{}}}\n",
                     serde_json::to_string(&executable.display().to_string())
@@ -233,11 +229,51 @@ impl Executor for FakeExecutor {
     }
 }
 
-/// A linkable ELF object whose `spice_app_zip` section holds `archive`, followed by
-/// `tag` so each processing step leaves distinct executable bytes.
-fn linked(archive: &[u8], tag: &[u8]) -> Vec<u8> {
-    let mut image = dist::canvas_object(archive, dist::ObjectTarget::LinuxX86_64);
+/// A linkable image whose app section holds `archive`, followed by `tag` so
+/// each processing step leaves distinct executable bytes.
+fn linked(target: ReleaseTarget, archive: &[u8], tag: &[u8]) -> Vec<u8> {
+    let mut image = if target == ReleaseTarget::X86_64PcWindowsMsvc {
+        pe(archive)
+    } else {
+        dist::canvas_object(archive, dist::ObjectTarget::LinuxX86_64)
+    };
     image.extend(tag);
+    image
+}
+
+fn native_path(root: &Path, target: ReleaseTarget) -> PathBuf {
+    root.join("target/release-appliance")
+        .join(target.as_str())
+        .join("release")
+        .join(if target == ReleaseTarget::X86_64PcWindowsMsvc {
+            "spice.exe"
+        } else {
+            "spice"
+        })
+}
+
+fn pe(archive: &[u8]) -> Vec<u8> {
+    const PE_HEADER: usize = 0x80;
+    const OPTIONAL_HEADER: usize = 0xf0;
+    const TABLE: usize = PE_HEADER + 4 + 20 + OPTIONAL_HEADER;
+    const RAW: usize = 0x200;
+
+    let mut image = vec![0_u8; RAW];
+    image[0..2].copy_from_slice(b"MZ");
+    image[0x3c..0x40].copy_from_slice(&(PE_HEADER as u32).to_le_bytes());
+    image[PE_HEADER..PE_HEADER + 4].copy_from_slice(b"PE\0\0");
+    let coff = PE_HEADER + 4;
+    image[coff..coff + 2].copy_from_slice(&0x8664_u16.to_le_bytes());
+    image[coff + 2..coff + 4].copy_from_slice(&1_u16.to_le_bytes());
+    image[coff + 16..coff + 18].copy_from_slice(&(OPTIONAL_HEADER as u16).to_le_bytes());
+    let optional = coff + 20;
+    image[optional..optional + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+    image[optional + 108..optional + 112].copy_from_slice(&16_u32.to_le_bytes());
+    image[TABLE..TABLE + 8].copy_from_slice(b"spiceapp");
+    image[TABLE + 8..TABLE + 12].copy_from_slice(&(archive.len() as u32).to_le_bytes());
+    image[TABLE + 16..TABLE + 20].copy_from_slice(&(archive.len() as u32).to_le_bytes());
+    image[TABLE + 20..TABLE + 24].copy_from_slice(&(RAW as u32).to_le_bytes());
+    image.extend_from_slice(archive);
     image
 }
 
@@ -316,9 +352,9 @@ fn all_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             Digest::compute(Domain::DistArtifact, &fixture.archive)
         );
         assert_eq!(build.staged.canvas, *staged.canvas());
-        let mut inventory = vec!["bin/spice"];
-        if target == ReleaseTarget::Aarch64AppleDarwin {
-            inventory.push("symbols/spice.dSYM.json");
+        let mut inventory = vec![target.executable_path()];
+        if let Some(debug) = target.debug_path() {
+            inventory.push(debug);
         }
         assert_eq!(
             build
@@ -331,6 +367,7 @@ fn all_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             inventory
         );
         let native = linked(
+            target,
             &fixture.archive,
             if target == ReleaseTarget::Aarch64AppleDarwin {
                 b"stripped"
@@ -399,8 +436,8 @@ fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
     expected
 }
 
-/// The native build runs Cargo, carries line tables only for the dSYM target,
-/// and links last an object carrying exactly the staged archive.
+/// The native build runs Cargo, carries line tables for declared debug
+/// artifacts, and links last an object carrying exactly the staged archive.
 fn assert_native_build(
     record: &CommandRecord,
     programs: &Programs,
@@ -414,7 +451,7 @@ fn assert_native_build(
             .arguments
             .iter()
             .any(|argument| argument == "profile.release.debug=\"line-tables-only\""),
-        target == ReleaseTarget::Aarch64AppleDarwin
+        target.debug_path().is_some()
     );
     let binary = record
         .arguments

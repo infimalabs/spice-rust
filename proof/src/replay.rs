@@ -11,7 +11,7 @@ use wire::manifest::{
 use wire::{Digest, Domain};
 
 use crate::container::{Execution, ExecutionCompletion};
-use crate::environment::{BatteryEnvironment, SealedEnvironment};
+use crate::environment::{BatteryEnvironment, BatteryStartError, SealedEnvironment};
 
 /// The complete generated proof battery, in execution order.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -365,18 +365,12 @@ pub fn replay(environment: &SealedEnvironment) -> Result<ReplayVerdict, ReplayEr
         .collect::<Vec<_>>();
     let executor = environment
         .battery(&commands)
-        .map_err(|source| ReplayError {
-            check: CheckKind::Gate,
-            source,
-        })?;
+        .map_err(|source| ReplayError::from_start(CheckKind::Gate, source))?;
     let replay = run_with(&executor, &battery);
     let cleanup = executor.close();
     match (replay, cleanup) {
         (Ok(verdict), Ok(())) => Ok(verdict),
-        (Ok(_), Err(source)) => Err(ReplayError {
-            check: CheckKind::SupplyRebuild,
-            source,
-        }),
+        (Ok(_), Err(source)) => Err(ReplayError::execution(CheckKind::SupplyRebuild, source)),
         (Err(error), Ok(())) => Err(error),
         (Err(mut error), Err(cleanup)) => {
             error
@@ -410,10 +404,9 @@ impl Executor for BatteryEnvironment<'_> {
 fn run_with<E: Executor>(executor: &E, battery: &Battery) -> Result<ReplayVerdict, ReplayError> {
     let mut checks = Vec::with_capacity(battery.checks.len());
     for check in &battery.checks {
-        let execution = executor.execute(check).map_err(|source| ReplayError {
-            check: check.kind,
-            source,
-        })?;
+        let execution = executor
+            .execute(check)
+            .map_err(|source| ReplayError::execution(check.kind, source))?;
         checks.push(classify(check.kind, execution));
     }
     let standing = if checks.iter().all(|check| check.standing.passes()) {
@@ -687,10 +680,18 @@ fn frame_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
     bytes.extend_from_slice(value);
 }
 
+/// Stable class of infrastructure failure preventing one replay verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReplayFailure {
+    Execution,
+    HostedAttestationPrerequisite,
+}
+
 /// Infrastructure failure that prevented one complete replay verdict.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplayError {
     check: CheckKind,
+    failure: ReplayFailure,
     source: String,
 }
 
@@ -701,16 +702,42 @@ impl ReplayError {
     }
 
     #[must_use]
+    pub const fn failure(&self) -> ReplayFailure {
+        self.failure
+    }
+
+    #[must_use]
     pub fn evidence(&self) -> &str {
         &self.source
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixture(check: CheckKind, source: impl Into<String>) -> Self {
+    fn execution(check: CheckKind, source: String) -> Self {
         Self {
             check,
-            source: source.into(),
+            failure: ReplayFailure::Execution,
+            source,
         }
+    }
+
+    fn from_start(check: CheckKind, error: BatteryStartError) -> Self {
+        match error {
+            BatteryStartError::HostedAttestationPrerequisite {
+                repository,
+                visibility,
+            } => Self {
+                check,
+                failure: ReplayFailure::HostedAttestationPrerequisite,
+                source: format!(
+                    "public hosted-attestation prerequisite is unsatisfied: repository {repository} has visibility {visibility:?}"
+                ),
+            },
+            BatteryStartError::Execution(source) => Self::execution(check, source),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(check: CheckKind, source: impl Into<String>) -> Self {
+        Self::execution(check, source.into())
     }
 }
 
@@ -753,9 +780,28 @@ mod tests {
 
     use wire::manifest::{ProofEnvironment, ReleaseTarget};
 
-    use super::{Battery, Check, CheckKind, CheckStanding, Executor, ProofStanding, run_with};
+    use super::{
+        Battery, Check, CheckKind, CheckStanding, Executor, ProofStanding, ReplayError,
+        ReplayFailure, run_with,
+    };
     use crate::container::{Captured, Execution, ExecutionCompletion};
+    use crate::environment::BatteryStartError;
 
+    #[test]
+    fn private_repository_refusal_keeps_its_typed_prerequisite() {
+        let error = ReplayError::from_start(
+            CheckKind::Gate,
+            BatteryStartError::HostedAttestationPrerequisite {
+                repository: "infimalabs/spice-rust".to_owned(),
+                visibility: "private".to_owned(),
+            },
+        );
+        assert_eq!(
+            error.failure(),
+            ReplayFailure::HostedAttestationPrerequisite
+        );
+        assert_eq!(error.check(), CheckKind::Gate);
+    }
     #[test]
     fn the_current_battery_pins_every_member_and_command_in_order() {
         let battery = Battery::current();
