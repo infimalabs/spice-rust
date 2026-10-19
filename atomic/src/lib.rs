@@ -78,15 +78,7 @@ impl Destination {
     pub fn stage(&self) -> Result<StagedWrite, Error> {
         for _ in 0..CREATE_ATTEMPTS {
             let temporary = self.parent.join(temporary_name());
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-
-                options.mode(0o600);
-            }
-            match options.open(&temporary) {
+            match create_stage(&temporary) {
                 Ok(file) => {
                     return Ok(StagedWrite {
                         file: Some(file),
@@ -448,12 +440,46 @@ fn temporary_name() -> OsString {
     ))
 }
 
+/// Create one stage that is owner-only from creation, so no published byte is
+/// ever reachable by another principal before its owner chooses a mode.
+#[cfg(any(unix, windows))]
+fn create_stage(temporary: &Path) -> io::Result<File> {
+    sill::authority::create_private_file(temporary)
+}
+
+/// Wasm contract checks have no filesystem principals to exclude.
+#[cfg(not(any(unix, windows)))]
+fn create_stage(temporary: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temporary)
+}
+
 fn sync_directory(parent: &Path) -> Result<(), Error> {
-    let directory =
-        File::open(parent).map_err(|error| Error::io(Operation::SyncDirectory, parent, error))?;
+    let directory = open_directory(parent)
+        .map_err(|error| Error::io(Operation::SyncDirectory, parent, error))?;
     directory
         .sync_all()
         .map_err(|error| Error::io(Operation::SyncDirectory, parent, error))
+}
+
+#[cfg(not(windows))]
+fn open_directory(parent: &Path) -> io::Result<File> {
+    File::open(parent)
+}
+
+/// Windows opens a directory only with backup semantics, and its flush
+/// (`FlushFileBuffers`) requires a handle with write access.
+#[cfg(windows)]
+fn open_directory(parent: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    OpenOptions::new()
+        .write(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(parent)
 }
 
 #[cfg(test)]
@@ -638,15 +664,7 @@ mod tests {
         staged.write_all(b"abandoned bytes").unwrap();
         let temporary = staged.temporary_path().to_path_buf();
         assert!(temporary.is_file());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            assert_eq!(
-                fs::metadata(&temporary).unwrap().permissions().mode() & 0o7777,
-                0o600
-            );
-        }
+        assert_eq!(sill::authority::owner_mode(&temporary).unwrap(), 0o600);
 
         drop(staged);
 

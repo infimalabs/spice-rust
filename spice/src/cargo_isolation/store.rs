@@ -1,16 +1,13 @@
-#[cfg(windows)]
-use super::platform::{DirBuilderExt as _, PermissionsExt as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-#[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use sill::authority;
 use sill::{Acquisition, LockFile, LockName};
 use wire::CanonicalUuid;
 
@@ -612,15 +609,15 @@ fn require_mode(path: &Path, expected: u32) -> Result<(), IsolationError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         IsolationError::io("cargo-isolation::permission-unavailable", path, error)
     })?;
-    if metadata.file_type().is_symlink()
+    let observed = owner_mode(path)?;
+    if authority::is_link_like(&metadata)
         || (!metadata.is_dir() && !metadata.is_file())
-        || metadata.permissions().mode() & 0o777 != expected
+        || observed != expected
     {
         return Err(IsolationError::new(
             "cargo-isolation::permission-mismatch",
             format!(
-                "{path:?}: expected mode {expected:04o} on a real file or directory, observed {:04o}",
-                metadata.permissions().mode() & 0o777,
+                "{path:?}: expected mode {expected:04o} on a real file or directory, observed {observed:04o}"
             ),
         ));
     }
@@ -631,19 +628,21 @@ fn require_directory_mode(path: &Path, expected: u32) -> Result<(), IsolationErr
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         IsolationError::io("cargo-isolation::directory-unavailable", path, error)
     })?;
-    if !metadata.is_dir()
-        || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o777 != expected
-    {
+    let observed = owner_mode(path)?;
+    if !metadata.is_dir() || authority::is_link_like(&metadata) || observed != expected {
         return Err(IsolationError::new(
             "cargo-isolation::directory-permission-mismatch",
             format!(
-                "{path:?}: expected a real mode {expected:04o} directory, observed mode {:04o}",
-                metadata.permissions().mode() & 0o777,
+                "{path:?}: expected a real mode {expected:04o} directory, observed mode {observed:04o}"
             ),
         ));
     }
     Ok(())
+}
+
+fn owner_mode(path: &Path) -> Result<u32, IsolationError> {
+    authority::owner_mode(path)
+        .map_err(|error| IsolationError::io("cargo-isolation::permission-unavailable", path, error))
 }
 
 fn make_generation_read_only(root: &Path) -> Result<(), IsolationError> {
@@ -654,7 +653,7 @@ fn seal_package_tree(root: &Path) -> Result<(), IsolationError> {
     let metadata = fs::symlink_metadata(root).map_err(|error| {
         IsolationError::io("cargo-isolation::permission-unavailable", root, error)
     })?;
-    if metadata.file_type().is_symlink() {
+    if authority::is_link_like(&metadata) {
         return Err(IsolationError::new(
             "cargo-isolation::file-type-invalid",
             format!("immutable package contains a link: {root:?}"),
@@ -667,7 +666,7 @@ fn seal_package_tree(root: &Path) -> Result<(), IsolationError> {
         return set_mode(root, 0o500);
     }
     if metadata.is_file() {
-        let executable = metadata.permissions().mode() & 0o111 != 0;
+        let executable = owner_mode(root)? & 0o111 != 0;
         return set_mode(root, if executable { 0o700 } else { 0o600 });
     }
     Err(IsolationError::new(
@@ -680,7 +679,7 @@ fn change_tree_permissions(root: &Path, writable: bool) -> Result<(), IsolationE
     let metadata = fs::symlink_metadata(root).map_err(|error| {
         IsolationError::io("cargo-isolation::permission-unavailable", root, error)
     })?;
-    if metadata.file_type().is_symlink() {
+    if authority::is_link_like(&metadata) {
         return Ok(());
     }
     if metadata.is_dir() {
@@ -689,7 +688,7 @@ fn change_tree_permissions(root: &Path, writable: bool) -> Result<(), IsolationE
         }
         set_mode(root, if writable { 0o700 } else { 0o500 })
     } else if metadata.is_file() {
-        let executable = metadata.permissions().mode() & 0o111 != 0;
+        let executable = owner_mode(root)? & 0o111 != 0;
         set_mode(
             root,
             if writable {
@@ -709,14 +708,14 @@ fn change_tree_permissions(root: &Path, writable: bool) -> Result<(), IsolationE
 }
 
 fn set_mode(path: &Path, mode: u32) -> Result<(), IsolationError> {
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+    authority::set_owner_mode(path, mode)
         .map_err(|error| IsolationError::io("cargo-isolation::permission-unavailable", path, error))
 }
 
 fn create_private_directory(path: &Path) -> Result<(), IsolationError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            if metadata.permissions().mode() & 0o777 != 0o700 {
+        Ok(metadata) if metadata.is_dir() && !authority::is_link_like(&metadata) => {
+            if owner_mode(path)? != 0o700 {
                 return Err(IsolationError::new(
                     "cargo-isolation::directory-permission-mismatch",
                     format!("{path:?} is not mode 0700"),
@@ -729,9 +728,7 @@ fn create_private_directory(path: &Path) -> Result<(), IsolationError> {
             format!("{path:?} is not an owned directory"),
         )),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let mut builder = fs::DirBuilder::new();
-            builder.mode(0o700);
-            match builder.create(path) {
+            match authority::create_private_directory(path) {
                 Ok(()) => create_private_directory(path),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     create_private_directory(path)
@@ -801,7 +798,7 @@ fn publish_bytes(path: &Path, bytes: &[u8]) -> Result<(), IsolationError> {
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, IsolationError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| IsolationError::io("cargo-isolation::record-unavailable", path, error))?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    if !metadata.is_file() || authority::is_link_like(&metadata) {
         return Err(IsolationError::new(
             "cargo-isolation::record-type-mismatch",
             format!("{path:?} is not a regular file"),
@@ -915,26 +912,8 @@ impl Drop for TemporaryDirectory {
     }
 }
 
-#[cfg(unix)]
 fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), IsolationError> {
-    rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        source,
-        rustix::fs::CWD,
-        destination,
-        rustix::fs::RenameFlags::NOREPLACE,
-    )
-    .map_err(|error| {
-        IsolationError::new(
-            "cargo-isolation::atomic-publication-failed",
-            format!("{source:?} -> {destination:?}: {error}"),
-        )
-    })
-}
-
-#[cfg(windows)]
-fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), IsolationError> {
-    fs::rename(source, destination).map_err(|error| {
+    authority::rename_no_replace(source, destination).map_err(|error| {
         IsolationError::new(
             "cargo-isolation::atomic-publication-failed",
             format!("{source:?} -> {destination:?}: {error}"),

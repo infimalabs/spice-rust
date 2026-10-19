@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -53,6 +54,7 @@ fn staged_deletion_changes_the_candidate_tree() {
     assert_ne!(candidate.as_str(), opening);
 }
 
+#[cfg(unix)]
 #[test]
 fn staged_mode_change_changes_the_candidate_tree() {
     let fixture = Fixture::new("mode-change");

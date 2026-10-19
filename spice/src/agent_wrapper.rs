@@ -4,9 +4,9 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+
+use sill::authority;
 
 use crate::repository::Repository;
 
@@ -46,14 +46,14 @@ fn validate_executable(path: PathBuf, repository: &Path) -> Result<(), ResolveEr
         path: path.clone(),
         source: Some(source),
     })?;
-    if metadata.file_type().is_symlink() {
+    if authority::is_link_like(&metadata) {
         return Err(ResolveError::Redirected { path });
     }
-    #[cfg(unix)]
-    let executable = metadata.permissions().mode() & 0o111 != 0;
-    #[cfg(not(unix))]
-    let executable = true;
-    if !metadata.is_file() || !executable {
+    let mode = authority::owner_mode(&path).map_err(|source| ResolveError::Unavailable {
+        path: path.clone(),
+        source: Some(source),
+    })?;
+    if !metadata.is_file() || mode & 0o111 == 0 {
         return Err(ResolveError::Unavailable { path, source: None });
     }
     let physical = fs::canonicalize(&path).map_err(|source| ResolveError::Unavailable {
@@ -160,11 +160,10 @@ impl Error for ResolveError {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::os::unix::fs::symlink;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct Scratch {
@@ -199,8 +198,7 @@ mod tests {
             fs::create_dir_all(path.parent().expect("installed command has a parent"))
                 .expect("create installed command parent");
             fs::write(path, b"#!/bin/sh\nexit 0\n").expect("write installed command");
-            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-                .expect("make installed command executable");
+            authority::set_owner_mode(path, 0o700).expect("make installed command executable");
         }
     }
 
@@ -242,8 +240,7 @@ mod tests {
         fs::create_dir_all(installed.parent().expect("installed command has a parent"))
             .expect("create appliance bin");
         fs::write(&installed, b"not executable\n").expect("write inert command");
-        fs::set_permissions(&installed, fs::Permissions::from_mode(0o644))
-            .expect("keep installed command inert");
+        authority::set_owner_mode(&installed, 0o600).expect("keep installed command inert");
         assert!(matches!(
             resolve(steer::WrapperReference::Appliance, &repository),
             Err(ResolveError::Unavailable { .. })
@@ -258,10 +255,8 @@ mod tests {
 
         fs::remove_dir(&installed).expect("remove non-regular command");
         let target = scratch.root.join("redirected-spice");
-        fs::write(&target, b"#!/bin/sh\nexit 0\n").expect("write redirect target");
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
-            .expect("make redirect target executable");
-        symlink(&target, &installed).expect("redirect installed command");
+        fs::create_dir(&target).expect("create redirect target");
+        authority::link_directory(&target, &installed).expect("redirect installed command");
         assert!(matches!(
             resolve(steer::WrapperReference::Appliance, &repository),
             Err(ResolveError::Redirected { .. })
@@ -296,7 +291,8 @@ mod tests {
         .expect("create appliance root");
         let external_bin = external.root.join("bin");
         fs::create_dir(&external_bin).expect("create external bin");
-        symlink(&external_bin, redirected_parent).expect("redirect appliance bin");
+        authority::link_directory(&external_bin, redirected_parent)
+            .expect("redirect appliance bin");
         Scratch::publish_executable(&installed);
 
         let error = resolve(steer::WrapperReference::Appliance, &scratch.repository())

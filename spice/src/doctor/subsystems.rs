@@ -2,9 +2,7 @@ use std::fs;
 use std::io::Read as _;
 use std::path::Path;
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
-
+use sill::authority;
 use sill::{Availability, LockFile, LockName};
 use spice::config::Root;
 use spice::install::{ApplianceState, InstallStatus, InstallTempInspection};
@@ -215,17 +213,22 @@ fn transport(path: &Path, resident: &Path) -> DoctorObservation {
             ));
         }
     };
-    if !metadata.is_file() {
+    if !metadata.is_file() || authority::is_link_like(&metadata) {
         return unavailable("resident transport discovery is not a regular file");
     }
     if metadata.len() > MAX_DISCOVERY_BYTES {
         return unavailable("resident transport discovery exceeds its bounded document size");
     }
-    #[cfg(unix)]
-    if metadata.permissions().mode() & 0o077 != 0 {
-        return unavailable("resident transport discovery is not owner-only");
+    match authority::owner_mode(path) {
+        Ok(mode) if mode & 0o077 == 0 => {}
+        Ok(_) => return unavailable("resident transport discovery is not owner-only"),
+        Err(error) => {
+            return unavailable(format!(
+                "resident transport discovery permissions could not be inspected: {error}"
+            ));
+        }
     }
-    let file = match fs::File::open(path) {
+    let file = match authority::open_unfollowed(path) {
         Ok(file) => file,
         Err(error) => {
             return unavailable(format!(

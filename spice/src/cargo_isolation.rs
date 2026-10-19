@@ -11,18 +11,16 @@ use std::fmt;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use sill::Environment;
+use sill::authority;
 use wire::CanonicalUuid;
 
 use crate::repository::Repository;
 
-mod platform;
 mod store;
 mod targets;
 mod windows_msvc;
@@ -707,7 +705,7 @@ fn admit_native_executable(path: PathBuf, name: &str) -> Result<PathBuf, Isolati
             error,
         )
     })?;
-    if !metadata.is_file() || !is_executable(&resolved, &metadata) {
+    if !metadata.is_file() || !is_executable(&resolved)? {
         return Err(IsolationError::new(
             "cargo-isolation::native-toolchain-invalid",
             format!("native {name} is not an executable file: {resolved:?}"),
@@ -716,15 +714,14 @@ fn admit_native_executable(path: PathBuf, name: &str) -> Result<PathBuf, Isolati
     Ok(resolved)
 }
 
-#[cfg(unix)]
-fn is_executable(_path: &Path, metadata: &fs::Metadata) -> bool {
-    metadata.permissions().mode() & 0o111 != 0
-}
-
-#[cfg(windows)]
-fn is_executable(path: &Path, _metadata: &fs::Metadata) -> bool {
-    path.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+/// Whether some principal may execute `path`: a Unix execute bit, or a
+/// Windows `FILE_EXECUTE` grant.
+fn is_executable(path: &Path) -> Result<bool, IsolationError> {
+    authority::owner_mode(path)
+        .map(|mode| mode & 0o111 != 0)
+        .map_err(|error| {
+            IsolationError::io("cargo-isolation::native-toolchain-unavailable", path, error)
+        })
 }
 
 fn require_absolute(path: &Path, label: &str) -> Result<(), IsolationError> {

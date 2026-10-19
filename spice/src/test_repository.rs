@@ -87,6 +87,7 @@ pub(crate) fn write_tree(root: &Path, index_path: Option<&Path>) -> String {
     write_index_tree(&repository, index).to_string()
 }
 
+#[cfg(unix)]
 pub(crate) fn index_mode(root: &Path, path: &str) -> Mode {
     let repository = open(root);
     let index = repository.index().expect("open fixture index");

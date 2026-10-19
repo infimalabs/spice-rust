@@ -878,6 +878,7 @@ fn image_matches(observed: Option<&ObservedFile>, expected: Option<&GeneratedIma
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
 
@@ -908,7 +909,10 @@ mod tests {
         fs::create_dir_all(path.parent().expect("fixture file has a parent"))
             .expect("fixture parent creates");
         fs::write(path, bytes).expect("fixture bytes write");
+        #[cfg(unix)]
         fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("fixture mode writes");
+        #[cfg(not(unix))]
+        let _ = mode;
     }
 
     #[test]
@@ -1017,6 +1021,7 @@ mod tests {
         let receipt = unapply_record(&repository).expect("interrupted unapply completes");
         assert_eq!(receipt.status(), InstallStatus::Uninstalled);
         assert_eq!(fs::read(&target).expect("prior bytes read"), prior);
+        #[cfg(unix)]
         assert_eq!(
             fs::metadata(&target)
                 .expect("prior metadata reads")

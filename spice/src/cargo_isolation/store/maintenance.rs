@@ -1,7 +1,3 @@
-#[cfg(windows)]
-use super::super::platform::PermissionsExt as _;
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt as _;
 use std::time::SystemTime;
 
 use super::*;
@@ -210,7 +206,7 @@ fn validate_sealed_package_tree(path: &Path) -> Result<(), IsolationError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         IsolationError::io("cargo-isolation::permission-unavailable", path, error)
     })?;
-    if metadata.file_type().is_symlink() {
+    if authority::is_link_like(&metadata) {
         return Err(IsolationError::new(
             "cargo-isolation::package-file-type-invalid",
             format!("immutable package contains a link: {path:?}"),
@@ -218,7 +214,7 @@ fn validate_sealed_package_tree(path: &Path) -> Result<(), IsolationError> {
     }
     let expected = if metadata.is_dir() {
         0o500
-    } else if metadata.is_file() && metadata.permissions().mode() & 0o111 != 0 {
+    } else if metadata.is_file() && owner_mode(path)? & 0o111 != 0 {
         0o700
     } else if metadata.is_file() {
         0o600
@@ -256,24 +252,16 @@ fn measure_tree(path: &Path, inspection: &mut Inspection) -> Result<(), Isolatio
             IsolationError::io("cargo-isolation::inspection-failed", &entry.path(), error)
         })?;
         inspection.logical_bytes = inspection.logical_bytes.saturating_add(metadata.len());
-        inspection.physical_bytes = inspection
-            .physical_bytes
-            .saturating_add(physical_bytes(&metadata));
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        inspection.physical_bytes = inspection.physical_bytes.saturating_add(
+            authority::allocated_bytes(&entry.path(), &metadata).map_err(|error| {
+                IsolationError::io("cargo-isolation::inspection-failed", &entry.path(), error)
+            })?,
+        );
+        if metadata.is_dir() && !authority::is_link_like(&metadata) {
             measure_tree(&entry.path(), inspection)?;
         }
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn physical_bytes(metadata: &fs::Metadata) -> u64 {
-    metadata.blocks().saturating_mul(512)
-}
-
-#[cfg(windows)]
-fn physical_bytes(metadata: &fs::Metadata) -> u64 {
-    metadata.len()
 }
 
 pub(super) fn cleanup(host: &Host) -> Result<CleanupReport, IsolationError> {

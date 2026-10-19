@@ -6,5 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[target.'cfg(any(unix, windows))'.dependencies]
+sill = { path = "../sill" }
+
 [lints]
 workspace = true

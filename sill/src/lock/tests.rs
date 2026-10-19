@@ -48,22 +48,11 @@ fn lock_names_are_single_safe_path_components() {
 /// it is what the owner record was read from, and probes with a clone of
 /// it. That is the arrangement the probe has to give possession back
 /// under, so it is the one tested.
-#[cfg(unix)]
 fn opened(path: &std::path::Path) -> fs::File {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(super::platform::O_CLOEXEC | super::platform::O_NOFOLLOW)
-        .open(path)
-        .expect("lock file opens")
+    super::platform::open(path, true).expect("lock file opens")
 }
 
 /// A probe answers a question; it must not keep what it took to answer it.
-#[cfg(unix)]
 #[test]
 fn an_availability_probe_gives_back_the_possession_it_took() {
     let path = unique_lock_path("probe-release");
@@ -77,8 +66,9 @@ fn an_availability_probe_gives_back_the_possession_it_took() {
     );
 
     // Closing the clone cannot be what released it: the clone shared an
-    // open file description with `file`, which is still open here, and
-    // flock binds to the description. Only an explicit unlock gets here.
+    // open file description (Windows: file object) with `file`, which is
+    // still open here, and the lock binds to it. Only an explicit unlock
+    // gets here.
     acquired(lock.try_acquire().expect("acquisition after a probe"));
 
     drop(file);

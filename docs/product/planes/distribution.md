@@ -341,7 +341,17 @@ an in-guest toolchain, and the guest must never imitate the former.
 the real Windows kernel. Cargo prints each test executable's path as
 `target/x86_64-pc-windows-msvc/debug/deps/NAME-HASH.exe`. `spice` and `sill`
 build for this target only once the corresponding port lands. Until then,
-these are the commands each port's native developer smoke must pass.
+these are the commands each port's native developer smoke must pass. Each
+`sync` replaces the guest's `bin\`, so name every artifact a run needs in one
+`sync`.
+
+The guest account is a local administrator, and its SSH session, including
+every `run`, holds an elevated token with backup and restore privileges that
+override file DACLs. An elevated owner can therefore remove entries from a
+sealed directory. Prove such owner refusals from an unelevated token: over the
+guest's SSH, run the same test argv under
+`runas /trustlevel:0x20000 "cmd /c C:\spice\work\bin\NAME-HASH.exe FILTER > C:\spice\tmp\OUT.txt 2>&1"`,
+which starts asynchronously, then read `OUT.txt`.
 
 ```sh
 spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p windows-guest
@@ -349,9 +359,13 @@ spice dev xtask -- windows-guest start
 
 # Filesystem and Cargo isolation (PLATFOR-dWJhTHGms)
 spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --lib
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill -p atomic -p serve --lib
 spice dev cargo -- build --locked --target x86_64-pc-windows-msvc -p spice
-spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/spice.exe
-spice dev xtask -- windows-guest run -- bin/spice-HASH.exe cargo_isolation
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/atomic-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/serve-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/spice.exe
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe config:: cargo_isolation agent_wrapper
+spice dev xtask -- windows-guest run -- bin/sill-HASH.exe authority lock
+spice dev xtask -- windows-guest run -- bin/atomic-HASH.exe
+spice dev xtask -- windows-guest run -- bin/serve-HASH.exe discovery
 
 # Job Object process ownership (PLATFOR-dWJhVJ7Sd)
 spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill

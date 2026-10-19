@@ -1,10 +1,8 @@
 //! The native client's sole authenticated path to the current resident.
 
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -35,7 +33,7 @@ mod typed;
 use browser::browser_command;
 pub(crate) use browser::{open_app_result_with, open_app_with, system_browser};
 use deadline_stream::{DeadlineStream, IoDirection, IoFailure, remaining};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use discovery::open_discovery;
 use discovery::{
     DiscoveryObserver, DiscoveryRead, DiscoveryWait, resident_lock_path, selected_discovery_path,

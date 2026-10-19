@@ -4,6 +4,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sill::authority;
 use wire::{AgentMediaReference, CanonicalUuid, Digest};
 
 const DIRECTORY_MODE: u32 = 0o700;
@@ -274,13 +275,13 @@ fn file_name(record: &Record) -> Result<String, String> {
 
 fn publish_verified(path: &Path, bytes: &[u8]) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if !metadata.file_type().is_file() => {
+        Ok(metadata) if !owned_file(&metadata) => {
             return Err(format!(
                 "steering media projection {} is not a regular file",
                 path.display(),
             ));
         }
-        Ok(metadata) if private_mode(&metadata, FILE_MODE) => {
+        Ok(_) if private_mode(path, FILE_MODE)? => {
             let observed = fs::read(path).map_err(|error| {
                 format!("published steering media bytes are unreadable: {error}")
             })?;
@@ -298,7 +299,7 @@ fn publish_verified(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("steering media projection is unpublished: {error}"))?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("published steering media is unreadable: {error}"))?;
-    if !metadata.file_type().is_file() || !private_mode(&metadata, FILE_MODE) {
+    if !owned_file(&metadata) || !private_mode(path, FILE_MODE)? {
         return Err(format!(
             "published steering media {} is not a private regular file",
             path.display(),
@@ -317,7 +318,7 @@ fn publish_verified(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 fn remove_projection(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() => fs::remove_file(path)
+        Ok(metadata) if owned_file(&metadata) => fs::remove_file(path)
             .map_err(|error| format!("obsolete steering media could not be removed: {error}")),
         Ok(_) => Err(format!(
             "obsolete steering media {} is not a regular file",
@@ -329,15 +330,22 @@ fn remove_projection(path: &Path) -> Result<(), String> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    create_private_directory(path).map_err(|error| {
-        format!(
-            "steering media directory {} is unavailable: {error}",
-            path.display(),
-        )
-    })?;
+    match authority::create_private_directory(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(format!(
+                "steering media directory {} is unavailable: {error}",
+                path.display(),
+            ));
+        }
+    }
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("steering media directory is unreadable: {error}"))?;
-    if !metadata.file_type().is_dir() || !private_mode(&metadata, DIRECTORY_MODE) {
+    if !metadata.is_dir()
+        || authority::is_link_like(&metadata)
+        || !private_mode(path, DIRECTORY_MODE)?
+    {
         return Err(format!(
             "steering media directory {} is not a private directory",
             path.display(),
@@ -346,38 +354,21 @@ fn ensure_private_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt as _;
-
-    let mut builder = fs::DirBuilder::new();
-    builder.mode(DIRECTORY_MODE);
-    match builder.create(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error),
-    }
+/// Whether unfollowed `metadata` names a regular file this store owns rather
+/// than a link or reparse point whose content lives elsewhere.
+fn owned_file(metadata: &fs::Metadata) -> bool {
+    metadata.is_file() && !authority::is_link_like(metadata)
 }
 
-#[cfg(not(unix))]
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    match fs::create_dir(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(unix)]
-fn private_mode(metadata: &fs::Metadata, expected: u32) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    metadata.permissions().mode() & 0o777 == expected
-}
-
-#[cfg(not(unix))]
-fn private_mode(_: &fs::Metadata, _: u32) -> bool {
-    true
+fn private_mode(path: &Path, expected: u32) -> Result<bool, String> {
+    authority::owner_mode(path)
+        .map(|mode| mode == expected)
+        .map_err(|error| {
+            format!(
+                "steering media {} mode is unreadable: {error}",
+                path.display()
+            )
+        })
 }
 
 #[cfg(test)]
