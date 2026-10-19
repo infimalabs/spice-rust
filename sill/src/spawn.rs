@@ -33,6 +33,8 @@ const GROUP_POLL: Duration = Duration::from_millis(10);
 use capture::{CaptureHandle, FailureContext};
 #[cfg(unix)]
 use launch::spawn_inner;
+#[cfg(windows)]
+pub use windows::{OwnedChild, Running};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturedOutput {
@@ -73,6 +75,23 @@ impl Completion {
         match self {
             Self::Exited(status) | Self::TimedOut(status) | Self::Cancelled(status) => *status,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingAction {
+    Wait,
+    Cancel,
+    Timeout,
+}
+
+const fn pending_action(cancelled: bool, timed_out: bool) -> PendingAction {
+    if cancelled {
+        PendingAction::Cancel
+    } else if timed_out {
+        PendingAction::Timeout
+    } else {
+        PendingAction::Wait
     }
 }
 
@@ -353,7 +372,7 @@ impl IoFailure {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[derive(Debug)]
 pub struct Running {
     spec: Spec,
@@ -362,6 +381,26 @@ pub struct Running {
 #[cfg(unix)]
 pub fn spawn(spec: Spec) -> io::Result<Running> {
     spawn_inner(spec, None, None, None, &mut |_| Ok(()))
+}
+
+#[cfg(windows)]
+pub fn spawn(spec: Spec) -> io::Result<Running> {
+    windows::spawn(spec, None)
+}
+
+/// Spawn an already-configured command beneath the shared Windows Job Object
+/// boundary while leaving its stream handling to the caller.
+///
+/// # Errors
+///
+/// Returns an I/O error if the suspended child cannot be created, assigned, or
+/// resumed. A refused launch is killed and reaped before this function returns.
+#[cfg(windows)]
+pub fn spawn_owned_command(
+    command: &mut std::process::Command,
+    group: crate::spec::ProcessGroup,
+) -> io::Result<OwnedChild> {
+    windows::spawn_command(command, group)
 }
 
 /// Spawn a consumer that inherits an already-held resource lock.
@@ -414,7 +453,12 @@ pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Runnin
     spawn_inner(spec, Some(observation), None, None, &mut |_| Ok(()))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn spawn_observed(spec: Spec, observation: Observation) -> io::Result<Running> {
+    windows::spawn(spec, Some(observation))
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn spawn_observed(_spec: Spec, _observation: Observation) -> io::Result<Running> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -422,7 +466,7 @@ pub fn spawn_observed(_spec: Spec, _observation: Observation) -> io::Result<Runn
     ))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub fn spawn(_spec: Spec) -> io::Result<Running> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -589,15 +633,20 @@ impl Running {
                 return self.finish(completion);
             }
 
-            if self.spec.wait.cancellation().is_cancelled() {
-                let status = self.terminate_and_reap()?;
-                return self.finish(Completion::Cancelled(status));
-            }
-
             let elapsed = self.started.elapsed();
-            if elapsed >= self.spec.deadlines.runtime() {
-                let status = self.terminate_and_reap()?;
-                return self.finish(Completion::TimedOut(status));
+            match pending_action(
+                self.spec.wait.cancellation().is_cancelled(),
+                elapsed >= self.spec.deadlines.runtime(),
+            ) {
+                PendingAction::Cancel => {
+                    let status = self.terminate_and_reap()?;
+                    return self.finish(Completion::Cancelled(status));
+                }
+                PendingAction::Timeout => {
+                    let status = self.terminate_and_reap()?;
+                    return self.finish(Completion::TimedOut(status));
+                }
+                PendingAction::Wait => {}
             }
 
             self.block_for(self.spec.deadlines.runtime().saturating_sub(elapsed))?;
@@ -932,7 +981,7 @@ fn execution_group_terminal_against(
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl Running {
     pub fn id(&self) -> u32 {
         unreachable!("unsupported targets cannot construct Running")
@@ -1306,6 +1355,19 @@ fn poll_timeout(duration: Duration) -> i32 {
     i32::try_from(rounded_milliseconds).unwrap_or(i32::MAX)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{PendingAction, pending_action};
+
+    #[test]
+    fn pending_wait_prefers_cancellation_to_timeout() {
+        assert_eq!(pending_action(false, false), PendingAction::Wait);
+        assert_eq!(pending_action(false, true), PendingAction::Timeout);
+        assert_eq!(pending_action(true, false), PendingAction::Cancel);
+        assert_eq!(pending_action(true, true), PendingAction::Cancel);
+    }
+}
+
 #[cfg(unix)]
 mod capture;
 #[cfg(unix)]
@@ -1314,3 +1376,5 @@ mod guardian;
 mod launch;
 #[cfg(unix)]
 mod platform;
+#[cfg(windows)]
+mod windows;

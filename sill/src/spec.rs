@@ -198,7 +198,7 @@ pub enum Cancellation {
 }
 
 impl Cancellation {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn is_cancelled(&self) -> bool {
         match self {
             Self::Never => false,

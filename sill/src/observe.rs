@@ -42,7 +42,7 @@ pub struct ObservedRecord<'a> {
 }
 
 impl<'a> ObservedRecord<'a> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn new(bytes: &'a [u8], boundary: RecordBoundary) -> Self {
         Self { bytes, boundary }
     }
@@ -257,26 +257,26 @@ impl Observation {
         })
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn stream(&self) -> OutputStream {
         self.stream
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn frame_limit(&self) -> usize {
         self.frame_limit
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn queue_capacity(&self) -> usize {
         self.queue_capacity
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) const fn sink_deadline(&self) -> Duration {
         self.sink_deadline
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn observer(&self) -> Arc<dyn RecordObserver> {
         Arc::clone(&self.observer)
     }

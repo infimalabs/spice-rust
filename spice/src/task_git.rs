@@ -15,7 +15,6 @@ use std::fmt;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -30,13 +29,6 @@ const LOCAL_COMMAND_LIMIT: Duration = Duration::from_secs(10);
 const NETWORK_COMMAND_LIMIT: Duration = Duration::from_secs(30);
 const OUTPUT_DRAIN_LIMIT: Duration = Duration::from_secs(1);
 const PROCESS_GROUP_GRACE: Duration = Duration::from_millis(100);
-/// How long a descendant still on its way out may take before it is a survivor.
-///
-/// Git has already exited when this is waited on, so nothing can join the group
-/// any more and the wait can only shorten. A descendant that has called exit
-/// leaves the group in microseconds, so this is slack for a loaded machine to
-/// schedule it, not time any healthy command spends.
-const DESCENDANT_EXIT_GRACE: Duration = Duration::from_millis(500);
 const PROCESS_GROUP_REAP_LIMIT: Duration = Duration::from_secs(1);
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 /// One repair direction for work that has not entered a task boundary.

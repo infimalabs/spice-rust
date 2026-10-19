@@ -811,5 +811,5 @@ impl Error for LockSurfaceError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
