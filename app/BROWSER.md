@@ -48,13 +48,17 @@ editing them changes no production style.
 ## Task graph workflow cues
 
 The task overview overlays each Mermaid task node with the authoritative
-availability label. `WAITING` is healthy workflow progress that is not running
-yet: it shares `IN FLIGHT`'s tone, and a dotted outline on both the node frame
-and its state tag sets it apart from in-flight's solid frame and deleted work's
-dashed one. `DONE` remains quiet settled provenance with a single neutral frame
-and rounded tag. The outline and tag shapes keep the states distinct without
-color, including reduced-contrast and forced-color presentation; waiting never
-borrows warning, danger, or operator-attention emphasis.
+availability label, and that overlay is the node's only frame: the diagram
+draws no stroke of its own around a task node, so selection and state read
+from one outline. `WAITING` is healthy workflow progress that is not running
+yet: it wears the base of the surface containing the map, plum inside a
+Design-flavored overview and the page's green elsewhere, and a dotted outline
+on both the node frame and its state tag sets it apart from in-flight's solid
+frame and deleted work's dashed one. `DONE` remains quiet settled provenance
+with a single neutral frame and rounded tag. The outline and tag shapes keep
+the states distinct without color, including reduced-contrast and forced-color
+presentation; waiting never borrows warning, danger, or operator-attention
+emphasis.
 
 ## Browser branding
 

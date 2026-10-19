@@ -483,6 +483,9 @@ fn present_review_node(
 /// layer: one column. Invisible links from [`row_links`] instead pack whole
 /// components into rows, which ELK stacks in shared layers as a near-square
 /// grid without moving any drawn edge.
+///
+/// Every task node is framed by its interactive overlay, which carries its
+/// state and selection, so the diagram draws no stroke of its own around one.
 fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
     let mut source = String::from("---\nconfig:\n  layout: elk\n---\nflowchart LR\n");
     for node in nodes {
@@ -496,15 +499,14 @@ fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
     for (from, to) in row_links(nodes.len(), edges) {
         writeln!(source, "  n{from} ~~~ n{to}").expect("String writes are infallible");
     }
-    let selected = nodes
+    let tasks = nodes
         .iter()
-        .filter(|node| node.selected)
+        .filter(|node| node.task.is_some())
         .map(|node| node.id.as_str())
         .collect::<Vec<_>>();
-    if !selected.is_empty() {
-        writeln!(source, "  class {} selected", selected.join(","))
-            .expect("String writes are infallible");
-        source.push_str("  classDef selected stroke-width:3px\n");
+    if !tasks.is_empty() {
+        writeln!(source, "  class {} task", tasks.join(",")).expect("String writes are infallible");
+        source.push_str("  classDef task stroke:none\n");
     }
     source
 }
