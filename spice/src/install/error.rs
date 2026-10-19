@@ -26,6 +26,11 @@ pub enum InstallError {
     GenerationChanged(PathBuf),
     BinaryNotRegular(PathBuf),
     BinaryEmpty(PathBuf),
+    /// An existing target whose mode this platform cannot restore on reversal.
+    OccupantUnrestorable {
+        path: PathBuf,
+        mode: u32,
+    },
     HookPathUnrepresentable {
         path: PathBuf,
         reason: &'static str,
@@ -108,6 +113,7 @@ impl fmt::Display for InstallError {
             | Self::GenerationChanged(_)
             | Self::BinaryNotRegular(_)
             | Self::BinaryEmpty(_)
+            | Self::OccupantUnrestorable { .. }
             | Self::HookPathUnrepresentable { .. }
             | Self::SymbolsRefused { .. } => fmt_input_error(self, formatter),
             Self::ForeignHookPath { .. }
@@ -174,6 +180,11 @@ fn fmt_input_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> 
         InstallError::BinaryEmpty(path) => {
             write!(formatter, "Spice executable is empty: {}", path.display())
         }
+        InstallError::OccupantUnrestorable { path, mode } => write!(
+            formatter,
+            "existing install target {} has mode {mode:#05o}, which this platform cannot restore on reversal",
+            path.display()
+        ),
         InstallError::HookPathUnrepresentable { path, reason } => write!(
             formatter,
             "installed Spice hook path {path:?} {reason} and cannot be rendered on one shell line",

@@ -16,12 +16,56 @@ pub struct Generation {
 }
 
 impl Generation {
+    /// Identity of the object `metadata` describes on Unix: device and inode.
+    #[cfg(unix)]
     pub(super) fn observe(metadata: &fs::Metadata) -> Self {
-        generation(metadata)
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        }
     }
 
-    pub(super) fn matches(self, metadata: &fs::Metadata) -> bool {
-        self == Self::observe(metadata)
+    /// Identity of the object at `path`, already inspected unfollowed as
+    /// `metadata`.
+    ///
+    /// Unix reads it from `metadata`. Windows metadata carries no file ID, so
+    /// the object is reopened without following a final reparse point.
+    pub(super) fn observe_at(path: &Path, metadata: &fs::Metadata) -> io::Result<Self> {
+        #[cfg(unix)]
+        {
+            let _ = path;
+            Ok(Self::observe(metadata))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = metadata;
+            Self::of_object(sill::authority::path_identity(path)?.object())
+        }
+    }
+
+    /// Identity of the object `file` holds open.
+    #[cfg(not(unix))]
+    pub(super) fn of_file(file: &fs::File) -> io::Result<Self> {
+        Self::of_object(sill::authority::file_identity(file)?.object())
+    }
+
+    /// Windows volume serial and file ID. NTFS file IDs fit in 64 bits; a
+    /// wider ID is refused rather than truncated into another object's.
+    #[cfg(not(unix))]
+    pub(super) fn of_object(object: sill::authority::FileObject) -> io::Result<Self> {
+        let index = object.index();
+        let (low, high) = index.split_at(8);
+        if high.iter().any(|byte| *byte != 0) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "install generations require 64-bit file identifiers",
+            ));
+        }
+        Ok(Self {
+            device: object.volume(),
+            inode: u64::from_le_bytes(low.try_into().expect("the low half is eight bytes")),
+        })
     }
 }
 
@@ -110,7 +154,9 @@ pub(super) fn bind_destination(
         destination,
         parent: ParentObservation {
             ancestor,
-            generation: Generation::observe(&metadata),
+            generation: Generation::observe_at(&canonical, &metadata).map_err(|source| {
+                InstallError::io("inspect resolved destination parent", &canonical, source)
+            })?,
             missing,
         },
         introduced_parents,
@@ -133,7 +179,11 @@ pub(super) fn validate_binding(
     let metadata = fs::symlink_metadata(&ancestor).map_err(|source| {
         InstallError::io("inspect bound destination parent", &ancestor, source)
     })?;
-    if !metadata.is_dir() || !parent.generation.matches(&metadata) {
+    if !metadata.is_dir()
+        || Generation::observe_at(&ancestor, &metadata).map_err(|source| {
+            InstallError::io("inspect bound destination parent", &ancestor, source)
+        })? != parent.generation
+    {
         return Err(InstallError::ParentChanged(ancestor));
     }
     let expected_parent = ancestor.join(&parent.missing);
@@ -200,28 +250,5 @@ fn validate_optional_relative(path: &str) -> Result<(), InstallError> {
         Ok(())
     } else {
         validate_relative(path).map(|_| ())
-    }
-}
-
-#[cfg(unix)]
-fn generation(metadata: &fs::Metadata) -> Generation {
-    use std::os::unix::fs::MetadataExt;
-    Generation {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-    }
-}
-
-#[cfg(not(unix))]
-fn generation(metadata: &fs::Metadata) -> Generation {
-    use std::time::UNIX_EPOCH;
-    let changed = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |duration| duration.as_nanos() as u64);
-    Generation {
-        device: metadata.len(),
-        inode: changed,
     }
 }

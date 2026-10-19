@@ -18,6 +18,10 @@ pub mod config;
 mod group;
 #[cfg(any(unix, windows))]
 mod interface;
+#[cfg(windows)]
+mod known_folder;
+#[cfg(windows)]
+mod liveness;
 mod lock;
 mod observe;
 #[cfg(unix)]
@@ -34,6 +38,10 @@ pub use config::{
 pub use group::{GroupSignal, signal_group};
 #[cfg(any(unix, windows))]
 pub use interface::local_addresses;
+#[cfg(windows)]
+pub use known_folder::program_files;
+#[cfg(windows)]
+pub use liveness::process_running;
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
 pub use observe::{
     Observation, ObservationFailure, ObservationSpecError, ObservationStall, ObserveError,

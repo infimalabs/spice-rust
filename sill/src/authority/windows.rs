@@ -21,13 +21,13 @@ use windows_sys::Win32::Security::{
     GetTokenInformation, INHERIT_ONLY_ACE, InitializeAcl, InitializeSecurityDescriptor,
     OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
     PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-    SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_INFORMATION_CLASS, TOKEN_OWNER,
-    TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser,
+    SID_AND_ATTRIBUTES, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_GROUPS,
+    TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenGroups, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_DELETE_CHILD, FILE_EXECUTE,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
+    CREATE_NEW, CreateDirectoryW, CreateFileW, CreateHardLinkW, DELETE, FILE_APPEND_DATA,
+    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_DELETE_CHILD,
+    FILE_EXECUTE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS,
     FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
     FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FileBasicInfo,
@@ -37,8 +37,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
 use windows_sys::Win32::System::SystemServices::{
-    ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, IO_REPARSE_TAG_MOUNT_POINT,
-    SECURITY_DESCRIPTOR_REVISION,
+    ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, IO_REPARSE_TAG_MOUNT_POINT, SE_GROUP_ENABLED,
+    SE_GROUP_OWNER, SECURITY_DESCRIPTOR_REVISION,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -439,6 +439,22 @@ pub(super) fn replace_entry(
     Ok(())
 }
 
+pub(super) fn link_entry(
+    _directory: &File,
+    path: &Path,
+    existing: &OsStr,
+    new: &OsStr,
+) -> io::Result<()> {
+    let existing = wide(&path.join(existing))?;
+    let new = wide(&path.join(new))?;
+    // SAFETY: both paths are NUL-terminated and outlive the call; a null
+    // security descriptor leaves the object's own protection in force.
+    if unsafe { CreateHardLinkW(new.as_ptr(), existing.as_ptr(), ptr::null()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 pub(super) fn remove_entry(_directory: &File, path: &Path, name: &OsStr) -> io::Result<()> {
     fs::remove_file(path.join(name))
 }
@@ -511,10 +527,10 @@ impl ProtectedSecurity {
     }
 }
 
-/// The current token's user and default owner.
+/// The current token's user and groups.
 struct Principal {
     user: Vec<usize>,
-    owner: Vec<usize>,
+    groups: Vec<usize>,
 }
 
 impl Principal {
@@ -529,7 +545,7 @@ impl Principal {
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
         Ok(Self {
             user: token_information(&token, TokenUser)?,
-            owner: token_information(&token, TokenOwner)?,
+            groups: token_information(&token, TokenGroups)?,
         })
     }
 
@@ -538,19 +554,29 @@ impl Principal {
         unsafe { (*self.user.as_ptr().cast::<TOKEN_USER>()).User.Sid }
     }
 
-    fn default_owner(&self) -> PSID {
-        // SAFETY: `owner` holds a `TOKEN_OWNER` whose SID points into itself.
-        unsafe { (*self.owner.as_ptr().cast::<TOKEN_OWNER>()).Owner }
-    }
-
-    /// Whether `owner` is this token's user or the default owner it assigns
-    /// to new objects, which is Administrators for an elevated token.
+    /// Whether `owner` is a SID this token may assign as an object's owner:
+    /// its user, or an enabled group the token holds for ownership, such as
+    /// Administrators in an elevated token. A token's default owner is always
+    /// one of these, whatever default the launching runtime selected, so an
+    /// object created by any process of this principal stays controlled.
     fn controls(&self, owner: PSID) -> bool {
+        let assignable = (SE_GROUP_ENABLED | SE_GROUP_OWNER) as u32;
+        // SAFETY: `groups` holds a `TOKEN_GROUPS` whose `GroupCount` entries
+        // follow it inside the same allocation.
+        let groups = unsafe {
+            let groups = self.groups.as_ptr().cast::<TOKEN_GROUPS>();
+            std::slice::from_raw_parts(
+                (&raw const (*groups).Groups).cast::<SID_AND_ATTRIBUTES>(),
+                (*groups).GroupCount as usize,
+            )
+        };
         // SAFETY: all SIDs are valid for the duration of the calls.
         !owner.is_null()
-            && unsafe {
-                EqualSid(owner, self.user()) != 0 || EqualSid(owner, self.default_owner()) != 0
-            }
+            && (unsafe { EqualSid(owner, self.user()) } != 0
+                || groups.iter().any(|group| {
+                    group.Attributes & assignable == assignable
+                        && unsafe { EqualSid(owner, group.Sid) } != 0
+                }))
     }
 }
 

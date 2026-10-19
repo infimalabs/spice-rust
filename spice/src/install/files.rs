@@ -267,6 +267,14 @@ pub(super) fn publish_bound(
     path.publish_receipt(image, expected)
 }
 
+/// Whether reversal can restore an observed occupant's `mode` here.
+///
+/// Windows expresses only owner-only modes as a protected owner DACL, so an
+/// occupant readable by others could be captured but never put back.
+pub(super) const fn restorable_mode(mode: u32) -> bool {
+    cfg!(unix) || mode & 0o077 == 0
+}
+
 pub(super) fn observe(path: &Path) -> Result<Option<ObservedFile>, InstallError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -276,20 +284,29 @@ pub(super) fn observe(path: &Path) -> Result<Option<ObservedFile>, InstallError>
     if !metadata.file_type().is_file() {
         return Err(InstallError::PathShape(path.to_path_buf()));
     }
-    let bytes = fs::read(path).map_err(|source| InstallError::io("read file", path, source))?;
-    Ok(Some(ObservedFile {
-        image: FileImage::new(file_mode(&metadata), bytes),
-        generation: Generation::observe(&metadata),
-    }))
-}
-
-#[cfg(unix)]
-fn file_mode(metadata: &fs::Metadata) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-    metadata.permissions().mode() & 0o777
-}
-
-#[cfg(not(unix))]
-fn file_mode(_metadata: &fs::Metadata) -> u32 {
-    super::DATA_MODE
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let bytes = fs::read(path).map_err(|source| InstallError::io("read file", path, source))?;
+        Ok(Some(ObservedFile {
+            image: FileImage::new(metadata.permissions().mode() & 0o777, bytes),
+            generation: Generation::observe(&metadata),
+        }))
+    }
+    #[cfg(not(unix))]
+    {
+        use std::io::Read;
+        let mut file =
+            fs::File::open(path).map_err(|source| InstallError::io("open file", path, source))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| InstallError::io("read file", path, source))?;
+        let mode = sill::authority::file_mode(&file)
+            .map_err(|source| InstallError::io("inspect file mode", path, source))?;
+        Ok(Some(ObservedFile {
+            image: FileImage::new(mode & 0o777, bytes),
+            generation: Generation::of_file(&file)
+                .map_err(|source| InstallError::io("inspect file", path, source))?,
+        }))
+    }
 }

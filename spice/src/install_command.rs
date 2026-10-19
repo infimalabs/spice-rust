@@ -176,6 +176,7 @@ pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::GenerationChanged(_)
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
+        | InstallError::OccupantUnrestorable { .. }
         | InstallError::HookPathUnrepresentable { .. }
         | InstallError::SymbolsRefused { .. }
         | InstallError::ForeignHookPath { .. }
@@ -241,6 +242,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::DigestMismatch { .. } => "install::digest-moved",
         InstallError::HookPathUnrepresentable { .. } => "install::hook-path-unrepresentable",
         InstallError::SymbolsRefused { .. } => "install::symbols-refused",
+        InstallError::OccupantUnrestorable { .. } => "install::occupant-unrestorable",
         InstallError::ForeignHookPath { .. } => "install::foreign-hooks",
         InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
         InstallError::LegacyRecord { .. } | InstallError::RetainedRecord { .. } => {
@@ -291,6 +293,10 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         InstallError::HookPathUnrepresentable { path, .. } => format!(
             "move or recreate the repository at a UTF-8 path with no line separators, then rerun this executable's install preview; the refused Git-common path was {path:?}",
         ),
+        InstallError::OccupantUnrestorable { path, .. } => format!(
+            "inspect the existing target with `{}`; move it out of the install tree, or restrict it to owner-only access, then preview again",
+            inspect_path(path),
+        ),
         InstallError::SymbolsRefused { path, .. } => format!(
             "inspect the package symbol input with `{}`; re-acquire the release package so its executable, payload, and `symbols/spice.dSYM.json` come from one sealed build, then rerun `spice install --package`",
             inspect_path(path),
@@ -335,7 +341,8 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         )
         .to_owned(),
         InstallError::Drift { path, .. } => format!(
-            "resolve the asset root with `/usr/bin/git rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `ls -ld -- <printed-common-git>/{path}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
+            "resolve the asset root with `{GIT} rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `{}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
+            inspect_path(&Path::new("<printed-common-git>").join(path)),
         ),
         _ => {
             unreachable!("fault-only install errors never construct refusal guidance")
@@ -346,13 +353,13 @@ fn install_refusal_remedy(error: &InstallError) -> String {
 fn hook_configuration_remedy(error: &InstallError) -> Option<String> {
     match error {
         InstallError::ForeignHookPath { worktree, .. } => Some(format!(
-            "inspect `/usr/bin/git config --show-origin --show-scope --get-all core.hooksPath` in {}; make system, global, and command scopes contribute no value, then deliberately replace only the exact refused common-local or worktree-local value before previewing again",
+            "inspect `{GIT} config --show-origin --show-scope --get-all core.hooksPath` in {}; make system, global, and command scopes contribute no value, then deliberately replace only the exact refused common-local or worktree-local value before previewing again",
             worktree.display(),
         )),
         InstallError::GitConfigurationDrift {
             worktree, scope, ..
         } => Some(format!(
-            "inspect `/usr/bin/git config --show-origin --show-scope --get-all core.hooksPath` in {}, then restore the exact previewed or installed vector in its {scope:?} scope; system, global, and command scopes must contribute no value",
+            "inspect `{GIT} config --show-origin --show-scope --get-all core.hooksPath` in {}, then restore the exact previewed or installed vector in its {scope:?} scope; system, global, and command scopes must contribute no value",
             worktree.display(),
         )),
         _ => None,
@@ -377,6 +384,13 @@ fn state_remedy(error: &InstallError) -> Option<String> {
     }
 }
 
+/// The Git the installer itself trusts, spelled for the operator's shell.
+#[cfg(unix)]
+const GIT: &str = "/usr/bin/git";
+#[cfg(windows)]
+const GIT: &str = r#""%ProgramFiles%\Git\cmd\git.exe""#;
+
+#[cfg(unix)]
 fn inspect_path(path: &Path) -> String {
     shell_words::join([
         "ls".to_owned(),
@@ -384,4 +398,9 @@ fn inspect_path(path: &Path) -> String {
         "--".to_owned(),
         path.to_string_lossy().into_owned(),
     ])
+}
+
+#[cfg(windows)]
+fn inspect_path(path: &Path) -> String {
+    format!("icacls \"{}\"", path.display())
 }

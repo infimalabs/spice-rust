@@ -10,7 +10,7 @@
 //! it still holds the image schema 18 recorded. Nothing else reads schema 18.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use wire::{Digest, Domain};
@@ -404,7 +404,7 @@ pub(super) fn binding(
             repository.common_dir().join(ANCHOR),
         ));
     }
-    let below = Path::new(path).strip_prefix(ANCHOR).map_err(|_| {
+    let below = below_anchor(path).ok_or_else(|| {
         InstallError::InvalidRecord("sidecar path lies outside its anchor".to_owned())
     })?;
     let missing = below
@@ -423,14 +423,22 @@ pub(super) fn binding(
     ))
 }
 
+/// `path` below the sidecar anchor, rebuilt from its components so it is
+/// spelled as `bind_destination` spells the same file on this platform.
+fn below_anchor(path: &str) -> Option<PathBuf> {
+    Path::new(path)
+        .strip_prefix(ANCHOR)
+        .ok()
+        .map(|below| below.components().collect())
+}
+
 /// Sidecar discards close the retirement inventory: exact, witnessed discards
 /// in strict path order, each naming its own directory suffix.
 pub(super) fn validate_retirements(retirements: &[Retirement]) -> Result<(), InstallError> {
     let mut prior: Option<&str> = None;
     for retirement in retirements {
-        let suffix = Path::new(&retirement.path)
-            .strip_prefix(ANCHOR)
-            .ok()
+        let suffix = below_anchor(&retirement.path)
+            .as_deref()
             .and_then(Path::parent)
             .and_then(|suffix| relative_path(suffix).ok());
         let generation_file = retirement

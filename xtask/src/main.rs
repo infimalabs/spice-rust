@@ -307,7 +307,9 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
 fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
     let mut request = xtask::RefreshRequest {
         restart: true,
-        symbols: true,
+        // Worktree dSYMs exist only on macOS; elsewhere the bare command
+        // publishes without them instead of refusing.
+        symbols: cfg!(target_os = "macos"),
         ..xtask::RefreshRequest::default()
     };
     let mut arguments = arguments.iter();
