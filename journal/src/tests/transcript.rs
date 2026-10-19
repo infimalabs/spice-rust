@@ -118,8 +118,6 @@ fn a_transcript_head_whose_stream_disagrees_with_its_row_is_refused() {
 /// silently uncounted, in the bundle every restore is judged against.
 #[test]
 fn a_captured_bundle_verifies_the_transcript_head_it_carries() {
-    use std::os::unix::fs::PermissionsExt;
-
     use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 
     let scratch = Scratch::new();
@@ -134,11 +132,10 @@ fn a_captured_bundle_verifies_the_transcript_head_it_carries() {
         authority: "spicejournal.sqlite3".to_owned(),
         members: vec![JournalBackupMember {
             path: "spicejournal.sqlite3".to_owned(),
-            mode: fs::metadata(&authority)
-                .expect("captured authority metadata reads")
-                .permissions()
-                .mode()
-                & 0o7777,
+            mode: sill::authority::file_mode(
+                &fs::File::open(&authority).expect("captured authority opens"),
+            )
+            .expect("captured authority mode reads"),
             bytes: u64::try_from(bytes.len()).expect("authority length crosses"),
             digest: Digest::compute(wire::Domain::JournalBackupMember, &bytes),
         }],

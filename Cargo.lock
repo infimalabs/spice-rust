@@ -132,7 +132,6 @@ name = "artifact"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "libc",
  "serde",
  "sill",
  "wire",
@@ -2287,9 +2286,9 @@ version = "0.0.0"
 dependencies = [
  "atomic",
  "rusqlite",
- "rustix",
  "serde",
  "serde_json",
+ "sill",
  "wire",
 ]
 
@@ -3198,6 +3197,7 @@ name = "sill"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "rustix",
  "serde",
  "serde_json",
  "toml",

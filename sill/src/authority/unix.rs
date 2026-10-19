@@ -1,4 +1,4 @@
-use std::ffi::{CString, OsStr};
+use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, DirBuilder, File, Metadata, Permissions};
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
@@ -8,7 +8,9 @@ use std::os::unix::fs::{
 };
 use std::path::{Path, PathBuf};
 
-use super::{Entry, FileIdentity, FileObject};
+use rustix::fs::{AtFlags, Dir, FileType};
+
+use super::{Entry, EntryKind, FileIdentity, FileObject};
 
 /// The owner-only mode of a created private file.
 const PRIVATE_FILE: libc::c_uint = 0o600;
@@ -20,8 +22,16 @@ pub(super) fn owner_mode(path: &Path) -> io::Result<u32> {
     Ok(fs::symlink_metadata(path)?.mode() & 0o777)
 }
 
+pub(super) fn file_mode(file: &File) -> io::Result<u32> {
+    Ok(file.metadata()?.mode() & 0o7777)
+}
+
 pub(super) fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
     fs::set_permissions(path, Permissions::from_mode(mode))
+}
+
+pub(super) fn set_file_mode(file: &File, mode: u32) -> io::Result<()> {
+    file.set_permissions(Permissions::from_mode(mode))
 }
 
 pub(super) fn create_private_directory(path: &Path) -> io::Result<()> {
@@ -122,6 +132,69 @@ pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
         .read(true)
         .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
         .open(path)
+        .map_err(directory_refusal)
+}
+
+pub(super) fn open_directory_entry(
+    directory: &File,
+    _path: &Path,
+    name: &OsStr,
+) -> io::Result<File> {
+    open_at(
+        directory,
+        name,
+        libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        0,
+    )
+    .map_err(directory_refusal)
+}
+
+/// A final link refuses a directory open as `ELOOP`; report it as the
+/// non-directory it is.
+fn directory_refusal(error: io::Error) -> io::Error {
+    if error.raw_os_error() == Some(libc::ELOOP) {
+        io::Error::new(io::ErrorKind::NotADirectory, error)
+    } else {
+        error
+    }
+}
+
+pub(super) struct Entries {
+    directory: File,
+    listing: Dir,
+}
+
+pub(super) fn entries(directory: &File, _path: &Path) -> io::Result<Entries> {
+    Ok(Entries {
+        listing: Dir::read_from(directory)?,
+        directory: directory.try_clone()?,
+    })
+}
+
+impl Iterator for Entries {
+    type Item = io::Result<(OsString, EntryKind)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let entry = match self.listing.next()? {
+                Ok(entry) => entry,
+                Err(error) => return Some(Err(error.into())),
+            };
+            let name = entry.file_name().to_bytes();
+            if name == b"." || name == b".." {
+                continue;
+            }
+            let name = OsStr::from_bytes(name).to_os_string();
+            let kind =
+                rustix::fs::statat(&self.directory, name.as_os_str(), AtFlags::SYMLINK_NOFOLLOW)
+                    .map(|stat| match FileType::from_raw_mode(stat.st_mode) {
+                        FileType::RegularFile => EntryKind::File,
+                        FileType::Directory => EntryKind::Directory,
+                        _ => EntryKind::Other,
+                    });
+            return Some(kind.map(|kind| (name, kind)).map_err(Into::into));
+        }
+    }
 }
 
 pub(super) fn create_private_entry(

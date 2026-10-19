@@ -41,7 +41,7 @@ use windows_sys::Win32::System::SystemServices::{
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-use super::{Entry, FileIdentity, FileObject};
+use super::{Entry, EntryKind, FileIdentity, FileObject};
 
 /// Access mapped to one owner permission bit (`r`, `w`, or `x`).
 const READ_BITS: u32 = 0o4;
@@ -59,9 +59,12 @@ const NT_PREFIX: &str = r"\??\";
 const MOUNT_POINT_HEADER_BYTES: usize = 8;
 
 pub(super) fn owner_mode(path: &Path) -> io::Result<u32> {
-    let file = open(path, READ_CONTROL)?;
+    file_mode(&open(path, READ_CONTROL)?)
+}
+
+pub(super) fn file_mode(file: &File) -> io::Result<u32> {
     let principal = Principal::current()?;
-    let descriptor = Descriptor::read(&file)?;
+    let descriptor = Descriptor::read(file)?;
     let mut owner = 0;
     let mut other = 0;
     if !principal.controls(descriptor.owner) {
@@ -111,6 +114,16 @@ pub(super) fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
         &open(path, READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES)?,
         mode,
     )
+}
+
+pub(super) fn set_file_mode(file: &File, mode: u32) -> io::Result<()> {
+    if mode & !0o700 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Windows expresses only owner-only modes, not {mode:#o}"),
+        ));
+    }
+    protect(file, mode)
 }
 
 /// Replace the DACL of the object `file` holds open with `WRITE_DAC` by one
@@ -308,7 +321,7 @@ pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
     let metadata = directory.metadata()?;
     if is_link_like(&metadata) {
         return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
+            io::ErrorKind::NotADirectory,
             format!("a held directory cannot be a link or reparse point: {path:?}"),
         ));
     }
@@ -316,6 +329,45 @@ pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
         return Err(io::Error::from(io::ErrorKind::NotADirectory));
     }
     Ok(directory)
+}
+
+pub(super) fn open_directory_entry(
+    _directory: &File,
+    path: &Path,
+    name: &OsStr,
+) -> io::Result<File> {
+    hold_directory(&path.join(name))
+}
+
+/// The listing reads each entry's attributes from the directory itself, so a
+/// reparse point reports as one without being opened or followed.
+pub(super) struct Entries(fs::ReadDir);
+
+pub(super) fn entries(_directory: &File, path: &Path) -> io::Result<Entries> {
+    fs::read_dir(path).map(Entries)
+}
+
+impl Iterator for Entries {
+    type Item = io::Result<(OsString, EntryKind)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entry = match self.0.next()? {
+            Ok(entry) => entry,
+            Err(error) => return Some(Err(error)),
+        };
+        Some(entry.metadata().map(|metadata| {
+            let kind = if is_link_like(&metadata) {
+                EntryKind::Other
+            } else if metadata.is_dir() {
+                EntryKind::Directory
+            } else if metadata.is_file() {
+                EntryKind::File
+            } else {
+                EntryKind::Other
+            };
+            (entry.file_name(), kind)
+        }))
+    }
 }
 
 pub(super) fn create_private_file(path: &Path) -> io::Result<File> {

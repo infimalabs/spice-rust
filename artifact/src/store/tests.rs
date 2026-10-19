@@ -441,17 +441,14 @@ fn missing_and_corrupt_payloads_fail_as_store_corruption() {
     assert_eq!(corrupt.class(), ErrorClass::Corrupt);
 }
 
-#[cfg(unix)]
 #[test]
-fn dangling_manifest_link_is_corruption_not_an_omitted_backup_task() {
-    use std::os::unix::fs::symlink;
-
+fn a_linked_manifest_is_corruption_not_an_omitted_backup_task() {
     let fixture = Fixture::new();
     let task = task("ARTIFACT-l2");
     let task_dir = fixture.store.root().join(task.as_str());
     fs::create_dir_all(&task_dir).expect("create task directory");
-    symlink("missing-manifest", task_dir.join("manifest.json"))
-        .expect("plant dangling manifest link");
+    sill::authority::link_directory(&task_dir, &task_dir.join("manifest.json"))
+        .expect("plant manifest link");
 
     let failure = fixture
         .store

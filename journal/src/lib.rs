@@ -127,7 +127,7 @@ pub mod crossing {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, Seek, Write};
 #[cfg(not(target_arch = "wasm32"))]
@@ -248,14 +248,7 @@ impl Drop for JournalSnapshot {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn create_snapshot(path: &Path) -> Result<File, SnapshotFileError> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path).map_err(|source| SnapshotFileError::Io {
+    sill::authority::create_private_file(path).map_err(|source| SnapshotFileError::Io {
         path: path.to_path_buf(),
         source,
     })
