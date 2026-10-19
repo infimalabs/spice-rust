@@ -155,10 +155,11 @@ spice dev xtask -- stage-target x86_64-pc-windows-msvc
 token: `@runner`, `@cargo`, `@rustc`, `@git`, `@cl`, or `@rc`. Proof replay
 sends its five commands as one bounded batch, so one signed provider run
 identity covers the complete battery. The client materializes the selected
-worktree in a temporary Git index, creates a one-use commit, computes the exact
-source archive's SHA-256 identity, and pushes only a temporary
-`refs/tags/spice-hosted-*` ref. It never pushes or moves a branch. It deletes
-that ref and the result artifact after the run.
+worktree in a temporary Git index, creates a one-use commit, computes a
+cross-platform SHA-256 identity from the exact source tree's recursive Git
+listing, and pushes only a temporary `refs/tags/spice-hosted-*` ref. It never
+pushes or moves a branch. It deletes that ref and the result artifact after the
+run.
 
 GitHub registers `workflow_dispatch` only from the default branch. The
 repository command therefore becomes live only after
