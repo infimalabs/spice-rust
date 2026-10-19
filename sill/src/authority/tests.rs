@@ -5,7 +5,8 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
-    create_private_directory, directory_link_form, is_link_like, link_directory, owner_mode,
+    Directory, Entry, create_private_directory, directory_link_form, file_identity, is_link_like,
+    link_directory, open_unfollowed, owned_by_current_user, owner_mode, path_identity,
     read_directory_link, rename_no_replace, set_owner_mode,
 };
 
@@ -156,6 +157,177 @@ fn directory_links_record_their_target_and_read_as_links() {
 
     let occupied = link_directory(&target, &link).expect_err("link name exists");
     assert_eq!(occupied.kind(), io::ErrorKind::AlreadyExists);
+}
+
+#[test]
+fn identity_tracks_one_object_and_detects_change_and_replacement() {
+    let scratch = Scratch::new("identity");
+    let path = scratch.path("file");
+    fs::write(&path, b"first").expect("create file");
+    let observed = path_identity(&path).expect("path identity");
+    let opened = file_identity(&fs::File::open(&path).expect("open file")).expect("identity");
+    assert_eq!(
+        observed, opened,
+        "path and handle observe one unchanged object"
+    );
+    assert_eq!(observed.bytes(), 5);
+
+    fs::write(&path, b"changed").expect("rewrite file");
+    let changed = path_identity(&path).expect("changed identity");
+    assert_ne!(changed, observed, "a write changes the observed state");
+    assert_eq!(
+        changed.object(),
+        observed.object(),
+        "a write keeps the object"
+    );
+
+    let replacement = scratch.path("replacement");
+    fs::write(&replacement, b"changed").expect("create replacement");
+    fs::rename(&replacement, &path).expect("replace file");
+    let replaced = path_identity(&path).expect("replaced identity");
+    assert!(
+        replaced.object() != changed.object(),
+        "an equal-length replacement is another object"
+    );
+    assert!(owned_by_current_user(&path).expect("observe owner"));
+}
+
+#[test]
+fn identity_and_reads_never_follow_a_final_link() {
+    let scratch = Scratch::new("identity-link");
+    let target = scratch.path("target");
+    let link = scratch.path("link");
+    fs::create_dir(&target).expect("create target");
+    link_directory(&target, &link).expect("create link");
+
+    let through = path_identity(&link).expect("link identity");
+    let direct = path_identity(&target).expect("target identity");
+    assert_ne!(through.object(), direct.object());
+    assert!(owned_by_current_user(&link).expect("observe link owner"));
+    if let Ok(opened) = open_unfollowed(&link) {
+        let opened = file_identity(&opened).expect("opened identity");
+        assert_ne!(
+            opened.object(),
+            direct.object(),
+            "the open reached the target"
+        );
+    }
+}
+
+#[test]
+fn held_directory_entries_are_private_exclusive_and_never_followed() {
+    let scratch = Scratch::new("held");
+    let root = scratch.path("root");
+    fs::create_dir(&root).expect("create root");
+    fs::create_dir(scratch.path("outside")).expect("create outside");
+    link_directory(&scratch.path("outside"), &root.join("link")).expect("create link");
+    let held = Directory::open(&root).expect("hold directory");
+
+    let mut staged = held
+        .create_private("staged".as_ref())
+        .expect("create staged");
+    io::Write::write_all(&mut staged, b"next").expect("write staged");
+    drop(staged);
+    assert_eq!(
+        owner_mode(&root.join("staged")).expect("staged mode"),
+        0o600
+    );
+    for existing in ["staged", "link"] {
+        let refused = held
+            .create_private(existing.as_ref())
+            .expect_err("creation refuses an existing entry");
+        assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{existing}");
+    }
+    assert!(
+        fs::read_dir(scratch.path("outside"))
+            .expect("list outside")
+            .next()
+            .is_none()
+    );
+
+    assert!(matches!(
+        held.open_entry("absent".as_ref(), false).expect("absent"),
+        Entry::Missing
+    ));
+    assert!(matches!(
+        held.open_entry("link".as_ref(), true).expect("link"),
+        Entry::Link
+    ));
+
+    fs::write(root.join("current"), b"before").expect("create current");
+    held.replace("staged".as_ref(), "current".as_ref())
+        .expect("replace current");
+    held.sync().expect("sync held directory");
+    let Entry::Opened(mut current) = held.open_entry("current".as_ref(), false).expect("current")
+    else {
+        panic!("the replaced entry opens as itself");
+    };
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut current, &mut bytes).expect("read current");
+    assert_eq!(bytes, b"next");
+    assert!(!root.join("staged").exists());
+
+    drop(current);
+    held.remove_file("current".as_ref())
+        .expect("remove current");
+    assert!(matches!(
+        held.open_entry("current".as_ref(), false).expect("removed"),
+        Entry::Missing
+    ));
+    for invalid in ["", ".", "..", "a/b"] {
+        let refused = held
+            .open_entry(invalid.as_ref(), false)
+            .expect_err("not one entry name");
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{invalid:?}");
+    }
+}
+
+#[test]
+fn held_directory_operations_never_land_in_a_directory_that_took_its_name() {
+    for renamed in ["held", "parent"] {
+        let scratch = Scratch::new("held-rename");
+        let parent = scratch.path("parent");
+        let held_path = parent.join("held");
+        fs::create_dir_all(&held_path).expect("create held directory");
+        let held = Directory::open(&held_path).expect("hold directory");
+        let object = held.identity().expect("held identity").object();
+
+        let (from, to) = match renamed {
+            "held" => (held_path.clone(), parent.join("moved")),
+            _ => (parent.clone(), scratch.path("moved")),
+        };
+        let moved_held = if renamed == "held" {
+            to.clone()
+        } else {
+            to.join("held")
+        };
+        if fs::rename(&from, &to).is_ok() {
+            fs::create_dir_all(&held_path).expect("create impostor");
+        }
+        drop(held.create_private("entry".as_ref()).expect("create entry"));
+
+        let holder = [&held_path, &moved_held]
+            .into_iter()
+            .find(|path| path_identity(path).is_ok_and(|identity| identity.object() == object))
+            .expect("the held directory is still named");
+        assert!(holder.join("entry").is_file(), "{renamed}");
+        let other = if holder == &held_path {
+            &moved_held
+        } else {
+            &held_path
+        };
+        assert!(!other.join("entry").exists(), "{renamed}");
+    }
+}
+
+#[test]
+fn held_directories_refuse_links_and_files() {
+    let scratch = Scratch::new("held-refusal");
+    fs::create_dir(scratch.path("target")).expect("create target");
+    link_directory(&scratch.path("target"), &scratch.path("link")).expect("create link");
+    fs::write(scratch.path("file"), b"").expect("create file");
+    Directory::open(&scratch.path("link")).expect_err("a link is not held");
+    Directory::open(&scratch.path("file")).expect_err("a file is not held");
 }
 
 #[cfg(windows)]

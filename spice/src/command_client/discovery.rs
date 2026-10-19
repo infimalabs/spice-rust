@@ -7,6 +7,8 @@
 //! publisher alive, and with the identities of the file and its parent so a
 //! record replaced underneath the client is seen rather than believed.
 
+use sill::authority::{self, FileIdentity};
+
 use super::*;
 
 pub(super) fn selected_discovery_path(
@@ -72,11 +74,9 @@ impl DiscoveryRead {
                 "resident discovery has no repository runtime parent",
             )
         })?;
-        let parent_metadata = secure_metadata(parent, DiscoveryKind::Runtime)?;
-        let parent_identity = FileIdentity::from_metadata(&parent_metadata);
-        let before = secure_metadata(path, DiscoveryKind::File)?;
-        let file_identity = FileIdentity::from_metadata(&before);
-        if file_identity.len > MAX_DISCOVERY_BYTES {
+        let parent_identity = secure_identity(parent, DiscoveryKind::Runtime)?;
+        let file_identity = secure_identity(path, DiscoveryKind::File)?;
+        if file_identity.bytes() > MAX_DISCOVERY_BYTES {
             return Err(protocol_fault_value(
                 "serve::discovery-malformed",
                 "resident discovery exceeds the current bounded document size",
@@ -84,9 +84,13 @@ impl DiscoveryRead {
         }
         before_open();
         let mut file = open_discovery(path)?;
-        let opened = file.metadata().map_err(discovery_unavailable)?;
-        require_secure(&opened, DiscoveryKind::File)?;
-        if FileIdentity::from_metadata(&opened) != file_identity {
+        if !file.metadata().map_err(discovery_unavailable)?.is_file() {
+            return Err(environment_fault_value(
+                "serve::discovery-insecure",
+                "resident discovery path is not a real repository-owned file",
+            ));
+        }
+        if authority::file_identity(&file).map_err(discovery_unavailable)? != file_identity {
             return Err(discovery_replaced());
         }
         let mut bytes = Vec::new();
@@ -94,7 +98,7 @@ impl DiscoveryRead {
             .take(MAX_DISCOVERY_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(discovery_unavailable)?;
-        if u64::try_from(bytes.len()).ok() != Some(file_identity.len) {
+        if u64::try_from(bytes.len()).ok() != Some(file_identity.bytes()) {
             return Err(discovery_replaced());
         }
         let value = wire::decode(&bytes).map_err(|_| {
@@ -196,13 +200,9 @@ impl DiscoveryRead {
     }
 
     pub(super) fn verify_current_fault(&self) -> Result<(), Fault> {
-        let parent = secure_metadata(&self.parent, DiscoveryKind::Runtime)?;
-        let file = secure_metadata(&self.path, DiscoveryKind::File)?;
-        if !self
-            .parent_identity
-            .same_object(&FileIdentity::from_metadata(&parent))
-            || FileIdentity::from_metadata(&file) != self.file_identity
-        {
+        let parent = secure_identity(&self.parent, DiscoveryKind::Runtime)?;
+        let file = secure_identity(&self.path, DiscoveryKind::File)?;
+        if self.parent_identity.object() != parent.object() || file != self.file_identity {
             return Err(discovery_replaced());
         }
         Ok(())
@@ -215,117 +215,49 @@ pub(super) enum DiscoveryKind {
     File,
 }
 
-#[cfg(unix)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct FileIdentity {
-    device: u64,
-    inode: u64,
-    mode: u32,
-    owner: u32,
-    len: u64,
-    modified_seconds: i64,
-    modified_nanoseconds: i64,
-    changed_seconds: i64,
-    changed_nanoseconds: i64,
-}
-
-#[cfg(unix)]
-impl FileIdentity {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        Self {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            mode: metadata.mode(),
-            owner: metadata.uid(),
-            len: metadata.len(),
-            modified_seconds: metadata.mtime(),
-            modified_nanoseconds: metadata.mtime_nsec(),
-            changed_seconds: metadata.ctime(),
-            changed_nanoseconds: metadata.ctime_nsec(),
-        }
-    }
-
-    fn same_object(&self, other: &Self) -> bool {
-        self.device == other.device && self.inode == other.inode && self.owner == other.owner
-    }
-}
-
-#[cfg(not(unix))]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct FileIdentity {
-    len: u64,
-    modified: Option<std::time::SystemTime>,
-}
-
-#[cfg(not(unix))]
-impl FileIdentity {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        Self {
-            len: metadata.len(),
-            modified: metadata.modified().ok(),
-        }
-    }
-
-    fn same_object(&self, other: &Self) -> bool {
-        self == other
-    }
-}
-
-pub(super) fn secure_metadata(path: &Path, kind: DiscoveryKind) -> Result<Metadata, Fault> {
+/// The identity of a discovery path admitted as secure.
+///
+/// The path must be a real directory or file, never a link or reparse point,
+/// owned by the current user; a record must also be private to that user. The
+/// identity is observed before and after the checks, and its unchanged state
+/// (which includes the change time permissions and ownership move) proves the
+/// checks saw that same object.
+fn secure_identity(path: &Path, kind: DiscoveryKind) -> Result<FileIdentity, Fault> {
+    let before = authority::path_identity(path).map_err(discovery_unavailable)?;
     let metadata = fs::symlink_metadata(path).map_err(discovery_unavailable)?;
-    require_secure(&metadata, kind)?;
-    Ok(metadata)
-}
-
-#[cfg(unix)]
-pub(super) fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result<(), Fault> {
     let shape_matches = match kind {
-        DiscoveryKind::Runtime => metadata.file_type().is_dir(),
-        DiscoveryKind::File => metadata.file_type().is_file(),
+        DiscoveryKind::Runtime => metadata.is_dir(),
+        DiscoveryKind::File => metadata.is_file(),
     };
-    if !shape_matches {
+    if !shape_matches || authority::is_link_like(&metadata) {
         return Err(environment_fault_value(
             "serve::discovery-insecure",
             "resident discovery path is not a real repository-owned file",
         ));
     }
-    let owner = rustix::process::geteuid().as_raw();
-    if metadata.uid() != owner {
+    if !authority::owned_by_current_user(path).map_err(discovery_unavailable)? {
         return Err(environment_fault_value(
             "serve::discovery-non-owner",
             "resident discovery path is not owned by the effective user",
         ));
     }
-    if matches!(kind, DiscoveryKind::File) && metadata.mode() & 0o077 != 0 {
+    if matches!(kind, DiscoveryKind::File)
+        && authority::owner_mode(path).map_err(discovery_unavailable)? & 0o077 != 0
+    {
         return Err(environment_fault_value(
             "serve::discovery-insecure",
             "resident discovery is readable or writable by group or other",
         ));
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-pub(super) fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result<(), Fault> {
-    let shape_matches = match kind {
-        DiscoveryKind::Runtime => metadata.file_type().is_dir(),
-        DiscoveryKind::File => metadata.file_type().is_file(),
-    };
-    if !shape_matches {
-        return Err(environment_fault_value(
-            "serve::discovery-insecure",
-            "resident discovery path is not a real repository-owned file",
-        ));
+    let after = authority::path_identity(path).map_err(discovery_unavailable)?;
+    if after != before {
+        return Err(discovery_replaced());
     }
-    Ok(())
+    Ok(after)
 }
 
 pub(super) fn open_discovery(path: &Path) -> Result<File, Fault> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    options.open(path).map_err(discovery_unavailable)
+    authority::open_unfollowed(path).map_err(discovery_unavailable)
 }
 
 /// One direct wake on the runtime directory, re-armed before each read.

@@ -351,7 +351,7 @@ spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spi
 spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill --lib
 spice dev cargo -- build --locked --target x86_64-pc-windows-msvc -p spice
 spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/spice.exe
-spice dev xtask -- windows-guest run -- bin/spice-HASH.exe cargo_isolation
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe config:: cargo_isolation
 spice dev xtask -- windows-guest run -- bin/sill-HASH.exe authority lock
 
 # Job Object process ownership (PLATFOR-dWJhVJ7Sd)

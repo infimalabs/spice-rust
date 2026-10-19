@@ -24,11 +24,13 @@ use windows_sys::Win32::Security::{
     TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateDirectoryW, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD,
-    FILE_EXECUTE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA,
-    FileStandardInfo, GetFileInformationByHandleEx, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    CreateDirectoryW, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
+    FILE_DELETE_CHILD, FILE_EXECUTE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
+    FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
+    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FileBasicInfo, FileIdInfo, FileStandardInfo,
+    GetFileInformationByHandleEx, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
@@ -38,6 +40,8 @@ use windows_sys::Win32::System::SystemServices::{
     SECURITY_DESCRIPTOR_REVISION,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+use super::{Entry, FileIdentity, FileObject};
 
 /// Access mapped to one owner permission bit (`r`, `w`, or `x`).
 const READ_BITS: u32 = 0o4;
@@ -103,7 +107,15 @@ pub(super) fn owner_mode(path: &Path) -> io::Result<u32> {
 }
 
 pub(super) fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
-    let file = open(path, READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES)?;
+    protect(
+        &open(path, READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES)?,
+        mode,
+    )
+}
+
+/// Replace the DACL of the object `file` holds open with `WRITE_DAC` by one
+/// protected owner-only grant of `mode`'s owner bits.
+fn protect(file: &File, mode: u32) -> io::Result<()> {
     let directory = file.metadata()?.is_dir();
     let principal = Principal::current()?;
     let acl = owner_acl(principal.user(), mode >> 6, directory)?;
@@ -222,26 +234,177 @@ pub(super) fn read_directory_link(link: &Path) -> io::Result<PathBuf> {
 }
 
 pub(super) fn allocated_bytes(path: &Path, _metadata: &Metadata) -> io::Result<u64> {
-    let file = open(path, FILE_READ_ATTRIBUTES)?;
-    let mut information = FILE_STANDARD_INFO::default();
-    // SAFETY: the handle is open, and the output buffer is exactly one
-    // `FILE_STANDARD_INFO`.
+    let standard: FILE_STANDARD_INFO =
+        information(&open(path, FILE_READ_ATTRIBUTES)?, FileStandardInfo)?;
+    Ok(u64::try_from(standard.AllocationSize).unwrap_or(0))
+}
+
+pub(super) fn is_link_like(metadata: &Metadata) -> bool {
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+pub(super) fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    let id: FILE_ID_INFO = information(file, FileIdInfo)?;
+    let basic: FILE_BASIC_INFO = information(file, FileBasicInfo)?;
+    let standard: FILE_STANDARD_INFO = information(file, FileStandardInfo)?;
+    Ok(FileIdentity {
+        object: FileObject {
+            volume: id.VolumeSerialNumber,
+            index: id.FileId.Identifier,
+        },
+        bytes: u64::try_from(standard.EndOfFile).unwrap_or(0),
+        modified: i128::from(basic.LastWriteTime),
+        changed: i128::from(basic.ChangeTime),
+    })
+}
+
+pub(super) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    file_identity(&open(path, FILE_READ_ATTRIBUTES)?)
+}
+
+pub(super) fn owned_by_current_user(path: &Path) -> io::Result<bool> {
+    let descriptor = Descriptor::read(&open(path, READ_CONTROL)?)?;
+    Ok(Principal::current()?.controls(descriptor.owner))
+}
+
+/// One fixed-size `GetFileInformationByHandleEx` record for `file`.
+fn information<T: Default>(file: &File, class: FILE_INFO_BY_HANDLE_CLASS) -> io::Result<T> {
+    let mut record = T::default();
+    // SAFETY: the handle is open, and the output buffer is exactly one `T`,
+    // the record type `class` names.
     let read = unsafe {
         GetFileInformationByHandleEx(
             file.as_raw_handle(),
-            FileStandardInfo,
-            (&raw mut information).cast(),
-            size_of::<FILE_STANDARD_INFO>() as u32,
+            class,
+            (&raw mut record).cast(),
+            size_of::<T>() as u32,
         )
     };
     if read == 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(u64::try_from(information.AllocationSize).unwrap_or(0))
+    Ok(record)
 }
 
-pub(super) fn is_link_like(metadata: &Metadata) -> bool {
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+pub(super) fn open_unfollowed(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+/// Hold a directory without delete sharing: while the handle is open, the
+/// directory can be neither renamed nor removed, so its path keeps naming it.
+///
+/// Share modes bind only handles holding data access, so the hold lists the
+/// directory; attribute access alone would leave a rename unobstructed.
+pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
+    let directory = OpenOptions::new()
+        .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let metadata = directory.metadata()?;
+    if is_link_like(&metadata) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("a held directory cannot be a link or reparse point: {path:?}"),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::from(io::ErrorKind::NotADirectory));
+    }
+    Ok(directory)
+}
+
+pub(super) fn create_private_entry(
+    _directory: &File,
+    path: &Path,
+    name: &OsStr,
+) -> io::Result<File> {
+    let entry = path.join(name);
+    let created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(&entry);
+    let file = match created {
+        Ok(file) => file,
+        // An existing directory or directory link refuses `CREATE_NEW` as
+        // access denied rather than as a collision.
+        Err(error)
+            if error.kind() == io::ErrorKind::PermissionDenied
+                && fs::symlink_metadata(&entry).is_ok() =>
+        {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, error));
+        }
+        Err(error) => return Err(error),
+    };
+    protect(&file, 0o600)?;
+    Ok(file)
+}
+
+pub(super) fn open_entry(
+    _directory: &File,
+    path: &Path,
+    name: &OsStr,
+    write: bool,
+) -> io::Result<Entry> {
+    let opened = OpenOptions::new()
+        .read(true)
+        .write(write)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path.join(name));
+    let file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Entry::Missing),
+        Err(error) => return Err(error),
+    };
+    if is_link_like(&file.metadata()?) {
+        return Ok(Entry::Link);
+    }
+    Ok(Entry::Opened(file))
+}
+
+pub(super) fn replace_entry(
+    _directory: &File,
+    path: &Path,
+    source: &OsStr,
+    destination: &OsStr,
+) -> io::Result<()> {
+    let source = wide(&path.join(source))?;
+    let destination = wide(&path.join(destination))?;
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    if unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+pub(super) fn remove_entry(_directory: &File, path: &Path, name: &OsStr) -> io::Result<()> {
+    fs::remove_file(path.join(name))
+}
+
+/// Flush the held directory. `FlushFileBuffers` needs write access, which the
+/// held handle deliberately lacks; the path still names the held directory.
+pub(super) fn sync_directory(_directory: &File, path: &Path) -> io::Result<()> {
+    OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?
+        .sync_all()
 }
 
 /// Open the entry itself, including a directory or a reparse point.

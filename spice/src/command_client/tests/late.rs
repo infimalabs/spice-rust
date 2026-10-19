@@ -365,6 +365,7 @@ fn discovery_symlinks_and_public_modes_are_refused() {
 fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() {
     use rustix::fs::{OFlags, fcntl_getfl};
     use std::ffi::CString;
+    use std::fs::OpenOptions;
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::OpenOptionsExt as _;
 

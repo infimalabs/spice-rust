@@ -1,11 +1,20 @@
-use std::ffi::CString;
-use std::fs::{self, DirBuilder, Metadata, Permissions};
+use std::ffi::{CString, OsStr};
+use std::fs::{self, DirBuilder, File, Metadata, Permissions};
 use std::io;
+use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
+use std::os::unix::fs::{
+    DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+};
 use std::path::{Path, PathBuf};
 
+use super::{Entry, FileIdentity, FileObject};
+
+/// The owner-only mode of a created private file.
+const PRIVATE_FILE: libc::c_uint = 0o600;
+
 const BLOCK_BYTES: u64 = 512;
+const NANOSECONDS: i128 = 1_000_000_000;
 
 pub(super) fn owner_mode(path: &Path) -> io::Result<u32> {
     Ok(fs::symlink_metadata(path)?.mode() & 0o777)
@@ -65,7 +74,138 @@ pub(super) fn is_link_like(metadata: &Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
-fn c_path(path: &Path) -> io::Result<CString> {
-    CString::new(path.as_os_str().as_bytes())
+pub(super) fn file_identity(file: &File) -> io::Result<FileIdentity> {
+    Ok(identity(&file.metadata()?))
+}
+
+pub(super) fn path_identity(path: &Path) -> io::Result<FileIdentity> {
+    Ok(identity(&fs::symlink_metadata(path)?))
+}
+
+pub(super) fn owned_by_current_user(path: &Path) -> io::Result<bool> {
+    // SAFETY: `geteuid` reads this process's credentials and cannot fail.
+    let user = unsafe { libc::geteuid() };
+    Ok(fs::symlink_metadata(path)?.uid() == user)
+}
+
+fn identity(metadata: &Metadata) -> FileIdentity {
+    FileIdentity {
+        object: FileObject {
+            volume: metadata.dev(),
+            index: u128::from(metadata.ino()).to_le_bytes(),
+        },
+        bytes: metadata.size(),
+        modified: i128::from(metadata.mtime()) * NANOSECONDS + i128::from(metadata.mtime_nsec()),
+        changed: i128::from(metadata.ctime()) * NANOSECONDS + i128::from(metadata.ctime_nsec()),
+    }
+}
+
+pub(super) fn open_unfollowed(path: &Path) -> io::Result<File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+}
+
+pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(path)
+}
+
+pub(super) fn create_private_entry(
+    directory: &File,
+    _path: &Path,
+    name: &OsStr,
+) -> io::Result<File> {
+    open_at(
+        directory,
+        name,
+        libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        PRIVATE_FILE,
+    )
+}
+
+pub(super) fn open_entry(
+    directory: &File,
+    _path: &Path,
+    name: &OsStr,
+    write: bool,
+) -> io::Result<Entry> {
+    let access = if write { libc::O_RDWR } else { libc::O_RDONLY };
+    let flags = access | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
+    match open_at(directory, name, flags, 0) {
+        Ok(file) => Ok(Entry::Opened(file)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Entry::Missing),
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => Ok(Entry::Link),
+        Err(error) => Err(error),
+    }
+}
+
+pub(super) fn replace_entry(
+    directory: &File,
+    _path: &Path,
+    source: &OsStr,
+    destination: &OsStr,
+) -> io::Result<()> {
+    let source = c_name(source)?;
+    let destination = c_name(destination)?;
+    let descriptor = directory.as_raw_fd();
+    // SAFETY: the descriptor is open for the call, and both names are
+    // NUL-terminated single components that outlive it.
+    let result = unsafe {
+        libc::renameat(
+            descriptor,
+            source.as_ptr(),
+            descriptor,
+            destination.as_ptr(),
+        )
+    };
+    status(result)
+}
+
+pub(super) fn remove_entry(directory: &File, _path: &Path, name: &OsStr) -> io::Result<()> {
+    let name = c_name(name)?;
+    // SAFETY: the descriptor is open for the call, and `name` is a
+    // NUL-terminated single component that outlives it.
+    status(unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) })
+}
+
+pub(super) fn sync_directory(directory: &File, _path: &Path) -> io::Result<()> {
+    directory.sync_all()
+}
+
+fn open_at(
+    directory: &File,
+    name: &OsStr,
+    flags: libc::c_int,
+    mode: libc::c_uint,
+) -> io::Result<File> {
+    let name = c_name(name)?;
+    // SAFETY: the descriptor is open for the call, `name` is NUL-terminated,
+    // and `mode` is read only when `flags` creates the entry.
+    let descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags, mode) };
+    if descriptor < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `openat` returned a new descriptor that nothing else owns.
+    Ok(File::from(unsafe { OwnedFd::from_raw_fd(descriptor) }))
+}
+
+fn status(result: libc::c_int) -> io::Result<()> {
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn c_name(name: &OsStr) -> io::Result<CString> {
+    CString::new(name.as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))
+}
+
+fn c_path(path: &Path) -> io::Result<CString> {
+    c_name(path.as_os_str())
 }

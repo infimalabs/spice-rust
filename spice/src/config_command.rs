@@ -1,17 +1,12 @@
-#[cfg(unix)]
-use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io::{self, Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use clap::ArgMatches;
-#[cfg(unix)]
-use rustix::fs::{self as unix_fs, AtFlags, Mode, OFlags};
 use serde::Serialize;
+use sill::authority::{self, Directory, Entry, FileIdentity, FileObject};
 use sill::{Acquisition, LockFile, LockName};
 use spice::config::{
     self, Builtin, Document, Inputs, PathSegment, PolicyClass, Resolved, ValueKind,
@@ -21,10 +16,9 @@ use wire::{
     ConfigSource, Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
 };
 
-const CONFIG_PLAN_VERSION: u16 = 1;
-#[cfg(unix)]
+const CONFIG_PLAN_VERSION: u16 = 2;
 const PUBLICATION_ATTEMPTS: usize = 128;
-#[cfg(unix)]
+const LOCK_NAME: &str = "config.lock";
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -97,10 +91,7 @@ enum ParentWitness {
     Absent,
     Directory {
         canonical: PathBuf,
-        #[cfg(unix)]
-        device: u64,
-        #[cfg(unix)]
-        inode: u64,
+        object: FileObject,
     },
 }
 
@@ -412,7 +403,6 @@ fn admit_repository_owner(repository: &Repository) -> Result<(), Outcome<()>> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn publish(
     documents: &Documents,
     target: MutationTarget,
@@ -425,36 +415,18 @@ fn publish(
     Ok(receipt(plan, changed))
 }
 
-#[cfg(not(unix))]
-fn publish(
-    _documents: &Documents,
-    _target: MutationTarget,
-    _plan: &MutationPlan,
-    _candidate: &[u8],
-) -> Result<MutationReceipt, Outcome<()>> {
-    Err(environment_fault(
-        "config::publication-unavailable",
-        "handle-bound config publication requires a Unix filesystem",
-    ))
-}
-
-#[cfg(unix)]
+/// The configuration parent, held so that every lock, read, and publication
+/// reaches the admitted directory by entry name alone.
 struct AdmittedParent {
-    directory: fs::File,
-    path: PathBuf,
+    directory: Directory,
+    object: FileObject,
     target_path: PathBuf,
     target_name: OsString,
 }
 
-#[cfg(unix)]
 impl AdmittedParent {
     fn open(target: &Path, witness: &ParentWitness) -> Result<Self, Outcome<()>> {
-        let ParentWitness::Directory {
-            canonical,
-            device,
-            inode,
-        } = witness
-        else {
+        let ParentWitness::Directory { canonical, object } = witness else {
             unreachable!("publication materializes one real directory")
         };
         let parent = config_parent(target)?;
@@ -464,30 +436,28 @@ impl AdmittedParent {
         let target_name = target.file_name().ok_or_else(|| {
             environment_fault("config::target-path-invalid", &target.display().to_string())
         })?;
-        let directory = unix_fs::open(
-            canonical,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map(fs::File::from)
-        .map_err(|source| source_moved_with(canonical, source.into()))?;
-        let metadata = directory.metadata().map_err(|error| {
+        let directory = Directory::open(canonical).map_err(|_| source_moved(canonical))?;
+        let held = directory.identity().map_err(|error| {
             environment_fault(
                 "config::local-parent-unavailable",
                 &format!("{}: {error}", canonical.display()),
             )
         })?;
-        if !metadata.is_dir() || metadata.dev() != *device || metadata.ino() != *inode {
+        if held.object() != *object {
             return Err(source_moved(canonical));
         }
         let admitted = Self {
             directory,
-            path: canonical.clone(),
+            object: *object,
             target_path: target.to_path_buf(),
             target_name: target_name.to_os_string(),
         };
         admitted.verify_named()?;
         Ok(admitted)
+    }
+
+    fn path(&self) -> &Path {
+        self.directory.path()
     }
 
     fn commit(
@@ -499,7 +469,7 @@ impl AdmittedParent {
         self.verify_named()?;
         let lock = LockFile::new(
             LockName::new("config").expect("config is a valid lock name"),
-            self.path.join("config.lock"),
+            self.path().join(LOCK_NAME),
         );
         let (lock_file, created) = self.open_lock()?;
         let possession = match lock.try_acquire_opened(lock_file) {
@@ -539,53 +509,32 @@ impl AdmittedParent {
         result
     }
 
+    /// Refuse when the parent's path no longer names the held directory.
     fn verify_named(&self) -> Result<(), Outcome<()>> {
-        let reopened = unix_fs::open(
-            &self.path,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        )
-        .map(fs::File::from)
-        .map_err(|source| source_moved_with(&self.path, source.into()))?;
-        let held = self.directory.metadata().map_err(|error| {
-            environment_fault(
-                "config::local-parent-unavailable",
-                &format!("{}: {error}", self.path.display()),
-            )
-        })?;
-        let observed = reopened
-            .metadata()
-            .map_err(|error| source_moved_with(&self.path, error))?;
-        if same_file(&held, &observed) {
+        let named = authority::path_identity(self.path()).map_err(|_| source_moved(self.path()))?;
+        if named.object() == self.object {
             Ok(())
         } else {
-            Err(source_moved(&self.path))
+            Err(source_moved(self.path()))
         }
     }
 
     fn open_lock(&self) -> Result<(fs::File, bool), Outcome<()>> {
         self.verify_named()?;
-        let create =
-            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW;
-        match unix_fs::openat(
-            &self.directory,
-            "config.lock",
-            create,
-            Mode::from_raw_mode(0o600),
-        ) {
-            Ok(descriptor) => Ok((fs::File::from(descriptor), true)),
-            Err(rustix::io::Errno::EXIST) => unix_fs::openat(
-                &self.directory,
-                "config.lock",
-                OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-                Mode::empty(),
-            )
-            .map(|descriptor| (fs::File::from(descriptor), false))
-            .map_err(|source| environment_fault("config::lock-unavailable", &source.to_string())),
-            Err(source) => Err(environment_fault(
-                "config::lock-unavailable",
-                &source.to_string(),
-            )),
+        let lock_unavailable = |detail: &str| environment_fault("config::lock-unavailable", detail);
+        match self.directory.create_private(OsStr::new(LOCK_NAME)) {
+            Ok(file) => Ok((file, true)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                match self.directory.open_entry(OsStr::new(LOCK_NAME), true) {
+                    Ok(Entry::Opened(file)) => Ok((file, false)),
+                    Ok(Entry::Link) => Err(lock_unavailable("the configuration lock is a link")),
+                    Ok(Entry::Missing) => Err(lock_unavailable(
+                        "the configuration lock vanished while opening",
+                    )),
+                    Err(error) => Err(lock_unavailable(&error.to_string())),
+                }
+            }
+            Err(error) => Err(lock_unavailable(&error.to_string())),
         }
     }
 
@@ -619,43 +568,18 @@ impl AdmittedParent {
     }
 
     fn read_target(&self, remaining: &mut u64) -> Result<Option<Vec<u8>>, Outcome<()>> {
-        let descriptor = match unix_fs::openat(
-            &self.directory,
-            &self.target_name,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-            Mode::empty(),
-        ) {
-            Ok(descriptor) => descriptor,
-            Err(rustix::io::Errno::NOENT) => return Ok(None),
-            Err(rustix::io::Errno::LOOP) => {
-                return Err(refusal(
-                    "config::source-not-regular",
-                    Some(self.target_path.display().to_string()),
-                    "replace the source with one regular file",
-                ));
-            }
-            Err(source) => {
+        let mut file = match self.directory.open_entry(&self.target_name, false) {
+            Ok(Entry::Opened(file)) => file,
+            Ok(Entry::Missing) => return Ok(None),
+            Ok(Entry::Link) => return Err(source_not_regular(&self.target_path)),
+            Err(error) => {
                 return Err(environment_fault(
                     "config::source-unreadable",
-                    &format!("{}: {source}", self.target_path.display()),
+                    &format!("{}: {error}", self.target_path.display()),
                 ));
             }
         };
-        let mut file = fs::File::from(descriptor);
-        let opened = file.metadata().map_err(|error| {
-            environment_fault(
-                "config::source-unreadable",
-                &format!("{}: {error}", self.target_path.display()),
-            )
-        })?;
-        if !opened.is_file() {
-            return Err(refusal(
-                "config::source-not-regular",
-                Some(self.target_path.display().to_string()),
-                "replace the source with one regular file",
-            ));
-        }
-        read_bounded_source(&mut file, &opened, &self.target_path, remaining).map(Some)
+        read_bounded_source(&mut file, &self.target_path, remaining).map(Some)
     }
 
     fn publish_candidate(
@@ -663,33 +587,21 @@ impl AdmittedParent {
         documents: &Documents,
         candidate: &[u8],
     ) -> Result<(), Outcome<()>> {
-        let temporary = self.create_temporary()?;
-        let temporary_name = temporary.0;
-        let mut staged = temporary.1;
+        let (temporary_name, mut staged) = self.create_temporary()?;
+        let publication_failed =
+            |error: io::Error| environment_fault("config::publication-failed", &error.to_string());
         let result = (|| {
-            staged.write_all(candidate).map_err(|error| {
-                environment_fault("config::publication-failed", &error.to_string())
-            })?;
-            staged.sync_all().map_err(|error| {
-                environment_fault("config::publication-failed", &error.to_string())
-            })?;
+            staged.write_all(candidate).map_err(publication_failed)?;
+            staged.sync_all().map_err(publication_failed)?;
             self.ensure_unchanged(documents)?;
-            unix_fs::renameat(
-                &self.directory,
-                &temporary_name,
-                &self.directory,
-                &self.target_name,
-            )
-            .map_err(|source| {
-                environment_fault("config::publication-failed", &source.to_string())
-            })?;
-            self.directory.sync_all().map_err(|error| {
-                environment_fault("config::publication-failed", &error.to_string())
-            })
+            self.directory
+                .replace(&temporary_name, &self.target_name)
+                .map_err(publication_failed)?;
+            self.directory.sync().map_err(publication_failed)
         })();
         drop(staged);
         if result.is_err() {
-            let _ = unix_fs::unlinkat(&self.directory, &temporary_name, AtFlags::empty());
+            let _ = self.directory.remove_file(&temporary_name);
         }
         result
     }
@@ -698,18 +610,13 @@ impl AdmittedParent {
         self.verify_named()?;
         for _ in 0..PUBLICATION_ATTEMPTS {
             let name = temporary_name();
-            match unix_fs::openat(
-                &self.directory,
-                &name,
-                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC | OFlags::NOFOLLOW,
-                Mode::from_raw_mode(0o600),
-            ) {
-                Ok(descriptor) => return Ok((name, fs::File::from(descriptor))),
-                Err(rustix::io::Errno::EXIST) => {}
-                Err(source) => {
+            match self.directory.create_private(&name) {
+                Ok(file) => return Ok((name, file)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
                     return Err(environment_fault(
                         "config::publication-failed",
-                        &source.to_string(),
+                        &error.to_string(),
                     ));
                 }
             }
@@ -721,15 +628,15 @@ impl AdmittedParent {
     }
 
     fn remove_created_lock(&self) -> Result<(), Outcome<()>> {
-        unix_fs::unlinkat(&self.directory, "config.lock", AtFlags::empty())
-            .map_err(|source| environment_fault("config::lock-unavailable", &source.to_string()))?;
+        let lock_unavailable =
+            |error: io::Error| environment_fault("config::lock-unavailable", &error.to_string());
         self.directory
-            .sync_all()
-            .map_err(|error| environment_fault("config::lock-unavailable", &error.to_string()))
+            .remove_file(OsStr::new(LOCK_NAME))
+            .map_err(lock_unavailable)?;
+        self.directory.sync().map_err(lock_unavailable)
     }
 }
 
-#[cfg(unix)]
 fn temporary_name() -> OsString {
     OsString::from(format!(
         ".spice-config-{}-{}.tmp",
@@ -738,9 +645,12 @@ fn temporary_name() -> OsString {
     ))
 }
 
-#[cfg(unix)]
-fn source_moved_with(path: &Path, _error: io::Error) -> Outcome<()> {
-    source_moved(path)
+fn source_not_regular(path: &Path) -> Outcome<()> {
+    refusal(
+        "config::source-not-regular",
+        Some(path.display().to_string()),
+        "replace the source with one regular file",
+    )
 }
 
 fn receipt(plan: &MutationPlan, changed: bool) -> MutationReceipt {
@@ -827,13 +737,15 @@ fn admit_parent(target: &Path) -> Result<ParentWitness, Outcome<()>> {
             "restore the exact unlinked configuration parent",
         ));
     }
-    Ok(ParentWitness::Directory {
-        canonical,
-        #[cfg(unix)]
-        device: metadata.dev(),
-        #[cfg(unix)]
-        inode: metadata.ino(),
-    })
+    let object = authority::path_identity(&canonical)
+        .map_err(|error| {
+            environment_fault(
+                "config::local-parent-unavailable",
+                &format!("{}: {error}", canonical.display()),
+            )
+        })?
+        .object();
+    Ok(ParentWitness::Directory { canonical, object })
 }
 
 fn config_parent(target: &Path) -> Result<&Path, Outcome<()>> {
@@ -1003,8 +915,8 @@ fn path_matches(path: &config::ConcretePath, keys: &[String]) -> bool {
 }
 
 fn read_optional(path: &Path, remaining: &mut u64) -> Result<Option<Vec<u8>>, Outcome<()>> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let named = match authority::path_identity(path) {
+        Ok(identity) => identity,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(environment_fault(
@@ -1013,102 +925,70 @@ fn read_optional(path: &Path, remaining: &mut u64) -> Result<Option<Vec<u8>>, Ou
             ));
         }
     };
-    if !metadata.file_type().is_file() {
-        return Err(refusal(
-            "config::source-not-regular",
-            Some(path.display().to_string()),
-            "replace the source with one regular file",
-        ));
+    let metadata = fs::symlink_metadata(path).map_err(|_| source_moved(path))?;
+    if !metadata.file_type().is_file() || authority::is_link_like(&metadata) {
+        return Err(source_not_regular(path));
     }
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(path).map_err(|error| {
+    let mut file = authority::open_unfollowed(path).map_err(|error| {
         environment_fault(
             "config::source-unreadable",
             &format!("{}: {error}", path.display()),
         )
     })?;
-    let opened = file.metadata().map_err(|error| {
-        environment_fault(
-            "config::source-unreadable",
-            &format!("{}: {error}", path.display()),
-        )
-    })?;
-    if !opened.is_file() || !same_file(&metadata, &opened) {
+    let opened = authority::file_identity(&file).map_err(|error| source_unreadable(path, error))?;
+    if opened.object() != named.object() {
         return Err(source_moved(path));
     }
-    read_bounded_source(&mut file, &opened, path, remaining).map(Some)
+    read_bounded_source(&mut file, path, remaining).map(Some)
 }
 
+/// Read one opened regular source whose identity holds across the read.
 fn read_bounded_source(
     file: &mut fs::File,
-    opened: &fs::Metadata,
     path: &Path,
     remaining: &mut u64,
 ) -> Result<Vec<u8>, Outcome<()>> {
+    if !file
+        .metadata()
+        .map_err(|error| source_unreadable(path, error))?
+        .is_file()
+    {
+        return Err(source_not_regular(path));
+    }
+    let opened = authority::file_identity(file).map_err(|error| source_unreadable(path, error))?;
     let limit = config::DOCUMENT_BYTE_LIMIT.min(*remaining);
-    if opened.len() > limit {
+    if opened.bytes() > limit {
         return Err(refusal(
             "config::source-oversized",
             Some(format!(
                 "{} bytes={} maximum={limit}",
                 path.display(),
-                opened.len()
+                opened.bytes()
             )),
             "reduce the tracked, worktree, and local configuration generation",
         ));
     }
     let mut bytes = Vec::with_capacity(
-        usize::try_from(opened.len()).expect("admitted configuration length fits usize"),
+        usize::try_from(opened.bytes()).expect("admitted configuration length fits usize"),
     );
     Read::by_ref(file)
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes)
-        .map_err(|error| {
-            environment_fault(
-                "config::source-unreadable",
-                &format!("{}: {error}", path.display()),
-            )
-        })?;
-    let finished = file.metadata().map_err(|error| {
-        environment_fault(
-            "config::source-unreadable",
-            &format!("{}: {error}", path.display()),
-        )
-    })?;
-    if !same_generation(opened, &finished) || u64::try_from(bytes.len()).ok() != Some(opened.len())
-    {
+        .map_err(|error| source_unreadable(path, error))?;
+    let finished: FileIdentity =
+        authority::file_identity(file).map_err(|error| source_unreadable(path, error))?;
+    if finished != opened || u64::try_from(bytes.len()).ok() != Some(opened.bytes()) {
         return Err(source_moved(path));
     }
-    *remaining -= opened.len();
+    *remaining -= opened.bytes();
     Ok(bytes)
 }
 
-#[cfg(unix)]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.dev() == right.dev() && left.ino() == right.ino()
-}
-
-#[cfg(unix)]
-fn same_generation(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    same_file(left, right)
-        && left.size() == right.size()
-        && left.mtime() == right.mtime()
-        && left.mtime_nsec() == right.mtime_nsec()
-        && left.ctime() == right.ctime()
-        && left.ctime_nsec() == right.ctime_nsec()
-}
-
-#[cfg(not(unix))]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.is_file() == right.is_file() && left.len() == right.len()
-}
-
-#[cfg(not(unix))]
-fn same_generation(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    same_file(left, right) && left.modified().ok() == right.modified().ok()
+fn source_unreadable(path: &Path, error: io::Error) -> Outcome<()> {
+    environment_fault(
+        "config::source-unreadable",
+        &format!("{}: {error}", path.display()),
+    )
 }
 
 fn optional_utf8<'a>(bytes: Option<&'a [u8]>, path: &Path) -> Result<Option<&'a str>, Outcome<()>> {

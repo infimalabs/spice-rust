@@ -3,19 +3,20 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::{File, Metadata};
+use std::fs::File;
+#[cfg(not(unix))]
+use std::fs::{self, Metadata};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use sill::authority::{self, FileIdentity, FileObject};
 use wire::ConfigSource;
 
 #[cfg(unix)]
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 #[cfg(unix)]
 use std::ffi::OsStr;
-#[cfg(not(unix))]
-use std::fs;
 #[cfg(unix)]
 use std::path::Component;
 
@@ -76,8 +77,8 @@ pub struct CaptureGeneration {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DocumentGeneration {
-    root: DirectoryIdentity,
-    directories: Vec<(OsString, DirectoryIdentity)>,
+    root: FileObject,
+    directories: Vec<(OsString, FileObject)>,
     relative: PathBuf,
     state: DocumentState,
 }
@@ -86,41 +87,6 @@ struct DocumentGeneration {
 enum DocumentState {
     Missing { component: usize },
     Present(FileIdentity),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct DirectoryIdentity {
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(not(unix))]
-    modified: Option<std::time::SystemTime>,
-    #[cfg(not(unix))]
-    created: Option<std::time::SystemTime>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct FileIdentity {
-    len: u64,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
-    mode: u32,
-    #[cfg(unix)]
-    modified_seconds: i64,
-    #[cfg(unix)]
-    modified_nanoseconds: i64,
-    #[cfg(unix)]
-    changed_seconds: i64,
-    #[cfg(unix)]
-    changed_nanoseconds: i64,
-    #[cfg(not(unix))]
-    modified: Option<std::time::SystemTime>,
-    #[cfg(not(unix))]
-    created: Option<std::time::SystemTime>,
 }
 
 #[derive(Debug)]
@@ -136,10 +102,10 @@ struct CaptureBudget {
 #[cfg(unix)]
 #[derive(Debug)]
 struct OpenParent {
-    root: DirectoryIdentity,
+    root: FileObject,
     components: Vec<OsString>,
     directories: Vec<File>,
-    generations: Vec<(OsString, DirectoryIdentity)>,
+    generations: Vec<(OsString, FileObject)>,
 }
 
 #[cfg(unix)]
@@ -635,7 +601,6 @@ fn acquire(
     }
 }
 
-#[cfg(unix)]
 fn acquire_document(
     source: ConfigSource,
     root: &Path,
@@ -671,11 +636,7 @@ fn walk_to_document_parent(
     relative: &Path,
 ) -> Result<ParentCapture, AcquisitionIssue> {
     let root_file = open_root(source, root)?;
-    let root_identity = DirectoryIdentity::from_metadata(
-        &root_file
-            .metadata()
-            .map_err(|error| AcquisitionIssue::unreadable(source, root, error))?,
-    );
+    let root_identity = directory_object(source, root, &root_file)?;
 
     let components = relative
         .components()
@@ -715,11 +676,7 @@ fn walk_to_document_parent(
             component,
         )
         .map_err(|error| AcquisitionIssue::unreadable(source, &display, error))?;
-        let identity = DirectoryIdentity::from_metadata(
-            &directory
-                .metadata()
-                .map_err(|error| AcquisitionIssue::unreadable(source, &display, error))?,
-        );
+        let identity = directory_object(source, &display, &directory)?;
         directory_generations.push((component.clone(), identity));
         directories.push(directory);
     }
@@ -782,7 +739,7 @@ where
     let file = open_file_at(opened_parent, file_name)
         .map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
     let (bytes, identity) = read_bounded_file(source, &path, file, budget, before_read, || {
-        open_file_at(opened_parent, file_name).and_then(|file| file.metadata())
+        open_file_at(opened_parent, file_name).and_then(|file| authority::file_identity(&file))
     })?;
     let generation = DocumentGeneration {
         root: parent.root,
@@ -807,8 +764,8 @@ fn missing_acquired(
     relative: &Path,
     directories: Vec<File>,
     components: Vec<OsString>,
-    root_identity: DirectoryIdentity,
-    directory_generations: Vec<(OsString, DirectoryIdentity)>,
+    root_identity: FileObject,
+    directory_generations: Vec<(OsString, FileObject)>,
     missing: usize,
 ) -> Result<Acquired, AcquisitionIssue> {
     let generation = DocumentGeneration {
@@ -873,11 +830,11 @@ fn read_bounded_file<F, N>(
     mut file: File,
     budget: &mut CaptureBudget,
     before_read: F,
-    named_metadata: N,
+    named_identity: N,
 ) -> Result<(Vec<u8>, FileIdentity), AcquisitionIssue>
 where
     F: FnOnce(),
-    N: FnOnce() -> io::Result<Metadata>,
+    N: FnOnce() -> io::Result<FileIdentity>,
 {
     let opened = file
         .metadata()
@@ -889,45 +846,68 @@ where
             AcquisitionKind::NonRegular,
         ));
     }
-    let identity = FileIdentity::from_metadata(&opened);
-    let limit = budget.read_limit(source, path, identity.len)?;
+    let identity = authority::file_identity(&file)
+        .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
+    let limit = budget.read_limit(source, path, identity.bytes())?;
     before_read();
     let mut bytes = Vec::with_capacity(
-        usize::try_from(identity.len).expect("admitted configuration length fits usize"),
+        usize::try_from(identity.bytes()).expect("admitted configuration length fits usize"),
     );
     file.by_ref()
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
-    let after = file
-        .metadata()
+    let after = authority::file_identity(&file)
         .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
     let named =
-        named_metadata().map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
-    if !named.is_file()
-        || FileIdentity::from_metadata(&after) != identity
-        || FileIdentity::from_metadata(&named) != identity
-        || u64::try_from(bytes.len()).ok() != Some(identity.len)
+        named_identity().map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
+    if after != identity
+        || named != identity
+        || u64::try_from(bytes.len()).ok() != Some(identity.bytes())
     {
         return Err(generation_moved(source, path));
     }
     budget.used = budget
         .used
-        .checked_add(identity.len)
+        .checked_add(identity.bytes())
         .expect("admitted configuration generation cannot overflow");
     Ok((bytes, identity))
 }
 
+/// Capture one document by name, never following a link or reparse point.
+///
+/// Windows has no descriptor-relative walk, so every component is observed by
+/// path without following it, and the named directories are verified again
+/// after the read or the miss: a component replaced mid-capture moves the
+/// generation instead of redirecting it.
 #[cfg(not(unix))]
-fn acquire_document(
+fn acquire_document_with<F>(
     source: ConfigSource,
     root: &Path,
     relative: &Path,
     budget: &mut CaptureBudget,
-) -> Result<Acquired, AcquisitionIssue> {
-    let path = root.join(relative);
-    let root_metadata = fs::symlink_metadata(root)
-        .map_err(|error| AcquisitionIssue::unreadable(source, root, error))?;
+    before_read: F,
+) -> Result<Acquired, AcquisitionIssue>
+where
+    F: FnOnce(),
+{
+    let root_metadata = named_metadata(source, root)?.ok_or_else(|| {
+        AcquisitionIssue::unreadable(
+            source,
+            root,
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "configuration root component is missing",
+            ),
+        )
+    })?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(AcquisitionIssue::shape(
+            source,
+            root,
+            AcquisitionKind::Symlink,
+        ));
+    }
     if !root_metadata.is_dir() {
         return Err(AcquisitionIssue::shape(
             source,
@@ -935,64 +915,137 @@ fn acquire_document(
             AcquisitionKind::NonRegular,
         ));
     }
-    let root_identity = DirectoryIdentity::from_metadata(&root_metadata);
-    let metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Acquired {
-                text: None,
-                generation: DocumentGeneration {
-                    root: root_identity,
-                    directories: Vec::new(),
-                    relative: relative.to_path_buf(),
-                    state: DocumentState::Missing { component: 0 },
-                },
-            });
-        }
-        Err(error) => return Err(AcquisitionIssue::unreadable(source, &path, error)),
+    let components = relative
+        .components()
+        .map(|component| component.as_os_str().to_os_string())
+        .collect::<Vec<_>>();
+    let (file_name, parents) = components
+        .split_last()
+        .expect("configuration document paths have one file name");
+    let mut generation = DocumentGeneration {
+        root: named_object(source, root)?,
+        directories: Vec::new(),
+        relative: relative.to_path_buf(),
+        state: DocumentState::Missing {
+            component: parents.len(),
+        },
     };
-    if metadata.file_type().is_symlink() {
-        return Err(AcquisitionIssue::shape(
-            source,
-            &path,
-            AcquisitionKind::Symlink,
-        ));
+    let mut path = root.to_path_buf();
+    for (index, component) in parents.iter().enumerate() {
+        path.push(component);
+        let Some(metadata) = named_metadata(source, &path)? else {
+            generation.state = DocumentState::Missing { component: index };
+            return missing_document(source, root, &path, generation);
+        };
+        require_directory(source, &path, &metadata)?;
+        let identity = named_object(source, &path)?;
+        generation.directories.push((component.clone(), identity));
     }
-    if metadata.is_dir() {
-        return Err(AcquisitionIssue::shape(
-            source,
-            &path,
-            AcquisitionKind::Directory,
-        ));
-    }
-    if !metadata.is_file() {
-        return Err(AcquisitionIssue::shape(
-            source,
-            &path,
-            AcquisitionKind::NonRegular,
-        ));
-    }
-    let file =
-        File::open(&path).map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
-    let (bytes, identity) = read_bounded_file(
-        source,
-        &path,
-        file,
-        budget,
-        || {},
-        || fs::symlink_metadata(&path),
-    )?;
+    path.push(file_name);
+    let Some(metadata) = named_metadata(source, &path)? else {
+        return missing_document(source, root, &path, generation);
+    };
+    require_regular_file(source, &path, &metadata)?;
+    let file = authority::open_unfollowed(&path)
+        .map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
+    let (bytes, identity) = read_bounded_file(source, &path, file, budget, before_read, || {
+        authority::path_identity(&path)
+    })?;
+    generation.state = DocumentState::Present(identity);
+    verify_named_directories(source, root, &generation)?;
     let text = String::from_utf8(bytes)
         .map_err(|_| AcquisitionIssue::shape(source, &path, AcquisitionKind::NonUtf8))?;
     Ok(Acquired {
         text: Some(text),
-        generation: DocumentGeneration {
-            root: root_identity,
-            directories: Vec::new(),
-            relative: relative.to_path_buf(),
-            state: DocumentState::Present(identity),
-        },
+        generation,
     })
+}
+
+#[cfg(not(unix))]
+fn missing_document(
+    source: ConfigSource,
+    root: &Path,
+    missing: &Path,
+    generation: DocumentGeneration,
+) -> Result<Acquired, AcquisitionIssue> {
+    verify_named_directories(source, root, &generation)?;
+    if named_metadata(source, missing)?.is_some() {
+        return Err(generation_moved(source, missing));
+    }
+    Ok(Acquired {
+        text: None,
+        generation,
+    })
+}
+
+/// The entry named by `path` itself, or `None` when nothing is named.
+#[cfg(not(unix))]
+fn named_metadata(source: ConfigSource, path: &Path) -> Result<Option<Metadata>, AcquisitionIssue> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AcquisitionIssue::unreadable(source, path, error)),
+    }
+}
+
+#[cfg(not(unix))]
+fn require_directory(
+    source: ConfigSource,
+    path: &Path,
+    metadata: &Metadata,
+) -> Result<(), AcquisitionIssue> {
+    let kind = if authority::is_link_like(metadata) {
+        AcquisitionKind::Symlink
+    } else if metadata.is_dir() {
+        return Ok(());
+    } else {
+        AcquisitionKind::NonRegular
+    };
+    Err(AcquisitionIssue::shape(source, path, kind))
+}
+
+#[cfg(not(unix))]
+fn require_regular_file(
+    source: ConfigSource,
+    path: &Path,
+    metadata: &Metadata,
+) -> Result<(), AcquisitionIssue> {
+    let kind = if authority::is_link_like(metadata) {
+        AcquisitionKind::Symlink
+    } else if metadata.is_dir() {
+        AcquisitionKind::Directory
+    } else if metadata.is_file() {
+        return Ok(());
+    } else {
+        AcquisitionKind::NonRegular
+    };
+    Err(AcquisitionIssue::shape(source, path, kind))
+}
+
+#[cfg(not(unix))]
+fn named_object(source: ConfigSource, path: &Path) -> Result<FileObject, AcquisitionIssue> {
+    authority::path_identity(path)
+        .map(|identity| identity.object())
+        .map_err(|error| AcquisitionIssue::unreadable(source, path, error))
+}
+
+#[cfg(not(unix))]
+fn verify_named_directories(
+    source: ConfigSource,
+    root: &Path,
+    generation: &DocumentGeneration,
+) -> Result<(), AcquisitionIssue> {
+    if named_object(source, root)? != generation.root {
+        return Err(generation_moved(source, root));
+    }
+    let mut path = root.to_path_buf();
+    for (component, expected) in &generation.directories {
+        path.push(component);
+        if &named_object(source, &path)? != expected {
+            return Err(generation_moved(source, &path));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -1024,11 +1077,7 @@ fn verify_named_directories(
     generation: &DocumentGeneration,
 ) -> Result<(), AcquisitionIssue> {
     let mut current = open_root(source, root)?;
-    let observed = DirectoryIdentity::from_metadata(
-        &current
-            .metadata()
-            .map_err(|error| AcquisitionIssue::unreadable(source, root, error))?,
-    );
+    let observed = directory_object(source, root, &current)?;
     if observed != generation.root {
         return Err(generation_moved(source, root));
     }
@@ -1037,11 +1086,7 @@ fn verify_named_directories(
         display.push(component);
         let reopened = open_directory_at(&current, component)
             .map_err(|error| AcquisitionIssue::unreadable(source, &display, error))?;
-        let observed = DirectoryIdentity::from_metadata(
-            &reopened
-                .metadata()
-                .map_err(|error| AcquisitionIssue::unreadable(source, &display, error))?,
-        );
+        let observed = directory_object(source, &display, &reopened)?;
         if &observed != expected {
             return Err(generation_moved(source, &display));
         }
@@ -1146,51 +1191,15 @@ fn open_file_at(parent: &File, component: &OsStr) -> io::Result<File> {
     .map_err(Into::into)
 }
 
-impl DirectoryIdentity {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt as _;
-
-        Self {
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(not(unix))]
-            modified: metadata.modified().ok(),
-            #[cfg(not(unix))]
-            created: metadata.created().ok(),
-        }
-    }
-}
-
-impl FileIdentity {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt as _;
-
-        Self {
-            len: metadata.len(),
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(unix)]
-            mode: metadata.mode(),
-            #[cfg(unix)]
-            modified_seconds: metadata.mtime(),
-            #[cfg(unix)]
-            modified_nanoseconds: metadata.mtime_nsec(),
-            #[cfg(unix)]
-            changed_seconds: metadata.ctime(),
-            #[cfg(unix)]
-            changed_nanoseconds: metadata.ctime_nsec(),
-            #[cfg(not(unix))]
-            modified: metadata.modified().ok(),
-            #[cfg(not(unix))]
-            created: metadata.created().ok(),
-        }
-    }
+#[cfg(unix)]
+fn directory_object(
+    source: ConfigSource,
+    path: &Path,
+    directory: &File,
+) -> Result<FileObject, AcquisitionIssue> {
+    authority::file_identity(directory)
+        .map(|identity| identity.object())
+        .map_err(|error| AcquisitionIssue::unreadable(source, path, error))
 }
 
 fn generation_moved(source: ConfigSource, path: &Path) -> AcquisitionIssue {
