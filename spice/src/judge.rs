@@ -381,7 +381,6 @@ pub(crate) fn failure_error(reason: &'static str, detail: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::ExitStatusExt as _;
     use std::process::ExitStatus;
 
     fn prompts() -> Vec<Prompt> {
@@ -399,6 +398,18 @@ mod tests {
             bytes,
             truncated: false,
             complete: true,
+        }
+    }
+    fn exit_status(code: u32) -> ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt as _;
+            ExitStatus::from_raw((code as i32) << 8)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt as _;
+            ExitStatus::from_raw(code)
         }
     }
 
@@ -459,7 +470,7 @@ mod tests {
 
     #[test]
     fn a_clean_success_returns_the_complete_captured_reply() {
-        let completion = Completion::Exited(ExitStatus::from_raw(0));
+        let completion = Completion::Exited(exit_status(0));
         let reply = classify_reply(
             evidence(
                 &completion,
@@ -477,7 +488,7 @@ mod tests {
 
     #[test]
     fn a_nonzero_exit_is_unavailable() {
-        let completion = Completion::Exited(ExitStatus::from_raw(7 << 8));
+        let completion = Completion::Exited(exit_status(7));
         let error = classify_reply(
             evidence(
                 &completion,
@@ -495,7 +506,7 @@ mod tests {
 
     #[test]
     fn undrained_output_is_a_boundary_failure() {
-        let completion = Completion::Exited(ExitStatus::from_raw(0));
+        let completion = Completion::Exited(exit_status(0));
         let error = classify_reply(
             evidence(
                 &completion,
@@ -513,7 +524,7 @@ mod tests {
 
     #[test]
     fn timeout_and_cancellation_remain_distinct() {
-        let success = ExitStatus::from_raw(0);
+        let success = exit_status(0);
         let timed_out = Completion::TimedOut(success);
         let cancelled = Completion::Cancelled(success);
 
@@ -536,7 +547,7 @@ mod tests {
 
     #[test]
     fn invalid_captures_keep_their_failure_class() {
-        let completion = Completion::Exited(ExitStatus::from_raw(0));
+        let completion = Completion::Exited(exit_status(0));
         let stderr = Some(capture(b""));
 
         let truncated = classify_reply(

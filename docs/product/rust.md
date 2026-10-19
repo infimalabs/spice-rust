@@ -167,25 +167,33 @@ admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
 
 The `canvas` crate declares the two symbols a relocatable object defines:
 `spice_app_zip` at the archive's first byte and `spice_app_zip_len` at its
-length. Current macOS and Linux appliance builds resolve the first to a mapped
-address, so the process reads its app as a direct static slice without storing
-a file offset or parsing its own image.
+length. Every current appliance target resolves the first to a mapped address,
+so the process reads its app as a direct static slice without storing a file
+offset or parsing its own image.
 
-At the object-format boundary, `dist` can also write an x86-64 COFF object with
-the same symbols and locate the archive in a final PE32+ image's `spiceapp`
-section. The name fits PE's eight-byte section-name limit. This support is
-format-only: the release pipeline targets only `aarch64-apple-darwin` and
-`x86_64-unknown-linux-musl`, install builds only on supported macOS and Linux
-hosts, and no Windows appliance build currently links the COFF object.
+At the object-format boundary, `dist` writes an x86-64 COFF object with the same
+symbols and locates the archive in a final PE32+ image's `spiceapp` section. The
+name fits PE's eight-byte section-name limit. The Windows development build
+enables the same ordinary `spice` binary and modules as macOS and Linux; only
+the filesystem, process, and local-IPC adapters vary by target.
 
-Only current macOS and Linux builds that enable the `spice/canvas` feature
-resolve the crate. They write the object for the staged archive and hand it to
-the final link through `cargo rustc`. The object's name carries the archive
-digest, so a new archive relinks the executable and rebuilds nothing else.
-After symbol, strip, and signing steps as applicable, the build locates the
-section through the final Mach-O or ELF metadata and refuses absent, repeated,
-truncated, or wrong bytes. The PE reader applies the same final-image boundary
-for format admission. No persisted build-time offset participates.
+Materialize the pinned xwin/LLVM toolchain, cross-check the ordinary executable,
+then build the complete executable with the current staged canvas:
+
+```sh
+spice dev xtask -- windows-msvc
+spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p spice --bin spice
+spice dev xtask -- windows-appliance
+```
+
+The final command writes and verifies
+`target/x86_64-pc-windows-msvc/release/spice.exe`. It hands the staged archive's
+COFF object only to that final link through `cargo rustc`; the plain Cargo
+command remains the fast source and linker integration check. The object's name
+carries the archive digest, so a new archive relinks the executable and rebuilds
+nothing else. Final-image admission locates the section through Mach-O, ELF, or
+PE metadata and refuses absent, repeated, truncated, or wrong bytes. No
+persisted build-time offset participates.
 [`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
 once. An installed resident without one refuses with
 `serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does

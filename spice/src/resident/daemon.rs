@@ -46,6 +46,7 @@ const ARRIVAL_HORIZON: Duration = Duration::from_secs(60);
 /// When an unfinished wait logs a warning rather than refusing outright.
 const ARRIVAL_WARN_HORIZON: Duration = Duration::from_secs(30);
 const PROBE_BOUND: Duration = Duration::from_secs(20);
+#[cfg(unix)]
 const TERMINATION_HORIZON: Duration = Duration::from_secs(5);
 /// Size past which the previous residents' log is set aside at start-up.
 ///

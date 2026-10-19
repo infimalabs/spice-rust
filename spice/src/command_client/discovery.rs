@@ -50,7 +50,7 @@ impl DiscoveryRead {
         Self::open_fault(path, resident_lock).map_err(Outcome::Fault)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn open_with(
         path: &Path,
         resident_lock: &Path,

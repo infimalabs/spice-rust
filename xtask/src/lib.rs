@@ -45,7 +45,8 @@ pub use verify_error::{GateArmError, VerifyError};
 pub use develop::refresh_install;
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use release::{
-    CommandRecord, MacSymbols, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target,
+    CommandRecord, MacSymbols, ReleaseEnvironment, TargetBuild, TargetBuildError,
+    build_windows_appliance, stage_target,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use report::report;

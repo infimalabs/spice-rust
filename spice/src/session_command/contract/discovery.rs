@@ -1,6 +1,7 @@
 use super::*;
 use flate2::Compression;
 use flate2::write::GzEncoder;
+#[cfg(unix)]
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::Write;

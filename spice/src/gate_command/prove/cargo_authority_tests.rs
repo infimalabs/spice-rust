@@ -1,6 +1,5 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::cargo_authority;
@@ -30,7 +29,7 @@ fn staged_lockfile_uses_the_live_worktrees_private_home() {
     for name in ["cargo", "rustc", "rustdoc"] {
         let path = tools.join(name);
         fs::write(&path, "#!/bin/sh\nexit 91\n").unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        sill::authority::set_owner_mode(&path, 0o700).unwrap();
     }
     let host = Host::new(
         bootstrap,
@@ -111,7 +110,7 @@ fn staged_lockfile_uses_the_live_worktrees_private_home() {
 fn writable_directories(path: &std::path::Path) {
     let metadata = fs::symlink_metadata(path).unwrap();
     if metadata.is_dir() {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        sill::authority::set_owner_mode(path, 0o700).unwrap();
         for entry in fs::read_dir(path).unwrap() {
             writable_directories(&entry.unwrap().path());
         }
@@ -138,8 +137,7 @@ fn cargo_authority_binds_absolute_tools_before_planning() {
     let rustdoc = tools.join("rustdoc");
     for tool in [&cargo, &rustc, &rustdoc] {
         fs::write(tool, "fixture\n").expect("write native tool fixture");
-        fs::set_permissions(tool, fs::Permissions::from_mode(0o700))
-            .expect("make native tool fixture executable");
+        sill::authority::set_owner_mode(tool, 0o700).expect("make native tool fixture executable");
     }
     let environment = vec![
         (

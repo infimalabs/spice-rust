@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+use spice::config::{AcquisitionKind, capture_repository};
 use spice::config::{
-    AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, capture_repository,
-    capture_repository_scoped, descriptor, descriptors, load, load_repository,
-    pre_commit_declarations,
+    FlagOverride, FlagValue, PathSegment, Resolved, capture_repository_scoped, descriptor,
+    descriptors, load, load_repository, pre_commit_declarations,
 };
 use wire::{ConfigSource, Name};
 
