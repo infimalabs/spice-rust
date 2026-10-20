@@ -334,7 +334,9 @@ namespaces.
 ## Diagnostics
 
 `spice doctor` rolls up one closed roster of stateful subsystems — board,
-journal, steering, lane, transport, installation, and release. Host-probing
+journal, steering, lane, transport, installation, and release. It reads the
+journal through its bounded indexes, so its cost does not grow with journal
+history; `spice journal verify` owns whole-journal verification. Host-probing
 checks stay out of hook verdicts: diagnosing the environment and refusing a
 commit are different jobs.
 
