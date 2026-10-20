@@ -44,7 +44,7 @@ spice --json doctor || exit
 
 ### Windows PowerShell
 
-Use the same digest-bound flow from PowerShell. Git for Windows must be in its
+Use the same xtask install from PowerShell. Git for Windows must be in its
 system Program Files location because the installer deliberately ignores
 `PATH` when it activates hooks:
 
@@ -52,20 +52,15 @@ system Program Files location because the installer deliberately ignores
 $ErrorActionPreference = 'Stop'
 $Git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
 
-cargo build --locked --target-dir target -p spice
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-.\target\debug\spice.exe install
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-.\target\debug\spice.exe install --apply=DIGEST_PRINTED_BY_PREVIEW
+cargo run --locked -p xtask -- install --no-resident
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $SpiceCommon = & $Git rev-parse --path-format=absolute --git-common-dir
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $SpiceCommon = $SpiceCommon.Trim()
 $SpiceBin = Join-Path $SpiceCommon '.spice-install\bin\spice.exe'
-if ((Get-FileHash .\target\debug\spice.exe).Hash -ne
-    (Get-FileHash $SpiceBin).Hash) {
-    throw 'installed Spice does not match the built executable'
+if (-not (Test-Path -LiteralPath $SpiceBin -PathType Leaf)) {
+    throw "installed Spice executable is missing: $SpiceBin"
 }
 $ExpectedHooks = $SpiceCommon.TrimEnd('/', '\') + '/.spice-install/git-hooks'
 $ObservedHooks = & $Git config --local --get core.hooksPath
@@ -156,30 +151,21 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-For a source refresh, publish the app and build through the installed
-appliance, then preview and apply with the resulting worktree executable:
+For a source refresh, run the xtask install through the installed appliance.
+It restarts the resident with arguments after `--` going to `spice up`;
+`--no-resident` omits that lifecycle:
 
 ```powershell
-& $SpiceBin dev xtask -- app
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $SpiceBin dev cargo -- build --locked --target-dir target -p spice
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-.\target\debug\spice.exe install
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-.\target\debug\spice.exe install --apply=DIGEST_PRINTED_BY_PREVIEW
+& $SpiceBin dev xtask -- install --port PORT
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Restart explicitly after apply, or use the operator shortcut:
+After a package apply or a `--no-resident` refresh, restart explicitly:
 
 ```powershell
 & $SpiceBin down
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $SpiceBin up
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-# Alternatively, perform the source refresh and resident lifecycle together.
-& $SpiceBin dev xtask -- install --port PORT
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
