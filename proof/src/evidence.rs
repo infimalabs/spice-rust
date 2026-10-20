@@ -2,14 +2,16 @@
 
 use std::error::Error;
 use std::fmt;
-use std::io::Write as _;
 use std::path::Path;
+
+use atomic::RootedPublish as _;
 
 use wire::manifest::{
     PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt, ProofStanding, ReleaseTarget,
 };
 use wire::{Digest, Domain, ProofEvidence};
 
+use crate::manifest::DATA_MODE;
 use crate::payload::AdmittedPayload;
 use crate::replay::{Battery, ReplayVerdict};
 
@@ -244,9 +246,19 @@ pub fn publish(receipt: &ProofReceipt, destination: &Path) -> Result<Digest, Evi
     let bytes = wire::encode(receipt).map_err(|source| EvidencePublishError::Encode {
         source: source.to_string(),
     })?;
-    atomic::Destination::new(destination)
-        .map_err(EvidencePublishError::Publish)?
-        .publish(|staged| staged.write_all(&bytes))
+    let name = destination.file_name().ok_or_else(|| {
+        EvidencePublishError::Publish(atomic::Error::Refused(
+            atomic::Refusal::DestinationHasNoFileName {
+                destination: destination.to_path_buf(),
+            },
+        ))
+    })?;
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    atomic::RootedFiles::new(parent)
+        .publish(Path::new(name), DATA_MODE, &bytes)
         .map_err(EvidencePublishError::Publish)?;
     Ok(Digest::compute(Domain::ProofReceiptV3, &bytes))
 }

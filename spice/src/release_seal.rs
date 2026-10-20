@@ -20,28 +20,35 @@ struct CurrentBindings {
 }
 
 struct CurrentPublisher<'a> {
-    inner: proof::FileManifestPublisher,
+    inner: atomic::RootedFiles,
     worktree: &'a Path,
     expected: CurrentBindings,
 }
 
-impl proof::ManifestPublisher for CurrentPublisher<'_> {
-    fn publish(
-        &mut self,
-        path: &Path,
-        mode: u32,
-        bytes: &[u8],
-    ) -> Result<(), proof::ManifestPublishError> {
+impl CurrentPublisher<'_> {
+    /// The source and app still match the bindings the manifest was composed from.
+    fn verify_unmoved(&self) -> Result<(), String> {
+        let observed = current_bindings(self.worktree)?;
+        if observed == self.expected {
+            Ok(())
+        } else {
+            Err(format!(
+                "source or app moved before the manifest pointer: expected {:?}, observed {:?}",
+                self.expected, observed
+            ))
+        }
+    }
+}
+
+impl atomic::RootedPublish for CurrentPublisher<'_> {
+    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8]) -> Result<(), atomic::Error> {
         if path == Path::new("release/manifest.json") {
-            let observed =
-                current_bindings(self.worktree).map_err(proof::ManifestPublishError::Guard)?;
-            if observed != self.expected {
-                return Err(proof::ManifestPublishError::Guard(format!(
-                    "source or app moved before the manifest pointer: expected {:?}, observed \
-                     {:?}",
-                    self.expected, observed
-                )));
-            }
+            self.verify_unmoved().map_err(|reason| {
+                atomic::Error::Refused(atomic::Refusal::Withheld {
+                    path: path.to_path_buf(),
+                    reason,
+                })
+            })?;
         }
         self.inner.publish(path, mode, bytes)
     }
@@ -121,7 +128,7 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
             )
         })?;
     let mut publisher = CurrentPublisher {
-        inner: proof::FileManifestPublisher::new(&stage),
+        inner: atomic::RootedFiles::new(&stage),
         worktree: repository.worktree_root(),
         expected: bindings.clone(),
     };
