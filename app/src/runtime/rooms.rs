@@ -282,6 +282,15 @@ pub struct RoomParticipant {
     pub reasons: Vec<ParticipantReason>,
 }
 
+/// Authenticated journal provenance of one recorded Design proposal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposalRecord {
+    /// Principal that recorded the proposal.
+    pub author: wire::Actor,
+    /// Commit instant of the proposal fact.
+    pub at: wire::Instant,
+}
+
 /// Preparation provenance recorded under stable native identities.
 ///
 /// Current output control lives only in board dependency edges.
@@ -290,8 +299,8 @@ pub struct PreparationProjection {
     /// Design pass proposals by stable candidate identity.
     pub candidates:
         BTreeMap<authority::CandidateRef, RoomPositioned<authority::DesignPassProposal>>,
-    /// The authenticated actor that recorded each proposal.
-    pub proposers: BTreeMap<authority::CandidateRef, wire::Actor>,
+    /// Authenticated journal provenance of each proposal.
+    pub proposal_records: BTreeMap<authority::CandidateRef, ProposalRecord>,
     /// Critiques by stable critique identity.
     pub critiques: BTreeMap<authority::CritiqueRef, RoomPositioned<authority::CandidateCritique>>,
     /// Coverage by stable coverage identity.
@@ -913,17 +922,21 @@ impl RoomProjection {
             FactKind::DesignProposed => Some(fact.read::<authority::DesignProposed>().is_some_and(
                 |body| {
                     let candidate = body.candidate.candidate.clone();
-                    let author = self
+                    let record = ProposalRecord {
+                        author: fact.actor().clone(),
+                        at: *fact.at(),
+                    };
+                    let provenance = self
                         .preparation
-                        .proposers
-                        .insert(candidate.clone(), fact.actor().clone())
-                        .is_none_or(|previous| previous != *fact.actor());
+                        .proposal_records
+                        .insert(candidate.clone(), record.clone())
+                        .is_none_or(|previous| previous != record);
                     replace(
                         &mut self.preparation.candidates,
                         candidate,
                         fact.seq(),
                         body.candidate,
-                    ) | author
+                    ) | provenance
                 },
             )),
             FactKind::CandidateCritiqued => Some(

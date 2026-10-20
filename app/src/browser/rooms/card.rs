@@ -85,12 +85,12 @@ pub(super) fn render_face(
     let face = conversation::face(runtime, controls, publication, event, unheard)
         .or_else(|| contributions::face(runtime, publication, event))
         .unwrap_or_else(|| super::summary_face(runtime, event));
-    render(runtime, publication, face, anchor)
+    render(runtime, publication.micros() / 1_000, face, anchor)
 }
 
 pub(super) fn render(
     runtime: &AppRuntime,
-    publication: &RoomAuthorityStamp,
+    authored_millis: i64,
     face: Face,
     anchor: Option<Anchor<'_>>,
 ) -> Html {
@@ -117,7 +117,7 @@ pub(super) fn render(
                 {island}
                 <p class="room-card-words">
                     <span class="message-signoff">
-                        <Age authored={publication.micros() / 1_000} class="relative-age" {href} {label} />
+                        <Age authored={authored_millis} class="relative-age" {href} {label} />
                         {for speaker.map(|speaker| render_speaker(runtime, speaker))}
                         if !receivers.is_empty() {
                             <span class="message-quote-direction" aria-label="to">{"→"}</span>

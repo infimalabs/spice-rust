@@ -209,10 +209,9 @@ pub(super) fn render_proposal_face(
     let preparation = runtime.room_projection().preparation();
     let candidate = &positioned.value;
     let code = candidate.candidate.candidate.to_string();
-    let speaker = preparation
-        .proposers
-        .get(&candidate.candidate)
-        .map(|actor| match runtime.room_projection().author(actor) {
+    let record = preparation.proposal_records.get(&candidate.candidate);
+    let speaker = record.map(
+        |record| match runtime.room_projection().author(&record.author) {
             wire::Actor::Lane(lane) => card::Speaker {
                 name: lane_label(runtime, lane),
                 lane: Some(lane),
@@ -221,7 +220,8 @@ pub(super) fn render_proposal_face(
                 name: crate::work::owner_label(&other, None, runtime.principals()),
                 lane: None,
             },
-        });
+        },
+    );
     let tasks = runtime
         .board()
         .map_or(&[][..], |board| board.tasks.as_slice());
@@ -265,7 +265,7 @@ pub(super) fn render_proposal_face(
     };
     card::render(
         runtime,
-        &candidate.candidate.candidate,
+        proposal_display_millis(preparation, positioned),
         card::Face {
             speaker,
             receivers: String::new(),
@@ -282,6 +282,21 @@ pub(super) fn render_proposal_face(
         },
         None,
     )
+}
+
+/// Journal time shown by a proposal card and used to interleave it with other
+/// activity. Synthetic opportunistic candidates fall back to their task time.
+pub(super) fn proposal_display_millis(
+    preparation: &PreparationProjection,
+    positioned: &RoomPositioned<DesignPassProposal>,
+) -> i64 {
+    preparation
+        .proposal_records
+        .get(&positioned.value.candidate)
+        .map_or_else(
+            || positioned.value.candidate.candidate.micros() / 1_000,
+            |record| record.at.get().as_millisecond(),
+        )
 }
 
 /// What a proposal's card shape must change with: the version and its standing.

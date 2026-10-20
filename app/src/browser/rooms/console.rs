@@ -358,11 +358,15 @@ fn proposal_card(
     proposal: &RoomPositioned<DesignPassProposal>,
 ) -> ActivityCard {
     let candidate = &proposal.value.candidate.candidate;
+    let display_millis = super::approval::proposal_display_millis(
+        render.runtime.room_projection().preparation(),
+        proposal,
+    );
     ActivityCard::Room {
         accent: channel.accent,
         design: channel.stamp.clone(),
         source_id: Rc::from(format!("room-proposal-{candidate}")),
-        display_millis: candidate.micros() / 1_000,
+        display_millis,
         position: proposal.position,
         divider: false,
         shape: Rc::from(super::approval::proposal_shape(

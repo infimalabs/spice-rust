@@ -114,7 +114,7 @@ fn entry_face(runtime: &AppRuntime, entry: &Contribution<'_>) -> Face {
 fn render_entry(runtime: &AppRuntime, entry: &Contribution<'_>) -> Html {
     html! {
         <article class="room-card" key={entry.publication.to_string()} tabindex="0">
-            {super::card::render(runtime, entry.publication, entry_face(runtime, entry), None)}
+            {super::card::render(runtime, entry.publication.micros() / 1_000, entry_face(runtime, entry), None)}
         </article>
     }
 }
