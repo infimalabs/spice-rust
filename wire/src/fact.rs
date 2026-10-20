@@ -350,7 +350,7 @@ vocabulary! {
     RoomContributed = "room::contributed" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
-    /// A lane with no delivery cursor began owing room catch-up here.
+    /// Retained predecessor for lane-global room catch-up; no longer minted.
     RoomHorizon = "room::horizon" by ResidentRecognition;
     /// The resident told a lane about one open Design matching its claimed work.
     DesignNoticed = "room::noticed" by ResidentRecognition;

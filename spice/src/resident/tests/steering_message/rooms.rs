@@ -392,15 +392,15 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     lanes.finish();
 }
 
-/// More retained room publications than several catch-up pages hold.
-const RETAINED_BACKLOG: usize = 40;
+/// More room publications than one catch-up page holds.
+const RETAINED_BACKLOG: usize = 18;
 
-/// Each seated lane starts at a horizon the resident records once, so a large
-/// retained backlog is never owed; the lane working the room then receives a
-/// bounded source-backed page of what followed, a lane a room-scoped MSG only
-/// addressed receives none, and delivery never becomes lifecycle authority.
+/// A current claim admits publications from its own durable authority even
+/// when the supervisor seats later. An addressed lane without native
+/// authority receives no historical echo, and delivery never becomes
+/// lifecycle authority.
 #[test]
-fn resident_catch_up_pages_the_working_lane_from_its_horizon_and_skips_an_addressed_lane() {
+fn resident_catch_up_starts_at_native_authority_and_skips_an_addressed_lane() {
     let lanes = Lanes::new("room-catch-up");
     let room = lanes.held_room("dVrD245Kc", FIRST);
     let (first_lane, second_lane) = (test_uuid(FIRST), test_uuid(SECOND));
@@ -429,52 +429,7 @@ fn resident_catch_up_pages_the_working_lane_from_its_horizon_and_skips_an_addres
             .expect("listener seats");
     }
     let notice = |lane| room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, lane));
-    let appended = |after: u64| {
-        lanes
-            .bus
-            .fact_snapshot()
-            .expect("facts read")
-            .facts()
-            .iter()
-            .filter(|envelope| envelope.seq.get() > after)
-            .map(|envelope| {
-                envelope
-                    .fact
-                    .read::<wire::rooms::RoomHorizon>()
-                    .map(|body| body.lane)
-            })
-            .collect::<Vec<_>>()
-    };
     let mut diagnostics = Vec::new();
-    let before = lanes.cursor();
-    for _ in 0..2 {
-        room_catch_up::reconcile(
-            &lanes.bus,
-            &lanes.paths,
-            &startup.config,
-            &seats,
-            &mut diagnostics,
-        )
-        .expect("catch-up reconciles");
-    }
-    let mut started = appended(before);
-    started.sort();
-    assert_eq!(
-        started,
-        [Some(first_lane), Some(second_lane)],
-        "a retried reconciliation records one horizon per listener and nothing else"
-    );
-    assert!(
-        notice(first_lane).is_none() && notice(second_lane).is_none(),
-        "retained history before the horizons is never owed: {}",
-        String::from_utf8_lossy(&diagnostics)
-    );
-
-    for item in 0..18 {
-        lanes.author(SENDER, &format!("MSG #{room}: publication {item}"));
-    }
-    lanes.account(SENDER);
-    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
     let before = lanes.cursor();
     room_catch_up::reconcile(
         &lanes.bus,
@@ -492,13 +447,13 @@ fn resident_catch_up_pages_the_working_lane_from_its_horizon_and_skips_an_addres
 
     let first = notice(first_lane).unwrap_or_else(|| {
         panic!(
-            "the working lane has catch-up: {}",
+            "the working lane catches up from its claim: {}",
             String::from_utf8_lossy(&diagnostics)
         )
     });
-    assert!(first.text.contains("publication 0"));
+    assert!(first.text.contains("second addressed"), "{first:?}");
+    assert!(first.text.contains("retained 0"), "{first:?}");
     assert!(first.text.contains("continue: spice://task/"));
-    assert!(!first.text.contains("retained") && !first.text.contains("addressed"));
     assert!(
         notice(second_lane).is_none(),
         "a room-scoped MSG route reaches its lane by steering, never later catch-up"
@@ -571,8 +526,8 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
     lanes.finish();
 }
 
-/// Recording a Design request changes room attention by itself: the asked lane
-/// receives already-unread context without waiting for another room post.
+/// Recording a Design request changes room attention at its own authority:
+/// prior unread context stays excluded, while a later room post is delivered.
 #[test]
 fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
     let lanes = Lanes::new("room-catch-up-design-request");
@@ -605,52 +560,11 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
         &seats,
         &mut diagnostics,
     )
-    .expect("startup catch-up establishes the lane horizon");
+    .expect("startup catch-up reconciles");
 
     append_room_publication(&lanes, &design);
     let design_stamp = design.born().expect("fixture Design has a birth");
-    let statement = lanes
-        .bus
-        .read({
-            let design = design_stamp.clone();
-            move |read| read.task_head(&design)
-        })
-        .expect("Design statement reads")
-        .expect("Design statement exists")
-        .body()
-        .revision;
-    let prior = prior.born().expect("fixture prior task has a birth");
-    let mut request = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
-        .expect("request write starts");
-    request
-        .fact(
-            wire::rooms::DesignNoticed {
-                design: design_stamp.clone(),
-                statement,
-                lane: first_lane,
-                occupant: test_uuid(FIRST + 1),
-                session: wire::rooms::DesignSession {
-                    vendor: "omp".parse().expect("vendor"),
-                    identity: "fixture-session".to_owned(),
-                },
-                compaction: None,
-                opportunity: wire::rooms::DesignNoticeOpportunity::TaskCompletion {
-                    task: prior.clone(),
-                    completed: statement,
-                },
-                evidence: wire::rooms::DesignNoticeEvidence::Task {
-                    task: prior,
-                    statement,
-                    completed: statement,
-                    support: wire::rooms::DesignSupport::Implemented,
-                },
-                excerpt: "context room".to_owned(),
-                terms: vec!["context".to_owned(), "room".to_owned()],
-            },
-            FactCause::Root,
-        )
-        .expect("Design request is valid");
-    let noticed = commit(&lanes.bus, request).expect("Design request commits");
+    let noticed = record_design_request(&lanes, &design_stamp, &prior, first_lane);
     let mut expected_rooms = BTreeSet::new();
     expected_rooms.insert(design_stamp);
     let changes =
@@ -673,8 +587,25 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
     )
     .expect("Design request room reconciles");
 
-    let _notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
-        .expect("asked lane receives unread room context");
+    assert!(
+        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane)).is_none(),
+        "the request cannot retroactively admit room context"
+    );
+    let published = append_room_publication(&lanes, &design);
+    let changes =
+        room_catch_up::changes(&lanes.bus, published).expect("later publication changes classify");
+    room_catch_up::reconcile_commit(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        &changes,
+        &mut diagnostics,
+    )
+    .expect("later room publication reconciles");
+    let notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
+        .expect("asked lane receives later room context");
+    assert!(notice.text.contains("appended before accounting"));
     assert!(
         diagnostics.is_empty(),
         "{}",
@@ -682,6 +613,56 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
     );
     seats.release_all();
     lanes.finish();
+}
+
+fn record_design_request(
+    lanes: &Lanes,
+    design: &wire::TaskStamp,
+    prior: &wire::TaskHandle,
+    lane: CanonicalUuid,
+) -> bus::JournalCommit {
+    let statement = lanes
+        .bus
+        .read({
+            let design = design.clone();
+            move |read| read.task_head(&design)
+        })
+        .expect("Design statement reads")
+        .expect("Design statement exists")
+        .body()
+        .revision;
+    let prior = prior.born().expect("fixture prior task has a birth");
+    let mut request = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
+        .expect("request write starts");
+    request
+        .fact(
+            wire::rooms::DesignNoticed {
+                design: design.clone(),
+                statement,
+                lane,
+                occupant: test_uuid(FIRST + 1),
+                session: wire::rooms::DesignSession {
+                    vendor: "omp".parse().expect("vendor"),
+                    identity: "fixture-session".to_owned(),
+                },
+                compaction: None,
+                opportunity: wire::rooms::DesignNoticeOpportunity::TaskCompletion {
+                    task: prior.clone(),
+                    completed: statement,
+                },
+                evidence: wire::rooms::DesignNoticeEvidence::Task {
+                    task: prior,
+                    statement,
+                    completed: statement,
+                    support: wire::rooms::DesignSupport::Implemented,
+                },
+                excerpt: "context room".to_owned(),
+                terms: vec!["context".to_owned(), "room".to_owned()],
+            },
+            FactCause::Root,
+        )
+        .expect("Design request is valid");
+    commit(&lanes.bus, request).expect("Design request commits")
 }
 
 fn land_delivery(
@@ -842,8 +823,11 @@ fn recognize_delivery(
 }
 
 fn append_room_publication(lanes: &Lanes, room: &wire::TaskHandle) -> bus::JournalCommit {
-    let publication = wire::rooms::RoomAuthorityStamp::for_micros(1_790_000_000_000_000)
-        .expect("fixture publication stamp");
+    let publication = wire::rooms::RoomAuthorityStamp::for_micros(
+        1_790_000_000_000_000
+            + i64::try_from(lanes.cursor()).expect("fixture cursor fits a timestamp"),
+    )
+    .expect("fixture publication stamp");
     let mut append =
         write(Actor::Operator, lanes.epoch, Producer::CommandDoor).expect("post write starts");
     append

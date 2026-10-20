@@ -326,14 +326,17 @@ fn room_native_duties(
     Ok(steering
         .into_iter()
         .filter_map(|head| {
+            let position = head.body().created;
             let head = head.into_body();
             let kind = match head.control.as_deref()?.parse().ok()? {
-                wire::rooms::CoordinationControl::Coordinate(_) => {
-                    RoomDutyKind::Coordination { key: head.key }
-                }
-                wire::rooms::CoordinationControl::Stop { .. } => {
-                    RoomDutyKind::Stop { key: head.key }
-                }
+                wire::rooms::CoordinationControl::Coordinate(_) => RoomDutyKind::Coordination {
+                    key: head.key,
+                    position,
+                },
+                wire::rooms::CoordinationControl::Stop { .. } => RoomDutyKind::Stop {
+                    key: head.key,
+                    position,
+                },
             };
             Some(RoomDuty {
                 room: room.clone(),

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spice::rooms::{CatchUpBudget, CatchUpKind, CatchUpSource, select_catch_up};
-use wire::rooms::{CoordinationControl, RoomDelivered, RoomHorizon, TextRange, TranscriptHunk};
+use wire::rooms::{CoordinationControl, RoomDelivered, TextRange, TranscriptHunk};
 use wire::{
     Actor, AnyFact, CanonicalUuid, Producer, Seq, SequenceCode, SteeringHead, TaskHandle, TaskStamp,
 };
@@ -74,11 +74,13 @@ fn listening(
         .iter()
         .take(LISTENING_REASONS)
         .map(|reason| match reason {
-            Reason::Work { task: work } => format!("work {}", task(work)),
-            Reason::Responsibility { task: work } => format!("responsibility {}", task(work)),
-            Reason::Asked { source } => format!("asked from {source}"),
-            Reason::Coordination { key } => format!("coordination request {key}"),
-            Reason::Stop { key } => format!("stop request {key}"),
+            Reason::Work { task: work, .. } => format!("work {}", task(work)),
+            Reason::Responsibility { task: work, .. } => {
+                format!("responsibility {}", task(work))
+            }
+            Reason::Asked { source, .. } => format!("asked from {source}"),
+            Reason::Coordination { key, .. } => format!("coordination request {key}"),
+            Reason::Stop { key, .. } => format!("stop request {key}"),
         })
         .collect::<Vec<_>>();
     if reasons.len() > LISTENING_REASONS {
@@ -351,7 +353,7 @@ fn plan(
     planning: &Planning,
     rooms: Option<&BTreeSet<TaskStamp>>,
 ) -> CommandResult<Option<Notice>> {
-    let after = start(bus, lane)?;
+    let after = cursor(bus, lane)?;
     let mut sources = Vec::new();
     let mut attention = Vec::new();
     let mut presented = BTreeMap::new();
@@ -514,18 +516,27 @@ fn append_room(
     lane: CanonicalUuid,
     planning: &Planning,
     entry: &board::Entry,
-    after: Seq,
+    after: Option<Seq>,
     sources: &mut Vec<CatchUpSource>,
     attention: &mut Vec<spice::rooms::RoomAttention>,
     presented: &mut BTreeMap<Seq, Presented>,
 ) -> CommandResult<()> {
     let room = entry.born().clone();
+    let room_attention = room_attention(bus, lane, planning, &room)?;
+    let Some(authority) = room_attention
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .and_then(spice::rooms::RoomLaneAttention::catch_up_after)
+    else {
+        return Ok(());
+    };
+    let after = after.map_or(authority, |cursor| cursor.max(authority));
     let publications =
         crate::board_command::room_publications_after(bus, &room, after).map_err(unit_outcome)?;
     if publications.is_empty() {
         return Ok(());
     }
-    let room_attention = room_attention(bus, lane, planning, &room)?;
     let artifacts = paths.artifacts();
     let owners = crate::room_command::SourceOwners {
         tape: &paths.tape,
@@ -593,23 +604,6 @@ fn latest_lane_publication(
                 &error.to_string(),
             )
         })
-}
-
-/// Where `lane`'s catch-up starts: its delivery cursor or, before any delivery,
-/// its horizon, recorded at the journal head the first time the lane is
-/// reconciled without either, so retained history it predates is never owed.
-fn start(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Seq> {
-    if let Some(cursor) = cursor(bus, lane)? {
-        return Ok(cursor);
-    }
-    let horizon = bus
-        .read(move |read| read.room_catch_up_horizon(lane))
-        .map_err(|error| store_fault("room::catch-up-horizon-unreadable", &error.to_string()))?;
-    match horizon {
-        Some(head) => Ok(head.position()),
-        None => commit_fact(bus, lane, RoomHorizon { lane })
-            .map(|commit| Seq::new(commit.last()).expect("a committed position is positive")),
-    }
 }
 
 fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {

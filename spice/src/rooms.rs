@@ -81,6 +81,7 @@ pub struct RoomWork {
     room: TaskStamp,
     task: TaskStamp,
     lane: CanonicalUuid,
+    since: Seq,
 }
 
 impl RoomWork {
@@ -104,6 +105,7 @@ impl RoomWork {
             room: room.clone(),
             task: task.born().clone(),
             lane: claim.lane,
+            since: claim.claimed.max(statement.queue_origin),
         })
     }
 }
@@ -124,9 +126,9 @@ pub enum RoomDutyKind {
     /// `source` names the retained task or conversation that supported it.
     Asked { source: String, position: Seq },
     /// A live room coordination request addressing the lane.
-    Coordination { key: String },
+    Coordination { key: String, position: Seq },
     /// A live stop request addressing the lane's claim.
-    Stop { key: String },
+    Stop { key: String, position: Seq },
 }
 
 /// One current room-scoped attention duty.
@@ -151,6 +153,8 @@ pub struct RoomResponsibility {
     pub lane: CanonicalUuid,
     /// Native task that establishes the responsibility.
     pub task: TaskStamp,
+    /// Authority position from which the responsibility is current.
+    pub since: Seq,
 }
 
 /// Complete declared authority sources for a room projection.
@@ -253,19 +257,19 @@ pub enum ParticipationReason {
 /// Current reason a lane should receive bounded room catch-up.
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum AttentionReason {
-    /// The lane has current relevant native work.
-    Work { task: TaskStamp },
+    /// The lane has current relevant native work from `since`.
+    Work { task: TaskStamp, since: Seq },
 
     /// A recorded Design request asked the lane using `source`; it does not
     /// make a participant, and the lane's next room publication or leave
     /// answers or declines it.
-    Asked { source: String },
+    Asked { source: String, since: Seq },
     /// A live room coordination request addresses the lane.
-    Coordination { key: String },
+    Coordination { key: String, since: Seq },
     /// A live stop request addresses the lane's claim.
-    Stop { key: String },
+    Stop { key: String, since: Seq },
     /// Native work records an explicit continuing responsibility.
-    Responsibility { task: TaskStamp },
+    Responsibility { task: TaskStamp, since: Seq },
 }
 
 impl AttentionReason {
@@ -273,6 +277,18 @@ impl AttentionReason {
     #[must_use]
     pub const fn is_native(&self) -> bool {
         !matches!(self, Self::Asked { .. })
+    }
+
+    /// Journal position after which this authority begins admitting catch-up.
+    #[must_use]
+    pub const fn since(&self) -> Seq {
+        match self {
+            Self::Work { since, .. }
+            | Self::Asked { since, .. }
+            | Self::Coordination { since, .. }
+            | Self::Stop { since, .. }
+            | Self::Responsibility { since, .. } => *since,
+        }
     }
 }
 
@@ -338,12 +354,20 @@ impl RoomLaneAttention {
     /// Whether current authority admits the publication at `position`.
     #[must_use]
     fn listens_to(&self, position: Seq) -> bool {
-        self.listens()
-            && (self.attention.iter().any(AttentionReason::is_native)
-                || !self
-                    .leave_intervals
-                    .iter()
-                    .any(|interval| interval.contains(position)))
+        self.attention.iter().any(|reason| {
+            position > reason.since()
+                && (reason.is_native()
+                    || !self
+                        .leave_intervals
+                        .iter()
+                        .any(|interval| interval.contains(position)))
+        })
+    }
+
+    /// Earliest journal authority that can admit current catch-up.
+    #[must_use]
+    pub fn catch_up_after(&self) -> Option<Seq> {
+        self.attention.iter().map(AttentionReason::since).min()
     }
 }
 
@@ -605,6 +629,7 @@ fn fold_attention(
             .attention
             .insert(AttentionReason::Work {
                 task: current.task.clone(),
+                since: current.since,
             });
     }
     for duty in sources
@@ -632,12 +657,17 @@ fn fold_attention(
                 ));
                 AttentionReason::Asked {
                     source: source.clone(),
+                    since: *position,
                 }
             }
-            RoomDutyKind::Coordination { key } => {
-                AttentionReason::Coordination { key: key.clone() }
-            }
-            RoomDutyKind::Stop { key } => AttentionReason::Stop { key: key.clone() },
+            RoomDutyKind::Coordination { key, position } => AttentionReason::Coordination {
+                key: key.clone(),
+                since: *position,
+            },
+            RoomDutyKind::Stop { key, position } => AttentionReason::Stop {
+                key: key.clone(),
+                since: *position,
+            },
         };
         folded.attention.insert(reason);
     }
@@ -650,6 +680,7 @@ fn fold_attention(
             .attention
             .insert(AttentionReason::Responsibility {
                 task: responsibility.task.clone(),
+                since: responsibility.since,
             });
     }
     Ok(())
@@ -933,7 +964,8 @@ mod tests {
         assert_eq!(
             requested.attention,
             vec![AttentionReason::Asked {
-                source: "task 1kKRRsDS1".to_owned()
+                source: "task 1kKRRsDS1".to_owned(),
+                since: Seq::new(4).expect("request position"),
             }],
             "only the request no later publication answered stays owed"
         );
@@ -975,7 +1007,7 @@ mod tests {
         };
         let catch_up = select_catch_up(
             lane_id,
-            Seq::new(2).expect("positive cursor"),
+            Some(Seq::new(2).expect("positive cursor")),
             &[RoomAttention {
                 room: room.clone(),
                 lanes: vec![returned],
@@ -1039,9 +1071,11 @@ mod tests {
         let duties = vec![
             owed(RoomDutyKind::Coordination {
                 key: "1kKRRsDS2".to_owned(),
+                position: Seq::new(1).expect("duty position"),
             }),
             owed(RoomDutyKind::Stop {
                 key: "1kKRRsDS3".to_owned(),
+                position: Seq::new(1).expect("duty position"),
             }),
         ];
         let row = project_one(
@@ -1154,7 +1188,7 @@ mod tests {
         };
         let claim = ClaimHead {
             actor: Actor::Lane(lane),
-            fact: Seq::new(2).expect("positive sequence"),
+            fact: Seq::new(9).expect("renewed head position"),
             claimed: Seq::new(2).expect("positive sequence"),
             cell: ClaimCell {
                 project: "spice.rooms".to_owned(),
@@ -1213,6 +1247,7 @@ mod tests {
             lane: lane_id,
             kind: RoomDutyKind::Coordination {
                 key: "1kKRRsDS0".to_owned(),
+                position: Seq::new(1).expect("duty position"),
             },
             standing: RoomDutyStanding::Owed,
         }];
@@ -1220,6 +1255,7 @@ mod tests {
             room: room.clone(),
             lane: lane_id,
             task: room.clone(),
+            since: Seq::new(1).expect("responsibility position"),
         }];
         let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
 
@@ -1245,11 +1281,18 @@ mod tests {
         let output = task("1kKRRsDR2");
         let lane_id = uuid("01");
         let active = current_task(&room, output.clone(), lane_id, ClaimDisposition::Active);
-        assert!(RoomWork::from_task(&room, &active).is_some());
+        let work = RoomWork::from_task(&room, &active).expect("active work is relevant");
+        assert_eq!(
+            work.since,
+            Seq::new(2).expect("original claim position"),
+            "renewal retains the claim win as the catch-up boundary"
+        );
         assert!(RoomWork::from_task(&other, &active).is_none());
 
-        let freed = current_task(&room, output, lane_id, ClaimDisposition::Freed);
-        assert!(RoomWork::from_task(&room, &freed).is_none());
+        for disposition in [ClaimDisposition::Freed, ClaimDisposition::Lapsed] {
+            let ended = current_task(&room, output.clone(), lane_id, disposition);
+            assert!(RoomWork::from_task(&room, &ended).is_none());
+        }
     }
     #[test]
     fn handoff_preserves_native_duties_without_adding_author_attention() {
@@ -1276,6 +1319,7 @@ mod tests {
             lane: old_lane,
             kind: RoomDutyKind::Coordination {
                 key: "1kKRRsDS0".to_owned(),
+                position: Seq::new(1).expect("duty position"),
             },
             standing: RoomDutyStanding::Owed,
         }];
@@ -1283,6 +1327,7 @@ mod tests {
             room: room.clone(),
             lane: old_lane,
             task: room.clone(),
+            since: Seq::new(1).expect("responsibility position"),
         }];
         let topology = residency(vec![lane(new_lane, Some(uuid("03")))]);
 
@@ -1342,6 +1387,7 @@ mod tests {
             lane: lane_id,
             kind: RoomDutyKind::Coordination {
                 key: "1kKRRsDS0".to_owned(),
+                position: Seq::new(1).expect("duty position"),
             },
             standing: RoomDutyStanding::Settled,
         }];

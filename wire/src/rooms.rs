@@ -382,18 +382,17 @@ pub struct RoomDelivered {
     pub hunk: TranscriptHunk,
 }
 
-/// The journal position from which a logical lane with no delivery cursor is
-/// owed room catch-up: the position of this fact itself.
+/// Retained predecessor for the former lane-global catch-up start.
 ///
-/// The resident records it once, the first time it observes the lane occupied
-/// without a cursor, so a lane never inherits retained room history it
-/// predates, while every publication admitted after it stays owed in journal
-/// order. It claims no delivery, so it neither moves the cursor nor implies
-/// participation.
+/// Current catch-up derives its lower bound from each current task, Design
+/// request, coordination, or stop authority instead. The journal continues to
+/// admit and replay historical horizon facts so an existing repository keeps
+/// one valid history across the cutover; this fact claims no delivery,
+/// participation, or current listening authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomHorizon {
-    /// Logical lane whose catch-up starts here.
+    /// Logical lane the retained predecessor named.
     pub lane: CanonicalUuid,
 }
 
