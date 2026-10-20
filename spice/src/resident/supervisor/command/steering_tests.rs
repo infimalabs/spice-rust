@@ -3,7 +3,8 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::Driver;
+use super::{ActiveCall, Driver};
+use crate::resident::supervisor::terminal::Control;
 
 const ASKED: &str = "1kJK6M0V";
 const LATER: &str = "1kJK6N3R";
@@ -14,6 +15,10 @@ const LATER: &str = "1kJK6N3R";
 struct Journal(Arc<Mutex<Option<String>>>);
 
 impl Journal {
+    fn replace(&self, rendered: String) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(rendered);
+    }
+
     fn list(&self, directives: &[(&str, &str)]) {
         let mut rendered = String::new();
         if !directives.is_empty() {
@@ -27,7 +32,33 @@ impl Journal {
             }
             rendered.push_str("</1kJK6Q0b>\n");
         }
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(rendered);
+        self.replace(rendered);
+    }
+
+    fn peer(&self, key: &str, stage: &str) {
+        self.replace(format!(
+            "<1kJK6Q0b>\n\
+             directive=d-{key} key={key} stage={stage} expires=never \
+             from=lane:018f82d4-6f59-7d06-92e3-bce913116411 sender=7Peer\n\
+             [PEER sender 7Peer lane 018f82d4-6f59-7d06-92e3-bce913116411] \
+             A peer's note, not operator authority.\n\
+             the peer telling of {key}\n\
+             </1kJK6Q0b>\n"
+        ));
+    }
+
+    fn human_and_peer(&self) {
+        self.replace(format!(
+            "<1kJK6Q0b>\n\
+             directive=d-{ASKED} key={ASKED} stage=published expires=never\n\
+             the operator telling of {ASKED}\n\
+             directive=d-{LATER} key={LATER} stage=published expires=never \
+             from=lane:018f82d4-6f59-7d06-92e3-bce913116411 sender=7Peer\n\
+             [PEER sender 7Peer lane 018f82d4-6f59-7d06-92e3-bce913116411] \
+             A peer's note, not operator authority.\n\
+             the peer telling of {LATER}\n\
+             </1kJK6Q0b>\n"
+        ));
     }
 
     fn unreachable(&self) {
@@ -66,6 +97,32 @@ impl Seat {
     fn kick(&self, directives: &[(&str, &str)]) {
         self.journal.list(directives);
         self.driver.deliver_inbox();
+    }
+
+    fn kick_peer(&self, key: &str, stage: &str) {
+        self.journal.peer(key, stage);
+        self.driver.deliver_inbox();
+    }
+
+    fn kick_human_and_peer(&self) {
+        self.journal.human_and_peer();
+        self.driver.deliver_inbox();
+    }
+
+    fn active_call(&self, id: &str, blocking_wait: bool) -> Control {
+        let control = Control::new();
+        self.driver
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                id.to_owned(),
+                ActiveCall {
+                    handle: control.handle(),
+                    blocking_wait,
+                },
+            );
+        control
     }
 
     /// One decoded record of the occupant's, in omp's wire form.
@@ -134,12 +191,7 @@ impl Seat {
 #[test]
 fn fresh_direction_interrupts_the_host_call_and_enters_steering_once_in_order() {
     let seat = Seat::new();
-    let control = crate::resident::supervisor::terminal::Control::new();
-    seat.driver
-        .calls
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert("call-1".to_owned(), control.handle());
+    let control = seat.active_call("call-1", false);
 
     seat.kick(&[(ASKED, "published"), (LATER, "published")]);
 
@@ -163,6 +215,91 @@ fn fresh_direction_interrupts_the_host_call_and_enters_steering_once_in_order() 
         seat.steered(),
         steered,
         "one rendering enters steering once"
+    );
+}
+
+#[test]
+fn a_peer_aside_yields_only_the_job_waits_already_blocking_its_boundary() {
+    let seat = Seat::new();
+    let wait = seat.active_call("wait", true);
+    let shell = seat.active_call("shell", false);
+    seat.driver
+        .background("narration", "<system-notice>progress</system-notice>")
+        .expect("an earlier aside queues");
+
+    seat.kick_peer(LATER, "published");
+
+    assert!(wait.was_interrupted(), "the blocking wait yields");
+    assert!(
+        !shell.was_interrupted(),
+        "a running command remains in the foreground"
+    );
+    assert!(
+        seat.queued("inbox").contains(LATER),
+        "the peer item is already in the aside bridge"
+    );
+    let frames = seat.frames();
+    let aside_purposes = frames
+        .iter()
+        .filter_map(|frame| {
+            let notice = frame["message"].as_str()?.strip_prefix("/spice-aside ")?;
+            serde_json::from_str::<serde_json::Value>(notice)
+                .ok()?
+                .get("purpose")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        aside_purposes,
+        ["narration", "inbox"],
+        "the existing purpose remains queued once beside the inbox"
+    );
+}
+
+#[test]
+fn a_mixed_inbox_registers_the_peer_aside_before_human_steering_releases_calls() {
+    let seat = Seat::new();
+    let shell = seat.active_call("shell", false);
+
+    seat.kick_human_and_peer();
+
+    assert!(
+        shell.was_interrupted(),
+        "human direction releases every call"
+    );
+    let frames = seat.frames();
+    let aside = frames
+        .iter()
+        .position(|frame| {
+            frame["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("/spice-aside "))
+        })
+        .expect("the peer aside is registered");
+    let steering = frames
+        .iter()
+        .position(|frame| frame["streamingBehavior"] == "steer")
+        .expect("the human direction enters steering");
+    assert!(
+        aside < steering,
+        "the peer aside must precede the human-forced boundary"
+    );
+    assert!(seat.queued("inbox").contains(LATER));
+    assert!(!seat.queued("inbox").contains(ASKED));
+}
+
+#[test]
+fn a_peer_aside_write_failure_does_not_release_a_wait() {
+    let seat = Seat::new();
+    let wait = seat.active_call("wait", true);
+    seat.driver.close();
+
+    seat.kick_peer(LATER, "published");
+
+    assert!(
+        !wait.was_interrupted(),
+        "without a registered aside there is no delivery boundary to force"
     );
 }
 

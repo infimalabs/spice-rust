@@ -152,8 +152,10 @@ impl CompletionCursor {
 }
 
 /// Record one best matching open Design for every retained-profile
-/// opportunity. Nothing is delivered in the background: the lane reads the
-/// owed request from its next `task next`.
+/// opportunity, replacing a session's owed request only with a strictly better
+/// match. Nothing is pushed into a lane's turn here: room catch-up carries the
+/// owed request into the lane's next model input, and `task next` shows it
+/// while the lane holds no claim.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     config: &SurfaceConfig,
@@ -273,6 +275,11 @@ fn plan_profile_requests(
     }
     let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
     let prepared = prepare_open_designs(entries, &frequency);
+    let scoring = Scoring {
+        facts,
+        frequency: &frequency,
+        prepared: &prepared,
+    };
 
     let mut state = message_surface::lock_state(profiles)?;
     let mut planned_sessions = BTreeSet::new();
@@ -291,59 +298,44 @@ fn plan_profile_requests(
         };
         let compaction = facts.session_compaction(lane, &session);
         let session_identity = (lane, session.clone());
-        if planned_sessions.contains(&session_identity)
-            || session_has_outstanding(bus, facts, entries, lane, &session)?
-        {
+        if planned_sessions.contains(&session_identity) {
             continue;
         }
+        let owed = owed_notice(bus, facts, entries, lane, &session)?;
+        if let Some(owed) = owed
+            && let Some(restated) =
+                restated_request(bus, planning, occupant, &session, compaction, owed)?
+        {
+            planned_sessions.insert(session_identity);
+            planned.push(restated);
+            continue;
+        }
+        let owed = owed.map(|(_, notice)| notice.design.clone());
         let Some(durable_opportunity) = durable_opportunity(&opportunity, facts, occupant) else {
             continue;
         };
-        {
-            let Some(profile) = state.profiles.profile_mut(&opportunity.session) else {
-                continue;
-            };
-            remove_stale_profile_evidence(bus, lane, &session, profile)?;
-        }
-        let candidates = prepared
-            .iter()
-            .filter(|(design, _)| {
-                opportunity_design_matches(&opportunity.kind, design)
-                    && !facts.design_was_noticed_in_session(lane, &session, design.born())
-                    && !facts.published_in_room_for_session(lane, &session, design.born())
-            })
-            .map(|(design, vector)| {
-                DesignCandidate::new(
-                    design.born(),
-                    *design,
-                    vector,
-                    match_score_floor(facts.design_stance(design.born())),
-                )
-            });
         let selected = {
             let Some(profile) = state.profiles.profile_mut(&opportunity.session) else {
                 continue;
             };
-            profile
-                .evidence_mut()
-                .select(&frequency, candidates)
-                .map_err(|error| {
-                    store_fault(
-                        "room::awareness-profile-generation-mismatch",
-                        &error.to_string(),
-                    )
-                })?
-                .map(|matched| {
-                    (
-                        matched.design.born().clone(),
-                        matched.design.statement().revision,
-                        durable_evidence(matched.evidence, matched.digest),
-                        matched.excerpt.to_owned(),
-                        matched.terms,
-                    )
-                })
+            remove_stale_profile_evidence(bus, lane, &session, profile)?;
+            select_design(
+                &scoring,
+                profile,
+                lane,
+                &session,
+                &opportunity.kind,
+                owed.as_ref(),
+            )?
         };
-        let Some((design, statement, evidence, excerpt, terms)) = selected else {
+        let Some(Selection {
+            design,
+            statement,
+            evidence,
+            excerpt,
+            terms,
+        }) = selected
+        else {
             continue;
         };
         planned_sessions.insert(session_identity);
@@ -383,6 +375,100 @@ fn prepare_open_designs<'e>(
                 .map(|vector| (entry, vector))
         })
         .collect()
+}
+
+/// Open Designs weighted under one planning read's frequency generation.
+struct Scoring<'e> {
+    facts: &'e bus::TaskFacts,
+    frequency: &'e FrequencyProfile,
+    prepared: &'e [(&'e board::Entry, spice::rooms::awareness::Prepared)],
+}
+
+/// The Design one session's current cards select for an opportunity.
+struct Selection {
+    design: TaskStamp,
+    statement: Seq,
+    evidence: DesignNoticeEvidence,
+    excerpt: String,
+    terms: Vec<String>,
+}
+
+/// The best Design `kind` admits that this session was never offered and never
+/// joined, unless it fails to strictly outrank the Design still owed to the
+/// session under the same frequency generation, current cards, and stance
+/// floors. An owed Design that no longer clears its floor bars nothing.
+fn select_design(
+    scoring: &Scoring<'_>,
+    profile: &mut spice::rooms::profile::SessionProfile,
+    lane: CanonicalUuid,
+    session: &DesignSession,
+    kind: &ProfileOpportunityKind,
+    owed: Option<&TaskStamp>,
+) -> CommandResult<Option<Selection>> {
+    let Scoring {
+        facts,
+        frequency,
+        prepared,
+    } = *scoring;
+    let mismatch = |error: spice::rooms::awareness::GenerationMismatch| {
+        store_fault(
+            "room::awareness-profile-generation-mismatch",
+            &error.to_string(),
+        )
+    };
+    let candidate = |prepared| candidate(facts, prepared);
+    let bar = match owed {
+        Some(owed) => profile
+            .evidence_mut()
+            .select(
+                frequency,
+                prepared
+                    .iter()
+                    .filter(|(design, _)| design.born() == owed)
+                    .map(candidate),
+            )
+            .map_err(mismatch)?
+            .map(|matched| matched.score),
+        None => None,
+    };
+    let candidates = prepared
+        .iter()
+        .filter(|(design, _)| {
+            opportunity_design_matches(kind, design)
+                && !facts.design_was_noticed_in_session(lane, session, design.born())
+                && !facts.published_in_room_for_session(lane, session, design.born())
+        })
+        .map(candidate);
+    let Some(matched) = profile
+        .evidence_mut()
+        .select(frequency, candidates)
+        .map_err(mismatch)?
+    else {
+        return Ok(None);
+    };
+    if bar.is_some_and(|bar| matched.score <= bar) {
+        return Ok(None);
+    }
+    Ok(Some(Selection {
+        design: matched.design.born().clone(),
+        statement: matched.design.statement().revision,
+        evidence: durable_evidence(matched.evidence, matched.digest),
+        excerpt: matched.excerpt.to_owned(),
+        terms: matched.terms,
+    }))
+}
+
+/// One prepared open Design weighted under its effective stance's floor.
+fn candidate<'a>(
+    facts: &bus::TaskFacts,
+    (design, vector): &'a (&'a board::Entry, spice::rooms::awareness::Prepared),
+) -> DesignCandidate<'a, board::Entry> {
+    DesignCandidate::new(
+        design.born(),
+        *design,
+        vector,
+        match_score_floor(facts.design_stance(design.born())),
+    )
 }
 
 fn record_design_changes(
@@ -670,16 +756,48 @@ pub(crate) fn project_request(
     Ok(owed_request(bus, observed, entries, lane, occupant)?.map(|owed| owed.request))
 }
 
-fn session_has_outstanding(
+/// The owed request restated for a new occupant of its continuing session.
+///
+/// Once an earlier occupant's catch-up carried the request, the lane's cursor
+/// has passed its record, so the resumed occupant would never be shown it.
+/// Recording it again at the resume makes catch-up present it once more; the
+/// restated record names this occupant, so it is never restated for it again.
+fn restated_request(
     bus: &Bus,
-    facts: &bus::TaskFacts,
-    entries: &[board::Entry],
-    lane: CanonicalUuid,
+    planning: &Planning,
+    occupant: CanonicalUuid,
     session: &DesignSession,
-) -> CommandResult<bool> {
-    owed_notice(bus, facts, entries, lane, session).map(|notice| notice.is_some())
+    compaction: Option<Seq>,
+    (noticed_at, notice): (Seq, &DesignNoticed),
+) -> CommandResult<Option<PlannedRequest>> {
+    let lane = notice.lane;
+    if notice.occupant == occupant {
+        return Ok(None);
+    }
+    let Some(declaration) = planning
+        .snapshot
+        .facts()
+        .lane_session_declaration(lane, occupant)
+    else {
+        return Ok(None);
+    };
+    if super::room_catch_up::cursor(bus, lane)?.is_none_or(|cursor| cursor < noticed_at) {
+        return Ok(None);
+    }
+    Ok(Some(PlannedRequest {
+        lane,
+        occupant,
+        session: session.clone(),
+        compaction,
+        opportunity: DesignNoticeOpportunity::SessionResumed { declaration },
+        evidence: notice.evidence.clone(),
+        excerpt: notice.excerpt.clone(),
+        design: notice.design.clone(),
+        statement: notice.statement,
+        terms: notice.terms.clone(),
+        horizon: planning.horizon,
+    }))
 }
-
 /// Whether a recorded invitation is still owed. Design closure, statement
 /// replacement, or a room publication releases it.
 fn request_is_current(
