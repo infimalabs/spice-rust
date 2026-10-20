@@ -974,28 +974,7 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
         assert!(shown.contains(&expected), "{expected} is missing: {shown}");
     }
 
-    // The completion fixture reseated FIRST, so its capture names that occupant.
-    let mut landed = lanes.operator(FIRST, &notice.text);
-    landed.occupant = test_uuid(FIRST);
-    let _ = ingest_transcripts(
-        &lanes.bus,
-        &lanes.paths,
-        Some(test_uuid(FIRST)),
-        lane::ingest::Bound::IMMEDIATE,
-        lane::ingest::Coalescing::default(),
-        &mut diagnostics,
-    )
-    .expect("the delivery is accounted");
-    let source = lanes
-        .tape(FIRST)
-        .source_id()
-        .expect("tape source reads")
-        .as_str()
-        .parse()
-        .expect("tape source is a UUID");
-    room_catch_up::recognize(&lanes.bus, &lanes.paths, &landed, source)
-        .expect("the delivery is recognized")
-        .expect("the landed invitation advances the cursor past it");
+    land_catch_up(&lanes, &notice, &mut diagnostics);
     assert!(
         pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
         "a landed invitation is not delivered again"
@@ -1007,6 +986,95 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
         Some(spice::rooms::awareness::request_text(&request)),
         "task next keeps the delivered request owed"
     );
+    seated.release_all();
+    assert!(
+        diagnostics.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+    lanes.finish();
+}
+
+/// Land FIRST's catch-up `notice` in its transcript and recognize it, moving
+/// the lane's cursor past what it carried.
+fn land_catch_up(lanes: &Lanes, notice: &room_catch_up::Notice, diagnostics: &mut Vec<u8>) {
+    let mut landed = lanes.operator(FIRST, &notice.text);
+    landed.occupant = notice.occupant;
+    let _ = ingest_transcripts(
+        &lanes.bus,
+        &lanes.paths,
+        Some(test_uuid(FIRST)),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::default(),
+        diagnostics,
+    )
+    .expect("the delivery is accounted");
+    let source = lanes
+        .tape(FIRST)
+        .source_id()
+        .expect("tape source reads")
+        .as_str()
+        .parse()
+        .expect("tape source is a UUID");
+    room_catch_up::recognize(&lanes.bus, &lanes.paths, &landed, source)
+        .expect("the delivery is recognized")
+        .expect("the landed delivery advances the cursor");
+}
+
+/// A new occupant resuming the same session is told a still-owed request
+/// once, though its predecessor's landed delivery moved the cursor past it.
+#[test]
+fn a_resumed_occupant_is_told_the_owed_request_once() {
+    let lanes = Lanes::new("design-request-resumed-occupant");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let mut seated = claimant_seats();
+    let mut diagnostics = Vec::new();
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    lanes.complete(&task, MATCHING);
+    lanes.reconcile_completions(&config, &seated, &mut completions);
+    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
+        .expect("the first occupant is told");
+    land_catch_up(&lanes, &notice, &mut diagnostics);
+
+    seated.release_all();
+    let successor = test_uuid(FIRST.saturating_add(42));
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, successor);
+    lanes.declare(FIRST);
+    seated = seats(&[(FIRST, successor)]);
+    let restart = |seated: &Seats| {
+        let mut completions =
+            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+                .expect("restarted completion cursor starts");
+        lanes.reconcile_completions(&config, seated, &mut completions);
+    };
+    restart(&seated);
+    let notices = lanes.noticed();
+    assert_eq!(
+        notices.len(),
+        2,
+        "the resumed occupant is owed a restatement"
+    );
+    assert_eq!(notices[1].occupant, successor);
+    assert_eq!(notices[1].design, notices[0].design);
+    assert!(matches!(
+        notices[1].opportunity,
+        wire::rooms::DesignNoticeOpportunity::SessionResumed { .. }
+    ));
+    let restated = lanes
+        .request(&config, FIRST)
+        .expect("task next shows the restated request");
+    let resumed = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
+        .expect("the resumed occupant is told");
+    assert_eq!(resumed.occupant, successor);
+    let shown = spice::rooms::awareness::request_text(&restated);
+    assert!(resumed.text.contains(&shown), "{}", resumed.text);
+    restart(&seated);
+    assert_eq!(lanes.noticed().len(), 2, "one occupant is told once");
     seated.release_all();
     assert!(
         diagnostics.is_empty(),

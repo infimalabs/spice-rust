@@ -606,7 +606,7 @@ fn latest_lane_publication(
         })
 }
 
-fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {
+pub(in crate::resident) fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {
     bus.read(move |read| read.room_cursor(lane))
         .map_err(|error| store_fault("room::catch-up-cursor-unreadable", &error.to_string()))
         .map(|cursor| {
