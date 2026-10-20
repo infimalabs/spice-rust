@@ -119,12 +119,16 @@ fn consent_initialization_resumes_across_small_materializer_steps() {
     fs::remove_dir_all(root).expect("consent fixture cleanup");
 }
 
+/// A root unique among live processes; one left by a dead process whose pid
+/// this run reuses is stale and cleared rather than colliding.
 fn fixture(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
+    let root = std::env::temp_dir().join(format!(
         "spice-resident-{name}-{}-{}",
         std::process::id(),
         NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-    ))
+    ));
+    let _ = fs::remove_dir_all(&root);
+    root
 }
 
 struct DetachedFixture {
