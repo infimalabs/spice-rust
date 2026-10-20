@@ -67,8 +67,10 @@ impl Check {
             // seconds, and it drops the worktree the wider corpus required from
             // a copy cargo-mutants takes without one.
             CheckKind::MutationCorpus => ["mutants", "-p", "dist"].as_slice(),
+            // The omp dialect is the sole decoder; its suite owns the refused
+            // wire, unowned record, and residue contracts.
             CheckKind::DialectRefusals => {
-                ["test", "--locked", "-p", "listen", "--test", "corpus"].as_slice()
+                ["test", "--locked", "-p", "listen", "--test", "omp"].as_slice()
             }
             CheckKind::WaitAndProcess => ["test", "--locked", "-p", "sill", "--lib"].as_slice(),
             CheckKind::SupplyRebuild => {
@@ -777,6 +779,7 @@ impl Error for ReceiptError {}
 mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::path::Path;
 
     use wire::manifest::{ProofEnvironment, ReleaseTarget};
 
@@ -837,7 +840,7 @@ mod tests {
                 (
                     CheckKind::DialectRefusals,
                     "cargo",
-                    vec!["test", "--locked", "-p", "listen", "--test", "corpus"]
+                    vec!["test", "--locked", "-p", "listen", "--test", "omp"]
                 ),
                 (
                     CheckKind::WaitAndProcess,
@@ -851,6 +854,45 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// A member naming a package or test target the workspace no longer has
+    /// fails every real seal and rederive, so the battery names only live ones.
+    #[test]
+    fn every_battery_member_names_a_live_workspace_target() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the proof crate sits in the workspace");
+        for check in Battery::current().checks() {
+            let arguments = check.arguments();
+            let value = |flag: &str| {
+                arguments
+                    .iter()
+                    .position(|argument| argument == flag)
+                    .map(|index| arguments[index + 1].as_str())
+            };
+            let package = value("-p").expect("every member scopes one package");
+            let manifest = std::fs::read_to_string(workspace.join(package).join("Cargo.toml"))
+                .unwrap_or_else(|error| {
+                    panic!("{:?} names package {package}: {error}", check.kind())
+                });
+            assert!(
+                manifest.contains(&format!("name = \"{package}\"")),
+                "{:?} names package {package}",
+                check.kind()
+            );
+            if let Some(target) = value("--test") {
+                let source = workspace
+                    .join(package)
+                    .join("tests")
+                    .join(format!("{target}.rs"));
+                assert!(
+                    source.is_file(),
+                    "{:?} names test target {target} absent from {package}",
+                    check.kind()
+                );
+            }
+        }
     }
 
     /// One clean mutation run, in the words the pinned cargo-mutants uses.
