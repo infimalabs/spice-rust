@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::io::{self, Write as _};
-use std::path::{Component, Path, PathBuf};
+use std::io;
+use std::path::{Path, PathBuf};
 
 use wire::manifest::{
     ProofEnvironment, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest,
@@ -16,7 +16,7 @@ use wire::{Digest, Domain};
 use crate::evidence::admit_receipt;
 use crate::{Battery, EvidenceError, PayloadError, admit, verify_stored};
 
-const DATA_MODE: u32 = 0o644;
+pub(crate) const DATA_MODE: u32 = 0o644;
 const MANIFEST_POINTER: &str = "release/manifest.json";
 const TARGETS: [ReleaseTarget; 3] = [
     ReleaseTarget::Aarch64AppleDarwin,
@@ -45,59 +45,6 @@ pub struct PublishedManifest {
     pub bytes: Vec<u8>,
     pub digest: Digest,
     pub pointer: PathBuf,
-}
-
-/// Durable publication seam used by the filesystem and interruption fixtures.
-pub trait ManifestPublisher {
-    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8])
-    -> Result<(), ManifestPublishError>;
-}
-
-/// Atomic filesystem publication rooted at one exact release directory.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileManifestPublisher {
-    root: PathBuf,
-}
-
-impl FileManifestPublisher {
-    #[must_use]
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-}
-
-impl ManifestPublisher for FileManifestPublisher {
-    fn publish(
-        &mut self,
-        path: &Path,
-        mode: u32,
-        bytes: &[u8],
-    ) -> Result<(), ManifestPublishError> {
-        validate_relative(path)?;
-        let destination = self.root.join(path);
-        let parent = destination
-            .parent()
-            .ok_or_else(|| ManifestPublishError::InvalidPath(path.to_path_buf()))?;
-        fs::create_dir_all(parent).map_err(|source| ManifestPublishError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-        let mut staged = atomic::Destination::new(&destination)?.stage()?;
-        staged
-            .write_all(bytes)
-            .map_err(|source| ManifestPublishError::Io {
-                path: staged.temporary_path().to_path_buf(),
-                source,
-            })?;
-        set_mode(staged.temporary_path(), mode)?;
-        staged.commit()?;
-        Ok(())
-    }
 }
 
 /// Admit the current fixed manifest pointer and every object it names.
@@ -376,10 +323,12 @@ fn read_regular(
     relative: &Path,
     label: &'static str,
 ) -> Result<Vec<u8>, ManifestAdmissionError> {
-    validate_relative(relative).map_err(|_| ManifestAdmissionError::OutsideRoot {
-        label,
-        path: relative.to_path_buf(),
-    })?;
+    if !atomic::is_rooted_path(relative) {
+        return Err(ManifestAdmissionError::OutsideRoot {
+            label,
+            path: relative.to_path_buf(),
+        });
+    }
     let mut component_path = root.to_path_buf();
     for component in relative
         .parent()
@@ -449,7 +398,7 @@ pub fn publish_manifest<'a, I, P>(
 ) -> Result<PublishedManifest, ManifestError>
 where
     I: IntoIterator<Item = ManifestInput<'a>>,
-    P: ManifestPublisher,
+    P: atomic::RootedPublish,
 {
     let inputs = inputs.into_iter().collect::<Vec<_>>();
     if inputs.len() != TARGETS.len() {
@@ -557,35 +506,6 @@ fn object_path(kind: &str, digest: &Digest) -> PathBuf {
     PathBuf::from(format!("objects/{kind}-{digest}.json"))
 }
 
-fn validate_relative(path: &Path) -> Result<(), ManifestPublishError> {
-    let valid = !path.as_os_str().is_empty()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)));
-    if valid {
-        Ok(())
-    } else {
-        Err(ManifestPublishError::InvalidPath(path.to_path_buf()))
-    }
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> Result<(), ManifestPublishError> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|source| {
-        ManifestPublishError::Io {
-            path: path.to_path_buf(),
-            source,
-        }
-    })
-}
-
-#[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: u32) -> Result<(), ManifestPublishError> {
-    Ok(())
-}
-
 #[derive(Debug)]
 pub enum ManifestError {
     EntryCount(usize),
@@ -613,7 +533,7 @@ pub enum ManifestError {
     Encode(String),
     Publish {
         path: PathBuf,
-        source: ManifestPublishError,
+        source: atomic::Error,
     },
 }
 
@@ -833,53 +753,6 @@ impl Error for ManifestAdmissionError {
             Self::Receipt { source, .. } => Some(source),
             _ => None,
         }
-    }
-}
-
-#[derive(Debug)]
-pub enum ManifestPublishError {
-    InvalidPath(PathBuf),
-    Guard(String),
-    Io { path: PathBuf, source: io::Error },
-    Atomic(atomic::Error),
-}
-
-impl fmt::Display for ManifestPublishError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPath(path) => {
-                write!(formatter, "invalid manifest path {}", path.display())
-            }
-            Self::Guard(reason) => {
-                write!(formatter, "manifest publication guard refused: {reason}")
-            }
-            Self::Io { path, source } => {
-                write!(
-                    formatter,
-                    "manifest I/O failed at {}: {source}",
-                    path.display()
-                )
-            }
-            Self::Atomic(source) => {
-                write!(formatter, "manifest atomic publication failed: {source}")
-            }
-        }
-    }
-}
-
-impl Error for ManifestPublishError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Io { source, .. } => Some(source),
-            Self::Atomic(source) => Some(source),
-            Self::InvalidPath(_) | Self::Guard(_) => None,
-        }
-    }
-}
-
-impl From<atomic::Error> for ManifestPublishError {
-    fn from(source: atomic::Error) -> Self {
-        Self::Atomic(source)
     }
 }
 

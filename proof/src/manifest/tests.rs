@@ -10,9 +10,11 @@ use wire::manifest::{
 };
 use wire::{Digest, Domain};
 
+use atomic::{RootedFiles, RootedPublish};
+
 use super::{
-    FileManifestPublisher, MANIFEST_POINTER, ManifestAdmissionError, ManifestError, ManifestInput,
-    ManifestPublishError, ManifestPublisher, admit_manifest, object_path, publish_manifest,
+    MANIFEST_POINTER, ManifestAdmissionError, ManifestError, ManifestInput, admit_manifest,
+    object_path, publish_manifest,
 };
 use crate::{Battery, CheckKind, CheckStanding, EvidenceError, ReplayVerdict};
 
@@ -32,19 +34,16 @@ struct MemoryPublisher {
     fail_at: Option<usize>,
 }
 
-impl ManifestPublisher for MemoryPublisher {
-    fn publish(
-        &mut self,
-        path: &Path,
-        mode: u32,
-        bytes: &[u8],
-    ) -> Result<(), ManifestPublishError> {
+impl RootedPublish for MemoryPublisher {
+    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8]) -> Result<(), atomic::Error> {
         let attempt = self.writes.len();
         self.writes.push(path.to_path_buf());
         if self.fail_at == Some(attempt) {
-            return Err(ManifestPublishError::Io {
+            return Err(atomic::Error::Io {
+                operation: atomic::Operation::Replace,
                 path: path.to_path_buf(),
                 source: io::Error::other("fixture interruption"),
+                cleanup: None,
             });
         }
         self.files
@@ -288,7 +287,7 @@ fn filesystem_publication_commits_exact_objects_and_pointer() {
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
     let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
     let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source, true);
-    let mut publisher = FileManifestPublisher::new(&scratch.root);
+    let mut publisher = RootedFiles::new(&scratch.root);
 
     let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
         .expect("filesystem publication succeeds");
@@ -362,7 +361,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     let expected: TargetPayload = wire::decode(&darwin.payload).expect("payload decodes");
 
     let missing = Scratch::new();
-    let mut publisher = FileManifestPublisher::new(&missing.root);
+    let mut publisher = RootedFiles::new(&missing.root);
     let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
         .expect("fixture publishes");
     fs::remove_file(missing.root.join(object_path(
@@ -381,7 +380,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     ));
 
     let stale = Scratch::new();
-    let mut publisher = FileManifestPublisher::new(&stale.root);
+    let mut publisher = RootedFiles::new(&stale.root);
     publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher).expect("fixture publishes");
     let mut pointer: ReleaseManifest =
         wire::decode(&fs::read(stale.root.join(MANIFEST_POINTER)).expect("read pointer"))
@@ -403,7 +402,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     ));
 
     let divergent = Scratch::new();
-    let mut publisher = FileManifestPublisher::new(&divergent.root);
+    let mut publisher = RootedFiles::new(&divergent.root);
     let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
         .expect("fixture publishes");
     let mut manifest = published.manifest;
@@ -431,7 +430,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     ));
 
     let mixed = Scratch::new();
-    let mut publisher = FileManifestPublisher::new(&mixed.root);
+    let mut publisher = RootedFiles::new(&mixed.root);
     let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
         .expect("fixture publishes");
     fs::write(
@@ -451,26 +450,6 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
         ),
         Err(ManifestAdmissionError::Binding { .. })
     ));
-}
-
-#[test]
-fn filesystem_publisher_refuses_every_path_outside_its_root() {
-    let scratch = Scratch::new();
-    let mut publisher = FileManifestPublisher::new(&scratch.root);
-
-    for path in [Path::new(""), Path::new("../escape"), Path::new("/escape")] {
-        assert!(matches!(
-            publisher.publish(path, 0o644, b"escape"),
-            Err(ManifestPublishError::InvalidPath(observed)) if observed == path
-        ));
-    }
-    assert_eq!(
-        fs::read_dir(&scratch.root)
-            .expect("scratch remains readable")
-            .count(),
-        0,
-        "a refused path creates nothing"
-    );
 }
 
 struct Scratch {

@@ -155,6 +155,14 @@ with a clean, mutually consistent receipt, or no release. Content-addressed
 objects publish before the sole manifest pointer, so a reader sees the prior or
 the new complete seal, never a pointer to missing proof.
 
+**Invariant —** Staged artifacts and target payload pointers, proof receipts,
+and release manifest objects and pointer all publish through one rooted
+regular-file boundary. A path must be relative and stay beneath its root; an
+ancestor that is a symlink or not a directory, or a destination that is not a
+regular file, refuses before mutation. Bytes and their exact mode land in a
+private same-directory file that replaces the destination only once complete,
+so an interrupted publication leaves the prior file or none.
+
 ### Ephemeral native Windows execution
 
 The repository's Windows execution boundary is a fresh GitHub-hosted

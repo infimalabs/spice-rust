@@ -12,10 +12,8 @@ use std::time::Duration;
 
 use crate::app::PINNED_TRUNK;
 
-use dist::{
-    BuildError, Builder, Canvas, FilePublisher, Pipeline, PublishError, Publisher, RequiredPins,
-    StagedTarget,
-};
+use atomic::{RootedFiles, RootedPublish};
+use dist::{BuildError, Builder, Canvas, Pipeline, RequiredPins, StagedTarget};
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
@@ -373,7 +371,7 @@ fn stage_with_roots<E: Executor>(
         executable: None,
     };
     let mut publisher = GuardedPublisher {
-        inner: FilePublisher::new(stage_root),
+        inner: RootedFiles::new(stage_root),
         source: &source,
         required: &required,
         programs,

@@ -102,7 +102,7 @@ fn release_output(path: &str) -> bool {
 }
 
 pub(super) struct GuardedPublisher<'a, E> {
-    pub(super) inner: FilePublisher,
+    pub(super) inner: RootedFiles,
     pub(super) source: &'a SourceGuard,
     pub(super) required: &'a RequiredPins,
     pub(super) programs: &'a Programs,
@@ -110,28 +110,29 @@ pub(super) struct GuardedPublisher<'a, E> {
     pub(super) executor: &'a E,
 }
 
-impl<E: Executor> Publisher for GuardedPublisher<'_, E> {
-    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8]) -> Result<(), PublishError> {
+impl<E: Executor> GuardedPublisher<'_, E> {
+    /// The source and toolchain pins still match those the build began with.
+    fn verify_unmoved(&self) -> Result<(), String> {
+        self.source
+            .verify(self.executor)
+            .map_err(|error| error.to_string())?;
+        let observed = observe_pins(self.executor, self.programs, self.target)
+            .map_err(|error| error.to_string())?;
+        self.required
+            .verify(&observed)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl<E: Executor> RootedPublish for GuardedPublisher<'_, E> {
+    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8]) -> Result<(), atomic::Error> {
         if path.starts_with("targets") && path.file_name() == Some(OsStr::new("payload.json")) {
-            self.source
-                .verify(self.executor)
-                .map_err(|error| PublishError::Guard {
+            self.verify_unmoved().map_err(|reason| {
+                atomic::Error::Refused(atomic::Refusal::Withheld {
                     path: path.to_path_buf(),
-                    reason: error.to_string(),
-                })?;
-            let observed =
-                observe_pins(self.executor, self.programs, self.target).map_err(|error| {
-                    PublishError::Guard {
-                        path: path.to_path_buf(),
-                        reason: error.to_string(),
-                    }
-                })?;
-            self.required
-                .verify(&observed)
-                .map_err(|error| PublishError::Guard {
-                    path: path.to_path_buf(),
-                    reason: error.to_string(),
-                })?;
+                    reason,
+                })
+            })?;
         }
         self.inner.publish(path, mode, bytes)
     }

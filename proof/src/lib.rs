@@ -119,8 +119,7 @@ pub use evidence::{
 };
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
 pub use manifest::{
-    FileManifestPublisher, ManifestAdmissionError, ManifestError, ManifestInput,
-    ManifestPublishError, ManifestPublisher, PublishedManifest, admit_manifest,
+    ManifestAdmissionError, ManifestError, ManifestInput, PublishedManifest, admit_manifest,
     admit_proof_manifest, publish_manifest,
 };
 pub use native::{NativeError, NativeRunner};

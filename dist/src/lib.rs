@@ -26,8 +26,5 @@ pub use release::{
     OperationReceipt, OperationState, PlanError, PlanInput, RegistryEvidence, ReleaseAction,
     ReleaseExecutor, ReleaseJournal, ReleaseObservations, ReleasePlan, SealedTarget, plan_release,
 };
-pub use stage::{
-    BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,
-    StagedTarget,
-};
+pub use stage::{BuildError, BuildStep, Builder, Pipeline, StageError, StagedTarget};
 pub use wire::manifest::ProductVersion;

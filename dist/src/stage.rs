@@ -1,10 +1,8 @@
 //! Ordered builds and manifest-last atomic staging.
 
-use std::fs;
-use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 
-use atomic::Destination;
+use atomic::RootedPublish;
 use wire::manifest::{
     BuildPins, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, MacSymbolMetadata,
     ProductVersion, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
@@ -65,51 +63,6 @@ pub trait Builder {
     }
 }
 
-/// Publication boundary used by the real stage and interruption fixtures.
-pub trait Publisher {
-    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8]) -> Result<(), PublishError>;
-}
-
-/// Filesystem publication rooted at one canonical stage directory.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FilePublisher {
-    root: PathBuf,
-}
-
-impl FilePublisher {
-    #[must_use]
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
-    }
-
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-}
-
-impl Publisher for FilePublisher {
-    fn publish(&mut self, path: &Path, mode: u32, bytes: &[u8]) -> Result<(), PublishError> {
-        validate_relative(path)?;
-        let destination = self.root.join(path);
-        let parent = destination
-            .parent()
-            .ok_or_else(|| PublishError::InvalidPath(path.to_path_buf()))?;
-        fs::create_dir_all(parent).map_err(|source| PublishError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-        let mut staged = Destination::new(&destination)?.stage()?;
-        staged.write_all(bytes).map_err(|source| PublishError::Io {
-            path: staged.temporary_path().to_path_buf(),
-            source,
-        })?;
-        set_mode(staged.temporary_path(), mode)?;
-        staged.commit()?;
-        Ok(())
-    }
-}
-
 /// One completed, receipt-free target stage.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StagedTarget {
@@ -146,7 +99,7 @@ impl Pipeline {
     /// Refuses pin drift before calling the builder, names the failed build
     /// step, and preserves a previously published payload when object
     /// publication is interrupted.
-    pub fn stage<B: Builder, P: Publisher>(
+    pub fn stage<B: Builder, P: RootedPublish>(
         &self,
         target: ReleaseTarget,
         source: Digest,
@@ -191,22 +144,12 @@ pub enum StageError {
     #[error("{step:?} build failed: {source}")]
     Build { step: BuildStep, source: BuildError },
     #[error("failed to publish {path}: {source}")]
-    Publish { path: PathBuf, source: PublishError },
+    Publish {
+        path: PathBuf,
+        source: atomic::Error,
+    },
     #[error("target payload encoding failed: {0}")]
     Encode(#[from] serde_json::Error),
-}
-
-/// A typed publication failure.
-#[derive(Debug, thiserror::Error)]
-pub enum PublishError {
-    #[error("stage path must be relative and contain no parent traversal: {0}")]
-    InvalidPath(PathBuf),
-    #[error("stage publication refused at {path}: {reason}")]
-    Guard { path: PathBuf, reason: String },
-    #[error("stage I/O failed at {path}: {source}")]
-    Io { path: PathBuf, source: io::Error },
-    #[error(transparent)]
-    Atomic(#[from] atomic::Error),
 }
 
 #[derive(Clone, Debug)]
@@ -390,7 +333,7 @@ fn inventory_entry(artifact: &Artifact) -> InventoryEntry {
     }
 }
 
-fn publish_artifacts<P: Publisher>(
+fn publish_artifacts<P: RootedPublish>(
     publisher: &mut P,
     artifacts: &[Artifact],
 ) -> Result<(), StageError> {
@@ -407,35 +350,4 @@ fn publish_artifacts<P: Publisher>(
 
 fn object_path(artifact: &Artifact) -> PathBuf {
     PathBuf::from(format!("objects/{}-{:04o}", artifact.digest, artifact.mode))
-}
-
-fn validate_relative(path: &Path) -> Result<(), PublishError> {
-    let valid = !path.as_os_str().is_empty()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)));
-    if valid {
-        Ok(())
-    } else {
-        Err(PublishError::InvalidPath(path.to_path_buf()))
-    }
-}
-
-fn set_mode(path: &Path, mode: u32) -> Result<(), PublishError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|source| {
-            PublishError::Io {
-                path: path.to_path_buf(),
-                source,
-            }
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-        Ok(())
-    }
 }

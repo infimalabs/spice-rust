@@ -19,6 +19,9 @@ const CREATE_ATTEMPTS: usize = 128;
 const TEMPORARY_PREFIX: &str = ".spice-atomic-";
 const TEMPORARY_SUFFIX: &str = ".tmp";
 
+mod rooted;
+pub use rooted::{RootedFiles, RootedPublish, is_rooted_path};
+
 /// Whether a path carries the exact temporary filename emitted by this crate.
 ///
 /// This recognizes the name without reading or resolving the path, so a
@@ -285,18 +288,28 @@ pub enum Refusal {
     SourceIsDestination { path: PathBuf },
     /// Prepared publication accepts regular files only.
     SourceIsNotRegularFile { source: PathBuf },
+    /// A rooted path is empty, absolute, or climbs out of its root.
+    PathNotRooted { path: PathBuf },
+    /// A directory beneath the root is a symlink or not a directory.
+    AncestorNotDirectory { path: PathBuf },
+    /// The destination exists as something other than a regular file.
+    DestinationNotRegularFile { destination: PathBuf },
+    /// A publisher layered over this seam declined before any mutation.
+    Withheld { path: PathBuf, reason: String },
 }
 
 /// The filesystem operation associated with an I/O failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
     ResolveDestination,
+    PrepareDirectory,
     ResolveSource,
     CreateTemporary,
     WriteTemporary,
     InspectSource,
     OpenSource,
     SyncFile,
+    SetMode,
     Replace,
     SyncDirectory,
 }
@@ -305,12 +318,14 @@ impl fmt::Display for Operation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::ResolveDestination => "resolve destination directory",
+            Self::PrepareDirectory => "prepare destination directory",
             Self::ResolveSource => "resolve source directory",
             Self::CreateTemporary => "create temporary file",
             Self::WriteTemporary => "write temporary file",
             Self::InspectSource => "inspect source file",
             Self::OpenSource => "open source file",
             Self::SyncFile => "sync file",
+            Self::SetMode => "set file mode",
             Self::Replace => "replace destination",
             Self::SyncDirectory => "sync parent directory",
         })
@@ -417,6 +432,24 @@ impl fmt::Display for Refusal {
                     "source {} is not a regular file",
                     source.display()
                 )
+            }
+            Self::PathNotRooted { path } => write!(
+                formatter,
+                "path {} is not a nonempty relative path beneath its root",
+                path.display()
+            ),
+            Self::AncestorNotDirectory { path } => write!(
+                formatter,
+                "{} is a symlink or not a directory",
+                path.display()
+            ),
+            Self::DestinationNotRegularFile { destination } => write!(
+                formatter,
+                "destination {} exists and is not a regular file",
+                destination.display()
+            ),
+            Self::Withheld { path, reason } => {
+                write!(formatter, "{} was withheld: {reason}", path.display())
             }
         }
     }
@@ -719,10 +752,10 @@ mod tests {
     // helper needs a workspace member and an atomic dev-dependency. The gate lattice
     // test filters Cargo.lock to workspace members, so that edge would change its
     // deliberate `("atomic", &[])` row.
-    struct TestDirectory(PathBuf);
+    pub(crate) struct TestDirectory(PathBuf);
 
     impl TestDirectory {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             for _ in 0..CREATE_ATTEMPTS {
                 let sequence = NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed);
                 let path = std::env::temp_dir().join(format!(
@@ -738,11 +771,11 @@ mod tests {
             panic!("test directory attempts exhausted");
         }
 
-        fn path(&self) -> &Path {
+        pub(crate) fn path(&self) -> &Path {
             &self.0
         }
 
-        fn entries(&self) -> Vec<OsString> {
+        pub(crate) fn entries(&self) -> Vec<OsString> {
             let mut entries = fs::read_dir(&self.0)
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name())
