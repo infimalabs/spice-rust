@@ -174,11 +174,16 @@ fn commit_doc_plan(
     plan: &DocPlan,
 ) -> Outcome<CommandAnswer> {
     let intrinsic = wire::TaskProvenance::Document(apply.preview.clone());
-    let origin =
-        match resolve_creation_origin(None, command.actor(), &plan.snapshot, Some(intrinsic)) {
-            Ok(origin) => origin,
-            Err(outcome) => return outcome,
-        };
+    let origin = match resolve_creation_origin(
+        None,
+        command.actor(),
+        &plan.snapshot,
+        Some(intrinsic),
+        false,
+    ) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
