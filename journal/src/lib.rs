@@ -49,8 +49,9 @@
 /// creation context on the registered transcript stream or a current
 /// unavailable reason, retires the gather route, and gates every retained
 /// pending direct Design output on its Design. Schema 86 indexes each steering
-/// head's room as a typed column for newest-route lookup.
-pub const SCHEMA_VERSION: u32 = 86;
+/// head's room as a typed column for newest-route lookup. Schema 87 retires
+/// required question-result evidence from task statements.
+pub const SCHEMA_VERSION: u32 = 87;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

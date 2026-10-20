@@ -645,7 +645,6 @@ mod tests {
             .expect("task fact");
         write.task_head(fact, move |position| TaskHead {
             preparation: None,
-            evidence: Vec::new(),
             intent: None,
             born: born(),
             queue_origin: position,

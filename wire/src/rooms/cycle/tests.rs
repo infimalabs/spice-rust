@@ -112,7 +112,6 @@ fn proposed(micros: i64, outputs: Vec<TaskStamp>) -> AnyFact {
                     fact: SequenceCode::new(1),
                 },
             }],
-            evidence: Vec::new(),
         },
     })
 }

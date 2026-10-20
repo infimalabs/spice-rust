@@ -97,7 +97,6 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Sealed { .. }
         | Witness::Source { .. }
         | Witness::Delivery { .. }
-        | Witness::Question { .. }
         | Witness::Transition { .. } => Err(GuardError::Invalid(
             "board transaction carried a witness outside its authority plane".to_owned(),
         )),

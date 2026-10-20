@@ -121,7 +121,6 @@ impl Lanes {
             .fact(
                 wire::body::TaskEdited {
                     intent: None,
-                    evidence: None,
                     task,
                     revision: 2,
                     dependencies: None,

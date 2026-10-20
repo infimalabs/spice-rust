@@ -276,7 +276,6 @@ fn retained(
                         fact: wire::SequenceCode::new(1),
                     },
                 }],
-                evidence: Vec::new(),
                 justification: "the cited contract supports this pass".to_owned(),
             },
         },

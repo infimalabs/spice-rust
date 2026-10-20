@@ -86,7 +86,6 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
         Actor::Operator,
         &TaskEdit {
             intent: None,
-            evidence: None,
             task: original.clone(),
             title: None,
             description: None,
@@ -194,7 +193,6 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
             Actor::Operator,
             &TaskEdit {
                 intent: None,
-                evidence: None,
                 task: task.clone(),
                 title: None,
                 description: Some("what the task actually means".to_owned()),
@@ -214,7 +212,6 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
             lane.clone(),
             &TaskEdit {
                 intent: None,
-                evidence: None,
                 task: task.clone(),
                 title: None,
                 description: None,
@@ -360,7 +357,6 @@ fn a_live_claimed_correction_moves_neither_claim_nor_lease() {
             lane.clone(),
             &TaskEdit {
                 intent: None,
-                evidence: None,
                 task: task.clone(),
                 title: Some("Corrected title".to_owned()),
                 description: Some("Corrected description".to_owned()),
@@ -408,7 +404,6 @@ fn a_settled_task_refuses_a_correction() {
         Actor::Operator,
         &TaskEdit {
             intent: None,
-            evidence: None,
             task: task.clone(),
             title: Some("Rewrite what already shipped".to_owned()),
             description: None,
@@ -456,7 +451,6 @@ fn a_correction_naming_no_field_is_refused() {
         Actor::Operator,
         &TaskEdit {
             intent: None,
-            evidence: None,
             task: task.clone(),
             title: None,
             description: None,
@@ -506,7 +500,6 @@ fn a_correction_to_an_unknown_task_is_refused() {
         vec![statement_witness(heads)],
         &TaskEdit {
             intent: None,
-            evidence: None,
             task: missing.clone(),
             title: Some("Correct a task that was never filed".to_owned()),
             description: None,
@@ -531,7 +524,6 @@ fn a_correction_to_an_unknown_task_is_refused() {
 pub(super) fn only(task: &TaskHandle) -> TaskEdit {
     TaskEdit {
         intent: None,
-        evidence: None,
         task: task.clone(),
         title: None,
         description: None,

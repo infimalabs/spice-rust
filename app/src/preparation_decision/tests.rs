@@ -30,7 +30,6 @@ fn candidate() -> DesignPassProposal {
                 fact: SequenceCode::new(40),
             },
         }],
-        evidence: Vec::new(),
         justification: "the evidence supports this pass".to_owned(),
     }
 }

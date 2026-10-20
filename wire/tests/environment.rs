@@ -343,7 +343,6 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
     let roles = wire::principal::PrincipalRoles::default();
     let edit = wire::intent::TaskEdit {
         intent: None,
-        evidence: None,
         task,
         title: None,
         description: None,

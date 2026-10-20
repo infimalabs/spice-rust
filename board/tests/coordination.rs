@@ -97,7 +97,6 @@ fn statement(name: &str) -> TaskHead {
     let born = stamp(name);
     TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: born.clone(),
         queue_origin: seq(1),

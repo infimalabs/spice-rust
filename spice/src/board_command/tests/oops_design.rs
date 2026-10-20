@@ -264,7 +264,6 @@ fn oops_decision_refuses_when_a_previewed_line_head_moves() {
             acceptance: Vec::new(),
             requirements: None,
             intent: None,
-            evidence: None,
             priority: None,
             project: None,
             flow: None,

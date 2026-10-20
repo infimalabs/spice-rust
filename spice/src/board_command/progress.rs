@@ -121,9 +121,6 @@ pub(super) fn task_done(
             Ok(value) => value,
             Err(outcome) => return outcome,
         };
-    if let Err(outcome) = evidence::require_answered(bus, entry) {
-        return outcome;
-    }
     let source = match bus.source_boundary(&lane) {
         Ok(source) => source,
         Err(error) => {
@@ -819,9 +816,6 @@ fn prepare_review(
         .source_boundary(&lane)
         .map_err(|error| store_fault("review::boundary-unreadable", &error.to_string()))?;
     let (verdict, finding, note) = review_verdict(review)?;
-    if verdict == body::Verdict::Clean {
-        evidence::require_answered(bus, entry)?;
-    }
     let statement = match verdict {
         body::Verdict::Clean => {
             admit_plan_transition(&snapshot, entry, command, &transition, None)?;
@@ -1047,7 +1041,6 @@ fn append_review_statement(
         .fact(
             body::TaskEdited {
                 intent: None,
-                evidence: None,
                 task: entry.born().clone(),
                 revision,
                 dependencies,

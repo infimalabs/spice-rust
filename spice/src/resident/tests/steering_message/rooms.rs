@@ -84,7 +84,6 @@ impl Lanes {
         seed.task_head(added, move |position| wire::TaskHead {
             preparation: None,
             intent,
-            evidence: Vec::new(),
             born,
             queue_origin: position,
             title,

@@ -908,7 +908,6 @@ fn client_modify(
             vec![statement_witness(heads)],
             serde_json::to_value(TaskEdit {
                 intent,
-                evidence: None,
                 task,
                 title,
                 description,

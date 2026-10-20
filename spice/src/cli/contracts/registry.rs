@@ -985,8 +985,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "require"],
         "task require HANDLE [--journal-schema SCHEMA] [--trust-grant DIGEST] \
-         [--appliance-after [VERSION]] [--clear] [--evidence RESULT] [--replace RESULT] \
-         [--with RESULT] [--waive RESULT]",
+         [--appliance-after [VERSION]] [--clear]",
         OperatorOrLane,
         Command,
         [TaskEdited],

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::envelope::{Actor, Seq};
 use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest};
-use crate::rooms::{ProposalRef, QuestionResultRef, RoomReceiptRef};
+use crate::rooms::{ProposalRef, RoomReceiptRef};
 
 pub(crate) const TASK_STAMP_ALPHABET: &[u8; 52] =
     b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
@@ -746,18 +746,6 @@ pub enum Witness {
         )]
         head: Option<Seq>,
     },
-    /// One ASK's distinct substantive result head.
-    Question {
-        /// Public result handle, also the ASK's delivery key.
-        result: QuestionResultRef,
-        /// Current result head, absent before the ASK opens.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "crate::optional::present"
-        )]
-        head: Option<Seq>,
-    },
     /// The resident lifecycle edge the command requests.
     Transition {
         /// State the resident currently occupies.
@@ -835,8 +823,6 @@ pub enum WitnessKind {
     Authorization,
     /// One directed route's semantic receipt head.
     Delivery,
-    /// One ASK's substantive result head.
-    Question,
     /// A resident lifecycle edge.
     Transition,
 }
@@ -875,7 +861,6 @@ impl WitnessKind {
         Self::Proposal,
         Self::Authorization,
         Self::Delivery,
-        Self::Question,
         Self::Transition,
     ];
 }
@@ -914,7 +899,6 @@ impl Witness {
             Self::Proposal { .. } => WitnessKind::Proposal,
             Self::Authorization { .. } => WitnessKind::Authorization,
             Self::Delivery { .. } => WitnessKind::Delivery,
-            Self::Question { .. } => WitnessKind::Question,
             Self::Transition { .. } => WitnessKind::Transition,
         }
     }

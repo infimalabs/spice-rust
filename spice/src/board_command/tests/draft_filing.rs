@@ -49,7 +49,6 @@ fn edit(task: &TaskHandle) -> TaskEdit {
         acceptance: Vec::new(),
         requirements: None,
         intent: None,
-        evidence: None,
         priority: None,
         project: None,
         flow: None,

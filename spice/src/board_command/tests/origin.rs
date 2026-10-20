@@ -316,7 +316,6 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
         vec![statement_witness(at(&current, &child))],
         &TaskEdit {
             intent: None,
-            evidence: None,
             task: child.clone(),
             title: Some("Create the same causal child after correction".to_owned()),
             description: None,

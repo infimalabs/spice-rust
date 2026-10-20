@@ -130,82 +130,6 @@ impl TaskIntentEdit {
     }
 }
 
-/// One explicit change to the question results a task requires answered.
-///
-/// Omission means unchanged. Requiring adds one correlated result; replacing
-/// or waiving one already required is its own spelling, so no statement
-/// correction can drop required evidence by accident.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
-pub enum TaskEvidenceEdit {
-    /// Require this result answered before positive phase completion.
-    Require {
-        /// Result asked in this task's room.
-        result: crate::rooms::QuestionResultRef,
-    },
-    /// Replace one required result with another asked in this task's room.
-    Replace {
-        /// Currently required result.
-        result: crate::rooms::QuestionResultRef,
-        /// Result required in its place.
-        with: crate::rooms::QuestionResultRef,
-    },
-    /// Stop requiring one result.
-    Waive {
-        /// Currently required result.
-        result: crate::rooms::QuestionResultRef,
-    },
-}
-
-impl TaskEvidenceEdit {
-    /// Required results after applying this change to `current`, or the
-    /// reason it does not apply.
-    ///
-    /// # Errors
-    ///
-    /// Requiring a result already required, or replacing or waiving one that
-    /// is not, names the mismatch.
-    pub fn apply(
-        &self,
-        current: &[crate::rooms::QuestionResultRef],
-    ) -> Result<Vec<crate::rooms::QuestionResultRef>, String> {
-        let mut next = current.to_vec();
-        if let Some(released) = self.released() {
-            let Some(index) = next.iter().position(|required| required == released) else {
-                return Err(format!("result {released} is not required"));
-            };
-            next.remove(index);
-        }
-        if let Some(required) = self.required() {
-            if next.contains(required) || self.released() == Some(required) {
-                return Err(format!("result {required} is already required"));
-            }
-            next.push(required.clone());
-            next.sort();
-        }
-        Ok(next)
-    }
-
-    /// The required result this change replaces or waives, when it releases
-    /// one; releasing required evidence needs operator authority.
-    #[must_use]
-    pub const fn released(&self) -> Option<&crate::rooms::QuestionResultRef> {
-        match self {
-            Self::Replace { result, .. } | Self::Waive { result } => Some(result),
-            Self::Require { .. } => None,
-        }
-    }
-
-    /// The result this change newly requires, when it requires one.
-    #[must_use]
-    pub const fn required(&self) -> Option<&crate::rooms::QuestionResultRef> {
-        match self {
-            Self::Require { result } | Self::Replace { with: result, .. } => Some(result),
-            Self::Waive { .. } => None,
-        }
-    }
-}
-
 /// Explicit association for preparation within an existing planning context.
 ///
 /// An unassociated Plan or Design owns its own controller and construction
@@ -503,14 +427,6 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<TaskPreparation>,
-    /// Question results, asked in this task's room, that must be answered
-    /// before any positive phase completion; answered means available for
-    /// assessment, never accepted.
-    ///
-    /// Only an explicit [`TaskEvidenceEdit`] admitted through a statement
-    /// correction moves it, in canonical order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub evidence: Vec<crate::rooms::QuestionResultRef>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::TaskProvenance,
     /// Creation-time transcript authority, immutable across statement revisions.

@@ -48,18 +48,6 @@ impl Projection {
                 heads.insert(room, (seq, body));
             }
             Change::Conversation(edit) => self.conversation.apply(edit),
-            Change::Evidence {
-                task,
-                released,
-                required,
-            } => {
-                if let Some(result) = released {
-                    self.evidence.remove(&(task.clone(), result));
-                }
-                if let Some((result, seq)) = required {
-                    self.evidence.insert((task, result), seq);
-                }
-            }
             Change::Relevance(edit) => self.relevance.apply(edit),
             Change::MaturityNotice { seq, notice } => {
                 self.notices.insert((notice.design.to_string(), seq), ());

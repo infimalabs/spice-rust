@@ -31,7 +31,6 @@ mod claims;
 mod conversation;
 mod coordination;
 mod dependencies;
-mod evidence;
 mod history;
 mod hunk;
 mod packets;
@@ -50,7 +49,6 @@ pub(crate) use coordination::{
     Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
     require_writes as require_coordination_writes,
 };
-pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
 pub(crate) use history::History;
 use hunk::require_hunk;
 pub(crate) use packets::require_packet_routes;
@@ -215,8 +213,6 @@ pub(crate) struct Projection {
     pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
     /// Conversation publications with their operator item and result heads.
     pub(crate) conversation: conversation::Heads,
-    /// `(task, result)` required evidence to the position that required it.
-    pub(crate) evidence: BTreeMap<(String, String), u64>,
     /// Append-only shadow relevance observations and operator assessments.
     pub(crate) relevance: relevance::Heads,
 }
@@ -310,8 +306,6 @@ pub(crate) trait Authority {
     fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal>;
     /// One question result head by its handle.
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal>;
-    /// Results one task currently requires answered, in canonical order.
-    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal>;
     /// How many question results one requester holds pending.
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal>;
     /// One shadow relevance observation by stable identity.
@@ -368,11 +362,6 @@ pub(crate) enum Change {
         body: Vec<u8>,
     },
     Conversation(conversation::Edit),
-    Evidence {
-        task: String,
-        released: Option<String>,
-        required: Option<(String, u64)>,
-    },
     Relevance(relevance::Edit),
     MaturityNotice {
         seq: u64,

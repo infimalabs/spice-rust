@@ -89,9 +89,9 @@ task handles instead, and `preparation nudge` one open Design's handle.
   unique `outputs` plus any `governed_inputs`, while conclude and collapse name
   neither. Every work output must carry acceptance and still depend on the
   Design; any intent qualifies. `justification` is nonblank and `references`
-  contains at least one `{"relation": NAME, "source": SOURCE}`; optional
-  `evidence` retains question results. Inputs and outputs are unique and
-  disjoint. Every reference must lie in the controlling Design's scope: a
+  contains at least one `{"relation": NAME, "source": SOURCE}`. Inputs and
+  outputs are unique and disjoint. Every reference must lie in the
+  controlling Design's scope: a
   contribution in its room, or a journal fact of its room, the Design, a
   governed input, an output, or a task prepared under it. The command records
   the immutable proposal and releases that exact claim atomically.
@@ -156,7 +156,6 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Post to a deleted room | any anchor that is not deleted, settled included | `room::anchor-deleted`, naming the standing: a deleted anchor's room stays readable, and its open receipts and results still settle |
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
-| Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
 | Terminal Design or negative Plan settlement | every pending downstream dependency branch closes in the same transaction | a held branch refuses `task::controlled-descendant-claimed` and names its holder unless explicit force is permitted |
 | Candidate or decision controller | an open Design | `preparation::controller-not-design` or `preparation::controller-concluded`: a Plan's outputs follow its positive review |
 | Selecting Design outputs | no pending Design dependency, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |

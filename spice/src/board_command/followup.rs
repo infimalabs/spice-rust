@@ -496,7 +496,6 @@ fn create_followup(
     let (flow, phase, taste) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
         preparation: planning::correction_preparation(context.reviewed_task),
-        evidence: Vec::new(),
         intent: followup
             .add
             .intent

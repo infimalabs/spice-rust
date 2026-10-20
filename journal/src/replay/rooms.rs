@@ -120,12 +120,6 @@ pub(super) fn verify(
         &stored.conversation.results,
         violations,
     );
-    compare(
-        "task_evidence",
-        &expected.evidence,
-        &stored.evidence,
-        violations,
-    );
     Ok(usize::from(stored.partition.is_some())
         + stored.notices.len()
         + stored.maturity.len()
@@ -136,8 +130,7 @@ pub(super) fn verify(
         + stored.shelved.len()
         + stored.conversation.publications.len()
         + stored.conversation.items.len()
-        + stored.conversation.results.len()
-        + stored.evidence.len())
+        + stored.conversation.results.len())
 }
 
 fn compare<K: Ord + Debug, V: PartialEq>(

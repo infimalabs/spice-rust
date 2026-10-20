@@ -25,7 +25,6 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
     let origin = wire::TaskProvenance::Task(task.clone());
     let statement = TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: task,
         queue_origin: Seq::new(1).expect("nonzero sequence"),

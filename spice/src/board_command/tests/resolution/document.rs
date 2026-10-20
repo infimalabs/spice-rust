@@ -558,7 +558,6 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
         vec![statement_witness(at(&visible, &task))],
         &TaskEdit {
             intent: None,
-            evidence: None,
             task: task.clone(),
             title: None,
             description: None,

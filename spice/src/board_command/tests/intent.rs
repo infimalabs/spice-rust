@@ -44,7 +44,6 @@ fn edit(task: &TaskHandle) -> TaskEdit {
         priority: None,
         project: None,
         intent: None,
-        evidence: None,
         flow: None,
     }
 }

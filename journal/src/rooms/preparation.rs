@@ -8,8 +8,8 @@ use wire::rooms::{
 use wire::{Actor, Seq, TaskStamp};
 
 use super::{
-    Authority, AuthorizationRow, Change, Refusal, evidence, record, require_proposal,
-    require_source, require_task, subject, unsound,
+    Authority, AuthorizationRow, Change, Refusal, record, require_proposal, require_source,
+    require_task, subject, unsound,
 };
 pub(super) fn retain(
     authority: &mut impl Authority,
@@ -52,7 +52,6 @@ pub(super) fn retain(
     for reference in &candidate.references {
         require_source(authority, seq, &reference.source)?;
     }
-    evidence::require_candidate_evidence(authority, &candidate)?;
     let proposal = ProposalRef::Candidate {
         candidate: candidate.candidate.clone(),
     };

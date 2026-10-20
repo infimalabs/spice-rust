@@ -524,9 +524,6 @@ pub struct DesignPassProposal {
     pub justification: String,
     /// Exact source links supporting the recommendation.
     pub references: Vec<CandidateReference>,
-    /// Question results, asked in the controller's room, retained as explicit
-    /// proposal evidence without granting or gating selection authority.
-    pub evidence: Vec<QuestionResultRef>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -541,8 +538,6 @@ struct DesignPassProposalWire {
     outputs: Vec<TaskStamp>,
     justification: String,
     references: Vec<CandidateReference>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    evidence: Vec<QuestionResultRef>,
 }
 
 impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
@@ -578,9 +573,6 @@ impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
         if value.references.is_empty() {
             return Err("a Design pass proposal must link its supporting authority");
         }
-        if !all_unique(&value.evidence) {
-            return Err("proposal evidence results must be unique");
-        }
         Ok(Self {
             candidate: value.candidate,
             statement: value.statement,
@@ -590,7 +582,6 @@ impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
             outputs: value.outputs,
             justification: value.justification,
             references: value.references,
-            evidence: value.evidence,
         })
     }
 }
@@ -606,7 +597,6 @@ impl From<DesignPassProposal> for DesignPassProposalWire {
             outputs: value.outputs,
             justification: value.justification,
             references: value.references,
-            evidence: value.evidence,
         }
     }
 }

@@ -51,7 +51,6 @@ fn retain_citing(
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
-                evidence: Vec::new(),
                 justification: "the cited evidence supports this pass".to_owned(),
                 references: sources
                     .into_iter()
