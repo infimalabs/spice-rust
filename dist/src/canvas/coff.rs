@@ -13,10 +13,10 @@ const COFF_SECTION_HEADER_BYTES: usize = 40;
 const COFF_SYMBOL_BYTES: usize = 18;
 const PE_SECTION_HEADER_BYTES: usize = 40;
 const PE32_PLUS_OPTIONAL_HEADER_BYTES: usize = 112;
-const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x40;
-const IMAGE_SCN_ALIGN_1BYTES: u32 = 0x0010_0000;
-const IMAGE_SCN_ALIGN_8BYTES: u32 = 0x0040_0000;
-const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
+/// Initialized, readable data with byte alignment.
+const ARCHIVE_CHARACTERISTICS: u32 = 0x4010_0040;
+/// Initialized, readable data with eight-byte alignment.
+const LENGTH_CHARACTERISTICS: u32 = 0x4040_0040;
 const IMAGE_SYM_CLASS_EXTERNAL: u8 = 2;
 
 pub(super) fn object(archive: &[u8]) -> Vec<u8> {
@@ -47,11 +47,7 @@ pub(super) fn object(archive: &[u8]) -> Vec<u8> {
     output[archive_header..archive_header + SECTION.len()].copy_from_slice(SECTION);
     put_u32(&mut output, archive_header + 16, archive_bytes);
     put_u32(&mut output, archive_header + 20, data_at as u32);
-    put_u32(
-        &mut output,
-        archive_header + 36,
-        IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_1BYTES | IMAGE_SCN_MEM_READ,
-    );
+    put_u32(&mut output, archive_header + 36, ARCHIVE_CHARACTERISTICS);
 
     let length_header = archive_header + COFF_SECTION_HEADER_BYTES;
     output[length_header..length_header + 6].copy_from_slice(b".rdata");
@@ -65,11 +61,7 @@ pub(super) fn object(archive: &[u8]) -> Vec<u8> {
         length_header + 20,
         u32::try_from(length_at).expect("the COFF length section offset fits in 32 bits"),
     );
-    put_u32(
-        &mut output,
-        length_header + 36,
-        IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_ALIGN_8BYTES | IMAGE_SCN_MEM_READ,
-    );
+    put_u32(&mut output, length_header + 36, LENGTH_CHARACTERISTICS);
 
     output[data_at..data_at + archive.len()].copy_from_slice(archive);
     put_u64(&mut output, length_at, archive.len() as u64);
@@ -293,6 +285,14 @@ mod tests {
         let archive_at = read_u32(&bytes, archive_header + 20, "archive offset").unwrap() as usize;
         let archive_bytes = read_u32(&bytes, archive_header + 16, "archive size").unwrap() as usize;
         assert_eq!(&bytes[archive_at..archive_at + archive_bytes], ARCHIVE);
+        assert_eq!(
+            archive_at,
+            COFF_HEADER_BYTES + 2 * COFF_SECTION_HEADER_BYTES
+        );
+        assert_eq!(
+            read_u32(&bytes, archive_header + 36, "archive characteristics"),
+            Ok(0x4010_0040)
+        );
 
         let length_header = archive_header + COFF_SECTION_HEADER_BYTES;
         let length_at = read_u32(&bytes, length_header + 20, "length offset").unwrap() as usize;
@@ -300,9 +300,28 @@ mod tests {
             u64::from_le_bytes(bytes[length_at..length_at + 8].try_into().unwrap()),
             ARCHIVE.len() as u64
         );
+        assert_eq!(
+            read_u32(&bytes, length_header + 16, "length bytes"),
+            Ok(std::mem::size_of::<u64>() as u32)
+        );
+        assert_eq!(
+            read_u32(&bytes, length_header + 36, "length characteristics"),
+            Ok(0x4040_0040)
+        );
+        assert_eq!(
+            length_at,
+            (archive_at + ARCHIVE.len()).next_multiple_of(std::mem::align_of::<u64>())
+        );
 
         let symbols = read_u32(&bytes, 8, "symbol table").unwrap() as usize;
         let strings = symbols + 2 * COFF_SYMBOL_BYTES;
+        assert_eq!(symbols, length_at + std::mem::size_of::<u64>());
+        let strings_bytes = 4 + ARCHIVE_SYMBOL.len() + 1 + LENGTH_SYMBOL.len() + 1;
+        assert_eq!(
+            read_u32(&bytes, strings, "string table bytes"),
+            Ok(strings_bytes as u32)
+        );
+        assert_eq!(bytes.len(), strings + strings_bytes);
         assert_eq!(symbol_name(&bytes, symbols, strings), ARCHIVE_SYMBOL);
         assert_eq!(
             symbol_name(&bytes, symbols + COFF_SYMBOL_BYTES, strings),
@@ -331,6 +350,9 @@ mod tests {
 
         let repeated = pe(&[(SECTION, ARCHIVE), (SECTION, b"again")]);
         assert_eq!(pe_archive(&repeated), Err(CanvasError::Repeated));
+
+        let archive_after_another = pe(&[(b"another", b"prefix"), (SECTION, ARCHIVE)]);
+        assert_eq!(pe_archive(&archive_after_another), Ok(ARCHIVE));
 
         let mut truncated = exact.clone();
         truncated.pop();
@@ -371,6 +393,31 @@ mod tests {
         assert_eq!(
             pe_archive(&virtual_overrun),
             Err(CanvasError::Malformed("app ZIP section range"))
+        );
+    }
+
+    #[test]
+    fn pe32_plus_optional_header_bounds_its_directory_table_exactly() {
+        let coff = 0;
+        let optional = COFF_HEADER_BYTES;
+        let exact_bytes = PE32_PLUS_OPTIONAL_HEADER_BYTES;
+        let mut exact = vec![0; optional + exact_bytes];
+        put_u16(&mut exact, optional, IMAGE_NT_OPTIONAL_HDR64_MAGIC);
+        assert_eq!(
+            pe_optional_table(&exact, coff, exact_bytes),
+            Ok(exact.len())
+        );
+
+        let short_bytes = exact_bytes - 1;
+        assert_eq!(
+            pe_optional_table(&exact, coff, short_bytes),
+            Err(CanvasError::Malformed("PE32+ optional header"))
+        );
+
+        put_u32(&mut exact, optional + 108, 1);
+        assert_eq!(
+            pe_optional_table(&exact, coff, exact_bytes),
+            Err(CanvasError::Malformed("PE32+ data directories"))
         );
     }
 

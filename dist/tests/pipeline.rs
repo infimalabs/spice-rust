@@ -98,6 +98,35 @@ impl Builder for RecordingBuilder {
     }
 }
 
+#[derive(Default)]
+struct DefaultArtifactsBuilder {
+    report: Option<String>,
+}
+
+impl Builder for DefaultArtifactsBuilder {
+    fn build_app(&mut self) -> Result<Canvas, BuildError> {
+        Ok(canvas())
+    }
+
+    fn build_native(
+        &mut self,
+        target: ReleaseTarget,
+        canvas: &Canvas,
+    ) -> Result<Vec<u8>, BuildError> {
+        let native = match target {
+            ReleaseTarget::Aarch64AppleDarwin => macho(ARCHIVE),
+            ReleaseTarget::X86_64UnknownLinuxMusl => elf(ARCHIVE),
+            ReleaseTarget::X86_64PcWindowsMsvc => pe(ARCHIVE),
+        };
+        self.report = Some(format!("spice 1.2.3 app {}\n", canvas.generation()));
+        Ok(native)
+    }
+
+    fn report_version(&mut self) -> Result<String, BuildError> {
+        Ok(self.report.clone().expect("native ran first"))
+    }
+}
+
 fn canvas() -> Canvas {
     Canvas::new(
         Digest::compute(Domain::DistArtifact, b"app generation"),
@@ -454,6 +483,75 @@ fn target_payload_pointers_and_native_identities_do_not_alias() {
             .inventory
             .iter()
             .any(|entry| { entry.path == "symbols/spice.pdb" && entry.mode == 0o644 })
+    );
+}
+
+#[test]
+fn default_artifact_absence_and_empty_windows_debug_output_are_distinct() {
+    let required = pins();
+    let pipeline = Pipeline::new(
+        RequiredPins::new(required.clone()).expect("pins are valid"),
+        product_version(),
+    );
+    let mut builder = DefaultArtifactsBuilder::default();
+    let mut publisher = MemoryPublisher::default();
+    let staged = pipeline
+        .stage(
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+            source_digest(),
+            &required,
+            &mut builder,
+            &mut publisher,
+        )
+        .expect("a Linux builder needs no separate debug artifact");
+    assert_eq!(staged.payload.inventory.len(), 1);
+    assert_eq!(staged.payload.inventory[0].path, "bin/spice");
+
+    struct EmptyPdbBuilder(RecordingBuilder);
+    impl Builder for EmptyPdbBuilder {
+        fn build_app(&mut self) -> Result<Canvas, BuildError> {
+            self.0.build_app()
+        }
+
+        fn build_native(
+            &mut self,
+            target: ReleaseTarget,
+            canvas: &Canvas,
+        ) -> Result<Vec<u8>, BuildError> {
+            self.0.build_native(target, canvas)
+        }
+
+        fn report_version(&mut self) -> Result<String, BuildError> {
+            self.0.report_version()
+        }
+
+        fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
+            self.0.take_symbol_artifact()
+        }
+
+        fn take_windows_debug_artifact(&mut self) -> Option<Vec<u8>> {
+            Some(Vec::new())
+        }
+    }
+
+    let mut builder = EmptyPdbBuilder(RecordingBuilder::default());
+    let mut windows_publisher = MemoryPublisher::default();
+    let error = pipeline
+        .stage(
+            ReleaseTarget::X86_64PcWindowsMsvc,
+            source_digest(),
+            &required,
+            &mut builder,
+            &mut windows_publisher,
+        )
+        .expect_err("an empty PDB is not a Windows debug artifact");
+    assert!(
+        matches!(&error, StageError::Build { step: BuildStep::Native, source } if source.to_string() == "Windows build produced an empty PDB"),
+        "{error:?}"
+    );
+    assert!(
+        windows_publisher.writes.is_empty(),
+        "the failed Windows stage publishes nothing"
     );
 }
 
