@@ -110,8 +110,8 @@ executable:
 ```powershell
 $Git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
 & $Git -C C:\absolute\path\to\worktree config --show-origin --show-scope --get-all core.hooksPath
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
+
 ## Upgrade
 
 An installed appliance verifies a sealed release package (index, manifest,
