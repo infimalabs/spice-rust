@@ -114,12 +114,7 @@ pub(super) fn verify(
         &stored.conversation.items,
         violations,
     );
-    compare(
-        "room_results",
-        &expected.conversation.results,
-        &stored.conversation.results,
-        violations,
-    );
+
     Ok(usize::from(stored.partition.is_some())
         + stored.notices.len()
         + stored.maturity.len()
@@ -129,8 +124,7 @@ pub(super) fn verify(
         + stored.directed.len()
         + stored.shelved.len()
         + stored.conversation.publications.len()
-        + stored.conversation.items.len()
-        + stored.conversation.results.len())
+        + stored.conversation.items.len())
 }
 
 fn compare<K: Ord + Debug, V: PartialEq>(

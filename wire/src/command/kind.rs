@@ -28,7 +28,6 @@ impl CommandKind {
         Self::RoomContribute,
         Self::RoomContributionSources,
         Self::RoomControl,
-        Self::RoomClose,
         Self::WorkingGroupRead,
         Self::WorkingGroupMove,
         Self::WorkingGroupArrange,
@@ -136,7 +135,6 @@ impl CommandKind {
             | Self::RoomContribute
             | Self::RoomContributionSources
             | Self::RoomControl
-            | Self::RoomClose
             | Self::WorkingGroupRead
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
@@ -239,7 +237,6 @@ impl CommandKind {
             | Self::RoomContribute
             | Self::RoomContributionSources
             | Self::RoomControl
-            | Self::RoomClose
             | Self::WorkingGroupRead
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
@@ -283,7 +280,6 @@ impl CommandKind {
             Self::RoomContribute => "room::contribute",
             Self::RoomContributionSources => "room::contribution-sources",
             Self::RoomControl => "room::control",
-            Self::RoomClose => "room::close",
             Self::WorkingGroupRead => "group::read",
             Self::WorkingGroupMove => "group::move",
             Self::WorkingGroupArrange => "group::arrange",

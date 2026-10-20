@@ -122,7 +122,8 @@ pub(super) fn client_require(
                 return Err(refusal(
                     "task::require-shape",
                     None,
-                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or --appliance-after [VERSION] to replace requirements, or --clear to remove them",
+                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or \
+                     --appliance-after [VERSION] to replace requirements, or --clear to remove them",
                 ));
             }
         };

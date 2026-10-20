@@ -1,56 +1,30 @@
-//! Room conversation authority: source-backed MSG, ASK, and ANS publications,
-//! one guarded operator item per operator delivery, and one guarded result
-//! head per ASK.
+//! Source-backed MSG publications and guarded operator items.
 //!
-//! Lane deliveries are native steering directives, never room heads: each lane
-//! route, and each answer returned to a lane requester, names one directive its
-//! own write opened, and an ASK's directive is keyed by the ASK's result handle.
-//! That directive's ACK, lapse, recovery, dead-letter, and cancellation move
-//! only the directive; its NAK also declines the ASK's pending result in the
-//! same fact. Only an operator delivery opens an operator item here.
-//!
-//! A publication is write-once. An ASK opens a result that only one terminal
-//! outcome settles, before its immutable deadline or by timing out at it. The
-//! fold compares every ANS with the commit instant, so a late answer refuses
-//! even before any timeout is recorded, while an admitted answer replays at its
-//! own instant. Answer admission, retirement of the live ASK delivery, and the
-//! answer's return delivery commit in one write. Every fact computes all of its
-//! edits before applying any, so a refused fact leaves each result and item as
-//! it was. Item lapse and recovery move only the item, and controls open
-//! nothing.
+//! Lane deliveries are native steering directives. Room authority records each
+//! write-once publication and one guarded item for an operator destination.
+//! Item lapse and recovery move only that item. Every fact computes all edits
+//! before applying any, so a refused fact leaves each item unchanged.
 
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use wire::body::{SteerAcked, SteerDeclined, SteerMessaged, SteerQueued, SteerSent};
+use wire::body::{SteerMessaged, SteerQueued, SteerSent};
 use wire::rooms::{
-    QuestionClosure, QuestionParties, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
-    QuestionResultState, RoomAnchor, RoomConversed, RoomDelivery, RoomDestination, RoomDisposed,
-    RoomPosted, RoomPublication, RoomPublicationKind, RoomQuestionClosed, RoomQuestionTimedOut,
+    RoomAnchor, RoomConversed, RoomDestination, RoomDisposed, RoomPosted, RoomPublication,
     RoomReceiptControl, RoomReceiptHead, RoomReceiptLapsed, RoomReceiptRecord,
-    RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState, RoomSource, TranscriptHunk,
+    RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState, TranscriptHunk,
 };
-use wire::{Actor, AnyFact, CanonicalUuid, Disposition, Instant, Seq, SequenceCode};
+use wire::{Actor, AnyFact, CanonicalUuid, Instant, Seq, SequenceCode};
 
 use super::{Authority, Change, Refusal, require_hunk, require_operator, require_task, unsound};
 
-/// Conversation publications and their result heads, created with the
-/// current schema.
+/// Conversation publications, created with the current schema.
 pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE room_conversations (
     publication TEXT PRIMARY KEY,
     head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
-CREATE TABLE room_results (
-    result TEXT PRIMARY KEY,
-    requester TEXT NOT NULL,
-    pending INTEGER NOT NULL CHECK (pending IN (0, 1)),
-    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    record BLOB NOT NULL,
-    head BLOB NOT NULL
-) STRICT;
-CREATE INDEX room_results_pending ON room_results(requester, pending);
 "#;
 
 /// Operator item heads, created with the current schema.
@@ -75,17 +49,6 @@ pub(crate) struct ItemRow {
     pub(crate) head: Vec<u8>,
 }
 
-/// One stored result head: its requester, whether it is still pending, the
-/// position of its latest move, and its canonical record and head.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ResultRow {
-    pub(crate) requester: String,
-    pub(crate) pending: bool,
-    pub(crate) seq: u64,
-    pub(crate) record: Vec<u8>,
-    pub(crate) head: Vec<u8>,
-}
-
 /// The conversation projection, row for row.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Heads {
@@ -93,8 +56,6 @@ pub(crate) struct Heads {
     pub(crate) publications: BTreeMap<String, (u64, Vec<u8>)>,
     /// Operator item key to its head.
     pub(crate) items: BTreeMap<String, ItemRow>,
-    /// Result handle to its head.
-    pub(crate) results: BTreeMap<String, ResultRow>,
 }
 
 /// One conversation projection consequence of an admitted fact.
@@ -108,10 +69,6 @@ pub(crate) enum Edit {
         key: String,
         row: ItemRow,
     },
-    Result {
-        key: String,
-        row: ResultRow,
-    },
 }
 
 impl Heads {
@@ -123,19 +80,8 @@ impl Heads {
             Edit::Item { key, row } => {
                 self.items.insert(key, row);
             }
-            Edit::Result { key, row } => {
-                self.results.insert(key, row);
-            }
         }
     }
-
-    pub(super) fn pending_results(&self, requester: &str) -> usize {
-        self.results
-            .values()
-            .filter(|row| row.pending && row.requester == requester)
-            .count()
-    }
-
     pub(super) fn load(connection: &Connection) -> Result<Self, rusqlite::Error> {
         let mut heads = Self::default();
         let mut statement =
@@ -162,32 +108,12 @@ impl Heads {
             let (key, value) = row?;
             heads.items.insert(key, value);
         }
-        let mut statement = connection.prepare(
-            "SELECT result, requester, pending, head_seq, record, head FROM room_results",
-        )?;
-        for row in statement.query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                ResultRow {
-                    requester: row.get(1)?,
-                    pending: row.get(2)?,
-                    seq: super::sql::unsql(row.get(3)?),
-                    record: row.get(4)?,
-                    head: row.get(5)?,
-                },
-            ))
-        })? {
-            let (key, value) = row?;
-            heads.results.insert(key, value);
-        }
         Ok(heads)
     }
 
     /// Replace every stored conversation row with these heads.
     pub(super) fn write(&self, connection: &Connection) -> Result<(), rusqlite::Error> {
-        connection.execute_batch(
-            "DELETE FROM room_conversations; DELETE FROM room_items; DELETE FROM room_results;",
-        )?;
+        connection.execute_batch("DELETE FROM room_conversations; DELETE FROM room_items;")?;
         for (key, (seq, body)) in &self.publications {
             apply_sql(
                 connection,
@@ -202,15 +128,6 @@ impl Heads {
             apply_sql(
                 connection,
                 Edit::Item {
-                    key: key.clone(),
-                    row: row.clone(),
-                },
-            )?;
-        }
-        for (key, row) in &self.results {
-            apply_sql(
-                connection,
-                Edit::Result {
                     key: key.clone(),
                     row: row.clone(),
                 },
@@ -238,22 +155,6 @@ pub(super) fn apply_sql(connection: &Connection, edit: Edit) -> Result<(), rusql
                 params![
                     key,
                     row.open,
-                    super::sql::sql(row.seq),
-                    row.record,
-                    row.head
-                ],
-            )?;
-        }
-        Edit::Result { key, row } => {
-            connection.execute(
-                "INSERT INTO room_results(result, requester, pending, head_seq, record, head) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-                 ON CONFLICT(result) DO UPDATE SET \
-                    pending = excluded.pending, head_seq = excluded.head_seq, head = excluded.head",
-                params![
-                    key,
-                    row.requester,
-                    row.pending,
                     super::sql::sql(row.seq),
                     row.record,
                     row.head
@@ -296,47 +197,6 @@ pub(super) fn stored_item(connection: &Connection, key: &str) -> Result<Option<I
         .optional()?)
 }
 
-/// Stored result head, as one commit transaction sees it.
-pub(super) fn stored_result(
-    connection: &Connection,
-    key: &str,
-) -> Result<Option<ResultRow>, Refusal> {
-    Ok(connection
-        .query_row(
-            "SELECT requester, pending, head_seq, record, head FROM room_results WHERE result = ?1",
-            [key],
-            |row| {
-                Ok(ResultRow {
-                    requester: row.get(0)?,
-                    pending: row.get(1)?,
-                    seq: super::sql::unsql(row.get(2)?),
-                    record: row.get(3)?,
-                    head: row.get(4)?,
-                })
-            },
-        )
-        .optional()?)
-}
-
-/// Stored count of one requester's pending results.
-pub(super) fn stored_pending_results(
-    connection: &Connection,
-    requester: &str,
-) -> Result<usize, Refusal> {
-    let count: i64 = connection.query_row(
-        "SELECT count(*) FROM room_results WHERE requester = ?1 AND pending = 1",
-        [requester],
-        |row| row.get(0),
-    )?;
-    Ok(usize::try_from(count).unwrap_or_default())
-}
-
-/// Canonical key of one route destination.
-pub(crate) fn destination_key(destination: &RoomDestination) -> Result<String, Refusal> {
-    String::from_utf8(wire::encode(destination)?)
-        .map_err(|_| Refusal::Unsound("room destination key is not text".to_owned()))
-}
-
 /// Admit one conversation fact, or `None` when `fact` is not one.
 pub(super) fn fold(
     authority: &mut impl Authority,
@@ -349,16 +209,10 @@ pub(super) fn fold(
         conversed(authority, seq, at, actor, &body)
     } else if let Some(body) = fact.read::<RoomPosted>() {
         return Some(posted(authority, seq, at, actor, &body));
-    } else if let Some(body) = fact.read::<SteerDeclined>() {
-        directive_declined(authority, seq, &body)
     } else if let Some(body) = fact.read::<RoomDisposed>() {
         require_operator(actor, "an operator ACK or NAK")
             .and_then(|()| body.control(code(seq)).or_else(unsound))
             .and_then(|control| controlled(authority, seq, &control))
-    } else if let Some(body) = fact.read::<RoomQuestionClosed>() {
-        closed(authority, seq, actor, &body)
-    } else if let Some(body) = fact.read::<RoomQuestionTimedOut>() {
-        timed_out(authority, seq, at, actor, &body.result)
     } else if let Some(body) = fact.read::<RoomReceiptLapsed>() {
         lapsed(authority, seq, at, actor, &body.receipt)
     } else {
@@ -373,9 +227,8 @@ pub(super) fn fold(
     }))
 }
 
-/// Admit one operator MSG, ASK, or ANS, then record it in the one room it
-/// speaks in, so the room's history and catch-up carry the operator's own
-/// text.
+/// Admit one operator MSG, then record it in the one room it speaks in, so the
+/// room's history and catch-up carry the operator's own text.
 fn posted(
     authority: &mut impl Authority,
     seq: Seq,
@@ -404,29 +257,20 @@ fn posted(
 }
 
 /// The one room an operator post speaks in: its routes' contexts and room
-/// destinations, or an answer's stored question context. A post spanning
-/// more than one room refuses, because one journal position records in at
-/// most one room.
+/// destinations. A post spanning more than one room refuses, because one
+/// journal position records in at most one room.
 fn posted_room(
-    authority: &impl Authority,
+    _authority: &impl Authority,
     publication: &RoomPublication,
 ) -> Result<Option<RoomAnchor>, Refusal> {
-    let mut rooms = match publication.kind() {
-        RoomPublicationKind::Ans { result, .. } => Question::load(authority, result)?
-            .record
-            .context()
-            .cloned()
-            .into_iter()
-            .collect(),
-        RoomPublicationKind::Msg {} | RoomPublicationKind::Ask { .. } => publication
-            .routes()
-            .iter()
-            .filter_map(|route| match &route.destination {
-                RoomDestination::Task { task } => Some(task.clone()),
-                _ => route.context.clone(),
-            })
-            .collect::<Vec<_>>(),
-    };
+    let mut rooms = publication
+        .routes()
+        .iter()
+        .filter_map(|route| match &route.destination {
+            RoomDestination::Task { task } => Some(task.clone()),
+            _ => route.context.clone(),
+        })
+        .collect::<Vec<_>>();
     rooms.sort();
     rooms.dedup();
     match rooms.len() {
@@ -458,8 +302,8 @@ fn conversed(
     )
 }
 
-/// Admit one substantive publication with the operator item and result it
-/// opens, bound to the directives its write opened for its lane deliveries.
+/// Admit one substantive message with the operator item it opens, bound to the
+/// directives its write opened for lane deliveries.
 fn admit(
     authority: &impl Authority,
     seq: Seq,
@@ -501,31 +345,15 @@ fn admit(
             }
         }
     }
-    let active = match publication.kind() {
-        RoomPublicationKind::Ask { .. } => {
-            authority.pending_results(&destination_key(publication.author())?)?
-        }
-        RoomPublicationKind::Msg {} | RoomPublicationKind::Ans { .. } => 0,
-    };
-    if let Err(error) = publication.admission_charge(active) {
+    if let Err(error) = publication.admission_charge() {
         return unsound(format!("room publication {stamp}: {error}"));
     }
-    if !matches!(publication.kind(), RoomPublicationKind::Ans { .. })
-        && directed.len() != publication.lane_routes().count()
-    {
+    if directed.len() != publication.lane_routes().count() {
         return unsound(format!(
             "room publication {stamp} must name one directive for each lane route"
         ));
     }
-    let mut edits = match publication.kind() {
-        RoomPublicationKind::Msg {} => Vec::new(),
-        RoomPublicationKind::Ask { result, deadline } => {
-            vec![asked(authority, seq, at, publication, result, *deadline)?]
-        }
-        RoomPublicationKind::Ans { result, .. } => {
-            answered(authority, seq, at, publication, result, directed, expires)?
-        }
-    };
+    let mut edits = Vec::new();
     if let Some((item, context)) = publication.operator_item() {
         edits.push(open(
             authority,
@@ -545,224 +373,23 @@ fn admit(
     Ok(edits)
 }
 
-fn asked(
-    authority: &impl Authority,
-    seq: Seq,
-    at: Instant,
-    publication: &RoomPublication,
-    result: &QuestionResultRef,
-    deadline: Instant,
-) -> Result<Edit, Refusal> {
-    if deadline <= at {
-        return unsound(format!(
-            "question {result} deadline must follow its admission"
-        ));
-    }
-    if authority.question_result(result.as_str())?.is_some() {
-        return unsound(format!("question result {result} already exists"));
-    }
-    let route = &publication.routes()[0];
-    let record = QuestionResultRecord::try_new(
-        result.clone(),
-        publication.publication().clone(),
-        QuestionParties {
-            requester: publication.author().clone(),
-            respondent: route.destination.clone(),
-            context: route.context.clone(),
-        },
-        publication.source().clone(),
-        deadline,
-    )
-    .or_else(unsound)?;
-    Question {
-        head: QuestionResultHead::pending(result.clone()),
-        record,
-    }
-    .edit(seq)
-}
-
-/// Settle the answered result, retire a live operator ASK item, and open the
-/// answer's return item to an operator requester, together. A lane
-/// respondent's live ASK directive and a lane requester's return directive are
-/// bound to this write by [`require_deliveries`].
-fn answered(
-    authority: &impl Authority,
-    seq: Seq,
-    at: Instant,
-    publication: &RoomPublication,
-    result: &QuestionResultRef,
-    directed: &[CanonicalUuid],
-    expires: Instant,
-) -> Result<Vec<Edit>, Refusal> {
-    let mut question = Question::load(authority, result)?;
-    let state = question
-        .record
-        .answer_state(publication, at, directed)
-        .or_else(|error| unsound(format!("ANS to question {result}: {error}")))?;
-    let QuestionResultState::Answered {
-        return_delivery, ..
-    } = &state
-    else {
-        return unsound(format!("ANS to question {result} did not answer it"));
-    };
-    let returned = return_delivery.delivery().clone();
-    question.settle(state)?;
-    let mut edits = vec![question.edit(seq)?];
-    if let Some(item) = question.record.item() {
-        let mut asked = Item::load(authority, &item)?;
-        if matches!(asked.head.state(), RoomReceiptState::Pending { .. }) {
-            asked
-                .head
-                .settle(RoomReceiptState::Acked {
-                    source: publication.source().clone(),
-                })
-                .or_else(|error| unsound(error.to_string()))?;
-            edits.push(asked.edit(seq)?);
-        }
-    }
-    if let RoomDelivery::Item { item } = returned {
-        edits.push(open(
-            authority,
-            seq,
-            at,
-            item,
-            publication,
-            question.record.context().cloned(),
-            expires,
-        )?);
-    }
-    Ok(edits)
-}
-
-/// A lane's NAK of a live ASK directive declines that ASK's pending result
-/// in the same fact. Any other decline, including one after the result
-/// settled, moves only native steering.
-fn directive_declined(
-    authority: &impl Authority,
-    seq: Seq,
-    body: &SteerDeclined,
-) -> Result<Vec<Edit>, Refusal> {
-    let Some(row) = authority.question_result(&body.key)? else {
-        return Ok(Vec::new());
-    };
-    let mut question = Question {
-        record: wire::decode(&row.record)?,
-        head: wire::decode(&row.head)?,
-    };
-    if question.record.respondent() != (&RoomDestination::Lane { lane: body.lane })
-        || question.head.state().is_terminal()
-    {
-        return Ok(Vec::new());
-    }
-    question.settle(QuestionResultState::Declined {
-        source: RoomSource::Journal { fact: code(seq) },
-    })?;
-    Ok(vec![question.edit(seq)?])
-}
-
-/// Settle every operator item an ACK or NAK names, and decline an operator
-/// ASK's pending result on NAK even after its item retired.
 fn controlled(
     authority: &impl Authority,
     seq: Seq,
     control: &RoomReceiptControl,
 ) -> Result<Vec<Edit>, Refusal> {
-    let mut edits = Vec::new();
-    for key in control.keys() {
-        let mut item = Item::load(authority, key)?;
-        let mut question = match authority.question_result(&key.to_string())? {
-            Some(row) => Some(Question {
-                record: wire::decode(&row.record)?,
-                head: wire::decode(&row.head)?,
-            }),
-            None => None,
-        }
-        .filter(|question| question.record.item().as_ref() == Some(key));
-        let before = item.head.state().clone();
-        let settled = item.head.settle(control.receipt_state());
-        let declined = question.as_ref().and_then(|question| {
-            matches!(question.head.state(), QuestionResultState::Pending {})
-                .then(|| question.record.control_result(control))
-                .flatten()
-        });
-        match settled {
-            Ok(()) if item.head.state() != &before => edits.push(item.edit(seq)?),
-            _ if declined.is_some() => {}
-            Ok(()) => {
-                return unsound(format!(
-                    "operator item {} already carries this disposition",
-                    item.key
-                ));
-            }
-            Err(error) => return unsound(format!("operator item {}: {error}", item.key)),
-        }
-        if let (Some(question), Some(state)) = (question.as_mut(), declined) {
-            question.settle(state)?;
-            edits.push(question.edit(seq)?);
-        }
-    }
-    Ok(edits)
-}
-
-/// An explicit decline by the respondent or cancellation by the requester,
-/// either of which the operator may override. A pending operator ASK item
-/// retires with it; a lane respondent's directive stays with native steering.
-fn closed(
-    authority: &impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    body: &RoomQuestionClosed,
-) -> Result<Vec<Edit>, Refusal> {
-    let mut question = Question::load(authority, &body.result)?;
-    let source = RoomSource::Journal { fact: code(seq) };
-    let (party, item_state) = match body.closure {
-        QuestionClosure::Declined => (
-            question.record.respondent(),
-            RoomReceiptState::Declined { source },
-        ),
-        QuestionClosure::Cancelled => (
-            question.record.requester(),
-            RoomReceiptState::Cancelled { source },
-        ),
-    };
-    if !super::is_principal(actor) && !acts_as(actor, party) {
-        return unsound(format!(
-            "{actor} cannot close question {} for its stored party",
-            body.result
-        ));
-    }
-    question.settle(body.state(code(seq)))?;
-    let mut edits = vec![question.edit(seq)?];
-    if let Some(item) = question.record.item() {
-        let mut asked = Item::load(authority, &item)?;
-        if matches!(asked.head.state(), RoomReceiptState::Pending { .. }) {
-            asked
-                .head
-                .settle(item_state)
-                .or_else(|error| unsound(error.to_string()))?;
-            edits.push(asked.edit(seq)?);
-        }
-    }
-    Ok(edits)
-}
-
-fn timed_out(
-    authority: &impl Authority,
-    seq: Seq,
-    at: Instant,
-    actor: &Actor,
-    result: &QuestionResultRef,
-) -> Result<Vec<Edit>, Refusal> {
-    require_resident(actor, "a question timeout")?;
-    let mut question = Question::load(authority, result)?;
-    if at < question.record.deadline() {
-        return unsound(format!("question {result} deadline has not passed"));
-    }
-    if question.head.state().is_terminal() {
-        return unsound(format!("question result {result} is already settled"));
-    }
-    question.settle(QuestionResultState::TimedOut {})?;
-    Ok(vec![question.edit(seq)?])
+    let next = control.receipt_state();
+    control
+        .keys()
+        .iter()
+        .map(|key| {
+            let mut item = Item::load(authority, key)?;
+            item.head
+                .settle(next.clone())
+                .or_else(|error| unsound(format!("operator item {}: {error}", item.key)))?;
+            item.edit(seq)
+        })
+        .collect()
 }
 
 fn lapsed(
@@ -873,48 +500,9 @@ impl Item {
     }
 }
 
-/// One decoded result head and the immutable question record behind it.
-struct Question {
-    record: QuestionResultRecord,
-    head: QuestionResultHead,
-}
-
-impl Question {
-    fn load(authority: &impl Authority, result: &QuestionResultRef) -> Result<Self, Refusal> {
-        let Some(row) = authority.question_result(result.as_str())? else {
-            return unsound(format!("question result {result} does not exist"));
-        };
-        Ok(Self {
-            record: wire::decode(&row.record)?,
-            head: wire::decode(&row.head)?,
-        })
-    }
-
-    fn settle(&mut self, state: QuestionResultState) -> Result<(), Refusal> {
-        let result = self.record.result();
-        self.head
-            .settle(state)
-            .or_else(|error| unsound(format!("question result {result}: {error}")))
-    }
-
-    fn edit(&self, seq: Seq) -> Result<Edit, Refusal> {
-        Ok(Edit::Result {
-            key: self.record.result().to_string(),
-            row: ResultRow {
-                requester: destination_key(self.record.requester())?,
-                pending: !self.head.state().is_terminal(),
-                seq: seq.get(),
-                record: wire::encode(&self.record)?,
-                head: wire::encode(&self.head)?,
-            },
-        })
-    }
-}
-
 /// One directive a write opens, as a conversation's lane delivery reads it.
 struct Opened {
     directive: CanonicalUuid,
-    key: String,
     lane: CanonicalUuid,
     room: Option<RoomAnchor>,
     /// The packet that told it, for a seated peer message.
@@ -929,7 +517,6 @@ impl Opened {
         if let Some(message) = fact.read::<SteerMessaged>() {
             return Some(Self {
                 directive: message.directive,
-                key: message.key.clone(),
                 lane: message.lane,
                 room: message.room.clone(),
                 from: Some(message.from),
@@ -940,7 +527,6 @@ impl Opened {
         if let Some(message) = fact.read::<SteerQueued>() {
             return Some(Self {
                 directive: message.directive,
-                key: message.key.clone(),
                 lane: message.lane,
                 room: message.room.clone(),
                 from: Some(message.from),
@@ -950,7 +536,6 @@ impl Opened {
         }
         fact.read::<SteerSent>().map(|sent| Self {
             directive: sent.directive,
-            key: sent.key,
             lane: sent.lane,
             room: sent.room,
             told: None,
@@ -985,16 +570,9 @@ impl Opened {
 /// Each conversation in a write names, in order, exactly the native
 /// directives that write opened for its lane deliveries: a peer message told
 /// from a lane author's own record, or operator direction for an operator
-/// author. Each goes to its lane with that route's context; an ASK's directive
-/// carries the ASK's result handle as its key, and an answer's return carries
-/// the stored question's context. An answer by a lane respondent whose ASK
-/// directive is still live acknowledges that directive in the same write.
-///
-/// The fold has already admitted the conversation, so an answer's question is
-/// stored; native steering heads are not yet applied, so they still show the
-/// standing before this write.
+/// author. Each goes to its lane with that route's context.
 pub(crate) fn require_deliveries<'a>(
-    connection: &Connection,
+    _connection: &Connection,
     facts: impl IntoIterator<Item = &'a AnyFact>,
 ) -> Result<(), Refusal> {
     let facts = facts.into_iter().collect::<Vec<_>>();
@@ -1003,7 +581,7 @@ pub(crate) fn require_deliveries<'a>(
         .filter_map(|fact| Opened::read(fact))
         .collect::<Vec<_>>();
     for fact in &facts {
-        let (stamp, hunk, operation, routes, directed) =
+        let (stamp, hunk, _operation, routes, directed) =
             if let Some(body) = fact.read::<RoomConversed>() {
                 (
                     body.publication,
@@ -1027,41 +605,13 @@ pub(crate) fn require_deliveries<'a>(
             RoomDestination::Lane { lane } => Some((lane, route.context.clone())),
             _ => None,
         });
-        let expected = match &operation {
-            RoomPublicationKind::Msg {} => lanes.map(|(lane, room)| (lane, room, None)).collect(),
-            RoomPublicationKind::Ask { result, .. } => lanes
-                .map(|(lane, room)| (lane, room, Some(result.as_str())))
-                .collect(),
-            RoomPublicationKind::Ans { result, .. } => {
-                let Some(row) = stored_result(connection, result.as_str())? else {
-                    return unsound(format!("ANS {stamp} names no stored question {result}"));
-                };
-                let record: QuestionResultRecord = wire::decode(&row.record)?;
-                if matches!(record.respondent(), RoomDestination::Lane { .. })
-                    && live_directive(connection, result.as_str())?
-                    && !facts.iter().any(|fact| {
-                        fact.read::<SteerAcked>()
-                            .is_some_and(|acked| acked.key == result.as_str())
-                    })
-                {
-                    return unsound(format!(
-                        "ANS {stamp} leaves the live ASK directive {result} unretired"
-                    ));
-                }
-                match record.requester() {
-                    RoomDestination::Lane { lane } => {
-                        vec![(*lane, record.context().cloned(), None)]
-                    }
-                    _ => Vec::new(),
-                }
-            }
-        };
+        let expected = lanes.map(|(lane, room)| (lane, room)).collect::<Vec<_>>();
         if directed.len() != expected.len() {
             return unsound(format!(
                 "room publication {stamp} names other lane deliveries than its routes need"
             ));
         }
-        for (directive, (lane, room, key)) in directed.iter().zip(expected) {
+        for (directive, (lane, room)) in directed.iter().zip(expected) {
             let Some(open) = opened.iter().find(|open| open.directive == *directive) else {
                 return unsound(format!(
                     "room publication {stamp} names directive {directive} its write did not open"
@@ -1071,11 +621,7 @@ pub(crate) fn require_deliveries<'a>(
                 Some(hunk) => open.told_by(hunk),
                 None => open.told.is_none() && open.queued.is_none() && open.from.is_none(),
             };
-            if !authored
-                || open.lane != lane
-                || open.room != room
-                || key.is_some_and(|key| open.key != key)
-            {
+            if !authored || open.lane != lane || open.room != room {
                 return unsound(format!(
                     "directive {directive} is not room publication {stamp}'s delivery to lane {lane}"
                 ));
@@ -1083,33 +629,6 @@ pub(crate) fn require_deliveries<'a>(
         }
     }
     Ok(())
-}
-
-/// Whether a native directive with this key is live before the current write.
-fn live_directive(connection: &Connection, key: &str) -> Result<bool, Refusal> {
-    let body: Option<Vec<u8>> = connection
-        .query_row(
-            "SELECT body FROM steering_heads WHERE steer_key = ?1",
-            [key],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(match body {
-        Some(body) => wire::decode::<wire::SteeringHead>(&body)?.disposition == Disposition::Live,
-        None => false,
-    })
-}
-
-fn code(seq: Seq) -> SequenceCode {
-    SequenceCode::new(seq.get())
-}
-
-fn acts_as(actor: &Actor, party: &RoomDestination) -> bool {
-    match (actor, party) {
-        (Actor::Lane(actor), RoomDestination::Lane { lane }) => actor == lane,
-        (actor, RoomDestination::Operator {}) => super::is_principal(actor),
-        _ => false,
-    }
 }
 
 fn require_lane(actor: &Actor, lane: CanonicalUuid, what: &str) -> Result<(), Refusal> {
@@ -1121,7 +640,12 @@ fn require_lane(actor: &Actor, lane: CanonicalUuid, what: &str) -> Result<(), Re
 
 fn require_resident(actor: &Actor, what: &str) -> Result<(), Refusal> {
     if *actor == Actor::Spice {
-        return Ok(());
+        Ok(())
+    } else {
+        unsound(format!("{what} is written by {actor}, not spice"))
     }
-    unsound(format!("{what} is resident-owned, not written by {actor}"))
+}
+
+fn code(seq: Seq) -> SequenceCode {
+    SequenceCode::new(seq.get())
 }

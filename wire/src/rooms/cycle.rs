@@ -21,7 +21,7 @@ use super::maturity::maturity_unmet;
 use super::{
     CandidateRef, CandidateWithdrawn, DecisionOutcome, DesignContributionCounts, DesignProposed,
     ExecutionAuthorized, OutputControlled, OutputVerdict, PreparationDecided, RoomContributed,
-    RoomDestination, RoomPosted, RoomPublicationContent, RoomPublicationKind, RoomPublished,
+    RoomDestination, RoomPosted, RoomPublicationContent, RoomPublished,
 };
 use crate::body::{
     ClaimFreed, ClaimLapsed, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
@@ -573,16 +573,13 @@ impl DesignCycles {
         }
     }
 
-    /// An operator's authored room post or MSG/ANS counts; an ASK requests
-    /// input rather than supplying it.
+    /// An operator's authored room post or MSG counts as input.
     fn observe_operator_post(&mut self, seq: Seq, fact: &AnyFact) {
         if let Some(published) = fact.as_body::<RoomPublished>() {
             if matches!(published.content, RoomPublicationContent::Authored { .. }) {
                 self.design(&published.room).input(seq);
             }
-        } else if let Some(posted) = fact.as_body::<RoomPosted>()
-            && !matches!(posted.operation, RoomPublicationKind::Ask { .. })
-        {
+        } else if let Some(posted) = fact.as_body::<RoomPosted>() {
             for room in posted_rooms(posted) {
                 self.design(room).input(seq);
             }
@@ -663,13 +660,9 @@ impl DesignCycles {
     }
 }
 
-/// Each distinct room an operator post addresses: task routes, route
-/// contexts, and an answer's own context.
+/// Each distinct room an operator post addresses: task routes and route
+/// contexts.
 fn posted_rooms(posted: &RoomPosted) -> Vec<&TaskStamp> {
-    let answered = match &posted.operation {
-        RoomPublicationKind::Ans { context, .. } => context.as_ref(),
-        RoomPublicationKind::Msg {} | RoomPublicationKind::Ask { .. } => None,
-    };
     let mut rooms = posted
         .routes
         .iter()
@@ -680,7 +673,6 @@ fn posted_rooms(posted: &RoomPosted) -> Vec<&TaskStamp> {
             };
             destination.into_iter().chain(route.context.as_ref())
         })
-        .chain(answered)
         .collect::<Vec<_>>();
     rooms.sort_unstable();
     rooms.dedup();

@@ -171,14 +171,14 @@ cards, and linked bytes that are not present stay labeled source
 placeholders. Each room card is a single top-level card shaped like a team
 message card, with no card nested inside it and no publication key shown. Its
 words lead with the relative age, the speaker in their lane's team accent, an
-arrow to any receivers, and one badge: ASK or ANS for a question or answer, the
-contribution kind (reason for, reason against, evidence, question), or Unheard
-on an operator post that no current or later lane authority proves was heard.
-The Unheard pill's tooltip and accessible label explain that no lane listens
-yet and that starting or directing one will have the post read.
-Its receipts, result, or cited sources follow the words. Listening and native
-work and duties remain standing rather than fabricated timeline events. A
-lane's departure from a design's room is one full-width divider, the
+arrow to any receivers, and, where applicable, the contribution kind (reason
+for, reason against, evidence, or question) or Unheard on an operator post that
+no current or later lane authority proves was heard. The Unheard pill's tooltip
+and accessible label explain that no lane listens yet and that starting or
+directing one will have the post read. Receipts and cited sources follow the
+words. Listening, native work, and duties remain standing rather than
+fabricated timeline events. A lane's departure from a Design's room is one
+full-width divider, the
 group's counterpart of a team compaction card and in its compact shape: two
 rules in the design's accent around the leave's linked age, the leaving lane,
 the design it left, and its clause, which alone yields width; the label's title
@@ -222,20 +222,16 @@ The design's menu carries its
 for a contribution or put the room aside while the Design is active, and its
 preparation authority.
 
-Operator posts and lane MSG, ASK, and ANS publications share one card family:
-sender → destinations, verb, and text. A lane's own bytes come from its
-transcript echo; absent that, the text its native delivery carried stands in.
-An operator-direction route names the principal that direction reaches; while
-that recipient read is unavailable it names the route's `#KEY` concern, never
-the retired context-free `operator` spelling. Each card separates being
-recorded in the room, each route's receipt (pending, queued for a vacant lane
-and unheard, vacant, unavailable, acked, declined, expired, or cancelled), and
-a question's substantive result (pending against its deadline and the
-requester's pending-result capacity, answered, declined, cancelled, or timed
-out). ACK settles only a receipt; an answer is its own ANS card whose return
-carries a separate receipt. None of these is styled as review evidence or
-output authorization, which stay on their exact proposal version and in
-immutable preparation authority.
+Operator posts and lane MSG publications share one card family: sender →
+destinations and text. A lane's own bytes come from its transcript echo; absent
+that, the text its native delivery carried stands in. An operator-direction
+route names the principal that direction reaches; while that recipient read is
+unavailable it names the route's `#KEY` concern, never the retired
+context-free `operator` spelling. Each card separates being recorded in the
+room from each route's receipt (pending, queued for a vacant lane and unheard,
+vacant, unavailable, acked, declined, expired, or cancelled). These receipts
+are not styled as review evidence or output authorization, which stay on their
+exact proposal version and in immutable preparation authority.
 
 The operator's inbox sits in the Spice sidebar's Principals section, inside
 their own principal row beneath its avatar, name, and email, above Jobs, and
@@ -254,17 +250,12 @@ Then the card shows its publication's full body. A lane's body stays in its
 transcript, so the app reads it once, with the concerned direction's text,
 through the operator-only `room::conversation-text` read, which projects the
 same text `spice://room/inbox` prints; the transcript echo stands in while
-that read runs. An ASK item leads with the answer it owes: **Answer** sends the
-reply back to the requesting lane as an ANS and settles the receipt, and
-**Decline** refuses the question. Its receipt row is separate: ACK only marks
-the item seen and NAK declines it. An MSG or ANS item offers **Reply**, ACK,
-and NAK: Reply sends waking operator direction to its author lane and settles
-the item, while ACK and NAK settle silently. **Recover** returns a lapsed
-receipt to pending. Closing a lane party's
-question is an explicit override. The catalog keeps an operator-targeted ASK in
-immutable admission order while either its receipt or its answer duty remains
-open, so ACK cannot hide the still-pending result. Receipt and result rows keep
-one geometry in every state. Acting moves keyboard focus to the acting card,
+that read runs. Every current item offers **Reply**, ACK, and NAK: Reply sends
+waking operator direction to its author lane and settles the item, while ACK
+and NAK settle silently. **Recover** returns a lapsed receipt to pending. The
+catalog keeps operator items in immutable admission order, and every receipt
+row keeps one geometry in every state. Acting moves keyboard focus to the acting
+card,
 and its outcome or refusal is reported in the composer toast for a console card
 and beside the inbox for an inbox item.
 

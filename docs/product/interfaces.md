@@ -90,11 +90,11 @@ task handles instead, and `preparation nudge` one open Design's handle.
   neither. Every work output must carry acceptance and still depend on the
   Design; any intent qualifies. `justification` is nonblank and `references`
   contains at least one `{"relation": NAME, "source": SOURCE}`. Inputs and
-  outputs are unique and disjoint. Every reference must lie in the
-  controlling Design's scope: a
-  contribution in its room, or a journal fact of its room, the Design, a
-  governed input, an output, or a task prepared under it. The command records
-  the immutable proposal and releases that exact claim atomically.
+  outputs are unique and disjoint. Every reference must lie in the controlling
+  Design's scope: a contribution in its room, or a journal fact of its room,
+  the Design, a governed input, an output, or a task prepared under it. The
+  command records the immutable proposal and releases that exact claim
+  atomically.
 - **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
   SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
   `material-finding`).
@@ -145,17 +145,14 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
-| Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large`; an operator answer refuses `room::answer-too-large` |
-| Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
-| Relevance sources per observation | 8 | an observation never cites more |
+| Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large` |
+| Relevance sources per retained observation | 8 | an observation never cites more |
 | Design contribution text | 4096 bytes, nonempty and stored without leading or trailing whitespace | `room::contribution-empty` or `room::contribution-too-long`; the command normalizes outer whitespace, while a noncanonical journal fact is refused |
 | Sources per Design contribution | 8 distinct exact authorities | `room::contribution-sources-exceeded` or `room::contribution-source-duplicate`; two transcript links to the same locus and text range remain one authority when only their accounted boundary differs |
 | Contribution room and proof | an open Design, by a lane, with one source witness per cited authority | `room::contribution-not-design`, `room::contribution-design-concluded`, `room::contribution-lane-only`, or `room::contribution-source-witness`; the journal refuses a contribution without its matching successful command receipt |
 | Exact Design maturity statement heads | current plus three recent heads; older heads fold into one aggregate | display the aggregate instead of expanding history |
 | Distinct lanes per Design maturity set | 64 sorted identities | display the retained count with a bounded marker; maturity's three-lane threshold remains exact |
-| Post to a deleted room | any anchor that is not deleted, settled included | `room::anchor-deleted`, naming the standing: a deleted anchor's room stays readable, and its open receipts and results still settle |
-| Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
-| Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
+| Post to a deleted room | any anchor that is not deleted, settled included | `room::anchor-deleted`, naming the standing: a deleted anchor's room stays readable, and its open receipts still settle |
 | Terminal Design or negative Plan settlement | every pending downstream dependency branch closes in the same transaction | a held branch refuses `task::controlled-descendant-claimed` and names its holder unless explicit force is permitted |
 | Candidate or decision controller | an open Design | `preparation::controller-not-design` or `preparation::controller-concluded`: a Plan's outputs follow its positive review |
 | Selecting Design outputs | no pending Design dependency, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |

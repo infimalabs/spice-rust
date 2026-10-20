@@ -1,14 +1,12 @@
 //! `spice room inbox`: the reader's open operator items in key order.
 //!
-//! Each item is the receipt the operator owes one publication, pending or
-//! lapsed, shown with what it concerns: the operator direction a lane's `#KEY`
-//! named. An item reaches only the principal that sent that direction, or for
-//! an answer the principal that asked; the local reader is the bootstrap
-//! principal. Retained pre-cutover routes remain readable with the task they
-//! named, or as unnamed when they named none, and reach the bootstrap
-//! principal. Its text comes from its owning source and, for an ASK, its
-//! question result. Items page whole in key order; a page that withholds any
-//! continues at the first withheld item. Reading settles nothing.
+//! Each item is the receipt the operator owes one MSG publication, pending or
+//! lapsed, shown with the operator direction a lane's `#KEY` named. An item
+//! reaches only the principal that sent that direction; the local reader is
+//! the bootstrap principal. Retained pre-cutover routes remain readable with
+//! the task they named, or as unnamed when they named none, and reach the
+//! bootstrap principal. Items page whole in key order; a page that withholds
+//! any continues at the first withheld item. Reading settles nothing.
 
 use std::fmt;
 use std::path::Path;
@@ -18,12 +16,10 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::intent::RoomConcernedDirection;
 use wire::output::Bounded;
-use wire::rooms::{
-    RoomAnchor, RoomAuthorityStamp, RoomDestination, RoomPublicationKind, RoomReceiptRef,
-};
+use wire::rooms::{RoomAnchor, RoomAuthorityStamp, RoomDestination, RoomReceiptRef};
 use wire::{FaultClass, Outcome, Reply, ReplyPosition};
 
-use super::conversation::{ItemView, Party, ResultView, item_view, result_view};
+use super::conversation::{ItemView, Party, item_view};
 use super::{
     Body, Content, Failure, concerned_direction, conversation_body, discover, fault, open,
     project_body, store, write_content,
@@ -47,8 +43,6 @@ pub(crate) struct InboxItem {
     author: RoomDestination,
     concerns: Concern,
     content: Content,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<ResultView>,
 }
 
 /// What an operator item concerns, most contextual first.
@@ -70,7 +64,6 @@ struct Recorded {
     author: RoomDestination,
     concerns: Concern,
     body: Body,
-    result: Option<ResultView>,
 }
 
 /// Read one bounded page of open operator items from the working repository.
@@ -164,19 +157,7 @@ fn inbox(
                                 ),
                             )
                         })?;
-                    let (verb, result) = match publication.kind() {
-                        RoomPublicationKind::Msg {} => ("msg", None),
-                        RoomPublicationKind::Ask { result, .. } => ("ask", Some(result)),
-                        RoomPublicationKind::Ans { result, .. } => ("ans", Some(result)),
-                    };
-                    let result = match result {
-                        Some(result) => read
-                            .question_result(result)
-                            .map_err(store)?
-                            .map(|(record, head)| result_view(read, &principals, record, head))
-                            .transpose()?,
-                        None => None,
-                    };
+                    let verb = "msg";
                     let concerns = match concerned_direction(read, &publication)? {
                         Some(direction) => Concern::Direction(direction),
                         None => match record.context() {
@@ -190,7 +171,6 @@ fn inbox(
                         author: publication.author().clone(),
                         concerns,
                         body: conversation_body(read, &publication)?,
-                        result,
                     })
                 })
                 .collect::<Result<Vec<_>, Failure>>()?;
@@ -212,7 +192,6 @@ fn inbox(
                     author: recorded.author,
                     concerns: recorded.concerns,
                     content,
-                    result: recorded.result,
                 },
                 key,
             )
@@ -256,9 +235,6 @@ impl fmt::Display for InboxItem {
             )?,
             Concern::Task { task } => write!(formatter, "\n  concerns task {task}")?,
             Concern::Unnamed => formatter.write_str("\n  concerns nothing named")?,
-        }
-        if let Some(result) = &self.result {
-            write!(formatter, "\n  {result}")?;
         }
         write_content(formatter, &self.content)
     }

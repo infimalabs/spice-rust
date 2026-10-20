@@ -24,8 +24,6 @@ pub(super) struct Speaker {
 
 /// What classifies one card, beside its speaker.
 pub(super) enum Badge {
-    /// A question or its answer, worn as a quoted packet wears it.
-    Packet(Packet),
     /// A room-only kind, such as a typed contribution or a recorded room
     /// event: a stable key and the words that name it.
     Kind {
@@ -34,12 +32,6 @@ pub(super) enum Badge {
     },
     /// An operator post no current or later lane authority proves was heard.
     Unheard,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum Packet {
-    Ask,
-    Ans,
 }
 
 /// One card's signoff-led words and what follows them.
@@ -160,23 +152,6 @@ fn render_speaker(runtime: &AppRuntime, speaker: Speaker) -> Html {
 
 fn render_badge(badge: Badge) -> Html {
     match badge {
-        Badge::Packet(packet) => {
-            let (kind, acknowledgement, label, text) = match packet {
-                Packet::Ask => ("ask", "question", "Question", "ASK"),
-                Packet::Ans => ("ans", "answer", "Answer", "ANS"),
-            };
-            html! {
-                <span
-                    class="message-ack-pill"
-                    data-message-classification={kind}
-                    data-acknowledgement={acknowledgement}
-                    data-message-packet={kind}
-                    aria-label={label}
-                >
-                    <span class="message-ack-label">{text}</span>
-                </span>
-            }
-        }
         Badge::Kind { kind, label } => html! {
             <span class="message-room-pill" data-message-classification={kind}>
                 {label}

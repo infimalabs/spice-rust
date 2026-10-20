@@ -1297,7 +1297,6 @@ fn accept_commit_turn(
         message_state,
         diagnostic,
     )?;
-    room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)?;
     room_automation::reconcile(
         bus,
         command_surface.paths,

@@ -45,10 +45,6 @@ pub(super) struct Runtime {
 struct TimerSnapshot {
     authority: bus::TaskSnapshot,
     steering: Vec<journal::JournalHead<wire::SteeringHead>>,
-    results: Vec<(
-        wire::rooms::QuestionResultRecord,
-        journal::JournalHead<wire::rooms::QuestionResultHead>,
-    )>,
     items: Vec<(
         wire::rooms::RoomReceiptRecord,
         journal::JournalHead<wire::rooms::RoomReceiptHead>,
@@ -169,7 +165,7 @@ pub(super) enum Fired {
     Steering,
     TaskWake(CanonicalUuid),
     LaneResume(CanonicalUuid),
-    /// A room result timed out or an operator item lapsed.
+    /// An operator item lapsed.
     Room,
 }
 
@@ -274,7 +270,7 @@ impl Runtime {
         let desired_renewals =
             desired_renewals(tasks, residency, |lane| vacated_bound(supervisors, lane))?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
-        let desired_rooms = rooms::desired(&snapshot.results, &snapshot.items, residency);
+        let desired_rooms = rooms::desired(&snapshot.items, residency);
         self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
             .claims
@@ -854,11 +850,10 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
         let authority = bus
             .task_snapshot()
             .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
-        let (steering, results, items, horizon) = bus
+        let (steering, items, horizon) = bus
             .read(|read| {
                 Ok((
                     crate::steering_read::pending(read, None)?,
-                    read.pending_question_results()?,
                     read.open_room_items()?,
                     read.cursor()?,
                 ))
@@ -870,7 +865,6 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
         return Ok(TimerSnapshot {
             authority,
             steering,
-            results,
             items,
             horizon,
         });

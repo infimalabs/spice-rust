@@ -18,6 +18,7 @@ mod probe;
 mod provenance;
 mod retained;
 mod retained_notes;
+mod room_questions;
 mod settings_receipts;
 mod task_evidence;
 mod task_markers;
@@ -85,7 +86,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
         ""
     };
     let conversations = if predecessor < crate::migrate::ROOM_CONVERSATION_SCHEMA {
-        "DROP TABLE room_conversations; DROP TABLE room_items; DROP TABLE room_results;"
+        "DROP TABLE room_conversations; DROP TABLE room_items; DROP TABLE IF EXISTS room_results;"
     } else if predecessor < crate::migrate::ROOM_ITEM_SCHEMA {
         "DROP TABLE room_items;
          CREATE TABLE room_receipts (
@@ -157,8 +158,8 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} {evidence} \
-             {relevance} {principals} {oops_generation} {steering}
+            "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} \
+             {evidence} {relevance} {principals} {oops_generation} {steering}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))

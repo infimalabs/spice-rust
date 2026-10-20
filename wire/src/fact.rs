@@ -132,12 +132,6 @@ macro_rules! registered_body {
     (RoomDisposed) => {
         crate::rooms::RoomDisposed
     };
-    (RoomQuestionClosed) => {
-        crate::rooms::RoomQuestionClosed
-    };
-    (RoomQuestionTimedOut) => {
-        crate::rooms::RoomQuestionTimedOut
-    };
     (RoomReceiptLapsed) => {
         crate::rooms::RoomReceiptLapsed
     };
@@ -360,18 +354,13 @@ vocabulary! {
     RoomRelevanceObserved = "room::observed" by ResidentRecognition;
     /// The operator assessed one shadow observation for quality measurement.
     RoomRelevanceAssessed = "room::assessed" by CommandDoor;
-    /// A lane's authored MSG naming `#KEY` bound its native lane deliveries and
-    /// opened its operator item; retained ASK and ANS records also bound a result.
+    /// A lane's authored MSG bound its native lane deliveries and opened its
+    /// operator item.
     RoomConversed = "room::conversed" by AckScanner;
-    /// An operator MSG, ASK, or ANS bound its native lane deliveries and
-    /// opened its result.
+    /// An operator MSG bound its native lane deliveries and operator item.
     RoomPosted = "room::posted" by CommandDoor;
     /// The operator's ACK or NAK settled exact operator items.
     RoomDisposed = "room::disposed" by CommandDoor;
-    /// A pending question result was explicitly declined or cancelled.
-    RoomQuestionClosed = "room::closed" by CommandDoor;
-    /// A pending question result reached its immutable deadline.
-    RoomQuestionTimedOut = "room::timedout" by BusTimer;
     /// A pending operator item expired without a disposition.
     RoomReceiptLapsed = "room::lapsed" by BusTimer;
     /// Operator recovery returned a lapsed operator item to pending.

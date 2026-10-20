@@ -861,12 +861,9 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["room", "contribute"][..], CommandKind::RoomContribute),
         (&["room", "ack"][..], CommandKind::RoomControl),
         (&["room", "nak"][..], CommandKind::RoomControl),
-        (&["room", "answer"][..], CommandKind::RoomControl),
         (&["room", "reply"][..], CommandKind::RoomControl),
         (&["room", "recover"][..], CommandKind::RoomControl),
         (&["room", "assess"][..], CommandKind::RoomControl),
-        (&["room", "decline"][..], CommandKind::RoomClose),
-        (&["room", "cancel"][..], CommandKind::RoomClose),
         (&["preparation", "propose"][..], CommandKind::DesignPropose),
         (
             &["preparation", "critique"][..],

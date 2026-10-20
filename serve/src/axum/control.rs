@@ -45,7 +45,6 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::RoomContribute
         | CommandKind::RoomContributionSources
         | CommandKind::RoomControl
-        | CommandKind::RoomClose
         | CommandKind::WorkingGroupRead
         | CommandKind::WorkingGroupMove
         | CommandKind::WorkingGroupArrange

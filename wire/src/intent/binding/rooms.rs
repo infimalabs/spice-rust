@@ -39,7 +39,6 @@ impl CommandKind {
                 Binding::of(B::RoomContributionSources, A::RoomContributionSources)
             }
             Self::RoomControl => Binding::of(B::RoomControl, A::RoomControl),
-            Self::RoomClose => Binding::of(B::RoomClose, A::RoomControl),
             _ => panic!("room command binding partition is closed"),
         }
     }
@@ -57,7 +56,6 @@ impl Intent {
             Self::RoomContribute(_) => BodyShape::RoomContribute,
             Self::RoomContributionSources(_) => BodyShape::RoomContributionSources,
             Self::RoomControl(_) => BodyShape::RoomControl,
-            Self::RoomClose(_) => BodyShape::RoomClose,
             _ => panic!("room intent shape partition is closed"),
         }
     }
@@ -75,7 +73,6 @@ impl BodyShape {
             Self::RoomContribute => Intent::RoomContribute(crate::decode(bytes)?),
             Self::RoomContributionSources => Intent::RoomContributionSources(crate::decode(bytes)?),
             Self::RoomControl => Intent::RoomControl(crate::decode(bytes)?),
-            Self::RoomClose => Intent::RoomClose(crate::decode(bytes)?),
             _ => unreachable!("only room shapes decode as room bodies"),
         })
     }
