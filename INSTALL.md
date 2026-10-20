@@ -1,9 +1,11 @@
 # Installing Spice
 
 Installation is a digest-bound authority change. Preview writes nothing and
-prints the ordered plan with its canonical digest; apply publishes exactly that
-plan and selects the repository-wide Git hooks. Neither stops, drains, imports,
-or deletes foreign processes or state. The receipt and reversal contract lives
+prints its canonical digest, change counts, affected paths, and exact apply
+command; `--json` exposes the complete ordered plan. Apply publishes exactly
+that plan, selects the repository-wide Git hooks, and reports durable receipt
+status and progress. Neither stops, drains, imports, or deletes foreign
+processes or state. The receipt and reversal contract lives
 in [Distribution](docs/product/planes/distribution.md#installing-into-a-repository-the-product-does-not-own).
 
 Source work ends with a validated, landed commit and never installs.
