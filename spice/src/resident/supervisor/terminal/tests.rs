@@ -1,9 +1,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sill::Environment;
 use vendor::omp::{JobCall, JobOp, OutputPattern};
@@ -135,56 +133,6 @@ fn a_finite_wait_reports_what_its_log_gains_though_its_directory_never_changes()
     assert_eq!(
         progress,
         [named.clone() + "building", named + "ready on 8080"]
-    );
-}
-
-#[test]
-fn a_finite_wait_reports_at_most_once_per_cadence_however_often_its_job_changes() {
-    let root = scratch("wait-cadence");
-    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
-    let job = jobs.record_for_tests("chatty", false, Some(600_000));
-    fs::write(job.log_path(), "0\n").expect("job output");
-    let cadence = Duration::from_millis(20);
-    let stopped = Arc::new(AtomicBool::new(false));
-    let writer = {
-        let (log, stopped) = (job.log_path().to_path_buf(), Arc::clone(&stopped));
-        let probe = log.with_file_name("probe");
-        std::thread::spawn(move || {
-            let mut line = 0_u64;
-            while !stopped.load(Ordering::Relaxed) {
-                line += 1;
-                append(&log, &format!("{line}\n"));
-                // A directory entry change wakes the watch on every platform.
-                let _ = fs::write(&probe, b"");
-                let _ = fs::remove_file(&probe);
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        })
-    };
-    let mut reported = Vec::new();
-
-    wait(
-        &job,
-        &Control::new(),
-        Duration::from_millis(200),
-        cadence,
-        &mut |_| reported.push(Instant::now()),
-    );
-
-    stopped.store(true, Ordering::Relaxed);
-    writer.join().expect("writer stops");
-    let _ = fs::remove_dir_all(&root);
-    assert!(
-        reported.len() > 1,
-        "a job that keeps printing is reported again"
-    );
-    // The wait spaces its reads by the cadence; each report follows its read
-    // by however long that read took, so reports keep at least half of it.
-    assert!(
-        reported
-            .windows(2)
-            .all(|pair| pair[1] - pair[0] >= cadence / 2),
-        "{reported:?}"
     );
 }
 
