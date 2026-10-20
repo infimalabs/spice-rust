@@ -188,16 +188,15 @@ the room snapshot, its live facts, the board, and lane topology on every render:
 - **Lanes**: each involved lane with whether it is seated, vacant, or unknown,
   plus one chip per reason, each naming its source:
   - authored message and contribution history;
-  - an invitation by a lane-addressed room packet inside the day-long window;
+  - a recorded Design request the lane has not answered or declined;
   - native work;
   - a live coordination request;
-  - an owed receipt or ASK result;
   - a claim-bound stop request;
   - a leave with the lane's clause.
-  Aging removes only invitations. A leave ends invitations and Design requests
-  it postdates. Authored messages and contributions never create listening or
-  end a leave; later addressed requests may restore listening. History and
-  native duties stay.
+  Nothing ages. The lane's next room publication, a leave included, ends a
+  Design request it postdates. Authored messages and contributions never
+  create listening or end a leave; only a later Design request restores
+  listening. History and native duties stay.
 - **Relevance**: the resident's shadow relevance observations, each with its
   classification, progress standing, explanation, exceptions, uncertainty,
   source coverage, and operator verdict.

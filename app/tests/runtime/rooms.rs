@@ -384,22 +384,10 @@ fn room_board(
         .expect("room board response is admitted")
 }
 
-fn participants(runtime: &AppRuntime, now_micros: i64) -> Vec<app::RoomParticipant> {
+fn participants(runtime: &AppRuntime) -> Vec<app::RoomParticipant> {
     runtime
         .room_projection()
-        .participants(&room(), runtime.board(), now_micros)
-}
-
-const MICROS_PER_SECOND: i64 = 1_000_000;
-
-/// The moment `seconds` after the fixture room message was published.
-fn after_message(seconds: i64) -> i64 {
-    authority(ROOM_EVENT).micros() + seconds * MICROS_PER_SECOND
-}
-
-/// A moment past the invitation window of every fixture publication.
-fn aged() -> i64 {
-    after_message(2 * wire::rooms::ROOM_INVITATION_SECONDS)
+        .participants(&room(), runtime.board())
 }
 
 /// The frames an operator subscription opens with: its live-start fact page,
@@ -438,8 +426,7 @@ fn unheard_operator_post_tracks_current_listening_and_later_lane_events() {
 
     let is_unheard = |runtime: &AppRuntime| {
         let projection = runtime.room_projection();
-        let has_current_listener =
-            projection.has_current_listener(&room(), runtime.board(), aged());
+        let has_current_listener = projection.has_current_listener(&room(), runtime.board());
         projection.unheard_post(&room(), &operator_post(), has_current_listener)
     };
     assert!(is_unheard(&runtime), "no lane can have heard the post");
@@ -461,7 +448,7 @@ fn unheard_operator_post_tracks_current_listening_and_later_lane_events() {
     assert!(
         !runtime
             .room_projection()
-            .has_current_listener(&room(), runtime.board(), after_message(1)),
+            .has_current_listener(&room(), runtime.board()),
         "authoring the message creates participation but no listening authority"
     );
     let left = authority(COORDINATION_EVENT);
@@ -478,12 +465,6 @@ fn unheard_operator_post_tracks_current_listening_and_later_lane_events() {
             },
         )),
     ));
-    assert!(
-        !runtime
-            .room_projection()
-            .has_current_listener(&room(), runtime.board(), aged()),
-        "the lane's leave ends its current listening authority"
-    );
     assert!(
         !is_unheard(&runtime),
         "a later lane event permanently proves that the post was heard"
@@ -546,7 +527,7 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
             .into()
     );
     assert_eq!(
-        participants(&runtime, aged()),
+        participants(&runtime),
         vec![
             app::RoomParticipant {
                 lane: uuid(LANE),
@@ -785,7 +766,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
         Some(&stop())
     );
     assert_eq!(
-        participants(&runtime, aged())[0].reasons,
+        participants(&runtime)[0].reasons,
         vec![
             app::ParticipantReason::Publication(authority(ROOM_EVENT)),
             app::ParticipantReason::Work(room()),
@@ -804,7 +785,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
     runtime.apply_stream(&admitted_stream(&session, &live_fact(canceled)));
     runtime.apply_stream(&admitted_stream(&session, &live_fact(authorized(10, 2))));
     assert_eq!(
-        participants(&runtime, aged())
+        participants(&runtime)
             .iter()
             .map(|participant| participant.lane)
             .collect::<Vec<_>>(),
@@ -844,31 +825,25 @@ fn authored_message_records_participation_without_author_attention() {
         runtime.apply_stream(&frame);
     }
     assert_eq!(
-        participants(&runtime, after_message(1))[0].reasons,
+        participants(&runtime)[0].reasons,
         vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
         "the author's room history is not a reason to deliver later catch-up"
     );
     assert_eq!(
-        participants(&runtime, after_message(1))[1].reasons,
+        participants(&runtime)[1].reasons,
         vec![app::ParticipantReason::Coordination(
             COORDINATION_KEY.to_owned()
         )],
         "another lane's native duty is unchanged"
     );
-    let projection = runtime.room_projection();
-    assert!(
-        projection
-            .room(&room())
-            .expect("room")
-            .listener_joins(projection.conversation())
-            .is_empty(),
-        "authorship creates no joined-listener timeline event"
-    );
 }
+
+const MICROS_PER_SECOND: i64 = 1_000_000;
 
 /// A room publication identity `seconds` after the fixture room message.
 fn later_publication(seconds: i64) -> RoomAuthorityStamp {
-    RoomAuthorityStamp::for_micros(after_message(seconds)).expect("fixture publication")
+    RoomAuthorityStamp::for_micros(authority(ROOM_EVENT).micros() + seconds * MICROS_PER_SECOND)
+        .expect("fixture publication")
 }
 
 #[test]
@@ -894,7 +869,7 @@ fn an_authored_message_does_not_end_a_leave() {
             },
         ),
     );
-    let current = participants(&runtime, after_message(2));
+    let current = participants(&runtime);
     assert_eq!(
         current[0].reasons,
         vec![
@@ -919,7 +894,7 @@ fn an_authored_message_does_not_end_a_leave() {
     contribution["fact"]["publication"] = serde_json::json!(returned.to_string());
     live(&mut runtime, &session, contribution);
     assert_eq!(
-        participants(&runtime, after_message(4))[0].reasons,
+        participants(&runtime)[0].reasons,
         vec![
             app::ParticipantReason::Publication(authority(ROOM_EVENT)),
             app::ParticipantReason::Publication(returned),
@@ -933,62 +908,85 @@ fn an_authored_message_does_not_end_a_leave() {
 }
 
 #[test]
-fn an_asked_lane_stands_asked_until_it_leaves() {
+fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = AppRuntime::new(&accepted);
-    for frame in opening(&session) {
-        runtime.apply_stream(&frame);
-    }
+    let evidence = wire::rooms::DesignNoticeEvidence::Task {
+        task: room(),
+        statement: wire::Seq::new(1).expect("fixture evidence statement"),
+        completed: wire::Seq::new(8).expect("fixture completion"),
+        support: wire::rooms::DesignSupport::Implemented,
+    };
+    let asked = || {
+        let mut runtime = AppRuntime::new(&accepted);
+        for frame in opening(&session) {
+            runtime.apply_stream(&frame);
+        }
+        live(
+            &mut runtime,
+            &session,
+            envelope(
+                9,
+                "room::noticed",
+                &wire::rooms::DesignNoticed {
+                    design: room(),
+                    statement: wire::Seq::new(1).expect("fixture statement"),
+                    lane: uuid(THIRD_LANE),
+                    occupant: uuid(REQUEST),
+                    session: wire::rooms::DesignSession {
+                        vendor: "omp".parse().expect("fixture vendor"),
+                        identity: "fixture-session".to_owned(),
+                    },
+                    compaction: None,
+                    opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
+                    evidence: evidence.clone(),
+                    excerpt: "fixture rooms".to_owned(),
+                    terms: vec!["rooms".to_owned()],
+                },
+            ),
+        );
+        runtime
+    };
     let reasons = |runtime: &AppRuntime| {
-        participants(runtime, after_message(2))
+        participants(runtime)
             .into_iter()
             .find(|participant| participant.lane == uuid(THIRD_LANE))
             .map(|participant| participant.reasons)
     };
+
+    let mut answered = asked();
+    assert_eq!(
+        reasons(&answered),
+        Some(vec![app::ParticipantReason::Asked(evidence.clone())])
+    );
+    let contribution = later_publication(1);
     live(
-        &mut runtime,
+        &mut answered,
         &session,
         envelope(
-            9,
-            "room::noticed",
-            &wire::rooms::DesignNoticed {
-                design: room(),
-                statement: wire::Seq::new(1).expect("fixture statement"),
+            10,
+            "room::contributed",
+            &wire::rooms::RoomContributed {
+                room: room(),
+                publication: contribution.clone(),
                 lane: uuid(THIRD_LANE),
-                occupant: uuid(REQUEST),
-                session: wire::rooms::DesignSession {
-                    vendor: "omp".parse().expect("fixture vendor"),
-                    identity: "fixture-session".to_owned(),
-                },
-                compaction: None,
-                opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
-                evidence: wire::rooms::DesignNoticeEvidence::Task {
-                    task: room(),
-                    statement: wire::Seq::new(1).expect("fixture evidence statement"),
-                    completed: wire::Seq::new(8).expect("fixture completion"),
-                    support: wire::rooms::DesignSupport::Implemented,
-                },
-                excerpt: "fixture rooms".to_owned(),
-                terms: vec!["rooms".to_owned()],
+                contribution: wire::rooms::RoomContributionKind::Evidence,
+                statement: None,
+                text: "the fold already covers this".to_owned(),
+                sources: Vec::new(),
             },
         ),
     );
     assert_eq!(
-        reasons(&runtime),
-        Some(vec![app::ParticipantReason::Asked(
-            wire::rooms::DesignNoticeEvidence::Task {
-                task: room(),
-                statement: wire::Seq::new(1).expect("fixture evidence statement"),
-                completed: wire::Seq::new(8).expect("fixture completion"),
-                support: wire::rooms::DesignSupport::Implemented,
-            }
-        )])
+        reasons(&answered),
+        Some(vec![app::ParticipantReason::Publication(contribution)]),
+        "a contribution answers the request and subscribes no one"
     );
 
+    let mut declined = asked();
     let left = later_publication(1);
     live(
-        &mut runtime,
+        &mut declined,
         &session,
         envelope(
             10,
@@ -1002,12 +1000,12 @@ fn an_asked_lane_stands_asked_until_it_leaves() {
         ),
     );
     assert_eq!(
-        reasons(&runtime),
+        reasons(&declined),
         Some(vec![app::ParticipantReason::Left {
             publication: left,
             clause: "not my problem space".to_owned(),
         }]),
-        "a leave ends the asked reason"
+        "a leave declines the request"
     );
 }
 

@@ -1073,11 +1073,9 @@
   border-radius: var(--app-radius-control);
 }
 
-.room-reason[data-reason="activity"] { border-inline-start-color: var(--muted); }
 .room-reason[data-reason="invitation"] { border-style: dashed; border-inline-start-color: var(--focus); }
 .room-reason[data-reason="work"] { border-inline-start-color: var(--accent); }
 .room-reason[data-reason="requested"] { border-inline-start-color: var(--focus); }
-.room-reason[data-reason="receipt"], .room-reason[data-reason="result"] { border-inline-start-color: var(--warning); }
 .room-reason[data-reason="responsibility"] { border-inline-start-color: var(--danger); }
 .room-reason[data-reason="left"] { border-style: dotted; border-inline-start-color: var(--muted); color: var(--muted); overflow-wrap: anywhere; }
 

@@ -1,7 +1,7 @@
 //! Deterministic room, group, preparation, and conversation authority
 //! projected from facts.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use wire::rooms::{self as authority, RoomAuthorityStamp};
 use wire::{Actor, CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskStamp};
@@ -12,8 +12,6 @@ mod contributions;
 mod conversation;
 #[cfg(test)]
 mod design_standing_tests;
-#[cfg(test)]
-mod listener_tests;
 mod standing;
 
 pub use contributions::{Contribution, ContributionGroup};
@@ -245,90 +243,28 @@ impl RoomState {
     pub fn events(&self) -> &BTreeMap<RoomAuthorityStamp, RoomEvent> {
         &self.events
     }
-
-    /// Event-backed transitions into listening, keyed by the exact directed
-    /// room publication that established each transition. Initial invitation
-    /// and post-leave restoration are visible; later invitations while the
-    /// lane remains present create no duplicate.
-    #[must_use]
-    pub fn listener_joins<'a>(
-        &'a self,
-        conversation: &ConversationProjection,
-    ) -> BTreeMap<&'a RoomAuthorityStamp, Vec<CanonicalUuid>> {
-        let mut listening = BTreeSet::new();
-        let mut joins = BTreeMap::new();
-        for (publication, event) in self.in_journal_order() {
-            if let RoomEventKind::Left { lane, .. } = &event.kind {
-                listening.remove(lane);
-            }
-            let joined = event_listener_lanes(event, conversation)
-                .into_iter()
-                .filter(|lane| listening.insert(*lane))
-                .collect::<Vec<_>>();
-            if !joined.is_empty() {
-                joins.insert(publication, joined);
-            }
-        }
-        joins
-    }
-}
-
-/// Lanes whose exact room event establishes listening. Authorship and room-only
-/// posting join nobody; a packet joins each lane it actually directed.
-fn event_listener_lanes(
-    event: &RoomEvent,
-    conversation: &ConversationProjection,
-) -> BTreeSet<CanonicalUuid> {
-    let mut lanes = BTreeSet::new();
-    if let RoomEventKind::Messaged {
-        directed,
-        conversation: admitted,
-        ..
-    } = &event.kind
-    {
-        lanes.extend(
-            directed
-                .iter()
-                .chain(
-                    admitted
-                        .as_ref()
-                        .and_then(|stamp| conversation.conversation(stamp))
-                        .into_iter()
-                        .flat_map(|conversation| &conversation.directed),
-                )
-                .filter_map(|directive| conversation.delivery(directive))
-                .map(|delivery| delivery.value.lane),
-        );
-    }
-    lanes
 }
 
 /// Why a logical lane currently appears in a room. Each reason names the
-/// admitted source it traces to; only `Invitation` ages out of the invitation
-/// window, a leave in force ends it and every earlier `Asked`, and native
-/// duties end only through their own dispositions.
+/// admitted source it traces to; nothing ages, a Design request stands until
+/// the lane's next room publication, and native duties end only through their
+/// own dispositions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipantReason {
     /// The lane authored a room message or typed contribution; history never ages.
     Publication(RoomAuthorityStamp),
-    /// A room MSG or ASK addressed the lane inside the invitation window; it
-    /// requests involvement and is not a contribution.
-    Invitation(String),
     /// A recorded Design request asks the lane from this exact retained
-    /// evidence; it never ages, and only a leave ends it.
+    /// evidence; it never ages, and the lane's next room publication answers
+    /// or declines it.
     Asked(authority::DesignNoticeEvidence),
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
     /// A live room coordination request addresses the lane.
     Coordination(String),
-    /// The lane owes the receipt of a room delivery with this steering key.
-    Receipt(String),
-    /// The lane owes the substantive result of a room ASK.
-    Result(authority::QuestionResultRef),
     /// A live stop request addresses the lane's exact claim.
     Stop(String),
-    /// The lane recorded a leave; only later addressed request attention and
-    /// native duties can make it listen.
+    /// The lane recorded a leave; only a later Design request and native
+    /// duties can make it listen.
     Left {
         /// The leave's publication identity.
         publication: RoomAuthorityStamp,

@@ -272,59 +272,6 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     );
 }
 
-/// A room route read answers one lane's newest route into one room in any
-/// disposition; routes into another room, without a room, or to another lane
-/// never answer, and a typed room disagreeing with its body refuses.
-#[test]
-fn a_room_route_read_answers_the_lanes_newest_route_into_the_room() {
-    let mut journal = Journal::in_memory().expect("steering journal");
-    let [room, other] = rooms();
-    let peer = indexed_uuid(0xff);
-    assert_eq!(latest_route(&journal, lane(), &room), None);
-
-    publish_route(&mut journal, 1, lane(), Some(&other));
-    publish_route(&mut journal, 2, lane(), None);
-    assert_eq!(latest_route(&journal, lane(), &room), None);
-    publish_route(&mut journal, 3, lane(), Some(&room));
-    assert_eq!(
-        latest_route(&journal, lane(), &room).as_deref(),
-        Some("route-3")
-    );
-    let newest = publish_route(&mut journal, 4, lane(), Some(&room));
-    journal
-        .apply(retire_write(&newest, Disposition::Acked))
-        .expect("newest route retires");
-    publish_route(&mut journal, 5, peer, Some(&room));
-    assert_eq!(
-        latest_route(&journal, lane(), &room).as_deref(),
-        Some("route-4"),
-        "the newest route answers in any disposition"
-    );
-    assert_eq!(
-        latest_route(&journal, lane(), &other).as_deref(),
-        Some("route-1")
-    );
-    assert_eq!(
-        latest_route(&journal, peer, &room).as_deref(),
-        Some("route-5")
-    );
-    journal.verify().expect("typed rooms verify");
-
-    journal
-        .connection
-        .execute(
-            "UPDATE steering_heads SET room = ?1 WHERE steer_key = 'route-2'",
-            [other.to_string()],
-        )
-        .expect("corrupt a typed room");
-    assert!(
-        journal
-            .read(|read| read.latest_room_route(lane(), &other))
-            .is_err(),
-        "a typed room disagreeing with its body refuses"
-    );
-}
-
 #[test]
 fn a_rebuilt_steering_index_restores_typed_rooms() {
     let mut journal = Journal::in_memory().expect("steering journal");
@@ -343,10 +290,6 @@ fn a_rebuilt_steering_index_restores_typed_rooms() {
         .rebuild_steering_index(cursor, &heads, &[])
         .expect("steering index rebuilds");
     assert_eq!(typed_rooms(&journal), [Some(room.to_string()), None]);
-    assert_eq!(
-        latest_route(&journal, lane(), &room).as_deref(),
-        Some("route-1")
-    );
     journal.verify().expect("rebuilt rooms verify");
 }
 
@@ -389,10 +332,6 @@ fn a_predecessor_crossing_backfills_typed_rooms_without_rewriting_authority() {
     );
     assert_eq!(authority(&journal), before);
     assert_eq!(typed_rooms(&journal), [Some(room.to_string()), None]);
-    assert_eq!(
-        latest_route(&journal, lane(), &room).as_deref(),
-        Some("route-1")
-    );
     journal.verify().expect("crossed rooms verify");
 }
 
@@ -424,13 +363,6 @@ fn publish_route(
         .read(|read| read.steering_key(&key))
         .expect("room route reads")
         .expect("room route exists")
-}
-
-fn latest_route(journal: &Journal, lane: CanonicalUuid, room: &wire::TaskStamp) -> Option<String> {
-    journal
-        .read(|read| read.latest_room_route(lane, room))
-        .expect("room route reads")
-        .map(|head| head.body().key.clone())
 }
 
 fn typed_rooms(journal: &Journal) -> Vec<Option<String>> {
