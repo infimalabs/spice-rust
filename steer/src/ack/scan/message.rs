@@ -192,11 +192,13 @@ pub(super) struct Header {
 ///
 /// A selector is an ASCII-alphanumeric audience run, optionally followed by
 /// `#` and an ASCII-alphanumeric-or-hyphen context run; selectors are
-/// separated by header space or a comma. A colon-closed list is an attempt
-/// when any selector spells a valid route or carries the hyphen required by a
-/// task handle, so a malformed room-only selector is refused rather than
-/// ignored. An unclosed list is one only when its first selector is already
-/// valid.
+/// separated by header space or a comma. A colon-closed list whose first
+/// selector is route-shaped is an attempt anywhere authored prose can place a
+/// packet. At a line packet boundary, a later route-shaped selector also makes
+/// the list an attempt so an explicitly malformed first selector is refused
+/// rather than ignored. This boundary keeps ordinary mid-clause narration from
+/// borrowing a later address-shaped word before its colon. An unclosed list is
+/// one only when its first selector is already valid.
 pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
     let marker_boundary = skip_emphasis(prose, marker_end);
     let mut cursor = skip_header_space(prose, marker_boundary);
@@ -244,8 +246,10 @@ pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
         let (_, context) = split(prose, start, end);
         context.is_some_and(|context| prose.as_bytes()[context].contains(&b'-'))
     };
+    let first_spells = spells(&first) || room_like(&first);
     let attempt = if terminated {
-        tokens.iter().any(|token| spells(token) || room_like(token))
+        (first_spells || marker_starts_line(prose, marker_end - MARKER.len()))
+            && tokens.iter().any(|token| spells(token) || room_like(token))
     } else {
         spells(&first)
     };
@@ -258,6 +262,16 @@ pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
         tokens,
         terminated,
     })
+}
+
+/// Whether a marker begins an explicit line packet, ignoring Markdown framing.
+fn marker_starts_line(prose: &str, marker_start: usize) -> bool {
+    let line_start = prose[..marker_start]
+        .rfind(['\r', '\n'])
+        .map_or(0, |index| index + 1);
+    prose[line_start..marker_start]
+        .bytes()
+        .all(|byte| matches!(byte, b' ' | b'\t' | b'-' | b'+' | b'*' | b'_'))
 }
 
 /// One selector's lead range and, when qualified, its context range.

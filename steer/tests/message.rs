@@ -7,8 +7,8 @@
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
-    Audience, Message, MessageRefusal, Outcome, Standing, answer, scan, scan_acknowledgements,
-    scan_messages,
+    Audience, Message, MessageRefusal, Outcome, Standing, answer, placed_headers, scan,
+    scan_acknowledgements, scan_messages,
 };
 use wire::{Disposition, OccupantAddress, OccupantAddressError, TaskHandle};
 
@@ -278,6 +278,23 @@ fn unauthored_markers_neither_publish_nor_bound_a_body() {
             .iter()
             .all(|recognition| !matches!(recognition.outcome, Outcome::Retired { .. }))
     );
+}
+
+/// A protocol name inside an ordinary clause does not become a header merely
+/// because later prose contains an address-shaped token before its colon.
+#[test]
+fn mid_clause_message_narration_is_not_a_packet_or_body_boundary() {
+    let narration = "the test must prove an ASK line inside a MSG body does not end that body, which is acceptance item 1:";
+    assert!(scan_messages(narration).is_empty());
+    assert!(placed_headers(narration).is_empty());
+
+    let prose = format!("MSG 6HmS: Keep all of this: {narration}");
+    let [message] = scan_messages(&prose).try_into().expect("one packet");
+    assert_eq!(
+        sent(&prose, &message),
+        (vec!["6HmS"], &prose["MSG 6HmS: ".len()..])
+    );
+    assert_eq!(placed_headers(&prose), [0.."MSG 6HmS:".len()]);
 }
 
 /// Every recipient-list or body defect refuses the whole packet, decided by the
