@@ -15,6 +15,15 @@ use wire::{Digest, Domain};
 mod renderer;
 mod source;
 
+/// The one Trunk version every app build and release compiles with.
+macro_rules! trunk_version {
+    () => {
+        "0.21.14"
+    };
+}
+pub(crate) const PINNED_TRUNK: &str = concat!("trunk ", trunk_version!());
+const TRUNK_INSTALL: &str = concat!("cargo install --locked trunk --version ", trunk_version!());
+
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
 const APP_GENERATION_PLACEHOLDER: &str = "__SPICE_APP_GENERATION__";
@@ -408,6 +417,27 @@ fn read_regular(path: &Path) -> Result<Vec<u8>, AppBuildError> {
     })
 }
 
+/// Refuse before compiling unless `PATH` resolves the pinned Trunk, so a
+/// machine without it learns the exact remedy instead of a bare launch error.
+fn verify_trunk() -> Result<(), AppBuildError> {
+    let report = match Command::new("trunk").arg("--version").output() {
+        Ok(report) => report,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(AppBuildError::TrunkUnpinned(None));
+        }
+        Err(error) => return Err(AppBuildError::Launch(error)),
+    };
+    let observed = String::from_utf8_lossy(&report.stdout).trim().to_owned();
+    if report.status.success() && observed == PINNED_TRUNK {
+        return Ok(());
+    }
+    Err(AppBuildError::TrunkUnpinned(Some(if observed.is_empty() {
+        format!("a trunk whose version report failed ({})", report.status)
+    } else {
+        observed
+    })))
+}
+
 fn run_trunk(
     root: &Path,
     environment: &ReleaseEnvironment,
@@ -420,8 +450,9 @@ fn run_trunk(
     let cargo_home = environment
         .cargo_home()
         .ok_or(AppBuildError::MissingCargoHome)?;
+    verify_trunk()?;
     prepare_app_build(&build_root, &worktree_identity)?;
-    writeln!(output, "[app] trunk 0.21.14 -> {}", stage.display())
+    writeln!(output, "[app] {PINNED_TRUNK} -> {}", stage.display())
         .map_err(AppBuildError::Output)?;
     let rustflags = remapped_rustflags(root, &cargo_home)?;
     let status = trunk_command(
@@ -711,8 +742,13 @@ fn workspace_root() -> Result<PathBuf, AppBuildError> {
 pub enum AppBuildError {
     Output(io::Error),
     Launch(io::Error),
+    /// Trunk is absent from `PATH` or reports a version other than the pin.
+    TrunkUnpinned(Option<String>),
     Exit(Option<i32>),
-    Io { path: PathBuf, source: io::Error },
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
     NonUtf8(PathBuf),
     MissingCargoHome,
     SourceIdentity(String),
@@ -726,6 +762,12 @@ impl fmt::Display for AppBuildError {
         match self {
             Self::Output(error) => write!(formatter, "app build output failed: {error}"),
             Self::Launch(error) => write!(formatter, "trunk did not launch: {error}"),
+            Self::TrunkUnpinned(observed) => write!(
+                formatter,
+                "the app build needs {PINNED_TRUNK} on PATH, found {}; install it with \
+                 `{TRUNK_INSTALL}`",
+                observed.as_deref().unwrap_or("no trunk"),
+            ),
             Self::Exit(Some(code)) => write!(formatter, "trunk failed with exit {code}"),
             Self::Exit(None) => formatter.write_str("trunk was terminated by a signal"),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),

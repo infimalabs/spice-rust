@@ -10,6 +10,8 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::app::PINNED_TRUNK;
+
 use dist::{
     BuildError, Builder, Canvas, FilePublisher, Pipeline, PublishError, Publisher, RequiredPins,
     StagedTarget,
@@ -49,7 +51,6 @@ const OUTPUT_DRAIN: Duration = Duration::from_secs(10);
 const REAP: Duration = Duration::from_secs(10);
 const GRACE: Duration = Duration::from_secs(5);
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
-const PINNED_TRUNK: &str = "trunk 0.21.14";
 const PINNED_MUTANTS: &str = "cargo-mutants 27.1.0";
 #[cfg(unix)]
 const MACHO_UUID_LENGTH: usize = 36;
