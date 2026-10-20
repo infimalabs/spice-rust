@@ -15,6 +15,7 @@ use super::{Available, Backoff, Resolution, Target, Trigger, project_targets, re
 
 mod deferred_exit;
 mod exit_disposal;
+mod group_arrangement;
 mod reaped_seat;
 mod selection_wait;
 mod trust_ice;
@@ -25,6 +26,7 @@ const TASK_MOMENT: &str = "1kKRRsDP";
 const NEWER_TASK_MOMENT: &str = "1kKRRsDT";
 const INVALID_TASK_MOMENT: &str = "1kKRRsDQ";
 const DESIGN_MOMENT: &str = "1kKRRsDV";
+const SECOND_DESIGN_MOMENT: &str = "1kKRRsDW";
 
 #[derive(Debug, PartialEq, Eq)]
 struct SemanticState {
@@ -119,7 +121,7 @@ fn allocation_index_rebuilds_only_for_changed_task_heads() {
 fn group_moves_refresh_a_designs_standing_incrementally() {
     let (bus, projects, mut incremental) = caught_up_fixture(0);
     committed(
-        bus.commit(design_write(instant(5)))
+        bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("open Design commits"),
     );
     let design = task(DESIGN_MOMENT);
@@ -157,7 +159,7 @@ fn group_moves_refresh_a_designs_standing_incrementally() {
 fn stance_changes_refresh_every_design_in_the_group() {
     let (bus, projects, mut incremental) = caught_up_fixture(0);
     committed(
-        bus.commit(design_write(instant(5)))
+        bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("open Design commits"),
     );
     let design = task(DESIGN_MOMENT);
@@ -207,7 +209,7 @@ fn stance_changes_refresh_every_design_in_the_group() {
 fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
     let (bus, projects, mut incremental) = caught_up_fixture(0);
     committed(
-        bus.commit(design_write(instant(5)))
+        bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("open Design commits"),
     );
     let design = task(DESIGN_MOMENT);
@@ -940,14 +942,14 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
     write
 }
 
-fn design_write(at: Instant) -> JournalWrite {
-    let born = task(DESIGN_MOMENT);
+fn design_write(moment: &str, at: Instant) -> JournalWrite {
+    let born = task(moment);
     let flow: Vec<Phase> = ["design", "review"]
         .iter()
         .map(|phase| phase.parse().expect("Design phase"))
         .collect();
     let phase = flow[0].clone();
-    let origin = format!("task:{}", handle(DESIGN_MOMENT))
+    let origin = format!("task:{}", handle(moment))
         .parse::<Origin>()
         .expect("Design origin");
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
