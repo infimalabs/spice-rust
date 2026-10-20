@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use wire::rooms::{
-    self as authority, QuestionResultState, ROOM_ACTIVITY_SECONDS, RoomDestination,
+    self as authority, QuestionResultState, ROOM_INVITATION_SECONDS, RoomDestination,
     RoomPublicationKind,
 };
 use wire::{CanonicalUuid, Disposition, Seq, TaskStamp};
@@ -78,23 +78,21 @@ pub struct CoordinationStanding<'a> {
 
 impl RoomProjection {
     /// Current logical-lane participants and the exact reasons for their
-    /// presence at `now_micros`. Contribution history and native duties stay;
-    /// only activity and invitations leave once they age past
-    /// [`ROOM_ACTIVITY_SECONDS`]. Activity comes only from authored room
-    /// messages: a typed contribution is participation, never attention, and
-    /// does not end a leave. A leave later than the lane's latest room message
-    /// ends its activity and every invitation or Design request it postdates.
+    /// presence at `now_micros`. Publication history and native duties stay;
+    /// only invitations leave once they age past [`ROOM_INVITATION_SECONDS`].
+    /// Authored room messages and typed contributions are participation, never
+    /// attention, and do not end a leave. A leave ends every invitation or
+    /// Design request it postdates.
     pub fn participants(
         &self,
         room: &TaskStamp,
         board: Option<&BoardView>,
         now_micros: i64,
     ) -> Vec<RoomParticipant> {
-        let since = now_micros.saturating_sub(ROOM_ACTIVITY_SECONDS * MICROS_PER_SECOND);
+        let since = now_micros.saturating_sub(ROOM_INVITATION_SECONDS * MICROS_PER_SECOND);
         let mut reasons = BTreeMap::<CanonicalUuid, Vec<ParticipantReason>>::new();
         let mut add = |lane: CanonicalUuid, reason| reasons.entry(lane).or_default().push(reason);
         if let Some(state) = self.rooms.get(room) {
-            let mut latest = BTreeMap::new();
             let mut leaves = BTreeMap::new();
             let mut invitations = Vec::new();
             for (publication, event) in &state.events {
@@ -107,9 +105,8 @@ impl RoomProjection {
                     } => {
                         add(
                             source.head.lane,
-                            ParticipantReason::Contribution(publication.clone()),
+                            ParticipantReason::Publication(publication.clone()),
                         );
-                        latest.insert(source.head.lane, publication);
                         (directed.as_slice(), conversation.as_ref())
                     }
                     RoomEventKind::Posted { .. } => (
@@ -123,7 +120,7 @@ impl RoomProjection {
                         continue;
                     }
                     RoomEventKind::Contributed { lane, .. } => {
-                        add(*lane, ParticipantReason::Contribution(publication.clone()));
+                        add(*lane, ParticipantReason::Publication(publication.clone()));
                         continue;
                     }
                     _ => continue,
@@ -153,7 +150,6 @@ impl RoomProjection {
                     }
                 }
             }
-            leaves.retain(|lane, (left, ..)| latest.get(lane).is_none_or(|latest| *left > *latest));
             for (lane, publication, key) in invitations {
                 if leaves
                     .get(&lane)
@@ -168,11 +164,6 @@ impl RoomProjection {
                     .is_none_or(|(.., position)| asked > position)
                 {
                     add(*lane, ParticipantReason::Asked(task.clone()));
-                }
-            }
-            for (lane, publication) in latest {
-                if publication.micros() >= since && !leaves.contains_key(&lane) {
-                    add(lane, ParticipantReason::Activity(publication.clone()));
                 }
             }
             for (lane, (publication, clause, _)) in leaves {
@@ -198,8 +189,8 @@ impl RoomProjection {
 
     /// Whether any lane currently has a reason to receive bounded catch-up.
     ///
-    /// Participation and a leave never listen; activity, invitations, Design
-    /// requests, and native duties do, matching the resident's attention.
+    /// Participation and a leave never listen; invitations, Design requests,
+    /// and native duties do, matching the resident's attention.
     #[must_use]
     pub fn has_current_listener(
         &self,
@@ -211,9 +202,8 @@ impl RoomProjection {
             .iter()
             .flat_map(|participant| &participant.reasons)
             .any(|reason| match reason {
-                ParticipantReason::Contribution(_) | ParticipantReason::Left { .. } => false,
-                ParticipantReason::Activity(_)
-                | ParticipantReason::Invitation(_)
+                ParticipantReason::Publication(_) | ParticipantReason::Left { .. } => false,
+                ParticipantReason::Invitation(_)
                 | ParticipantReason::Asked(_)
                 | ParticipantReason::Work(_)
                 | ParticipantReason::Coordination(_)

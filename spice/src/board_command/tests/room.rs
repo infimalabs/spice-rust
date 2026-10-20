@@ -7,8 +7,7 @@ use wire::intent::{
 };
 use wire::rooms::{
     CoordinationControl, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp, RoomCoordinationStarted,
-    RoomListenerAvailability, RoomListenerDelivery, RoomMessaged, RoomPost, RoomPostOutcome,
-    RoomPublicationContent, RoomPublished, TranscriptHunk,
+    RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
 mod automation;
@@ -549,94 +548,6 @@ fn authored_observations_enforce_the_room_publication_byte_bound() {
             .map(|publication| publication.content),
         Some(RoomPublicationContent::Authored { text: boundary })
     );
-}
-
-#[test]
-fn room_post_reports_occupied_vacant_and_unknown_listeners_without_waking() {
-    let (_root, bus, epoch, seats) = fixture("room-post-listeners", 2);
-    let room = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-post-listeners",
-        "Room",
-        None,
-    );
-    let micros = jiff::Timestamp::now().as_microsecond();
-    publish_message(&bus, &room, seats[0].lane, seats[0].occupant, micros);
-    publish_message(&bus, &room, seats[1].lane, seats[1].occupant, micros + 1);
-    let unknown = uuid(900_000);
-    publish_message(&bus, &room, unknown, uuid(900_001), micros + 2);
-    vacate(&bus, epoch, &seats[1]);
-
-    let answer = assert_committed(
-        dispatch(&bus, &post_command(&bus, epoch, &room, "Recorded only."))
-            .expect("room command dispatches"),
-    );
-    let CommandAnswer::RoomPost(answer) = answer else {
-        panic!("room post returned another answer shape: {answer:?}");
-    };
-    let RoomPostOutcome::RecordedWithListeners { listeners } = answer.outcome else {
-        panic!("current listeners were not reported")
-    };
-    assert_eq!(listeners.len(), 3);
-    let occupied = listeners
-        .iter()
-        .find(|listener| listener.lane == seats[0].lane)
-        .expect("occupied listener is present");
-    assert_eq!(occupied.availability, RoomListenerAvailability::Occupied);
-    assert_eq!(occupied.delivery, RoomListenerDelivery::AtSafeBoundary);
-    let vacant = listeners
-        .iter()
-        .find(|listener| listener.lane == seats[1].lane)
-        .expect("vacant listener is present");
-    assert_eq!(vacant.availability, RoomListenerAvailability::Vacant);
-    assert_eq!(vacant.delivery, RoomListenerDelivery::WaitsForNextStart);
-    let unknown = listeners
-        .iter()
-        .find(|listener| listener.lane == unknown)
-        .expect("unknown listener is present");
-    assert_eq!(unknown.availability, RoomListenerAvailability::Unknown);
-    assert_eq!(unknown.delivery, RoomListenerDelivery::PendingAvailability);
-    assert!(
-        bus.task_snapshot()
-            .expect("post-residency reads")
-            .residency()
-            .expect("post-residency exists")
-            .body()
-            .lanes
-            .iter()
-            .any(|row| row.lane == seats[1].lane && row.occupant.is_none())
-    );
-}
-
-#[test]
-fn a_left_lane_stops_listening_until_it_messages_again() {
-    let (_root, bus, epoch, seats) = fixture("room-leave-listening", 1);
-    let lane = seats[0].lane;
-    let room = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-leave-listen",
-        "Room",
-        None,
-    );
-    let micros = jiff::Timestamp::now().as_microsecond();
-    publish_message(&bus, &room, lane, seats[0].occupant, micros);
-    assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
-
-    let (committed, first) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
-    assert!(committed && first.recorded, "{first:?}");
-    assert!(first.kept.is_empty(), "{first:?}");
-    assert!(post_listeners(&bus, epoch, &room).is_empty());
-
-    let (committed, repeated) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
-    assert!(!committed && !repeated.recorded, "{repeated:?}");
-    assert_eq!(repeated.publication, first.publication);
-
-    publish_message(&bus, &room, lane, seats[0].occupant, micros + 1_000_000_000);
-    assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
 }
 
 #[test]

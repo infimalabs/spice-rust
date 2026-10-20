@@ -81,9 +81,6 @@ fn listening(
         .map(|reason| match reason {
             Reason::Work { task: work } => format!("work {}", task(work)),
             Reason::Responsibility { task: work } => format!("responsibility {}", task(work)),
-            Reason::Activity { publication, .. } => {
-                format!("recent room message {publication}")
-            }
             Reason::Invitation { key } => format!("invitation {key}"),
             Reason::Asked { source } => format!("asked from {source}"),
             Reason::Delivery { key } => format!("owed receipt {key}"),
@@ -407,7 +404,6 @@ fn plan(
             append_room(
                 bus,
                 paths,
-                lane,
                 planning,
                 entry,
                 after,
@@ -423,7 +419,6 @@ fn plan(
             append_room(
                 bus,
                 paths,
-                lane,
                 planning,
                 entry,
                 after,
@@ -449,7 +444,7 @@ fn plan(
             .iter()
             .any(|view: &spice::rooms::RoomAttention| view.room == owed.design)
         {
-            attention.push(room_attention(bus, lane, planning, &owed.design)?);
+            attention.push(room_attention(bus, planning, &owed.design)?);
         }
         let text = spice::rooms::awareness::request_text(&owed.request);
         sources.push(CatchUpSource {
@@ -550,7 +545,6 @@ fn render(
 fn append_room(
     bus: &Bus,
     paths: &RuntimePaths,
-    lane: CanonicalUuid,
     planning: &Planning,
     entry: &board::Entry,
     after: Seq,
@@ -564,7 +558,7 @@ fn append_room(
     if publications.is_empty() {
         return Ok(());
     }
-    let room_attention = room_attention(bus, lane, planning, &room)?;
+    let room_attention = room_attention(bus, planning, &room)?;
     let artifacts = paths.artifacts();
     let owners = crate::room_command::SourceOwners {
         tape: &paths.tape,
@@ -604,7 +598,6 @@ fn append_room(
 
 fn room_attention(
     bus: &Bus,
-    lane: CanonicalUuid,
     planning: &Planning,
     room: &TaskStamp,
 ) -> CommandResult<spice::rooms::RoomAttention> {
@@ -613,21 +606,10 @@ fn room_attention(
         &planning.entries,
         &planning.residency,
         room,
-        latest_lane_activity(bus, room, lane)?.as_slice(),
+        &[],
         planning.at,
     )
     .map_err(unit_outcome)
-}
-
-fn latest_lane_activity(
-    bus: &Bus,
-    room: &TaskStamp,
-    lane: CanonicalUuid,
-) -> CommandResult<Option<wire::Envelope<wire::AnyFact>>> {
-    let room = room.clone();
-    let actor = Actor::Lane(lane);
-    bus.read(move |read| read.latest_room_publication(&room, &actor))
-        .map_err(|error| store_fault("room::catch-up-activity-unreadable", &error.to_string()))
 }
 
 /// Where `lane`'s catch-up starts: its delivery cursor or, before any delivery,

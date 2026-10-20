@@ -404,11 +404,12 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
     let lanes = Lanes::new("room-catch-up");
     let room = lanes.room("dVrD245Kc");
     let (first_lane, second_lane) = (test_uuid(FIRST), test_uuid(SECOND));
-    for (lane, body) in [(FIRST, "first joined"), (SECOND, "second joined")] {
-        lanes.author(lane, &format!("MSG #{room}: {body}"));
-        lanes.account(lane);
-        let _ = lanes.hear(lane, test_uuid(lane + 1));
+    for (lane, body) in [(FIRST, "first invited"), (SECOND, "second invited")] {
+        let address = lanes.address(lane);
+        lanes.author(SENDER, &format!("MSG {address}#{room}: {body}"));
     }
+    lanes.account(SENDER);
+    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
     for item in 0..RETAINED_BACKLOG {
         lanes.author(SENDER, &format!("MSG #{room}: retained {item}"));
     }
@@ -501,7 +502,7 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
     for notice in [&first, &second] {
         assert!(notice.text.contains("publication 0"));
         assert!(notice.text.contains("continue: spice://task/"));
-        assert!(!notice.text.contains("retained") && !notice.text.contains("joined"));
+        assert!(!notice.text.contains("retained") && !notice.text.contains("invited"));
     }
     land_delivery(&lanes, &room, &startup.config, &mut seats, &first);
     seats.release_all();

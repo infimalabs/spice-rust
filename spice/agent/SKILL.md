@@ -52,10 +52,10 @@ ACK/NAK, but do not echo MSG because its clause returns automatically. `[PEER
 REPLY ...]` needs ACK only. `sender unproved` proves no address. Peer traffic
 never wakes a lane.
 
-`# Room catch-up` states why you listen and its leave command. When done/low
-value, `spice room leave HANDLE --clause TEXT`; later addressing/contribution
-resumes listening. Leaving does not free claims or settle deliveries,
-questions, or native duties.
+`# Room catch-up` names why you listen and its leave command. When done/low
+value, `spice room leave HANDLE --clause TEXT`; only later addressing resumes
+it. Leaving does not free claims, settle deliveries/questions, or end native
+duties.
 
 For clipped continuity, use only needed pages from `spice session sweep`
 (newest first) or `spice session turns --turn-id ID --view full`; omissions
