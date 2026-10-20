@@ -9,8 +9,6 @@ use std::fs;
 use std::io::{self, Read};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -372,22 +370,14 @@ fn worktree_git_state(repository: &Repository) -> Option<(String, bool)> {
     }
 }
 
-/// Whether one regular file stayed bound to the path across the whole read.
-fn settled_in_place(planned: &fs::Metadata, opened: &fs::Metadata, settled: &fs::Metadata) -> bool {
-    same_file(planned, opened) && same_file(opened, settled) && settled.file_type().is_file()
-}
-
-#[cfg(unix)]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.dev() == right.dev() && left.ino() == right.ino() && left.len() == right.len()
-}
-
-#[cfg(windows)]
-fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    left.creation_time() == right.creation_time()
-        && left.last_write_time() == right.last_write_time()
-        && left.file_size() == right.file_size()
-        && left.file_attributes() == right.file_attributes()
+/// Whether one opened file stayed unchanged and bound to its path across the
+/// whole read.
+fn settled_in_place(
+    opened: sill::authority::FileIdentity,
+    held: sill::authority::FileIdentity,
+    named: sill::authority::FileIdentity,
+) -> bool {
+    opened == held && held == named
 }
 
 /// Read the artifact through one handle and prove it never moved beneath it.
@@ -395,36 +385,38 @@ fn read_artifact(
     path: &Path,
     metadata: &MacSymbolMetadata,
 ) -> Result<MacSymbolArtifact, InstallError> {
-    let planned = match fs::symlink_metadata(path) {
-        Ok(planned) => planned,
+    let mut file = match sill::authority::open_unfollowed(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Err(refused(path, "is absent"));
         }
         Err(error) => {
             return Err(InstallError::io(
-                "inspect appliance symbol artifact",
+                "open appliance symbol artifact",
                 path,
                 error,
             ));
         }
     };
-    if !planned.file_type().is_file() {
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| InstallError::io("inspect appliance symbol artifact", path, error))?;
+    if !opened_metadata.is_file() {
         return Err(refused(path, "is not a regular file"));
     }
-    let mut file = fs::File::open(path)
-        .map_err(|error| InstallError::io("open appliance symbol artifact", path, error))?;
-    let opened = file
-        .metadata()
+    let opened = sill::authority::file_identity(&file)
         .map_err(|error| InstallError::io("inspect appliance symbol artifact", path, error))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|error| InstallError::io("read appliance symbol artifact", path, error))?;
-    let settled = fs::symlink_metadata(path)
-        .map_err(|error| InstallError::io("inspect appliance symbol artifact", path, error))?;
-    if !settled_in_place(&planned, &opened, &settled) {
+    let held = sill::authority::file_identity(&file)
+        .map_err(|error| InstallError::io("reinspect appliance symbol artifact", path, error))?;
+    let named = sill::authority::path_identity(path)
+        .map_err(|error| InstallError::io("reinspect appliance symbol path", path, error))?;
+    if !settled_in_place(opened, held, named) {
         return Err(refused(path, "moved while it was read"));
     }
-    if !has_data_mode(&opened)
+    if !has_data_mode(&opened_metadata)
         || metadata.mode != DATA_MODE
         || bytes.len() as u64 != metadata.bytes
         || Digest::compute(Domain::DistArtifact, &bytes) != metadata.digest
@@ -641,26 +633,27 @@ mod tests {
     }
 
     #[test]
-    fn a_read_settles_only_on_one_unmoved_regular_file() {
+    fn a_read_settles_only_on_one_unchanged_named_file_identity() {
         let root = scratch("settled");
         let first = root.join("first");
         let second = root.join("second");
         fs::write(&first, b"artifact").unwrap();
         fs::write(&second, b"artifact").unwrap();
-        let planned = fs::symlink_metadata(&first).unwrap();
-        let opened = fs::File::open(&first).unwrap().metadata().unwrap();
-        assert!(settled_in_place(&planned, &opened, &planned));
-        // Another inode of the same length replaced the path mid-read.
-        let swapped = fs::symlink_metadata(&second).unwrap();
-        assert!(!settled_in_place(&planned, &opened, &swapped));
-        assert!(!settled_in_place(&planned, &swapped, &planned));
-        // The same inode grew while it was read.
+        let opened_file = fs::File::open(&first).unwrap();
+        let opened = sill::authority::file_identity(&opened_file).unwrap();
+        let named = sill::authority::path_identity(&first).unwrap();
+        assert!(settled_in_place(opened, opened, named));
+
+        // Another object of the same length can never impersonate the opened
+        // file, regardless of matching timestamps or permissions.
+        let replacement = sill::authority::path_identity(&second).unwrap();
+        assert_ne!(opened.object(), replacement.object());
+        assert!(!settled_in_place(opened, opened, replacement));
+
+        // The same object changing while held also refuses.
         fs::write(&first, b"artifact grew").unwrap();
-        let grown = fs::symlink_metadata(&first).unwrap();
-        assert!(!settled_in_place(&planned, &opened, &grown));
-        // A directory settled at the path is never a regular artifact.
-        let directory = fs::symlink_metadata(&root).unwrap();
-        assert!(!settled_in_place(&directory, &directory, &directory));
+        let changed = sill::authority::file_identity(&opened_file).unwrap();
+        assert!(!settled_in_place(opened, changed, changed));
         fs::remove_dir_all(&root).unwrap();
     }
 
