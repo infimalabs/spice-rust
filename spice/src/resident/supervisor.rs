@@ -592,7 +592,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         terminal::ServiceAuthority::new(paths.journal.clone(), request.lane, request.occupant);
     let terminal = terminal::Terminal::from_launch(&launch.spec, jobs, service_authority);
     let observation = OccupantLaunch::observation(launch.capture).map_err(outcome_error)?;
-    let mut running = sill::spawn_observed(launch.spec, observation)?;
+    let mut running = spawn_occupant(&vendor, launch.spec, observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();
     let grace = running.spec().grace;
@@ -664,6 +664,24 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         occupant: request.occupant,
     });
     Ok(())
+}
+
+/// Spawn the occupant, naming the vendor and program when the launch fails.
+fn spawn_occupant(
+    vendor: &wire::Name,
+    spec: sill::Spec,
+    observation: sill::Observation,
+) -> io::Result<sill::Running> {
+    let program = spec.argv.program().to_owned();
+    sill::spawn_observed(spec, observation).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "could not launch vendor {vendor} program {}: {error}",
+                program.display()
+            ),
+        )
+    })
 }
 
 /// A field a running supervisor's published state must carry.
