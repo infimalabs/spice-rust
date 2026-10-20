@@ -344,7 +344,7 @@ impl NativeInvocation<'_> {
         // speaks only to text invocations.
         let live = form == Form::Text;
         match contract.path {
-            ["doctor"] => deliver(&doctor_outcome(configuration), form),
+            ["doctor"] => deliver_display(&doctor_outcome(configuration), form),
             ["demo"] => deliver(&demo_command::run(leaf), form),
             ["gate"] => deliver_with_reply_text(
                 &gate_command::run(leaf, configuration, live),
