@@ -9,6 +9,17 @@ use wire::{Digest, Domain};
 
 const PAYLOAD_VERSION: u16 = wire::manifest::TARGET_PAYLOAD_VERSION;
 
+/// The last release that wrote each retired payload schema. No retired
+/// payload can be migrated: each predecessor lacks identities only its own
+/// build observed.
+const RETIRED_PAYLOADS: &[(u16, &str)] = &[(2, "0.1.0")];
+
+/// Only the schema version, read before the current shape is assumed.
+#[derive(serde::Deserialize)]
+struct Versioned {
+    version: u16,
+}
+
 /// A canonical, internally coherent target payload admitted for proof work.
 ///
 /// Construction is private so runner and evidence APIs can require this type
@@ -37,20 +48,25 @@ impl AdmittedPayload {
 ///
 /// # Errors
 ///
-/// Refuses malformed or noncanonical bytes, a stale schema, an unpinned proof
-/// environment, inconsistent subordinate digests, or any inventory other than
-/// the target's canonical executable and required debug artifact in exact
-/// order and mode.
+/// Refuses malformed or noncanonical bytes, a non-current schema (naming the
+/// release that last wrote it), an unpinned proof environment, inconsistent
+/// subordinate digests, or any inventory other than the target's canonical
+/// executable and required debug artifact in exact order and mode.
 pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
+    let Versioned { version } =
+        wire::decode(bytes).map_err(|source| PayloadError::Decode(source.to_string()))?;
+    if version != PAYLOAD_VERSION {
+        let release = RETIRED_PAYLOADS
+            .iter()
+            .find_map(|&(retired, release)| (retired == version).then_some(release));
+        return Err(PayloadError::Version { version, release });
+    }
     let payload: TargetPayload =
         wire::decode(bytes).map_err(|source| PayloadError::Decode(source.to_string()))?;
     let canonical =
         wire::encode(&payload).map_err(|source| PayloadError::Encode(source.to_string()))?;
     if canonical != bytes {
         return Err(PayloadError::NonCanonical);
-    }
-    if payload.version != PAYLOAD_VERSION {
-        return Err(PayloadError::Version(payload.version));
     }
     if !ProofImage::admits(&payload.pins.proof_container) {
         return Err(PayloadError::UnpinnedEnvironment(
@@ -228,8 +244,11 @@ pub enum PayloadError {
     Encode(String),
     /// Bytes decode but differ from their canonical encoding.
     NonCanonical,
-    /// The payload schema is not current.
-    Version(u16),
+    /// The payload schema is not current; `release` last wrote a retired one.
+    Version {
+        version: u16,
+        release: Option<&'static str>,
+    },
     /// The proof environment is not pinned by an OCI digest.
     UnpinnedEnvironment(String),
     /// The declared pins digest disagrees with the pins document.
@@ -274,9 +293,17 @@ impl fmt::Display for PayloadError {
             Self::Decode(source) => write!(formatter, "target payload does not decode: {source}"),
             Self::Encode(source) => write!(formatter, "target payload does not encode: {source}"),
             Self::NonCanonical => formatter.write_str("target payload bytes are not canonical"),
-            Self::Version(version) => {
-                write!(formatter, "target payload version {version} is not current")
-            }
+            Self::Version {
+                version,
+                release: Some(release),
+            } => write!(
+                formatter,
+                "target payload version {version} was last written by release {release} and is not current"
+            ),
+            Self::Version {
+                version,
+                release: None,
+            } => write!(formatter, "target payload version {version} is not current"),
             Self::UnpinnedEnvironment(environment) => write!(
                 formatter,
                 "target payload proof environment is not digest-pinned: {environment:?}"
@@ -374,7 +401,46 @@ mod tests {
 
         let mut stale = payload();
         stale.version = 1;
-        assert_refuses_before_proof(&encode(&stale), PayloadError::Version(1));
+        assert_refuses_before_proof(
+            &encode(&stale),
+            PayloadError::Version {
+                version: 1,
+                release: None,
+            },
+        );
+
+        // The exact shape release 0.1.0 wrote: version 2, no canvas identity.
+        #[derive(serde::Serialize)]
+        struct Retired {
+            version: u16,
+            target: ReleaseTarget,
+            source: Digest,
+            app: Digest,
+            native: Digest,
+            pins: BuildPins,
+            pins_digest: Digest,
+            inventory: Vec<InventoryEntry>,
+            inventory_digest: Digest,
+        }
+        let current = payload();
+        let retired = Retired {
+            version: 2,
+            target: current.target,
+            source: current.source,
+            app: current.app,
+            native: current.native,
+            pins: current.pins,
+            pins_digest: current.pins_digest,
+            inventory: current.inventory,
+            inventory_digest: current.inventory_digest,
+        };
+        assert_refuses_before_proof(
+            &wire::encode(&retired).expect("retired payload encodes"),
+            PayloadError::Version {
+                version: 2,
+                release: Some("0.1.0"),
+            },
+        );
 
         let mut unpinned = payload();
         unpinned.pins.proof_container = "registry.example/proof:latest".to_owned();

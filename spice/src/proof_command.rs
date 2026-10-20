@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use proof::{
     CheckStanding, ContainerError, EnvironmentError, EvidenceError, EvidencePublishError,
-    InputError, NativeError, PayloadError, RederiveError, ReplayError, ReplayFailure,
+    InputError, NativeError, PayloadError, ProofError, RederiveError, ReplayError, ReplayFailure,
     ReplayRefusal, SealError,
 };
 use sill::Deadlines;
@@ -188,19 +188,33 @@ impl Failure {
         )
     }
 
+    /// Map the shared replay core's refusal; `layout_remedy` names how the
+    /// caller's own operation restores its layout.
+    fn proof(error: ProofError, layout_remedy: &'static str) -> Self {
+        match error {
+            ProofError::ReadPayload(error) => Self::input(error, InputKind::Payload),
+            ProofError::AdmitPayload(error) => Self::payload(error),
+            error @ (ProofError::Layout(_) | ProofError::EnvironmentTarget { .. }) => {
+                Self::refusal(
+                    "proof::layout-refused",
+                    "one payload, layout, and compiled release target",
+                    error.to_string(),
+                    layout_remedy,
+                )
+            }
+            ProofError::Environment(error) => Self::environment(error),
+            ProofError::Replay(error) => Self::replay(error),
+            ProofError::Refused(refusal) => Self::battery(refusal),
+            ProofError::Evidence(error) => Self::evidence(error),
+        }
+    }
+
     fn seal(error: SealError) -> Self {
         match error {
-            SealError::ReadPayload(error) => Self::input(error, InputKind::Payload),
-            SealError::AdmitPayload(error) => Self::payload(error),
-            error @ (SealError::Layout(_) | SealError::EnvironmentTarget { .. }) => Self::refusal(
-                "proof::layout-refused",
-                "one payload, layout, and compiled release target",
-                error.to_string(),
+            SealError::Proof(error) => Self::proof(
+                error,
                 "stage the payload under its exact compiled-target layout and retry",
             ),
-            SealError::Environment(error) => Self::environment(error),
-            SealError::Replay(error) => Self::replay(error),
-            SealError::Refused(refusal) => Self::battery(refusal),
             SealError::Receipt(error) => Self::refusal(
                 "proof::verification-refused",
                 "one replay and payload for the same release target",
@@ -210,7 +224,6 @@ impl Failure {
             SealError::EncodeReceipt(error) => {
                 Self::fault(FaultClass::Protocol, "proof::encoding-failed", error)
             }
-            SealError::Evidence(error) => Self::evidence(error),
             SealError::PrepareDestination { path, source } => Self::fault(
                 FaultClass::Store,
                 "proof::publication-failed",
@@ -227,22 +240,12 @@ impl Failure {
 
     fn rederive(error: RederiveError) -> Self {
         match error {
-            RederiveError::ReadPayload(error) => Self::input(error, InputKind::Payload),
-            RederiveError::AdmitPayload(error) => Self::payload(error),
-            error @ (RederiveError::Layout(_) | RederiveError::EnvironmentTarget { .. }) => {
-                Self::refusal(
-                    "proof::layout-refused",
-                    "one payload, layout, and compiled release target",
-                    error.to_string(),
-                    "restore the target-matched staged payload and detached receipt",
-                )
-            }
+            RederiveError::Proof(error) => Self::proof(
+                error,
+                "restore the target-matched staged payload and detached receipt",
+            ),
             RederiveError::ReadReceipt(error) => Self::input(error, InputKind::Receipt),
             RederiveError::AdmitReceipt(error) => Self::receipt(error),
-            RederiveError::Environment(error) => Self::environment(error),
-            RederiveError::Replay(error) => Self::replay(error),
-            RederiveError::Refused(refusal) => Self::battery(refusal),
-            RederiveError::Evidence(error) => Self::evidence(error),
         }
     }
 
@@ -581,28 +584,34 @@ mod tests {
     use std::io;
     use std::path::PathBuf;
 
-    use proof::{EvidencePublishError, Input, InputError, PayloadError, SealError};
+    use proof::{EvidencePublishError, Input, InputError, PayloadError, ProofError, SealError};
     use wire::{FaultClass, Outcome};
 
     use super::Failure;
 
     #[test]
     fn input_shape_refuses_while_io_and_encoding_defects_fault() {
-        let missing = Failure::seal(SealError::ReadPayload(InputError::Missing {
-            input: Input::Payload,
-            path: PathBuf::from("payload.json"),
-        }))
+        let missing = Failure::proof(
+            ProofError::ReadPayload(InputError::Missing {
+                input: Input::Payload,
+                path: PathBuf::from("payload.json"),
+            }),
+            "restage",
+        )
         .outcome::<()>();
         let Outcome::Refusal(missing) = missing else {
             panic!("missing payload must refuse")
         };
         assert_eq!(missing.reason(), "proof::payload-refused");
 
-        let unreadable = Failure::seal(SealError::ReadPayload(InputError::Unreadable {
-            input: Input::Payload,
-            path: PathBuf::from("payload.json"),
-            source: io::Error::new(io::ErrorKind::PermissionDenied, "fixture"),
-        }))
+        let unreadable = Failure::proof(
+            ProofError::ReadPayload(InputError::Unreadable {
+                input: Input::Payload,
+                path: PathBuf::from("payload.json"),
+                source: io::Error::new(io::ErrorKind::PermissionDenied, "fixture"),
+            }),
+            "restage",
+        )
         .outcome::<()>();
         let Outcome::Fault(unreadable) = unreadable else {
             panic!("payload I/O must fault")
@@ -610,9 +619,10 @@ mod tests {
         assert_eq!(unreadable.reason, "proof::payload-unreadable");
         assert_eq!(unreadable.class, FaultClass::Environment);
 
-        let encoding = Failure::seal(SealError::AdmitPayload(PayloadError::Encode(
-            "fixture encoder".to_owned(),
-        )))
+        let encoding = Failure::proof(
+            ProofError::AdmitPayload(PayloadError::Encode("fixture encoder".to_owned())),
+            "restage",
+        )
         .outcome::<()>();
         let Outcome::Fault(encoding) = encoding else {
             panic!("encoding defect must fault")

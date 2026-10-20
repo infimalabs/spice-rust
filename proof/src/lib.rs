@@ -4,7 +4,8 @@
 //! the network and cache boundary, [`replay`](mod@replay) runs the complete
 //! generated battery inside it, and [`evidence`] binds that replay to the
 //! receipt-free target payload before publishing its detached receipt
-//! atomically.
+//! atomically. [`seal`](fn@seal) and [`rederive`](fn@rederive) share one replay
+//! core for every stage before their receipt creation or receipt admission.
 
 #![forbid(unsafe_code)]
 
@@ -107,6 +108,7 @@ pub mod manifest;
 pub mod native;
 pub mod package;
 pub mod payload;
+mod proving;
 pub mod rederive;
 pub mod replay;
 pub mod seal;
@@ -114,9 +116,7 @@ pub mod seal;
 pub use config::{Config, DEFAULT_IMAGE, ExecutablePath, Image};
 pub use container::{Container, ContainerError, Limits, OciRuntime};
 pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost, compiled_target};
-pub use evidence::{
-    EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify, verify_stored,
-};
+pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify_stored};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
 pub use manifest::{
     FileManifestPublisher, ManifestAdmissionError, ManifestError, ManifestInput,
@@ -129,9 +129,10 @@ pub use package::{
     PackageTargetInput, PackageTree, admit_package_tree, build_package, build_package_index,
 };
 pub use payload::{AdmittedPayload, PayloadError, admit};
+pub use proving::{ProofError, ReplayRefusal};
 pub use rederive::{RederiveError, rederive};
 pub use replay::{
     Battery, Check, CheckKind, CheckStanding, CheckVerdict, ReceiptError, ReplayError,
     ReplayFailure, ReplayVerdict, replay,
 };
-pub use seal::{ReplayRefusal, SealError, seal};
+pub use seal::{SealError, seal};
