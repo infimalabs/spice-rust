@@ -160,12 +160,12 @@ fn fold_entries(input: &NotesInput) -> Result<Vec<ReleaseNotesEntry>, NotesError
             .unwrap_or(landing.task.as_str());
         if root == landing.task {
             let current = metadata.entry(root).or_insert(landing);
-            if landing.sequence.cmp(&current.sequence).is_gt() {
+            if landing.sequence > current.sequence {
                 *current = landing;
             }
             if let Some(verdict) = landing.verdict {
                 let current = standing.entry(root).or_insert((landing.sequence, verdict));
-                if landing.sequence.cmp(&current.0).is_gt() {
+                if landing.sequence > current.0 {
                     *current = (landing.sequence, verdict);
                 }
             }
