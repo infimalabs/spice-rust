@@ -249,7 +249,7 @@ fn temporary_removal_restores_directory_access_without_following_symlinks() {
         .expect("the member output is writable");
     std::fs::write(outside.join("kept"), b"outside").expect("the outside target is writable");
     symlink(&outside, root.join("outside-link")).expect("the outside symlink is creatable");
-    for directory in [&nested, &root.join("retained"), &root] {
+    for directory in [&nested, &root.join("retained"), &root, &outside] {
         std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o500))
             .expect("the fixture directory can be made read-only");
     }
@@ -270,5 +270,14 @@ fn temporary_removal_restores_directory_access_without_following_symlinks() {
         std::fs::read(outside.join("kept")).expect("the outside target remains readable"),
         b"outside",
         "cleanup followed the symlink outside its private root"
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(&outside)
+            .expect("the outside target remains")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o500,
+        "cleanup restored access through the symlink outside its private root"
     );
 }
