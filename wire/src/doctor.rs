@@ -602,20 +602,20 @@ impl<C> DoctorReport<C> {
         let present = self
             .environment
             .iter()
-            .filter(|row| row.observation == DoctorObservation::Ready {})
-            .map(|row| row.variable.as_str())
-            .collect::<Vec<_>>();
+            .filter(|row| row.observation == DoctorObservation::Ready {});
+        let count = present.clone().count();
         write!(
             formatter,
-            "environment {} of {} optional variables set",
-            present.len(),
+            "environment {count} of {} optional variables set",
             self.environment.len()
         )?;
-        if present.is_empty() {
-            writeln!(formatter)
-        } else {
-            writeln!(formatter, ": {}", present.join(" "))
+        if count > 0 {
+            formatter.write_str(":")?;
         }
+        for row in present {
+            write!(formatter, " {}", row.variable.as_str())?;
+        }
+        writeln!(formatter)
     }
 
     fn fmt_commands(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
