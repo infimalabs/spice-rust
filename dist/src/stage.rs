@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use atomic::Destination;
 use wire::manifest::{
     BuildPins, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, MacSymbolMetadata,
-    ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    ProductVersion, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -121,16 +121,17 @@ pub struct StagedTarget {
     pub canvas: Canvas,
 }
 
-/// Pin-guarded deterministic stage assembly.
+/// Pin- and version-guarded deterministic stage assembly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pipeline {
     pins: RequiredPins,
+    version: ProductVersion,
 }
 
 impl Pipeline {
     #[must_use]
-    pub const fn new(pins: RequiredPins) -> Self {
-        Self { pins }
+    pub const fn new(pins: RequiredPins, version: ProductVersion) -> Self {
+        Self { pins, version }
     }
 
     /// Build and publish one target. The payload pointer is always last.
@@ -154,7 +155,7 @@ impl Pipeline {
         publisher: &mut P,
     ) -> Result<StagedTarget, StageError> {
         self.pins.verify(observed)?;
-        let built = build_artifacts(target, builder)?;
+        let built = build_artifacts(target, &self.version, builder)?;
         let payload = make_payload(
             target,
             source,
@@ -224,6 +225,7 @@ struct BuiltArtifacts {
 
 fn build_artifacts<B: Builder>(
     target: ReleaseTarget,
+    version: &ProductVersion,
     builder: &mut B,
 ) -> Result<BuiltArtifacts, StageError> {
     let canvas = builder.build_app().map_err(|source| StageError::Build {
@@ -248,7 +250,9 @@ fn build_artifacts<B: Builder>(
             step: BuildStep::Native,
             source,
         })?;
-    canvas.verify_report(&report).map_err(native_build_error)?;
+    canvas
+        .verify_release_report(version, &report)
+        .map_err(native_build_error)?;
     let symbols = builder.take_symbol_artifact();
     let windows_debug = builder.take_windows_debug_artifact();
     let mut artifacts = Vec::new();

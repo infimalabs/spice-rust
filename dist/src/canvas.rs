@@ -8,6 +8,7 @@
 //! its own start; the executable around it is not.
 mod coff;
 
+use wire::manifest::ProductVersion;
 use wire::{Digest, Domain};
 
 /// Segment holding the app ZIP section on Mach-O.
@@ -365,6 +366,33 @@ impl Canvas {
         }
     }
 
+    /// Refuse a release executable whose report differs from its complete
+    /// declared product identity.
+    ///
+    /// One ordinary line terminator is transport, not identity. Every other
+    /// byte must name the admitted product version and this app generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the expected and observed reports when either identity moved.
+    pub fn verify_release_report(
+        &self,
+        version: &ProductVersion,
+        report: &str,
+    ) -> Result<(), CanvasError> {
+        let expected = format!("spice {} app {}", version.as_str(), self.generation);
+        let observed = report.strip_suffix('\n').unwrap_or(report);
+        let observed = observed.strip_suffix('\r').unwrap_or(observed);
+        if observed == expected {
+            Ok(())
+        } else {
+            Err(CanvasError::ReleaseReport {
+                expected,
+                observed: report.to_owned(),
+            })
+        }
+    }
+
     /// Enforce the Windows release policy: the PE image carries no embedded
     /// Authenticode certificate. Release authenticity is supplied by the
     /// detached public GitHub Sigstore proof after all image bytes are final.
@@ -395,6 +423,10 @@ pub enum CanvasError {
     Authenticode,
     #[error("executable version report does not name its app generation: {0:?}")]
     Report(String),
+    #[error(
+        "release executable version report differs from expected {expected:?}: observed {observed:?}"
+    )]
+    ReleaseReport { expected: String, observed: String },
 }
 
 /// The archive bytes inside a final executable's app ZIP section.

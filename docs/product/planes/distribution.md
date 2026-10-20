@@ -118,8 +118,9 @@ metadata is the canonical external extraction boundary; no build-time file
 offset is persisted. The running process stores no offset and parses no image:
 the linker resolves both symbols to the mapped address and byte length. The
 final executable is refused unless exactly one section carries the staged
-archive and its one version report names G. Only these builds write the object
-carrying the archive and enable the `canvas` feature that names its symbols, so
+archive and its one version report names both the admitted product version and
+G exactly. Only these builds write the object carrying the archive and enable
+the `canvas` feature that names its symbols, so
 no compile step reads a file outside the selected tree. A resident whose
 executable carries no archive refuses installed serving at startup.
 

@@ -9,7 +9,8 @@ use dist::{
     Pipeline, PublishError, Publisher, RequiredPins, StageError,
 };
 use wire::manifest::{
-    BuildPins, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ReleaseTarget, TargetPayload,
+    BuildPins, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ProductVersion, ReleaseTarget,
+    TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -28,6 +29,10 @@ fn pins() -> BuildPins {
 
 fn source_digest() -> Digest {
     Digest::from_str(&"1".repeat(64)).expect("fixture digest is canonical")
+}
+
+fn product_version() -> ProductVersion {
+    ProductVersion::parse("1.2.3").expect("fixture version is canonical")
 }
 
 #[derive(Default)]
@@ -209,7 +214,10 @@ fn pin_mismatch_refuses_before_the_first_build_or_write() {
     let required = pins();
     let mut observed = required.clone();
     observed.trunk = "trunk 0.21.13".to_owned();
-    let pipeline = Pipeline::new(RequiredPins::new(required).expect("pins are valid"));
+    let pipeline = Pipeline::new(
+        RequiredPins::new(required).expect("pins are valid"),
+        product_version(),
+    );
     let mut builder = RecordingBuilder::default();
     let mut publisher = MemoryPublisher::default();
 
@@ -237,7 +245,10 @@ fn pin_mismatch_refuses_before_the_first_build_or_write() {
 #[test]
 fn build_order_payload_bytes_and_restaging_are_deterministic() {
     let required = pins();
-    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
+    let pipeline = Pipeline::new(
+        RequiredPins::new(required.clone()).expect("pins are valid"),
+        product_version(),
+    );
     let first = run_stage(&pipeline, &required, ReleaseTarget::Aarch64AppleDarwin);
     let second = run_stage(&pipeline, &required, ReleaseTarget::Aarch64AppleDarwin);
 
@@ -265,9 +276,12 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
 }
 
 #[test]
-fn a_final_executable_without_the_staged_archive_or_its_generation_refuses_before_publication() {
+fn a_final_executable_without_the_staged_archive_or_declared_identity_refuses_before_publication() {
     let required = pins();
-    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
+    let pipeline = Pipeline::new(
+        RequiredPins::new(required.clone()).expect("pins are valid"),
+        product_version(),
+    );
     for target in [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
@@ -339,12 +353,44 @@ fn a_final_executable_without_the_staged_archive_or_its_generation_refuses_befor
         "{error:?}"
     );
     assert!(publisher.writes.is_empty());
+
+    struct StaleProductVersion(RecordingBuilder);
+    impl Builder for StaleProductVersion {
+        fn build_app(&mut self) -> Result<Canvas, BuildError> {
+            self.0.build_app()
+        }
+        fn build_native(
+            &mut self,
+            target: ReleaseTarget,
+            canvas: &Canvas,
+        ) -> Result<Vec<u8>, BuildError> {
+            self.0.build_native(target, canvas)
+        }
+        fn report_version(&mut self) -> Result<String, BuildError> {
+            Ok(format!("spice 9.9.9 app {}\n", canvas().generation()))
+        }
+    }
+    let mut builder = StaleProductVersion(RecordingBuilder::default());
+    let mut publisher = MemoryPublisher::default();
+    pipeline
+        .stage(
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+            source_digest(),
+            &required,
+            &mut builder,
+            &mut publisher,
+        )
+        .expect_err("a report naming another product version refuses");
+    assert!(publisher.writes.is_empty());
 }
 
 #[test]
 fn interruption_at_every_publication_edge_preserves_the_old_target_pointer() {
     let required = pins();
-    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
+    let pipeline = Pipeline::new(
+        RequiredPins::new(required.clone()).expect("pins are valid"),
+        product_version(),
+    );
     let payload_path = PathBuf::from("targets/aarch64-apple-darwin/payload.json");
     for fail_at in 0..=2 {
         let mut publisher = MemoryPublisher {
@@ -372,7 +418,10 @@ fn interruption_at_every_publication_edge_preserves_the_old_target_pointer() {
 #[test]
 fn target_payload_pointers_and_native_identities_do_not_alias() {
     let required = pins();
-    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
+    let pipeline = Pipeline::new(
+        RequiredPins::new(required.clone()).expect("pins are valid"),
+        product_version(),
+    );
     let darwin = run_stage(&pipeline, &required, ReleaseTarget::Aarch64AppleDarwin);
     let linux = run_stage(&pipeline, &required, ReleaseTarget::X86_64UnknownLinuxMusl);
     let windows = run_stage(&pipeline, &required, ReleaseTarget::X86_64PcWindowsMsvc);

@@ -355,7 +355,7 @@ fn stage_with_roots<E: Executor>(
     let required = RequiredPins::new(required)?;
     required.verify(&observed)?;
 
-    let pipeline = Pipeline::new(required.clone());
+    let pipeline = Pipeline::new(required.clone(), dist::current_product_version()?);
     let target_dir = build_root.join("release-appliance");
     let mut builder = CommandBuilder {
         root,
