@@ -287,7 +287,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
-            "inspect the selected executable with `{}`; from the worktree root, rebuild it with `cargo build --locked --target-dir target -p spice`, then rerun `target/debug/spice install`",
+            "inspect the selected executable with `{}`; install an appliance that links its canvas archive, built by `spice dev xtask -- install` or taken from a sealed release package",
             inspect_path(path),
         ),
         InstallError::HookPathUnrepresentable { path, .. } => format!(
@@ -302,10 +302,9 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::BinaryContextChanged => concat!(
-            "the `.spice-install/bin/spice` asset was planned from another executable; preview ",
-            "and apply through the same freshly built executable: from the worktree root, run ",
-            "`cargo build --locked --target-dir target -p spice`, rerun `target/debug/spice install`, then pass ",
-            "that preview's digest to `target/debug/spice install --apply=<digest>`",
+            "the `.spice-install/bin/spice` asset was planned from another executable; rerun ",
+            "`spice dev xtask -- install`, which plans and applies one linked build, or preview a ",
+            "sealed release package and pass that preview's digest to the same `install --package`",
         )
         .to_owned(),
         InstallError::DigestMismatch { .. } => concat!(

@@ -9,15 +9,16 @@ in [Distribution](docs/product/planes/distribution.md#installing-into-a-reposito
 Source work ends with a validated, landed commit and never installs.
 Activation, repair, and relocation need explicit operator authorization.
 
-## Build, preview, apply
+## Install from source
 
-Run from the root of the worktree being installed, and build immediately before
-preview so planner and source agree:
+An installable executable links its app archive, and only the xtask install
+builds one: it builds the app, links it into a fresh executable, then derives
+the plan once and applies exactly that plan, printing its digest. A plain
+`cargo build -p spice` links no app, and its preview refuses with
+`install::canvas-refused`. Run from the root of the worktree being installed:
 
 ```sh
-cargo build --locked --target-dir target -p spice || exit
-target/debug/spice install || exit
-target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW || exit
+cargo run --locked -p xtask -- install --no-resident || exit
 ```
 
 The plan publishes the executable, bootstrap skill, supervised-shell assets, and
@@ -28,7 +29,7 @@ admitted worktree-local hook overrides, and switches the common
 ```sh
 SPICE_COMMON=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
 SPICE_BIN="$SPICE_COMMON/.spice-install/bin/spice"
-/usr/bin/cmp target/debug/spice "$SPICE_BIN" || exit
+test -x "$SPICE_BIN" || exit
 test "$(/usr/bin/git config --local --get core.hooksPath)" = "$SPICE_COMMON/.spice-install/git-hooks" || exit
 ```
 
@@ -122,25 +123,17 @@ applying it, without Cargo, `xtask`, or a source checkout:
 "$SPICE_BIN" install --package /absolute/path/to/spice-release-package --apply=DIGEST_PRINTED_BY_PREVIEW || exit
 ```
 
-From source, publish the app generation, then preview and apply with one freshly
-built executable. Refresh in place; do not unapply first:
-
-```sh
-"$SPICE_BIN" dev xtask -- app || exit
-"$SPICE_BIN" dev cargo -- build --locked --target-dir target -p spice || exit
-target/debug/spice install || exit
-target/debug/spice install --apply=DIGEST_PRINTED_BY_PREVIEW || exit
-```
-
-Apply never restarts a running resident. Restart through the installed
-appliance with `"$SPICE_BIN" down` and `"$SPICE_BIN" up`, or use the operator
-shortcut, which stops the published resident, refreshes, and starts the new
-executable; `--no-resident` omits that lifecycle and arguments after `--` go to
-`spice up`:
+From source, refresh in place through the installed appliance; do not unapply
+first. The shortcut stops the published resident, builds and applies as above,
+and starts the new executable; `--no-resident` omits that lifecycle and
+arguments after `--` go to `spice up`:
 
 ```sh
 "$SPICE_BIN" dev xtask -- install --port PORT
 ```
+
+Package apply never restarts a running resident. Restart through the installed
+appliance with `"$SPICE_BIN" down` and `"$SPICE_BIN" up`.
 
 The shortcut refuses with `resident::operator-install-only` when run from a
 lane the repository seats, because that lane runs the appliance it would
@@ -232,13 +225,13 @@ the current bytes. Review the reported locations and command words, then grant
 only that digest with `spice trust grant DIGEST`. Any byte change is a new
 identity; revoke with `spice trust revoke DIGEST`. Never guess a digest.
 
-**Damaged appliance.** Build, preview, and apply a fresh digest as above.
+**Damaged appliance.** Install from source or apply a sealed package as above.
 Receipt, binary, hook, and fixed-asset drift refuse distinctly rather than
 overwrite evidence; restore the receipt-owned bytes or reverse.
 
 **Relocation.** Launchers and the hook path are absolute, so a moved
-repository fails closed. At the new location, build, preview the rebased plan,
-and apply.
+repository fails closed. At the new location, install from source or apply a
+sealed package again so the plan rebases.
 
 **Break glass.** `git commit --no-verify` skips `pre-commit` and `commit-msg`,
 not `reference-transaction`. Use it only for an explicitly authorized emergency

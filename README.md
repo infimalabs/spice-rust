@@ -6,12 +6,12 @@ the invariants its code keeps.
 
 ## Install
 
-Preview the digest-bound installation plan, review it, then apply that exact
-plan:
+Install from a source checkout. The xtask builds the app, links it into the
+executable, and applies the digest-bound installation plan derived from that
+build:
 
 ```sh
-cargo run --locked -p spice -- install
-cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
+cargo run --locked -p xtask -- install --no-resident
 ```
 
 An installed appliance updates from a sealed release-package directory without
@@ -27,7 +27,6 @@ spice install --package /absolute/path/to/spice-release-package --apply=DIGEST_F
 ## Run
 
 ```sh
-spice dev xtask -- app
 spice up
 ```
 
