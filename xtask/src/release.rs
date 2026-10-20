@@ -6,7 +6,7 @@ use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -934,17 +934,36 @@ fn successful(record: CommandRecord) -> Result<CommandRecord, TargetBuildError> 
 }
 
 fn read_regular(path: &Path) -> Result<Vec<u8>, TargetBuildError> {
-    let metadata = fs::symlink_metadata(path).map_err(|source| TargetBuildError::Io {
+    read_regular_with(path, || {})
+}
+
+fn read_regular_with(
+    path: &Path,
+    after_admission: impl FnOnce(),
+) -> Result<Vec<u8>, TargetBuildError> {
+    let io = |source| TargetBuildError::Io {
         path: path.to_path_buf(),
         source,
-    })?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    };
+    let mut file = fs::File::open(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
         return Err(TargetBuildError::Artifact(path.to_path_buf()));
     }
-    fs::read(path).map_err(|source| TargetBuildError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    let admitted = sill::authority::file_identity(&file).map_err(io)?;
+    if sill::authority::path_identity(path).map_err(io)? != admitted {
+        return Err(TargetBuildError::Artifact(path.to_path_buf()));
+    }
+    let length = usize::try_from(admitted.bytes())
+        .map_err(|_| TargetBuildError::Artifact(path.to_path_buf()))?;
+    let mut bytes = vec![0; length];
+    after_admission();
+    file.read_exact(&mut bytes).map_err(io)?;
+    let finished = sill::authority::file_identity(&file).map_err(io)?;
+    let named = sill::authority::path_identity(path).map_err(io)?;
+    if finished != admitted || named != admitted {
+        return Err(TargetBuildError::Artifact(path.to_path_buf()));
+    }
+    Ok(bytes)
 }
 
 fn remapped_rustflags(root: &Path) -> Result<String, TargetBuildError> {

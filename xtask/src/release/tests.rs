@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 
+mod artifact_capture;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const COMMIT: &str = "1111111111111111111111111111111111111111";
 const MOVED: &str = "2222222222222222222222222222222222222222";
