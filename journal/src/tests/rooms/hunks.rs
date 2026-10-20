@@ -135,6 +135,58 @@ fn landed_deliveries_advance_one_monotone_cursor_per_logical_lane() {
     assert_eq!(projection(&journal), expected);
 }
 
+#[test]
+fn retiring_a_cursor_head_restores_the_latest_surviving_delivery() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let origin = TranscriptPosition {
+        member: 1,
+        offset: 0,
+    };
+    let head = transcript_source_head();
+    ingest(&mut journal, head.clone(), origin, None);
+    let first = published(&mut journal, &room, 1);
+    let question = published(&mut journal, &room, 2);
+    deliver(&mut journal, &head, first).expect("the first delivery lands");
+    let surviving_head = cursor(&journal).expect("the first delivery is the head");
+    deliver(&mut journal, &head, question).expect("the question delivery lands");
+
+    let position = i64::try_from(question.get()).expect("fixture position fits SQLite");
+    let bytes: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+            [position],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut envelope: wire::Envelope<serde_json::Value> = wire::decode(&bytes).unwrap();
+    envelope.fact = serde_json::json!({
+        "kind": "room::posted",
+        "operation": {"verb": "ask", "result": "dVwVYC9yR"}
+    });
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET kind = 'room::posted', envelope = ?1 WHERE seq = ?2",
+            params![wire::encode(&envelope).unwrap(), position],
+        )
+        .unwrap();
+    super::super::schema::restore_predecessor(&journal, SCHEMA_VERSION - 1);
+
+    crate::migrate::admit(&mut journal.connection)
+        .expect("predecessor crosses")
+        .expect("crossing is reported");
+
+    assert_eq!(
+        room_cursor(&journal, head.lane),
+        Some((surviving_head, first.get()))
+    );
+    journal
+        .verify()
+        .expect("the restored cursor agrees with replay");
+}
+
 /// Only the resident starts a lane's catch-up, once, at the horizon fact's own
 /// position; a lane already started or already advanced by a delivery refuses
 /// another start, and replay rebuilds every horizon.

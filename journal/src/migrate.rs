@@ -446,9 +446,10 @@ fn cross_room_questions(
     version: u32,
 ) -> Result<(), OpenError> {
     if version == STEERING_ROOM_SCHEMA {
-        room_questions::cross(transaction)?;
+        room_questions::cross(transaction)
+    } else {
+        room_questions::refuse_retained(transaction)
     }
-    Ok(())
 }
 
 fn cross_room_successors(

@@ -110,3 +110,110 @@ fn retired_question_receipts_cross_once_and_reserve_their_identities() {
         );
     }
 }
+
+#[test]
+fn an_older_predecessor_with_question_authority_refuses_unchanged() {
+    let mut journal = authority_fixture();
+    let position = 3_i64;
+    let envelope = wire::Envelope {
+        v: WireVersion::CURRENT,
+        seq: seq(u64::try_from(position).unwrap()),
+        at: instant(),
+        actor: Actor::Spice,
+        origin: "task:1kKRRsDP".parse().unwrap(),
+        cause: None,
+        fact: json!({
+            "kind": "room::conversed",
+            "operation": {"verb": "ask", "result": "dVwVYC9yR"}
+        }),
+    };
+    let envelope_bytes = wire::encode(&envelope).unwrap();
+    journal
+        .connection
+        .execute(
+            "INSERT INTO fact_envelopes \
+             (seq, wire_version, instant, actor, origin, cause, kind, envelope) \
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'room::conversed', ?6)",
+            params![
+                position,
+                envelope.v.0,
+                envelope.at.to_string(),
+                envelope.actor.to_string(),
+                envelope.origin.as_str(),
+                envelope_bytes,
+            ],
+        )
+        .unwrap();
+    let request = json!({
+        "v": 1,
+        "id": CLOSE,
+        "epoch": EPOCH,
+        "kind": "room::close",
+        "expected": [],
+        "body": {"result": "dVwVYC9yR", "clause": "retired"},
+    });
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id: uuid(CLOSE),
+        epoch: uuid(EPOCH),
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(1),
+                last: seq(2),
+            }),
+            body: json!({"result": "dVwVYC9yR", "state": "declined"}),
+        }),
+    };
+    journal
+        .connection
+        .execute(
+            "INSERT INTO command_receipts \
+             (command_id, actor, command_kind, request, evaluated_witnesses, response, \
+              first_seq, last_seq, snapshot_seq, epoch) \
+             VALUES (?1, 'operator', 'room::close', ?2, ?3, ?4, 1, 2, NULL, ?5)",
+            params![
+                CLOSE,
+                serde_json::to_vec(&request).unwrap(),
+                wire::encode(&Vec::<Witness>::new()).unwrap(),
+                wire::encode(&response).unwrap(),
+                EPOCH,
+            ],
+        )
+        .unwrap();
+    restore_predecessor(&journal, SCHEMA_VERSION - 2);
+    let before = retained_question_rows(&journal);
+
+    let error = crate::migrate::admit(&mut journal.connection).unwrap_err();
+
+    assert!(error.to_string().contains("963a54c37"), "{error}");
+    assert_eq!(retained_question_rows(&journal), before);
+}
+
+fn retained_question_rows(journal: &Journal) -> (i64, String, Vec<u8>, String, Vec<u8>, Vec<u8>) {
+    let version = journal
+        .connection
+        .query_row(
+            "SELECT version FROM journal_schema WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let (kind, envelope) = journal
+        .connection
+        .query_row(
+            "SELECT kind, envelope FROM fact_envelopes WHERE seq = 3",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let (command_kind, request, response) = journal
+        .connection
+        .query_row(
+            "SELECT command_kind, request, response FROM command_receipts \
+             WHERE command_id = ?1",
+            [CLOSE],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    (version, kind, envelope, command_kind, request, response)
+}

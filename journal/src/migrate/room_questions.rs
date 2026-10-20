@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use crate::{MigrationError, OpenError};
 
@@ -29,6 +29,56 @@ pub(super) fn cross(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenE
     crate::historical_receipts::reserve_identities(transaction)?;
     retire_facts(transaction)?;
     drop_projections(transaction)
+}
+
+/// Refuse an older predecessor that still carries authority for the retired
+/// question protocol. Only schema 86 has the exact shape the crossing below
+/// knows how to retire; the enclosing transaction leaves every earlier store
+/// unchanged on this error.
+pub(super) fn refuse_retained(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    let fact = transaction
+        .query_row(
+            "SELECT seq FROM fact_envelopes \
+             WHERE kind IN ('room::closed', 'room::timedout') \
+             OR (kind IN ('room::conversed', 'room::posted') AND \
+                 json_extract(CAST(envelope AS TEXT), '$.fact.operation.verb') \
+                 IN ('ask', 'ans')) \
+             ORDER BY seq LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(OpenError::Sqlite)?;
+    if let Some(seq) = fact {
+        return Err(retained_fact_error(
+            seq,
+            "this predecessor cannot retire room question authority",
+        ));
+    }
+    let receipt = transaction
+        .query_row(
+            "SELECT command_id FROM command_receipts \
+             WHERE command_kind = 'room::close' \
+             OR (command_kind = 'room::control' AND (\
+                 json_extract(CAST(request AS TEXT), '$.body.control') = 'answer' \
+                 OR json_type(CAST(response AS TEXT), '$.outcome.body.answer') IS NOT NULL \
+                 OR json_type(CAST(response AS TEXT), '$.outcome.body.results') IS NOT NULL\
+             )) ORDER BY command_id LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(OpenError::Sqlite)?;
+    if let Some(receipt) = receipt {
+        return Err(MigrationError::RetainedRow {
+            table: "command_receipts",
+            row: receipt,
+            release: RELEASE,
+            detail: "this predecessor cannot retire a room question receipt".to_owned(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
@@ -226,13 +276,97 @@ fn repair_projections(
     transaction: &rusqlite::Transaction<'_>,
     retired: &BTreeSet<i64>,
 ) -> Result<(), OpenError> {
-    for seq in retired {
+    for &seq in retired {
         transaction
             .execute("DELETE FROM room_publications WHERE seq = ?1", [seq])
             .map_err(OpenError::Sqlite)?;
-        transaction
-            .execute("DELETE FROM room_cursors WHERE head_seq = ?1", [seq])
+        let cursor = transaction
+            .query_row(
+                "SELECT lane FROM room_cursors WHERE head_seq = ?1",
+                [seq],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
             .map_err(OpenError::Sqlite)?;
+        if let Some(lane) = cursor {
+            restore_cursor(transaction, &lane, seq)?;
+        }
+    }
+    Ok(())
+}
+
+/// Restore the newest surviving delivery for `lane`, exactly as replay does.
+fn restore_cursor(
+    transaction: &rusqlite::Transaction<'_>,
+    lane: &str,
+    retired_head: i64,
+) -> Result<(), OpenError> {
+    let lane_id = lane
+        .parse()
+        .map_err(|_| retained_fact_error(retired_head, "room cursor has an invalid lane"))?;
+    let previous = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT seq, envelope FROM fact_envelopes \
+                 WHERE kind = 'room::delivered' AND seq < ?1 ORDER BY seq DESC",
+            )
+            .map_err(OpenError::Sqlite)?;
+        let mut rows = statement.query([retired_head]).map_err(OpenError::Sqlite)?;
+        let mut previous = None;
+        while let Some(row) = rows.next().map_err(OpenError::Sqlite)? {
+            let seq = row.get::<_, i64>(0).map_err(OpenError::Sqlite)?;
+            let bytes = row.get::<_, Vec<u8>>(1).map_err(OpenError::Sqlite)?;
+            let envelope: wire::Envelope<wire::AnyFact> =
+                wire::decode(&bytes).map_err(|error| {
+                    retained_fact_error(seq, format!("surviving delivery does not decode: {error}"))
+                })?;
+            let indexed = u64::try_from(seq).map_err(|_| {
+                retained_fact_error(seq, "surviving delivery has a negative position")
+            })?;
+            if envelope.seq.get() != indexed {
+                return Err(retained_fact_error(
+                    seq,
+                    "surviving delivery disagrees with its indexed position",
+                ));
+            }
+            let delivered = envelope
+                .fact
+                .read::<wire::rooms::RoomDelivered>()
+                .ok_or_else(|| {
+                    retained_fact_error(seq, "surviving delivery has no delivery body")
+                })?;
+            if delivered.hunk.head.lane == lane_id {
+                previous = Some((
+                    seq,
+                    wire::encode(&delivered).map_err(|error| {
+                        retained_fact_error(
+                            seq,
+                            format!("surviving delivery does not encode: {error}"),
+                        )
+                    })?,
+                ));
+                break;
+            }
+        }
+        previous
+    };
+    let changed = match previous {
+        Some((seq, body)) => transaction.execute(
+            "UPDATE room_cursors SET head_seq = ?1, body = ?2 \
+             WHERE lane = ?3 AND head_seq = ?4",
+            params![seq, body, lane, retired_head],
+        ),
+        None => transaction.execute(
+            "DELETE FROM room_cursors WHERE lane = ?1 AND head_seq = ?2",
+            params![lane, retired_head],
+        ),
+    }
+    .map_err(OpenError::Sqlite)?;
+    if changed != 1 {
+        return Err(retained_fact_error(
+            retired_head,
+            "room cursor changed during exclusive migration",
+        ));
     }
     Ok(())
 }
