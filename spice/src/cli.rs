@@ -529,11 +529,11 @@ No form writes raw payload bytes to the terminal.
 written file against the retained digest, and reports its path, size, and
 digest without echoing contents. It is never truncated; '-' is refused.";
 
-/// Claim behavior and dry-board semantics for the allocator entry point.
+/// Selection, claim, and dry-board semantics for the allocator entry point.
 const TASK_NEXT_HELP: &str = "\
-Claims the allocator's next eligible task for this lane. If the lane already
-holds work, returns that assignment without changing its claim. When no work is
-eligible, reports a bounded board summary and leaves state unchanged.";
+Returns this lane's current assignment or pending private Design request first.
+Otherwise claims the allocator's next eligible task. When no task is eligible,
+reports a bounded board summary and leaves state unchanged.";
 
 /// Initial framing for one open Design.
 const TASK_DESIGN_HELP: &str = "\
