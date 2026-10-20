@@ -692,6 +692,16 @@
   margin-inline: .5rem calc(-1 * var(--message-control-inline-offset));
   line-height: 1.25;
 }
+/* Non-prose cards mount their one island directly in the Markdown body rather
+   than in a hunk slot. Give it the same action size and carry it through the
+   content inset so the card edge closes the action pair. Image covers retain
+   their deliberately inset overlay below. */
+.team-surface
+  .mosaic-message-card:not(.mosaic-message-card--image-cover)
+  .markdown-body > .message-controls {
+  --message-control-size: var(--app-header-control);
+  margin-inline-end: calc(-1 * var(--message-card-inset));
+}
 .team-surface .message-controls-slot > span { display: contents; }
 .team-surface .mosaic-message-card .message-controls-slot .message-controls {
   float: none;
@@ -765,12 +775,18 @@
   color: var(--ink);
 }
 .team-surface .message-controls-slot .app-card-action,
+.team-surface
+  .mosaic-message-card:not(.mosaic-message-card--image-cover)
+  .markdown-body > .message-controls .app-card-action,
 .team-surface .message-image-quote {
   width: var(--message-control-size);
   height: var(--message-control-size);
   font-size: calc(var(--message-control-size) * .4);
 }
-.team-surface .message-controls-slot .app-card-action > svg.app-card-action__icon {
+.team-surface .message-controls-slot .app-card-action > svg.app-card-action__icon,
+.team-surface
+  .mosaic-message-card:not(.mosaic-message-card--image-cover)
+  .markdown-body > .message-controls .app-card-action > svg.app-card-action__icon {
   width: 62.5%;
   height: 62.5%;
 }
