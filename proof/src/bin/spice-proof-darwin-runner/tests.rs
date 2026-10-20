@@ -212,3 +212,63 @@ fn command_inventory_is_closed() {
     assert!(!allowed_cargo_arguments(&["test".into()]));
     assert!(!allowed_cargo_arguments(&["metadata".into()]));
 }
+
+#[cfg(unix)]
+struct RemovalFixture(PathBuf);
+
+#[cfg(unix)]
+impl Drop for RemovalFixture {
+    fn drop(&mut self) {
+        let _ = super::restore_owner_directory_access(&self.0);
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn temporary_removal_restores_directory_access_without_following_symlinks() {
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static ROOTS: AtomicU64 = AtomicU64::new(0);
+
+    let stem = format!(
+        "{}-{}",
+        std::process::id(),
+        ROOTS.fetch_add(1, Ordering::Relaxed)
+    );
+    let temporary_dir = std::env::temp_dir();
+    let root = temporary_dir.join(format!("spice-proof-remove-{stem}"));
+    let outside = temporary_dir.join(format!("spice-proof-remove-outside-{stem}"));
+    let _root_cleanup = RemovalFixture(root.clone());
+    let _outside_cleanup = RemovalFixture(outside.clone());
+    let nested = root.join("retained/src");
+    std::fs::create_dir_all(&nested).expect("the retained tree is creatable");
+    std::fs::create_dir_all(&outside).expect("the outside target is creatable");
+    std::fs::write(nested.join("member-output"), b"retained")
+        .expect("the member output is writable");
+    std::fs::write(outside.join("kept"), b"outside").expect("the outside target is writable");
+    symlink(&outside, root.join("outside-link")).expect("the outside symlink is creatable");
+    for directory in [&nested, &root.join("retained"), &root] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o500))
+            .expect("the fixture directory can be made read-only");
+    }
+
+    Temporary {
+        cargo_home: root.join("cargo-home"),
+        cargo_target: root.join("cargo-target"),
+        home: root.join("home"),
+        mutants: root.join("mutants"),
+        temporary: root.join("tmp"),
+        root: root.clone(),
+    }
+    .remove()
+    .expect("the runner removes its read-only private tree");
+
+    assert!(!root.exists(), "the private root survived cleanup");
+    assert_eq!(
+        std::fs::read(outside.join("kept")).expect("the outside target remains readable"),
+        b"outside",
+        "cleanup followed the symlink outside its private root"
+    );
+}
