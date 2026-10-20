@@ -1,6 +1,8 @@
 //! Bounded public folds of private installation authority.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
 use wire::Digest;
 
 use super::{Asset, GeneratedImage, InstallError, InstallPlan, Location, SymbolProvenance};
@@ -85,6 +87,10 @@ impl InstallOperationSummary {
     pub fn introduced_parents(&self) -> &[String] {
         &self.introduced_parents
     }
+
+    fn changes_file(&self) -> bool {
+        self.superseded.as_ref().or(self.previous.as_ref()) != Some(&self.generated)
+    }
 }
 
 /// One byte-free legacy retirement stage in canonical execution order.
@@ -145,6 +151,10 @@ impl InstallRetirementSummary {
     #[must_use]
     pub fn introduced_parents(&self) -> &[String] {
         &self.introduced_parents
+    }
+
+    fn removes_file(&self) -> bool {
+        self.superseded.is_some() || self.observed.is_some()
     }
 }
 
@@ -329,6 +339,80 @@ impl InstallPreview {
     }
 }
 
+impl fmt::Display for InstallPreview {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let files = self
+            .plan
+            .operations
+            .iter()
+            .filter(|operation| operation.changes_file())
+            .count();
+        let retirements = self
+            .plan
+            .retirements
+            .iter()
+            .filter(|retirement| retirement.removes_file())
+            .count();
+        let hooks = self
+            .plan
+            .hook_activation
+            .as_ref()
+            .map_or(0, HookActivationSummary::mutation_count);
+
+        writeln!(formatter, "install plan {}", self.digest)?;
+        if files == 0 && retirements == 0 && hooks == 0 {
+            writeln!(formatter, "changes: none")?;
+        } else {
+            writeln!(
+                formatter,
+                "changes: {files} {}, {retirements} {}, {hooks} {}",
+                plural(files, "file", "files"),
+                plural(retirements, "retirement", "retirements"),
+                plural(hooks, "hook setting", "hook settings"),
+            )?;
+        }
+        for operation in self
+            .plan
+            .operations
+            .iter()
+            .filter(|operation| operation.changes_file())
+        {
+            let action = if operation.superseded.is_some() || operation.previous.is_some() {
+                "update"
+            } else {
+                "create"
+            };
+            writeln!(formatter, "  {action} {}", operation.path)?;
+        }
+        for retirement in self
+            .plan
+            .retirements
+            .iter()
+            .filter(|retirement| retirement.removes_file())
+        {
+            writeln!(formatter, "  remove {}", retirement.path)?;
+        }
+        if let Some(activation) = self
+            .plan
+            .hook_activation
+            .as_ref()
+            .filter(|activation| activation.mutation_count() > 0)
+        {
+            writeln!(
+                formatter,
+                "  set {hooks} {} to {}",
+                plural(hooks, "Git hook setting", "Git hook settings"),
+                activation.hooks_path(),
+            )?;
+        }
+        write!(formatter, "apply: spice install --apply={}", self.digest)
+    }
+}
+
+const fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
+}
+
 /// Durable progress state for apply and reversal.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -372,5 +456,28 @@ impl InstallReceipt {
     #[must_use]
     pub const fn completed(&self) -> usize {
         self.completed
+    }
+}
+
+impl fmt::Display for InstallReceipt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = match self.status {
+            InstallStatus::Applying => "installation applying",
+            InstallStatus::Complete => "installation complete",
+            InstallStatus::Unapplying => "installation removal in progress",
+            InstallStatus::Uninstalled => "installation removed",
+        };
+        writeln!(formatter, "{state}")?;
+        writeln!(formatter, "plan: {}", self.digest)?;
+        write!(
+            formatter,
+            "progress: {}/{} stages",
+            self.completed, self.plan.operation_count
+        )?;
+        match self.status {
+            InstallStatus::Complete => write!(formatter, "\nunapply: spice install --unapply"),
+            InstallStatus::Uninstalled => write!(formatter, "\npreview: spice install"),
+            InstallStatus::Applying | InstallStatus::Unapplying => Ok(()),
+        }
     }
 }

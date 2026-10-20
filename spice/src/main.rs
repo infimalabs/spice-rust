@@ -385,8 +385,8 @@ impl NativeInvocation<'_> {
                 }
             }
             ["install"] => match install_command::run(leaf) {
-                install_command::Answer::Plan(outcome) => deliver(&outcome, form),
-                install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
+                install_command::Answer::Plan(outcome) => deliver_display(&outcome, form),
+                install_command::Answer::Receipt(outcome) => deliver_display(&outcome, form),
                 install_command::Answer::Child(status) => terminate_child(status),
             },
             ["install", "symbols"] => deliver(&install_symbols_command::run(leaf), form),
