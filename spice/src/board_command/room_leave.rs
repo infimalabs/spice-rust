@@ -140,16 +140,18 @@ fn kept_duties(reasons: &[AttentionReason], entries: &[Entry]) -> Vec<RoomListen
     let mut kept = reasons
         .iter()
         .filter_map(|reason| match reason {
-            AttentionReason::Work { task } | AttentionReason::Responsibility { task } => entries
-                .iter()
-                .find(|entry| entry.born() == task)
-                .map(|entry| RoomListeningDuty::Work {
-                    task: entry.handle().clone(),
-                }),
-            AttentionReason::Coordination { key } => {
+            AttentionReason::Work { task, .. } | AttentionReason::Responsibility { task, .. } => {
+                entries
+                    .iter()
+                    .find(|entry| entry.born() == task)
+                    .map(|entry| RoomListeningDuty::Work {
+                        task: entry.handle().clone(),
+                    })
+            }
+            AttentionReason::Coordination { key, .. } => {
                 Some(RoomListeningDuty::Coordination { key: key.clone() })
             }
-            AttentionReason::Stop { key } => Some(RoomListeningDuty::Stop { key: key.clone() }),
+            AttentionReason::Stop { key, .. } => Some(RoomListeningDuty::Stop { key: key.clone() }),
             AttentionReason::Asked { .. } => None,
         })
         .collect::<Vec<_>>();

@@ -383,8 +383,8 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
-    /// One logical lane's room catch-up horizon, absent until the resident
-    /// records the lane's first start; the head's position is the horizon.
+    /// One logical lane's retained predecessor catch-up horizon, present only
+    /// in journals written before authority-bounded room selection.
     pub fn room_catch_up_horizon(
         &self,
         lane: wire::CanonicalUuid,

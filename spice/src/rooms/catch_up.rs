@@ -89,16 +89,16 @@ pub struct CatchUp {
     pub continuation: Option<Seq>,
 }
 
-/// Select `lane`'s next catch-up from `sources` admitted after `after`, its
-/// delivery cursor or, before any delivery, its horizon, judging listening by
-/// the current `rooms` projection.
+/// Select `lane`'s next catch-up from `sources` strictly after its optional
+/// landed delivery cursor, judging each publication against the current
+/// authority-bounded `rooms` projection.
 ///
 /// The first owed item always fits, so one oversized publication cannot stall
 /// the cursor; rendering bounds what a single item says. An unchanged start
 /// selects the same delivery again.
 pub fn select_catch_up(
     lane: CanonicalUuid,
-    after: Seq,
+    after: Option<Seq>,
     rooms: &[RoomAttention],
     mut sources: Vec<CatchUpSource>,
     budget: CatchUpBudget,
@@ -122,7 +122,10 @@ pub fn select_catch_up(
     let mut selected = CatchUp::default();
     let mut bytes = 0usize;
     let mut passed = None;
-    for source in sources.into_iter().filter(|source| source.seq > after) {
+    for source in sources
+        .into_iter()
+        .filter(|source| after.is_none_or(|after| source.seq > after))
+    {
         let owed = match &source.kind {
             CatchUpKind::Publication { author, recipients } => {
                 listened
@@ -172,9 +175,9 @@ mod tests {
         Seq::new(value).expect("fixture position")
     }
 
-    /// The lane's cursor or horizon in every fixture.
-    fn start() -> Seq {
-        seq(10)
+    /// The lane's delivery cursor in every ordinary fixture.
+    fn start() -> Option<Seq> {
+        Some(seq(10))
     }
 
     fn listening(room: &TaskStamp, lanes: &[CanonicalUuid]) -> RoomAttention {
@@ -186,7 +189,10 @@ mod tests {
                     lane: *lane,
                     availability: LaneAvailability::Occupied,
                     participation: Vec::new(),
-                    attention: vec![AttentionReason::Work { task: room.clone() }],
+                    attention: vec![AttentionReason::Work {
+                        task: room.clone(),
+                        since: seq(10),
+                    }],
                     left: None,
                     leave_intervals: Vec::new(),
                 })
@@ -253,8 +259,8 @@ mod tests {
         let landed = selected
             .through
             .expect("the first page lands through a position");
-        let resumed =
-            select_catch_up(lane, landed, &rooms, sources.clone(), by_items).expect("resumes");
+        let resumed = select_catch_up(lane, Some(landed), &rooms, sources.clone(), by_items)
+            .expect("resumes");
         assert_eq!(positions(&resumed), [13, 14]);
         assert_eq!(
             (resumed.through, resumed.continuation),
@@ -298,7 +304,7 @@ mod tests {
             (vec![11], Some(seq(11)), Some(seq(12))),
             "a withheld invitation stays ahead of the cursor"
         );
-        let second = select_catch_up(lane, seq(11), &rooms, sources, one).expect("resumes");
+        let second = select_catch_up(lane, Some(seq(11)), &rooms, sources, one).expect("resumes");
         assert_eq!(
             (positions(&second), second.through),
             (vec![12], Some(seq(12)))
@@ -364,6 +370,42 @@ mod tests {
         )
         .expect("selects");
         assert_eq!(nothing_owed, CatchUp::default());
+    }
+    /// Current native authority, rather than process start or an older cursor,
+    /// bounds both first delivery and a later claim after an inactive gap.
+    #[test]
+    fn native_authority_bounds_initial_and_resumed_catch_up() {
+        let lane = uuid("05");
+        let room = room(1);
+        let mut rooms = [listening(&room, &[lane])];
+        rooms[0].lanes[0].attention = vec![AttentionReason::Work {
+            task: room.clone(),
+            since: seq(20),
+        }];
+        let sources = vec![
+            source(11, &room, 1),
+            source(19, &room, 1),
+            source(21, &room, 1),
+            source(22, &room, 1),
+        ];
+
+        let initial = select_catch_up(lane, None, &rooms, sources.clone(), CatchUpBudget::STANDARD)
+            .expect("initial catch-up selects");
+        assert_eq!(positions(&initial), [21, 22]);
+
+        let resumed = select_catch_up(
+            lane,
+            Some(seq(12)),
+            &rooms,
+            sources,
+            CatchUpBudget::STANDARD,
+        )
+        .expect("later claim catch-up selects");
+        assert_eq!(
+            positions(&resumed),
+            [21, 22],
+            "the cursor cannot reopen the inactive interval before the new claim"
+        );
     }
 
     #[test]
