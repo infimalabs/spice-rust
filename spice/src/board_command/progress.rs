@@ -436,7 +436,7 @@ fn admit_disposition(
         ));
     }
     let owner = planning::construction_owner(plan, entry.statement().preparation.as_ref());
-    if entry.statement().intent.is_none() {
+    if !planning::planning_deliverable(entry) {
         return Err(refusal(
             "task::disposition-refused",
             Some(entry.handle().to_string()),
