@@ -28,7 +28,8 @@ pub(super) fn run(
         contract,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead::All { family: None },
+        // Active claims sit only on open tasks; terminal history is not read.
+        &BoardRead::Open,
     ) {
         Outcome::Reply(Reply {
             position,
