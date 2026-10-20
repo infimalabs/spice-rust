@@ -577,3 +577,322 @@ fn read_u64(image: &[u8], offset: usize) -> Result<u64, CanvasError> {
         bytes.try_into().expect("the field is eight bytes"),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ARCHIVE: &[u8] = b"PK\x03\x04object layout boundary";
+
+    #[test]
+    fn object_targets_name_their_linker_artifacts() {
+        for (target, name, extension) in [
+            (ObjectTarget::MacAarch64, "macos-aarch64", "o"),
+            (ObjectTarget::MacX86_64, "macos-x86_64", "o"),
+            (ObjectTarget::LinuxAarch64, "linux-aarch64", "o"),
+            (ObjectTarget::LinuxX86_64, "linux-x86_64", "o"),
+            (ObjectTarget::WindowsX86_64, "windows-x86_64", "obj"),
+        ] {
+            assert_eq!(target.name(), name);
+            assert_eq!(target.object_extension(), extension);
+        }
+    }
+
+    #[test]
+    fn canvas_metadata_and_generation_report_are_exact() {
+        let generation = Digest::compute(Domain::DistArtifact, b"generation");
+        let canvas = Canvas::new(generation.clone(), ARCHIVE);
+
+        assert_eq!(canvas.generation(), &generation);
+        assert_eq!(
+            canvas.archive(),
+            &Digest::compute(Domain::DistArtifact, ARCHIVE)
+        );
+        assert_eq!(canvas.bytes(), ARCHIVE.len() as u64);
+        assert_eq!(
+            canvas.verify_report(&format!("spice development app {generation}\n")),
+            Ok(())
+        );
+        assert!(matches!(
+            canvas.verify_report(&format!("spice development app {}\n", "0".repeat(64))),
+            Err(CanvasError::Report(_))
+        ));
+    }
+
+    #[test]
+    fn executable_parsers_refuse_format_boundary_violations() {
+        let mut macho = canvas_object(ARCHIVE, ObjectTarget::MacAarch64);
+        macho[16..20].copy_from_slice(&1_u32.to_le_bytes());
+        macho[MACHO_HEADER_BYTES..MACHO_HEADER_BYTES + 4].copy_from_slice(&0_u32.to_le_bytes());
+        macho[MACHO_HEADER_BYTES + 4..MACHO_HEADER_BYTES + 8].copy_from_slice(&7_u32.to_le_bytes());
+        assert_eq!(
+            linked_archive(&macho),
+            Err(CanvasError::Malformed("load command"))
+        );
+        macho[MACHO_HEADER_BYTES + 4..MACHO_HEADER_BYTES + 8].copy_from_slice(&8_u32.to_le_bytes());
+        assert_eq!(linked_archive(&macho), Err(CanvasError::Absent));
+
+        let elf = canvas_object(ARCHIVE, ObjectTarget::LinuxX86_64);
+        let mut wrong_class = elf.clone();
+        wrong_class[4] = 1;
+        assert_eq!(linked_archive(&wrong_class), Err(CanvasError::Format));
+
+        let mut wrong_header_size = elf.clone();
+        wrong_header_size[0x3a..0x3c].copy_from_slice(&63_u16.to_le_bytes());
+        assert_eq!(
+            linked_archive(&wrong_header_size),
+            Err(CanvasError::Malformed("section header table"))
+        );
+
+        let mut no_headers = elf.clone();
+        no_headers[0x3c..0x3e].copy_from_slice(&0_u16.to_le_bytes());
+        assert_eq!(
+            linked_archive(&no_headers),
+            Err(CanvasError::Malformed("section header table"))
+        );
+
+        let mut names_outside_table = elf.clone();
+        names_outside_table[0x3e..0x40].copy_from_slice(&7_u16.to_le_bytes());
+        assert_eq!(
+            linked_archive(&names_outside_table),
+            Err(CanvasError::Malformed("section header table"))
+        );
+
+        let headers = u64_at(&elf, 0x28) as usize;
+        let archive_header = headers + ELF_SECTION_HEADER_BYTES as usize;
+        let mut no_file_bytes = elf;
+        no_file_bytes[archive_header + 4..archive_header + 8]
+            .copy_from_slice(&SHT_NOBITS.to_le_bytes());
+        assert_eq!(
+            linked_archive(&no_file_bytes),
+            Err(CanvasError::Malformed(
+                "app ZIP section holds no file bytes"
+            ))
+        );
+    }
+
+    #[test]
+    fn mach_o_objects_expose_exact_sections_symbols_and_target_identity() {
+        for (target, cpu, subtype, minos) in [
+            (ObjectTarget::MacAarch64, 0x0100_000c, 0, 0x000b_0000),
+            (ObjectTarget::MacX86_64, 0x0100_0007, 3, 0x000a_0c00),
+        ] {
+            let object = canvas_object(ARCHIVE, target);
+            let data =
+                MACHO_HEADER_BYTES + SEGMENT_COMMAND_BYTES + 2 * SECTION_64_BYTES + 24 + 24 + 80;
+            let length_at = ARCHIVE.len().next_multiple_of(8);
+            let segment_bytes = length_at + 8;
+            let symbols = data + segment_bytes;
+            let strings_at = symbols + 2 * 16;
+            let string_table = b"\0_spiceapp\0_spiceapp_len\0";
+            let string_bytes = string_table.len().next_multiple_of(8);
+
+            assert_eq!(u32_at(&object, 0), MACHO_MAGIC_64);
+            assert_eq!(u32_at(&object, 4), cpu);
+            assert_eq!(u32_at(&object, 8), subtype);
+            assert_eq!(u32_at(&object, 12), 1);
+            assert_eq!(u32_at(&object, 16), 4);
+            assert_eq!(u32_at(&object, 20) as usize, data - MACHO_HEADER_BYTES);
+
+            let segment = MACHO_HEADER_BYTES;
+            assert_eq!(u32_at(&object, segment), LC_SEGMENT_64);
+            assert_eq!(
+                u32_at(&object, segment + 4) as usize,
+                SEGMENT_COMMAND_BYTES + 2 * SECTION_64_BYTES
+            );
+            assert_eq!(u64_at(&object, segment + 32) as usize, segment_bytes);
+            assert_eq!(u64_at(&object, segment + 40) as usize, data);
+            assert_eq!(u64_at(&object, segment + 48) as usize, segment_bytes);
+            assert_eq!(u32_at(&object, segment + 64), 2);
+
+            let archive = segment + SEGMENT_COMMAND_BYTES;
+            assert_eq!(name(&object, archive), Ok(MACHO_SECTION));
+            assert_eq!(name(&object, archive + 16), Ok(MACHO_SEGMENT));
+            assert_eq!(u64_at(&object, archive + 32), 0);
+            assert_eq!(u64_at(&object, archive + 40) as usize, ARCHIVE.len());
+            assert_eq!(u32_at(&object, archive + 48) as usize, data);
+            assert_eq!(u32_at(&object, archive + 52), 0);
+
+            let length = archive + SECTION_64_BYTES;
+            assert_eq!(name(&object, length), Ok(&b"__const"[..]));
+            assert_eq!(name(&object, length + 16), Ok(MACHO_SEGMENT));
+            assert_eq!(u64_at(&object, length + 32) as usize, length_at);
+            assert_eq!(u64_at(&object, length + 40), 8);
+            assert_eq!(u32_at(&object, length + 48) as usize, data + length_at);
+            assert_eq!(u32_at(&object, length + 52), 3);
+
+            let build = segment + SEGMENT_COMMAND_BYTES + 2 * SECTION_64_BYTES;
+            assert_eq!(u32_at(&object, build), LC_BUILD_VERSION);
+            assert_eq!(u32_at(&object, build + 8), 1);
+            assert_eq!(u32_at(&object, build + 12), minos);
+
+            let symtab = build + 24;
+            assert_eq!(u32_at(&object, symtab), LC_SYMTAB);
+            assert_eq!(u32_at(&object, symtab + 8) as usize, symbols);
+            assert_eq!(u32_at(&object, symtab + 12), 2);
+            assert_eq!(u32_at(&object, symtab + 16) as usize, strings_at);
+            assert_eq!(u32_at(&object, symtab + 20) as usize, string_bytes);
+
+            assert_eq!(&object[data..data + ARCHIVE.len()], ARCHIVE);
+            assert_eq!(u64_at(&object, data + length_at), ARCHIVE.len() as u64);
+            assert_eq!(u32_at(&object, symbols), 1);
+            assert_eq!(&object[symbols + 4..symbols + 8], &[0x0f, 1, 0, 0]);
+            assert_eq!(u64_at(&object, symbols + 8), 0);
+            assert_eq!(
+                u32_at(&object, symbols + 16),
+                ARCHIVE_SYMBOL.len() as u32 + 3
+            );
+            assert_eq!(&object[symbols + 20..symbols + 24], &[0x0f, 2, 0, 0]);
+            assert_eq!(u64_at(&object, symbols + 24) as usize, length_at);
+            assert_eq!(
+                &object[strings_at..strings_at + string_table.len()],
+                string_table
+            );
+            assert_eq!(object.len(), strings_at + string_bytes);
+            assert_eq!(linked_archive(&object), Ok(ARCHIVE));
+        }
+    }
+
+    #[test]
+    fn elf_objects_expose_exact_sections_symbols_and_target_identity() {
+        let section_names =
+            b"\0spiceapp\0.rodata.spiceapp_len\0.note.GNU-stack\0.symtab\0.strtab\0.shstrtab\0";
+        let symbol_names = b"\0spiceapp\0spiceapp_len\0";
+        for (target, machine) in [
+            (ObjectTarget::LinuxAarch64, 183),
+            (ObjectTarget::LinuxX86_64, 62),
+        ] {
+            let object = canvas_object(ARCHIVE, target);
+            let length_at = (64 + ARCHIVE.len()).next_multiple_of(8);
+            let symbols = length_at + 8;
+            let symbol_names_at = symbols + 3 * 24;
+            let section_names_at = symbol_names_at + symbol_names.len();
+            let headers = (section_names_at + section_names.len()).next_multiple_of(8);
+
+            assert_eq!(&object[..4], ELF_MAGIC);
+            assert_eq!(&object[4..7], &[ELF_CLASS_64, ELF_LITTLE_ENDIAN, 1]);
+            assert_eq!(u16_at(&object, 16), 1);
+            assert_eq!(u16_at(&object, 18), machine);
+            assert_eq!(u32_at(&object, 20), 1);
+            assert_eq!(u64_at(&object, 40) as usize, headers);
+            assert_eq!(u16_at(&object, 52), 64);
+            assert_eq!(u16_at(&object, 58), 64);
+            assert_eq!(u16_at(&object, 60), 7);
+            assert_eq!(u16_at(&object, 62), 6);
+
+            assert_eq!(&object[64..64 + ARCHIVE.len()], ARCHIVE);
+            assert_eq!(u64_at(&object, length_at), ARCHIVE.len() as u64);
+            assert_eq!(&object[symbols..symbols + 24], &[0; 24]);
+            assert_elf_symbol(&object, symbols + 24, 1, 1, ARCHIVE.len() as u64);
+            assert_elf_symbol(&object, symbols + 48, 10, 2, 8);
+            assert_eq!(
+                &object[symbol_names_at..symbol_names_at + symbol_names.len()],
+                symbol_names
+            );
+            assert_eq!(
+                &object[section_names_at..section_names_at + section_names.len()],
+                section_names
+            );
+
+            let archive = headers + ELF_SECTION_HEADER_BYTES as usize;
+            assert_elf_section(
+                &object,
+                archive,
+                section_name(section_names, b"spiceapp"),
+                SHT_PROGBITS,
+                SHF_ALLOC,
+                64,
+                ARCHIVE.len() as u64,
+                0,
+                0,
+                1,
+                0,
+            );
+            let length = archive + ELF_SECTION_HEADER_BYTES as usize;
+            assert_elf_section(
+                &object,
+                length,
+                section_name(section_names, b".rodata.spiceapp_len"),
+                SHT_PROGBITS,
+                SHF_ALLOC,
+                length_at as u64,
+                8,
+                0,
+                0,
+                8,
+                0,
+            );
+            let symtab = archive + 3 * ELF_SECTION_HEADER_BYTES as usize;
+            assert_elf_section(
+                &object,
+                symtab,
+                section_name(section_names, b".symtab"),
+                SHT_SYMTAB,
+                0,
+                symbols as u64,
+                3 * 24,
+                5,
+                1,
+                8,
+                24,
+            );
+            assert_eq!(
+                object.len(),
+                headers + 7 * ELF_SECTION_HEADER_BYTES as usize
+            );
+            assert_eq!(linked_archive(&object), Ok(ARCHIVE));
+        }
+    }
+
+    fn assert_elf_symbol(object: &[u8], offset: usize, name_offset: u32, section: u16, bytes: u64) {
+        assert_eq!(u32_at(object, offset), name_offset);
+        assert_eq!(&object[offset + 4..offset + 6], &[0x11, 0]);
+        assert_eq!(u16_at(object, offset + 6), section);
+        assert_eq!(u64_at(object, offset + 8), 0);
+        assert_eq!(u64_at(object, offset + 16), bytes);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assert_elf_section(
+        object: &[u8],
+        offset: usize,
+        name_offset: u32,
+        kind: u32,
+        flags: u64,
+        data_offset: u64,
+        bytes: u64,
+        link: u32,
+        info: u32,
+        align: u64,
+        entry_bytes: u64,
+    ) {
+        assert_eq!(u32_at(object, offset), name_offset);
+        assert_eq!(u32_at(object, offset + 4), kind);
+        assert_eq!(u64_at(object, offset + 8), flags);
+        assert_eq!(u64_at(object, offset + 24), data_offset);
+        assert_eq!(u64_at(object, offset + 32), bytes);
+        assert_eq!(u32_at(object, offset + 40), link);
+        assert_eq!(u32_at(object, offset + 44), info);
+        assert_eq!(u64_at(object, offset + 48), align);
+        assert_eq!(u64_at(object, offset + 56), entry_bytes);
+    }
+
+    fn section_name(table: &[u8], expected: &[u8]) -> u32 {
+        table
+            .windows(expected.len() + 1)
+            .position(|window| window[..expected.len()] == *expected && window[expected.len()] == 0)
+            .expect("section name is present") as u32
+    }
+
+    fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("u16 field"))
+    }
+
+    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32 field"))
+    }
+
+    fn u64_at(bytes: &[u8], offset: usize) -> u64 {
+        u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("u64 field"))
+    }
+}

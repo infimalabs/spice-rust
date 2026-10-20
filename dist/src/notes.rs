@@ -160,12 +160,12 @@ fn fold_entries(input: &NotesInput) -> Result<Vec<ReleaseNotesEntry>, NotesError
             .unwrap_or(landing.task.as_str());
         if root == landing.task {
             let current = metadata.entry(root).or_insert(landing);
-            if landing.sequence > current.sequence {
+            if landing.sequence.cmp(&current.sequence).is_gt() {
                 *current = landing;
             }
             if let Some(verdict) = landing.verdict {
                 let current = standing.entry(root).or_insert((landing.sequence, verdict));
-                if landing.sequence > current.0 {
+                if landing.sequence.cmp(&current.0).is_gt() {
                     *current = (landing.sequence, verdict);
                 }
             }
@@ -508,6 +508,83 @@ mod tests {
         ))
         .expect("clean review folds");
         assert_eq!(visible.entries.len(), 1);
+    }
+
+    #[test]
+    fn latest_root_metadata_wins_independent_of_landing_order() {
+        for landings in [
+            vec![
+                landing(1, "1111111111", "root", "spice.old", "Old title"),
+                landing(2, "2222222222", "root", "spice.new", "New title"),
+            ],
+            vec![
+                landing(2, "2222222222", "root", "spice.new", "New title"),
+                landing(1, "1111111111", "root", "spice.old", "Old title"),
+            ],
+        ] {
+            let notes = release_notes(fixture(
+                vec!["1111111111", "2222222222"],
+                landings,
+                Vec::new(),
+            ))
+            .expect("latest typed metadata folds");
+
+            assert_eq!(notes.entries.len(), 1);
+            assert_eq!(notes.entries[0].project, "spice.new");
+            assert_eq!(notes.entries[0].subject, "New title");
+        }
+    }
+
+    #[test]
+    fn repeated_identical_correction_authority_is_idempotent() {
+        let correction = Correction {
+            parent: "root".to_owned(),
+            correction: "fix".to_owned(),
+        };
+        let notes = release_notes(fixture(
+            vec!["1111111111", "2222222222"],
+            vec![
+                landing(1, "1111111111", "root", "spice.app", "Show presence"),
+                landing(2, "2222222222", "fix", "spice.fix", "Repair presence"),
+            ],
+            vec![correction.clone(), correction],
+        ))
+        .expect("identical correction authority folds once");
+
+        assert_eq!(notes.entries.len(), 1);
+        assert_eq!(notes.entries[0].task.as_deref(), Some("root"));
+        assert_eq!(notes.entries[0].references, ["1111111111", "2222222222"]);
+    }
+
+    #[test]
+    fn inventory_groups_exact_projects_and_titles_with_canonical_headings() {
+        let notes = release_notes(fixture(
+            vec!["1111111111", "2222222222", "3333333333", "4444444444"],
+            vec![
+                landing(1, "1111111111", "cli-a", "spice.cli", "Shared title"),
+                landing(2, "2222222222", "ui", "spice.ui", "Shared title"),
+                landing(3, "3333333333", "cli-b", "spice.cli", "CLI only"),
+                landing(4, "4444444444", "tools", ".spice..cli-", "Tooling"),
+            ],
+            Vec::new(),
+        ))
+        .expect("typed projects render");
+
+        assert!(
+            notes
+                .document
+                .contains("### Spice CLI\n\n- Shared title (1111111)\n- CLI only (3333333)")
+        );
+        assert!(
+            notes
+                .document
+                .contains("### Spice UI\n\n- Shared title (2222222)")
+        );
+        assert!(
+            notes
+                .document
+                .contains("### Spice CLI\n\n- Tooling (4444444)")
+        );
     }
 
     #[test]
