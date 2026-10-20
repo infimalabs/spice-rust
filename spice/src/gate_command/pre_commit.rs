@@ -901,6 +901,11 @@ fn failure_outcome<T>(mut failure: WorkerFailure) -> Outcome<T> {
         ))
     } else {
         let observed = failure.detail;
+        let remedy = if super::proof_absent(&failure.reason) {
+            "the staged tree is not proved yet; run each named command, then retry the same git commit"
+        } else {
+            "repair the named capture input; the selected change gate is the sole execution path"
+        };
         Outcome::Refusal(Refusal::bare(
             RefusalDiagnostic::new(
                 failure.reason,
@@ -908,13 +913,7 @@ fn failure_outcome<T>(mut failure: WorkerFailure) -> Outcome<T> {
                 Some("one complete selected change-gate capture".to_owned()),
                 Some(observed.clone()),
             )
-            .with_detail(format!(
-                concat!(
-                    "{}\n",
-                    "repair the named capture input; the selected change gate is the sole execution path"
-                ),
-                observed,
-            )),
+            .with_detail(format!("{observed}\n{remedy}")),
         ))
     }
 }

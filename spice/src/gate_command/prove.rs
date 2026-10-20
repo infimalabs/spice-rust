@@ -1028,11 +1028,12 @@ fn refusal_detail(report: &FocusedArmReport) -> String {
 }
 
 fn refusal<B>(reason: &str, detail: impl Into<String>) -> Outcome<B> {
-    Outcome::Refusal(Refusal::evidence(
-        reason,
-        detail,
-        "repair the named proof request or staged action inputs, then rerun it",
-    ))
+    let remedy = if super::proof_absent(reason) {
+        "the staged tree is not proved yet; run each named command to prove it"
+    } else {
+        "repair the named proof request or staged action inputs, then rerun it"
+    };
+    Outcome::Refusal(Refusal::evidence(reason, detail, remedy))
 }
 
 pub(super) enum ProveFailure {

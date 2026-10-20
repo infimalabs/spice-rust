@@ -25,6 +25,19 @@ pub(crate) use battery::BatteryRun;
 pub(crate) use mutation::{CampAnswer, KillAnswer, camp, kill};
 pub(crate) use prove::{ProveReport, prove};
 
+/// Whether a gate refusal reports only that no proof covers the staged tree
+/// yet. Its detail names each `spice gate prove` command that supplies the
+/// proof, so nothing needs repair.
+fn proof_absent(reason: &str) -> bool {
+    matches!(
+        reason,
+        "gate::pre-commit-fingerprint-missing"
+            | "gate::pre-commit-proof-missing"
+            | "gate::prove-fingerprint-missing"
+            | "gate::prove-receipt-missing"
+    )
+}
+
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(
     matches: &clap::ArgMatches,
