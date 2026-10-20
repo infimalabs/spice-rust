@@ -313,7 +313,7 @@ fn a_predecessor_crossing_backfills_typed_rooms_without_rewriting_authority() {
             .expect("authority decodes")
     };
     let before = authority(&journal);
-    let predecessor = SCHEMA_VERSION - 1;
+    let predecessor = crate::migrate::STEERING_ROOM_SCHEMA - 1;
     journal
         .connection
         .execute_batch(&format!(

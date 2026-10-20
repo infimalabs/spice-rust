@@ -17,8 +17,6 @@ use wire::{Disposition, SteeringHead};
 
 use super::*;
 
-mod evidence;
-
 fn minute(minute: u32) -> Instant {
     format!("2030-04-12T19:{minute:02}:00.000Z")
         .parse()

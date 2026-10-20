@@ -353,7 +353,6 @@ fn cover_task_heads() {
         &[
             TaskHead {
                 preparation: None,
-                evidence: Vec::new(),
                 intent: None,
                 born: task.clone(),
                 queue_origin: seq(9),
@@ -376,7 +375,6 @@ fn cover_task_heads() {
             },
             TaskHead {
                 preparation: None,
-                evidence: Vec::new(),
                 intent: None,
                 born: task.clone(),
                 queue_origin: seq(9),

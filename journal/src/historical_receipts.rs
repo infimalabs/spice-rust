@@ -3,7 +3,9 @@
 //! A retired kind's receipts stay verifiable evidence after its command is
 //! gone. `gate::findings` receipts stand in their own table; `steer::tell`
 //! and `preparation::authorize` receipts stay among the command receipts they
-//! were committed with. The retained registry never makes these kinds
+//! were committed with. A `task::edit` receipt whose request carried a retired
+//! evidence change stands in the historical table while current edits keep
+//! their live receipts. The retained registry never makes these receipts
 //! executable again.
 
 use rusqlite::Connection;
@@ -20,6 +22,8 @@ enum HistoricalKind {
     PreparationAuthorize,
     #[serde(rename = "steer::tell")]
     SteerTell,
+    #[serde(rename = "task::edit")]
+    TaskEdit,
 }
 
 impl HistoricalKind {
@@ -28,6 +32,7 @@ impl HistoricalKind {
             Self::GateFindings => "gate::findings",
             Self::PreparationAuthorize => "preparation::authorize",
             Self::SteerTell => "steer::tell",
+            Self::TaskEdit => "task::edit",
         }
     }
 

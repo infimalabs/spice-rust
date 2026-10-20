@@ -63,7 +63,6 @@ fn workflow(current: &str) -> WorkflowHead {
 fn statement(name: &str) -> TaskHead {
     TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: stamp(name),
         queue_origin: seq(1),

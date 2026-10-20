@@ -131,7 +131,6 @@ mod dependency_witness;
 use dependency_witness::*;
 mod design_return;
 pub(crate) use design_return::{ReturnOwed, owed_returns, record_return};
-mod evidence;
 mod followup;
 use followup::*;
 mod handoff;

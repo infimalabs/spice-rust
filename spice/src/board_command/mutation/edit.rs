@@ -68,18 +68,6 @@ fn prepare_correction(
     projects: &ProjectPolicy,
 ) -> Result<(TaskHead, CorrectionPublication), Outcome<CommandAnswer>> {
     validate_acceptance(&edit.acceptance)?;
-    if edit
-        .evidence
-        .as_ref()
-        .is_some_and(|change| change.released().is_some())
-        && !command.holds(wire::principal::PrincipalRole::Operator)
-    {
-        return Err(refusal(
-            "task::evidence-authority",
-            Some(edit.task.to_string()),
-            "only the operator replaces or waives required evidence",
-        ));
-    }
     let (mut statement, flow) = corrected_statement(entry, edit, projects)?;
     // A Draft asserts nothing yet; taste policy binds when it is filed.
     let released = if entry.is_draft() {
@@ -217,13 +205,12 @@ fn corrected_statement(
         && edit.intent.is_none()
         && edit.priority.is_none()
         && edit.project.is_none()
-        && edit.evidence.is_none()
         && edit.flow.is_none()
     {
         return Err(refusal(
             "task::edit-empty",
             Some(edit.task.to_string()),
-            "name at least one statement field, an environmental requirement edit, an intent edit, an evidence edit, or a Draft flow",
+            "name at least one statement field, an environmental requirement edit, an intent edit, or a Draft flow",
         ));
     }
     let flow = edit
@@ -267,15 +254,6 @@ fn corrected_statement(
     }
     if let Some(requested) = &edit.project {
         statement.project = corrected_project(projects, requested)?;
-    }
-    if let Some(change) = &edit.evidence {
-        statement.evidence = change.apply(&statement.evidence).map_err(|error| {
-            refusal(
-                "task::evidence-edit-refused",
-                Some(error),
-                "require a result not yet required, or replace or waive one this task requires",
-            )
-        })?;
     }
     // A Design walks one phase: judge the pair this edit leaves, so an intent
     // and a Draft route edited together are checked as they will stand.
@@ -373,7 +351,6 @@ fn publish_correction(
     let edited = match write.fact(
         body::TaskEdited {
             intent: edit.intent,
-            evidence: edit.evidence.clone(),
             task: statement.born.clone(),
             revision,
             dependencies: None,

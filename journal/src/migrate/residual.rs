@@ -416,7 +416,7 @@ pub(super) fn cross_steering_rooms(transaction: &Transaction<'_>) -> Result<(), 
 }
 
 /// Refuse naming the first row `sql` selects, if any.
-fn refuse_first(
+pub(super) fn refuse_first(
     connection: &Connection,
     table: &'static str,
     sql: &str,

@@ -141,7 +141,6 @@ fn fixture() -> Journal {
         let statement_origin = wire::TaskProvenance::Task(task.clone());
         write.task_head(fact, move |position| TaskHead {
             preparation: None,
-            evidence: Vec::new(),
             intent: None,
             born: statement_task,
             queue_origin: position,

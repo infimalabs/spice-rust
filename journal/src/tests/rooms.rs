@@ -189,7 +189,6 @@ fn task_with_intent(
     let born = task.clone();
     write.task_head(fact, move |revision| TaskHead {
         preparation,
-        evidence: Vec::new(),
         intent,
         born,
         queue_origin: revision,
@@ -313,7 +312,6 @@ fn set_dependencies(journal: &mut Journal, task: &TaskStamp, dependencies: Vec<T
                 revision,
                 dependencies: Some(dependencies.clone()),
                 intent: None,
-                evidence: None,
             },
             FactCause::Root,
         )
@@ -336,7 +334,6 @@ fn edit_project(journal: &mut Journal, task: &TaskStamp, project: &str) {
                 revision: 2,
                 dependencies: None,
                 intent: None,
-                evidence: None,
             },
             FactCause::Root,
         )
@@ -363,7 +360,6 @@ fn declare_plan(journal: &mut Journal, task: &TaskStamp) -> Commit {
                 intent: Some(wire::TaskIntentEdit::Set {
                     intent: wire::TaskIntent::Plan,
                 }),
-                evidence: None,
             },
             FactCause::Root,
         )
@@ -509,7 +505,6 @@ impl Preparation {
                     relation: name("contract"),
                     source: journal_source(1),
                 }],
-                evidence: Vec::new(),
             },
         }
     }

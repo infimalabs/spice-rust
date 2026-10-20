@@ -19,6 +19,7 @@ mod provenance;
 mod retained;
 mod retained_notes;
 mod settings_receipts;
+mod task_evidence;
 mod task_markers;
 mod task_standing;
 mod vendor_holds;
@@ -55,6 +56,9 @@ fn current_schema_is_the_only_executable_journal_shape() {
 
 /// Last retained schema that still needs the pre-56 shape migrations.
 const SHAPE_PREDECESSOR_SCHEMA: u32 = 55;
+/// First schema whose baseline carried the retired required-evidence index,
+/// held by every predecessor from it through schema 86.
+const TASK_EVIDENCE_SCHEMA: u32 = 48;
 
 /// Return a current fixture to a predecessor's shape and identity.
 fn restore_predecessor(journal: &Journal, predecessor: u32) {
@@ -96,8 +100,10 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
-    let evidence = if predecessor < crate::migrate::TASK_EVIDENCE_SCHEMA {
-        "DROP TABLE task_evidence;"
+    let evidence = if predecessor >= TASK_EVIDENCE_SCHEMA {
+        "CREATE TABLE IF NOT EXISTS task_evidence (task TEXT NOT NULL, result TEXT NOT NULL, \
+         head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq), \
+         PRIMARY KEY (task, result)) STRICT;"
     } else {
         ""
     };
@@ -143,7 +149,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
             |row| row.get(0),
         )
         .expect("steering head shape reads");
-    let steering = if typed_rooms {
+    let steering = if typed_rooms && predecessor < crate::migrate::STEERING_ROOM_SCHEMA {
         PREDECESSOR_STEERING_HEADS
     } else {
         ""

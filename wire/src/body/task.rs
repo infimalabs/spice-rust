@@ -533,16 +533,6 @@ pub struct TaskEdited {
         deserialize_with = "crate::optional::present"
     )]
     pub intent: Option<crate::TaskIntentEdit>,
-    /// Explicit required-evidence change this edit admitted.
-    ///
-    /// The fold of these changes is the statement head's required evidence;
-    /// edits that leave evidence alone omit this field.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub evidence: Option<crate::TaskEvidenceEdit>,
 }
 
 /// A task was withdrawn from the board with a recorded reason.

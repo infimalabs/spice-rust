@@ -438,7 +438,6 @@ fn edit_doc_task(
         .fact(
             body::TaskEdited {
                 intent: None,
-                evidence: None,
                 task: existing.born().clone(),
                 revision,
                 dependencies,
@@ -499,7 +498,6 @@ fn add_doc_task(
     let statement_creation = creation.context();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: statement_task,
         queue_origin: position,

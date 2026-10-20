@@ -73,7 +73,6 @@ fn bystander() -> Actor {
 fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -> Entry {
     let statement = TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: stamp("BOARD-r1"),
         queue_origin: seq(1),

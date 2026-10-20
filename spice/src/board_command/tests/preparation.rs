@@ -469,7 +469,6 @@ fn propose_candidate_version(
             .iter()
             .map(|output| output.born().expect("output stamp"))
             .collect(),
-        evidence: Vec::new(),
         justification: "the cited contract supports this Design pass".to_owned(),
         references: vec![CandidateReference {
             relation: "contract".parse().expect("relation"),
@@ -548,7 +547,6 @@ fn current_proposal_requires_an_exact_active_claim() {
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
-                evidence: Vec::new(),
                 justification: "the cited contract supports this Design pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("relation"),
@@ -913,7 +911,6 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
-                evidence: Vec::new(),
                 justification: "the cited contract supports this pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("relation"),
@@ -1207,7 +1204,6 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![task_stamp],
-                evidence: Vec::new(),
                 justification: "the cited contract supports this pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("relation"),

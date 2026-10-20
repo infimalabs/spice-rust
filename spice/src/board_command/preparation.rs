@@ -850,7 +850,6 @@ fn opportunistic_candidate(
             "Resolve each pending unexpected-behavior line item through an explicit verdict."
                 .to_owned(),
         references,
-        evidence: Vec::new(),
     })
 }
 

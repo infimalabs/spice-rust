@@ -207,7 +207,6 @@ fn assert_anchor_resolution_and_group_end(
             acceptance: Vec::new(),
             requirements: None,
             intent: None,
-            evidence: None,
             priority: None,
             project: Some("board.renamed".to_owned()),
             flow: None,

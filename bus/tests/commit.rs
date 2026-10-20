@@ -519,7 +519,6 @@ fn complete_head_materialization_is_shared_and_delta_bounded() {
                     task: current.born.clone(),
                     revision: u32::try_from(revision).expect("fixture revision"),
                     dependencies: None,
-                    evidence: None,
                 },
                 FactCause::Existing(snapshot.cursor().expect("prior cursor")),
             )
@@ -1002,7 +1001,6 @@ fn retained_added(
 fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq) -> TaskHead {
     TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: task,
         queue_origin: seq,
@@ -1074,7 +1072,6 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     let task_for_head = stamp();
     write.task_head(fact, move |seq| TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: task_for_head,
         queue_origin: seq,

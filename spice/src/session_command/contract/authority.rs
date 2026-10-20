@@ -127,7 +127,6 @@ fn task_added(
     let statement_task = task.clone();
     write.task_head(fact, move |position| wire::TaskHead {
         preparation,
-        evidence: Vec::new(),
         intent,
         born: statement_task,
         queue_origin: position,

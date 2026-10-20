@@ -386,16 +386,6 @@ impl Authority for Stored<'_> {
         conversation::stored_result(self.connection, result)
     }
 
-    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT result FROM task_evidence WHERE task = ?1 ORDER BY result")?;
-        let keys = statement
-            .query_map([task.as_str()], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        super::evidence::parse(keys)
-    }
-
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
         conversation::stored_pending_results(self.connection, requester)
     }
@@ -469,18 +459,6 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
             )?;
         }
         Change::Conversation(edit) => conversation::apply_sql(connection, edit)?,
-        Change::Evidence {
-            task,
-            released,
-            required,
-        } => super::evidence::apply_sql(
-            connection,
-            &task,
-            released.as_deref(),
-            required
-                .as_ref()
-                .map(|(result, seq)| (result.as_str(), *seq)),
-        )?,
         Change::Relevance(edit) => relevance::apply_sql(connection, edit)?,
         Change::MaturityNotice { seq, notice } => {
             connection.execute(
@@ -687,11 +665,6 @@ impl Projection {
                 "SELECT room, head_seq, body FROM room_shelvings",
             )?,
             conversation: conversation::Heads::load(connection)?,
-            evidence: table(
-                connection,
-                "SELECT task, result, head_seq FROM task_evidence",
-                |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
-            )?,
             relevance: relevance::Heads::load(connection)?,
         })
     }
@@ -725,7 +698,7 @@ pub(crate) fn write_projection(
         "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_maturity; \
          DELETE FROM oops_generation_head; DELETE FROM group_partition; DELETE FROM proposal_heads; \
          DELETE FROM authorization_heads; DELETE FROM room_cursors; DELETE FROM room_horizons; \
-         DELETE FROM room_directions; DELETE FROM room_shelvings; DELETE FROM task_evidence;",
+         DELETE FROM room_directions; DELETE FROM room_shelvings;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -783,9 +756,6 @@ pub(crate) fn write_projection(
             )?;
         }
     }
-    for ((task, result), seq) in &projection.evidence {
-        super::evidence::insert(connection, task, result, *seq)?;
-    }
     projection.conversation.write(connection)?;
     projection.relevance.write(connection)
 }
@@ -829,8 +799,7 @@ fn stored_open_design(connection: &Connection, task: &TaskStamp) -> Result<bool,
 }
 
 /// Every output control and execution authorization in this write left the
-/// task heads it names carrying exactly that authority at its fact, and no
-/// statement this write moved disagrees with the authorization projection.
+/// task heads it names carrying exactly that authority at its fact.
 ///
 /// Control writes the output's preparation and gating dependency.
 /// Authorization removes each selected output's Design dependency and leaves
@@ -839,9 +808,7 @@ pub(crate) fn settle_controls<'a>(
     connection: &Connection,
     facts: impl IntoIterator<Item = (Seq, &'a AnyFact)>,
 ) -> Result<(), Refusal> {
-    let mut span: Option<(Seq, Seq)> = None;
     for (seq, fact) in facts {
-        span = Some(span.map_or((seq, seq), |(first, _)| (first, seq)));
         if let Some(control) = fact.read::<wire::rooms::OutputControlled>() {
             let head = stored::<wire::TaskHead>(connection, STATEMENT, &control.output)?;
             if !head.is_some_and(|(_, head)| {
@@ -875,39 +842,6 @@ pub(crate) fn settle_controls<'a>(
                     "authorization at {seq} must leave controller {controller} open"
                 ));
             }
-        }
-    }
-    match span {
-        Some((first, last)) => settle_statements(connection, first, last),
-        None => Ok(()),
-    }
-}
-
-/// Each statement written in `first..=last` carries exactly the evidence that
-/// explicit evidence changes left it requiring.
-fn settle_statements(connection: &Connection, first: Seq, last: Seq) -> Result<(), Refusal> {
-    let mut required = connection.prepare("SELECT result FROM task_evidence WHERE task = ?1")?;
-    let mut statement = connection.prepare(
-        "SELECT statement.stamp, statement.body \
-         FROM task_heads AS statement \
-         WHERE statement.head_seq BETWEEN ?1 AND ?2",
-    )?;
-    let mut rows = statement.query(params![sql(first.get()), sql(last.get())])?;
-    while let Some(row) = rows.next()? {
-        let stamp: String = row.get(0)?;
-        let head: wire::TaskHead = wire::decode(&row.get::<_, Vec<u8>>(1)?)?;
-        let projected = required
-            .query_map([&stamp], |row| row.get::<_, String>(0))?
-            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-        let carried = head
-            .evidence
-            .iter()
-            .map(ToString::to_string)
-            .collect::<std::collections::BTreeSet<_>>();
-        if carried.len() != head.evidence.len() || carried != projected {
-            return unsound(format!(
-                "task {stamp} statement evidence disagrees with its explicit evidence changes"
-            ));
         }
     }
     Ok(())

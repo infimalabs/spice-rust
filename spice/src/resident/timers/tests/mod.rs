@@ -1163,7 +1163,6 @@ fn attach_heads(
     let statement_phase = phase.clone();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: statement_task,
         queue_origin: position,

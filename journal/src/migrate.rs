@@ -22,6 +22,7 @@ mod residual;
 mod retained_notes;
 mod settings_receipts;
 mod steering_rooms;
+mod task_evidence;
 mod task_markers;
 mod task_standing;
 mod task_tags;
@@ -64,7 +65,7 @@ const PREPARED: &str = "prepared";
 /// claim-phase classification and bounded excerpt and elides the excerpt of a
 /// retained conversation notice that kept no prose, and creates the room-authority projection,
 /// room catch-up cursors and horizons, room coordination heads, room
-/// conversation heads, operator items, required task evidence, relevance
+/// conversation heads, operator items, relevance
 /// shadow records, the working-group partition, the empty principal head
 /// index, and the per-Design notice and bounded maturity projections a
 /// predecessor lacks, replacing its per-route room receipts and per-group
@@ -87,11 +88,14 @@ const PREPARED: &str = "prepared";
 /// takes the reason its creating actor proves on both, refusing a lane creator,
 /// a missing creating fact, a copy already contradicting that reason, and any
 /// boundary on an unregistered transcript stream. Last, every steering head
-/// takes its body's room as a typed indexed column.
-const PREDECESSOR_SCHEMAS: [u32; 53] = [
+/// takes its body's room as a typed indexed column. Before any of that, required
+/// question-result evidence retires: its derived index is dropped, retained
+/// evidence edits and statement sets lose only that member, and each task edit
+/// receipt that changed evidence moves into historical receipt authority.
+const PREDECESSOR_SCHEMAS: [u32; 54] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85,
+    81, 82, 83, 84, 85, 86,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -127,8 +131,6 @@ pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
 /// First schema whose baseline carries operator items in place of per-route
 /// room receipts.
 pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
-/// First schema whose baseline carries required task evidence.
-pub(crate) const TASK_EVIDENCE_SCHEMA: u32 = 48;
 /// First schema whose baseline carries room relevance shadow observations.
 pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
 /// First schema whose baseline carries the working-group partition in place
@@ -145,9 +147,11 @@ const DESIGN_PASS_SCHEMA: u32 = 73;
 pub(crate) const RETAINED_NOTES_SCHEMA: u32 = 76;
 /// First schema whose baseline carries the repository OOPS-generation head.
 pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
+/// First schema whose baseline indexes each steering head's room.
+pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 11] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (
@@ -160,7 +164,6 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 11] = [
         crate::rooms::CONVERSATION_SCHEMA_SQL,
     ),
     (ROOM_ITEM_SCHEMA, crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL),
-    (TASK_EVIDENCE_SCHEMA, crate::rooms::EVIDENCE_SCHEMA_SQL),
     (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
     (GROUP_PARTITION_SCHEMA, crate::rooms::GROUP_SCHEMA_SQL),
     (DESIGN_MATURITY_SCHEMA, crate::rooms::MATURITY_SCHEMA_SQL),
@@ -378,6 +381,13 @@ fn cross_current_rows(
     Ok(taste_audits)
 }
 
+/// Remove each retired member a current decoder would refuse, before any
+/// later crossing decodes a retained row strictly.
+fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    preparation_edges::strip_authorization(transaction)?;
+    task_evidence::cross(transaction)
+}
+
 /// Move a finalized predecessor authority to the current schema exactly once.
 fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
     let transaction = connection
@@ -389,7 +399,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
-    preparation_edges::strip_authorization(&transaction)?;
+    strip_retired_members(&transaction)?;
     let taste_audits = cross_current_rows(&transaction)?;
     if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
         cross_shape_predecessor(&transaction, version)?;
@@ -414,7 +424,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     maturity::cross(&transaction)?;
     cross_retained_notes(&transaction, version)?;
     preparation_edges::cross(&transaction)?;
-    advance_identity(&transaction)?;
+    advance_identity(&transaction, version)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
         from: version,
@@ -443,10 +453,15 @@ fn cross_retained_notes(
     Ok(())
 }
 
-/// Index every settled steering head's room, then name the crossed authority
-/// the current schema.
-fn advance_identity(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
-    steering_rooms::cross(transaction)?;
+/// Index every settled steering head's room an authority at `version` lacks,
+/// then name the crossed authority the current schema.
+fn advance_identity(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version < STEERING_ROOM_SCHEMA {
+        steering_rooms::cross(transaction)?;
+    }
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -1384,8 +1399,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 86, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 87, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 86;
+PRAGMA user_version = 87;
 "#;

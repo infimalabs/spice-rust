@@ -236,7 +236,6 @@ pub(super) fn held_claim_write(
                 intent: statement
                     .intent
                     .map(|intent| wire::TaskIntentEdit::Set { intent }),
-                evidence: None,
                 task: task.clone(),
                 revision: 2,
                 dependencies: None,
