@@ -975,6 +975,16 @@ pub struct StateAnswer {
     pub to: ResidentState,
 }
 
+impl std::fmt::Display for StateAnswer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(if self.to == ResidentState::Dark {
+            "Spice resident stopped."
+        } else {
+            "Spice resident is stopping."
+        })
+    }
+}
+
 /// Where one command a lane keeps stands, seen from the lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
