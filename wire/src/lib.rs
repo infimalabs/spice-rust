@@ -66,6 +66,7 @@ mod provenance;
 pub mod quota;
 pub mod quote;
 pub use provenance::{TaskProvenance, TaskProvenanceError};
+pub mod release;
 pub mod reply;
 pub mod rooms;
 mod sequence_code;
@@ -127,8 +128,7 @@ pub use quote::{
 pub use reply::{
     AppOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
     JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome, ProofEvidence,
-    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
-    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
+    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, Reply, ReplyPosition, Response,
     RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
     ThreadReport, Version,
 };

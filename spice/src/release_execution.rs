@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use wire::release::{Operation, RegistryEvidence, ReleaseAction, ReleaseObservations, ReleasePlan};
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal};
 
-const JOURNAL_SCHEMA: u16 = 1;
+const JOURNAL_SCHEMA: u16 = 2;
 const VISIBILITY_ATTEMPTS: usize = 8;
 
 enum CorrectnessGateStanding {
@@ -59,7 +60,7 @@ fn run_release_gate_with(
 #[serde(deny_unknown_fields)]
 struct JournalDocument {
     schema: u16,
-    plan: dist::ReleasePlan,
+    plan: ReleasePlan,
     accepted: Vec<dist::AcceptedOperation>,
     receipts: Vec<dist::OperationReceipt>,
 }
@@ -70,7 +71,7 @@ pub(super) struct FileReleaseJournal {
 }
 
 impl FileReleaseJournal {
-    fn open(root: &Path, plan: &dist::ReleasePlan) -> Result<Self, String> {
+    fn open(root: &Path, plan: &ReleasePlan) -> Result<Self, String> {
         let path = root.join(format!("{}.json", plan.key));
         let document = match fs::read(&path) {
             Ok(bytes) => {
@@ -118,7 +119,7 @@ impl FileReleaseJournal {
 }
 
 fn validate_document(document: &JournalDocument) -> Result<(), String> {
-    document.plan.verify().map_err(|error| error.to_string())?;
+    dist::verify_plan(&document.plan).map_err(|error| error.to_string())?;
     if document.accepted.len() > document.plan.operations.len()
         || document
             .accepted
@@ -167,7 +168,7 @@ impl dist::ReleaseJournal for FileReleaseJournal {
     fn accepted(
         &mut self,
         plan: &Digest,
-        operation: dist::Operation,
+        operation: Operation,
     ) -> Result<Option<dist::AcceptedOperation>, Self::Error> {
         Ok(self
             .document
@@ -180,7 +181,7 @@ impl dist::ReleaseJournal for FileReleaseJournal {
     fn receipt(
         &mut self,
         plan: &Digest,
-        operation: dist::Operation,
+        operation: Operation,
     ) -> Result<Option<dist::OperationReceipt>, Self::Error> {
         Ok(self
             .document
@@ -259,7 +260,7 @@ impl SystemEffects {
 
     fn package_index(
         &mut self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<&crate::release_package::ReleaseIndex, dist::EffectError> {
         if let Some((key, _)) = &self.package
             && key != &plan.key
@@ -272,8 +273,8 @@ impl SystemEffects {
             let index = crate::release_package::ReleaseIndex::admit(
                 &self.root,
                 &plan.requested_version,
-                plan.notes_identity.clone(),
-                &plan.notes,
+                plan.notes.clone(),
+                plan.notes_document.as_bytes(),
                 &plan.manifest,
             )
             .map_err(package_failure)?;
@@ -304,25 +305,19 @@ impl SystemEffects {
         run(&self.root, command.program(), &arguments).map_err(dist::EffectError::RemoteRefused)
     }
 
-    fn reference_for(
-        &self,
-        plan: &dist::ReleasePlan,
-        operation: dist::Operation,
-    ) -> Option<String> {
+    fn reference_for(&self, plan: &ReleasePlan, operation: Operation) -> Option<String> {
         let refs = self.authority.refs(&plan.requested_version);
         match operation {
-            dist::Operation::RehearseUpload | dist::Operation::UploadPackage => {
-                Some(refs.package().to_owned())
-            }
-            dist::Operation::CreateImmutableTag => Some(refs.tag().to_owned()),
-            dist::Operation::Announce => Some(refs.announcement().to_owned()),
+            Operation::RehearseUpload | Operation::UploadPackage => Some(refs.package().to_owned()),
+            Operation::CreateImmutableTag => Some(refs.tag().to_owned()),
+            Operation::Announce => Some(refs.announcement().to_owned()),
             _ => None,
         }
     }
 
     fn registry_state(
         &self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<dist::OperationState, dist::EffectError> {
         let reference = self
             .authority
@@ -330,7 +325,7 @@ impl SystemEffects {
             .package()
             .to_owned();
         let evidence = match self.remote_ref(&reference)? {
-            Some(object) if object == plan.package_object => Some(dist::RegistryEvidence {
+            Some(object) if object == plan.package_object => Some(RegistryEvidence {
                 version: plan.requested_version.clone(),
                 release_commit: plan.release_commit.clone(),
                 package: plan.package.clone(),
@@ -346,13 +341,13 @@ impl SystemEffects {
         Ok(dist::OperationState::Registry { evidence })
     }
 
-    fn probe_path(&self, plan: &dist::ReleasePlan) -> PathBuf {
+    fn probe_path(&self, plan: &ReleasePlan) -> PathBuf {
         self.probe_root.join(plan.key.as_str()).join("spice")
     }
 
     fn installed_state(
         &self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<dist::OperationState, dist::EffectError> {
         let path = self.probe_path(plan);
         match fs::symlink_metadata(&path) {
@@ -373,10 +368,7 @@ impl SystemEffects {
         }
     }
 
-    fn gate_state(
-        &self,
-        plan: &dist::ReleasePlan,
-    ) -> Result<dist::OperationState, dist::EffectError> {
+    fn gate_state(&self, plan: &ReleasePlan) -> Result<dist::OperationState, dist::EffectError> {
         let path = self
             .probe_root
             .join(plan.key.as_str())
@@ -397,7 +389,7 @@ impl SystemEffects {
 
     fn install_and_probe(
         &mut self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let target = proof::compiled_target()
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
@@ -453,10 +445,7 @@ impl SystemEffects {
 }
 
 impl dist::EffectPort for SystemEffects {
-    fn preflight(
-        &mut self,
-        plan: &dist::ReleasePlan,
-    ) -> Result<dist::ReleaseObservations, dist::EffectError> {
+    fn preflight(&mut self, plan: &ReleasePlan) -> Result<ReleaseObservations, dist::EffectError> {
         let mut observed = plan.observations.clone();
         let repository =
             crate::release_command::repository_identity(&self.root, self.authority.remote())
@@ -494,7 +483,7 @@ impl dist::EffectPort for SystemEffects {
             &plan.release_commit,
         );
         observed.credentials_valid = true;
-        if plan.action == dist::ReleaseAction::TagAndAnnounce {
+        if plan.action == ReleaseAction::TagAndAnnounce {
             let dist::OperationState::Registry { evidence } = self.registry_state(plan)? else {
                 unreachable!("registry observer has one state shape")
             };
@@ -511,10 +500,10 @@ impl dist::EffectPort for SystemEffects {
 
     fn prior(
         &mut self,
-        plan: &dist::ReleasePlan,
-        operation: dist::Operation,
+        plan: &ReleasePlan,
+        operation: Operation,
     ) -> Result<dist::OperationState, dist::EffectError> {
-        use dist::Operation as Op;
+        use Operation as Op;
         match operation {
             Op::ResolvePreconditionsAndCredentials => {
                 let identity = crate::release_command::repository_identity(
@@ -557,11 +546,11 @@ impl dist::EffectPort for SystemEffects {
 
     fn converge(
         &mut self,
-        plan: &dist::ReleasePlan,
-        operation: dist::Operation,
+        plan: &ReleasePlan,
+        operation: Operation,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
-        use dist::Operation as Op;
+        use Operation as Op;
         match operation {
             Op::ResolvePreconditionsAndCredentials => self.converge_preconditions(plan),
             Op::RunCorrectnessGate => self.converge_gate(plan, prior),
@@ -578,7 +567,7 @@ impl dist::EffectPort for SystemEffects {
 impl SystemEffects {
     fn converge_preconditions(
         &self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let identity =
             crate::release_command::repository_identity(&self.root, self.authority.remote())
@@ -596,13 +585,13 @@ impl SystemEffects {
 
     fn converge_gate(
         &self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let current = self.gate_state(plan)?;
         if current
             == (dist::OperationState::Gate {
-                receipt: Some(plan.gate_receipt()),
+                receipt: Some(dist::gate_receipt(plan)),
             })
         {
             return Ok((current, dist::Convergence::AlreadyConverged));
@@ -628,7 +617,7 @@ impl SystemEffects {
                 "correctness gate moved source state: HEAD={head} status={status:?}"
             )));
         }
-        let receipt = plan.gate_receipt();
+        let receipt = dist::gate_receipt(plan);
         let path = self
             .probe_root
             .join(plan.key.as_str())
@@ -656,7 +645,7 @@ impl SystemEffects {
 
     fn converge_rehearsal(
         &mut self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let root = self.root.clone();
         let package = self
@@ -681,7 +670,7 @@ impl SystemEffects {
 
     fn await_registry(
         &self,
-        plan: &dist::ReleasePlan,
+        plan: &ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         for _ in 0..VISIBILITY_ATTEMPTS {
             let observed = self.registry_state(plan)?;
@@ -700,8 +689,8 @@ impl SystemEffects {
 
     fn converge_immutable(
         &self,
-        plan: &dist::ReleasePlan,
-        operation: dist::Operation,
+        plan: &ReleasePlan,
+        operation: Operation,
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         match prior {
@@ -717,17 +706,17 @@ impl SystemEffects {
             .expect("immutable operation has one authority ref");
         let current = self.remote_ref(&reference)?;
         let mutation = match operation {
-            dist::Operation::UploadPackage => self.authority.package_push(
+            Operation::UploadPackage => self.authority.package_push(
                 &plan.requested_version,
                 &plan.package_object,
                 ref_state(current.as_deref()),
             ),
-            dist::Operation::CreateImmutableTag => self.authority.tag_push(
+            Operation::CreateImmutableTag => self.authority.tag_push(
                 &plan.requested_version,
                 &plan.release_commit,
                 ref_state(current.as_deref()),
             ),
-            dist::Operation::Announce => self.authority.announcement_push(
+            Operation::Announce => self.authority.announcement_push(
                 &plan.requested_version,
                 &plan.release_commit,
                 ref_state(current.as_deref()),
@@ -743,12 +732,12 @@ impl SystemEffects {
             }
         };
         let target_object = match operation {
-            dist::Operation::UploadPackage => &plan.package_object,
-            dist::Operation::CreateImmutableTag | dist::Operation::Announce => &plan.release_commit,
+            Operation::UploadPackage => &plan.package_object,
+            Operation::CreateImmutableTag | Operation::Announce => &plan.release_commit,
             _ => unreachable!("caller admits only immutable-ref operations"),
         };
         let result = match operation {
-            dist::Operation::Announce => dist::OperationState::Announcement {
+            Operation::Announce => dist::OperationState::Announcement {
                 object: Some(target_object.to_owned()),
             },
             _ => dist::OperationState::RemoteRef {

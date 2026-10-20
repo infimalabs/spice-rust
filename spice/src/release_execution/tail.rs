@@ -23,7 +23,7 @@ pub(super) fn stable_ref_observation(
 }
 
 pub(super) fn admitted_local_progress(
-    plan: &dist::ReleasePlan,
+    plan: &ReleasePlan,
     head: &str,
     version: &dist::ProductVersion,
     status: &str,
@@ -88,7 +88,7 @@ pub(super) fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<Stri
 pub(crate) fn execute(
     root: &Path,
     journal_root: &Path,
-    plan: &dist::ReleasePlan,
+    plan: &ReleasePlan,
     applied: &Digest,
 ) -> Result<(), Outcome<wire::intent::RecognitionAnswer>> {
     let mut journal = FileReleaseJournal::open(journal_root, plan).map_err(journal_fault)?;
@@ -113,20 +113,10 @@ pub(crate) fn verify_completed(
     if bytes != canonical || document.schema != JOURNAL_SCHEMA || document.plan.key != *key {
         return Err("external release journal identity or encoding moved".to_owned());
     }
-    document.plan.verify().map_err(|error| error.to_string())?;
+    dist::verify_plan(&document.plan).map_err(|error| error.to_string())?;
     if document.plan.manifest != *manifest
-        || document.plan.notes_identity != *notes
-        || document.plan.targets.len() != targets.len()
-        || !document
-            .plan
-            .targets
-            .iter()
-            .zip(targets)
-            .all(|(planned, published)| {
-                planned.target == published.target
-                    && planned.artifact == published.artifact
-                    && planned.receipt == published.receipt
-            })
+        || document.plan.notes != *notes
+        || document.plan.targets != targets
     {
         return Err("external release journal disagrees with the resident command".to_owned());
     }

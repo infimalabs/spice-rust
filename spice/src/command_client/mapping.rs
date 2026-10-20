@@ -18,9 +18,11 @@ impl MappedCommand {
                 answer,
                 expected,
             } => Self::consent_decide(contract, request, answer, expected),
-            SelectedCommand::ReleasePublish { release, state } => {
-                Self::release_publish(contract, release, state)
-            }
+            SelectedCommand::ReleasePublish {
+                release,
+                key,
+                state,
+            } => Self::release_publish(contract, release, key, state),
             SelectedCommand::ProofRecognize { manifest, head } => {
                 Self::proof_recognize(contract, manifest, head)
             }
@@ -118,10 +120,11 @@ impl MappedCommand {
     fn release_publish(
         contract: &Contract,
         release: &crate::release_command::AdmittedRelease,
+        key: &Digest,
         state: crate::release_command::PublicationState,
     ) -> ClientResult<Self> {
         let mut expected = vec![Witness::Observation {
-            key: release.key().clone(),
+            key: key.clone(),
             head: state.observation(),
         }];
         expected.extend(release.receipts().map(|proof| Witness::Sealed {
@@ -134,7 +137,7 @@ impl MappedCommand {
             CommandKind::ReleasePublish,
             expected,
             &wire::intent::ReleasePublish {
-                key: release.key().clone(),
+                key: key.clone(),
                 manifest: release.manifest().clone(),
                 notes: release.notes().clone().into(),
             },
