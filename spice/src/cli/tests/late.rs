@@ -65,6 +65,21 @@ fn mutating_contract_syntax_mutates_registration_and_help() {
 }
 
 #[test]
+#[should_panic(expected = "has no help summary")]
+fn a_registered_command_without_a_summary_refuses_the_parser() {
+    let mut contracts = CONTRACTS.to_vec();
+    let mut novel = *contracts
+        .iter()
+        .find(|contract| contract.path == ["doctor"])
+        .expect("doctor contract exists");
+    novel.path = &["unsummarized"];
+    novel.syntax = "unsummarized";
+    contracts.push(novel);
+
+    let _ = command_from(&contracts, &[]);
+}
+
+#[test]
 fn selected_leaf_recovers_the_same_contract_row() {
     let matches = command()
         .try_get_matches_from(["spice", "doctor"])
