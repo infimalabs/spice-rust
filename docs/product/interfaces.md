@@ -60,7 +60,7 @@ refusals and faults to standard error.
 
 ## Room and preparation commands
 
-The [room loop](loops.md#l-room--conversation-at-a-task) states what these
+The [room loop](rooms.md#l-room--conversation-at-a-task) states what these
 commands mean; this section fixes their operand bodies and bounds.
 
 ### Preparation command bodies
