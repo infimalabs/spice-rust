@@ -337,10 +337,14 @@ impl InstallPreview {
     pub const fn plan(&self) -> &InstallPlanSummary {
         &self.plan
     }
-}
 
-impl fmt::Display for InstallPreview {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    /// Write the person-facing preview, ending with the exact command that
+    /// applies this digest from where the preview came from.
+    pub fn write_text(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+        apply: &dyn fmt::Display,
+    ) -> fmt::Result {
         let files = self
             .plan
             .operations
@@ -405,7 +409,7 @@ impl fmt::Display for InstallPreview {
                 activation.hooks_path(),
             )?;
         }
-        write!(formatter, "apply: spice install --apply={}", self.digest)
+        write!(formatter, "apply: {apply}")
     }
 }
 

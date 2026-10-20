@@ -1,0 +1,80 @@
+use super::*;
+use wire::Domain;
+
+fn preview() -> InstallPreview {
+    let digest = Digest::compute(Domain::InstallPlan, b"install guidance fixture");
+    wire::decode(
+        serde_json::json!({
+            "digest": digest,
+            "plan": {
+                "version": 1,
+                "operation_count": 0,
+                "operations": [],
+                "retirements": [],
+            },
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .expect("a minimal preview decodes")
+}
+
+fn apply_line(text: &str) -> &str {
+    text.lines()
+        .last()
+        .and_then(|line| line.strip_prefix("apply: "))
+        .expect("a preview ends with its apply command")
+}
+
+#[test]
+fn source_preview_replays_this_executable_with_the_digest() {
+    let preview = preview();
+    let digest = preview.digest().to_string();
+
+    let text = PlanPreview::source(preview).to_string();
+
+    assert_eq!(apply_line(&text), format!("spice install --apply={digest}"));
+}
+
+#[cfg(unix)]
+#[test]
+fn package_preview_replays_the_original_source_as_one_argument() {
+    for package in [
+        "dist/spice-0.3.0",
+        "/tmp/My Packages/spice 0.3.0",
+        "./pkg; rm -rf ~ $(touch x) `id` 'quoted' \"double\" *?[a]",
+    ] {
+        let preview = preview();
+        let digest = preview.digest().to_string();
+
+        let text = PlanPreview::package(preview, package).to_string();
+
+        assert_eq!(
+            shell_words::split(apply_line(&text)).expect("the replay command parses"),
+            [
+                "spice",
+                "install",
+                "--package",
+                package,
+                &format!("--apply={digest}"),
+            ],
+            "replay for {package:?}",
+        );
+    }
+}
+
+#[test]
+fn guidance_never_changes_the_structured_preview() {
+    let preview = preview();
+    let expected = serde_json::to_value(&preview).expect("preview encodes");
+
+    for guided in [
+        PlanPreview::source(preview.clone()),
+        PlanPreview::package(preview, "/tmp/My Packages/spice"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(&guided).expect("guided preview encodes"),
+            expected,
+        );
+    }
+}

@@ -2,12 +2,15 @@
 
 use std::fmt;
 use std::fs::{self, File};
+use std::io::Write as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
+use spice::install::InstallPreview;
 use spice::repository::Repository;
+use wire::Outcome;
 use wire::manifest::ReleaseTarget;
 
 const MAX_PACKAGE_ENTRIES: usize = 64 + wire::manifest::renderer::MAX_FILES;
@@ -15,6 +18,8 @@ const MAX_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 1024 * 1024 * 1024;
 const PACKAGE_DOCUMENT_PATH: &str = "release/package.json";
 
+/// Hand the request to the verified package executable, whose own output and
+/// exit status answer it.
 pub(crate) fn run(
     repository: &Repository,
     source: &Path,
@@ -22,16 +27,52 @@ pub(crate) fn run(
     json: bool,
 ) -> Result<ExitStatus, Error> {
     let acquired = acquire(source)?;
-    delegate(repository.worktree_root(), &acquired, apply, json)
+    let staged = StagedPackage::new(&acquired)?;
+    delegate(&staged, repository.worktree_root(), apply, json)
+        .status()
+        .map_err(|source| launch_failure(&staged, source))
 }
 
-fn delegate(
-    worktree: &Path,
-    acquired: &AcquiredPackage,
-    apply: Option<&str>,
-    json: bool,
-) -> Result<ExitStatus, Error> {
-    let staged = StagedPackage::new(acquired)?;
+/// Ask the verified package executable for its typed install preview.
+///
+/// The staged executable alone derives and digests the plan; this front-end
+/// only decodes its structured answer so the caller can render guidance that
+/// names the original package source instead of the temporary staging.
+pub(crate) fn preview(
+    repository: &Repository,
+    source: &Path,
+) -> Result<Outcome<InstallPreview>, Error> {
+    let acquired = acquire(source)?;
+    let staged = StagedPackage::new(&acquired)?;
+    let output = delegate(&staged, repository.worktree_root(), None, true)
+        .output()
+        .map_err(|source| launch_failure(&staged, source))?;
+    answer(&output)
+}
+
+/// Decode the child's `--json` preview from the stream its outcome uses: a
+/// reply on stdout, a refusal or fault on stderr with a failing status.
+/// Anything the child said beside a reply, or an answer this appliance cannot
+/// read, still reaches the person verbatim.
+fn answer(output: &std::process::Output) -> Result<Outcome<InstallPreview>, Error> {
+    let document = if output.status.success() {
+        let _ = std::io::stderr().write_all(&output.stderr);
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    wire::decode(document).map_err(|source| {
+        if !output.status.success() {
+            let _ = std::io::stderr().write_all(&output.stderr);
+        }
+        Error::Unreadable {
+            status: output.status,
+            source,
+        }
+    })
+}
+
+fn delegate(staged: &StagedPackage, worktree: &Path, apply: Option<&str>, json: bool) -> Command {
     let mut command = Command::new(staged.executable());
     command.current_dir(worktree).arg("install");
     if let Some(digest) = apply {
@@ -40,13 +81,15 @@ fn delegate(
     if json {
         command.arg("--json");
     }
-    command.status().map_err(|source| {
-        Error::environment(
-            "launch verified package executable",
-            staged.executable(),
-            source,
-        )
-    })
+    command
+}
+
+fn launch_failure(staged: &StagedPackage, source: std::io::Error) -> Error {
+    Error::environment(
+        "launch verified package executable",
+        staged.executable(),
+        source,
+    )
 }
 
 fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
@@ -309,6 +352,11 @@ pub(crate) enum Error {
         path: PathBuf,
         source: std::io::Error,
     },
+    /// The verified executable answered a preview this appliance cannot decode.
+    Unreadable {
+        status: ExitStatus,
+        source: serde_json::Error,
+    },
 }
 
 impl Error {
@@ -323,10 +371,6 @@ impl Error {
             source,
         }
     }
-
-    pub(crate) const fn is_environment(&self) -> bool {
-        matches!(self, Self::Environment { .. })
-    }
 }
 
 impl fmt::Display for Error {
@@ -338,6 +382,10 @@ impl fmt::Display for Error {
                 path,
                 source,
             } => write!(formatter, "{operation} at {}: {source}", path.display()),
+            Self::Unreadable { status, source } => write!(
+                formatter,
+                "the verified package executable exited with {status} and its preview did not decode: {source}; rerun with --json to read its own answer",
+            ),
         }
     }
 }
@@ -634,5 +682,51 @@ mod tests {
             standing: ProofStanding::Clean,
         };
         (executable, payload, proof, sealed)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_preview_is_read_from_the_stream_its_outcome_uses() {
+        use std::os::unix::process::ExitStatusExt;
+        use std::process::Output;
+
+        let preview: InstallPreview = wire::decode(
+            serde_json::json!({
+                "digest": Digest::compute(Domain::InstallPlan, b"child preview"),
+                "plan": {"version": 1, "operation_count": 0, "operations": [], "retirements": []},
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .expect("a minimal preview decodes");
+        let reply = Outcome::Reply(wire::Reply {
+            position: wire::ReplyPosition::Direct {},
+            body: preview,
+        });
+        let refusal: Outcome<InstallPreview> = Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new("install::canvas-refused".to_owned(), None, None, None),
+        ));
+        let encoded = |outcome: &Outcome<InstallPreview>| wire::encode(outcome).expect("encodes");
+
+        let replied = Output {
+            status: ExitStatusExt::from_raw(0),
+            stdout: encoded(&reply),
+            stderr: Vec::new(),
+        };
+        assert_eq!(answer(&replied).expect("reply decodes"), reply);
+
+        let refused = Output {
+            status: ExitStatusExt::from_raw(2 << 8),
+            stdout: Vec::new(),
+            stderr: encoded(&refusal),
+        };
+        assert_eq!(answer(&refused).expect("refusal decodes"), refusal);
+
+        let silent = Output {
+            status: ExitStatusExt::from_raw(2 << 8),
+            stdout: encoded(&reply),
+            stderr: Vec::new(),
+        };
+        assert!(matches!(answer(&silent), Err(Error::Unreadable { .. })));
     }
 }
