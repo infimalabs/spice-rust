@@ -291,12 +291,14 @@ pub(super) fn append_operations(
         let path = path(asset).expect("symbol assets publish fixed paths");
         let bytes = source.bytes(asset).expect("symbol assets carry bytes");
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
+        let inherited = installed.binding(path);
         let (previous, superseded) = reversal_context(installed, asset, observed, None);
         operations.push(operation(
             directories,
             asset,
             (Location::CommonGit, path.to_owned()),
             bound,
+            inherited,
             previous,
             superseded,
             GeneratedImage::new(DATA_MODE, bytes),

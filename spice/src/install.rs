@@ -2,7 +2,7 @@
 //!
 //! Plans are side-effect free; apply re-plans and reverses only exact images.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -318,7 +318,9 @@ impl InstallPlan {
         }
         for operation in &self.operations {
             let current = bind_destination(operation.location.root(repository), &operation.path)?;
-            if current.destination != operation.destination || current.parent != operation.parent {
+            if current.destination != operation.destination
+                || current.parent != *operation.publication_parent()
+            {
                 return Err(InstallError::ParentChanged(
                     operation.location.root(repository).join(&operation.path),
                 ));
@@ -330,7 +332,7 @@ impl InstallPlan {
         }
         for retirement in &self.retirements {
             let (destination, parent) = retirement_binding(repository, retirement)?;
-            if destination != retirement.destination || parent != retirement.parent {
+            if destination != retirement.destination || parent != *retirement.publication_parent() {
                 return Err(InstallError::ParentChanged(
                     retirement.destination(repository),
                 ));
@@ -338,7 +340,7 @@ impl InstallPlan {
             let (observed, _) = observe_bound(
                 repository.common_dir(),
                 &retirement.destination,
-                &retirement.parent,
+                retirement.publication_parent(),
             )?;
             if !retirement.expects_in_place(observed.as_ref()) {
                 return Err(retirement_drift(retirement, observed));
@@ -604,19 +606,25 @@ fn retirement(
     installed: Option<&InstallPlan>,
     path: &str,
 ) -> Result<Retirement, InstallError> {
+    let inherited = InstalledOperations(installed).binding(path);
+    let (ownership_parent, introduced_parents) = inherited_binding(inherited);
     if is_discard_path(path) {
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
+        let (parent, publication_parent) = parent_bindings(bound.parent, ownership_parent);
         return Ok(Retirement {
             path: path.to_owned(),
             destination: bound.destination,
-            parent: bound.parent,
+            parent,
             previous: None,
             observed: None,
             superseded: observed.as_ref().map(ObservedFile::generated),
+            publication_parent,
+            introduced_parents,
             discard: true,
         });
     }
     let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
+    let (parent, publication_parent) = parent_bindings(bound.parent, ownership_parent);
     let installed = installed.and_then(|plan| {
         plan.retirements
             .iter()
@@ -629,10 +637,12 @@ fn retirement(
     Ok(Retirement {
         path: path.to_owned(),
         destination: bound.destination,
-        parent: bound.parent,
+        parent,
         previous,
         observed: observed.as_ref().map(ObservedFile::generated),
         superseded: None,
+        publication_parent,
+        introduced_parents,
         discard: false,
     })
 }
@@ -661,14 +671,53 @@ fn reversal_context(
     }
 }
 
-type InstalledOperations<'a> = BTreeMap<Asset, &'a Operation>;
+struct InstalledOperations<'a>(Option<&'a InstallPlan>);
 
-fn operation_index(installed: Option<&InstallPlan>) -> InstalledOperations<'_> {
-    installed
-        .into_iter()
-        .flat_map(|plan| &plan.operations)
-        .map(|operation| (operation.asset, operation))
-        .collect()
+impl<'a> InstalledOperations<'a> {
+    fn get(&self, asset: &Asset) -> Option<&'a Operation> {
+        self.0?
+            .operations
+            .iter()
+            .find(|operation| &operation.asset == asset)
+    }
+
+    fn binding(&self, path: &str) -> Option<(&'a ParentObservation, &'a [String])> {
+        let plan = self.0?;
+        plan.operations
+            .iter()
+            .find(|operation| operation.path == path)
+            .map(|operation| (&operation.parent, operation.introduced_parents.as_slice()))
+            .or_else(|| {
+                plan.retirements
+                    .iter()
+                    .find(|retirement| retirement.path == path)
+                    .map(|retirement| {
+                        (&retirement.parent, retirement.introduced_parents.as_slice())
+                    })
+            })
+    }
+}
+
+const fn operation_index(installed: Option<&InstallPlan>) -> InstalledOperations<'_> {
+    InstalledOperations(installed)
+}
+
+fn inherited_binding(
+    inherited: Option<(&ParentObservation, &[String])>,
+) -> (Option<ParentObservation>, Vec<String>) {
+    inherited.map_or_else(
+        || (None, Vec::new()),
+        |(parent, introduced_parents)| (Some(parent.clone()), introduced_parents.to_vec()),
+    )
+}
+
+fn parent_bindings(
+    current: ParentObservation,
+    inherited: Option<ParentObservation>,
+) -> (ParentObservation, Option<ParentObservation>) {
+    inherited.map_or((current.clone(), None), |original| {
+        (original, Some(current))
+    })
 }
 
 type PlanState<'a> = (&'a mut BTreeSet<(Location, String)>, &'a mut Vec<Operation>);
@@ -693,12 +742,14 @@ fn append_fixed_operations(
         let bytes = fixed_asset_bytes(asset, repository.common_dir())?
             .expect("the fixed asset inventory contains no variable asset");
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
+        let inherited = installed.binding(&path);
         let (previous, superseded) = reversal_context(installed, asset, observed, None);
         operations.push(operation(
             directories,
             asset,
             (location, path),
             bound,
+            inherited,
             previous,
             superseded,
             GeneratedImage::new(mode, &bytes),
@@ -715,12 +766,14 @@ fn append_binary_operation(
     (directories, operations): PlanState<'_>,
 ) -> Result<(), InstallError> {
     let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
+    let inherited = installed.binding(BINARY_PATH);
     let (previous, superseded) = reversal_context(installed, Asset::Binary, observed, reconciled);
     operations.push(operation(
         directories,
         Asset::Binary,
         (Location::CommonGit, BINARY_PATH.to_owned()),
         bound,
+        inherited,
         previous,
         superseded,
         GeneratedImage::new(EXECUTABLE_MODE, bytes),
@@ -733,14 +786,22 @@ fn operation(
     asset: Asset,
     (location, path): (Location, String),
     bound: BoundDestination,
+    inherited: Option<(&ParentObservation, &[String])>,
     previous: Option<GeneratedImage>,
     superseded: Option<GeneratedImage>,
     generated: GeneratedImage,
 ) -> Result<Operation, InstallError> {
     // The caller resolves where the asset lands; `validate_operation_contract`
     // refuses any operation whose location and path disagree with its contract.
-    let mut introduced_parents = Vec::new();
-    for parent in bound.introduced_parents {
+    // A refresh carries the original install's directory ownership forward
+    // instead of claiming that the now-present directories predated Spice.
+    let (ownership_parent, parents) = match inherited {
+        Some(inherited) => inherited_binding(Some(inherited)),
+        None => (None, bound.introduced_parents),
+    };
+    let (parent, publication_parent) = parent_bindings(bound.parent, ownership_parent);
+    let mut introduced_parents = Vec::with_capacity(parents.len());
+    for parent in parents {
         let key = (location, parent.clone());
         if virtual_directories.insert(key) {
             introduced_parents.push(parent);
@@ -751,10 +812,11 @@ fn operation(
         location,
         path,
         destination: bound.destination,
-        parent: bound.parent,
+        parent,
         previous,
         generated,
         superseded,
+        publication_parent,
         introduced_parents,
     })
 }

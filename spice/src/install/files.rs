@@ -133,20 +133,22 @@ pub(super) fn restore_retirement(
     retirement: &Retirement,
     previous: Option<&FileImage>,
 ) -> Result<Option<Generation>, InstallError> {
-    let path = AdmittedPath::open(
+    let mut path = AdmittedPath::open(
         repository.common_dir(),
         &retirement.destination,
         &retirement.parent,
         false,
-        0,
+        retirement.introduced_parents.len(),
     )?;
     let current = path.observe()?;
     if current.is_some() {
         return Err(super::retirement_drift(retirement, current));
     }
-    previous
+    let restored = previous
         .map(|previous| path.publish(previous, None).map(Some))
-        .unwrap_or(Ok(None))
+        .unwrap_or(Ok(None))?;
+    path.cleanup_introduced()?;
+    Ok(restored)
 }
 
 pub(super) fn publish_operation(
@@ -157,9 +159,9 @@ pub(super) fn publish_operation(
     let path = AdmittedPath::open(
         operation.location.root(repository),
         &operation.destination,
-        &operation.parent,
+        operation.publication_parent(),
         true,
-        operation.introduced_parents.len(),
+        operation.publication_introduced(),
     )?;
     let current = path.observe()?;
     if !operation.expects_in_place(current.as_ref()) {

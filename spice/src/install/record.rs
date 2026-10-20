@@ -221,9 +221,23 @@ impl InstallRecord {
                 .map(|operation| operation.parent.generation.device)
                 .chain(
                     self.plan
+                        .operations
+                        .iter()
+                        .filter_map(|operation| operation.publication_parent.as_ref())
+                        .map(|parent| parent.generation.device),
+                )
+                .chain(
+                    self.plan
                         .retirements
                         .iter()
                         .map(|retirement| retirement.parent.generation.device),
+                )
+                .chain(
+                    self.plan
+                        .retirements
+                        .iter()
+                        .filter_map(|retirement| retirement.publication_parent.as_ref())
+                        .map(|parent| parent.generation.device),
                 )
                 .chain(
                     self.installed_parents
@@ -246,9 +260,15 @@ impl InstallRecord {
             self.plan.record.parent.generation.device = current;
             for operation in &mut self.plan.operations {
                 operation.parent.generation.device = current;
+                if let Some(parent) = &mut operation.publication_parent {
+                    parent.generation.device = current;
+                }
             }
             for retirement in &mut self.plan.retirements {
                 retirement.parent.generation.device = current;
+                if let Some(parent) = &mut retirement.publication_parent {
+                    parent.generation.device = current;
+                }
             }
             for parent in self.installed_parents.iter_mut().flatten() {
                 parent.device = current;

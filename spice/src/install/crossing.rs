@@ -317,6 +317,7 @@ fn keep(retained: RetainedRecord) -> Result<InstallRecord, InstallError> {
             previous: operation.previous,
             generated: operation.generated,
             superseded: operation.superseded,
+            publication_parent: None,
             introduced_parents: operation.introduced_parents,
         });
         kept_installed.push(installed);
@@ -373,6 +374,8 @@ pub(super) fn retirements(
                 previous: None,
                 observed: None,
                 superseded: Some(sidecar.image.clone()),
+                publication_parent: None,
+                introduced_parents: Vec::new(),
                 discard: true,
             })
         })

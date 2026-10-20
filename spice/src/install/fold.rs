@@ -100,6 +100,8 @@ pub struct InstallRetirementSummary {
     observed: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     superseded: Option<GeneratedImage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    introduced_parents: Vec<String>,
 }
 
 impl InstallRetirementSummary {
@@ -137,6 +139,12 @@ impl InstallRetirementSummary {
     #[must_use]
     pub const fn superseded(&self) -> Option<&GeneratedImage> {
         self.superseded.as_ref()
+    }
+
+    /// Parent directories withdrawn after this reversal, outermost first.
+    #[must_use]
+    pub fn introduced_parents(&self) -> &[String] {
+        &self.introduced_parents
     }
 }
 
@@ -227,6 +235,7 @@ impl InstallPlanSummary {
                 previous: retirement.previous.clone(),
                 observed: retirement.observed.clone(),
                 superseded: retirement.superseded.clone(),
+                introduced_parents: retirement.introduced_parents.clone(),
             })
             .collect();
         let hook_activation =
