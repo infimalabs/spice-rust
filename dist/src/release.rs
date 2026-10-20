@@ -505,7 +505,6 @@ impl ReleaseExecutor {
                 .receipt(&plan.key, *operation)
                 .map_err(journal_error)?
             {
-                validate_receipt(plan, &receipt)?;
                 completed.push(receipt);
                 continue;
             }
@@ -626,8 +625,9 @@ impl Witnesses {
     }
 }
 
-/// Refuse unless receipts and external witnesses describe one converged
-/// prefix. Credential resolution re-binds every run, so it is witnessed only by
+/// Refuse unless every stored receipt is exact for its operation and receipts
+/// and external witnesses describe one converged prefix, all before the first
+/// effect. Credential resolution re-binds every run, so it is witnessed only by
 /// its own receipt and never orders external state.
 fn admit_prefix<J: ReleaseJournal>(
     plan: &ReleasePlan,
@@ -636,14 +636,20 @@ fn admit_prefix<J: ReleaseJournal>(
 ) -> Result<(), ExecuteError> {
     let mut unmet = None;
     for operation in &plan.operations {
+        let receipt = journal
+            .receipt(&plan.key, *operation)
+            .map_err(journal_error)?;
+        if let Some(receipt) = &receipt {
+            if receipt.operation != *operation {
+                return Err(ExecuteError::ReceiptMoved(receipt.operation));
+            }
+            validate_receipt(plan, receipt)?;
+        }
         if *operation == Operation::ResolvePreconditionsAndCredentials {
             continue;
         }
         let witnessed = witnesses.proof(*operation).is_some();
-        let receipted = journal
-            .receipt(&plan.key, *operation)
-            .map_err(journal_error)?
-            .is_some();
+        let receipted = receipt.is_some();
         if receipted && !witnessed && Witnesses::observes(*operation) {
             return Err(ExecuteError::Contradicted(*operation));
         }
