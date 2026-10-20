@@ -484,29 +484,29 @@ hosted boundary:
 | Attestation | No provider run identity, Sigstore attestation, challenge, or receipt; results are machine-local developer output | Attested and receipted |
 | Configuration | Unactivated, with TPM and Secure Boot checks bypassed for Setup and no in-guest toolchain; networking is loopback only | Pinned image, toolchain, and firewall rule |
 
-### Notes are read out of the ledger
+### Notes are read out of durable landing authority
 
-**Invariant —** Notes derive from the ledger; there is no maintained changelog.
-The window runs from the highest-versioned prior tag reachable from the release
+**Invariant —** Notes derive from the journal; there is no maintained changelog.
+Git first-parent ancestry only selects the exact integrated commit window. The
+window runs from the highest-versioned prior tag reachable from the release
 commit, addressed through its fully qualified tag ref so a same-named branch
-cannot redefine it. With no reachable tag, a bounded window of recent landings
-names that basis. Only first-parent landings count, so one merged unit of work
-is one entry.
+cannot redefine it. With no reachable tag, a bounded window of recent commits
+names that basis.
 
-**Invariant —** Work added and reverted inside one window is suppressed on both
-sides. A revert pairs with the landing whose history contains the reverted
-commit, not one whose identifier equals it, because the reverted commit usually
-arrived on a side branch.
+**Invariant —** Every selected commit belongs to exactly one contributing task
+landing projected from a durable task Git boundary. Task identity, current title,
+current project, review standing, and typed correction relationships come from
+journal authority, never from commit subjects, trailers, or revert prose. A
+pre-projection landing that cannot be recovered unambiguously refuses before
+draft or release mutation and names the last release that wrote its shape.
 
 **Invariant —** Landings sharing a task collapse into one entry at the task's
-first landing; its latest landing supplies the subject and project. Entries
-group by that declared project, never by touched paths, with an empty or
-`agent.*` declaration mapped to `general`. Buckets appear in first-seen order and
-keep entry order; equal descriptions merge only within a bucket and retain every
-reference.
-
-**Invariant —** A trailing handle is stripped from a description only when it
-matches that commit's own recorded identifier.
+first selected commit. A correction task folds into its reviewed parent. A
+parent whose latest durable review is a finding remains suppressed until a
+later clean review. Entries group by the parent's exact current project, never
+by touched paths, and use the parent's exact current title. Buckets appear in
+first-seen order and keep entry order; equal titles merge only within a bucket
+and retain every selected commit reference.
 
 **Invariant —** Curation owns the region above the generated inventory. Plan
 building regenerates the inventory against the release commit, so a curated

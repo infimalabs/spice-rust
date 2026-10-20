@@ -1131,6 +1131,8 @@ fn expected_tables() -> BTreeSet<String> {
         "oops_generation_head",
         "proposal_heads",
         "residency_head",
+        "release_corrections",
+        "release_landings",
         "room_conversations",
         "room_cursors",
         "room_directions",

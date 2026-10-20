@@ -84,6 +84,14 @@ impl Journal {
             write.heads,
             &assigned,
         )?;
+        crate::release_notes::apply(&transaction, proposed(), &assigned).map_err(|error| {
+            match error {
+                crate::release_notes::ProjectionWriteError::Sqlite(error) => sqlite_fault(error),
+                crate::release_notes::ProjectionWriteError::Refused(detail) => {
+                    CommitError::Refused(GuardRefusal::new(detail))
+                }
+            }
+        })?;
         crate::rooms::settle_controls(
             &transaction,
             assigned
