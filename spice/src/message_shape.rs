@@ -106,7 +106,7 @@ fn machine_tag(opening: &str) -> bool {
 }
 
 fn is_rehydration(text: &str) -> bool {
-    intent_section(text).is_some() || {
+    intent_section(text, numbered_heading, PRIMARY_INTENT).is_some() || {
         let lower = text.to_ascii_lowercase();
         lower.contains("session is being continued from a previous conversation")
             && (lower.contains("summary") || lower.contains("context"))
@@ -365,13 +365,19 @@ fn authored_fold(text: &str, spans: &[Span]) -> Option<String> {
 }
 
 /// Recover the primary intent section or return a visible unrecoverable marker.
+///
+/// Claude Code opens its summary with a numbered `Primary Request and Intent`
+/// section and omp with a markdown `## Goal` section; each section ends at the
+/// next heading of its own style.
 pub(crate) fn rehydration_intent(text: &str) -> String {
-    let Some((heading, inline)) = intent_section(text) else {
+    let Some((style, heading, inline)) = INTENT_SECTIONS.iter().find_map(|&(style, name)| {
+        intent_section(text, style, name).map(|(heading, inline)| (style, heading, inline))
+    }) else {
         return UNRECOVERABLE_REHYDRATION_INTENT.to_owned();
     };
     let body = text[heading..]
         .lines()
-        .take_while(|line| numbered_heading(line).is_none())
+        .take_while(|line| style(line).is_none())
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
@@ -392,11 +398,22 @@ pub(crate) fn rehydration_intent(text: &str) -> String {
 
 pub(crate) const UNRECOVERABLE_REHYDRATION_INTENT: &str = "[unparseable compaction-summary intent]";
 
-fn intent_section(text: &str) -> Option<(usize, &str)> {
+/// A heading style: the heading's name and any inline text after a colon.
+type Heading = fn(&str) -> Option<(&str, &str)>;
+
+const PRIMARY_INTENT: &str = "Primary Request and Intent";
+
+/// Each vendor's primary intent section, in its own heading style.
+const INTENT_SECTIONS: [(Heading, &str); 2] = [
+    (numbered_heading, PRIMARY_INTENT),
+    (markdown_heading, "Goal"),
+];
+
+fn intent_section<'a>(text: &'a str, style: Heading, name: &str) -> Option<(usize, &'a str)> {
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
-        if let Some((heading, inline)) = numbered_heading(line)
-            && heading.eq_ignore_ascii_case("Primary Request and Intent")
+        if let Some((heading, inline)) = style(line)
+            && heading.eq_ignore_ascii_case(name)
         {
             return Some((offset + line.len(), inline));
         }
@@ -414,6 +431,15 @@ fn numbered_heading(line: &str) -> Option<(&str, &str)> {
     let body = line[digits + 1..].trim().trim_matches('*');
     let (heading, inline) = body.split_once(':').unwrap_or((body, ""));
     Some((heading.trim().trim_matches('*'), inline.trim()))
+}
+
+fn markdown_heading(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+    let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
+    if !(1..=6).contains(&hashes) || line.as_bytes().get(hashes) != Some(&b' ') {
+        return None;
+    }
+    Some((line[hashes..].trim(), ""))
 }
 
 #[cfg(test)]
@@ -526,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_rehydration_intent_is_an_explicit_marker() {
+    fn rehydration_intent_reads_each_vendor_section_or_marks_it_missing() {
         assert_eq!(
             rehydration_intent(
                 "This session is being continued from a previous conversation summary"
@@ -538,6 +564,16 @@ mod tests {
                 "1. Primary Request and Intent\n- preserve the ask\n2. Work Completed\n- none"
             ),
             "- preserve the ask"
+        );
+        assert_eq!(
+            rehydration_intent(
+                "## Goal\n- preserve the ask\n\n## Progress\n### Done\n- none\n1. not a heading"
+            ),
+            "- preserve the ask"
+        );
+        assert_eq!(
+            classify("## Goal\nShip the fix.").shape,
+            MessageShape::AuthoredAsk
         );
     }
 }
