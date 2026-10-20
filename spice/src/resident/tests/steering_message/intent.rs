@@ -3,7 +3,6 @@
 
 use steering::{Published, Unpublished};
 
-use super::conversation::asked;
 use super::*;
 
 /// Where the visible block sits in its assistant message.
@@ -37,12 +36,8 @@ impl Lanes {
             Placement::BeforeCall => {
                 let header = text
                     .lines()
-                    .find_map(|line| {
-                        ["MSG ", "ASK ", "ANS "].iter().find_map(|marker| {
-                            line.starts_with(marker)
-                                .then(|| &line[..=line.find(':').expect("header colon")])
-                        })
-                    })
+                    .find(|line| line.starts_with("MSG "))
+                    .map(|line| &line[..=line.find(':').expect("header colon")])
                     .expect("the block holds a packet header");
                 (
                     serde_json::json!([
@@ -116,12 +111,13 @@ impl Lanes {
     }
 }
 
-/// MSG, ASK, and ANS publish once from their visible block, whether a tool
-/// call follows it or it ends the turn. Each body runs to the next placed
-/// header or the block's end across lines, and an intent repeating the header
-/// neither publishes again nor replaces the body.
+/// MSG publishes once from its visible block, whether a tool call follows it
+/// or it ends the turn. Each body runs across lines to the next placed MSG,
+/// ACK, or NAK header or the block's end; a retired question spelling is body
+/// text, and an intent repeating the header neither publishes again nor
+/// replaces the body.
 #[test]
-fn each_packet_kind_publishes_its_visible_body_once_wherever_its_message_ends() {
+fn each_packet_publishes_its_visible_body_once_wherever_its_message_ends() {
     for placement in [Placement::BeforeCall, Placement::Final] {
         let lanes = Lanes::new(match placement {
             Placement::BeforeCall => "source-before-call",
@@ -129,34 +125,28 @@ fn each_packet_kind_publishes_its_visible_body_once_wherever_its_message_ends() 
         });
         let room = lanes.room("dVrD244Jd");
         let (sender, first) = (lanes.address(SENDER), lanes.address(FIRST));
+        let key = lanes.direct(SENDER, 20, "pick the parser");
 
-        let asking = lanes.speak(
+        let concern = lanes.speak(
             SENDER,
-            &format!("Status first.\nASK {first}#{room}: which parser\nowns terminal text?"),
+            &format!("Status first.\nMSG #{key} {first}#{room}: which parser\nowns terminal text?"),
             placement,
         );
-        let [asking] = <[_; 1]>::try_from(asking)
-            .unwrap_or_else(|outcomes| panic!("{placement:?}: one ASK publishes: {outcomes:?}"));
-        let result = asked(&asking);
-
-        let answering = lanes.speak(
-            FIRST,
-            &format!("ANS {result}#{room}: the visible one,\nalways."),
-            placement,
-        );
-        let [answering] = <[_; 1]>::try_from(answering)
-            .unwrap_or_else(|outcomes| panic!("{placement:?}: one ANS publishes: {outcomes:?}"));
-        assert!(answering.is_ok(), "{placement:?}: {answering:?}");
+        let [concern] = <[_; 1]>::try_from(concern)
+            .unwrap_or_else(|outcomes| panic!("{placement:?}: one MSG publishes: {outcomes:?}"));
+        assert!(concern.is_ok(), "{placement:?}: {concern:?}");
 
         let messaging = lanes.speak(
             FIRST,
-            &format!("MSG {sender}: rebase first\nthen rerun.\nMSG {sender}: second packet"),
+            &format!(
+                "MSG {sender}: rebase first\nASK {sender}: then rerun?\nMSG {sender}: second packet"
+            ),
             placement,
         );
         assert_eq!(
             messaging,
             [Ok(sent(&[SENDER], &[])), Ok(sent(&[SENDER], &[]))],
-            "{placement:?}: each packet in the block publishes once"
+            "{placement:?}: each MSG in the block publishes once"
         );
 
         let bodies = lanes
@@ -166,11 +156,8 @@ fn each_packet_kind_publishes_its_visible_body_once_wherever_its_message_ends() 
             .collect::<Vec<_>>();
         assert_eq!(
             bodies,
-            [
-                "which parser\nowns terminal text?",
-                "the visible one,\nalways."
-            ],
-            "{placement:?}: the recorded question and answer are their visible bodies"
+            ["which parser\nowns terminal text?"],
+            "{placement:?}: the recorded concern is its visible body"
         );
         let sent_bodies = lanes
             .messages()
@@ -181,12 +168,10 @@ fn each_packet_kind_publishes_its_visible_body_once_wherever_its_message_ends() 
         assert_eq!(
             sent_bodies,
             [
-                "the visible one,\nalways.",
-                "rebase first\nthen rerun.",
-                "second packet"
+                format!("rebase first\nASK {sender}: then rerun?"),
+                "second packet".to_owned()
             ],
-            "{placement:?}: the answer returns its visible body, and each MSG body ends at the \
-             next header or the block's end"
+            "{placement:?}: each MSG body ends at the next MSG header or the block's end"
         );
         lanes.finish();
     }
@@ -197,14 +182,7 @@ fn each_packet_kind_publishes_its_visible_body_once_wherever_its_message_ends() 
 fn a_tool_intent_alone_originates_no_packet() {
     let lanes = Lanes::new("source-intent-only");
     let first = lanes.address(FIRST);
-    lanes.intend(
-        SENDER,
-        &[],
-        &[
-            &format!("MSG {first}: from call metadata"),
-            &format!("ASK {first}: from call metadata?"),
-        ],
-    );
+    lanes.intend(SENDER, &[], &[&format!("MSG {first}: from call metadata")]);
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
     assert!(outcomes.is_empty(), "{outcomes:?} {diagnostics}");

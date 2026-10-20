@@ -7,9 +7,6 @@ pub(super) fn refusal_detail(text: &str, refusal: &steer::ack::scan::MessageRefu
     use steer::ack::scan::MessageRefusal;
     match refusal {
         MessageRefusal::Unterminated => "the selector list is not closed by a colon".to_owned(),
-        MessageRefusal::Selectors { verb, count } => {
-            format!("{} names exactly one selector, not {count}", verb.marker())
-        }
         MessageRefusal::Recipient { span, error } => {
             format!(
                 "`{}` is not an occupant address: {error}",
@@ -22,17 +19,6 @@ pub(super) fn refusal_detail(text: &str, refusal: &steer::ack::scan::MessageRefu
              reaching anyone",
             &text[span.clone()]
         ),
-        MessageRefusal::Respondent { span } => format!(
-            "`{}` names no respondent: a room records but cannot answer; ask an occupant \
-             `ADDRESS#TASK` or the operator through `#KEY` of a direction it sent you",
-            &text[span.clone()]
-        ),
-        MessageRefusal::Result { span, error } => {
-            format!(
-                "`{}` is not a question result handle: {error}",
-                &text[span.clone()]
-            )
-        }
         MessageRefusal::Context { span, .. } => {
             format!("`#{}` is not a task handle", &text[span.clone()])
         }
@@ -73,17 +59,17 @@ pub(super) fn report(
             queued,
             unreached,
             rooms,
-            conversed,
+            operator,
             held_room,
         }) => {
             for lane in lanes {
                 notify_inbox(paths, *lane);
             }
-            if !rooms.is_empty() || conversed.is_some() || !queued.is_empty() {
+            if !rooms.is_empty() || *operator || !queued.is_empty() {
                 teller.published(
                     &Recorded {
                         rooms,
-                        conversed: conversed.as_ref(),
+                        operator: *operator,
                         queued,
                         reached: lanes.len(),
                         held_room: *held_room,
@@ -118,7 +104,7 @@ struct Teller<'a> {
 #[derive(Clone, Copy)]
 struct Recorded<'a> {
     rooms: &'a [TaskHandle],
-    conversed: Option<&'a Conversed>,
+    operator: bool,
     queued: &'a [OccupantAddress],
     reached: usize,
     held_room: bool,
@@ -191,36 +177,16 @@ impl Teller<'_> {
         let (record, locus) = (self.record, self.locus);
         let Recorded {
             rooms,
-            conversed,
+            operator,
             queued,
             reached,
             held_room,
         } = *outcome;
         let rooms = rooms.iter().map(ToString::to_string).collect::<Vec<_>>();
         let queued = queued.iter().map(ToString::to_string).collect::<Vec<_>>();
-        let operator = conversed.is_some_and(|conversed| conversed.operator);
-        let (asked, answered) = match conversed {
-            Some(Conversed {
-                verb: Verb::Ask,
-                result: Some(result),
-                ..
-            }) => (Some(result.to_string()), None),
-            Some(Conversed {
-                verb: Verb::Ans,
-                result: Some(result),
-                ..
-            }) => (None, Some(result.to_string())),
-            Some(_) | None => (None, None),
-        };
         let mut outcome = String::new();
         if operator {
             outcome.push_str(" with an operator item");
-        }
-        if let Some(result) = &asked {
-            let _ = write!(outcome, " opening result {result}");
-        }
-        if let Some(result) = &answered {
-            let _ = write!(outcome, " answering result {result}");
         }
         if !queued.is_empty() {
             let _ = write!(outcome, " queued for [{}]", queued.join(", "));
@@ -249,8 +215,6 @@ impl Teller<'_> {
                     column: locus.column,
                     rooms,
                     operator,
-                    asked,
-                    answered,
                     queued,
                     reached,
                     held_room,
@@ -261,8 +225,8 @@ impl Teller<'_> {
 }
 
 /// One private record of what a packet published beyond its deliveries: the
-/// rooms it recorded in, the operator item it opened, and the question result
-/// it opened or answered, scoped to the packet's authoring occupant.
+/// rooms it recorded in and the operator item it opened, scoped to the
+/// packet's authoring occupant.
 #[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::resident) struct MessageRecordedNotice {
@@ -280,10 +244,6 @@ pub(in crate::resident) struct MessageRecordedNotice {
     pub(in crate::resident) queued: Vec<String>,
     /// Whether the packet opened one pending operator item.
     pub(in crate::resident) operator: bool,
-    /// The question result an ASK opened.
-    pub(in crate::resident) asked: Option<String>,
-    /// The question result an ANS answered.
-    pub(in crate::resident) answered: Option<String>,
     /// How many named recipients the packet reached.
     pub(in crate::resident) reached: usize,
     /// Some `#TASK` the packet named is the task its author's lane holds.
@@ -295,17 +255,6 @@ impl MessageRecordedNotice {
     /// The notice its author hears.
     pub(in crate::resident) fn text(&self) -> String {
         let mut clauses = Vec::new();
-        if let Some(result) = &self.asked {
-            clauses.push(format!(
-                "opened pending question result `{result}`; its respondent owes one answer, \
-                 which returns to you as its own delivery"
-            ));
-        }
-        if let Some(result) = &self.answered {
-            clauses.push(format!(
-                "answered question result `{result}`; the answer returns to its requester"
-            ));
-        }
         if !self.queued.is_empty() {
             clauses.push(format!(
                 "queued for {}; unheard until each lane's next occupant starts; nothing woke anyone",
@@ -390,11 +339,10 @@ impl MessageRefusalNotice {
              occupants (`spice lane list` shows each lane's), or point at one concern the \
              assigning principal already sees: `#DIRECTION` with the exact key of an operator \
              direction sent to this lane. `#TASK` only records the task or room and reaches \
-             nobody by itself. Give an ASK exactly one selector and an ANS exactly its \
-             question's result handle; qualify an occupant or result with `#TASK` only for \
-             an existing task's handle, close the list with a colon, and author a packet to \
-             the routes that still need it in new visible text. This is a private refusal \
-             notice; no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
+             nobody by itself. Qualify an occupant with `#TASK` only for an existing \
+             task's handle, close the list with a colon, and author a packet to the routes \
+             that still need it in new visible text. This is a private refusal notice; no \
+             acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
             self.header, self.line, self.column, self.reason, self.detail,
         )
     }

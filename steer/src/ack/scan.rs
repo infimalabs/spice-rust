@@ -8,11 +8,10 @@
 //! by name, because a silent non-recognition and a refusal look identical to an
 //! operator waiting on an answer.
 //!
-//! The same authored-context grammar reads [`message`] packets: `MSG`, `ASK`,
-//! and `ANS` headers that name their routes or answered question and own a
-//! body hunk but never retire anything. Every packet kind is found by one
-//! visitor, so a placed header of any kind bounds the body of the publication
-//! before it.
+//! The same authored-context grammar reads [`message`] packets: `MSG` headers
+//! that name their routes and own a body hunk but never retire anything. One
+//! visitor finds every packet, so a placed header of any kind bounds the body
+//! of the publication before it.
 //!
 //! The scanner performs no I/O. Standing arrives from the caller's reduced
 //! facts, so the same prose read against the same standing always recognizes
@@ -27,7 +26,7 @@ use crate::ack::keys::{Key, MARKERS, Marker};
 
 pub mod message;
 
-pub use message::{Audience, Message, MessageRefusal, Publication, Request, Route, Verb};
+pub use message::{Audience, Message, MessageRefusal, Publication, Route};
 
 /// Where in the scanned prose a recognition sits.
 ///
@@ -205,7 +204,7 @@ pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Re
 
 /// The response prose the placed header that retires `token` gives it: the
 /// rest of that header's line after its key list and separator, trimmed, and
-/// ending before any placed MSG, ASK, or ANS header on that line, which is its
+/// ending before any placed MSG header on that line, which is its
 /// own packet.
 ///
 /// Between placed headers retiring the same token the later one speaks, as
@@ -261,13 +260,13 @@ pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Ackno
     acknowledgements
 }
 
-/// Whether `prose` contains a placed MSG, ASK, or ANS header.
+/// Whether `prose` contains a placed MSG header.
 ///
 /// This is the allocation-free predicate for transcript surfaces that need to
 /// distinguish an explicitly authored packet from ordinary narration.
 #[must_use]
 pub fn has_message(prose: &str) -> bool {
-    if !message::MARKERS.iter().any(|marker| prose.contains(marker)) {
+    if !prose.contains(message::MARKER) {
         return false;
     }
     matches!(
@@ -282,8 +281,7 @@ pub fn has_message(prose: &str) -> bool {
     )
 }
 
-/// Reads every placed MSG, ASK, and ANS packet, each bounded by the next
-/// placed packet.
+/// Reads every placed MSG packet, each bounded by the next placed packet.
 ///
 /// Quoted, code, rendered-source, negated, hypothetical, and narrated markers
 /// publish nothing and bound nothing. The scan needs no standing: a
@@ -339,7 +337,7 @@ pub fn has_acknowledgement(prose: &str) -> bool {
 /// The byte ranges of every placed protocol header, in source order.
 ///
 /// An ACK or NAK range runs from its marker, including touching emphasis,
-/// through its key list and separator; a MSG, ASK, or ANS range is that
+/// through its key list and separator; a MSG range is that
 /// message's [`Message::header`]. Bodies and response prose are never inside a
 /// range, and quoted, code, rendered-source, negated, hypothetical, and
 /// narrated markers contribute none, so removing every range leaves what the
@@ -390,39 +388,38 @@ fn visit_packets(
         if !quoted && guarded_context(prose, start) {
             continue;
         }
-        let packet = match lead {
-            Lead::Retirement(marker) => {
-                let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
-                    continue;
-                };
-                if !header
-                    .tokens
-                    .iter()
-                    .any(|&(token_start, token_end)| intended_token(&prose[token_start..token_end]))
-                {
-                    continue;
+        let packet =
+            match lead {
+                Lead::Retirement(marker) => {
+                    let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
+                        continue;
+                    };
+                    if !header.tokens.iter().any(|&(token_start, token_end)| {
+                        intended_token(&prose[token_start..token_end])
+                    }) {
+                        continue;
+                    }
+                    Packet::Retirement(Clause {
+                        marker,
+                        position: position(quoted, &header.tokens, &lines),
+                        start: decorated_start,
+                        end: header.end,
+                        separator: header.separator,
+                        tokens: header.tokens,
+                    })
                 }
-                Packet::Retirement(Clause {
-                    marker,
-                    position: position(quoted, &header.tokens, &lines),
-                    start: decorated_start,
-                    end: header.end,
-                    separator: header.separator,
-                    tokens: header.tokens,
-                })
-            }
-            Lead::Message(verb) => {
-                let Some(header) = message::header_after(prose, verb, start + verb.marker().len())
-                else {
-                    continue;
-                };
-                Packet::Message {
-                    position: position(quoted, &header.tokens, &lines),
-                    start: decorated_start,
-                    header,
+                Lead::Message => {
+                    let Some(header) = message::header_after(prose, start + message::MARKER.len())
+                    else {
+                        continue;
+                    };
+                    Packet::Message {
+                        position: position(quoted, &header.tokens, &lines),
+                        start: decorated_start,
+                        header,
+                    }
                 }
-            }
-        };
+            };
         visit(&lines, packet)?;
     }
     ControlFlow::Continue(())
@@ -628,7 +625,7 @@ impl Clause {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lead {
     Retirement(Marker),
-    Message(message::Verb),
+    Message,
 }
 
 /// The protocol word beginning at this offset, if a whole word begins there.
@@ -642,8 +639,8 @@ fn lead_at(prose: &str, start: usize) -> Option<Lead> {
         return None;
     }
     let rest = prose.get(start..)?;
-    if let Some(verb) = message::Verb::leading(rest) {
-        return Some(Lead::Message(verb));
+    if rest.starts_with(message::MARKER) {
+        return Some(Lead::Message);
     }
     MARKERS
         .into_iter()

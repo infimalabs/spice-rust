@@ -47,28 +47,6 @@ fn prose_message() -> AgentMessage {
 }
 
 #[test]
-fn retained_send_annotations_decode_as_msg_without_a_kind_field() {
-    let retained = br#"{
-        "start":0,
-        "end":4,
-        "from":"018f82d4-6f59-7d06-92e3-bce9131163d8",
-        "sender":"018f82d4-6f59-7d06-92e3-bce9131163d9",
-        "recipients":[],
-        "operator":true,
-        "contexts":[]
-    }"#;
-    let send: wire::MessageSend = wire::decode(retained).expect("retained MSG annotation decodes");
-
-    assert_eq!(send.kind, wire::MessageSendKind::Msg);
-    assert!(send.result.is_none());
-    assert!(send.is_valid_for("> hi"));
-    let canonical = wire::encode(&send).expect("current MSG annotation encodes");
-    let canonical = String::from_utf8(canonical).expect("wire JSON is UTF-8");
-    assert!(!canonical.contains("\"kind\""), "{canonical}");
-    assert!(!canonical.contains("\"result\""), "{canonical}");
-}
-
-#[test]
 fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delivered() {
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d8");
     let occupant = uuid("018f82d4-6f59-7d06-92e3-bce9131163d9");
@@ -84,7 +62,6 @@ fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delive
             author,
             recipients,
             packet,
-            result: None,
         },
         authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
         badge: None,
@@ -99,7 +76,7 @@ fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delive
             occupant: None,
         }]
     };
-    let msg = Some(wire::MessageSendKind::Msg);
+    let msg = true;
 
     let peer = wire::QuoteAuthor::Agent { lane, occupant };
     let seated = vec![wire::QuoteRecipient {
@@ -108,31 +85,23 @@ fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delive
     }];
     assert!(directive(peer, seated, msg).is_valid_for("> hi"));
     assert!(directive(operator(), lane_only(), msg).is_valid_for("> hi"));
-    assert!(directive(operator(), lane_only(), None).is_valid_for("> hi"));
+    assert!(directive(operator(), lane_only(), false).is_valid_for("> hi"));
     assert!(
-        !directive(operator(), Vec::new(), None).is_valid_for("> hi"),
+        !directive(operator(), Vec::new(), false).is_valid_for("> hi"),
         "a steering directive always reached a lane"
     );
-    let answer = wire::MessageDirective {
-        attribution: wire::QuoteAttribution {
-            packet: Some(wire::MessageSendKind::Ans),
-            ..directive(operator(), lane_only(), None).attribution
-        },
-        ..directive(operator(), lane_only(), None)
-    };
-    assert!(!answer.is_valid_for("> hi"), "an ANS names its result");
 
     let delivered = |author, packet| wire::MessageDirective {
         delivery: Some(wire::MessageDelivery { fanout: None }),
         ..directive(author, lane_only(), packet)
     };
-    assert!(delivered(operator(), None).is_valid_for("> hi"));
+    assert!(delivered(operator(), false).is_valid_for("> hi"));
     assert!(
         !delivered(
             wire::QuoteAuthor::Directive {
                 actor: Actor::Spice
             },
-            None
+            false
         )
         .is_valid_for("> hi"),
         "only the operator's own direction is delivered as its card"

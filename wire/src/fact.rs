@@ -360,8 +360,8 @@ vocabulary! {
     RoomRelevanceObserved = "room::observed" by ResidentRecognition;
     /// The operator assessed one shadow observation for quality measurement.
     RoomRelevanceAssessed = "room::assessed" by CommandDoor;
-    /// A lane's authored MSG, ASK, or ANS bound its native lane deliveries and
-    /// opened its operator item and result.
+    /// A lane's authored MSG naming `#KEY` bound its native lane deliveries and
+    /// opened its operator item; retained ASK and ANS records also bound a result.
     RoomConversed = "room::conversed" by AckScanner;
     /// An operator MSG, ASK, or ANS bound its native lane deliveries and
     /// opened its result.
@@ -416,7 +416,8 @@ vocabulary! {
     SteerReplied = "steer::replied" by AckScanner;
     /// An authored MSG packet opened one peer message to one exact recipient.
     SteerMessaged = "steer::messaged" by AckScanner;
-    /// An authored MSG or ASK queued one peer directive for a vacant logical lane.
+    /// An authored MSG (or a retained ASK) queued one peer directive for a
+    /// vacant logical lane.
     SteerQueued = "steer::queued" by AckScanner;
     /// An authored MSG packet published to no one; rereads leave it unpublished.
     SteerWithheld = "steer::withheld" by AckScanner;

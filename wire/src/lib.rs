@@ -136,7 +136,7 @@ pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
     DirectiveBadge, MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,
     MessageClassificationKind, MessageDelivery, MessageDirective, MessageHistoryCursor,
-    MessageLocus, MessageProseOrigin, MessageRecipient, MessageSend, MessageSendKind,
+    MessageLocus, MessageProseOrigin, MessageRecipient, MessageSend,
     PACKET_WITHHELD_CONTROL_PREFIX, PEER_REPLY_CONTROL_PREFIX, PeerAnswer,
     REVIEW_FEEDBACK_CONTROL_PREFIX, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
     StreamLaneSeated, StreamRequest, TranscriptGeneration, TranscriptLaneFrontier,

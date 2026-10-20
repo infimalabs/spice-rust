@@ -1,15 +1,14 @@
-//! Reading authored MSG, ASK, and ANS packets out of assistant prose.
+//! Reading authored MSG packets out of assistant prose.
 //!
 //! Publication packets share the acknowledgment header grammar's
 //! authored-context rules but publish rather than retire: each placed packet
 //! names its routes, each an audience, a task context, or an audience in a
-//! context, or the question it answers, and owns exactly the body hunk up to
-//! the next placed packet.
+//! context, and owns exactly the body hunk up to the next placed packet.
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
-    Audience, Message, MessageRefusal, Outcome, Request, Standing, Verb, answer, scan,
-    scan_acknowledgements, scan_messages,
+    Audience, Message, MessageRefusal, Outcome, Standing, answer, scan, scan_acknowledgements,
+    scan_messages,
 };
 use wire::{Disposition, OccupantAddress, OccupantAddressError, TaskHandle};
 
@@ -33,7 +32,7 @@ fn sent<'prose>(prose: &'prose str, message: &Message) -> (Vec<&'prose str>, &'p
         .as_ref()
         .unwrap_or_else(|refusal| panic!("refused {refusal:?} in {prose:?}"));
     let selectors = publication
-        .routes()
+        .routes
         .iter()
         .map(|route| {
             let written = &prose[route.span.clone()];
@@ -91,25 +90,25 @@ fn selectors_route_to_occupants_rooms_or_both() {
     );
 }
 
-/// A task pointer records its room and reaches nobody, so it cannot answer an
-/// ASK; the context-free legacy operator spelling is not an audience either.
+/// A task pointer records its room and reaches nobody; the context-free legacy
+/// operator spelling is not an audience either.
 #[test]
 fn a_task_pointer_records_the_room_without_reaching_the_operator() {
     let prose = "MSG #ROOMS-dVrD244Jd: Background note.";
     let [message] = scan_messages(prose).try_into().expect("one packet");
     let publication = message.publication.expect("the task pointer records");
-    let [route] = publication.routes() else {
+    let [route] = publication.routes.as_slice() else {
         panic!("one route");
     };
     assert_eq!(route.audience, None);
     assert_eq!(route.context, Some(handle("ROOMS-dVrD244Jd")));
 
     assert_eq!(
-        refusal("ASK #ROOMS-dVrD244Jd: Which first?"),
-        MessageRefusal::Respondent { span: 4..20 }
+        refusal("MSG operator: context-free"),
+        MessageRefusal::Concern { span: 4..12 }
     );
     assert_eq!(
-        refusal("MSG operator: context-free"),
+        refusal("MSG operator#ROOMS-dVrD244Jd: still nowhere"),
         MessageRefusal::Concern { span: 4..12 }
     );
 }
@@ -156,7 +155,7 @@ fn malformed_or_repeated_destinations_refuse_the_packet() {
 }
 
 /// A hyphenless qualifier names a steering key: `#KEY` routes to the operator
-/// about that direction, an ASK may name one alone, an occupant is never
+/// about that direction, an occupant is never
 /// addressed about a direction, and a hyphenless qualifier that spells no key
 /// stays a malformed task context.
 #[test]
@@ -169,7 +168,7 @@ fn a_direction_key_routes_to_the_operator_about_that_direction() {
             .publication
             .as_ref()
             .unwrap_or_else(|refusal| panic!("refused {refusal:?} in {prose:?}"))
-            .routes()
+            .routes
             .iter()
             .map(|route| {
                 (
@@ -181,7 +180,7 @@ fn a_direction_key_routes_to_the_operator_about_that_direction() {
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        routes("ASK #dVwg6Zqlf: Which first?"),
+        routes("MSG #dVwg6Zqlf: Which first?"),
         [(Some(Audience::Operator), None, key())]
     );
     assert_eq!(
@@ -387,111 +386,27 @@ fn a_reply_clause_never_carries_a_placed_message() {
     }
 }
 
-fn result(text: &str) -> wire::rooms::QuestionResultRef {
-    wire::rooms::QuestionResultRef::new(text.parse().expect("fixture result handle"))
-}
-
-/// ASK names one occupant or `#KEY`, ANS names the answered result and
-/// only asserts a context, and every placed header of either verb bounds the
-/// body before it.
+/// Question and answer spellings are ordinary prose: they publish nothing,
+/// refuse nothing, and stay inside the body of the packet before them.
 #[test]
-fn questions_and_answers_route_by_verb() {
-    let prose = "MSG #ROOMS-dVrD244Jd 6HmS#ROOMS-dVrD244Jd: Heads up.\n\
-                 ASK 6HmS#ROOMS-dVrD244Jd: Does caching explain it?\n\
-                 ANS dVtYchNJW#ROOMS-dVrD244Jd: It does not.\n\
-                 ANS dVtYcnvty: Yes.";
-    let messages = scan_messages(prose);
-    assert_eq!(
-        messages
-            .iter()
-            .map(|message| message.verb)
-            .collect::<Vec<_>>(),
-        [Verb::Msg, Verb::Ask, Verb::Ans, Verb::Ans]
-    );
-    assert_eq!(
-        sent(prose, &messages[0]),
-        (
-            vec!["#ROOMS-dVrD244Jd", "6HmS#ROOMS-dVrD244Jd"],
-            "Heads up."
-        )
-    );
-    assert_eq!(
-        sent(prose, &messages[1]),
-        (vec!["6HmS#ROOMS-dVrD244Jd"], "Does caching explain it?")
-    );
-    for (message, (handle_text, context, body)) in messages[2..].iter().zip([
-        ("dVtYchNJW", Some(handle("ROOMS-dVrD244Jd")), "It does not."),
-        ("dVtYcnvty", None, "Yes."),
-    ]) {
-        let publication = message.publication.as_ref().expect("answer admits");
-        assert!(matches!(
-            &publication.request,
-            Request::Ans { result: answered, context: asserted, .. }
-                if *answered == result(handle_text) && *asserted == context
-        ));
-        assert!(publication.routes().is_empty());
-        assert_eq!(&prose[publication.body.clone()], body);
-    }
-}
-
-/// ASK and ANS refuse whole on their own arity and handle defects, while the
-/// removed context-free operator spelling remains a visible concern refusal.
-#[test]
-fn question_and_answer_defects_refuse_whole() {
-    assert_eq!(
-        refusal("ASK 6HmS 7Bc: two respondents?"),
-        MessageRefusal::Selectors {
-            verb: Verb::Ask,
-            count: 2
-        }
-    );
-    assert_eq!(
-        refusal("ANS dVtYchNJW dVtYcnvty: both."),
-        MessageRefusal::Selectors {
-            verb: Verb::Ans,
-            count: 2
-        }
-    );
-    assert!(matches!(
-        refusal("ANS dVtYchNJWx#ROOMS-dVrD244Jd: long handle."),
-        MessageRefusal::Result { span, .. } if span == (4..14)
-    ));
-    assert!(matches!(
-        refusal("ANS dVtYchNJW#rooms: lowercase room."),
-        MessageRefusal::Context { span, .. } if span == (14..19)
-    ));
-    assert_eq!(
-        refusal("MSG operator: nowhere"),
-        MessageRefusal::Concern { span: 4..12 }
-    );
-    assert_eq!(
-        refusal("MSG operator#ROOMS-dVrD244Jd: still nowhere"),
-        MessageRefusal::Concern { span: 4..12 }
-    );
-    assert_eq!(
-        refusal("ASK 6HmS#ROOMS-dVrD244Jd:   "),
-        MessageRefusal::EmptyBody
-    );
-}
-
-/// Quoted, coded, and narrated question and answer markers publish nothing and
-/// leave the preceding body whole.
-#[test]
-fn unauthored_questions_and_answers_neither_publish_nor_bound() {
+fn retired_question_spellings_are_prose() {
     for prose in [
-        "> ASK 6HmS: quoted",
-        "`ANS dVtYchNJW: inline code`",
-        "```\nASK #ROOMS-dVrD244Jd: fenced\n```",
-        "Never write ASK 6HmS: like this",
-        "ASKED 6HmS: not a marker",
+        "ASK 6HmS#ROOMS-dVrD244Jd: Does caching explain it?",
+        "ASK #dVwg6Zqlf: Which first?",
+        "ANS dVtYchNJW#ROOMS-dVrD244Jd: It does not.",
+        "ANS dVtYcnvty: Yes.",
     ] {
         assert_eq!(scan_messages(prose), [], "published {prose:?}");
     }
-    let prose = "MSG 6HmS: see `ANS dVtYchNJW: example` here";
-    let messages = scan_messages(prose);
-    assert_eq!(messages.len(), 1);
+    let prose = "MSG 6HmS: First point.\n\
+                 ASK 7Bc: still this body.\n\
+                 ANS dVtYchNJW: and this.";
+    let [message] = scan_messages(prose).try_into().expect("one packet");
     assert_eq!(
-        sent(prose, &messages[0]).1,
-        "see `ANS dVtYchNJW: example` here"
+        sent(prose, &message),
+        (
+            vec!["6HmS"],
+            "First point.\nASK 7Bc: still this body.\nANS dVtYchNJW: and this."
+        )
     );
 }

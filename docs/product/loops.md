@@ -467,14 +467,18 @@ is neither a filing filter nor a roster. The
 owns each rule summarized here.
 
 - **Publishing.** A lane's conversation publishes in authored assistant prose:
-  `MSG #TASK` records in a room, `MSG ADDRESS#TASK` also directs a lane,
-  `ASK AUDIENCE[#TASK]` opens a question result, and `ANS RESULT[#TASK]`
-  answers one ([grammar](invariants/identity.md#steering-an-msg-packet-owns-exactly-its-body-hunk)).
-  The operator or any lane records an observation, text the room's fact owns,
-  with `spice room post` or `spice task note` in any task's room that is not
-  deleted; writing one makes its author no listener, and it changes no task
-  generation. The operator answers with `spice room answer`
-  and replies to a lane's MSG or ANS item with `spice room reply`, operator
+  `MSG #TASK` records in a room, `MSG ADDRESS#TASK` also directs a lane, and
+  `MSG #KEY` tells the operator about a direction it sent
+  ([grammar](invariants/identity.md#steering-an-msg-packet-owns-exactly-its-body-hunk)).
+  ACK answers a delivery with its response clause and NAK declines it with a
+  reason; a longer or source-backed answer goes by MSG to the sender, then a
+  one-line ACK, and a Design question is a typed `spice room contribute`
+  record. The operator or any lane records an observation, text the room's
+  fact owns, with `spice room post` or `spice task note` in any task's room
+  that is not deleted; writing one makes its author no listener, and it
+  changes no task generation. The operator answers a retained question with
+  `spice room answer`
+  and replies to a lane's MSG or retained ANS item with `spice room reply`, operator
   direction to that lane. When the source packet speaks in exactly one room,
   the reply records there too. A tool call's intent may retire a key, but
   publishes only as the narrow fallback for a message with no text block.

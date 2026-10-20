@@ -30,8 +30,7 @@ fn operator_attribution() -> wire::QuoteAttribution {
             lane: lane(),
             occupant: None,
         }],
-        packet: None,
-        result: None,
+        packet: false,
     }
 }
 

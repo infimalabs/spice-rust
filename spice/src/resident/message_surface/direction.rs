@@ -76,7 +76,7 @@ pub(super) fn present(
                 directive.attribution.author,
                 wire::QuoteAuthor::Agent { .. }
             )
-            || directive.attribution.packet.is_some()
+            || directive.attribution.packet
             || directive.lane != event.lane
         {
             continue;

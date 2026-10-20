@@ -119,22 +119,11 @@ pub struct QuoteAttribution {
     /// transcript prose name none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipients: Vec<QuoteRecipient>,
-    /// Protocol kind of the room publication that opened a quoted source,
-    /// when an MSG, ASK, or ANS delivered it. The presented text is then that
-    /// packet's authenticated body, without the header its recipient read.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub packet: Option<crate::MessageSendKind>,
-    /// Result an ANS packet answers. Other packet kinds carry none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<crate::rooms::QuestionResultRef>,
-}
-
-impl QuoteAttribution {
-    /// Whether the packet and its answered result agree.
-    #[must_use]
-    pub fn is_valid(&self) -> bool {
-        self.result.is_some() == (self.packet == Some(crate::MessageSendKind::Ans))
-    }
+    /// Whether an MSG delivered the quoted source. The presented text is then
+    /// that packet's authenticated body, without the header its recipient
+    /// read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub packet: bool,
 }
 
 /// One lane a quoted source reached.

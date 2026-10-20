@@ -3,7 +3,7 @@
 /// Assistant prose one transcript event presents as a quoteable message card.
 ///
 /// Ordinary assistant prose presents itself. Streamed prose presents when it
-/// carries an acknowledgement or a placed MSG, ASK, or ANS packet, since that
+/// carries an acknowledgement or a placed MSG packet, since that
 /// visible block is the packet's source. A tool-call intent presents only when
 /// it carries an acknowledgement: OMP retains intent as the assistant
 /// message's only verbatim words when no text block survived settlement, but

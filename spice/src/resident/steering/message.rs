@@ -1,5 +1,5 @@
-//! Authored MSG, ASK, and ANS packets published as peer messages and room
-//! conversation records.
+//! Authored MSG packets published as peer messages and room conversation
+//! records.
 //!
 //! Visible assistant text is the only source: each complete streamed
 //! assistant text block, including a turn's final message, in presentation
@@ -26,10 +26,9 @@
 //! addresses in a private background notice. A packet the grammar refuses
 //! needs no record, since its text refuses identically on every read.
 //!
-//! ASK, ANS, and an MSG naming the exact key of an operator direction also
-//! write one `room::conversed` record in that same write; its identity is the
-//! packet's exact transcript hunk, so a reread finds it instead of publishing
-//! again.
+//! An MSG naming the exact key of an operator direction also writes one
+//! `room::conversed` record in that same write; its identity is the packet's
+//! exact transcript hunk, so a reread finds it instead of publishing again.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -37,9 +36,8 @@ use std::io;
 use std::ops::{ControlFlow, Range};
 use std::time::Duration;
 
-use steer::ack::scan::{Audience, Request, Route, Verb};
+use steer::ack::scan::{Audience, Route};
 use wire::rooms::{
-    QuestionResultHead, QuestionResultRecord, QuestionResultRef, QuestionResultState,
     RoomAuthorityStamp, RoomConversed, RoomDestination, RoomMessaged, RoomPublicationKind,
     RoomRoute, TextRange, TranscriptHunk,
 };
@@ -104,8 +102,8 @@ pub(in crate::resident) struct Packet<'a> {
     pub(in crate::resident) lane: CanonicalUuid,
     pub(in crate::resident) author: CanonicalUuid,
     pub(in crate::resident) locus: TranscriptLocus,
-    /// What the header requests, as it wrote it.
-    pub(in crate::resident) request: Request,
+    /// The routes the header spelled, in source order.
+    pub(in crate::resident) routes: Vec<Route>,
     pub(in crate::resident) body: &'a str,
     /// The body's byte range within its decoded event's text.
     pub(in crate::resident) text: Range<usize>,
@@ -123,24 +121,14 @@ pub(in crate::resident) enum Published {
         queued: Vec<OccupantAddress>,
         unreached: Vec<String>,
         rooms: Vec<TaskHandle>,
-        /// The conversation record an ASK, ANS, or operator-routed MSG wrote.
-        conversed: Option<Conversed>,
+        /// The packet's conversation record opened one operator item.
+        operator: bool,
         /// Some `#TASK` the packet names is the task its author's lane holds
         /// an active claim on.
         held_room: bool,
     },
     /// An earlier read of the same packet already published it.
     Already,
-}
-
-/// What one packet's conversation record opened or settled.
-#[derive(Debug, Eq, PartialEq)]
-pub(in crate::resident) struct Conversed {
-    pub(in crate::resident) verb: Verb,
-    /// Whether it opened one operator item.
-    pub(in crate::resident) operator: bool,
-    /// The question result an ASK opened or an ANS answered.
-    pub(in crate::resident) result: Option<QuestionResultRef>,
 }
 
 /// Why one packet published nothing.
@@ -226,7 +214,7 @@ fn publish_record(
                                     lane: record.lane,
                                     author: record.author,
                                     locus: locus.clone(),
-                                    request: publication.request.clone(),
+                                    routes: publication.routes.clone(),
                                     body: &text[publication.body.clone()],
                                     text: publication.body.clone(),
                                 },
@@ -350,7 +338,7 @@ fn recover_lane(
     let search = listen::search_tail(
         &path,
         vendor.dialect(),
-        &steer::ack::scan::message::MARKERS.map(str::as_bytes),
+        &[steer::ack::scan::message::MARKER.as_bytes()],
         budget,
         |record| {
             if (record.locus.member, record.locus.offset) <= declared {
@@ -524,16 +512,13 @@ fn publish_resolved(
     }
 }
 
-/// Why an answer's question moved between its read and its commit.
-const RESULT_MOVED: &str = "ans::result-moved";
-
 /// Whether a commit refusal means the view went stale rather than the packet
 /// being wrong.
 fn moved(reason: &str) -> bool {
     matches!(
         reason,
         "steer::residency-moved" | "steer::identity-taken" | "steer::directive-moved"
-    ) || reason == RESULT_MOVED
+    )
 }
 
 /// One directed lane route: the address it names and the context it carries.
@@ -543,9 +528,8 @@ type Directed = (OccupantAddress, Option<TaskHandle>);
 /// guarded write.
 ///
 /// A plain MSG, one naming no operator, is native peer messaging plus room
-/// records. ASK, ANS, and an operator-routed MSG also write the conversation
-/// record that owns their result and operator item; see
-/// [`publish_conversation`].
+/// records. An operator-routed MSG also writes the conversation record that
+/// owns its operator item; see [`publish_conversation`].
 ///
 /// The guard re-proves at commit that the residency is the one the view
 /// read and that every route still names either its resolved occupant or its
@@ -563,17 +547,14 @@ pub(in crate::resident) fn publish_packet(
     packet: &Packet<'_>,
     view: &bus::TaskSnapshot,
 ) -> Result<Published, Unpublished> {
-    match &packet.request {
-        Request::Msg { routes }
-            if routes
-                .iter()
-                .all(|route| route.audience != Some(Audience::Operator)) =>
-        {
-            publish_message(bus, epoch, config, packet, routes, view)
-        }
-        Request::Msg { .. } | Request::Ask { .. } | Request::Ans { .. } => {
-            publish_conversation(bus, epoch, config, packet, view)
-        }
+    if packet
+        .routes
+        .iter()
+        .any(|route| route.audience == Some(Audience::Operator))
+    {
+        publish_conversation(bus, epoch, config, packet, view)
+    } else {
+        publish_message(bus, epoch, config, packet, view)
     }
 }
 
@@ -582,10 +563,9 @@ fn publish_message(
     epoch: CanonicalUuid,
     config: &steer::Config,
     packet: &Packet<'_>,
-    routes: &[Route],
     view: &bus::TaskSnapshot,
 ) -> Result<Published, Unpublished> {
-    let directed = occupant_routes(routes);
+    let directed = occupant_routes(&packet.routes);
     let identities = identities(packet, &directed);
     let mut minted_micros = None;
     for directive in &identities {
@@ -644,7 +624,7 @@ fn publish_message(
         unreached,
         held_room: names_held_task(&record.rooms, view, packet.lane),
         rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
-        conversed: None,
+        operator: false,
     })
 }
 
@@ -658,17 +638,6 @@ fn names_held_task(rooms: &Rooms, view: &bus::TaskSnapshot, lane: CanonicalUuid)
                     && claim.body().lane == lane
             })
     })
-}
-
-impl Packet<'_> {
-    /// The routes the header spelled; ANS spells none.
-    fn request_routes(&self) -> &[Route] {
-        match &self.request {
-            Request::Msg { routes } => routes,
-            Request::Ask { route } => std::slice::from_ref(route),
-            Request::Ans { .. } => &[],
-        }
-    }
 }
 
 /// Each occupant-addressed route, in route order, with its own context.
@@ -896,7 +865,7 @@ fn resolve_rooms(
     sender: OccupantAddress,
 ) -> Result<Option<RoomRecord>, Unpublished> {
     let contexts = packet
-        .request_routes()
+        .routes
         .iter()
         .filter_map(|route| route.context.as_ref())
         .collect();
