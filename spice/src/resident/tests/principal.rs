@@ -20,19 +20,31 @@ struct Seated {
     surface: crate::trust_command::Surface,
     paths: RuntimePaths,
     bus: Bus,
+    /// Last, so it is removed only after the bus above has stopped its writer.
+    _root: RemovedRoot,
+}
+
+/// Removes a fixture root when the test ends, passing or panicking.
+struct RemovedRoot(PathBuf);
+
+impl Drop for RemovedRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 fn seated(name: &str) -> Seated {
     let (root, paths) = resident_fixture(name);
+    let root = RemovedRoot(root);
     writeln!(
         fs::OpenOptions::new()
             .append(true)
-            .open(root.join(".git/config"))
+            .open(root.0.join(".git/config"))
             .expect("open fixture repository config"),
         "[user]\n\tname = {GIT_NAME}\n\temail = {GIT_EMAIL}"
     )
     .expect("configure fixture Git identity");
-    let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let repository = Repository::discover(&root.0).expect("fixture repository resolves");
     let surface =
         crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
     let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
@@ -43,6 +55,7 @@ fn seated(name: &str) -> Seated {
         surface,
         paths,
         bus,
+        _root: root,
     }
 }
 

@@ -1100,6 +1100,7 @@ fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
         std::process::id(),
         NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
     ));
+    let _ = fs::remove_dir_all(&root);
     crate::test_repository::initialize(&root);
     let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
     fs::create_dir_all(&paths.data).expect("data directory");
