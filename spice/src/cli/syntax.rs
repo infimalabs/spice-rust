@@ -172,6 +172,11 @@ fn option(parts: &[&'static str]) -> Result<Arg, String> {
         if parts.len() != 1 || value.is_empty() {
             return Err(format!("invalid equals option syntax: {option_syntax}"));
         }
+        // Clap brackets every value name, so the registry's own pair goes.
+        let value = value
+            .strip_prefix('<')
+            .and_then(|value| value.strip_suffix('>'))
+            .unwrap_or(value);
         return Ok(argument
             .value_name(value)
             .num_args(1)
