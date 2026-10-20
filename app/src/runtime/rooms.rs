@@ -281,32 +281,27 @@ fn event_listener_lanes(
     conversation: &ConversationProjection,
 ) -> BTreeSet<CanonicalUuid> {
     let mut lanes = BTreeSet::new();
-    match &event.kind {
-        RoomEventKind::Messaged {
-            source,
-            directed,
-            conversation: admitted,
-            ..
-        } => {
-            lanes.insert(source.head.lane);
-            lanes.extend(
-                directed
-                    .iter()
-                    .chain(
-                        admitted
-                            .as_ref()
-                            .and_then(|stamp| conversation.conversation(stamp))
-                            .into_iter()
-                            .flat_map(|conversation| &conversation.directed),
-                    )
-                    .filter_map(|directive| conversation.delivery(directive))
-                    .map(|delivery| delivery.value.lane),
-            );
-        }
-        RoomEventKind::Contributed { lane, .. } => {
-            lanes.insert(*lane);
-        }
-        _ => {}
+    if let RoomEventKind::Messaged {
+        source,
+        directed,
+        conversation: admitted,
+        ..
+    } = &event.kind
+    {
+        lanes.insert(source.head.lane);
+        lanes.extend(
+            directed
+                .iter()
+                .chain(
+                    admitted
+                        .as_ref()
+                        .and_then(|stamp| conversation.conversation(stamp))
+                        .into_iter()
+                        .flat_map(|conversation| &conversation.directed),
+                )
+                .filter_map(|directive| conversation.delivery(directive))
+                .map(|delivery| delivery.value.lane),
+        );
     }
     lanes
 }
@@ -317,10 +312,9 @@ fn event_listener_lanes(
 /// and native duties end only through their own dispositions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipantReason {
-    /// The lane authored a transcript-backed publication; history that never
-    /// ages.
+    /// The lane authored a typed contribution; its participation never ages.
     Contribution(RoomAuthorityStamp),
-    /// The lane's latest contribution falls inside the activity window.
+    /// The lane's latest authored room message falls inside the activity window.
     Activity(RoomAuthorityStamp),
     /// A room MSG or ASK addressed the lane inside the activity window; it
     /// requests involvement and is not a contribution.
@@ -338,8 +332,8 @@ pub enum ParticipantReason {
     Result(authority::QuestionResultRef),
     /// A live stop request addresses the lane's exact claim.
     Stop(String),
-    /// The lane left after its latest contribution; until it contributes
-    /// again or a later packet addresses it, only native duties keep it.
+    /// The lane recorded a leave; only later message/request attention and
+    /// native duties can make it listen.
     Left {
         /// The leave's publication identity.
         publication: RoomAuthorityStamp,

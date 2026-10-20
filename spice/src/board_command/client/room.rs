@@ -245,9 +245,7 @@ fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
         )
     }];
     if answer.kept.is_empty() {
-        lines.push(
-            "no longer listening; a contribution or a new invitation restores listening".to_owned(),
-        );
+        lines.push("no longer listening; a new invitation restores listening".to_owned());
         return lines.join("\n");
     }
     lines.push("still listening until these native duties end; leaving ends none:".to_owned());

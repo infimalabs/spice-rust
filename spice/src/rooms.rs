@@ -261,7 +261,7 @@ pub enum ParticipationReason {
 pub enum AttentionReason {
     /// The lane has current relevant native work.
     Work { task: TaskStamp },
-    /// The lane contributed substantively at or after the supplied cutoff.
+    /// The lane authored a room message at or after the supplied cutoff.
     Activity {
         publication: RoomAuthorityStamp,
         at: Instant,
@@ -335,8 +335,8 @@ pub struct RoomLaneAttention {
     pub availability: LaneAvailability,
     pub participation: Vec<ParticipationReason>,
     pub attention: Vec<AttentionReason>,
-    /// The lane's leave in force: no contribution followed it. Only native
-    /// duties and later invitations remain in `attention`.
+    /// The lane's leave in force: no authored room message followed it. Only
+    /// native duties and later requests remain in `attention`.
     pub left: Option<RoomAuthorityStamp>,
     /// Derived-listening intervals ended by a leave. Retained after a return so
     /// publications skipped while left never become owed retroactively.
@@ -400,7 +400,7 @@ struct LaneFold {
 }
 
 impl LaneFold {
-    /// The leave no later contribution ended.
+    /// The leave no later authored room message ended.
     fn leave(&self) -> Option<&(Instant, RoomAuthorityStamp)> {
         self.latest_leave.as_ref().filter(|leave| {
             self.latest_activity
@@ -441,8 +441,9 @@ impl LaneFold {
 /// Derive one room's complete bounded attention view.
 ///
 /// `activity_since` is supplied by the caller, keeping wall-clock policy out of
-/// replay. Only admitted lane-authored MSG packets, contributions, and leaves
-/// can create participation or activity; an authored observation never does.
+/// replay. Only admitted lane-authored MSG packets create activity; contributions
+/// create participation, and leaves bound derived listening. An authored
+/// observation never does.
 /// Replaying them is idempotent. Current duties and work survive vacancy and
 /// activity expiry.
 pub fn derive_room_attention(
@@ -550,7 +551,8 @@ fn fold_publications(
         let left = envelope.fact.read::<RoomLeft>();
         let contributed = envelope.fact.read::<RoomContributed>();
         // An authored observation makes no one a participant, so only MSG
-        // packets, contributions, and leaves fold here.
+        // packets, contributions, and leaves fold here. Contributions record
+        // participation without subscribing their author to later publications.
         let Some((anchor, publication)) = envelope
             .fact
             .read::<RoomMessaged>()
@@ -599,24 +601,36 @@ fn fold_publications(
             at: envelope.at,
             publication: Some(publication.clone()),
         };
-        let latest = if left.is_some() {
+        if left.is_some() {
             folded
                 .derived_listening
                 .push((event, DerivedListeningEvent::Leave));
-            &mut folded.latest_leave
-        } else {
-            folded
-                .participation
-                .insert(ParticipationReason::Contribution {
-                    publication: publication.clone(),
-                });
-            folded
-                .derived_listening
-                .push((event, DerivedListeningEvent::Restore));
-            &mut folded.latest_activity
-        };
-        if latest.as_ref().is_none_or(|known| observed > *known) {
-            *latest = Some(observed);
+            if folded
+                .latest_leave
+                .as_ref()
+                .is_none_or(|known| observed > *known)
+            {
+                folded.latest_leave = Some(observed);
+            }
+            continue;
+        }
+        folded
+            .participation
+            .insert(ParticipationReason::Contribution {
+                publication: publication.clone(),
+            });
+        if contributed.is_some() {
+            continue;
+        }
+        folded
+            .derived_listening
+            .push((event, DerivedListeningEvent::Restore));
+        if folded
+            .latest_activity
+            .as_ref()
+            .is_none_or(|known| observed > *known)
+        {
+            folded.latest_activity = Some(observed);
         }
     }
     Ok(())
@@ -898,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn a_leave_ends_derived_listening_until_the_lane_returns() {
+    fn a_contribution_records_participation_without_restoring_listening() {
         let room = task("1kKRRsDR0");
         let lane_id = uuid("01");
         let peer = uuid("06");
@@ -909,6 +923,17 @@ mod tests {
         let returned_contribution = publication(&room, "1kKRRsDR4", lane_id, at(43), 4);
         let after_return = publication(&room, "1kKRRsDR5", peer, at(44), 5);
         let earlier = invitation(&room, lane_id, "1kKRRsDS0", at(40));
+
+        let participant = project_one(
+            &room,
+            std::slice::from_ref(&contributed),
+            &[],
+            &[],
+            &topology,
+        );
+        assert!(participant.participates());
+        assert!(!participant.listens(), "{participant:?}");
+        assert_eq!(participant.left, None);
 
         let row = project_one(
             &room,
@@ -952,11 +977,12 @@ mod tests {
             &[],
             &topology,
         );
-        assert_eq!(returned.left, None);
-        assert!(matches!(
-            returned.attention.as_slice(),
-            [AttentionReason::Activity { .. }]
-        ));
+        assert_eq!(
+            returned.left,
+            Some("1kKRRsDR2".parse().expect("leave identity"))
+        );
+        assert!(returned.participates());
+        assert!(!returned.listens(), "{returned:?}");
 
         let source = |seq: u64, publication: &str, minute| CatchUpSource {
             seq: Seq::new(seq).expect("positive source position"),
@@ -980,14 +1006,9 @@ mod tests {
             CatchUpBudget::STANDARD,
         )
         .expect("catch-up selects");
-        assert_eq!(
-            catch_up
-                .items
-                .iter()
-                .map(|item| item.seq.get())
-                .collect::<Vec<_>>(),
-            [5],
-            "the publication skipped while left never replays after return"
+        assert!(
+            catch_up.items.is_empty(),
+            "a contribution does not subscribe its author: {catch_up:?}"
         );
     }
 
@@ -1223,7 +1244,7 @@ mod tests {
         assert!(row.listens());
         assert_eq!(row.availability, LaneAvailability::Occupied);
         assert_eq!(row.participation.len(), 1);
-        assert_eq!(row.attention.len(), 5);
+        assert_eq!(row.attention.len(), 4);
     }
 
     #[test]

@@ -82,7 +82,7 @@ fn listening(
             Reason::Work { task: work } => format!("work {}", task(work)),
             Reason::Responsibility { task: work } => format!("responsibility {}", task(work)),
             Reason::Activity { publication, .. } => {
-                format!("recent contribution {publication}")
+                format!("recent room message {publication}")
             }
             Reason::Invitation { key } => format!("invitation {key}"),
             Reason::Asked { source } => format!("asked from {source}"),

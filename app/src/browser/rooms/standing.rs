@@ -330,7 +330,7 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
         ParticipantReason::Activity(publication) => (
             "activity",
             "Active",
-            format!("Latest contribution {publication} is inside the activity window"),
+            format!("Latest room message {publication} is inside the activity window"),
         ),
         ParticipantReason::Invitation(key) => (
             "invitation",

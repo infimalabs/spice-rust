@@ -611,7 +611,7 @@ fn room_post_reports_occupied_vacant_and_unknown_listeners_without_waking() {
 }
 
 #[test]
-fn a_left_lane_stops_listening_until_it_contributes_again() {
+fn a_left_lane_stops_listening_until_it_messages_again() {
     let (_root, bus, epoch, seats) = fixture("room-leave-listening", 1);
     let lane = seats[0].lane;
     let room = add(
