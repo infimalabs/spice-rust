@@ -777,10 +777,6 @@ impl Publication {
         &self.publication
     }
 
-    pub(crate) fn at(&self) -> Instant {
-        self.at
-    }
-
     pub(crate) fn author_lane(&self) -> Option<CanonicalUuid> {
         match self.actor.actor {
             Actor::Lane(lane) => Some(lane),

@@ -10,7 +10,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::rooms::RoomAuthorityStamp;
 use wire::{CanonicalUuid, Seq, TaskStamp};
 
 use super::{RoomAttention, RoomProjectionError};
@@ -70,11 +69,6 @@ pub struct CatchUpSource {
 pub enum CatchUpKind {
     /// A room publication, owed while the lane listens to its room.
     Publication {
-        /// Native identity of the publication.
-        publication: RoomAuthorityStamp,
-        /// Journal-authored instant, paired with `publication` for total
-        /// ordering.
-        at: wire::Instant,
         /// Lane that authored it; operator posts have none.
         author: Option<CanonicalUuid>,
         /// Lanes its packet already reached as directed routes.
@@ -130,15 +124,10 @@ pub fn select_catch_up(
     let mut passed = None;
     for source in sources.into_iter().filter(|source| source.seq > after) {
         let owed = match &source.kind {
-            CatchUpKind::Publication {
-                publication,
-                at,
-                author,
-                recipients,
-            } => {
+            CatchUpKind::Publication { author, recipients } => {
                 listened
                     .get(&source.room)
-                    .is_some_and(|attention| attention.listens_to(*at, publication))
+                    .is_some_and(|attention| attention.listens_to(source.seq))
                     && *author != Some(lane)
                     && !recipients.contains(&lane)
             }
@@ -220,13 +209,6 @@ mod tests {
             seq: seq(position),
             room: room.clone(),
             kind: CatchUpKind::Publication {
-                publication: RoomAuthorityStamp::for_micros(
-                    1_760_000_000_000_000 + i64::try_from(position).expect("small position"),
-                )
-                .expect("fixture publication"),
-                at: "2026-10-12T07:40:00.000Z"
-                    .parse()
-                    .expect("fixture publication instant"),
                 author,
                 recipients: recipients.iter().copied().collect(),
             },

@@ -274,16 +274,16 @@ fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome
         {
             newest.insert(
                 noticed.lane,
-                (notice_source(&noticed.evidence), envelope.at),
+                (notice_source(&noticed.evidence), envelope.seq),
             );
         }
     }
     Ok(newest
         .into_iter()
-        .map(|(lane, (source, at))| RoomDuty {
+        .map(|(lane, (source, position))| RoomDuty {
             room: room.clone(),
             lane,
-            kind: RoomDutyKind::Asked { source, at },
+            kind: RoomDutyKind::Asked { source, position },
             standing: RoomDutyStanding::Owed,
         })
         .collect())

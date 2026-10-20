@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use wire::rooms::{RoomAuthorityStamp, RoomContributed, RoomLeft, RoomMessaged};
-use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
+use wire::{Actor, CanonicalUuid, Seq, TaskStamp};
 
 pub mod awareness;
 mod catch_up;
@@ -108,10 +108,10 @@ impl RoomWork {
     }
 }
 
-/// Current standing of a room-scoped delivery or result duty.
+/// Current standing of a room-scoped attention duty.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RoomDutyStanding {
-    /// The lane still owes this delivery or result.
+    /// The lane still owes this duty.
     Owed,
     /// A terminal disposition ended the duty.
     Settled,
@@ -120,23 +120,23 @@ pub enum RoomDutyStanding {
 /// Kind and existing public key of one room-scoped duty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoomDutyKind {
-    /// A recorded Design request asked the lane about this room at `at`;
+    /// A recorded Design request asked the lane about this room at `position`;
     /// `source` names the retained task or conversation that supported it.
-    Asked { source: String, at: Instant },
+    Asked { source: String, position: Seq },
     /// A live room coordination request addressing the lane.
     Coordination { key: String },
     /// A live stop request addressing the lane's claim.
     Stop { key: String },
 }
 
-/// One current room-scoped duty from admitted delivery/result authority.
+/// One current room-scoped attention duty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoomDuty {
     /// Anchor whose conversation carries the duty.
     pub room: TaskStamp,
-    /// Logical lane that owes the disposition or result.
+    /// Logical lane that owes the duty.
     pub lane: CanonicalUuid,
-    /// Existing delivery/result identity and semantics.
+    /// Existing duty identity and semantics.
     pub kind: RoomDutyKind,
     /// Whether the authority still requires action.
     pub standing: RoomDutyStanding,
@@ -162,7 +162,7 @@ pub struct RoomProjectionSources<'a> {
     pub publications: Declared<&'a [wire::Envelope<wire::AnyFact>]>,
     /// Relevant current work derived from native task heads.
     pub work: Declared<&'a [RoomWork]>,
-    /// Current room-scoped delivery and result duties.
+    /// Current room-scoped attention duties.
     pub duties: Declared<&'a [RoomDuty]>,
     /// Explicit current responsibilities.
     pub responsibilities: Declared<&'a [RoomResponsibility]>,
@@ -288,11 +288,8 @@ pub struct RoomLeaveInterval {
 }
 
 impl RoomLeaveInterval {
-    fn contains(&self, at: Instant, publication: &RoomAuthorityStamp) -> bool {
-        let point = RoomAttentionPoint {
-            at,
-            publication: Some(publication.clone()),
-        };
+    fn contains(&self, position: Seq) -> bool {
+        let point = RoomAttentionPoint { position };
         point > self.after && self.until.as_ref().is_none_or(|until| point < *until)
     }
 }
@@ -338,15 +335,15 @@ impl RoomLaneAttention {
         !self.attention.is_empty()
     }
 
-    /// Whether current authority admits this historical publication.
+    /// Whether current authority admits the publication at `position`.
     #[must_use]
-    fn listens_to(&self, at: Instant, publication: &RoomAuthorityStamp) -> bool {
+    fn listens_to(&self, position: Seq) -> bool {
         self.listens()
             && (self.attention.iter().any(AttentionReason::is_native)
                 || !self
                     .leave_intervals
                     .iter()
-                    .any(|interval| interval.contains(at, publication)))
+                    .any(|interval| interval.contains(position)))
     }
 }
 
@@ -358,12 +355,9 @@ pub struct RoomAttention {
     pub lanes: Vec<RoomLaneAttention>,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RoomAttentionPoint {
-    at: Instant,
-    /// Design requests have no room publication identity and are admitted only
-    /// when their instant is strictly later than the leave they restore.
-    publication: Option<RoomAuthorityStamp>,
+    position: Seq,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -376,16 +370,16 @@ enum DerivedListeningEvent {
 struct LaneFold {
     participation: BTreeSet<ParticipationReason>,
     attention: BTreeSet<AttentionReason>,
-    latest_leave: Option<(Instant, RoomAuthorityStamp)>,
+    latest_leave: Option<(Seq, RoomAuthorityStamp)>,
     /// The lane's newest room publication of any kind; a Design request it
     /// does not postdate is answered or declined.
-    latest_publication: Option<Instant>,
+    latest_publication: Option<Seq>,
     derived_listening: Vec<(RoomAttentionPoint, DerivedListeningEvent)>,
 }
 
 impl LaneFold {
     /// The lane's latest recorded leave.
-    fn leave(&self) -> Option<&(Instant, RoomAuthorityStamp)> {
+    fn leave(&self) -> Option<&(Seq, RoomAuthorityStamp)> {
         self.latest_leave.as_ref()
     }
 
@@ -523,7 +517,7 @@ fn fold_publications(
     lanes: &mut BTreeMap<CanonicalUuid, LaneFold>,
     maximum: usize,
 ) -> Result<(), RoomProjectionError> {
-    let mut seen = BTreeMap::<RoomAuthorityStamp, (CanonicalUuid, Instant)>::new();
+    let mut seen = BTreeMap::<RoomAuthorityStamp, (CanonicalUuid, Seq)>::new();
     for envelope in publications {
         let left = envelope.fact.read::<RoomLeft>();
         let contributed = envelope.fact.read::<RoomContributed>();
@@ -563,22 +557,21 @@ fn fold_publications(
                 "contribution {publication} names a lane other than its author {lane}"
             )));
         }
-        if let Some((known_lane, known_at)) = seen.get(&publication) {
-            if *known_lane != lane || *known_at != envelope.at {
+        if let Some((known_lane, known_position)) = seen.get(&publication) {
+            if *known_lane != lane || *known_position != envelope.seq {
                 return Err(RoomProjectionError::InvalidAuthority(format!(
-                    "publication {publication} has conflicting authorship or time"
+                    "publication {publication} has conflicting authorship or position"
                 )));
             }
             continue;
         }
-        seen.insert(publication.clone(), (lane, envelope.at));
+        seen.insert(publication.clone(), (lane, envelope.seq));
         let folded = lane_fold(lanes, lane, maximum)?;
-        folded.latest_publication = folded.latest_publication.max(Some(envelope.at));
-        let observed = (envelope.at, publication.clone());
+        folded.latest_publication = folded.latest_publication.max(Some(envelope.seq));
+        let observed = (envelope.seq, publication.clone());
         if left.is_some() {
             let event = RoomAttentionPoint {
-                at: envelope.at,
-                publication: Some(publication.clone()),
+                position: envelope.seq,
             };
             folded
                 .derived_listening
@@ -621,20 +614,19 @@ fn fold_attention(
     {
         let folded = lane_fold(lanes, duty.lane, maximum)?;
         let reason = match &duty.kind {
-            RoomDutyKind::Asked { source, at } => {
+            RoomDutyKind::Asked { source, position } => {
                 // The lane's next room publication, a leave included, answers
                 // or declines the request; an owed one postdates every leave
-                // and reopens catch-up from `at`.
+                // and reopens catch-up from its journal position.
                 if folded
                     .latest_publication
-                    .is_some_and(|answered| answered >= *at)
+                    .is_some_and(|answered| answered > *position)
                 {
                     continue;
                 }
                 folded.derived_listening.push((
                     RoomAttentionPoint {
-                        at: *at,
-                        publication: None,
+                        position: *position,
                     },
                     DerivedListeningEvent::Restore,
                 ));
@@ -746,7 +738,7 @@ mod tests {
     use super::*;
     use wire::rooms::RoomContributionKind;
     use wire::{
-        ClaimCell, ClaimDisposition, ClaimHead, Fact, LaneResidency, LeaseHead, Phase,
+        ClaimCell, ClaimDisposition, ClaimHead, Fact, Instant, LaneResidency, LeaseHead, Phase,
         ResidentState, Seq, TaskHead, TaskPreparation, WireVersion, WorkflowHead,
     };
 
@@ -869,13 +861,13 @@ mod tests {
         }
     }
 
-    fn asked(room: &TaskStamp, lane: CanonicalUuid, source: &str, told: Instant) -> RoomDuty {
+    fn asked(room: &TaskStamp, lane: CanonicalUuid, source: &str, position: u64) -> RoomDuty {
         RoomDuty {
             room: room.clone(),
             lane,
             kind: RoomDutyKind::Asked {
                 source: source.to_owned(),
-                at: told,
+                position: Seq::new(position).expect("positive request position"),
             },
             standing: RoomDutyStanding::Owed,
         }
@@ -909,10 +901,10 @@ mod tests {
         let authored = message(&room, "1kKRRsDR1", lane_id, at(40), 1);
         let left = leave(&room, "1kKRRsDR2", lane_id, at(41), 2);
         let missed = message(&room, "1kKRRsDR3", peer, at(42), 3);
-        let returned_contribution = publication(&room, "1kKRRsDR4", lane_id, at(43), 4);
-        let returned_message = message(&room, "1kKRRsDR5", lane_id, at(44), 5);
-        let after_return = message(&room, "1kKRRsDR6", peer, at(45), 6);
-        let earlier = asked(&room, lane_id, "task 1kKRRsDS0", at(40));
+        let returned_contribution = publication(&room, "1kKRRsDR4", lane_id, at(43), 5);
+        let returned_message = message(&room, "1kKRRsDR5", lane_id, at(44), 6);
+        let after_return = message(&room, "1kKRRsDR6", peer, at(45), 7);
+        let earlier = asked(&room, lane_id, "task 1kKRRsDS0", 1);
 
         let participant = project_one(&room, std::slice::from_ref(&authored), &[], &[], &topology);
         assert!(participant.participates());
@@ -930,7 +922,7 @@ mod tests {
         assert!(row.participates(), "history survives the leave");
         assert_eq!(row.left, Some("1kKRRsDR2".parse().expect("leave identity")));
 
-        let later = asked(&room, lane_id, "task 1kKRRsDS1", at(42));
+        let later = asked(&room, lane_id, "task 1kKRRsDS1", 4);
         let requested = project_one(
             &room,
             &[authored.clone(), left.clone()],
@@ -943,11 +935,10 @@ mod tests {
             vec![AttentionReason::Asked {
                 source: "task 1kKRRsDS1".to_owned()
             }],
-            "only the request no publication answered stays owed"
+            "only the request no later publication answered stays owed"
         );
-        let candidate = "1kKRRsDR3".parse().expect("candidate publication identity");
-        assert!(!requested.listens_to(at(41), &candidate));
-        assert!(requested.listens_to(at(42), &candidate));
+        assert!(!requested.listens_to(Seq::new(3).expect("source position")));
+        assert!(requested.listens_to(Seq::new(5).expect("source position")));
 
         let returned = project_one(
             &room,
@@ -973,12 +964,10 @@ mod tests {
             "the answering contribution ends the request: {returned:?}"
         );
 
-        let source = |seq: u64, publication: &str, minute| CatchUpSource {
-            seq: Seq::new(seq).expect("positive source position"),
+        let source = |position: u64| CatchUpSource {
+            seq: Seq::new(position).expect("positive source position"),
             room: room.clone(),
             kind: CatchUpKind::Publication {
-                publication: publication.parse().expect("publication identity"),
-                at: at(minute),
                 author: Some(peer),
                 recipients: BTreeSet::new(),
             },
@@ -991,13 +980,41 @@ mod tests {
                 room: room.clone(),
                 lanes: vec![returned],
             }],
-            vec![source(3, "1kKRRsDR3", 42), source(6, "1kKRRsDR6", 45)],
+            vec![source(3), source(7)],
             CatchUpBudget::STANDARD,
         )
         .expect("catch-up selects");
         assert!(
             catch_up.items.is_empty(),
             "authorship does not subscribe the lane: {catch_up:?}"
+        );
+    }
+
+    #[test]
+    fn design_request_settlement_follows_journal_sequence() {
+        let room = task("1kKRRsDR0");
+        let lane_id = uuid("01");
+        let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
+        let before = message(&room, "1kKRRsDR1", lane_id, at(50), 1);
+        let after = message(&room, "1kKRRsDR2", lane_id, at(30), 3);
+        let request = asked(&room, lane_id, "task 1kKRRsDS0", 2);
+
+        let pending = project_one(
+            &room,
+            std::slice::from_ref(&before),
+            &[],
+            std::slice::from_ref(&request),
+            &topology,
+        );
+        assert!(
+            pending.listens(),
+            "an earlier publication cannot answer the request even with a later wall clock"
+        );
+
+        let answered = project_one(&room, &[before, after], &[], &[request], &topology);
+        assert!(
+            !answered.listens(),
+            "a later publication answers the request even with a regressed wall clock"
         );
     }
 
@@ -1298,7 +1315,7 @@ mod tests {
     fn request_only_and_unknown_lanes_stay_explicit() {
         let room = task("1kKRRsDR0");
         let requested = uuid("01");
-        let duties = vec![asked(&room, requested, "task 1kKRRsDS0", at(29))];
+        let duties = vec![asked(&room, requested, "task 1kKRRsDS0", 29)];
         let topology = residency(Vec::new());
         let projected = derive_room_attention(
             &room,

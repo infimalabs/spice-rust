@@ -541,8 +541,6 @@ fn append_room(
             seq,
             room: room.clone(),
             kind: CatchUpKind::Publication {
-                publication: publication.publication().clone(),
-                at: publication.at(),
                 author: publication.author_lane(),
                 recipients: publication
                     .recipients()
