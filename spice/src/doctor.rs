@@ -14,8 +14,8 @@ use spice::repository::Repository;
 use wire::{
     DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorExtension,
     DoctorExtensionNamespace, DoctorLocations, DoctorObservation, DoctorReport, DoctorTarget,
-    DoctorTool, DoctorToolSource, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
-    SpiceVariable,
+    DoctorTool, DoctorToolRequirement, DoctorToolSource, Fault, FaultClass, Outcome, Refusal,
+    Reply, ReplyPosition, SpiceVariable,
 };
 
 use crate::cli::{self, ExternalTool};
@@ -162,8 +162,11 @@ fn command_report(
             observation: tool_observation(tool, configuration, probe),
         })
         .collect();
+    // An optional tool's absence disables only its own integration, so only
+    // required and conditional tools decide whether the command can run.
     let observation = tools
         .iter()
+        .filter(|tool| tool.requirement != DoctorToolRequirement::Optional)
         .find(|tool| !matches!(tool.observation, DoctorObservation::Ready {}))
         .map_or_else(
             || {
@@ -387,8 +390,6 @@ fn executable(path: &Path) -> Result<(), String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use wire::{DoctorToolRequirement, DoctorToolSource};
-
     use super::*;
 
     struct Probe {
@@ -510,6 +511,46 @@ mod tests {
             default_command_report(dynamic, &missing).observation,
             DoctorObservation::InputRequired { .. }
         ));
+    }
+
+    #[test]
+    fn an_absent_optional_tool_leaves_its_command_ready() {
+        let judge = cli::JUDGE_EXECUTABLE;
+        let command = |path: &[&str]| {
+            cli::contracts()
+                .iter()
+                .find(|contract| contract.path == path)
+                .expect("command contract exists")
+        };
+        let mut without_judge = probe(Ok(()));
+        without_judge.named.insert("git".to_owned(), Ok(()));
+        without_judge
+            .named
+            .insert(judge.to_owned(), Err("judge is absent".to_owned()));
+
+        for path in [&["up"][..], &["task", "done"]] {
+            let row = default_command_report(command(path), &without_judge);
+            assert_eq!(row.observation, DoctorObservation::Ready {}, "{path:?}");
+            assert!(row.tools.iter().any(|tool| {
+                tool.name == judge
+                    && tool.requirement == DoctorToolRequirement::Optional
+                    && tool.observation
+                        == DoctorObservation::Unavailable {
+                            reason: "judge is absent".to_owned(),
+                        }
+            }));
+        }
+
+        let mut without_git = without_judge;
+        without_git
+            .named
+            .insert("git".to_owned(), Err("git is absent".to_owned()));
+        assert_eq!(
+            default_command_report(command(&["task", "done"]), &without_git).observation,
+            DoctorObservation::Unavailable {
+                reason: "git is absent".to_owned(),
+            }
+        );
     }
 
     #[test]
