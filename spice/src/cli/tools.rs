@@ -135,6 +135,19 @@ const JUDGE_TOOL: ExternalTool = ExternalTool {
 pub(super) const TASK_DONE_TOOLS: &[ExternalTool] = &[TASK_GIT_TOOL, JUDGE_TOOL];
 pub(super) const UP_TOOLS: &[ExternalTool] = &[JUDGE_TOOL];
 
+/// The configured vendor program the detached supervisor runs for a lane's
+/// occupant, under that supervisor's runtime, grace, and reap deadlines.
+pub(super) const OCCUPANT_LAUNCH_TOOLS: &[ExternalTool] = &[ExternalTool {
+    name: "omp",
+    owner: "resident::supervisor",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Required,
+    source: ToolSource::VendorConfiguration,
+    bounds: ToolBounds::CommandOwned,
+    cancellation: ToolCancellation::Deadline,
+    network: ToolNetwork::Permitted,
+}];
+
 pub(super) const INSTALL_SYMBOLS_TOOLS: &[ExternalTool] = &[ExternalTool {
     name: "dwarfdump",
     owner: "install::DwarfdumpLookup",
@@ -321,7 +334,7 @@ fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec
             ToolCancellation::Deadline,
             ToolNetwork::Permitted,
         ),
-        ToolSource::SymbolLookupContract => (
+        ToolSource::SymbolLookupContract | ToolSource::VendorConfiguration => (
             ToolMode::Launch,
             ToolBounds::CommandOwned,
             ToolCancellation::Deadline,
