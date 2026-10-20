@@ -30,11 +30,7 @@ pub(crate) struct PlanPreview {
 
 impl PlanPreview {
     fn source(preview: InstallPreview, program: &str) -> Self {
-        let apply = format!(
-            "{} install --apply={}",
-            program_word(program),
-            preview.digest()
-        );
+        let apply = source_apply_command(program, preview.digest());
         Self { preview, apply }
     }
 
@@ -478,18 +474,51 @@ fn invoked_program() -> String {
 }
 
 #[cfg(unix)]
+fn source_apply_command(program: &str, digest: &Digest) -> String {
+    format!("{} install --apply={digest}", program_word(program))
+}
+
+#[cfg(windows)]
+fn source_apply_command(program: &str, digest: &Digest) -> String {
+    windows_apply_command(program, None, digest)
+}
+
+#[cfg(unix)]
 fn program_word(program: &str) -> String {
     shell_words::quote(program).into_owned()
 }
 
-/// PowerShell runs a quoted program only through its call operator.
-#[cfg(windows)]
-fn program_word(program: &str) -> String {
-    if program.contains(char::is_whitespace) {
-        format!("& \"{program}\"")
-    } else {
-        program.to_owned()
+/// Render one Windows install replay with a literal PowerShell program word.
+#[cfg(any(windows, test))]
+fn windows_apply_command(program: &str, package: Option<&str>, digest: &Digest) -> String {
+    let apostrophes = program.bytes().filter(|byte| *byte == b'\'').count();
+    let package_len = package.map_or(0, |path| " --package \"\"".len() + path.len());
+    let mut command = String::with_capacity(
+        "& ''".len()
+            + program.len()
+            + apostrophes
+            + " install".len()
+            + package_len
+            + " --apply=".len()
+            + digest.as_str().len(),
+    );
+    command.push_str("& '");
+    for character in program.chars() {
+        if character == '\'' {
+            command.push_str("''");
+        } else {
+            command.push(character);
+        }
     }
+    command.push_str("' install");
+    if let Some(package) = package {
+        command.push_str(" --package \"");
+        command.push_str(package);
+        command.push('"');
+    }
+    command.push_str(" --apply=");
+    command.push_str(digest.as_str());
+    command
 }
 
 /// The command that reopens `package` and applies its previewed `digest`.
@@ -503,15 +532,9 @@ fn package_apply_command(program: &str, package: &str, digest: &Digest) -> Strin
 }
 
 /// The command that reopens `package` and applies its previewed `digest`.
-///
-/// Windows paths cannot contain `"`, so one double-quoted word stays one
-/// argument, matching the other guidance this installer prints there.
 #[cfg(windows)]
 fn package_apply_command(program: &str, package: &str, digest: &Digest) -> String {
-    format!(
-        "{} install --package \"{package}\" --apply={digest}",
-        program_word(program)
-    )
+    windows_apply_command(program, Some(package), digest)
 }
 
 #[cfg(test)]

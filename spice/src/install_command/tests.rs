@@ -81,6 +81,36 @@ fn package_preview_replays_the_program_and_original_source_as_single_arguments()
 }
 
 #[test]
+fn windows_replay_quotes_every_program_as_one_powershell_literal() {
+    let digest = preview().digest().clone();
+    let package = r"C:\Packages\Spice Release";
+    for (program, rendered) in [
+        ("spice.exe", "& 'spice.exe'"),
+        (r".\spice.exe", r"& '.\spice.exe'"),
+        (
+            r"C:\Program Files\Spice\spice.exe",
+            r"& 'C:\Program Files\Spice\spice.exe'",
+        ),
+        (
+            r"C:\Tools&Stuff;(x)\$bin`\spice.exe",
+            r"& 'C:\Tools&Stuff;(x)\$bin`\spice.exe'",
+        ),
+        (r"C:\O'Brien\spice.exe", r"& 'C:\O''Brien\spice.exe'"),
+    ] {
+        assert_eq!(
+            windows_apply_command(program, None, &digest),
+            format!("{rendered} install --apply={digest}"),
+            "source replay for {program:?}",
+        );
+        assert_eq!(
+            windows_apply_command(program, Some(package), &digest),
+            format!("{rendered} install --package \"{package}\" --apply={digest}"),
+            "package replay for {program:?}",
+        );
+    }
+}
+
+#[test]
 fn guidance_never_changes_the_structured_preview() {
     let preview = preview();
     let expected = serde_json::to_value(&preview).expect("preview encodes");
