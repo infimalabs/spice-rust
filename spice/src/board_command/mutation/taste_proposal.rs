@@ -81,12 +81,16 @@ pub(in crate::board_command) fn taste_proposal_add(
         claim: false,
         draft: false,
     };
-    let origin =
-        match resolve_creation_origin(normalized.origin.as_ref(), command.actor(), &snapshot, None)
-        {
-            Ok(origin) => origin,
-            Err(outcome) => return outcome,
-        };
+    let origin = match resolve_creation_origin(
+        normalized.origin.as_ref(),
+        command.actor(),
+        &snapshot,
+        None,
+        false,
+    ) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
     let creation = match task_creation_capture(bus, command, &snapshot) {
         Ok(creation) => creation,
         Err(outcome) => return outcome,

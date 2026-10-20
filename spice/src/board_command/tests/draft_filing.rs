@@ -132,15 +132,6 @@ fn draft_creation_refusals_name_their_repair_and_write_nothing() {
             "task::draft-claim-refused",
             "spice task file",
         ),
-        (
-            lane.clone(),
-            TaskAdd {
-                origin: None,
-                ..draft_add("DRAFT-origin01", None, &[])
-            },
-            "task::origin-required",
-            "--origin",
-        ),
     ] {
         let mut expected = vec![Witness::Absence {
             task: stamp(&add.title),
@@ -167,6 +158,48 @@ fn draft_creation_refusals_name_their_repair_and_write_nothing() {
         facts,
         "refused draft creation wrote facts"
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn origin_refusal_offers_the_draft_route_only_to_an_operator_add() {
+    let (root, bus, epoch, seats) = fixture("draft-origin-route", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let facts = fact_count(&bus);
+    for (actor, draft, offered) in [
+        (Actor::Operator, false, true),
+        (lane.clone(), false, false),
+        (lane, true, false),
+    ] {
+        let add = TaskAdd {
+            origin: None,
+            draft,
+            ..draft_add("DRAFT-route001", None, &[])
+        };
+        let outcome = issue(
+            &bus,
+            epoch,
+            actor.clone(),
+            CommandKind::TaskAdd,
+            vec![Witness::Absence {
+                task: stamp(&add.title),
+            }],
+            &add,
+        );
+        assert_eq!(refusal_reason(&outcome), "task::origin-required");
+        let Outcome::Refusal(refusal) = outcome else {
+            unreachable!("refusal was matched above");
+        };
+        let explanation = refusal.explanation();
+        assert!(explanation.contains("--origin ack:"), "{explanation}");
+        assert_eq!(
+            explanation.contains("--draft --project PROJECT"),
+            offered,
+            "{actor:?} draft={draft}: {explanation}",
+        );
+    }
+    assert_eq!(fact_count(&bus), facts, "refused creation wrote facts");
     clean(&root, bus);
 }
 

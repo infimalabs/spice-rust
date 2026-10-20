@@ -1367,11 +1367,14 @@ pub(super) fn authored_provenance(
 /// an intrinsic cause they have already proved, such as a reviewed parent,
 /// an authored-document digest, or an operator Draft. Dependency edges never
 /// participate: scheduling order and creation causality are independent facts.
+/// `offers_draft` names the operator Draft route in the refusal; only a
+/// `task add` whose actor holds the Operator role can take it.
 pub(super) fn resolve_creation_origin(
     authored: Option<&wire::Origin>,
     actor: &Actor,
     snapshot: &ValidatedSnapshot,
     intrinsic: Option<wire::TaskProvenance>,
+    offers_draft: bool,
 ) -> Result<CreationCause, Outcome<CommandAnswer>> {
     if let Some(origin) = authored {
         return CreationCause::of(authored_provenance(origin)?);
@@ -1393,10 +1396,20 @@ pub(super) fn resolve_creation_origin(
     if let Some(provenance) = intrinsic {
         return CreationCause::of(provenance);
     }
+    let origins = "supply --origin ack:<steering-key> or --origin task:<parent-born-stamp>, or create while holding one active claim";
+    let with_draft;
+    let detail = if offers_draft {
+        with_draft = format!(
+            "{origins}; without either, record a Draft with --draft --project PROJECT and file it with spice task file DRAFT"
+        );
+        with_draft.as_str()
+    } else {
+        origins
+    };
     Err(refusal(
         "task::origin-required",
         Some(actor.to_string()),
-        "supply --origin ack:<steering-key> or --origin task:<parent-born-stamp>, or create while holding one active claim; without either, record a Draft with --draft --project PROJECT and file it with spice task file DRAFT",
+        detail,
     ))
 }
 

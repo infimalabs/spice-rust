@@ -154,7 +154,8 @@ pub(in crate::board_command) fn task_oops_add(
         }
     };
     let origin =
-        match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, None) {
+        match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, None, false)
+        {
             Ok(origin) => origin,
             Err(outcome) => return outcome,
         };

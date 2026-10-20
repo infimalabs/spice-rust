@@ -252,11 +252,17 @@ fn create_task<B: serde::Serialize>(
         return unfiled_dependency_refusal(&unfiled);
     }
     let intrinsic = operator_draft_origin(command, filing);
-    let origin =
-        match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, intrinsic) {
-            Ok(origin) => origin,
-            Err(outcome) => return outcome,
-        };
+    let offers_draft = command.holds(wire::principal::PrincipalRole::Operator);
+    let origin = match resolve_creation_origin(
+        add.origin.as_ref(),
+        command.actor(),
+        &snapshot,
+        intrinsic,
+        offers_draft,
+    ) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
     let creation = match task_creation_capture(bus, command, &snapshot) {
         Ok(creation) => creation,
         Err(outcome) => return outcome,

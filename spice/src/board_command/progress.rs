@@ -832,7 +832,7 @@ fn prepare_review(
         followups: review_followups(review, verdict, &statement),
     };
     let parent = wire::TaskProvenance::Task(entry.born().clone());
-    let origin = resolve_creation_origin(None, command.actor(), &snapshot, Some(parent))?;
+    let origin = resolve_creation_origin(None, command.actor(), &snapshot, Some(parent), false)?;
     let git = publish_task_boundary(repository, &snapshot, command, entry)?;
     let creation = review_followup_creation(bus, command, &snapshot, review)?;
     Ok(PreparedReview {
