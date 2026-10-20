@@ -104,15 +104,17 @@ staged ZIP bytes from it. The Windows target inventory names `bin/spice.exe`
 and the matching `symbols/spice.pdb`; both are package members, while
 `proof.json` is the package's detached signature artifact.
 
-The Darwin target inventories one schema-3 symbol artifact containing only the
-captured `Info.plist` and complete `DWARF/spice` bytes, encoded as canonical
-base64 fields. Either member and their combined raw length are bounded at
-402,650,112 bytes; the complete encoded artifact is bounded at 536,870,912
-bytes. Schema 2's numeric-array encoding is retired and refused as last written
-by release `0.2.0-dev.0`, never decoded through a predecessor arm. Capture
-admits `dsymutil`'s optional
-`Relocations/<one-architecture>/spice.yml` by-product but does not publish it;
-any other extra dSYM entry refuses staging.
+The Darwin target inventories one schema-4 symbol artifact containing only the
+captured `Info.plist` and complete `DWARF/spice` bytes. A short canonical
+metadata header is followed directly by one deterministic deflate stream over
+both members; their decoded lengths split the stream without duplicating either
+member or expanding it through a text encoding. Either
+decoded member and their combined decoded length are bounded at 402,653,184
+bytes; the complete compressed artifact is bounded at 268,435,456 bytes.
+Schemas 2 and 3 are retired and refused as last written by release
+`0.2.0-dev.0`, never decoded through predecessor arms. Capture admits
+`dsymutil`'s optional `Relocations/<one-architecture>/spice.yml` by-product but
+does not publish it; any other extra dSYM entry refuses staging.
 
 Windows deliberately admits no embedded Authenticode certificate. The
 executable, PDB, payload, linked app archive, build pins, provider run, runner
