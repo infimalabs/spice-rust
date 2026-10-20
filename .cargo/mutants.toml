@@ -1,0 +1,8 @@
+exclude_re = [
+    # Equivalent: Landing.sequence is unique per landing fact; equality occurs only on the
+    # BTreeMap entry's first insertion, where assigning that landing to itself changes nothing.
+    "^dist/src/notes\\.rs:163:33: replace > with >= in fold_entries$",
+    # Equivalent: Landing.sequence is unique per landing fact; equality occurs only on the
+    # standing entry's first insertion, where replacing the tuple with itself changes nothing.
+    "^dist/src/notes\\.rs:168:37: replace > with >= in fold_entries$",
+]
