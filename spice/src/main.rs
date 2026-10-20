@@ -284,7 +284,7 @@ fn main() {
         _ => not_landed(contract),
     };
     #[cfg(not(target_arch = "wasm32"))]
-    deliver(&outcome, form);
+    deliver_display(&outcome, form);
 }
 
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]

@@ -221,6 +221,17 @@ pub struct AppOpen {
     pub epoch: CanonicalUuid,
 }
 
+/// The first-run page: where the console answers and how to seat an agent.
+impl fmt::Display for AppOpen {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "Spice is running at {}", self.endpoint)?;
+        write!(
+            formatter,
+            "Seat an agent lane with `spice lane add [WORKTREE]`."
+        )
+    }
+}
+
 /// Deterministic environment and lifecycle receipt returned by `spice demo`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
