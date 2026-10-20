@@ -176,7 +176,7 @@ fn draft_creation_admitted(add: &TaskAdd) -> Result<(), Outcome<CommandAnswer>> 
 
 fn manual_project_repair(projects: &ProjectPolicy) -> String {
     format!(
-        "use {}..={} dotted segments of [0-9a-z_]+ without a leading dot",
+        "name --project PROJECT with {}..={} dotted segments of [0-9a-z_]+ without a leading dot",
         projects.public_min_depth(),
         projects.public_max_depth(),
     )
