@@ -4114,6 +4114,7 @@ version = "0.0.0"
 dependencies = [
  "base64",
  "blake3",
+ "flate2",
  "jiff",
  "serde",
  "serde_json",

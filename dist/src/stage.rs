@@ -14,7 +14,7 @@ use crate::pins::{PinError, RequiredPins};
 
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
-const MAC_SYMBOL_PATH: &str = "symbols/spice.dSYM.json";
+const MAC_SYMBOL_PATH: &str = "symbols/spice.symbols";
 const WINDOWS_DEBUG_PATH: &str = "symbols/spice.pdb";
 
 /// Build work occurs in this fixed order.

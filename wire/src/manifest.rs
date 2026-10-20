@@ -2,11 +2,12 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::io;
+use std::io::{self, Read, Write};
 use std::str::FromStr;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
+use flate2::Compression;
+use flate2::read::DeflateDecoder;
+use flate2::write::DeflateEncoder;
 use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -63,18 +64,17 @@ pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
 pub const TARGET_PAYLOAD_VERSION: u16 = 5;
 /// The sole current deterministic macOS symbol artifact schema.
-pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 3;
-/// Most encoded bytes one macOS symbol artifact may carry.
-pub const MAC_SYMBOL_ARTIFACT_MAX_BYTES: u64 = 512 * 1024 * 1024;
-const MAC_SYMBOL_ENCODING_OVERHEAD: u64 = 4096;
-/// Most raw bytes the two published dSYM members may carry together.
-pub const MAC_SYMBOL_RAW_BYTES_LIMIT: u64 =
-    ((MAC_SYMBOL_ARTIFACT_MAX_BYTES - MAC_SYMBOL_ENCODING_OVERHEAD) / 4) * 3;
-/// Most raw bytes either published dSYM member may carry.
+pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 4;
+/// Most encoded bytes one compressed macOS symbol artifact may carry.
+pub const MAC_SYMBOL_ARTIFACT_MAX_BYTES: u64 = 256 * 1024 * 1024;
+/// Most decoded bytes the two published dSYM members may carry together.
+pub const MAC_SYMBOL_RAW_BYTES_LIMIT: u64 = 384 * 1024 * 1024;
+/// Most decoded bytes either published dSYM member may carry.
 pub const MAC_SYMBOL_MEMBER_BYTES_LIMIT: u64 = MAC_SYMBOL_RAW_BYTES_LIMIT;
-const RETIRED_MAC_SYMBOL_ARTIFACTS: &[(u16, &str)] = &[(2, "0.2.0-dev.0")];
-const MAC_SYMBOL_BASE64_CHUNK_BYTES: usize = 3 * 4096;
-const MAC_SYMBOL_BASE64_CHUNK_ENCODED_BYTES: usize = 4 * 4096;
+const RETIRED_MAC_SYMBOL_ARTIFACTS: &[(u16, &str)] = &[(2, "0.2.0-dev.0"), (3, "0.2.0-dev.0")];
+const MAC_SYMBOL_DEFLATE_LEVEL: u32 = 6;
+const MAC_SYMBOL_MAGIC: &[u8] = b"spice-macos-symbol-v4\n";
+const MAC_SYMBOL_HEADER_MAX_BYTES: usize = 4096;
 const MACHO_UUID_LENGTH: usize = 36;
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
@@ -399,7 +399,7 @@ impl ReleaseTarget {
     #[must_use]
     pub const fn debug_path(self) -> Option<&'static str> {
         match self {
-            Self::Aarch64AppleDarwin => Some("symbols/spice.dSYM.json"),
+            Self::Aarch64AppleDarwin => Some("symbols/spice.symbols"),
             Self::X86_64UnknownLinuxMusl => None,
             Self::X86_64PcWindowsMsvc => Some("symbols/spice.pdb"),
         }
@@ -610,39 +610,32 @@ pub struct MacSymbolArtifact {
 }
 
 impl MacSymbolArtifact {
-    /// Encode the sole current canonical artifact without copying either raw
-    /// member into an intermediate text value.
+    /// Encode the sole current canonical artifact by streaming one deterministic
+    /// deflate stream through canonical base64.
     ///
     /// # Errors
     ///
     /// Refuses a stale schema or a raw or encoded size above its fixed bound.
     pub fn encode(&self) -> Result<Vec<u8>, MacSymbolArtifactError> {
         self.require_current_and_bounded()?;
-        let encoded_members = base64_length(self.info.len())
-            .and_then(|info| {
-                base64_length(self.dwarf.len()).and_then(|dwarf| info.checked_add(dwarf))
-            })
-            .ok_or(MacSymbolArtifactError::RawSize)?;
-        let mut encoded = Vec::with_capacity(
-            encoded_members
-                .checked_add(MAC_SYMBOL_ENCODING_OVERHEAD as usize)
-                .ok_or(MacSymbolArtifactError::RawSize)?,
-        );
-        write_mac_symbol_artifact(self, &mut encoded).map_err(MacSymbolArtifactError::Encode)?;
-        if !mac_symbol_encoded_bytes_admitted(encoded.len() as u64) {
+        let mut encoded = BoundedBytes::new(MAC_SYMBOL_ARTIFACT_MAX_BYTES as usize);
+        let result = write_mac_symbol_artifact(self, &mut encoded);
+        if encoded.exceeded {
             return Err(MacSymbolArtifactError::EncodedSize {
-                observed: encoded.len() as u64,
+                observed: MAC_SYMBOL_ARTIFACT_MAX_BYTES + 1,
             });
         }
-        Ok(encoded)
+        result.map_err(MacSymbolArtifactError::Encode)?;
+        Ok(encoded.bytes)
     }
 
     /// Decode and admit only the sole current canonical artifact.
     ///
     /// # Errors
     ///
-    /// Refuses oversize, malformed, noncanonical, and retired artifacts before
-    /// exposing their members. A known retired schema names its last writer.
+    /// Refuses oversize, malformed, noncanonical, corrupt, and retired
+    /// artifacts before exposing their members. A known retired schema names
+    /// its last writer.
     pub fn decode(bytes: &[u8]) -> Result<Self, MacSymbolArtifactError> {
         if !mac_symbol_encoded_bytes_admitted(bytes.len() as u64) {
             return Err(MacSymbolArtifactError::EncodedSize {
@@ -653,25 +646,49 @@ impl MacSymbolArtifact {
         if version != MAC_SYMBOL_ARTIFACT_VERSION {
             return Err(MacSymbolArtifactError::Version {
                 version,
-                release: RETIRED_MAC_SYMBOL_ARTIFACTS
-                    .iter()
-                    .find_map(|(retired, release)| (*retired == version).then_some(*release)),
+                release: retired_mac_symbol_release(version),
             });
         }
-        let encoded: EncodedMacSymbolArtifact<'_> = serde_json::from_slice(bytes)
+        let (header, compressed) = current_mac_symbol_parts(bytes)?;
+        let encoded: EncodedMacSymbolArtifact<'_> = serde_json::from_slice(header)
             .map_err(|error| MacSymbolArtifactError::Decode(error.to_string()))?;
+        if encoded.version != MAC_SYMBOL_ARTIFACT_VERSION {
+            return Err(MacSymbolArtifactError::Version {
+                version: encoded.version,
+                release: retired_mac_symbol_release(encoded.version),
+            });
+        }
+        if !mac_symbol_raw_bytes_admitted(encoded.info_bytes, encoded.dwarf_bytes) {
+            return Err(MacSymbolArtifactError::RawSize);
+        }
+        let info_bytes =
+            usize::try_from(encoded.info_bytes).map_err(|_| MacSymbolArtifactError::RawSize)?;
+        let raw_bytes = encoded
+            .info_bytes
+            .checked_add(encoded.dwarf_bytes)
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .ok_or(MacSymbolArtifactError::RawSize)?;
+        let decoder = DeflateDecoder::new(compressed);
+        let mut limited = decoder.take((raw_bytes as u64).saturating_add(1));
+        let mut raw = Vec::new();
+        limited
+            .read_to_end(&mut raw)
+            .map_err(|error| MacSymbolArtifactError::Decode(error.to_string()))?;
+        if raw.len() != raw_bytes {
+            return Err(MacSymbolArtifactError::Decode(format!(
+                "decoded {} bytes, expected {raw_bytes}",
+                raw.len()
+            )));
+        }
+        let dwarf = raw.split_off(info_bytes);
         let artifact = Self {
             version: encoded.version,
             uuid: encoded.uuid.to_owned(),
             executable: encoded.executable,
             commit: encoded.commit.to_owned(),
             dirty: encoded.dirty,
-            info: STANDARD
-                .decode(encoded.info)
-                .map_err(|error| MacSymbolArtifactError::Decode(error.to_string()))?,
-            dwarf: STANDARD
-                .decode(encoded.dwarf)
-                .map_err(|error| MacSymbolArtifactError::Decode(error.to_string()))?,
+            info: raw,
+            dwarf,
         };
         artifact.require_current_and_bounded()?;
         let mut canonical = CanonicalBytes::new(bytes);
@@ -687,19 +704,10 @@ impl MacSymbolArtifact {
         if self.version != MAC_SYMBOL_ARTIFACT_VERSION {
             return Err(MacSymbolArtifactError::Version {
                 version: self.version,
-                release: RETIRED_MAC_SYMBOL_ARTIFACTS
-                    .iter()
-                    .find_map(|(retired, release)| (*retired == self.version).then_some(*release)),
+                release: retired_mac_symbol_release(self.version),
             });
         }
-        let info = self.info.len() as u64;
-        let dwarf = self.dwarf.len() as u64;
-        if info > MAC_SYMBOL_MEMBER_BYTES_LIMIT
-            || dwarf > MAC_SYMBOL_MEMBER_BYTES_LIMIT
-            || info
-                .checked_add(dwarf)
-                .is_none_or(|bytes| bytes > MAC_SYMBOL_RAW_BYTES_LIMIT)
-        {
+        if !mac_symbol_raw_bytes_admitted(self.info.len() as u64, self.dwarf.len() as u64) {
             return Err(MacSymbolArtifactError::RawSize);
         }
         Ok(())
@@ -726,8 +734,8 @@ struct EncodedMacSymbolArtifact<'a> {
     executable: Digest,
     commit: &'a str,
     dirty: bool,
-    info: &'a str,
-    dwarf: &'a str,
+    info_bytes: u64,
+    dwarf_bytes: u64,
 }
 
 /// Why a macOS symbol artifact did not cross its current schema boundary.
@@ -743,9 +751,11 @@ pub enum MacSymbolArtifactError {
         version: u16,
         release: Option<&'static str>,
     },
-    #[error("macOS symbol artifact raw members exceed their fixed byte limit")]
+    #[error("macOS symbol artifact decoded members exceed their fixed byte limit")]
     RawSize,
-    #[error("macOS symbol artifact has {observed} encoded bytes, exceeding its fixed byte limit")]
+    #[error(
+        "macOS symbol artifact has at least {observed} encoded bytes, exceeding its fixed byte limit"
+    )]
     EncodedSize { observed: u64 },
     #[error("macOS symbol artifact does not decode: {0}")]
     Decode(String),
@@ -755,8 +765,17 @@ pub enum MacSymbolArtifactError {
     NonCanonical,
 }
 
+fn retired_mac_symbol_release(version: u16) -> Option<&'static str> {
+    RETIRED_MAC_SYMBOL_ARTIFACTS
+        .iter()
+        .find_map(|(retired, release)| (*retired == version).then_some(*release))
+}
+
 fn mac_symbol_artifact_version(bytes: &[u8]) -> Result<u16, MacSymbolArtifactError> {
-    let version = bytes
+    if bytes.starts_with(MAC_SYMBOL_MAGIC) {
+        return Ok(MAC_SYMBOL_ARTIFACT_VERSION);
+    }
+    bytes
         .strip_prefix(b"{\"version\":")
         .and_then(|rest| rest.split(|byte| *byte == b',').next())
         .filter(|version| {
@@ -766,22 +785,42 @@ fn mac_symbol_artifact_version(bytes: &[u8]) -> Result<u16, MacSymbolArtifactErr
         })
         .and_then(|version| std::str::from_utf8(version).ok())
         .and_then(|version| version.parse().ok())
+        .ok_or(MacSymbolArtifactError::Header)
+}
+
+fn current_mac_symbol_parts(bytes: &[u8]) -> Result<(&[u8], &[u8]), MacSymbolArtifactError> {
+    let body = bytes
+        .strip_prefix(MAC_SYMBOL_MAGIC)
         .ok_or(MacSymbolArtifactError::Header)?;
-    Ok(version)
+    let header_bytes = body
+        .iter()
+        .take(MAC_SYMBOL_HEADER_MAX_BYTES + 1)
+        .position(|byte| *byte == b'\n')
+        .filter(|length| *length <= MAC_SYMBOL_HEADER_MAX_BYTES)
+        .ok_or(MacSymbolArtifactError::Header)?;
+    Ok((&body[..header_bytes], &body[header_bytes + 1..]))
 }
 
 const fn mac_symbol_encoded_bytes_admitted(bytes: u64) -> bool {
     bytes <= MAC_SYMBOL_ARTIFACT_MAX_BYTES
 }
 
-fn base64_length(bytes: usize) -> Option<usize> {
-    bytes.checked_add(2)?.checked_div(3)?.checked_mul(4)
+const fn mac_symbol_raw_bytes_admitted(info: u64, dwarf: u64) -> bool {
+    info <= MAC_SYMBOL_MEMBER_BYTES_LIMIT
+        && dwarf <= MAC_SYMBOL_MEMBER_BYTES_LIMIT
+        && matches!(
+            info.checked_add(dwarf),
+            Some(bytes) if bytes <= MAC_SYMBOL_RAW_BYTES_LIMIT
+        )
 }
 
 fn write_mac_symbol_artifact(
     artifact: &MacSymbolArtifact,
-    writer: &mut impl io::Write,
+    writer: &mut impl Write,
 ) -> Result<(), String> {
+    writer
+        .write_all(MAC_SYMBOL_MAGIC)
+        .map_err(|error| error.to_string())?;
     write!(writer, "{{\"version\":{},\"uuid\":", artifact.version)
         .map_err(|error| error.to_string())?;
     serde_json::to_writer(&mut *writer, &artifact.uuid).map_err(|error| error.to_string())?;
@@ -793,31 +832,56 @@ fn write_mac_symbol_artifact(
         .write_all(b",\"commit\":")
         .map_err(|error| error.to_string())?;
     serde_json::to_writer(&mut *writer, &artifact.commit).map_err(|error| error.to_string())?;
-    write!(
+    writeln!(
         writer,
-        ",\"dirty\":{},\"info\":\"",
-        if artifact.dirty { "true" } else { "false" }
+        ",\"dirty\":{},\"info_bytes\":{},\"dwarf_bytes\":{}}}",
+        if artifact.dirty { "true" } else { "false" },
+        artifact.info.len(),
+        artifact.dwarf.len()
     )
     .map_err(|error| error.to_string())?;
-    write_base64(writer, &artifact.info)?;
-    writer
-        .write_all(b"\",\"dwarf\":\"")
-        .map_err(|error| error.to_string())?;
-    write_base64(writer, &artifact.dwarf)?;
-    writer.write_all(b"\"}").map_err(|error| error.to_string())
+    let mut deflate = DeflateEncoder::new(&mut *writer, Compression::new(MAC_SYMBOL_DEFLATE_LEVEL));
+    deflate
+        .write_all(&artifact.info)
+        .and_then(|()| deflate.write_all(&artifact.dwarf))
+        .and_then(|()| deflate.finish().map(|_| ()))
+        .map_err(|error| error.to_string())
 }
 
-fn write_base64(writer: &mut impl io::Write, bytes: &[u8]) -> Result<(), String> {
-    let mut encoded = [0_u8; MAC_SYMBOL_BASE64_CHUNK_ENCODED_BYTES];
-    for chunk in bytes.chunks(MAC_SYMBOL_BASE64_CHUNK_BYTES) {
-        let length = STANDARD
-            .encode_slice(chunk, &mut encoded)
-            .map_err(|error| error.to_string())?;
-        writer
-            .write_all(&encoded[..length])
-            .map_err(|error| error.to_string())?;
+struct BoundedBytes {
+    bytes: Vec<u8>,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl BoundedBytes {
+    const fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+            exceeded: false,
+        }
     }
-    Ok(())
+}
+
+impl Write for BoundedBytes {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self
+            .bytes
+            .len()
+            .checked_add(bytes.len())
+            .is_none_or(|length| length > self.limit)
+        {
+            self.exceeded = true;
+            return Err(io::Error::other("encoded symbol artifact size limit"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 struct CanonicalBytes<'a> {
@@ -1061,14 +1125,12 @@ mod tests {
     }
 
     #[test]
-    fn mac_symbol_artifact_round_trips_its_canonical_base64_encoding() {
-        let artifact = symbol_artifact();
+    fn mac_symbol_artifact_compresses_and_round_trips_complete_members() {
+        let mut artifact = symbol_artifact();
+        artifact.dwarf = vec![0x5A; 64 * 1024];
+        let raw_bytes = artifact.info.len() + artifact.dwarf.len();
         let encoded = artifact.encode().expect("artifact encodes");
-        assert!(
-            std::str::from_utf8(&encoded)
-                .expect("artifact is JSON")
-                .contains("\"dwarf\":\"Zml4dHVyZSBEV0FSRg==\"")
-        );
+        assert!(encoded.len() < raw_bytes / 8);
         assert_eq!(
             MacSymbolArtifact::decode(&encoded).expect("artifact decodes"),
             artifact
@@ -1106,6 +1168,70 @@ mod tests {
                 release: Some("0.2.0-dev.0"),
             })
         );
+    }
+
+    #[test]
+    fn retired_uncompressed_schema_refuses_before_current_decode() {
+        let retired = b"{\"version\":3,\"retired\":true}";
+        assert_eq!(
+            MacSymbolArtifact::decode(retired),
+            Err(MacSymbolArtifactError::Version {
+                version: 3,
+                release: Some("0.2.0-dev.0"),
+            })
+        );
+    }
+
+    #[test]
+    fn mac_symbol_artifact_refuses_corrupt_compressed_data() {
+        let mut corrupted = symbol_artifact().encode().expect("artifact encodes");
+        let data = corrupted
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .expect("artifact separates its compressed data")
+            + 1;
+        corrupted[data] = corrupted[data].wrapping_add(1);
+        assert!(MacSymbolArtifact::decode(&corrupted).is_err());
+    }
+
+    #[test]
+    fn mac_symbol_artifact_refuses_truncated_and_trailing_compressed_data() {
+        let encoded = symbol_artifact().encode().expect("artifact encodes");
+        let mut truncated = encoded.clone();
+        truncated.pop();
+        assert!(MacSymbolArtifact::decode(&truncated).is_err());
+
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(MacSymbolArtifact::decode(&trailing).is_err());
+    }
+
+    #[test]
+    fn mac_symbol_artifact_bounds_decompression_by_declared_lengths() {
+        let mut encoded = symbol_artifact().encode().expect("artifact encodes");
+        let declared = b"\"dwarf_bytes\":13";
+        let at = encoded
+            .windows(declared.len())
+            .position(|window| window == declared)
+            .expect("fixture declares its DWARF length");
+        encoded[at + declared.len() - 1] = b'2';
+        assert!(matches!(
+            MacSymbolArtifact::decode(&encoded),
+            Err(MacSymbolArtifactError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn mac_symbol_decoded_size_bound_admits_its_edge_only() {
+        assert!(mac_symbol_raw_bytes_admitted(0, MAC_SYMBOL_RAW_BYTES_LIMIT));
+        assert!(!mac_symbol_raw_bytes_admitted(
+            0,
+            MAC_SYMBOL_RAW_BYTES_LIMIT + 1
+        ));
+        assert!(!mac_symbol_raw_bytes_admitted(
+            MAC_SYMBOL_RAW_BYTES_LIMIT / 2 + 1,
+            MAC_SYMBOL_RAW_BYTES_LIMIT - MAC_SYMBOL_RAW_BYTES_LIMIT / 2,
+        ));
     }
 
     #[test]

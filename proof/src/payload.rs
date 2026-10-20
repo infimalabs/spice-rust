@@ -117,7 +117,7 @@ fn verify_symbol_metadata(payload: &TargetPayload) -> Result<(), PayloadError> {
         .iter()
         .find(|entry| entry.path == symbols.path)
         .ok_or(PayloadError::SymbolMetadata("absent from inventory"))?;
-    if symbols.path != "symbols/spice.dSYM.json"
+    if symbols.path != "symbols/spice.symbols"
         || symbols.mode != 0o644
         || !symbols.uuid_is_canonical()
         || symbols.executable != payload.native
@@ -500,7 +500,7 @@ mod tests {
             PayloadError::ReorderedArtifact {
                 index: 0,
                 expected: "bin/spice".to_owned(),
-                observed: "symbols/spice.dSYM.json".to_owned(),
+                observed: "symbols/spice.symbols".to_owned(),
             },
         );
     }

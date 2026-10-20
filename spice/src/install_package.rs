@@ -428,7 +428,7 @@ mod tests {
         let tree = complete_package();
         write_package(&package, &tree);
         let acquired = acquire(&package).expect("complete package acquires");
-        let symbol_path = "targets/aarch64-apple-darwin/symbols/spice.dSYM.json";
+        let symbol_path = "targets/aarch64-apple-darwin/symbols/spice.symbols";
         assert_eq!(
             acquired.member(symbol_path).unwrap().digest(),
             &Digest::compute(Domain::DistArtifact, b"symbol fixture"),
@@ -611,7 +611,7 @@ mod tests {
         }];
         let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
             let metadata = MacSymbolMetadata {
-                path: "symbols/spice.dSYM.json".to_owned(),
+                path: "symbols/spice.symbols".to_owned(),
                 mode: 0o644,
                 bytes: 14,
                 digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),

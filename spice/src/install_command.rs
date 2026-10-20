@@ -351,7 +351,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::SymbolsRefused { path, .. } => format!(
-            "inspect the package symbol input with `{}`; re-acquire the release package so its executable, payload, and `symbols/spice.dSYM.json` come from one sealed build, then rerun `spice install --package`",
+            "inspect the package symbol input with `{}`; re-acquire the release package so its executable, payload, and `symbols/spice.symbols` come from one sealed build, then rerun `spice install --package`",
             inspect_path(path),
         ),
         InstallError::BinaryContextChanged => format!(
