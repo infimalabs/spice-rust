@@ -6,9 +6,11 @@ the invariants its code keeps.
 
 ## Install
 
-Install from a source checkout. The xtask builds the app, links it into the
-executable, and applies the digest-bound installation plan derived from that
-build:
+Install from a source checkout with [rustup](https://rustup.rs), which reads
+`rust-toolchain.toml`, and [Trunk](https://trunkrs.dev); the build names the
+exact Trunk install command when the pinned version is missing. The xtask
+builds the app, links it into the executable, and applies the digest-bound
+installation plan derived from that build:
 
 ```sh
 cargo run --locked -p xtask -- install --no-resident
@@ -50,6 +52,9 @@ spice up
 append to `<git-common>/.spice-rs/resident.log`. The resident listens on a
 loopback port the kernel picks unless `--host IP` or `--port PORT` names one; a
 named port keeps the URL stable across restarts.
+
+Lanes run the oh-my-pi agent, so `omp` must be on `PATH`. Seat a first lane
+with `spice lane add [WORKTREE]`.
 
 A non-loopback listener requires `--allow-insecure-bind`. Add a URL-safe bearer
 token unless the surrounding network is the intended access boundary:
