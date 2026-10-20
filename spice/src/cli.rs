@@ -10,6 +10,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use wire::{CommandKind, FactKind};
 
 mod mounts;
+mod options;
 mod syntax;
 mod tools;
 
@@ -569,9 +570,10 @@ fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
             Arg::new(JSON)
                 .long(JSON)
                 .global(true)
-                .action(ArgAction::SetTrue)
-                .help("Answer in machine-readable JSON"),
+                .action(ArgAction::SetTrue),
         );
+    root = options::describe(root, &[])
+        .unwrap_or_else(|error| panic!("invalid root option help: {error}"));
 
     for child in child_names(contracts, mounts, &[]) {
         root = root.subcommand(summarized(contracts, mounts, &[child]));
@@ -597,6 +599,8 @@ fn branch(contracts: &[Contract], mounts: &[Mount], name: &str, path: &[String])
         command = register_syntax(command, contract).unwrap_or_else(|error| {
             panic!("invalid CLI contract syntax {:?}: {error}", contract.path)
         });
+        command = options::describe(command, contract.path)
+            .unwrap_or_else(|error| panic!("invalid CLI option help {:?}: {error}", contract.path));
         if !children.is_empty() {
             command = command.subcommand_negates_reqs(true);
         }

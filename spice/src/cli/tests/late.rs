@@ -79,6 +79,56 @@ fn a_registered_command_without_a_summary_refuses_the_parser() {
     let _ = command_from(&contracts, &[]);
 }
 
+/// First-run paths must not expose an undocumented repository option.
+#[test]
+fn every_first_run_option_has_help() {
+    let parser = command();
+    let json = parser
+        .get_arguments()
+        .find(|argument| argument.get_long() == Some(JSON))
+        .expect("root owns the global renderer option");
+    assert!(json.get_help().is_some(), "global --json has no help");
+
+    for path in [
+        &["up"][..],
+        &["down"][..],
+        &["install"][..],
+        &["lane", "add"][..],
+        &["lane", "wake"][..],
+        &["doctor"][..],
+    ] {
+        let leaf = path.iter().fold(&parser, |command, name| {
+            command
+                .find_subcommand(name)
+                .unwrap_or_else(|| panic!("missing first-run command {path:?}"))
+        });
+        for argument in leaf
+            .get_arguments()
+            .filter(|argument| argument.get_long().is_some())
+        {
+            assert!(
+                argument.get_help().is_some(),
+                "{path:?} --{} has no help",
+                argument.get_long().expect("filtered long option")
+            );
+        }
+    }
+}
+
+/// Help rows are part of the syntax contract, not best-effort decorations.
+#[test]
+#[should_panic(expected = "names unregistered --foreground")]
+fn option_help_for_an_unaccepted_option_refuses_the_parser() {
+    let mut contracts = CONTRACTS.to_vec();
+    contracts
+        .iter_mut()
+        .find(|contract| contract.path == ["up"])
+        .expect("up contract exists")
+        .syntax = "up";
+
+    let _ = command_from(&contracts, &[]);
+}
+
 #[test]
 fn selected_leaf_recovers_the_same_contract_row() {
     let matches = command()
