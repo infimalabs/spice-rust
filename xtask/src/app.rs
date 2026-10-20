@@ -427,14 +427,15 @@ fn verify_trunk() -> Result<(), AppBuildError> {
         }
         Err(error) => return Err(AppBuildError::Launch(error)),
     };
-    let observed = String::from_utf8_lossy(&report.stdout).trim().to_owned();
+    let observed = String::from_utf8_lossy(&report.stdout);
+    let observed = observed.trim();
     if report.status.success() && observed == PINNED_TRUNK {
         return Ok(());
     }
     Err(AppBuildError::TrunkUnpinned(Some(if observed.is_empty() {
         format!("a trunk whose version report failed ({})", report.status)
     } else {
-        observed
+        observed.to_owned()
     })))
 }
 
