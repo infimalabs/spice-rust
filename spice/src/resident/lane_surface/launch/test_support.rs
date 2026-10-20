@@ -30,6 +30,7 @@ impl LaunchFixture {
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
         ));
+        let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("src")).expect("fixture source directory creates");
         let root = fs::canonicalize(root).expect("fixture root canonicalizes");
         fs::write(
