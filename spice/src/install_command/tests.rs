@@ -19,6 +19,7 @@ fn preview() -> InstallPreview {
     .expect("a minimal preview decodes")
 }
 
+#[cfg(unix)]
 fn apply_line(text: &str) -> &str {
     text.lines()
         .last()
@@ -26,40 +27,56 @@ fn apply_line(text: &str) -> &str {
         .expect("a preview ends with its apply command")
 }
 
+#[cfg(unix)]
+const PROGRAMS: [&str; 3] = [
+    "spice",
+    "./spice",
+    "/tmp/My Repo/.git/.spice-install/bin/spice",
+];
+
+#[cfg(unix)]
 #[test]
-fn source_preview_replays_this_executable_with_the_digest() {
-    let preview = preview();
-    let digest = preview.digest().to_string();
+fn source_preview_replays_the_invoked_program_with_the_digest() {
+    for program in PROGRAMS {
+        let preview = preview();
+        let digest = preview.digest().to_string();
 
-    let text = PlanPreview::source(preview).to_string();
+        let text = PlanPreview::source(preview, program).to_string();
 
-    assert_eq!(apply_line(&text), format!("spice install --apply={digest}"));
+        assert_eq!(
+            shell_words::split(apply_line(&text)).expect("the replay command parses"),
+            [program, "install", &format!("--apply={digest}")],
+            "replay for {program:?}",
+        );
+    }
 }
 
 #[cfg(unix)]
 #[test]
-fn package_preview_replays_the_original_source_as_one_argument() {
-    for package in [
-        "dist/spice-0.3.0",
-        "/tmp/My Packages/spice 0.3.0",
-        "./pkg; rm -rf ~ $(touch x) `id` 'quoted' \"double\" *?[a]",
-    ] {
-        let preview = preview();
-        let digest = preview.digest().to_string();
+fn package_preview_replays_the_program_and_original_source_as_single_arguments() {
+    for program in PROGRAMS {
+        for package in [
+            "dist/spice-0.3.0",
+            "/tmp/My Packages/spice 0.3.0",
+            "./pkg; rm -rf ~ $(touch x) `id` 'quoted' \"double\" *?[a]",
+        ] {
+            let preview = preview();
+            let digest = preview.digest().to_string();
 
-        let text = PlanPreview::package(preview, package).to_string();
+            let text = PlanPreview::package(preview, program, package).to_string();
 
-        assert_eq!(
-            shell_words::split(apply_line(&text)).expect("the replay command parses"),
-            [
-                "spice",
-                "install",
-                "--package",
-                package,
-                &format!("--apply={digest}"),
-            ],
-            "replay for {package:?}",
-        );
+            assert_eq!(
+                shell_words::split(apply_line(&text)).expect("the replay command parses"),
+                [
+                    program,
+                    "install",
+                    "--package",
+                    package,
+                    &format!("--apply={digest}"),
+                ],
+                "replay for {program:?} {package:?}",
+            );
+        }
     }
 }
 
@@ -69,8 +86,8 @@ fn guidance_never_changes_the_structured_preview() {
     let expected = serde_json::to_value(&preview).expect("preview encodes");
 
     for guided in [
-        PlanPreview::source(preview.clone()),
-        PlanPreview::package(preview, "/tmp/My Packages/spice"),
+        PlanPreview::source(preview.clone(), "spice"),
+        PlanPreview::package(preview, "spice", "/tmp/My Packages/spice"),
     ] {
         assert_eq!(
             serde_json::to_value(&guided).expect("guided preview encodes"),
