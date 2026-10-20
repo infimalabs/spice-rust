@@ -1,5 +1,6 @@
 //! Native rim for the digest-bound Spice installer.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
@@ -9,9 +10,46 @@ use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 pub(crate) enum Answer {
-    Plan(Outcome<InstallPreview>),
+    Plan(Outcome<PlanPreview>),
     Receipt(Outcome<InstallReceipt>),
     Child(ExitStatus),
+}
+
+/// An install preview with the exact command that applies its digest.
+///
+/// A package preview's plan comes from the verified staged executable, which
+/// is gone once the preview returns; replaying bare `install --apply` would
+/// ask the installed appliance to derive a different plan from its own
+/// executable. The command therefore reopens the original package source.
+/// The command is display only: the digest still comes from the preview, and
+/// apply derives and checks the plan afresh.
+pub(crate) struct PlanPreview {
+    preview: InstallPreview,
+    apply: String,
+}
+
+impl PlanPreview {
+    fn source(preview: InstallPreview) -> Self {
+        let apply = format!("spice install --apply={}", preview.digest());
+        Self { preview, apply }
+    }
+
+    fn package(preview: InstallPreview, package: &str) -> Self {
+        let apply = package_apply_command(package, preview.digest());
+        Self { preview, apply }
+    }
+}
+
+impl serde::Serialize for PlanPreview {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.preview.serialize(serializer)
+    }
+}
+
+impl fmt::Display for PlanPreview {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.preview.write_text(formatter, &self.apply)
+    }
 }
 
 pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
@@ -45,12 +83,21 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             Request::Plan => None,
             Request::Unapply => unreachable!("package unapply returned above"),
         };
-        return match crate::install_package::run(
-            &repository,
-            Path::new(package),
-            apply,
-            matches.get_flag("json"),
-        ) {
+        let json = matches.get_flag("json");
+        if apply.is_none() && !json {
+            return match crate::install_package::preview(&repository, Path::new(package)) {
+                Ok(outcome) => Answer::Plan(match outcome {
+                    Outcome::Reply(Reply { position, body }) => Outcome::Reply(Reply {
+                        position,
+                        body: PlanPreview::package(body, package),
+                    }),
+                    Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+                    Outcome::Fault(fault) => Outcome::Fault(fault),
+                }),
+                Err(error) => request.package_failure(error),
+            };
+        }
+        return match crate::install_package::run(&repository, Path::new(package), apply, json) {
             Ok(status) => Answer::Child(status),
             Err(error) => request.package_failure(error),
         };
@@ -63,7 +110,8 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             };
             Answer::Plan(result(
                 spice::install::plan(&repository, Some(&executable))
-                    .and_then(InstallPreview::from_plan),
+                    .and_then(InstallPreview::from_plan)
+                    .map(PlanPreview::source),
             ))
         }
         Request::Apply(spelling) => {
@@ -123,14 +171,19 @@ impl Request {
 }
 
 fn package_failure<B>(error: &crate::install_package::Error) -> Outcome<B> {
-    if error.is_environment() {
-        Outcome::Fault(Fault {
+    use crate::install_package::Error;
+    match error {
+        Error::Environment { .. } => Outcome::Fault(Fault {
             class: FaultClass::Environment,
             reason: "install::package-environment-failed".to_owned(),
             detail: error.to_string(),
-        })
-    } else {
-        Outcome::Refusal(Refusal::bare(
+        }),
+        Error::Unreadable { .. } => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "install::package-answer-unreadable".to_owned(),
+            detail: error.to_string(),
+        }),
+        Error::Input(_) => Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "install::package-refused".to_owned(),
                 Some("sealed-package".to_owned()),
@@ -140,7 +193,7 @@ fn package_failure<B>(error: &crate::install_package::Error) -> Outcome<B> {
             .with_detail(
                 "select the explicit local root of a canonical sealed release package and retry; no repository authority changed",
             ),
-        ))
+        )),
     }
 }
 
@@ -407,3 +460,24 @@ fn inspect_path(path: &Path) -> String {
 fn inspect_path(path: &Path) -> String {
     format!("icacls \"{}\"", path.display())
 }
+
+/// The command that reopens `package` and applies its previewed `digest`.
+#[cfg(unix)]
+fn package_apply_command(package: &str, digest: &Digest) -> String {
+    format!(
+        "spice install --package {} --apply={digest}",
+        shell_words::quote(package)
+    )
+}
+
+/// The command that reopens `package` and applies its previewed `digest`.
+///
+/// Windows paths cannot contain `"`, so one double-quoted word stays one
+/// argument, matching the other guidance this installer prints there.
+#[cfg(windows)]
+fn package_apply_command(package: &str, digest: &Digest) -> String {
+    format!("spice install --package \"{package}\" --apply={digest}")
+}
+
+#[cfg(test)]
+mod tests;
