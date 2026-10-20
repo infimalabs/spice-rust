@@ -806,8 +806,15 @@ fn session_error(error: SessionProofError) -> io::Error {
     io::Error::other(format!("session proof refused as {refusal:?}"))
 }
 
+/// The launch failure a supervisor publishes: the CLI's text rendering of the
+/// outcome, without the `spice: ` prefix the resident's own refusal adds.
 fn outcome_error(outcome: wire::Outcome<()>) -> io::Error {
-    io::Error::other(format!("{outcome:?}"))
+    let text = crate::render::render(&outcome, crate::render::Form::Text).map_or_else(
+        |error| error,
+        |rendering| String::from_utf8_lossy(rendering.document()).into_owned(),
+    );
+    let text = text.trim_end();
+    io::Error::other(text.strip_prefix("spice: ").unwrap_or(text).to_owned())
 }
 
 #[cfg(all(test, unix))]

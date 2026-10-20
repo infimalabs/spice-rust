@@ -386,3 +386,23 @@ fn unsupported_state_versions_are_refused_without_a_legacy_execution_path() {
     }
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[test]
+fn launch_outcomes_publish_their_cli_text_not_debug_syntax() {
+    assert_eq!(
+        outcome_error(store_fault(
+            "lane::native-shell-unavailable",
+            "the supervised environment has no native SHELL",
+        ))
+        .to_string(),
+        "lane::native-shell-unavailable; the supervised environment has no native SHELL"
+    );
+    let refusal = wire::Outcome::Refusal(wire::Refusal::bare(
+        wire::RefusalDiagnostic::new("config::value-invalid", None, None, None)
+            .with_detail("vendor.omp.binary must be a string"),
+    ));
+    assert_eq!(
+        outcome_error(refusal).to_string(),
+        "config::value-invalid; vendor.omp.binary must be a string"
+    );
+}
