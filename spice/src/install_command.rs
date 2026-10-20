@@ -301,12 +301,11 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             "inspect the package symbol input with `{}`; re-acquire the release package so its executable, payload, and `symbols/spice.dSYM.json` come from one sealed build, then rerun `spice install --package`",
             inspect_path(path),
         ),
-        InstallError::BinaryContextChanged => concat!(
-            "the `.spice-install/bin/spice` asset was planned from another executable; rerun ",
-            "`spice dev xtask -- install`, which plans and applies one linked build, or preview a ",
-            "sealed release package and pass that preview's digest to the same `install --package`",
-        )
-        .to_owned(),
+        InstallError::BinaryContextChanged => format!(
+            "the `{INSTALLED_SPICE}` asset was planned from another executable; rerun \
+             `spice dev xtask -- install`, which plans and applies one linked build, or preview a \
+             sealed release package and pass that preview's digest to the same `install --package`",
+        ),
         InstallError::DigestMismatch { .. } => concat!(
             "rerun this executable's `install` preview and pass its newly printed digest to ",
             "the same executable as `install --apply=<digest>`; do not reuse the refused digest",
@@ -388,6 +387,11 @@ fn state_remedy(error: &InstallError) -> Option<String> {
 const GIT: &str = "/usr/bin/git";
 #[cfg(windows)]
 const GIT: &str = r#""%ProgramFiles%\Git\cmd\git.exe""#;
+
+#[cfg(unix)]
+const INSTALLED_SPICE: &str = ".spice-install/bin/spice";
+#[cfg(windows)]
+const INSTALLED_SPICE: &str = ".spice-install/bin/spice.exe";
 
 #[cfg(unix)]
 fn inspect_path(path: &Path) -> String {
