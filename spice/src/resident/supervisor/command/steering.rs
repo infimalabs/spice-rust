@@ -11,6 +11,7 @@ use std::sync::{Arc, PoisonError};
 use listen::{Decoded, Event, ProseRole};
 use wire::Disposition;
 
+use super::super::terminal::Handle;
 use super::Driver;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -108,8 +109,8 @@ impl<W: Write + Send + 'static> Driver<W> {
             answered.settle(message);
             steer::inbox::retain(message, |key| !answered.holds(key))
         };
-        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut recognized = self
+        let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        let recognized = self
             .recognized
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -123,26 +124,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         };
         let standing =
             steer::inbox::retain(&owed, |key| recognized.contains(key) || peers.contains(key));
-        if !fresh.is_empty() {
-            for handle in self
-                .calls
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .values()
-            {
-                handle.interrupt();
-            }
-            if self.steer(&fresh).is_err() {
-                return;
-            }
-            // This original is never replaced or removed. A later reminder
-            // follows it, whether omp took it live or at a tool boundary.
-            told.extend(steer::inbox::keys(&fresh).map(str::to_owned));
-            recognized.extend(steer::inbox::keys(&fresh).map(str::to_owned));
-        }
         drop(recognized);
-        let reminder = if delivery == InboxDelivery::PostCompaction {
-            steer::inbox::post_compaction(&owed)
+        let (reminder, peer_due) = if delivery == InboxDelivery::PostCompaction {
+            (steer::inbox::post_compaction(&owed), false)
         } else {
             let previous = delivered
                 .as_deref()
@@ -166,14 +150,10 @@ impl<W: Write + Send + 'static> Driver<W> {
                     || previous.and_then(|previous| steer::inbox::stage(previous, key))
                         != steer::inbox::stage(&standing, key)
             });
-            if due.is_empty() {
-                // Every queued key is answered or retired by now.
-                if self.background("inbox", "").is_ok() {
-                    *delivered = Some(rendered);
-                }
-                return;
-            }
-            if replaying {
+            let peer_due = steer::inbox::peer_keys(&due).next().is_some();
+            let reminder = if due.is_empty() {
+                String::new()
+            } else if replaying {
                 steer::inbox::post_compaction(&due)
             } else {
                 let replied = self.replied.lock().unwrap_or_else(PoisonError::into_inner);
@@ -186,15 +166,67 @@ impl<W: Write + Send + 'static> Driver<W> {
                         }
                     })
                 })
-            }
+            };
+            (reminder, peer_due)
         };
-        if self.background("inbox", &reminder).is_ok() {
-            self.recognized
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend(steer::inbox::keys(message).map(str::to_owned));
+        drop(told);
+
+        let (fresh_calls, peer_waits) = self.delivery_calls(!fresh.is_empty(), peer_due);
+
+        // Register every background notice before releasing a host call: its
+        // result creates the boundary where omp flushes the queued aside.
+        let aside_sent = self.background("inbox", &reminder).is_ok();
+        if aside_sent && fresh.is_empty() {
+            for handle in peer_waits {
+                handle.interrupt();
+            }
+        }
+        if !fresh.is_empty() {
+            // Preserve the established human path: signal the host calls
+            // before entering steering, so a running command becomes a kept
+            // job rather than a withdrawn command.
+            for handle in fresh_calls {
+                handle.interrupt();
+            }
+        }
+        let steer_sent = fresh.is_empty() || self.steer(&fresh).is_ok();
+        if steer_sent && !fresh.is_empty() {
+            let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+            told.extend(steer::inbox::keys(&fresh).map(str::to_owned));
+            self.recognize(&fresh);
+        }
+        if aside_sent {
+            self.recognize(&reminder);
+        }
+
+        if aside_sent && steer_sent {
             *delivered = Some(rendered);
         }
+    }
+    fn delivery_calls(&self, human_due: bool, peer_due: bool) -> (Vec<Handle>, Vec<Handle>) {
+        let calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
+        let human = if human_due {
+            calls.values().map(|call| call.handle.clone()).collect()
+        } else {
+            Vec::new()
+        };
+        let peer = if peer_due {
+            calls
+                .values()
+                .filter(|call| call.blocking_wait)
+                .map(|call| call.handle.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        (human, peer)
+    }
+
+    fn recognize(&self, message: &str) {
+        self.recognized
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(steer::inbox::keys(message).map(str::to_owned));
     }
 
     /// Interject one message as steering, in sequence with the inbox.
