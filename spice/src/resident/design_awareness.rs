@@ -152,8 +152,9 @@ impl CompletionCursor {
 }
 
 /// Record one best matching open Design for every retained-profile
-/// opportunity. Nothing is delivered in the background: the lane reads the
-/// owed request from its next `task next`.
+/// opportunity. Nothing is pushed into a lane's turn here: room catch-up
+/// carries the owed request into the lane's next model input, and `task next`
+/// shows it while the lane holds no claim.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     config: &SurfaceConfig,
@@ -291,9 +292,16 @@ fn plan_profile_requests(
         };
         let compaction = facts.session_compaction(lane, &session);
         let session_identity = (lane, session.clone());
-        if planned_sessions.contains(&session_identity)
-            || session_has_outstanding(bus, facts, entries, lane, &session)?
-        {
+        if planned_sessions.contains(&session_identity) {
+            continue;
+        }
+        if let Some(owed) = owed_notice(bus, facts, entries, lane, &session)? {
+            if let Some(restated) =
+                restated_request(bus, planning, occupant, &session, compaction, owed)?
+            {
+                planned_sessions.insert(session_identity);
+                planned.push(restated);
+            }
             continue;
         }
         let Some(durable_opportunity) = durable_opportunity(&opportunity, facts, occupant) else {
@@ -670,14 +678,47 @@ pub(crate) fn project_request(
     Ok(owed_request(bus, observed, entries, lane, occupant)?.map(|owed| owed.request))
 }
 
-fn session_has_outstanding(
+/// The owed request restated for a new occupant of its continuing session.
+///
+/// Once an earlier occupant's catch-up carried the request, the lane's cursor
+/// has passed its record, so the resumed occupant would never be shown it.
+/// Recording it again at the resume makes catch-up present it once more; the
+/// restated record names this occupant, so it is never restated for it again.
+fn restated_request(
     bus: &Bus,
-    facts: &bus::TaskFacts,
-    entries: &[board::Entry],
-    lane: CanonicalUuid,
+    planning: &Planning,
+    occupant: CanonicalUuid,
     session: &DesignSession,
-) -> CommandResult<bool> {
-    owed_notice(bus, facts, entries, lane, session).map(|notice| notice.is_some())
+    compaction: Option<Seq>,
+    (noticed_at, notice): (Seq, &DesignNoticed),
+) -> CommandResult<Option<PlannedRequest>> {
+    let lane = notice.lane;
+    if notice.occupant == occupant {
+        return Ok(None);
+    }
+    let Some(declaration) = planning
+        .snapshot
+        .facts()
+        .lane_session_declaration(lane, occupant)
+    else {
+        return Ok(None);
+    };
+    if super::room_catch_up::cursor(bus, lane)?.is_none_or(|cursor| cursor < noticed_at) {
+        return Ok(None);
+    }
+    Ok(Some(PlannedRequest {
+        lane,
+        occupant,
+        session: session.clone(),
+        compaction,
+        opportunity: DesignNoticeOpportunity::SessionResumed { declaration },
+        evidence: notice.evidence.clone(),
+        excerpt: notice.excerpt.clone(),
+        design: notice.design.clone(),
+        statement: notice.statement,
+        terms: notice.terms.clone(),
+        horizon: planning.horizon,
+    }))
 }
 
 /// Whether a recorded invitation is still owed. Design closure, statement
