@@ -24,6 +24,7 @@ use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
 mod browser;
 mod deadline_stream;
 mod discovery;
+mod fault;
 mod mapping;
 mod session;
 mod steering;
@@ -32,11 +33,18 @@ mod typed;
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use browser::browser_command;
 pub(crate) use browser::{open_app_result_with, open_app_with, system_browser};
-use deadline_stream::{DeadlineStream, IoDirection, IoFailure, remaining};
+#[cfg(test)]
+use deadline_stream::IoFailure;
+use deadline_stream::{DeadlineStream, IoDirection, remaining};
 #[cfg(all(test, unix))]
 use discovery::open_discovery;
 use discovery::{
     DiscoveryObserver, DiscoveryRead, DiscoveryWait, resident_lock_path, selected_discovery_path,
+};
+use fault::{
+    OpeningBound, capability_disclosed, delivered_unanswered, discovery_replaced,
+    discovery_unavailable, environment_fault, environment_fault_value, opening_fault,
+    protocol_fault, protocol_fault_value, transport_fault,
 };
 use session::{AuthenticatedSession, dialable_endpoint, open_session};
 #[cfg(test)]
@@ -681,7 +689,7 @@ fn submit(
     }
     let response = match receive(&mut session.socket) {
         Ok(response) => response,
-        Err(outcome) => return outcome,
+        Err(outcome) => return delivered_unanswered(outcome, contract),
     };
     decode_response(
         &response,
@@ -869,67 +877,6 @@ fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> Clie
         .map_err(|error| transport_fault(socket.get_ref(), &error.to_string(), IoDirection::Write))
 }
 
-/// Name a transport failure by what ended it.
-///
-/// The bound elapsing is not a peer that failed: the resident may still be
-/// composing the answer, and a reader deciding whether to retry or to
-/// investigate the resident needs those two apart. The direction is only
-/// consulted once the bound is ruled out, because a socket implementation
-/// writes control frames underneath a read the caller asked for.
-fn transport_fault(
-    stream: &DeadlineStream,
-    detail: &str,
-    assumed: IoDirection,
-) -> Outcome<CommandAnswer> {
-    let failure = stream.last_failure.unwrap_or(IoFailure {
-        direction: assumed,
-        deadline_elapsed: false,
-    });
-    // An elapsed bound is the whole story: the detail it arrives with is only
-    // the socket's own timeout errno.
-    if failure.deadline_elapsed {
-        return environment_fault(
-            "serve::deadline-elapsed",
-            &format!(
-                "resident did not answer within the {:?} client bound",
-                stream.bound
-            ),
-        );
-    }
-    match failure.direction {
-        IoDirection::Read => environment_fault("serve::receive-failed", detail),
-        IoDirection::Write => environment_fault("serve::send-failed", detail),
-    }
-}
-
-/// What the opening handshake was bounded by, kept past the stream it came from.
-#[derive(Clone, Copy)]
-struct OpeningBound {
-    bound: Duration,
-    deadline: Instant,
-}
-
-/// Name a failed opening by whether the client's own bound is what ended it.
-///
-/// The handshake consumes the stream, so the direction `transport_fault` reads
-/// is out of reach by the time the failure surfaces; the deadline the stream
-/// was configured from outlives it. A resident under load accepts the socket
-/// long before it answers the upgrade, so this is the first place the bound can
-/// elapse, and tungstenite spells that arrival as an interrupted handshake --
-/// the same would-block shape a reader must not mistake for a peer that failed.
-fn opening_fault(opening: OpeningBound, detail: &str) -> Outcome<CommandAnswer> {
-    if Instant::now() >= opening.deadline {
-        return environment_fault(
-            "serve::deadline-elapsed",
-            &format!(
-                "resident did not open a socket within the {:?} client bound",
-                opening.bound
-            ),
-        );
-    }
-    environment_fault("serve::opening-failed", detail)
-}
-
 fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
     loop {
         let message = match socket.read() {
@@ -956,24 +903,6 @@ fn receive(socket: &mut WebSocket<DeadlineStream>) -> ClientResult<Vec<u8>> {
     }
 }
 
-fn discovery_unavailable(error: io::Error) -> Fault {
-    environment_fault_value("serve::discovery-unavailable", &error.to_string())
-}
-
-fn discovery_replaced() -> Fault {
-    environment_fault_value(
-        "serve::discovery-replaced",
-        "resident discovery changed identity while the current generation was acquired",
-    )
-}
-
-fn capability_disclosed() -> Outcome<CommandAnswer> {
-    protocol_fault(
-        "serve::capability-disclosed",
-        "resident response attempted to disclose the opening capability",
-    )
-}
-
 fn steering_refusal(
     reason: &str,
     observed: Option<String>,
@@ -988,30 +917,6 @@ fn steering_refusal(
         )
         .with_detail(detail),
     ))
-}
-
-fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
-    Outcome::Fault(protocol_fault_value(reason, detail))
-}
-
-fn protocol_fault_value(reason: &str, detail: &str) -> Fault {
-    Fault {
-        class: FaultClass::Protocol,
-        reason: reason.to_owned(),
-        detail: detail.to_owned(),
-    }
-}
-
-fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
-    Outcome::Fault(environment_fault_value(reason, detail))
-}
-
-fn environment_fault_value(reason: &str, detail: &str) -> Fault {
-    Fault {
-        class: FaultClass::Environment,
-        reason: reason.to_owned(),
-        detail: detail.to_owned(),
-    }
 }
 
 #[cfg(test)]
