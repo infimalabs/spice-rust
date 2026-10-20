@@ -39,11 +39,6 @@ impl AdmittedReceipt {
     pub(crate) const fn value(&self) -> &ProofReceipt {
         &self.value
     }
-
-    #[cfg(test)]
-    pub(crate) fn replace_digest(&mut self, digest: Digest) {
-        self.digest = digest;
-    }
 }
 
 impl VerifiedEvidence {
@@ -88,23 +83,6 @@ impl From<VerifiedEvidence> for ProofEvidence {
             replay: verified.replay,
         }
     }
-}
-
-/// Verify one detached receipt against an admitted target payload and replay.
-///
-/// # Errors
-///
-/// Payload shape and identity have already crossed [`crate::payload::admit`].
-/// This step refuses noncanonical receipt bytes, a stale receipt schema, a
-/// refused replay, or any receipt field that does not bind the admitted
-/// payload and supplied replay exactly.
-pub fn verify(
-    admitted: &AdmittedPayload,
-    receipt_bytes: &[u8],
-    replay: &ReplayVerdict,
-) -> Result<VerifiedEvidence, EvidenceError> {
-    let receipt = admit_receipt(receipt_bytes)?;
-    verify_admitted(admitted, &receipt, replay)
 }
 
 /// Verify one stored detached receipt against its admitted payload.
@@ -395,7 +373,7 @@ mod tests {
         BuildPins, InventoryEntry, ProofEnvironment, ReleaseTarget, TargetPayload,
     };
 
-    use super::{EvidenceError, publish, verify};
+    use super::{AdmittedReceipt, EvidenceError, VerifiedEvidence, admit_receipt, publish};
     use crate::payload::{AdmittedPayload, admit};
     use crate::replay::{Battery, ReplayVerdict};
     use wire::{Digest, Domain, ProofEvidence};
@@ -689,5 +667,14 @@ mod tests {
             ),
             Err(expected)
         );
+    }
+
+    fn verify(
+        admitted: &AdmittedPayload,
+        receipt_bytes: &[u8],
+        replay: &ReplayVerdict,
+    ) -> Result<VerifiedEvidence, EvidenceError> {
+        let receipt: AdmittedReceipt = admit_receipt(receipt_bytes)?;
+        super::verify_admitted(admitted, &receipt, replay)
     }
 }
