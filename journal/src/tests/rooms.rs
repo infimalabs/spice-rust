@@ -16,7 +16,6 @@ use crate::{CommitError, FactCause, JournalHead, JournalWrite, ProposalAuthority
 type Commit = Result<Applied, CommitError>;
 
 mod authorization;
-mod conversation;
 mod coordination;
 mod groups;
 mod hunks;

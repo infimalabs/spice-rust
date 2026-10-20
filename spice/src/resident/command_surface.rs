@@ -441,10 +441,6 @@ impl<'a> Surface<'a> {
                     );
                     (outcome, notify.into_iter().collect())
                 }
-                (CommandKind::RoomClose, Intent::RoomClose(close)) => (
-                    crate::board_command::room_close(self.bus, command, close),
-                    Vec::new(),
-                ),
                 _ => return None,
             };
         let mut effects = CommandEffects::default();

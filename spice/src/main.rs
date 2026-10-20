@@ -403,7 +403,6 @@ impl NativeInvocation<'_> {
         match contract.path {
             ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
             ["room", "inbox"] => deliver_display(&room_command::inbox::run(leaf, contract), form),
-            ["room", "result"] => deliver_display(&room_command::result::run(leaf, contract), form),
             ["room", "relevance"] => {
                 deliver_display(&room_command::relevance::run(leaf, contract), form)
             }

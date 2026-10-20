@@ -1,9 +1,8 @@
-//! Room conversation authority: each substantive MSG, ASK, or ANS, the
-//! receipt each destination owes it, and each question's result.
+//! Room conversation authority: each substantive MSG and the receipt each
+//! destination owes it.
 //!
 //! A room snapshot carries only the facts behind current heads, so every move
-//! sets the state its fact names instead of replaying a guarded transition;
-//! the journal already admitted each one.
+//! sets the state its fact names instead of replaying a guarded transition.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,11 +11,8 @@ use wire::body::{
     SteerRecovered, SteerSent,
 };
 use wire::rooms::{
-    QuestionClosure, QuestionParties, QuestionResultRecord, QuestionResultRef, QuestionResultState,
-    RoomAnchor, RoomAuthorityStamp, RoomDelivery, RoomDestination, RoomDisposed, RoomPublication,
-    RoomPublicationKind, RoomQuestionClosed, RoomQuestionTimedOut, RoomReceiptControl,
+    RoomAnchor, RoomAuthorityStamp, RoomDisposed, RoomPublication, RoomReceiptControl,
     RoomReceiptLapsed, RoomReceiptRecord, RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState,
-    RoomSource,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Disposition, FactKind, Instant, Seq, SequenceCode, StreamFact};
@@ -43,19 +39,8 @@ pub struct OperatorItem {
     pub admitted: Seq,
     /// Immutable publication, context, and source of the item.
     pub record: RoomReceiptRecord,
-    /// Question result the operator owes for an ASK, if this item delivered one.
-    pub result: Option<QuestionResultRef>,
     /// Current disposition.
     pub state: RoomReceiptState,
-}
-
-/// One question's substantive result, separate from its delivery.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QuestionResult {
-    /// Frozen parties, context, and deadline.
-    pub record: QuestionResultRecord,
-    /// Current result.
-    pub state: QuestionResultState,
 }
 
 /// One catalog entry while its operator receipt or answer duty remains open.
@@ -65,8 +50,6 @@ pub struct OperatorInboxItem<'a> {
     pub key: &'a RoomReceiptRef,
     /// Immutable record and current receipt state.
     pub item: &'a RoomPositioned<OperatorItem>,
-    /// Substantive result owed by the operator, when this item is an ASK.
-    pub result: Option<&'a RoomPositioned<QuestionResult>>,
 }
 
 /// One lane delivery's native steering standing.
@@ -89,7 +72,6 @@ pub struct Delivery {
 pub struct ConversationProjection {
     publications: BTreeMap<RoomAuthorityStamp, Conversation>,
     items: BTreeMap<RoomReceiptRef, RoomPositioned<OperatorItem>>,
-    results: BTreeMap<QuestionResultRef, RoomPositioned<QuestionResult>>,
     deliveries: BTreeMap<CanonicalUuid, RoomPositioned<Delivery>>,
     keys: BTreeMap<String, CanonicalUuid>,
     /// Directives some room record or conversation names; a directive opens
@@ -108,22 +90,14 @@ impl ConversationProjection {
         self.items.get(item)
     }
 
-    /// Operator items whose receipt or substantive answer duty remains open,
-    /// whichever principal each reaches, in immutable admission order.
-    /// Receipt/result head moves never reorder this catalog.
+    /// Operator items whose receipt remains open, in immutable admission order.
+    /// Receipt head moves never reorder this catalog.
     pub fn open_items(&self) -> Vec<OperatorInboxItem<'_>> {
         let mut open = self
             .items
             .iter()
             .filter_map(|(key, item)| {
-                let result = item
-                    .value
-                    .result
-                    .as_ref()
-                    .and_then(|result| self.results.get(result));
-                (!item.value.state.is_terminal()
-                    || result.is_some_and(|result| !result.value.state.is_terminal()))
-                .then_some(OperatorInboxItem { key, item, result })
+                (!item.value.state.is_terminal()).then_some(OperatorInboxItem { key, item })
             })
             .collect::<Vec<_>>();
         open.sort_by(|left, right| {
@@ -136,29 +110,9 @@ impl ConversationProjection {
         open
     }
 
-    /// Every question result in identity order.
-    pub fn results(&self) -> impl Iterator<Item = &RoomPositioned<QuestionResult>> {
-        self.results.values()
-    }
-
-    /// One question result.
-    pub fn result(&self, result: &QuestionResultRef) -> Option<&RoomPositioned<QuestionResult>> {
-        self.results.get(result)
-    }
-
     /// One named lane delivery.
     pub fn delivery(&self, directive: &CanonicalUuid) -> Option<&RoomPositioned<Delivery>> {
         self.deliveries.get(directive)
-    }
-
-    /// Pending results `requester` holds, against the admission bound.
-    pub fn pending_results(&self, requester: &RoomDestination) -> usize {
-        self.results
-            .values()
-            .filter(|result| {
-                result.value.record.requester() == requester && !result.value.state.is_terminal()
-            })
-            .count()
     }
 
     /// Mark directives a room record names as deliveries to keep.
@@ -166,11 +120,11 @@ impl ConversationProjection {
         self.named.extend(directed.iter().copied());
     }
 
-    /// Admit one publication with the operator item and result it opens.
+    /// Admit one publication and the operator item it opens, if any.
     pub(super) fn admit(
         &mut self,
         position: Seq,
-        at: Instant,
+        _at: Instant,
         publication: RoomPublication,
         directed: Vec<CanonicalUuid>,
         expires: Instant,
@@ -181,15 +135,6 @@ impl ConversationProjection {
             return false;
         }
         self.name(&directed);
-        match publication.kind() {
-            RoomPublicationKind::Msg {} => {}
-            RoomPublicationKind::Ask { result, deadline } => {
-                self.ask(position, &publication, result, *deadline);
-            }
-            RoomPublicationKind::Ans { result, .. } => {
-                self.answer(position, at, &publication, result, &directed, expires);
-            }
-        }
         if let Some((item, context)) = publication.operator_item() {
             let context = context.cloned();
             self.open(position, item, &publication, context, expires);
@@ -206,89 +151,6 @@ impl ConversationProjection {
         true
     }
 
-    fn ask(
-        &mut self,
-        position: Seq,
-        publication: &RoomPublication,
-        result: &QuestionResultRef,
-        deadline: Instant,
-    ) {
-        let Some(route) = publication.routes().first() else {
-            return;
-        };
-        let Ok(record) = QuestionResultRecord::try_new(
-            result.clone(),
-            publication.publication().clone(),
-            QuestionParties {
-                requester: publication.author().clone(),
-                respondent: route.destination.clone(),
-                context: route.context.clone(),
-            },
-            publication.source().clone(),
-            deadline,
-        ) else {
-            return;
-        };
-        self.results.insert(
-            result.clone(),
-            RoomPositioned {
-                position,
-                value: QuestionResult {
-                    record,
-                    state: QuestionResultState::Pending {},
-                },
-            },
-        );
-    }
-
-    /// Settle the answered result, retire a live operator ASK item, and open
-    /// the answer's return item to an operator requester.
-    fn answer(
-        &mut self,
-        position: Seq,
-        at: Instant,
-        publication: &RoomPublication,
-        result: &QuestionResultRef,
-        directed: &[CanonicalUuid],
-        expires: Instant,
-    ) {
-        let Some(question) = self.results.get_mut(result) else {
-            return;
-        };
-        let Ok(state) = question
-            .value
-            .record
-            .answer_state(publication, at, directed)
-        else {
-            return;
-        };
-        let QuestionResultState::Answered {
-            return_delivery, ..
-        } = &state
-        else {
-            return;
-        };
-        let returned = return_delivery.delivery().clone();
-        question.value.state = state;
-        question.position = position;
-        let context = question.value.record.context().cloned();
-        if let Some(asked) = question
-            .value
-            .record
-            .item()
-            .and_then(|item| self.items.get_mut(&item))
-            .filter(|asked| matches!(asked.value.state, RoomReceiptState::Pending { .. }))
-        {
-            asked.value.state = RoomReceiptState::Acked {
-                source: publication.source().clone(),
-            };
-            asked.position = position;
-        }
-        if let RoomDelivery::Item { item } = returned {
-            self.open(position, item, publication, context, expires);
-        }
-    }
-
     fn open(
         &mut self,
         position: Seq,
@@ -297,10 +159,6 @@ impl ConversationProjection {
         context: Option<RoomAnchor>,
         expires: Instant,
     ) {
-        let result = match publication.kind() {
-            RoomPublicationKind::Ask { result, .. } => Some(result.clone()),
-            RoomPublicationKind::Msg {} | RoomPublicationKind::Ans { .. } => None,
-        };
         let record = RoomReceiptRecord::new(
             item.clone(),
             publication.publication().clone(),
@@ -314,14 +172,13 @@ impl ConversationProjection {
                 value: OperatorItem {
                     admitted: position,
                     record,
-                    result,
                     state: RoomReceiptState::Pending { expires },
                 },
             },
         );
     }
 
-    /// Fold one operator-item or result move, or `None` when `fact` is not one.
+    /// Fold one operator-item move, or `None` when `fact` is unrelated.
     pub(super) fn apply(&mut self, fact: &StreamFact) -> Option<bool> {
         let position = fact.seq();
         let code = SequenceCode::new(position.get());
@@ -330,14 +187,6 @@ impl ConversationProjection {
                 .read::<RoomDisposed>()
                 .and_then(|body| body.control(code).ok())
                 .is_some_and(|control| self.disposed(position, &control)),
-            FactKind::RoomQuestionClosed => fact
-                .read::<RoomQuestionClosed>()
-                .is_some_and(|body| self.closed(position, &body)),
-            FactKind::RoomQuestionTimedOut => {
-                fact.read::<RoomQuestionTimedOut>().is_some_and(|body| {
-                    self.settle_result(position, &body.result, QuestionResultState::TimedOut {})
-                })
-            }
             FactKind::RoomReceiptLapsed => fact.read::<RoomReceiptLapsed>().is_some_and(|body| {
                 self.settle_item(
                     position,
@@ -360,45 +209,13 @@ impl ConversationProjection {
         })
     }
 
-    /// Settle every named pending item, and decline an operator ASK's pending
-    /// result on NAK even after its item retired.
+    /// Settle every named pending item.
     fn disposed(&mut self, position: Seq, control: &RoomReceiptControl) -> bool {
         let mut changed = false;
         for key in control.keys() {
             changed |= self.settle_item(position, key, control.receipt_state());
-            let result = QuestionResultRef::new(key.authority().clone());
-            let declined = self
-                .results
-                .get(&result)
-                .filter(|question| !question.value.state.is_terminal())
-                .and_then(|question| question.value.record.control_result(control));
-            if let Some(state) = declined {
-                changed |= self.settle_result(position, &result, state);
-            }
         }
         changed
-    }
-
-    /// A decline or cancellation settles the result and retires a pending
-    /// operator ASK item the same way.
-    fn closed(&mut self, position: Seq, body: &RoomQuestionClosed) -> bool {
-        let source = RoomSource::Journal {
-            fact: SequenceCode::new(position.get()),
-        };
-        let decided = match body.closure {
-            QuestionClosure::Declined => RoomReceiptState::Declined { source },
-            QuestionClosure::Cancelled => RoomReceiptState::Cancelled { source },
-        };
-        let item = self
-            .results
-            .get(&body.result)
-            .and_then(|question| question.value.record.item());
-        let settled = self.settle_result(
-            position,
-            &body.result,
-            body.state(SequenceCode::new(position.get())),
-        );
-        settled | item.is_some_and(|item| self.settle_item(position, &item, decided))
     }
 
     /// A decision moves only a pending item.
@@ -424,24 +241,7 @@ impl ConversationProjection {
         })
     }
 
-    fn settle_result(
-        &mut self,
-        position: Seq,
-        result: &QuestionResultRef,
-        state: QuestionResultState,
-    ) -> bool {
-        self.results
-            .get_mut(result)
-            .filter(|result| !result.value.state.is_terminal())
-            .is_some_and(|result| {
-                result.value.state = state;
-                result.position = position;
-                true
-            })
-    }
-
-    /// Fold one lane delivery's opening or steering move. A respondent lane's
-    /// NAK of a live ASK directive also declines that ASK's pending result.
+    /// Fold one lane delivery's opening or steering move.
     pub(super) fn apply_delivery(&mut self, fact: &StreamFact) -> bool {
         let position = fact.seq();
         match fact.kind() {
@@ -478,10 +278,9 @@ impl ConversationProjection {
             FactKind::SteerAcked => fact
                 .read::<SteerAcked>()
                 .is_some_and(|body| self.dispose(position, &body.key, Disposition::Acked)),
-            FactKind::SteerDeclined => fact.read::<SteerDeclined>().is_some_and(|body| {
-                let moved = self.dispose(position, &body.key, Disposition::Declined);
-                moved | self.directive_declined(position, &body)
-            }),
+            FactKind::SteerDeclined => fact
+                .read::<SteerDeclined>()
+                .is_some_and(|body| self.dispose(position, &body.key, Disposition::Declined)),
             FactKind::SteerLapsed => fact
                 .read::<SteerLapsed>()
                 .is_some_and(|body| self.dispose(position, &body.key, Disposition::Lapsed)),
@@ -496,23 +295,6 @@ impl ConversationProjection {
                 .is_some_and(|body| self.dispose(position, &body.key, Disposition::Live)),
             _ => false,
         }
-    }
-
-    /// A respondent lane's NAK of its ASK directive, keyed by the result
-    /// handle, declines that pending result.
-    fn directive_declined(&mut self, position: Seq, body: &SteerDeclined) -> bool {
-        let Ok(result) = body.key.parse().map(QuestionResultRef::new) else {
-            return false;
-        };
-        let respondent = RoomDestination::Lane { lane: body.lane };
-        let asked = self
-            .results
-            .get(&result)
-            .is_some_and(|question| question.value.record.respondent() == &respondent);
-        let source = RoomSource::Journal {
-            fact: SequenceCode::new(position.get()),
-        };
-        asked && self.settle_result(position, &result, QuestionResultState::Declined { source })
     }
 
     fn deliver(

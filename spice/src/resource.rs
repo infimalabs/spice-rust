@@ -56,8 +56,7 @@ spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
 spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, matched terms, and bounded advisory maturity; reading changes nothing
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
-spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items, each with its receipt and result; reading settles nothing
-spice://room/result/RESULT  room result RESULT; one question's result, its parties, closure attribution, and answer return receipt
+spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items with publication text and receipt state; reading settles nothing
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
 spice://lane  lane list [?limit=N&max-bytes=N&after=LANE]
 spice://session/briefing  session briefing [?file=PATH...&deadline-seconds=N]
@@ -138,7 +137,6 @@ enum Shape {
     Preparation { handle: TaskHandle },
     Inbox,
     RoomInbox,
-    RoomResult { result: String },
     Lanes,
     Session(Session),
     Context { session: String },
@@ -338,7 +336,6 @@ impl Shape {
             Self::Graph { .. } => GRAPH,
             Self::Tasks => TASK_LIST,
             Self::Task { .. } | Self::Inbox => PAGE,
-            Self::RoomResult { .. } => &[],
             Self::Ledger { .. } => LEDGER,
             Self::Artifacts { .. }
             | Self::RoomRelevance { .. }
@@ -399,7 +396,6 @@ impl Shape {
             Self::Preparation { handle } => format!("task/{handle}/preparation"),
             Self::Inbox => "inbox".to_owned(),
             Self::RoomInbox => "room/inbox".to_owned(),
-            Self::RoomResult { result } => format!("room/result/{}", encode(result)),
             Self::Lanes => "lane".to_owned(),
             Self::Session(session) => format!("session/{}", session.leaf()),
             Self::Context { session } => format!("session/context/{}", encode(session)),
@@ -433,7 +429,6 @@ impl Shape {
             Self::Preparation { handle } => words(&["preparation", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
             Self::RoomInbox => words(&["room", "inbox"]),
-            Self::RoomResult { result } => words(&["room", "result", result]),
             Self::Lanes => words(&["lane", "list"]),
             Self::Session(session) => words(&["session", session.leaf()]),
             Self::Context { session } => words(&["session", "context", session]),
@@ -586,12 +581,6 @@ impl Shape {
             ),
             ["inbox", rest @ ..] => (Self::Inbox, rest),
             ["room", "inbox", rest @ ..] => (Self::RoomInbox, rest),
-            ["room", "result", result, rest @ ..] => (
-                Self::RoomResult {
-                    result: (*result).to_owned(),
-                },
-                rest,
-            ),
             ["lane", "list", rest @ ..] => (Self::Lanes, rest),
             ["session", "context", session, rest @ ..] => (
                 Self::Context {
@@ -664,9 +653,6 @@ impl Request {
             ["task", task, rest @ ..] => task_shape(task, rest, url)?,
             ["inbox"] => Shape::Inbox,
             ["room", "inbox"] => Shape::RoomInbox,
-            ["room", "result", result] => Shape::RoomResult {
-                result: (*result).to_owned(),
-            },
             ["lane"] => Shape::Lanes,
             ["session", "context", session] => Shape::Context {
                 session: (*session).to_owned(),
@@ -1182,10 +1168,6 @@ fn room_document(
     match contract.path {
         ["room", "inbox"] => {
             let outcome = crate::room_command::inbox::run_at(repository, leaf, contract);
-            rendered(&outcome, render::render_display(&outcome, Form::Text))
-        }
-        ["room", "result"] => {
-            let outcome = crate::room_command::result::run_at(repository, leaf, contract);
             rendered(&outcome, render::render_display(&outcome, Form::Text))
         }
         ["room", "relevance"] => {

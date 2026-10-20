@@ -382,13 +382,6 @@ impl Authority for Stored<'_> {
         conversation::stored_item(self.connection, item)
     }
 
-    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
-        conversation::stored_result(self.connection, result)
-    }
-
-    fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
-        conversation::stored_pending_results(self.connection, requester)
-    }
     fn relevance_observation(
         &self,
         observation: &str,

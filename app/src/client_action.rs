@@ -26,11 +26,10 @@ pub(crate) struct RoomPostAction {
     pub(crate) respond: RoomPostResponse,
 }
 
-/// One operator receipt, answer, or recovery, or one question closure.
+/// One operator item disposition, reply, recovery, or relevance assessment.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum RoomControlRequest {
     Control(wire::intent::RoomControl),
-    Close(wire::intent::RoomClose),
 }
 
 /// One room's coordination: a Start or Resume asking one occupied seat for a

@@ -3,11 +3,10 @@
 //! The handle resolves by birth stamp, so every spelling a re-homed task has
 //! carried reads the same room, and the page names the current one. Each
 //! publication is projected from the authority that owns its bytes: operator
-//! text from its journal fact, an agent packet from its author's durable
-//! tape, and a directed route's receipt from its directive's steering head.
-//! A conversation publication (MSG, ASK, or ANS) also names its operator
-//! item receipt and its question result at their current heads, apart from
-//! what the room records; [`inbox`] and [`result`] read the same projections.
+//! text from its journal fact, an agent packet from its author's durable tape,
+//! and a directed route's receipt from its directive's steering head.
+//! A conversation MSG also names its operator item receipt at its current
+//! head, apart from what the room records; [`inbox`] reads the same projection.
 //! A typed contribution's text is its own fact, and each source it cites is
 //! resolved through [`RoomSources`]. A source that no longer yields the bytes
 //! renders as unavailable with its reason. Publications page whole in journal
@@ -22,7 +21,6 @@ mod conversation;
 pub(crate) mod inbox;
 mod newest;
 pub(crate) mod relevance;
-pub(crate) mod result;
 pub(crate) mod sections;
 mod sources;
 
@@ -87,13 +85,6 @@ impl fmt::Display for Named {
         }
         .fmt(formatter)
     }
-}
-
-/// Every born principal's recorded name inside `read`'s snapshot.
-fn principals(read: &journal::JournalRead<'_>) -> Result<PrincipalDirectory, Failure> {
-    read.principal_roles()
-        .map(|roles| PrincipalDirectory::names(&roles))
-        .map_err(store)
 }
 
 /// One page of a room, or the receipt of a page exported whole.

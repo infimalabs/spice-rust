@@ -625,9 +625,6 @@ fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usi
                     bytes.saturating_add(key.to_string().len())
                 })
             }
-            wire::intent::RoomControl::Answer { result, text, .. } => {
-                result.as_str().len().saturating_add(text.len())
-            }
             wire::intent::RoomControl::Reply { item, text } => {
                 item.to_string().len().saturating_add(text.len())
             }
@@ -638,11 +635,6 @@ fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usi
                 ..
             } => observation.as_str().len().saturating_add(explanation.len()),
         },
-        crate::client_action::RoomControlRequest::Close(close) => close
-            .result
-            .as_str()
-            .len()
-            .saturating_add(close.clause.len()),
     }
 }
 

@@ -92,12 +92,6 @@ impl Lanes {
                 Outcome::Reply(reply) => serde_json::to_value(&reply.body),
                 other => panic!("room inbox answered {other:?}"),
             },
-            ["room", "result"] => {
-                match crate::room_command::result::answer(&journal, &self.paths.tape, leaf) {
-                    Outcome::Reply(reply) => serde_json::to_value(&reply.body),
-                    other => panic!("room result answered {other:?}"),
-                }
-            }
             ["room", path @ ("relevance" | "awareness")] => {
                 let projects =
                     board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");

@@ -211,7 +211,7 @@ pub(crate) struct Projection {
     pub(crate) directed: BTreeMap<String, (u64, Vec<u8>)>,
     /// Room to its latest `room::shelved` head position and canonical body.
     pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
-    /// Conversation publications with their operator item and result heads.
+    /// Conversation publications with their operator item heads.
     pub(crate) conversation: conversation::Heads,
     /// Append-only shadow relevance observations and operator assessments.
     pub(crate) relevance: relevance::Heads,
@@ -304,10 +304,7 @@ pub(crate) trait Authority {
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// One operator item head by its key.
     fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal>;
-    /// One question result head by its handle.
-    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal>;
-    /// How many question results one requester holds pending.
-    fn pending_results(&self, requester: &str) -> Result<usize, Refusal>;
+
     /// One shadow relevance observation by stable identity.
     fn relevance_observation(
         &self,

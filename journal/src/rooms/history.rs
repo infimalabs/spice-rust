@@ -246,13 +246,6 @@ impl Authority for History {
         Ok(self.projection.conversation.items.get(item).cloned())
     }
 
-    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
-        Ok(self.projection.conversation.results.get(result).cloned())
-    }
-
-    fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
-        Ok(self.projection.conversation.pending_results(requester))
-    }
     fn relevance_observation(
         &self,
         observation: &str,

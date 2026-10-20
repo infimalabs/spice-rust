@@ -1,21 +1,17 @@
-//! Conversation authority as room reads state it.
+//! Current MSG conversation authority as room reads state it.
 //!
-//! Three distinct things are named apart: a publication recorded in a room,
-//! the receipt one participant owes for it (an operator item, or a lane's
-//! steering directive), and a question's result. Each decided state names
-//! who decided it; an operator closing a question for a stored lane party is
-//! marked as an override.
+//! A publication and the receipt one participant owes for it are named apart.
+//! Each decided item state names who decided it.
 
 use std::fmt;
 
 use serde::Serialize;
 use wire::principal::PrincipalDirectory;
 use wire::rooms::{
-    QuestionResultHead, QuestionResultRecord, QuestionResultRef, QuestionResultState, RoomAnchor,
-    RoomAuthorityStamp, RoomDelivery, RoomDestination, RoomPublication, RoomPublicationKind,
-    RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, RoomReceiptState, RoomSource,
+    RoomAnchor, RoomAuthorityStamp, RoomDestination, RoomPublication, RoomReceiptHead,
+    RoomReceiptRecord, RoomReceiptRef, RoomReceiptState, RoomSource,
 };
-use wire::{Actor, CanonicalUuid, Instant, Seq};
+use wire::{Actor, CanonicalUuid, Seq};
 
 use super::{Failure, Named, Receipt, fault, store};
 
@@ -34,73 +30,17 @@ pub(crate) struct ItemView {
     decided_by: Option<Named>,
 }
 
-/// One question's result and its parties.
-#[derive(Debug, Serialize)]
-pub(crate) struct ResultView {
-    result: QuestionResultRef,
-    question: RoomAuthorityStamp,
-    requester: RoomDestination,
-    respondent: RoomDestination,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    context: Option<RoomAnchor>,
-    deadline: Instant,
-    /// Journal position of the result's latest move.
-    position: Seq,
-    state: QuestionResultState,
-    /// Who declined or cancelled the question.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    closed_by: Option<Named>,
-    /// The operator closed it for a stored lane party.
-    #[serde(rename = "override", skip_serializing_if = "std::ops::Not::not")]
-    override_party: bool,
-    /// The answer's return receipt to its requester.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    returned: Option<Returned>,
-}
-
-/// The receipt an answer's return owes its requester.
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub(crate) enum Returned {
-    Directive {
-        directive: CanonicalUuid,
-        receipt: Receipt,
-    },
-    Item {
-        item: Box<ItemView>,
-    },
-    /// The return item the answer opened is not indexed.
-    Missing {
-        item: RoomReceiptRef,
-    },
-}
-
-/// A room publication's conversation verb, operator receipt, and result.
+/// A room publication's operator receipt.
 #[derive(Debug, Serialize)]
 pub(crate) struct ConversationView {
     verb: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     item: Option<ItemView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<ResultView>,
 }
 
 impl ItemView {
     pub(super) const fn item(&self) -> &RoomReceiptRef {
         &self.item
-    }
-}
-
-impl ResultView {
-    pub(super) const fn question(&self) -> &RoomAuthorityStamp {
-        &self.question
-    }
-
-    pub(super) const fn answer(&self) -> Option<&RoomAuthorityStamp> {
-        match &self.state {
-            QuestionResultState::Answered { answer, .. } => Some(answer),
-            _ => None,
-        }
     }
 }
 
@@ -110,21 +50,7 @@ pub(super) fn conversation(
     principals: &PrincipalDirectory,
     publication: &RoomPublication,
 ) -> Result<ConversationView, Failure> {
-    let (verb, item, result) = match publication.kind() {
-        RoomPublicationKind::Msg {} => {
-            ("msg", publication.operator_item().map(|(key, _)| key), None)
-        }
-        RoomPublicationKind::Ask { result, .. } => (
-            "ask",
-            publication.operator_item().map(|(key, _)| key),
-            Some(result),
-        ),
-        RoomPublicationKind::Ans { result, .. } => (
-            "ans",
-            Some(RoomReceiptRef::new(publication.publication().clone())),
-            Some(result),
-        ),
-    };
+    let item = publication.operator_item().map(|(key, _)| key);
     let item = match item {
         Some(key) => read
             .room_item(&key)
@@ -133,15 +59,7 @@ pub(super) fn conversation(
             .transpose()?,
         None => None,
     };
-    let result = match result {
-        Some(result) => read
-            .question_result(result)
-            .map_err(store)?
-            .map(|(record, head)| result_view(read, principals, record, head))
-            .transpose()?,
-        None => None,
-    };
-    Ok(ConversationView { verb, item, result })
+    Ok(ConversationView { verb: "msg", item })
 }
 
 pub(super) fn item_view(
@@ -165,55 +83,6 @@ pub(super) fn item_view(
         position,
         state,
         decided_by: decided_by.map(|actor| Named::of(principals, actor)),
-    })
-}
-
-pub(super) fn result_view(
-    read: &journal::JournalRead<'_>,
-    principals: &PrincipalDirectory,
-    record: QuestionResultRecord,
-    head: journal::JournalHead<QuestionResultHead>,
-) -> Result<ResultView, Failure> {
-    let position = head.position();
-    let state = head.body().state().clone();
-    let (closed_by, party) = match &state {
-        QuestionResultState::Declined { source } => (decider(read, source)?, record.respondent()),
-        QuestionResultState::Cancelled { source } => (decider(read, source)?, record.requester()),
-        _ => (None, record.requester()),
-    };
-    let override_party = closed_by
-        .as_ref()
-        .is_some_and(|actor| wire::principal::ActingPrincipal::of(actor).is_some())
-        && matches!(party, RoomDestination::Lane { .. });
-    let returned = match &state {
-        QuestionResultState::Answered {
-            return_delivery, ..
-        } => Some(match return_delivery.delivery() {
-            RoomDelivery::Directive { directive } => Returned::Directive {
-                directive: *directive,
-                receipt: super::receipt(read, *directive)?,
-            },
-            RoomDelivery::Item { item } => match read.room_item(item).map_err(store)? {
-                Some((record, head)) => Returned::Item {
-                    item: Box::new(item_view(read, principals, record, head)?),
-                },
-                None => Returned::Missing { item: item.clone() },
-            },
-        }),
-        _ => None,
-    };
-    Ok(ResultView {
-        result: record.result().clone(),
-        question: record.question().clone(),
-        requester: record.requester().clone(),
-        respondent: record.respondent().clone(),
-        context: record.context().cloned(),
-        deadline: record.deadline(),
-        position,
-        state,
-        closed_by: closed_by.map(|actor| Named::of(principals, actor)),
-        override_party,
-        returned,
     })
 }
 
@@ -274,49 +143,11 @@ impl fmt::Display for ItemView {
     }
 }
 
-impl fmt::Display for ResultView {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "result {} {} deadline={} requester={} respondent={}",
-            self.result,
-            self.state.name(),
-            self.deadline,
-            Party(&self.requester),
-            Party(&self.respondent)
-        )?;
-        if let Some(actor) = &self.closed_by {
-            write!(formatter, " by={actor}")?;
-        }
-        if self.override_party {
-            formatter.write_str(" override")?;
-        }
-        if let QuestionResultState::Answered { answer, .. } = &self.state {
-            write!(formatter, " answer={answer}")?;
-        }
-        match &self.returned {
-            Some(Returned::Directive { directive, receipt }) => {
-                write!(formatter, "\n  return ")?;
-                write_receipt(formatter, *directive, receipt)?;
-            }
-            Some(Returned::Item { item }) => write!(formatter, "\n  return {item}")?,
-            Some(Returned::Missing { item }) => {
-                write!(formatter, "\n  return operator item={item} missing")?;
-            }
-            None => {}
-        }
-        Ok(())
-    }
-}
-
 impl fmt::Display for ConversationView {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "recorded {}", self.verb)?;
         if let Some(item) = &self.item {
             write!(formatter, "\n  {item}")?;
-        }
-        if let Some(result) = &self.result {
-            write!(formatter, "\n  {result}")?;
         }
         Ok(())
     }

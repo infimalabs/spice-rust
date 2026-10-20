@@ -20,6 +20,7 @@ mod preparation_edges;
 mod provenance;
 mod residual;
 mod retained_notes;
+mod room_questions;
 mod settings_receipts;
 mod steering_rooms;
 mod task_evidence;
@@ -88,10 +89,9 @@ const PREPARED: &str = "prepared";
 /// takes the reason its creating actor proves on both, refusing a lane creator,
 /// a missing creating fact, a copy already contradicting that reason, and any
 /// boundary on an unregistered transcript stream. Last, every steering head
-/// takes its body's room as a typed indexed column. Before any of that, required
-/// question-result evidence retires: its derived index is dropped, retained
-/// evidence edits and statement sets lose only that member, and each task edit
-/// receipt that changed evidence moves into historical receipt authority.
+/// takes its body's room as a typed indexed column. Before any of that, the
+/// question-result protocol and required question-result evidence retire into
+/// inert historical authority.
 const PREDECESSOR_SCHEMAS: [u32; 54] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
@@ -147,7 +147,8 @@ const DESIGN_PASS_SCHEMA: u32 = 73;
 pub(crate) const RETAINED_NOTES_SCHEMA: u32 = 76;
 /// First schema whose baseline carries the repository OOPS-generation head.
 pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
-/// First schema whose baseline indexes each steering head's room.
+/// First schema whose baseline indexes each steering head's room, and the only
+/// retained schema whose executable authority still carries room questions.
 pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
@@ -399,17 +400,10 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    cross_room_questions(&transaction, version)?;
     strip_retired_members(&transaction)?;
     let taste_audits = cross_current_rows(&transaction)?;
-    if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
-        cross_shape_predecessor(&transaction, version)?;
-    } else {
-        create_room_schemas(&transaction, version)?;
-        if version < DESIGN_PASS_SCHEMA {
-            decisions::cross_design_passes(&transaction)?;
-            decisions::cross_output_decisions(&transaction)?;
-        }
-    }
+    cross_schema_shape(&transaction, version)?;
     cross_room_successors(&transaction, version)?;
     create_principal_heads(&transaction, version)?;
     working_groups::cross(&transaction)?;
@@ -424,12 +418,37 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     maturity::cross(&transaction)?;
     cross_retained_notes(&transaction, version)?;
     preparation_edges::cross(&transaction)?;
-    advance_identity(&transaction, version)?;
+    advance_identity(&transaction)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+fn cross_schema_shape(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
+        return cross_shape_predecessor(transaction, version);
+    }
+    create_room_schemas(transaction, version)?;
+    if version < DESIGN_PASS_SCHEMA {
+        decisions::cross_design_passes(transaction)?;
+        decisions::cross_output_decisions(transaction)?;
+    }
+    Ok(())
+}
+
+fn cross_room_questions(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version == STEERING_ROOM_SCHEMA {
+        room_questions::cross(transaction)?;
+    }
+    Ok(())
 }
 
 fn cross_room_successors(
@@ -453,13 +472,19 @@ fn cross_retained_notes(
     Ok(())
 }
 
-/// Index every settled steering head's room an authority at `version` lacks,
-/// then name the crossed authority the current schema.
-fn advance_identity(
-    transaction: &rusqlite::Transaction<'_>,
-    version: u32,
-) -> Result<(), OpenError> {
-    if version < STEERING_ROOM_SCHEMA {
+/// Index every settled steering head's room, then name the crossed authority
+/// the current schema.
+fn advance_identity(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    let room_is_typed = transaction
+        .query_row(
+            "SELECT EXISTS(\
+                 SELECT 1 FROM pragma_table_info('steering_heads') WHERE name = 'room'\
+             )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(OpenError::Sqlite)?;
+    if !room_is_typed {
         steering_rooms::cross(transaction)?;
     }
     transaction

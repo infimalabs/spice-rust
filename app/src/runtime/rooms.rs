@@ -16,7 +16,7 @@ mod standing;
 
 pub use contributions::{Contribution, ContributionGroup};
 pub use conversation::{
-    Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem, QuestionResult,
+    Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem,
 };
 pub use standing::{CoordinationStanding, Relevance, ResumeAutomation};
 
@@ -807,25 +807,18 @@ impl RoomProjection {
         admitted | linked
     }
 
-    /// An operator post records in the one room its routes, or an answer's
-    /// stored question, speak in.
+    /// An operator post records in the one room its routes speak in.
     fn apply_posted(&mut self, fact: &StreamFact, body: authority::RoomPosted) -> bool {
         let Ok(publication) = body.publication(wire::SequenceCode::new(fact.seq().get())) else {
             return false;
         };
-        let room = match publication.kind() {
-            authority::RoomPublicationKind::Ans { result, .. } => self
-                .conversation
-                .result(result)
-                .and_then(|result| result.value.record.context().cloned()),
-            _ => publication
-                .routes()
-                .iter()
-                .find_map(|route| match &route.destination {
-                    authority::RoomDestination::Task { task } => Some(task.clone()),
-                    _ => route.context.clone(),
-                }),
-        };
+        let room = publication
+            .routes()
+            .iter()
+            .find_map(|route| match &route.destination {
+                authority::RoomDestination::Task { task } => Some(task.clone()),
+                _ => route.context.clone(),
+            });
         let stamp = body.publication.clone();
         let admitted = self.conversation.admit(
             fact.seq(),
