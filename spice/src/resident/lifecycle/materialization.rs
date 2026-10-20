@@ -227,8 +227,10 @@ impl Projection {
 
     /// Every task a fact addresses, including each output an execution
     /// authorization selects, each Design a working-group move carries in
-    /// or out, and each Design whose pass cycle the fact or a changed task's
-    /// settlement moves, so its entry and READY origin are refreshed.
+    /// or out, each Design either side of a whole-partition arrangement holds
+    /// (stance changes and disbands commit as arrangements), and each Design
+    /// whose pass cycle the fact or a changed task's settlement moves, so its
+    /// entry and READY origin are refreshed.
     fn changed_tasks(
         &self,
         snapshot: &bus::TaskSnapshot,
@@ -254,6 +256,19 @@ impl Projection {
                         fact.fact
                             .read::<wire::rooms::WorkingGroupMoved>()
                             .map(|moved| moved.design),
+                    )
+                    .chain(
+                        fact.fact
+                            .read::<wire::rooms::WorkingGroupsArranged>()
+                            .into_iter()
+                            .flat_map(|arranged| {
+                                arranged
+                                    .from
+                                    .groups
+                                    .into_iter()
+                                    .chain(arranged.partition.groups)
+                            })
+                            .flat_map(|group| group.anchors),
                     )
             })
             .collect::<BTreeSet<_>>();
