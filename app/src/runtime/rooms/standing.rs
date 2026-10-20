@@ -80,9 +80,10 @@ impl RoomProjection {
     /// Current logical-lane participants and the exact reasons for their
     /// presence at `now_micros`. Contribution history and native duties stay;
     /// only activity and invitations leave once they age past
-    /// [`ROOM_ACTIVITY_SECONDS`], and a leave later than the lane's latest
-    /// contribution ends its activity and every invitation or Design request
-    /// it postdates.
+    /// [`ROOM_ACTIVITY_SECONDS`]. Activity comes only from authored room
+    /// messages: a typed contribution is participation, never attention, and
+    /// does not end a leave. A leave later than the lane's latest room message
+    /// ends its activity and every invitation or Design request it postdates.
     pub fn participants(
         &self,
         room: &TaskStamp,
@@ -123,7 +124,6 @@ impl RoomProjection {
                     }
                     RoomEventKind::Contributed { lane, .. } => {
                         add(*lane, ParticipantReason::Contribution(publication.clone()));
-                        latest.insert(*lane, publication);
                         continue;
                     }
                     _ => continue,
@@ -198,8 +198,8 @@ impl RoomProjection {
 
     /// Whether any lane currently has a reason to receive bounded catch-up.
     ///
-    /// A contribution keeps a lane listening until its later leave. Native
-    /// duties and invitations admitted after a leave still listen.
+    /// Participation and a leave never listen; activity, invitations, Design
+    /// requests, and native duties do, matching the resident's attention.
     #[must_use]
     pub fn has_current_listener(
         &self,
@@ -209,23 +209,17 @@ impl RoomProjection {
     ) -> bool {
         self.participants(room, board, now_micros)
             .iter()
-            .any(|participant| {
-                let left = participant
-                    .reasons
-                    .iter()
-                    .any(|reason| matches!(reason, ParticipantReason::Left { .. }));
-                participant.reasons.iter().any(|reason| match reason {
-                    ParticipantReason::Contribution(_) => !left,
-                    ParticipantReason::Left { .. } => false,
-                    ParticipantReason::Activity(_)
-                    | ParticipantReason::Invitation(_)
-                    | ParticipantReason::Asked(_)
-                    | ParticipantReason::Work(_)
-                    | ParticipantReason::Coordination(_)
-                    | ParticipantReason::Receipt(_)
-                    | ParticipantReason::Result(_)
-                    | ParticipantReason::Stop(_) => true,
-                })
+            .flat_map(|participant| &participant.reasons)
+            .any(|reason| match reason {
+                ParticipantReason::Contribution(_) | ParticipantReason::Left { .. } => false,
+                ParticipantReason::Activity(_)
+                | ParticipantReason::Invitation(_)
+                | ParticipantReason::Asked(_)
+                | ParticipantReason::Work(_)
+                | ParticipantReason::Coordination(_)
+                | ParticipantReason::Receipt(_)
+                | ParticipantReason::Result(_)
+                | ParticipantReason::Stop(_) => true,
             })
     }
 
