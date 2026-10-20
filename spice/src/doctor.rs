@@ -554,6 +554,34 @@ mod tests {
     }
 
     #[test]
+    fn an_absent_conditional_tool_keeps_its_command_unavailable() {
+        let contract = cli::contracts()
+            .iter()
+            .find(|contract| contract.path == ["gate", "reference-transaction"])
+            .expect("conditional command contract exists");
+        let mut without_git = probe(Ok(()));
+        without_git
+            .named
+            .insert("git".to_owned(), Err("git is absent".to_owned()));
+
+        let row = default_command_report(contract, &without_git);
+        assert_eq!(
+            row.observation,
+            DoctorObservation::Unavailable {
+                reason: "git is absent".to_owned(),
+            }
+        );
+        assert!(row.tools.iter().any(|tool| {
+            tool.name == "git"
+                && tool.requirement == DoctorToolRequirement::Conditional
+                && tool.observation
+                    == DoctorObservation::Unavailable {
+                        reason: "git is absent".to_owned(),
+                    }
+        }));
+    }
+
+    #[test]
     fn unsupported_checks_cannot_be_aggregated_as_ready() {
         for command in cli::contracts().iter().filter(|contract| {
             contract
