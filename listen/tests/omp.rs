@@ -54,6 +54,7 @@ const SILENT: &[&[u8]] = &[
     br#"{"id":"spice-prompt","type":"response","command":"prompt","success":true}"#,
     br#"{"type":"extension_ui_request","id":"1","method":"setWidget","widgetKey":"x"}"#,
     br#"{"type":"message_end","message":{"role":"custom","customType":"async-result","content":"<system-notice>done</system-notice>"}}"#,
+    br#"{"type":"message_end","message":{"role":"developer","content":[{"type":"text","text":"<system-reminder>comply</system-reminder>"}]}}"#,
     // Current run-state and retry telemetry is either represented by the
     // settled message/prompt result or carries no authored transcript moment.
     br#"{"type":"session_settled"}"#,

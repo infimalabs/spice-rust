@@ -366,8 +366,9 @@ fn message(message: &Object, locus: Locus) -> Events {
         "assistant" => assistant(message, locus),
         "toolResult" => tool_result(message, locus),
         // Vendor notices to the model: background-job deliveries, `!command`
-        // executions, and extension-authored custom messages.
-        "custom" | "bashExecution" => Ok(Vec::new()),
+        // executions, extension-authored custom messages, and harness
+        // reminders such as rule-violation notices.
+        "custom" | "bashExecution" | "developer" => Ok(Vec::new()),
         other => Err(drift(&format!("message:{other}"))),
     }
 }
