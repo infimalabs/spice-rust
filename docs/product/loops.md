@@ -503,16 +503,18 @@ owns each rule summarized here.
   standing.
 - **Attention.** An authored room message or contribution makes its lane a
   participant; neither subscribes that lane, grants permission to post, nor
-  restores listening. Listening is derived from invitation by a lane-addressed
-  packet, native work, a live request, an owed receipt or result, and a stop
-  request. A recorded Design request also keeps the asked lane listening
-  without making it a participant. Aging removes only invitations. Each room
-  catch-up names the lane's reasons and the leave command. `spice room leave
-  HANDLE --clause TEXT` is an attributed lane act recorded once in room history
-  and standing. It ends earlier invitations and Design requests until a later
-  packet or request addresses the lane. It never frees a claim, settles a
-  delivery, or answers a question, and its reply names each native duty that
-  still holds the lane. Relevance is
+  restores listening. Routing a packet into a room, an owed receipt, and a
+  pending ASK result subscribe no one: steering delivers each directly, and
+  room history stays readable on demand. Listening is derived from native
+  work, a live coordination request, and a stop request. A recorded Design
+  request also keeps the asked lane listening, without making it a
+  participant, until the lane's next room publication answers or declines it.
+  Nothing ages. Each room catch-up names the lane's reasons and the leave
+  command. `spice room leave HANDLE --clause TEXT` is an attributed lane act
+  recorded once in room history and standing. It declines earlier Design
+  requests until a later request asks the lane. It never frees a claim,
+  settles a delivery, or answers a question, and its reply names each native
+  duty that still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
 - **Contribution.** A lane records its reasoning on an open Design with

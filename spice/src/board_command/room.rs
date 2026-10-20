@@ -4,7 +4,7 @@ use spice::rooms::{
     Declared, LaneAvailability, RoomDuty, RoomDutyKind, RoomDutyStanding, RoomProjectionBudget,
     RoomProjectionError, RoomProjectionSources, RoomWork, derive_room_attention,
 };
-use wire::rooms::{ROOM_INVITATION_SECONDS, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp};
+use wire::rooms::{ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp};
 
 const ROOM_PUBLICATION_PAGES: usize =
     spice::rooms::MAX_ROOM_ATTENTION_SIGNALS.div_ceil(journal::MAX_RETAINED_FACT_PAGE_ROWS);
@@ -56,7 +56,6 @@ pub(super) fn room_post(
         &snapshot.answer.residency.body,
         &room,
         &publications,
-        at,
     ) {
         Ok(attention) => attention,
         Err(outcome) => return outcome,
@@ -206,34 +205,24 @@ fn bounded_room_publications(
     Ok(rows)
 }
 
-/// One room's listeners: lanes with native work or duties, lanes a
-/// `MSG ADDRESS#ROOM` route addressed within the invitation window, and lanes
-/// a recorded Design request asked about it. An addressed or asked lane hears
-/// the room without becoming a participant until it posts; a lane's leave ends
-/// invitations and requests, never its native work or duties.
+/// One room's listeners: lanes with native work, live coordination, or stop
+/// requests in it, and lanes a recorded Design request asked about it until
+/// their next room publication answers or declines it. Authoring a message or
+/// contribution, routing a packet into the room, an owed receipt, or a pending
+/// ASK result subscribes no one: steering delivers each directly. A lane's
+/// leave ends requests it postdates, never its native work or duties.
 pub(crate) fn project_attention(
     bus: &Bus,
     entries: &[Entry],
     residency: &wire::ResidencyHead,
     room: &wire::TaskStamp,
     publications: &[wire::Envelope<wire::AnyFact>],
-    at: Instant,
 ) -> Result<spice::rooms::RoomAttention, Outcome<CommandAnswer>> {
     let work = entries
         .iter()
         .filter_map(|entry| RoomWork::from_task(room, entry))
         .collect::<Vec<_>>();
-    let since = at
-        .get()
-        .checked_sub(jiff::SignedDuration::from_secs(ROOM_INVITATION_SECONDS))
-        .map_err(|error| {
-            environment_fault("room::invitation-window-invalid", &error.to_string())
-        })?;
-    let since = Instant::new(since).map_err(|error| {
-        environment_fault("room::invitation-window-invalid", &error.to_string())
-    })?;
-    let mut duties = room_invitations(bus, room, residency, since)?;
-    duties.extend(room_asks(bus, room)?);
+    let mut duties = room_asks(bus, room)?;
     duties.extend(room_native_duties(bus, room)?);
     derive_room_attention(
         room,
@@ -247,44 +236,6 @@ pub(crate) fn project_attention(
         RoomProjectionBudget::STANDARD,
     )
     .map_err(projection_refusal)
-}
-
-/// Each lane whose newest `MSG`/`ASK` route into `room` was told at or after
-/// `since`; the bounded read touches no room publication history.
-fn room_invitations(
-    bus: &Bus,
-    room: &wire::TaskStamp,
-    residency: &wire::ResidencyHead,
-    since: Instant,
-) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
-    let lanes = residency
-        .lanes
-        .iter()
-        .map(|row| row.lane)
-        .collect::<Vec<_>>();
-    let probe = room.clone();
-    let heads = bus
-        .read(move |read| {
-            lanes
-                .into_iter()
-                .map(|lane| read.latest_room_route(lane, &probe))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .map_err(|error| store_fault("room::invitation-unreadable", &error.to_string()))?;
-    Ok(heads
-        .into_iter()
-        .flatten()
-        .filter(|head| head.body().published >= since)
-        .map(|head| RoomDuty {
-            room: room.clone(),
-            lane: head.body().lane,
-            kind: RoomDutyKind::Invitation {
-                key: head.body().key.clone(),
-                at: head.body().published,
-            },
-            standing: RoomDutyStanding::Owed,
-        })
-        .collect())
 }
 
 /// The newest recorded Design request that asked each lane about `room`,
@@ -352,66 +303,46 @@ fn notice_source(evidence: &wire::rooms::DesignNoticeEvidence) -> String {
     }
 }
 
-/// Every native duty bound to `room` that no leave can end: each live route
-/// told into it is an owed receipt, each live coordination or stop request
-/// addresses its lane, and each pending ASK result a lane owes in it.
+/// Every native duty bound to `room` that no leave can end: each live
+/// coordination or stop request addresses its lane.
 fn room_native_duties(
     bus: &Bus,
     room: &wire::TaskStamp,
 ) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
     let limit = spice::rooms::MAX_ROOM_ATTENTION_SIGNALS;
     let probe = room.clone();
-    let (steering, results) = bus
-        .read(move |read| {
-            Ok((
-                read.live_room_steering(&probe, limit)?,
-                read.pending_question_results()?,
-            ))
-        })
+    let steering = bus
+        .read(move |read| read.live_room_controls(&probe, limit))
         .map_err(|error| store_fault("room::duties-unreadable", &error.to_string()))?;
     if steering.len() >= limit {
         return Err(refusal(
             "room::attention-budget",
-            Some(format!("room {room} holds {limit} or more live directives")),
-            "settle or cancel live room directives before retrying",
+            Some(format!(
+                "room {room} holds {limit} or more live coordination or stop requests"
+            )),
+            "settle or cancel live room coordination or stop requests before retrying",
         ));
     }
-    let duty = |lane, kind| RoomDuty {
-        room: room.clone(),
-        lane,
-        kind,
-        standing: RoomDutyStanding::Owed,
-    };
-    let mut duties = steering
+    Ok(steering
         .into_iter()
-        .map(|head| {
+        .filter_map(|head| {
             let head = head.into_body();
-            let kind = match head.control.as_deref().map(str::parse) {
-                Some(Ok(wire::rooms::CoordinationControl::Coordinate(_))) => {
+            let kind = match head.control.as_deref()?.parse().ok()? {
+                wire::rooms::CoordinationControl::Coordinate(_) => {
                     RoomDutyKind::Coordination { key: head.key }
                 }
-                Some(Ok(wire::rooms::CoordinationControl::Stop { .. })) => {
+                wire::rooms::CoordinationControl::Stop { .. } => {
                     RoomDutyKind::Stop { key: head.key }
                 }
-                _ => RoomDutyKind::Delivery { key: head.key },
             };
-            duty(head.lane, kind)
+            Some(RoomDuty {
+                room: room.clone(),
+                lane: head.lane,
+                kind,
+                standing: RoomDutyStanding::Owed,
+            })
         })
-        .collect::<Vec<_>>();
-    duties.extend(results.into_iter().filter_map(|(record, _)| {
-        match (record.respondent(), record.context()) {
-            (wire::rooms::RoomDestination::Lane { lane }, Some(context)) if context == room => {
-                Some(duty(
-                    *lane,
-                    RoomDutyKind::Result {
-                        key: record.result().to_string(),
-                    },
-                ))
-            }
-            _ => None,
-        }
-    }));
-    Ok(duties)
+        .collect())
 }
 
 fn projection_refusal(error: RoomProjectionError) -> Outcome<CommandAnswer> {

@@ -395,19 +395,17 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
 /// More retained room publications than several catch-up pages hold.
 const RETAINED_BACKLOG: usize = 40;
 
-/// Each listener starts at a horizon the resident records once, so a large
-/// retained backlog is never owed; both current listeners then receive the
-/// same bounded source-backed page of what followed, and delivery never
-/// becomes lifecycle authority.
+/// Each seated lane starts at a horizon the resident records once, so a large
+/// retained backlog is never owed; the lane working the room then receives a
+/// bounded source-backed page of what followed, a lane a room-scoped MSG only
+/// addressed receives none, and delivery never becomes lifecycle authority.
 #[test]
-fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them() {
+fn resident_catch_up_pages_the_working_lane_from_its_horizon_and_skips_an_addressed_lane() {
     let lanes = Lanes::new("room-catch-up");
-    let room = lanes.room("dVrD245Kc");
+    let room = lanes.held_room("dVrD245Kc", FIRST);
     let (first_lane, second_lane) = (test_uuid(FIRST), test_uuid(SECOND));
-    for (lane, body) in [(FIRST, "first invited"), (SECOND, "second invited")] {
-        let address = lanes.address(lane);
-        lanes.author(SENDER, &format!("MSG {address}#{room}: {body}"));
-    }
+    let address = lanes.address(SECOND);
+    lanes.author(SENDER, &format!("MSG {address}#{room}: second addressed"));
     lanes.account(SENDER);
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
     for item in 0..RETAINED_BACKLOG {
@@ -494,16 +492,17 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
 
     let first = notice(first_lane).unwrap_or_else(|| {
         panic!(
-            "first listener has catch-up: {}",
+            "the working lane has catch-up: {}",
             String::from_utf8_lossy(&diagnostics)
         )
     });
-    let second = notice(second_lane).expect("second listener has catch-up");
-    for notice in [&first, &second] {
-        assert!(notice.text.contains("publication 0"));
-        assert!(notice.text.contains("continue: spice://task/"));
-        assert!(!notice.text.contains("retained") && !notice.text.contains("invited"));
-    }
+    assert!(first.text.contains("publication 0"));
+    assert!(first.text.contains("continue: spice://task/"));
+    assert!(!first.text.contains("retained") && !first.text.contains("addressed"));
+    assert!(
+        notice(second_lane).is_none(),
+        "a room-scoped MSG route reaches its lane by steering, never later catch-up"
+    );
     land_delivery(&lanes, &room, &startup.config, &mut seats, &first);
     seats.release_all();
     lanes.finish();
@@ -680,95 +679,6 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
         diagnostics.is_empty(),
         "{}",
         String::from_utf8_lossy(&diagnostics)
-    );
-    seats.release_all();
-    lanes.finish();
-}
-
-/// A room-bound delivery's terminal steering fact publishes no room row, but
-/// commit classification still names the exact room whose attention changed.
-#[test]
-fn room_bound_steering_disposition_names_its_room_change() {
-    let lanes = Lanes::new("room-catch-up-steering-disposition");
-    let room = lanes.room("dVrD245Kc");
-    let first = lanes.address(FIRST);
-    lanes.author(SENDER, &format!("MSG {first}#{room}: settle this delivery"));
-    lanes.account(SENDER);
-    let (_, published) = lanes.hear_newest(SENDER);
-    assert!(matches!(published.as_slice(), [Ok(_)]));
-    let key = lanes.messages().pop().expect("room message records").1.key;
-
-    let commits = lanes.bus.subscribe().expect("commit subscription opens");
-    lanes.answer(FIRST, &[&key], &format!("ACK {key}: received"));
-    let acknowledged = commits.recv().expect("acknowledgment commit publishes");
-    let mut rooms = BTreeSet::new();
-    rooms.insert(room.born().expect("room stamp"));
-    assert_eq!(
-        room_catch_up::changes(&lanes.bus, acknowledged).expect("acknowledgment changes classify"),
-        room_catch_up::Changes {
-            authority: false,
-            lanes: BTreeSet::new(),
-            rooms,
-        }
-    );
-    lanes.finish();
-}
-
-/// `MSG ADDRESS#ROOM` invites the addressed lane: it hears later room posts
-/// through ordinary catch-up without posting or holding the room's work, while
-/// a seated lane nobody addressed still hears nothing.
-#[test]
-fn a_lane_addressed_into_a_room_hears_its_later_publications() {
-    let lanes = Lanes::new("room-invitation");
-    let room = lanes.room("dVrD245Kc");
-    let (first_lane, second_lane) = (test_uuid(FIRST), test_uuid(SECOND));
-    let first = lanes.address(FIRST);
-    lanes.author(SENDER, &format!("MSG {first}#{room}: join us here"));
-    lanes.account(SENDER);
-    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
-
-    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
-    let startup = load_startup_surface(&repository).expect("fixture surface loads");
-    let mut seats = Seats::new();
-    for lane in [FIRST, SECOND] {
-        seats
-            .seat_detached(
-                test_uuid(lane),
-                test_uuid(lane + 1),
-                Box::new(DetachedFixture {
-                    dropped: Arc::new(AtomicU64::new(0)),
-                }),
-            )
-            .expect("listener seats");
-    }
-    let mut diagnostics = Vec::new();
-    let mut reconcile = || {
-        room_catch_up::reconcile(
-            &lanes.bus,
-            &lanes.paths,
-            &startup.config,
-            &seats,
-            &mut diagnostics,
-        )
-        .expect("catch-up reconciles");
-    };
-    reconcile();
-    lanes.author(SENDER, &format!("MSG #{room}: after the invitation"));
-    lanes.account(SENDER);
-    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    reconcile();
-
-    let notice = |lane| room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, lane));
-    let invited = notice(first_lane).unwrap_or_else(|| {
-        panic!(
-            "the addressed lane hears the room: {}",
-            String::from_utf8_lossy(&diagnostics)
-        )
-    });
-    assert!(invited.text.contains("after the invitation"));
-    assert!(
-        notice(second_lane).is_none(),
-        "an unaddressed lane is not invited"
     );
     seats.release_all();
     lanes.finish();

@@ -11,7 +11,6 @@ use yew::prelude::*;
 
 use super::{Controls, RoomProjectionStatus, card};
 use crate::AppRuntime;
-use crate::browser::clock::now_millis;
 use crate::browser::sender::SenderHandle;
 
 /// The read view of one task's room beneath `composer`. `detail` is the
@@ -40,8 +39,7 @@ pub(in crate::browser) fn render_task_room(
             html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> }
         }
         RoomProjectionStatus::Available => {
-            let has_current_listener =
-                projection.has_current_listener(room, runtime.board(), now_millis() * 1_000);
+            let has_current_listener = projection.has_current_listener(room, runtime.board());
             let events = projection.room(room).map(|room| room.in_journal_order());
             html! {
                 <>

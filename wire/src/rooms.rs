@@ -46,9 +46,6 @@ pub type RoomAnchor = TaskStamp;
 pub const WORKING_GROUP_ANCHOR_LIMIT: usize = 100;
 /// Most designs a working group holds, matching the lanes one team admits.
 pub const WORKING_GROUP_DESIGN_LIMIT: usize = crate::head::TEAM_MEMBER_LIMIT;
-/// How long a lane-addressed room packet keeps its invitation active; native
-/// duties and Design requests do not age.
-pub const ROOM_INVITATION_SECONDS: i64 = 24 * 60 * 60;
 
 /// A current nine-digit native moment stamp for non-task room authority.
 /// Working groups and Design pass proposals need durable identities but are not
@@ -352,8 +349,8 @@ pub struct RoomMessaged {
 
 /// A lane stopped listening to one anchor task's room.
 ///
-/// The leave ends listening derived from invitations until a later route or
-/// request invites it. Authored messages and contributions remain participation
+/// The leave declines every Design request it postdates; only a later request
+/// restores listening. Authored messages and contributions remain participation
 /// records and neither create nor restore listening. It never frees a claim,
 /// settles a delivery, or answers a question; native duties keep the lane
 /// listening regardless.

@@ -88,10 +88,6 @@ pub enum RoomListeningDuty {
     Coordination { key: String },
     /// A live stop request addresses the lane's claim.
     Stop { key: String },
-    /// The lane owes the receipt of a room delivery.
-    Receipt { key: String },
-    /// The lane owes the substantive result of a room ASK with this handle.
-    Result { key: String },
 }
 
 /// One lane contributes a typed record to an open Design room.

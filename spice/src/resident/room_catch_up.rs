@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spice::rooms::{CatchUpBudget, CatchUpKind, CatchUpSource, select_catch_up};
-use wire::rooms::{
-    CoordinationControl, QuestionResultRef, RoomDelivered, RoomHorizon, RoomQuestionClosed,
-    RoomQuestionTimedOut, TextRange, TranscriptHunk,
-};
+use wire::rooms::{CoordinationControl, RoomDelivered, RoomHorizon, TextRange, TranscriptHunk};
 use wire::{
     Actor, AnyFact, CanonicalUuid, Producer, Seq, SequenceCode, SteeringHead, TaskHandle, TaskStamp,
 };
@@ -43,15 +40,13 @@ enum Item {
     Invitation(String),
 }
 
-/// One read of the task board, residency, and clock that room projections
-/// share.
+/// One read of the task board and residency that room projections share.
 pub(in crate::resident) struct Planning {
     pub(in crate::resident) residency: wire::ResidencyHead,
     pub(in crate::resident) entries: Vec<board::Entry>,
     pub(in crate::resident) snapshot: bus::TaskSnapshot,
     pub(in crate::resident) horizon: Option<Seq>,
     rooms: BTreeMap<TaskStamp, usize>,
-    pub(in crate::resident) at: Instant,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -81,10 +76,7 @@ fn listening(
         .map(|reason| match reason {
             Reason::Work { task: work } => format!("work {}", task(work)),
             Reason::Responsibility { task: work } => format!("responsibility {}", task(work)),
-            Reason::Invitation { key } => format!("invitation {key}"),
             Reason::Asked { source } => format!("asked from {source}"),
-            Reason::Delivery { key } => format!("owed receipt {key}"),
-            Reason::Result { key } => format!("owed result {key}"),
             Reason::Coordination { key } => format!("coordination request {key}"),
             Reason::Stop { key } => format!("stop request {key}"),
         })
@@ -270,16 +262,12 @@ impl Planning {
             .map(|(index, entry)| (entry.born().clone(), index))
             .collect();
         let horizon = snapshot.cursor();
-        let at = Instant::new(jiff::Timestamp::now()).map_err(|error| {
-            environment_fault("room::catch-up-clock-invalid", &error.to_string())
-        })?;
         Ok(Self {
             residency,
             entries,
             snapshot,
             horizon,
             rooms,
-            at,
         })
     }
 }
@@ -316,13 +304,7 @@ pub(in crate::resident) fn changes(
                 if let Some(key) = steer::directives::affected_key(envelope)
                     && let Some(head) = read.steering_key(key.as_str())?
                 {
-                    extend_steering_rooms(&mut changes.rooms, head.body());
-                }
-                if let Some(result) = changed_question_result(fact)
-                    && let Some((record, _)) = read.question_result(&result)?
-                    && let Some(room) = record.context()
-                {
-                    changes.rooms.insert(room.clone());
+                    extend_control_rooms(&mut changes.rooms, head.body());
                 }
             }
             let Some(overflow) = page.overflow else {
@@ -346,8 +328,9 @@ fn changes_task_attention(fact: &AnyFact) -> bool {
         || fact.kind() == wire::FactKind::PreparationDecided
 }
 
-fn extend_steering_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
-    rooms.extend(head.room.iter().cloned());
+/// A live coordination or stop request is the only steering that changes room
+/// attention; routing a packet into a room subscribes no one.
+fn extend_control_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
     let Some(control) = head
         .control
         .as_deref()
@@ -358,25 +341,6 @@ fn extend_steering_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
     rooms.insert(match control {
         CoordinationControl::Coordinate(room) | CoordinationControl::Stop { room, .. } => room,
     });
-}
-
-fn changed_question_result(fact: &AnyFact) -> Option<QuestionResultRef> {
-    fact.read::<RoomQuestionClosed>()
-        .map(|closed| closed.result)
-        .or_else(|| {
-            fact.read::<RoomQuestionTimedOut>()
-                .map(|timed_out| timed_out.result)
-        })
-        .or_else(|| {
-            fact.read::<wire::body::SteerDeclined>()
-                .and_then(|declined| {
-                    declined
-                        .key
-                        .parse::<wire::rooms::RoomAuthorityStamp>()
-                        .ok()
-                        .map(QuestionResultRef::new)
-                })
-        })
 }
 
 fn plan(
@@ -404,6 +368,7 @@ fn plan(
             append_room(
                 bus,
                 paths,
+                lane,
                 planning,
                 entry,
                 after,
@@ -419,6 +384,7 @@ fn plan(
             append_room(
                 bus,
                 paths,
+                lane,
                 planning,
                 entry,
                 after,
@@ -444,7 +410,7 @@ fn plan(
             .iter()
             .any(|view: &spice::rooms::RoomAttention| view.room == owed.design)
         {
-            attention.push(room_attention(bus, planning, &owed.design)?);
+            attention.push(room_attention(bus, lane, planning, &owed.design)?);
         }
         let text = spice::rooms::awareness::request_text(&owed.request);
         sources.push(CatchUpSource {
@@ -545,6 +511,7 @@ fn render(
 fn append_room(
     bus: &Bus,
     paths: &RuntimePaths,
+    lane: CanonicalUuid,
     planning: &Planning,
     entry: &board::Entry,
     after: Seq,
@@ -558,7 +525,7 @@ fn append_room(
     if publications.is_empty() {
         return Ok(());
     }
-    let room_attention = room_attention(bus, planning, &room)?;
+    let room_attention = room_attention(bus, lane, planning, &room)?;
     let artifacts = paths.artifacts();
     let owners = crate::room_command::SourceOwners {
         tape: &paths.tape,
@@ -598,6 +565,7 @@ fn append_room(
 
 fn room_attention(
     bus: &Bus,
+    lane: CanonicalUuid,
     planning: &Planning,
     room: &TaskStamp,
 ) -> CommandResult<spice::rooms::RoomAttention> {
@@ -606,10 +574,27 @@ fn room_attention(
         &planning.entries,
         &planning.residency,
         room,
-        &[],
-        planning.at,
+        latest_lane_publication(bus, room, lane)?.as_slice(),
     )
     .map_err(unit_outcome)
+}
+
+/// The lane's newest publication in `room`: a later one answers or declines a
+/// Design request, and a leave bounds derived listening.
+fn latest_lane_publication(
+    bus: &Bus,
+    room: &TaskStamp,
+    lane: CanonicalUuid,
+) -> CommandResult<Option<wire::Envelope<wire::AnyFact>>> {
+    let room = room.clone();
+    let actor = Actor::Lane(lane);
+    bus.read(move |read| read.latest_room_publication(&room, &actor))
+        .map_err(|error| {
+            store_fault(
+                "room::catch-up-lane-publication-unreadable",
+                &error.to_string(),
+            )
+        })
 }
 
 /// Where `lane`'s catch-up starts: its delivery cursor or, before any delivery,
@@ -923,41 +908,5 @@ mod tests {
             Some(&landed),
             "source-backed delivery"
         ));
-    }
-}
-
-#[cfg(test)]
-mod listening_tests {
-    use spice::rooms::{AttentionReason, LaneAvailability, RoomLaneAttention};
-
-    use super::*;
-
-    #[test]
-    fn each_room_names_why_the_lane_listens_and_how_it_leaves() {
-        let handle: TaskHandle = "ROOMS-dVxHkZhQY".parse().expect("fixture handle");
-        let row = RoomLaneAttention {
-            lane: "018f82d4-6f59-7d06-92e3-bce913116301"
-                .parse()
-                .expect("fixture lane"),
-            availability: LaneAvailability::Occupied,
-            participation: Vec::new(),
-            attention: vec![
-                AttentionReason::Invitation {
-                    key: "dVxJpSbV9".to_owned(),
-                },
-                AttentionReason::Result {
-                    key: "dVxJkvVCV".to_owned(),
-                },
-            ],
-            left: None,
-            leave_intervals: Vec::new(),
-        };
-        let block = listening(&handle, Some(&row), &[]);
-        assert!(block.contains("invitation dVxJpSbV9"), "{block}");
-        assert!(block.contains("owed result dVxJkvVCV"), "{block}");
-        assert!(
-            block.contains("spice room leave ROOMS-dVxHkZhQY --clause"),
-            "{block}"
-        );
     }
 }

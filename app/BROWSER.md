@@ -176,21 +176,15 @@ contribution kind (reason for, reason against, evidence, question), or Unheard
 on an operator post that no current or later lane authority proves was heard.
 The Unheard pill's tooltip and accessible label explain that no lane listens
 yet and that starting or directing one will have the post read.
-Its receipts, result, or cited sources follow the words. A lane's first
-event-backed transition into listening, and its first such transition after a
-leave, is a full-width `joined DESIGN` divider immediately before the exact
-directed packet that established it. The join carries that event's durable
-identity and lane attribution; later invitations while the lane remains
-present and replay after reconnect create none. Current native
+Its receipts, result, or cited sources follow the words. Listening and native
 work and duties remain standing rather than fabricated timeline events. A
-lane's departure from a design's room is likewise one full-width divider, the
+lane's departure from a design's room is one full-width divider, the
 group's counterpart of a team compaction card and in its compact shape: two
 rules in the design's accent around the leave's linked age, the leaving lane,
 the design it left, and its clause, which alone yields width; the label's title
 keeps the whole sentence. As on a team toolbar, the status band shows the
 newest thing said in any of the group's designs, a contribution named by its
-lane and kind, and no group name; a listener transition or coordination never
-displaces it.
+lane and kind, and no group name; a coordination never displaces it.
 
 As on a team's rail, the group's total holds the right edge of its tab rail and
 opens the group's work overview. Leftward from it, the rail lists each lane
