@@ -690,6 +690,46 @@ fn dispose(
 }
 
 #[test]
+fn an_ordinary_disposition_refusal_names_claimed_task_deletion() {
+    let (root, bus, epoch, seats) = fixture("ordinary-disposition-refusal", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let task = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "TASK-duplicate",
+        "Remove duplicate work",
+        "board.test",
+        Some("todo"),
+        &["The duplicate is removed"],
+    );
+    claim_task(&bus, epoch, seat, &lane, &task);
+
+    let result = dispose(
+        &bus,
+        epoch,
+        seat,
+        &task,
+        wire::body::PlanDisposition::NoWork {},
+        None,
+    );
+    let Outcome::Refusal(refusal) = result else {
+        panic!("ordinary disposition must refuse: {result:?}");
+    };
+    assert_eq!(refusal.reason(), "task::disposition-refused");
+    let detail = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::detail)
+        .expect("actionable disposition refusal");
+    assert!(detail.contains("spice task delete HANDLE REASON --force-claimed"));
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&current, &task).workflow.body.phase.as_str(), "todo");
+    assert!(at(&current, &task).workflow.body.status.is_pending());
+    clean(&root, bus);
+}
+
+#[test]
 fn a_disposed_plan_settles_on_clean_review_without_constructing_or_authorizing_work() {
     let (root, bus, epoch, seats) = fixture("planning-disposition", 1);
     let seat = &seats[0];
