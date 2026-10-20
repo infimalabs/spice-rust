@@ -151,6 +151,8 @@ fn retained(repository: &Repository) -> RetainedRecord {
             previous: None,
             observed: None,
             superseded: discard.then(|| image(b"retired html")),
+            publication_parent: None,
+            introduced_parents: Vec::new(),
             discard,
         }
     };

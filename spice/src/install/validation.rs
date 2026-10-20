@@ -156,7 +156,7 @@ fn validate_plan_destinations(
         }
     }
     for retirement in &plan.retirements {
-        validate_retirement(retirement)?;
+        validate_retirement(retirement, &mut introduced)?;
         if !destinations.insert((Location::CommonGit, retirement.destination.clone())) {
             return Err(InstallError::InvalidRecord(
                 "install plan duplicates a retirement destination".to_owned(),
@@ -166,10 +166,16 @@ fn validate_plan_destinations(
     Ok(())
 }
 
-fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
+fn validate_retirement(
+    retirement: &Retirement,
+    introduced: &mut BTreeSet<(Location, String)>,
+) -> Result<(), InstallError> {
     validate_relative(&retirement.path)?;
     validate_relative(&retirement.destination)?;
-    let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
+    validate_bound_parent(&retirement.destination, &retirement.parent)?;
+    if let Some(parent) = &retirement.publication_parent {
+        validate_bound_parent(&retirement.destination, parent)?;
+    }
     let current_discard = retirement.path == RETIRED_FOLD_STORE_PATH
         || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())
         || crossing::is_sidecar(&retirement.path);
@@ -178,8 +184,7 @@ fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
     } else {
         retirement.discard
     };
-    if Path::new(&retirement.destination).parent() != Some(expected_parent.as_path())
-        || invalid_discard
+    if invalid_discard
         || retirement
             .previous
             .as_ref()
@@ -198,7 +203,13 @@ fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
             "install retirement carries an invalid path or file image".to_owned(),
         ));
     }
-    Ok(())
+    validate_introduced_parents(
+        Location::CommonGit,
+        &retirement.destination,
+        retirement.previous.is_some(),
+        &retirement.introduced_parents,
+        introduced,
+    )
 }
 
 pub(super) fn validate_operation(
@@ -210,7 +221,13 @@ pub(super) fn validate_operation(
     let (location, path, expected_mode) = asset_contract(operation.asset)?;
     validate_operation_contract(operation, location, &path, expected_mode)?;
     validate_generated_content(operation, content, common_git)?;
-    validate_introduced_parents(operation, introduced)
+    validate_introduced_parents(
+        operation.location,
+        &operation.destination,
+        operation.previous.is_some(),
+        &operation.introduced_parents,
+        introduced,
+    )
 }
 
 fn validate_operation_contract(
@@ -230,11 +247,9 @@ fn validate_operation_contract(
     }
     validate_relative(&operation.path)?;
     validate_relative(&operation.destination)?;
-    let expected_parent = Path::new(&operation.parent.ancestor).join(&operation.parent.missing);
-    if Path::new(&operation.destination).parent() != Some(expected_parent.as_path()) {
-        return Err(InstallError::InvalidRecord(
-            "install destination does not match its bound parent".to_owned(),
-        ));
+    validate_bound_parent(&operation.destination, &operation.parent)?;
+    if let Some(parent) = &operation.publication_parent {
+        validate_bound_parent(&operation.destination, parent)?;
     }
     if !operation.generated.validate()
         || operation
@@ -324,27 +339,40 @@ fn asset_name(asset: Asset) -> &'static str {
     }
 }
 
-fn validate_introduced_parents(
-    operation: &Operation,
-    introduced: &mut BTreeSet<(Location, String)>,
+fn validate_bound_parent(
+    destination: &str,
+    parent: &ParentObservation,
 ) -> Result<(), InstallError> {
-    let parents = super::path::relative_parents(&operation.destination)?;
-    if operation.previous.is_some() && !operation.introduced_parents.is_empty() {
+    if !parent.ancestor.is_empty() {
+        validate_relative(&parent.ancestor)?;
+    }
+    if !parent.missing.is_empty() {
+        validate_relative(&parent.missing)?;
+    }
+    let expected = Path::new(&parent.ancestor).join(&parent.missing);
+    if Path::new(destination).parent() != Some(expected.as_path()) {
         return Err(InstallError::InvalidRecord(
-            "an existing target cannot have introduced parent directories".to_owned(),
+            "install destination does not match its bound parent".to_owned(),
         ));
     }
-    // A refresh is derived only over a verified-complete install, so every
-    // parent it needs is already there and already owned by the plan it
-    // supersedes. Claiming to introduce one would hand the same directory to
-    // two reversals.
-    if operation.superseded.is_some() && !operation.introduced_parents.is_empty() {
+    Ok(())
+}
+
+fn validate_introduced_parents(
+    location: Location,
+    destination: &str,
+    has_previous: bool,
+    owned: &[String],
+    introduced: &mut BTreeSet<(Location, String)>,
+) -> Result<(), InstallError> {
+    let parents = super::path::relative_parents(destination)?;
+    if has_previous && !owned.is_empty() {
         return Err(InstallError::InvalidRecord(
-            "a refreshed target cannot have introduced parent directories".to_owned(),
+            "an existing target cannot own introduced parent directories".to_owned(),
         ));
     }
     let mut minimum_parent = 0;
-    for relative in &operation.introduced_parents {
+    for relative in owned {
         validate_relative(relative)?;
         let Some(offset) = parents[minimum_parent..]
             .iter()
@@ -355,9 +383,9 @@ fn validate_introduced_parents(
             ));
         };
         minimum_parent += offset + 1;
-        if !introduced.insert((operation.location, relative.clone())) {
+        if !introduced.insert((location, relative.clone())) {
             return Err(InstallError::InvalidRecord(
-                "introduced directory is duplicated across operations".to_owned(),
+                "introduced directory is duplicated across reversals".to_owned(),
             ));
         }
     }

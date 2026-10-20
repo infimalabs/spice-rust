@@ -557,11 +557,14 @@ interrupted apply resumes only the same plan.
 
 **Invariant —** The receipt records the exact prior image the installation may
 restore: a fixed-size mode/content reference or absence; prior configuration
-values or absence; and whether it introduced a parent directory. Referenced
-regular-file bytes are stored once outside the repeatedly rewritten receipt,
-under their domain-separated content identity. Prior state is captured once, at
-first application, and never re-derived from the installation's own output.
-Recording only the new state would make absence unrecoverable.
+values or absence; and whether it introduced a parent directory. A refresh
+preserves each destination's original reversal binding and transfers each
+introduced directory to exactly one reversal while separately binding the
+current parent used for publication. Referenced regular-file bytes are stored
+once outside the repeatedly rewritten receipt, under their domain-separated
+content identity. Prior state is captured once, at first application, and never
+re-derived from the installation's own output. Recording only the new state
+would make absence unrecoverable.
 
 **Invariant —** The installed executable is the app's only carrier.
 Installation writes no app file. Its receipt binds the canvas generation G

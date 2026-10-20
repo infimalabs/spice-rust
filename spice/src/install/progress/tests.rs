@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
@@ -39,6 +40,95 @@ fn write_mode(path: &Path, bytes: &[u8], mode: u32) {
 fn mode_of(path: &Path) -> u32 {
     let file = fs::File::open(path).expect("fixture reopens");
     sill::authority::file_mode(&file).expect("fixture mode reads") & 0o777
+}
+
+fn parent_reversals(plan: &InstallPlan) -> Vec<(Location, String)> {
+    plan.operations
+        .iter()
+        .flat_map(|operation| {
+            operation
+                .introduced_parents
+                .iter()
+                .cloned()
+                .map(|parent| (operation.location, parent))
+        })
+        .chain(plan.retirements.iter().flat_map(|retirement| {
+            retirement
+                .introduced_parents
+                .iter()
+                .cloned()
+                .map(|parent| (Location::CommonGit, parent))
+        }))
+        .collect()
+}
+
+fn install_without_binary(repository: &Repository) -> Vec<(Location, String)> {
+    let prepared = prepare(repository, None).expect("install prepares");
+    let reversals = parent_reversals(prepared.plan());
+    apply_prepared_record(repository, None, prepared).expect("install applies");
+    reversals
+}
+
+fn refresh_without_binary(repository: &Repository) -> Vec<(Location, String)> {
+    let LoadedRecord { record, generation } = read_record(repository)
+        .expect("receipt reads")
+        .expect("receipt exists");
+    let plan =
+        refresh_plan(repository, None, &record, &[]).expect("refresh plan carries ownership");
+    let reversals = parent_reversals(&plan);
+    let prepared = fresh(plan, Some(generation)).expect("refresh prepares");
+    apply_prepared_record(repository, None, prepared).expect("refresh applies");
+    reversals
+}
+
+#[test]
+fn refresh_keeps_each_initial_parent_reversal_until_unapply() {
+    let (_scratch, repository) = repository("refresh-parent-ownership");
+    let initial = install_without_binary(&repository);
+    assert!(!initial.is_empty());
+    assert_eq!(
+        initial.len(),
+        initial.iter().collect::<BTreeSet<_>>().len(),
+        "initial install assigns every introduced directory once"
+    );
+
+    assert_eq!(refresh_without_binary(&repository), initial);
+    assert_eq!(refresh_without_binary(&repository), initial);
+    unapply_record(&repository).expect("refreshed install unapplies");
+
+    for (location, relative) in initial {
+        assert!(
+            !location.root(&repository).join(&relative).exists(),
+            "empty introduced directory survived unapply: {relative}"
+        );
+    }
+}
+
+#[test]
+fn unapply_retains_preexisting_directories_and_operator_content_after_refresh() {
+    let (_scratch, repository) = repository("refresh-parent-boundaries");
+    let preexisting = repository.common_dir().join(".spice-install/hooks");
+    fs::create_dir_all(&preexisting).expect("preexisting install directory creates");
+    install_without_binary(&repository);
+    refresh_without_binary(&repository);
+
+    let operator_file = repository
+        .common_dir()
+        .join(".spice-install/agents/skills/operator.txt");
+    fs::write(&operator_file, b"operator content").expect("operator content writes");
+    unapply_record(&repository).expect("refreshed install unapplies");
+
+    assert!(preexisting.is_dir());
+    assert_eq!(
+        fs::read(&operator_file).expect("operator content remains"),
+        b"operator content"
+    );
+    assert!(
+        !repository
+            .common_dir()
+            .join(".spice-install/git-hooks")
+            .exists()
+    );
 }
 
 #[test]

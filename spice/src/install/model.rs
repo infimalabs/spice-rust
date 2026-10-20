@@ -239,6 +239,10 @@ pub struct Operation {
     /// they had before refreshing existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) superseded: Option<GeneratedImage>,
+    /// Current binding used to publish a refresh after the originally absent
+    /// parent hierarchy has been created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) publication_parent: Option<super::ParentObservation>,
     pub(super) introduced_parents: Vec<String>,
 }
 
@@ -262,6 +266,14 @@ pub struct Retirement {
     pub(super) observed: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) superseded: Option<GeneratedImage>,
+    /// Current binding used to apply a refresh after the originally absent
+    /// parent hierarchy has been created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) publication_parent: Option<super::ParentObservation>,
+    /// Parent directories introduced by the original install and still owned
+    /// by this reversal after its publishing operation was retired.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) introduced_parents: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(super) discard: bool,
 }
@@ -293,6 +305,15 @@ impl Retirement {
         self.previous.as_ref()
     }
 
+    /// Parent directories withdrawn after this reversal, outermost first.
+    #[must_use]
+    pub fn introduced_parents(&self) -> &[String] {
+        &self.introduced_parents
+    }
+
+    pub(super) fn publication_parent(&self) -> &super::ParentObservation {
+        self.publication_parent.as_ref().unwrap_or(&self.parent)
+    }
     pub(super) fn destination(&self, repository: &Repository) -> PathBuf {
         repository.common_dir().join(&self.destination)
     }
@@ -381,6 +402,18 @@ impl Operation {
     #[must_use]
     pub fn introduced_parents(&self) -> &[String] {
         &self.introduced_parents
+    }
+
+    pub(super) fn publication_parent(&self) -> &super::ParentObservation {
+        self.publication_parent.as_ref().unwrap_or(&self.parent)
+    }
+
+    pub(super) fn publication_introduced(&self) -> usize {
+        if self.publication_parent.is_some() {
+            0
+        } else {
+            self.introduced_parents.len()
+        }
     }
 
     pub(super) fn destination(&self, repository: &Repository) -> PathBuf {
