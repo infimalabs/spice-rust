@@ -1,11 +1,12 @@
-//! Release-note folding from the first-parent landing ledger.
+//! Release-note folding from first-parent Git bounds and typed task authority.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::manifest::RELEASE_NOTES_VERSION;
 use wire::{Digest, Domain, ReleaseNotes, ReleaseNotesEntry};
 
-const GIT_OBJECT_HEX_LEN: usize = 40;
+/// Last release whose landing records predate the typed release-note projection.
+pub const PRE_PROJECTION_RELEASE: &str = "db7c4cb9c";
 
 /// Marker separating curator-owned prose from the regenerated inventory.
 pub const INVENTORY_OPEN: &str = "<details>";
@@ -15,21 +16,41 @@ pub const HIGHLIGHTS_PLACEHOLDER: &str = concat!(
     "the changes below._",
 );
 
-/// One first-parent landing observed by the repository rim.
+/// Review standing carried by one durable task landing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReviewStanding {
+    /// Review accepted the task.
+    Clean,
+    /// Review required a correction.
+    Finding,
+}
+
+/// One typed task landing projected from durable journal authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Landing {
-    /// Fully resolved landing commit.
+    /// Journal sequence establishing this landing.
+    pub sequence: u64,
+    /// Integrated Git commit named by the task boundary.
     pub commit: String,
-    /// First parent immediately preceding this landing, absent for a root.
-    pub first_parent: Option<String>,
-    /// Commit subject.
-    pub subject: String,
-    /// Project declared by the commit.
+    /// Stable task identity.
+    pub task: String,
+    /// Current typed task project.
     pub project: String,
-    /// Stable task identity declared by the commit, when present.
-    pub task: Option<String>,
-    /// Commit body used to recognize a structural revert.
-    pub body: String,
+    /// Current typed task title.
+    pub title: String,
+    /// Whether this task boundary contributed the integrated commit.
+    pub contributes: bool,
+    /// Review standing when this is a review landing.
+    pub verdict: Option<ReviewStanding>,
+}
+
+/// One correction task assigned by a parent task review.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Correction {
+    /// Parent task whose finding required correction.
+    pub parent: String,
+    /// Task created to make the correction.
+    pub correction: String,
 }
 
 /// Complete observations needed to fold one release-note document.
@@ -41,27 +62,22 @@ pub struct NotesInput {
     pub release_commit: String,
     /// Highest-versioned reachable prior release tag.
     pub previous_tag: Option<String>,
-    /// Ordered first-parent landings in the selected window.
+    /// Ordered first-parent commits in the exact selected release window.
+    pub window: Vec<String>,
+    /// Typed landings reachable in the selected first-parent ancestry.
     pub landings: Vec<Landing>,
+    /// Typed correction relations among those tasks.
+    pub corrections: Vec<Correction>,
 }
 
-/// Fold a release-note draft from first-parent landings.
-///
-/// `contains` answers whether a reverted side-branch commit is reachable from
-/// a candidate commit. A landing introduces the target only when the target is
-/// reachable from the landing but not its first parent. Keeping both Git
-/// observations at the rim leaves suppression, task collapsing, grouping, and
-/// rendering deterministic.
+/// Fold a release-note draft from Git bounds and typed task authority.
 ///
 /// # Errors
 ///
-/// Returns the ancestry observation failure with both commits that caused it.
-pub fn release_notes(
-    input: NotesInput,
-    mut contains: impl FnMut(&str, &str) -> Result<bool, String>,
-) -> Result<ReleaseNotes, NotesError> {
-    let suppressed = suppressed_landings(&input.landings, &mut contains)?;
-    let entries = fold_entries(&input.landings, &suppressed);
+/// Refuses a selected commit without exactly one contributing landing, an
+/// ambiguous correction relation, or a correction cycle.
+pub fn release_notes(input: NotesInput) -> Result<ReleaseNotes, NotesError> {
+    let entries = fold_entries(&input)?;
     let document = render(&input, &entries);
     Ok(ReleaseNotes {
         version: RELEASE_NOTES_VERSION,
@@ -111,98 +127,125 @@ pub fn curated_release_notes(
     Ok(notes)
 }
 
-fn suppressed_landings(
-    landings: &[Landing],
-    contains: &mut impl FnMut(&str, &str) -> Result<bool, String>,
-) -> Result<BTreeSet<usize>, NotesError> {
-    let mut suppressed = BTreeSet::new();
-    for (revert_index, revert) in landings.iter().enumerate() {
-        let Some(target) = reverted_commit(&revert.body) else {
-            continue;
-        };
-        let mut introduced = None;
-        for (landing_index, landing) in landings.iter().enumerate() {
-            if landing_index == revert_index {
-                continue;
-            }
-            let included =
-                contains(target, &landing.commit).map_err(|detail| NotesError::Ancestry {
-                    target: target.to_owned(),
-                    landing: landing.commit.clone(),
-                    detail,
-                })?;
-            let included_by_parent = match landing.first_parent.as_deref() {
-                Some(parent) if included => {
-                    contains(target, parent).map_err(|detail| NotesError::Ancestry {
-                        target: target.to_owned(),
-                        landing: parent.to_owned(),
-                        detail,
-                    })?
-                }
-                Some(_) | None => false,
-            };
-            if included && !included_by_parent {
-                introduced = Some(landing_index);
-                break;
-            }
-        }
-        let Some(introduced) = introduced else {
-            continue;
-        };
-        suppressed.insert(revert_index);
-        let task = landings[introduced].task.as_deref();
-        if let Some(task) = task {
-            for (index, landing) in landings.iter().enumerate() {
-                if landing.task.as_deref() == Some(task) {
-                    suppressed.insert(index);
-                }
-            }
-        } else {
-            suppressed.insert(introduced);
+fn fold_entries(input: &NotesInput) -> Result<Vec<ReleaseNotesEntry>, NotesError> {
+    let parents = correction_parents(&input.corrections)?;
+    let roots = input
+        .landings
+        .iter()
+        .map(|landing| {
+            correction_root(&landing.task, &parents)
+                .map(|root| (landing.task.clone(), root.to_owned()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+
+    let mut contributors: BTreeMap<&str, &Landing> = BTreeMap::new();
+    for landing in input.landings.iter().filter(|landing| landing.contributes) {
+        if contributors
+            .insert(landing.commit.as_str(), landing)
+            .is_some()
+        {
+            return Err(NotesError::AmbiguousLanding {
+                commit: landing.commit.clone(),
+                release: PRE_PROJECTION_RELEASE,
+            });
         }
     }
-    Ok(suppressed)
-}
 
-fn reverted_commit(body: &str) -> Option<&str> {
-    const PREFIX: &str = "This reverts commit ";
-    let tail = body.split_once(PREFIX)?.1;
-    let commit = tail
-        .split(|character: char| !character.is_ascii_hexdigit())
-        .next()?;
-    (commit.len() >= 7 && commit.len() <= GIT_OBJECT_HEX_LEN).then_some(commit)
-}
-
-fn fold_entries(landings: &[Landing], suppressed: &BTreeSet<usize>) -> Vec<ReleaseNotesEntry> {
-    let mut entries: Vec<ReleaseNotesEntry> = Vec::new();
-    let mut task_positions: BTreeMap<String, usize> = BTreeMap::new();
-    for (index, landing) in landings.iter().enumerate() {
-        if suppressed.contains(&index) {
-            continue;
+    let mut metadata: BTreeMap<&str, &Landing> = BTreeMap::new();
+    let mut standing: BTreeMap<&str, (u64, ReviewStanding)> = BTreeMap::new();
+    for landing in &input.landings {
+        let root = roots
+            .get(&landing.task)
+            .map(String::as_str)
+            .unwrap_or(landing.task.as_str());
+        if root == landing.task {
+            let current = metadata.entry(root).or_insert(landing);
+            if landing.sequence > current.sequence {
+                *current = landing;
+            }
+            if let Some(verdict) = landing.verdict {
+                let current = standing.entry(root).or_insert((landing.sequence, verdict));
+                if landing.sequence > current.0 {
+                    *current = (landing.sequence, verdict);
+                }
+            }
         }
-        let project = project_key(&landing.project);
-        let subject =
-            release_note_subject(&landing.subject, landing.task.as_deref(), &landing.project);
-        if let Some(task) = landing.task.as_deref()
-            && let Some(position) = task_positions.get(task).copied()
+    }
+
+    let mut entries = Vec::<ReleaseNotesEntry>::new();
+    let mut positions = BTreeMap::<String, usize>::new();
+    for commit in &input.window {
+        let landing = contributors.get(commit.as_str()).copied().ok_or_else(|| {
+            NotesError::MissingLanding {
+                commit: commit.clone(),
+                release: PRE_PROJECTION_RELEASE,
+            }
+        })?;
+        let root = roots
+            .get(&landing.task)
+            .map(String::as_str)
+            .unwrap_or(landing.task.as_str());
+        if standing
+            .get(root)
+            .is_some_and(|(_, verdict)| *verdict == ReviewStanding::Finding)
         {
-            let entry = &mut entries[position];
-            entry.project = project;
-            entry.subject = subject;
-            entry.references.push(landing.commit.clone());
             continue;
         }
-        if let Some(task) = landing.task.as_deref() {
-            task_positions.insert(task.to_owned(), entries.len());
+        let authority =
+            metadata
+                .get(root)
+                .copied()
+                .ok_or_else(|| NotesError::MissingTaskAuthority {
+                    task: root.to_owned(),
+                    release: PRE_PROJECTION_RELEASE,
+                })?;
+        if let Some(position) = positions.get(root).copied() {
+            entries[position].references.push(commit.clone());
+            continue;
         }
+        positions.insert(root.to_owned(), entries.len());
         entries.push(ReleaseNotesEntry {
-            project,
-            subject,
-            task: landing.task.clone(),
-            references: vec![landing.commit.clone()],
+            project: authority.project.clone(),
+            subject: authority.title.clone(),
+            task: Some(root.to_owned()),
+            references: vec![commit.clone()],
         });
     }
-    entries
+    Ok(entries)
+}
+
+fn correction_parents(corrections: &[Correction]) -> Result<BTreeMap<String, String>, NotesError> {
+    let mut parents = BTreeMap::new();
+    for correction in corrections {
+        if let Some(previous) =
+            parents.insert(correction.correction.clone(), correction.parent.clone())
+            && previous != correction.parent
+        {
+            return Err(NotesError::AmbiguousCorrection {
+                task: correction.correction.clone(),
+                release: PRE_PROJECTION_RELEASE,
+            });
+        }
+    }
+    Ok(parents)
+}
+
+fn correction_root<'a>(
+    task: &'a str,
+    parents: &'a BTreeMap<String, String>,
+) -> Result<&'a str, NotesError> {
+    let mut current = task;
+    let mut seen = BTreeSet::new();
+    while let Some(parent) = parents.get(current) {
+        if !seen.insert(current) {
+            return Err(NotesError::CorrectionCycle {
+                task: task.to_owned(),
+                release: PRE_PROJECTION_RELEASE,
+            });
+        }
+        current = parent;
+    }
+    Ok(current)
 }
 
 fn render(input: &NotesInput, entries: &[ReleaseNotesEntry]) -> String {
@@ -223,14 +266,16 @@ fn render(input: &NotesInput, entries: &[ReleaseNotesEntry]) -> String {
                 .expect("group was just inserted")
                 .highlights
         };
-        let text = edited_release_highlight(&entry.subject);
-        if let Some(highlight) = group.iter_mut().find(|highlight| highlight.text == text) {
+        if let Some(highlight) = group
+            .iter_mut()
+            .find(|highlight| highlight.text == entry.subject)
+        {
             highlight
                 .references
                 .extend(entry.references.iter().cloned());
         } else {
             group.push(ProjectHighlight {
-                text,
+                text: entry.subject.clone(),
                 references: entry.references.clone(),
             });
         }
@@ -254,7 +299,7 @@ fn render(input: &NotesInput, entries: &[ReleaseNotesEntry]) -> String {
         String::new(),
     ];
     if groups.is_empty() {
-        lines.extend(["- No non-release commits found.".to_owned(), String::new()]);
+        lines.extend(["- No task landings found.".to_owned(), String::new()]);
     } else {
         for ProjectGroup {
             project,
@@ -293,7 +338,7 @@ fn render(input: &NotesInput, entries: &[ReleaseNotesEntry]) -> String {
         ));
     }
     lines.push(
-        "- Commit source: first-parent history grouped by `Task-Project` metadata".to_owned(),
+        "- Commit source: first-parent Git bounds with durable task landing authority".to_owned(),
     );
     lines.push(String::new());
     lines.join("\n")
@@ -322,98 +367,6 @@ fn carries_highlights(curated: &str) -> bool {
     })
 }
 
-fn release_note_subject(subject: &str, task: Option<&str>, project: &str) -> String {
-    let mut trimmed = strip_phase_prefix(subject.trim());
-    let stem = project.split('.').next().unwrap_or(project).trim();
-    if !stem.is_empty()
-        && trimmed
-            .get(..stem.len().saturating_add(2))
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(&format!("{stem}: ")))
-    {
-        trimmed = trimmed[stem.len() + 2..].trim();
-        trimmed = strip_phase_suffix(trimmed);
-    }
-    if let Some(task) = task
-        && let Some((head, tail)) = trimmed.rsplit_once(' ')
-        && !head.is_empty()
-        && tail.ends_with(&format!("-{task}"))
-    {
-        trimmed = head.trim_end();
-    }
-    trimmed.to_owned()
-}
-
-fn strip_phase_prefix(subject: &str) -> &str {
-    const PHASES: [&str; 5] = ["design", "plan", "todo", "verify", "review"];
-    let Some(close) = subject.find("): ") else {
-        return subject;
-    };
-    let Some((phase, _)) = subject[..close].split_once('(') else {
-        return subject;
-    };
-    if PHASES
-        .iter()
-        .any(|candidate| phase.eq_ignore_ascii_case(candidate))
-    {
-        &subject[close + 3..]
-    } else {
-        subject
-    }
-}
-
-fn strip_phase_suffix(subject: &str) -> &str {
-    const PHASES: [&str; 4] = ["design", "plan", "verify", "review"];
-    for phase in PHASES {
-        let suffix = format!(" ({phase})");
-        if subject
-            .get(subject.len().saturating_sub(suffix.len())..)
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&suffix))
-        {
-            return &subject[..subject.len() - suffix.len()];
-        }
-    }
-    subject
-}
-
-fn edited_release_highlight(subject: &str) -> String {
-    let raw = subject.split_whitespace().collect::<Vec<_>>().join(" ");
-    if raw.is_empty() {
-        return "Updated the release.".to_owned();
-    }
-    const REPLACEMENTS: [(&str, &str); 12] = [
-        ("fix ", "Fixed "),
-        ("prefer ", "Improved "),
-        ("add ", "Added "),
-        ("expose ", "Added "),
-        ("remove ", "Removed "),
-        ("update ", "Updated "),
-        ("track ", "Tracked "),
-        ("document ", "Documented "),
-        ("restore ", "Restored "),
-        ("clean ", "Cleaned "),
-        ("wire ", "Wired "),
-        ("make ", "Made "),
-    ];
-    let lower = raw.to_lowercase();
-    let rewritten = REPLACEMENTS
-        .iter()
-        .find(|(prefix, _)| lower.starts_with(prefix))
-        .map_or_else(
-            || capitalize_first(&raw),
-            |(prefix, replacement)| format!("{replacement}{}", &raw[prefix.len()..]),
-        );
-    punctuate(rewritten)
-}
-
-fn project_key(project: &str) -> String {
-    let project = project.trim().to_lowercase();
-    if project.is_empty() || project.starts_with("agent.") {
-        "general".to_owned()
-    } else {
-        project
-    }
-}
-
 fn project_heading(project: &str) -> String {
     let words = project
         .replace('_', "-")
@@ -440,29 +393,44 @@ fn capitalize_first(text: &str) -> String {
     first.to_uppercase().chain(characters).collect()
 }
 
-fn punctuate(mut text: String) -> String {
-    if !text.ends_with(['.', '!', '?']) {
-        text.push('.');
-    }
-    text
-}
-
 fn short_commit(commit: &str) -> &str {
     commit.get(..7).unwrap_or(commit)
 }
 
-/// Why landing history could not become publishable release notes.
+/// Why typed landing authority could not become publishable release notes.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum NotesError {
-    /// A containment query failed instead of answering true or false.
+    /// A selected Git commit has no contributing typed landing.
     #[error(
-        "could not test whether reverted commit {target} belongs to landing {landing}: {detail}"
+        "integrated commit {commit} has no typed release-note landing; release {release} last wrote this retained shape"
     )]
-    Ancestry {
-        target: String,
-        landing: String,
-        detail: String,
+    MissingLanding {
+        commit: String,
+        release: &'static str,
     },
+    /// More than one task claims the same integrated commit.
+    #[error(
+        "integrated commit {commit} has ambiguous typed release-note landings; release {release} last wrote this retained shape"
+    )]
+    AmbiguousLanding {
+        commit: String,
+        release: &'static str,
+    },
+    /// One correction task names multiple parents.
+    #[error(
+        "correction task {task} has ambiguous parent authority; release {release} last wrote this retained shape"
+    )]
+    AmbiguousCorrection { task: String, release: &'static str },
+    /// Correction relations contain a cycle.
+    #[error(
+        "correction task {task} belongs to a correction cycle; release {release} last wrote this retained shape"
+    )]
+    CorrectionCycle { task: String, release: &'static str },
+    /// A folded root task has no typed metadata.
+    #[error(
+        "task {task} has no typed release-note metadata; release {release} last wrote this retained shape"
+    )]
+    MissingTaskAuthority { task: String, release: &'static str },
     /// The operator supplied the generated draft unchanged.
     #[error("release notes still exactly match the generated draft")]
     UntouchedDraft,
@@ -482,63 +450,93 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reverts_suppress_the_whole_task_and_repeated_landings_keep_every_reference() {
-        let input = fixture(vec![
-            landing(
+    fn task_landings_and_corrections_fold_under_typed_root_authority() {
+        let input = fixture(
+            vec!["1111111111", "2222222222", "3333333333"],
+            vec![
+                landing(1, "1111111111", "root", "spice.app", "Show presence"),
+                landing(2, "2222222222", "root", "spice.app", "Show presence"),
+                landing(3, "3333333333", "fix", "spice.fix", "Repair presence"),
+            ],
+            vec![Correction {
+                parent: "root".to_owned(),
+                correction: "fix".to_owned(),
+            }],
+        );
+
+        let notes = release_notes(input).expect("typed authority folds");
+
+        assert_eq!(notes.entries.len(), 1);
+        assert_eq!(notes.entries[0].task.as_deref(), Some("root"));
+        assert_eq!(notes.entries[0].project, "spice.app");
+        assert_eq!(notes.entries[0].subject, "Show presence");
+        assert_eq!(
+            notes.entries[0].references,
+            ["1111111111", "2222222222", "3333333333"]
+        );
+        assert!(
+            notes
+                .document
+                .contains("Show presence (1111111, 2222222, 3333333)")
+        );
+    }
+
+    #[test]
+    fn latest_parent_review_controls_correction_visibility() {
+        let mut landings = vec![
+            landing(1, "1111111111", "root", "spice.app", "Show presence"),
+            landing(3, "3333333333", "fix", "spice.fix", "Repair presence"),
+        ];
+        landings.push(review(2, "root", ReviewStanding::Finding));
+        let corrections = vec![Correction {
+            parent: "root".to_owned(),
+            correction: "fix".to_owned(),
+        }];
+        let hidden = release_notes(fixture(
+            vec!["1111111111", "3333333333"],
+            landings.clone(),
+            corrections.clone(),
+        ))
+        .expect("finding folds");
+        assert!(hidden.entries.is_empty());
+
+        landings.push(review(4, "root", ReviewStanding::Clean));
+        let visible = release_notes(fixture(
+            vec!["1111111111", "3333333333"],
+            landings,
+            corrections,
+        ))
+        .expect("clean review folds");
+        assert_eq!(visible.entries.len(), 1);
+    }
+
+    #[test]
+    fn every_selected_commit_requires_typed_landing_authority() {
+        let error = release_notes(fixture(
+            vec!["1111111111", "2222222222"],
+            vec![landing(
+                1,
                 "1111111111",
-                "app: Add palette UI-keep",
-                "app.ui",
-                Some("keep"),
-                "",
-            ),
-            landing(
-                "2222222222",
-                "app: Fix palette UI-keep (review)",
-                "app.ui",
-                Some("keep"),
-                "",
-            ),
-            landing(
-                "3333333333",
-                "gate: Add seam GATE-gone",
-                "gate.tests",
-                Some("gone"),
-                "",
-            ),
-            landing(
-                "4444444444",
-                "gate: Verify seam GATE-gone (review)",
-                "gate.tests",
-                Some("gone"),
-                "",
-            ),
-            landing(
-                "5555555555",
-                "Revert gate seam",
-                "gate.tests",
-                None,
-                "This reverts commit abcdef0123456789.",
-            ),
-            landing("6666666666", "Document fallback", "", None, ""),
-        ]);
+                "root",
+                "spice.app",
+                "Show presence",
+            )],
+            Vec::new(),
+        ))
+        .expect_err("unclaimed commit refuses");
 
-        let notes = release_notes(input, |target, landing| {
-            Ok(target == "abcdef0123456789" && landing == "3333333333")
-        })
-        .expect("history folds");
-
-        assert_eq!(notes.entries.len(), 2);
-        assert_eq!(notes.entries[0].subject, "Fix palette");
-        assert_eq!(notes.entries[0].references, ["1111111111", "2222222222"]);
-        assert_eq!(notes.entries[1].project, "general");
-        assert!(!notes.document.contains("seam"));
-        assert!(notes.document.contains("### App UI"));
-        assert!(notes.document.contains("Fixed palette. (1111111, 2222222)"));
+        assert_eq!(
+            error,
+            NotesError::MissingLanding {
+                commit: "2222222222".to_owned(),
+                release: PRE_PROJECTION_RELEASE,
+            }
+        );
     }
 
     #[test]
     fn no_tag_is_a_bounded_and_explicit_window() {
-        let notes = release_notes(fixture(Vec::new()), |_target, _landing| Ok(false))
+        let notes = release_notes(fixture(Vec::new(), Vec::new(), Vec::new()))
             .expect("empty history folds");
 
         assert!(notes.bounded_recent_window);
@@ -548,24 +546,25 @@ mod tests {
                 .document
                 .contains("bounded latest first-parent commits")
         );
-        assert!(notes.document.contains("No non-release commits found"));
+        assert!(notes.document.contains("No task landings found"));
     }
 
     #[test]
     fn curation_is_required_and_only_the_canonical_tail_survives() {
-        let canonical = release_notes(
-            NotesInput {
-                previous_tag: Some("v1.2.3".to_owned()),
-                ..fixture(vec![landing(
+        let canonical = release_notes(NotesInput {
+            previous_tag: Some("v1.2.3".to_owned()),
+            ..fixture(
+                vec!["1234567890"],
+                vec![landing(
+                    1,
                     "1234567890",
-                    "dist: Add history notes NOTES-note",
-                    "dist.notes",
-                    Some("note"),
-                    "",
-                )])
-            },
-            |_target, _landing| Ok(false),
-        )
+                    "note",
+                    "spice.dist",
+                    "Derive release notes from durable landings",
+                )],
+                Vec::new(),
+            )
+        })
         .expect("history folds");
 
         assert_eq!(
@@ -588,156 +587,58 @@ mod tests {
         );
 
         let candidate = concat!(
-            "## Highlights\r\n\r\n- Release notes now follow landing history.",
+            "## Highlights\r\n\r\n- Release notes now follow durable task authority.",
             "\r\n\r\n<details>\r\nold inventory",
         );
         let curated = curated_release_notes(candidate, &canonical).expect("highlights curate");
+        assert!(curated.document.starts_with(
+            "## Highlights\r\n\r\n- Release notes now follow durable task authority."
+        ));
         assert!(
             curated
                 .document
-                .starts_with("## Highlights\r\n\r\n- Release notes now follow landing history.")
+                .contains("Derive release notes from durable landings")
         );
-        assert!(curated.document.contains("Added history notes"));
         assert!(!curated.document.contains("old inventory"));
         assert_ne!(curated.identity, canonical.identity);
     }
 
-    #[test]
-    fn a_handle_shaped_suffix_is_removed_only_for_its_own_task() {
-        let notes = release_notes(
-            fixture(vec![
-                landing("1111111111", "Fix alpha MAYBE-other", "", Some("own"), ""),
-                landing("2222222222", "Fix beta TASK-own", "", Some("own-2"), ""),
-            ]),
-            |_target, _landing| Ok(false),
-        )
-        .expect("history folds");
-
-        assert_eq!(notes.entries[0].subject, "Fix alpha MAYBE-other");
-        assert_eq!(notes.entries[1].subject, "Fix beta TASK-own");
-    }
-
-    #[test]
-    fn ancestry_distinguishes_inherited_targets_from_the_introducing_landing() {
-        let notes = release_notes(
-            fixture(vec![
-                landing("1111111111", "Keep inherited", "dist", None, ""),
-                landing("2222222222", "Keep unrelated", "dist", None, ""),
-                landing("3333333333", "Remove introduced", "dist", None, ""),
-                landing(
-                    "4444444444",
-                    "Revert introduced",
-                    "dist",
-                    None,
-                    "This reverts commit abcdef0.",
-                ),
-            ]),
-            |target, landing| match (target, landing) {
-                ("abcdef0", "1111111111" | "parent-1111111111") => Ok(true),
-                ("abcdef0", "2222222222") => Ok(false),
-                ("abcdef0", "parent-2222222222") => {
-                    Err("an excluded landing's parent must not be queried".to_owned())
-                }
-                ("abcdef0", "3333333333") => Ok(true),
-                ("abcdef0", "parent-3333333333") => Ok(false),
-                _ => Ok(false),
-            },
-        )
-        .expect("history folds from the exact introduction boundary");
-
-        assert_eq!(
-            notes
-                .entries
-                .iter()
-                .map(|entry| entry.subject.as_str())
-                .collect::<Vec<_>>(),
-            ["Keep inherited", "Keep unrelated"]
-        );
-    }
-
-    #[test]
-    fn malformed_revert_ids_remain_ordinary_landings() {
-        let notes = release_notes(
-            fixture(vec![
-                landing("1111111111", "Keep ordinary landing", "dist", None, ""),
-                landing(
-                    "2222222222",
-                    "Document apparent revert",
-                    "dist",
-                    None,
-                    "This reverts commit abcdef.",
-                ),
-            ]),
-            |target, landing| Ok(target == "abcdef" && landing == "1111111111"),
-        )
-        .expect("short object id is not a structural revert");
-
-        assert_eq!(
-            notes
-                .entries
-                .iter()
-                .map(|entry| entry.subject.as_str())
-                .collect::<Vec<_>>(),
-            ["Keep ordinary landing", "Document apparent revert"]
-        );
-    }
-
-    #[test]
-    fn rendering_groups_equal_highlights_and_preserves_cli_subjects() {
-        let notes = release_notes(
-            fixture(vec![
-                landing(
-                    "1111111111",
-                    "review(CLI): Keep command spelling",
-                    "cli",
-                    None,
-                    "",
-                ),
-                landing(
-                    "2222222222",
-                    "review(CLI): Keep command spelling",
-                    "cli",
-                    None,
-                    "",
-                ),
-            ]),
-            |_target, _landing| Ok(false),
-        )
-        .expect("equal CLI highlights fold");
-
-        assert_eq!(notes.entries[0].subject, "Keep command spelling");
-        assert_eq!(notes.entries[1].subject, "Keep command spelling");
-        assert_eq!(notes.document.matches("### CLI").count(), 1);
-        assert!(
-            notes
-                .document
-                .contains("Keep command spelling. (1111111, 2222222)")
-        );
-    }
-
-    fn fixture(landings: Vec<Landing>) -> NotesInput {
+    fn fixture(
+        window: Vec<&str>,
+        landings: Vec<Landing>,
+        corrections: Vec<Correction>,
+    ) -> NotesInput {
         NotesInput {
             release_version: "1.2.4".to_owned(),
             release_commit: "abcdef0123456789".to_owned(),
             previous_tag: None,
+            window: window.into_iter().map(str::to_owned).collect(),
             landings,
+            corrections,
         }
     }
 
-    fn landing(
-        commit: &str,
-        subject: &str,
-        project: &str,
-        task: Option<&str>,
-        body: &str,
-    ) -> Landing {
+    fn landing(sequence: u64, commit: &str, task: &str, project: &str, title: &str) -> Landing {
         Landing {
+            sequence,
             commit: commit.to_owned(),
-            first_parent: Some(format!("parent-{commit}")),
-            subject: subject.to_owned(),
+            task: task.to_owned(),
             project: project.to_owned(),
-            task: task.map(str::to_owned),
-            body: body.to_owned(),
+            title: title.to_owned(),
+            contributes: true,
+            verdict: None,
+        }
+    }
+
+    fn review(sequence: u64, task: &str, verdict: ReviewStanding) -> Landing {
+        Landing {
+            sequence,
+            commit: format!("review-{sequence}"),
+            task: task.to_owned(),
+            project: "spice.app".to_owned(),
+            title: "Show presence".to_owned(),
+            contributes: false,
+            verdict: Some(verdict),
         }
     }
 }

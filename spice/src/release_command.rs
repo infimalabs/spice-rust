@@ -148,8 +148,18 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
             &error.to_string(),
         ))
     })?;
+    let state_paths = repository
+        .admit_state()
+        .map_err(|error| Box::new(crate::state_failure(&error).outcome()))?;
+    let reader = journal::JournalReader::open(state_paths.journal()).map_err(|error| {
+        Box::new(environment::<ReleasePlan>(
+            "release::journal-unavailable",
+            &error.to_string(),
+        ))
+    })?;
     let history = crate::release_history::draft(
         repository.worktree_root(),
+        &reader,
         matches
             .get_one::<String>("release-commit")
             .map(String::as_str),
@@ -174,6 +184,7 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
     })?;
     let canonical = crate::release_history::projected_draft(
         repository.worktree_root(),
+        &reader,
         &external.source_commit,
         matches.get_one::<String>("version").map(String::as_str),
         &external.release_commit,
@@ -217,15 +228,6 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         Box::new(refusal::<ReleasePlan>(
             "release::external-plan-refused",
             &error,
-        ))
-    })?;
-    let state_paths = repository
-        .admit_state()
-        .map_err(|error| Box::new(crate::state_failure(&error).outcome()))?;
-    let reader = journal::JournalReader::open(state_paths.journal()).map_err(|error| {
-        Box::new(environment::<ReleasePlan>(
-            "release::journal-unavailable",
-            &error.to_string(),
         ))
     })?;
     let facts = reader.read(observed_facts).map_err(|error| {
@@ -939,14 +941,28 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<NotesView> {
             return environment(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
+    let state_paths = match repository.admit_state() {
+        Ok(paths) => paths,
+        Err(error) => return crate::state_failure(&error).outcome(),
+    };
+    let reader = match journal::JournalReader::open(state_paths.journal()) {
+        Ok(reader) => reader,
+        Err(error) => {
+            return environment("release::journal-unavailable", &error.to_string());
+        }
+    };
     let release_commit = matches
         .get_one::<String>("release-commit")
         .map(String::as_str);
-    let notes =
-        match crate::release_history::draft(repository.worktree_root(), release_commit, None) {
-            Ok(notes) => notes,
-            Err(error) => return notes_refusal("release::history-refused", &error),
-        };
+    let notes = match crate::release_history::draft(
+        repository.worktree_root(),
+        &reader,
+        release_commit,
+        None,
+    ) {
+        Ok(notes) => notes,
+        Err(error) => return notes_refusal("release::history-refused", &error),
+    };
     let output = matches.get_one::<String>("output").map(String::as_str);
     match view::notes_view(&notes, output, release_commit) {
         Ok(body) => Outcome::Reply(Reply {

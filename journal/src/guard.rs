@@ -279,6 +279,10 @@ impl<'a> JournalRead<'a> {
     ) -> Result<(crate::Verification, crate::FactSnapshot), crate::VerifyError> {
         crate::replay::verify_connection_after_facts(self.connection, || {})
     }
+
+    pub(crate) const fn connection(&self) -> &'a Connection {
+        self.connection
+    }
 }
 
 /// One authoritative head body and the fact position that established it.

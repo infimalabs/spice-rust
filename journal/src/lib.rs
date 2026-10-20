@@ -51,8 +51,9 @@
 /// pending direct Design output on its Design. Schema 86 indexes each steering
 /// head's room as a typed column for newest-route lookup. Schema 87 retires the
 /// question-result protocol and required question-result evidence while preserving
-/// their receipts and facts as inert authority.
-pub const SCHEMA_VERSION: u32 = 87;
+/// their receipts and facts as inert authority. Schema 88 materializes task Git
+/// boundaries and review corrections as typed release-note authority.
+pub const SCHEMA_VERSION: u32 = 88;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -77,6 +78,8 @@ mod migrate;
 #[cfg(not(target_arch = "wasm32"))]
 mod read;
 #[cfg(not(target_arch = "wasm32"))]
+mod release_notes;
+#[cfg(not(target_arch = "wasm32"))]
 mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 mod restore;
@@ -100,6 +103,8 @@ pub use guard::{
 pub use migrate::{Migration, MigrationError, OpenError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use read::{FactSnapshot, SnapshotError, SteeringSnapshot};
+#[cfg(not(target_arch = "wasm32"))]
+pub use release_notes::{ReleaseCorrection, ReleaseLanding, ReleaseNoteAuthority};
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{
     ReindexError, ReindexReport, Verification, VerifyError, Violation, ViolationClass,

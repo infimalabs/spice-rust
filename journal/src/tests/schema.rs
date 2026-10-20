@@ -16,6 +16,7 @@ mod preparation_edges;
 mod principals;
 mod probe;
 mod provenance;
+mod release_notes;
 mod retained;
 mod retained_notes;
 mod room_questions;
@@ -142,6 +143,8 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let release_notes =
+        "DROP TABLE IF EXISTS release_corrections; DROP TABLE IF EXISTS release_landings;";
     let typed_rooms: bool = journal
         .connection
         .query_row(
@@ -159,7 +162,7 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
         .connection
         .execute_batch(&format!(
             "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} \
-             {evidence} {relevance} {principals} {oops_generation} {steering}
+             {evidence} {relevance} {principals} {oops_generation} {steering} {release_notes}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))

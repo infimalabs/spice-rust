@@ -89,13 +89,14 @@ const PREPARED: &str = "prepared";
 /// takes the reason its creating actor proves on both, refusing a lane creator,
 /// a missing creating fact, a copy already contradicting that reason, and any
 /// boundary on an unregistered transcript stream. Last, every steering head
-/// takes its body's room as a typed indexed column. Before any of that, the
-/// question-result protocol and required question-result evidence retire into
-/// inert historical authority.
-const PREDECESSOR_SCHEMAS: [u32; 54] = [
+/// takes its body's room as a typed indexed column, and every retained task Git
+/// boundary and review correction enters the release-note projection. Before
+/// any of that, the question-result protocol and required question-result
+/// evidence retire into inert historical authority.
+const PREDECESSOR_SCHEMAS: [u32; 55] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85, 86,
+    81, 82, 83, 84, 85, 86, 87,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -418,6 +419,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     maturity::cross(&transaction)?;
     cross_retained_notes(&transaction, version)?;
     preparation_edges::cross(&transaction)?;
+    crate::release_notes::cross(&transaction)?;
     advance_identity(&transaction)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
@@ -1292,6 +1294,25 @@ CREATE TABLE task_heads (
 ) STRICT;
 CREATE INDEX task_heads_project_stamp
 ON task_heads(json_extract(CAST(body AS TEXT), '$.project'), stamp);
+CREATE TABLE release_landings (
+    seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq) ON DELETE RESTRICT,
+    commit_id TEXT NOT NULL,
+    task TEXT NOT NULL REFERENCES task_heads(stamp) ON DELETE RESTRICT,
+    project TEXT NOT NULL,
+    title TEXT NOT NULL,
+    contributes INTEGER NOT NULL CHECK (contributes IN (0, 1)),
+    verdict TEXT CHECK (verdict IN ('clean', 'finding'))
+) STRICT;
+CREATE UNIQUE INDEX release_landings_contribution
+    ON release_landings(commit_id) WHERE contributes = 1;
+CREATE INDEX release_landings_commit_seq ON release_landings(commit_id, seq);
+CREATE INDEX release_landings_task_seq ON release_landings(task, seq);
+CREATE TABLE release_corrections (
+    correction TEXT PRIMARY KEY REFERENCES task_heads(stamp) ON DELETE RESTRICT,
+    parent TEXT NOT NULL REFERENCES task_heads(stamp) ON DELETE RESTRICT,
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq) ON DELETE RESTRICT,
+    CHECK (correction <> parent)
+) STRICT;
 CREATE TABLE workflow_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -1425,8 +1446,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 87, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 88, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 87;
+PRAGMA user_version = 88;
 "#;

@@ -17,8 +17,8 @@ pub use authority::{
 };
 pub use canvas::{Canvas, CanvasError, ObjectTarget, canvas_object, linked_archive};
 pub use notes::{
-    HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput, curated_release_notes,
-    release_notes,
+    Correction, HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput,
+    PRE_PROJECTION_RELEASE, ReviewStanding, curated_release_notes, release_notes,
 };
 pub use pins::{PinError, PinName, RequiredPins};
 pub use release::{

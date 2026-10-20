@@ -6,6 +6,7 @@ use wire::rooms::{RoomDelivered, RoomHorizon, RoomMessaged};
 use wire::{Disposition, SteeringHead};
 
 use super::*;
+const QUESTION_PROTOCOL_PREDECESSOR: u32 = 86;
 
 fn deliver(journal: &mut Journal, head: &TranscriptSourceHead, through: Seq) -> Commit {
     let mut write = JournalWrite::new(
@@ -172,7 +173,7 @@ fn retiring_a_cursor_head_restores_the_latest_surviving_delivery() {
             params![wire::encode(&envelope).unwrap(), position],
         )
         .unwrap();
-    super::super::schema::restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    super::super::schema::restore_predecessor(&journal, QUESTION_PROTOCOL_PREDECESSOR);
 
     crate::migrate::admit(&mut journal.connection)
         .expect("predecessor crosses")

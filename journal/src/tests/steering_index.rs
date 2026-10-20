@@ -317,7 +317,9 @@ fn a_predecessor_crossing_backfills_typed_rooms_without_rewriting_authority() {
     journal
         .connection
         .execute_batch(&format!(
-            "{PREDECESSOR_STEERING_HEADS}
+            "DROP TABLE release_corrections;
+             DROP TABLE release_landings;
+             {PREDECESSOR_STEERING_HEADS}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};"
         ))

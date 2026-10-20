@@ -3,6 +3,7 @@ use super::*;
 const CONTROL: &str = "018f82d4-6f59-7d06-92e3-bce913116310";
 const CLOSE: &str = "018f82d4-6f59-7d06-92e3-bce913116311";
 const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
+const QUESTION_PROTOCOL_PREDECESSOR: u32 = 86;
 
 #[test]
 fn retired_question_receipts_cross_once_and_reserve_their_identities() {
@@ -75,14 +76,14 @@ fn retired_question_receipts_cross_once_and_reserve_their_identities() {
              ) STRICT;",
         )
         .unwrap();
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, QUESTION_PROTOCOL_PREDECESSOR);
 
     let migration = crate::migrate::admit(&mut journal.connection)
         .expect("predecessor crosses")
         .expect("crossing is reported");
     assert_eq!(
         (migration.from(), migration.to()),
-        (SCHEMA_VERSION - 1, SCHEMA_VERSION)
+        (QUESTION_PROTOCOL_PREDECESSOR, SCHEMA_VERSION)
     );
     journal
         .verify()
@@ -180,7 +181,7 @@ fn an_older_predecessor_with_question_authority_refuses_unchanged() {
             ],
         )
         .unwrap();
-    restore_predecessor(&journal, SCHEMA_VERSION - 2);
+    restore_predecessor(&journal, QUESTION_PROTOCOL_PREDECESSOR - 1);
     let before = retained_question_rows(&journal);
 
     let error = crate::migrate::admit(&mut journal.connection).unwrap_err();
