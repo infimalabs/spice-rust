@@ -1,4 +1,4 @@
-//! Session-profile requests for one contribution to a matching passive Design.
+//! Session-profile requests for one contribution to a matching open Design.
 //!
 //! Each retained-profile opportunity can owe one request at a session's
 //! allocation boundary. The durable notice records that choice so command
@@ -7,13 +7,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
-use spice::rooms::awareness::{FrequencyProfile, TermCounts, pitch, request_questions};
+use spice::rooms::awareness::{
+    FrequencyProfile, MATCH_SCORE_BASE, TermCounts, pitch, request_questions,
+};
 use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
     DesignConversationEvidence, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed,
-    DesignSession, DesignSupport,
+    DesignSession, DesignSupport, WorkingGroupStance,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -31,6 +33,19 @@ const COMPLETION_PAGE_ROWS: usize = 64;
 const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
 /// Profile opportunities admitted to one in-memory page.
 const PROFILE_OPPORTUNITY_PAGE: usize = 64;
+/// Denominator shared by the exact stance weighting ratios.
+const MATCH_SCORE_PARTS: f64 = 3.0;
+
+/// Candidate-owned relevance floor for one Design's effective stance.
+#[must_use]
+pub(in crate::resident) fn match_score_floor(stance: WorkingGroupStance) -> f64 {
+    let parts = match stance {
+        WorkingGroupStance::Passive => 3.0,
+        WorkingGroupStance::Explore => 2.0,
+        WorkingGroupStance::Converge => 4.0,
+    };
+    MATCH_SCORE_BASE * parts / MATCH_SCORE_PARTS
+}
 
 /// One Design request and the journal position its planning read covered.
 #[derive(Clone)]
@@ -136,7 +151,7 @@ impl CompletionCursor {
     }
 }
 
-/// Record one best matching passive Design for every retained-profile
+/// Record one best matching open Design for every retained-profile
 /// opportunity. Nothing is delivered in the background: the lane reads the
 /// owed request from its next `task next`.
 pub(in crate::resident) fn reconcile(
@@ -251,7 +266,7 @@ fn plan_profile_requests(
     let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
     let prepared = entries
         .iter()
-        .filter(|entry| passive(entry) && entry.is_filed())
+        .filter(|entry| entry.is_filed() && open_design(entry))
         .filter_map(|entry| {
             let statement = entry.statement();
             frequency
@@ -304,7 +319,14 @@ fn plan_profile_requests(
                     && !facts.design_was_noticed_in_session(lane, &session, design.born())
                     && !facts.published_in_room_for_session(lane, &session, design.born())
             })
-            .map(|(design, vector)| DesignCandidate::new(design.born(), *design, vector));
+            .map(|(design, vector)| {
+                DesignCandidate::new(
+                    design.born(),
+                    *design,
+                    vector,
+                    match_score_floor(facts.design_stance(design.born())),
+                )
+            });
         let selected = {
             let Some(profile) = state.profiles.profile_mut(&opportunity.session) else {
                 continue;
@@ -533,9 +555,9 @@ fn durable_conversation(
     })
 }
 
-/// Whether `entry` is an open Design inactive under its group stance.
-fn passive(entry: &board::Entry) -> bool {
-    board::passive_design(entry)
+/// Whether `entry` is currently an open Design, regardless of its stance.
+fn open_design(entry: &board::Entry) -> bool {
+    wire::intent::is_open_design(entry.statement().intent, entry.workflow())
 }
 
 /// One request owed to a continuing session.
@@ -645,7 +667,7 @@ fn session_has_outstanding(
 }
 
 /// Whether a recorded invitation is still owed. Design closure, statement
-/// replacement, standing, or a room publication releases it.
+/// replacement, or a room publication releases it.
 fn request_is_current(
     facts: &bus::TaskFacts,
     design: &board::Entry,
@@ -654,7 +676,7 @@ fn request_is_current(
     noticed_at: Seq,
 ) -> bool {
     design.is_filed()
-        && passive(design)
+        && open_design(design)
         && design.statement().revision == statement
         && !facts.published_in_room_after(lane, design.born(), noticed_at)
 }
@@ -679,12 +701,12 @@ fn design_request(design: &board::Entry, notice: &DesignNoticed) -> DesignReques
     }
 }
 
-/// Refuse an invitation whose target session, supporting source, Design, room
-/// standing, or competing request moved.
+/// Refuse an invitation whose target session, supporting source, Design,
+/// room standing, or competing request moved.
 fn still_owed(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
     let session_declared = current_context(read, request)?;
     supporting_source(read, request)?;
-    passive_design(read, request, session_declared)?;
+    current_design(read, request, session_declared)?;
     unseen_request(read, request)
 }
 
@@ -863,7 +885,7 @@ fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
     )))
 }
 
-fn passive_design(
+fn current_design(
     read: &JournalRead<'_>,
     request: &PlannedRequest,
     session_declared: Seq,
@@ -882,12 +904,6 @@ fn passive_design(
         || !wire::intent::is_open_design(statement.body().intent, workflow.body())
     {
         return Err(stale("the Design is no longer open"));
-    }
-    if read
-        .group_partition()?
-        .is_some_and(|head| head.body().design_is_active(&request.design))
-    {
-        return Err(stale("the Design is no longer passive"));
     }
     if read
         .latest_room_publication(&request.design, &Actor::Lane(request.lane))?

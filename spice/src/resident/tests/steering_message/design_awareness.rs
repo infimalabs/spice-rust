@@ -1,5 +1,5 @@
 //! Session-profile Design requests are durable, singular, and released by
-//! substantive room publication, source replacement, or a Design standing change.
+//! substantive room publication, source replacement, or a Design statement change.
 
 use wire::rooms::DesignNoticed;
 
@@ -491,6 +491,54 @@ impl Lanes {
             wire::intent::NextWorkState::DesignRequest { request } => Some(request),
             _ => None,
         }
+    }
+}
+
+#[test]
+fn stance_match_floors_follow_the_balanced_base_ratio() {
+    use wire::rooms::WorkingGroupStance::{Converge, Explore, Passive};
+
+    for (stance, expected) in [(Passive, 0.15), (Explore, 0.10), (Converge, 0.20)] {
+        let observed = crate::resident::design_awareness::match_score_floor(stance);
+        assert!(
+            (observed - expected).abs() < 1e-12,
+            "{stance} floor {observed} != {expected}"
+        );
+    }
+}
+
+#[test]
+fn every_open_design_stance_is_invitation_eligible() {
+    use wire::rooms::WorkingGroupStance::{Converge, Explore, Passive};
+
+    for (fixture, stance) in [
+        ("design-request-passive", Passive),
+        ("design-request-explore", Explore),
+        ("design-request-converge", Converge),
+    ] {
+        let lanes = Lanes::new(fixture);
+        align_completion_lane(&lanes);
+        let config = surface(&lanes);
+        let task = lanes.claimed("dVrD245Kc", FIRST);
+        let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+        lanes.group(30, &config, &design, stance);
+        let mut completions =
+            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+                .expect("completion cursor starts");
+        let mut seated = claimant_seats();
+
+        lanes.complete(&task, MATCHING);
+        lanes.reconcile_completions(&config, &seated, &mut completions);
+        assert_eq!(
+            lanes
+                .request(&config, FIRST)
+                .expect("a filed open Design can be requested in every stance")
+                .design,
+            design,
+            "{stance} Design was not eligible"
+        );
+        seated.release_all();
+        lanes.finish();
     }
 }
 
@@ -1007,7 +1055,7 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
 }
 
 #[test]
-fn active_standing_releases_an_unanswered_request() {
+fn stance_changes_preserve_an_unanswered_open_design_request() {
     let lanes = Lanes::new("design-request-standing");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
@@ -1033,11 +1081,19 @@ fn active_standing_releases_an_unanswered_request() {
         design
     );
 
-    lanes.stance(72, &config, wire::rooms::WorkingGroupStance::Explore);
-    assert!(
-        lanes.request(&config, FIRST).is_none(),
-        "an active Design no longer owes the passive request"
-    );
+    for (id, stance) in [
+        (72, wire::rooms::WorkingGroupStance::Explore),
+        (73, wire::rooms::WorkingGroupStance::Converge),
+    ] {
+        lanes.stance(id, &config, stance);
+        assert_eq!(
+            lanes
+                .request(&config, FIRST)
+                .expect("an open Design stays owed across stance changes")
+                .design,
+            design
+        );
+    }
     seated.release_all();
     lanes.finish();
 }

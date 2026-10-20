@@ -275,9 +275,9 @@ struct Indexes {
     task_origins: HashMap<journal::crossing::TaskStamp, TaskOrigin>,
     duplicate_task_origins: HashSet<journal::crossing::TaskStamp>,
     invalid_creator_teams: HashSet<journal::crossing::TaskStamp>,
-    grouped_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
-    /// Open-Design activity implied by each grouped Design's shared stance.
-    active_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
+    /// Effective stance of each grouped Design; an ungrouped Design is passive.
+    design_stances:
+        Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::rooms::WorkingGroupStance>>,
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
@@ -293,19 +293,16 @@ struct Indexes {
 
 impl Indexes {
     fn replace_partition(&mut self, partition: journal::crossing::rooms::WorkingGroupPartition) {
-        self.active_designs = Arc::new(
-            partition
-                .groups
-                .iter()
-                .filter(|group| group.stance.is_active())
-                .flat_map(|group| group.anchors.iter().cloned())
-                .collect(),
-        );
-        self.grouped_designs = Arc::new(
+        self.design_stances = Arc::new(
             partition
                 .groups
                 .into_iter()
-                .flat_map(|group| group.anchors)
+                .flat_map(|group| {
+                    group
+                        .anchors
+                        .into_iter()
+                        .map(move |design| (design, group.stance))
+                })
                 .collect(),
         );
     }
@@ -988,19 +985,32 @@ impl TaskFacts {
     pub fn room_anchor_tasks(
         &self,
     ) -> impl Iterator<Item = &journal::crossing::TaskStamp> + ExactSizeIterator {
-        self.indexes.grouped_designs.iter()
+        self.indexes.design_stances.keys()
     }
 
     /// Whether the current working-group partition holds `task`.
     #[must_use]
     pub fn grouped(&self, task: &journal::crossing::TaskStamp) -> bool {
-        self.indexes.grouped_designs.contains(task)
+        self.indexes.design_stances.contains_key(task)
+    }
+
+    /// Effective stance of `task`; Designs outside every group are passive.
+    #[must_use]
+    pub fn design_stance(
+        &self,
+        task: &journal::crossing::TaskStamp,
+    ) -> journal::crossing::rooms::WorkingGroupStance {
+        self.indexes
+            .design_stances
+            .get(task)
+            .copied()
+            .unwrap_or(journal::crossing::rooms::WorkingGroupStance::Passive)
     }
 
     /// Whether `task` is active under its current working-group stance.
     #[must_use]
     pub fn design_is_active(&self, task: &journal::crossing::TaskStamp) -> bool {
-        self.indexes.active_designs.contains(task)
+        self.design_stance(task).is_active()
     }
 
     /// One open Design's standing and pass-cycle evidence.
