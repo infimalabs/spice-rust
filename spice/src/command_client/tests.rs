@@ -966,7 +966,10 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("classifier peer binds");
     let address = listener.local_addr().expect("classifier peer address");
     let bound = crate::cli::APP_ANSWER_BOUND;
-    let mut stream = DeadlineStream::connect(&address, bound).expect("classifier peer accepts");
+    // A later attempt inherits less than the whole bound; faults still name
+    // the bound the caller declared.
+    let mut stream = DeadlineStream::connect(&address, Instant::now() + bound / 2, bound)
+        .expect("classifier peer accepts");
 
     for (recorded, assumed, reason) in [
         (None, IoDirection::Read, "serve::receive-failed"),
@@ -1001,11 +1004,16 @@ fn a_transport_failure_names_the_elapsed_bound_before_it_names_a_direction() {
         };
         assert_eq!(fault.reason, reason);
         assert_eq!(fault.class, FaultClass::Environment);
-        assert!(fault.detail.contains("peer detail"), "{fault:?}");
+        let elapsed = reason == "serve::deadline-elapsed";
         assert_eq!(
             fault.detail.contains("20s"),
-            reason == "serve::deadline-elapsed",
+            elapsed,
             "only an elapsed bound names itself: {fault:?}"
+        );
+        assert_eq!(
+            fault.detail.contains("peer detail"),
+            !elapsed,
+            "a peer failure keeps its detail; an elapsed bound is the whole story: {fault:?}"
         );
     }
 }

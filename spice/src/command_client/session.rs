@@ -17,9 +17,10 @@ pub(super) struct AuthenticatedSession {
 pub(super) fn open_session(
     contract: &Contract,
     discovery: DiscoveryRead,
-    timeout: Duration,
+    deadline: Instant,
+    bound: Duration,
 ) -> ClientResult<AuthenticatedSession> {
-    open_session_with(contract, discovery, timeout, || {})
+    open_session_with(contract, discovery, deadline, bound, || {})
 }
 
 /// The request that carries the capability, built once the endpoint is known.
@@ -85,14 +86,15 @@ pub(super) fn capability_request(
 pub(super) fn open_session_with(
     contract: &Contract,
     discovery: DiscoveryRead,
-    timeout: Duration,
+    deadline: Instant,
+    bound: Duration,
     after_connect: impl FnOnce(),
 ) -> ClientResult<AuthenticatedSession> {
     let (authority, address) =
         dialable_endpoint(&discovery.value.endpoint).map_err(Outcome::Fault)?;
     discovery.verify_current()?;
     discovery.require_live_publisher().map_err(Outcome::Fault)?;
-    let stream = match DeadlineStream::connect(&address, timeout) {
+    let stream = match DeadlineStream::connect(&address, deadline, bound) {
         Ok(stream) => stream,
         Err(error) => {
             return Err(environment_fault(
