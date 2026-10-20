@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use listen::{Decoded, Dialog, Event, ProseRole};
 use serde::{Deserialize, Serialize};
-use vendor::omp::{JobCall, ShellCall};
+use vendor::omp::{JobCall, JobOp, ShellCall};
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
@@ -110,7 +110,7 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Where the occupant's commands run, for an occupant that has a shell.
     terminal: Option<Terminal>,
     /// The calls being answered now, by the host tool call each answers.
-    calls: Mutex<HashMap<String, Handle>>,
+    calls: Mutex<HashMap<String, ActiveCall>>,
     /// The latest progress each in-flight job wait reported, by its call:
     /// see [`waits`].
     waits: Mutex<HashMap<String, String>>,
@@ -125,6 +125,21 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
 enum Work {
     Shell(ShellCall),
     Job(JobCall),
+}
+
+#[derive(Clone)]
+struct ActiveCall {
+    handle: Handle,
+    blocking_wait: bool,
+}
+
+impl ActiveCall {
+    fn new(handle: Handle, work: &Work) -> Self {
+        Self {
+            handle,
+            blocking_wait: matches!(work, Work::Job(call) if call.op == JobOp::Wait),
+        }
+    }
 }
 
 /// A confirm dialog stated as the consent request the resident decides.
@@ -765,7 +780,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id.to_owned(), control.handle());
+            .insert(id.to_owned(), ActiveCall::new(control.handle(), &work));
         let driver = Arc::clone(self);
         let answered = id.to_owned();
         let started = std::thread::Builder::new()
@@ -915,8 +930,8 @@ impl<W: Write + Send + 'static> Driver<W> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(id);
-        if let Some(handle) = handle {
-            handle.cancel();
+        if let Some(call) = handle {
+            call.handle.cancel();
         }
     }
 
@@ -945,8 +960,8 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _aborted = self.write(&vendor::omp::abort_request());
         let running =
             std::mem::take(&mut *self.calls.lock().unwrap_or_else(PoisonError::into_inner));
-        for handle in running.into_values() {
-            handle.cancel();
+        for call in running.into_values() {
+            call.handle.cancel();
         }
         self.close();
     }
