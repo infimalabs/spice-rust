@@ -1132,7 +1132,7 @@ mod tests {
     }
 
     #[test]
-    fn a_keyed_read_answers_only_its_selection_in_text() {
+    fn text_focuses_keyed_reads_and_changes() {
         let root = std::env::temp_dir().join("spice-config-text-focus");
         let documents = Documents {
             tracked: None,
@@ -1161,5 +1161,29 @@ mod tests {
         let bare = text(None);
         assert!(bare.contains_key("effective") && bare.contains_key("provenance"));
         assert!(!bare.contains_key("selected"));
+
+        let plan = MutationPlan::new(
+            &documents,
+            MutationTarget::Local,
+            "vendor.omp.effort",
+            b"[vendor.omp]\neffort = 'high'\n",
+        )
+        .unwrap();
+        let mutation = receipt(&plan, true);
+        let report = report(
+            documents.resolve_current().unwrap(),
+            Some("vendor.omp.binary"),
+            Some(plan),
+            Some(mutation),
+        )
+        .unwrap();
+        let changed: toml::Table =
+            toml::from_str(std::str::from_utf8(&report.text().unwrap()).unwrap()).unwrap();
+        assert!(
+            ["selected", "plan", "mutation"]
+                .iter()
+                .all(|key| changed.contains_key(*key))
+        );
+        assert!(!changed.contains_key("effective") && !changed.contains_key("provenance"));
     }
 }
