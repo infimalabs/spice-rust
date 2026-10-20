@@ -205,7 +205,7 @@ fn task_list_continuation(
         wire::output::Resume::Widened { record, bytes } => (record, Some(bytes)),
         wire::output::Resume::Export(row) => (row, Some(wire::output::INTERACTIVE.maximum().bytes)),
     };
-    let limits = options.budget().limits();
+    let limits = options.budget().resume();
     let mut arguments = vec!["list".to_owned()];
     if options.selection.all {
         arguments.push("--all".to_owned());

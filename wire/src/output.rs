@@ -151,6 +151,7 @@ impl Surface {
                 text: admit(TEXT_FLAG, request.text, default.text, maximum.text, false)?,
             },
             maximum,
+            default_rows: default.rows,
         })
     }
 }
@@ -213,6 +214,7 @@ pub enum LimitError {
 pub struct Budget {
     limits: Limits,
     maximum: Limits,
+    default_rows: usize,
 }
 
 impl Budget {
@@ -220,6 +222,20 @@ impl Budget {
     #[must_use]
     pub const fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// Limits this read's continuation carries: a count-only read resumes
+    /// with the surface's default row limit, so following it shows rows.
+    #[must_use]
+    pub const fn resume(&self) -> Limits {
+        Limits {
+            rows: if self.limits.rows == 0 {
+                self.default_rows
+            } else {
+                self.limits.rows
+            },
+            ..self.limits
+        }
     }
 
     /// Cut one text field to this read's text limit.

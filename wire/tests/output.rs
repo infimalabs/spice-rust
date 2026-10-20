@@ -310,6 +310,29 @@ fn a_surface_admits_requests_only_within_its_maxima() {
 }
 
 #[test]
+fn a_continuation_resumes_a_count_only_read_with_the_default_rows() {
+    let resume = |rows| {
+        SURFACE
+            .budget(Request {
+                rows: Some(rows),
+                bytes: Some(300),
+                ..Request::default()
+            })
+            .expect("fixture request is admitted")
+            .resume()
+    };
+    assert_eq!(
+        resume(0),
+        Limits {
+            rows: SURFACE.default_limits().rows,
+            bytes: 300,
+            text: SURFACE.default_limits().text,
+        }
+    );
+    assert_eq!(resume(7).rows, 7, "an explicit row limit is carried");
+}
+
+#[test]
 #[should_panic(expected = "repository ceiling")]
 fn no_surface_may_declare_maxima_above_the_repository_ceiling() {
     let above = wire::output::CEILING.rows + 1;

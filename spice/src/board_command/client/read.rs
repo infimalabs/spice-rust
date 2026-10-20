@@ -798,7 +798,7 @@ fn task_show_continuation(
         wire::output::Resume::Widened { record, bytes } => (record, Some(bytes)),
         wire::output::Resume::Export(row) => (row, Some(wire::output::INTERACTIVE.maximum().bytes)),
     };
-    let limits = options.budget().limits();
+    let limits = options.budget().resume();
     let mut arguments = vec!["show".to_owned(), handle.to_string()];
     if options.context {
         arguments.push("--context".to_owned());
