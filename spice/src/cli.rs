@@ -529,6 +529,12 @@ No form writes raw payload bytes to the terminal.
 written file against the retained digest, and reports its path, size, and
 digest without echoing contents. It is never truncated; '-' is refused.";
 
+/// Claim behavior and dry-board semantics for the allocator entry point.
+const TASK_NEXT_HELP: &str = "\
+Claims the allocator's next eligible task for this lane. If the lane already
+holds work, returns that assignment without changing its claim. When no work is
+eligible, reports a bounded board summary and leaves state unchanged.";
+
 /// Initial framing for one open Design.
 const TASK_DESIGN_HELP: &str = "\
 A Design is itself a question: phrase TITLE as the question under Design.
@@ -539,6 +545,7 @@ answer, not an implementation completion criterion.";
 fn leaf_help(path: &[&str]) -> Option<&'static str> {
     match path {
         ["watch"] => Some(WATCH_HELP),
+        ["task", "next"] => Some(TASK_NEXT_HELP),
         ["task", "design"] => Some(TASK_DESIGN_HELP),
         ["task", "artifact", "list"] => Some(ARTIFACT_LIST_HELP),
         ["task", "artifact", "show"] => Some(ARTIFACT_SHOW_HELP),
