@@ -45,13 +45,14 @@ const EXPORT: Surface = Surface::new(
 
 /// Caller words a continuation states for itself rather than repeating, and
 /// the global output-form flag, which the caller chooses per invocation.
-const RESTATED: [&str; 4] = ["after", "max-bytes", "export", crate::cli::JSON];
+const RESTATED: [&str; 5] = ["after", "limit", "max-bytes", "export", crate::cli::JSON];
 
 /// One parsed `--after`, `--limit`, `--max-bytes`, `--max-text`, `--export`.
 pub(crate) struct Page {
     family: String,
     budget: Budget,
     after: Option<String>,
+    rows: Option<usize>,
     bytes: Option<usize>,
     export: Option<PathBuf>,
     export_name: String,
@@ -94,6 +95,7 @@ impl Page {
             family: family.to_owned(),
             budget,
             after: one(matches, "after").cloned(),
+            rows: request.rows,
             bytes: request.bytes,
             export,
             export_name: format!("spice-{}.json", path.join("-")),
@@ -311,6 +313,10 @@ impl Page {
     fn continuation(&self, resume: Resume<'_, impl Sized>, key: &str) -> SpiceCommand {
         let mut words = self.words.clone();
         words.extend(["--after".to_owned(), key.to_owned()]);
+        // A count-only read continues at the default row limit.
+        if let Some(rows) = self.rows.filter(|rows| *rows > 0) {
+            words.extend(["--limit".to_owned(), rows.to_string()]);
+        }
         let bytes = match resume {
             Resume::Widened { bytes, .. } => Some(bytes),
             Resume::At(_) | Resume::Export(_) => self.bytes,

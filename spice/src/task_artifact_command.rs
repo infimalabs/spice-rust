@@ -632,7 +632,7 @@ fn page(
             )
         })?;
     }
-    let limits = budget.limits();
+    let limits = budget.resume();
     let bounded = admission.finish(|resume| {
         // A record alone past the byte maximum cannot ride any page; its own
         // show names it singly.

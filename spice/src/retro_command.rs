@@ -407,8 +407,9 @@ impl Retro {
 
     fn next_command(&self, after: Option<&str>, bytes: Option<usize>) -> SpiceCommand {
         let mut words = self.base_words();
+        // A count-only read continues at the default row limit.
         for (flag, bound) in [
-            ("--limit", self.request.rows),
+            ("--limit", self.request.rows.filter(|rows| *rows > 0)),
             ("--max-bytes", bytes.or(self.request.bytes)),
             ("--max-text", self.request.text),
         ] {

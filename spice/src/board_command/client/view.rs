@@ -340,8 +340,9 @@ impl ViewRequest {
             arguments.extend(["--output".to_owned(), EXPORT_FILE.to_owned()]);
             return SpiceCommand::new("board", arguments).expect("board is a command token");
         };
+        // A count-only read continues at the default row limit.
         let flags = [
-            ("--limit", self.request.rows),
+            ("--limit", self.request.rows.filter(|rows| *rows > 0)),
             ("--max-bytes", bytes),
             ("--max-text", self.request.text),
         ];
