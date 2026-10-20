@@ -266,7 +266,7 @@ fn room_invitations(
         .read(move |read| {
             lanes
                 .into_iter()
-                .map(|lane| read.latest_room_route(lane, &probe))
+                .map(|lane| read.latest_room_route(lane, &probe, since))
                 .collect::<Result<Vec<_>, _>>()
         })
         .map_err(|error| store_fault("room::invitation-unreadable", &error.to_string()))?;

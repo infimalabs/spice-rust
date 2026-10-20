@@ -56,12 +56,19 @@ impl JournalRead<'_> {
         self.steering_row("steer_key", key)
     }
 
-    /// The newest steering one lane was told through a route into `room`, in
-    /// any disposition: the latest `MSG`/`ASK` that addressed the lane there.
+    /// The newest steering one lane was told through a route into `room`
+    /// that may have published at or after `since`, in any disposition: the
+    /// latest such `MSG`/`ASK` that addressed the lane there.
+    ///
+    /// A route key is minted at or after its head's publication instant, so
+    /// a head minted before `since` also published before it and is skipped
+    /// without decoding its body. A head whose key carries no minted moment
+    /// stays a candidate; the caller still compares `published` to `since`.
     pub fn latest_room_route(
         &self,
         lane: wire::CanonicalUuid,
         room: &wire::TaskStamp,
+        since: wire::Instant,
     ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
         self.require_current_steering_index()?;
         let row = self
@@ -69,9 +76,14 @@ impl JournalRead<'_> {
             .query_row(
                 "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
                  head_seq, body FROM steering_heads \
-                 WHERE lane = ?1 AND json_extract(CAST(body AS TEXT), '$.room') = ?2 \
+                 WHERE lane = ?1 AND (minted_micros IS NULL OR minted_micros >= ?3) \
+                 AND json_extract(CAST(body AS TEXT), '$.room') = ?2 \
                  ORDER BY created_seq DESC LIMIT 1",
-                [lane.to_string(), room.to_string()],
+                params![
+                    lane.to_string(),
+                    room.to_string(),
+                    since.get().as_microsecond()
+                ],
                 read_steering_columns,
             )
             .optional()
