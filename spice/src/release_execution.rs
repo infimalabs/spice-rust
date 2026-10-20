@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use wire::release::{Operation, RegistryEvidence, ReleaseAction, ReleaseObservations, ReleasePlan};
+use wire::release::{Operation, RegistryEvidence, ReleaseObservations, ReleasePlan};
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal};
 
-const JOURNAL_SCHEMA: u16 = 2;
+const JOURNAL_SCHEMA: u16 = 3;
 const VISIBILITY_ATTEMPTS: usize = 8;
 
 enum CorrectnessGateStanding {
@@ -65,6 +65,20 @@ struct JournalDocument {
     receipts: Vec<dist::OperationReceipt>,
 }
 
+/// The schema-independent part of any release journal, read before the typed
+/// decode so a predecessor is refused by name and never decoded for execution.
+#[derive(Deserialize)]
+struct JournalHeader {
+    schema: u16,
+    plan: JournalHeaderPlan,
+}
+
+#[derive(Deserialize)]
+struct JournalHeaderPlan {
+    requested_version: String,
+    release_commit: String,
+}
+
 pub(super) struct FileReleaseJournal {
     path: PathBuf,
     document: JournalDocument,
@@ -75,6 +89,19 @@ impl FileReleaseJournal {
         let path = root.join(format!("{}.json", plan.key));
         let document = match fs::read(&path) {
             Ok(bytes) => {
+                let header: JournalHeader = serde_json::from_slice(&bytes)
+                    .map_err(|error| format!("{}: {error}", path.display()))?;
+                if header.schema != JOURNAL_SCHEMA {
+                    return Err(format!(
+                        "release operation journal {} was last written by release v{} at {} \
+                         under journal schema {}; this appliance executes only schema \
+                         {JOURNAL_SCHEMA}",
+                        path.display(),
+                        header.plan.requested_version,
+                        header.plan.release_commit,
+                        header.schema,
+                    ));
+                }
                 let document: JournalDocument =
                     wire::decode(&bytes).map_err(|error| error.to_string())?;
                 let canonical = wire::encode(&document)
@@ -82,7 +109,7 @@ impl FileReleaseJournal {
                 if canonical != bytes {
                     return Err("release operation journal is not canonical".to_owned());
                 }
-                if document.schema != JOURNAL_SCHEMA || document.plan != *plan {
+                if document.plan != *plan {
                     return Err("release operation journal identity moved".to_owned());
                 }
                 validate_document(&document)?;
@@ -483,12 +510,6 @@ impl dist::EffectPort for SystemEffects {
             &plan.release_commit,
         );
         observed.credentials_valid = true;
-        if plan.action == ReleaseAction::TagAndAnnounce {
-            let dist::OperationState::Registry { evidence } = self.registry_state(plan)? else {
-                unreachable!("registry observer has one state shape")
-            };
-            observed.registry = evidence;
-        }
         let package = self.package_index(plan)?.preview().clone();
         if package.identity != plan.package || package.git_tree != plan.package_object {
             return Err(dist::EffectError::Moved(

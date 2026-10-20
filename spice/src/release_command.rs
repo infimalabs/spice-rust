@@ -9,7 +9,7 @@ use std::process::Command;
 use clap::ArgMatches;
 use wire::body::{ProofSealed, PublishedTarget, ReleasePublished};
 use wire::manifest::ProductVersion;
-use wire::release::{RegistryEvidence, ReleaseAction, ReleaseObservations, ReleasePlan};
+use wire::release::{ReleaseObservations, ReleasePlan};
 use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
 
 mod view;
@@ -263,7 +263,7 @@ fn retag<B>(outcome: Outcome<ReleasePlan>) -> Outcome<B> {
 /// The exact preview invocation, which `--apply` repeats.
 fn publish_words(matches: &ArgMatches) -> Vec<String> {
     let mut words = vec!["release".to_owned(), "publish".to_owned()];
-    for flag in ["notes-file", "release-commit", "version", "action"] {
+    for flag in ["notes-file", "release-commit", "version"] {
         if let Some(value) = matches.get_one::<String>(flag) {
             words.extend([format!("--{flag}"), value.clone()]);
         }
@@ -432,7 +432,6 @@ struct ExternalPreconditions {
     requested_version: ProductVersion,
     source_commit: String,
     release_commit: String,
-    action: ReleaseAction,
     repository: Digest,
     head: String,
     clean: bool,
@@ -470,10 +469,8 @@ fn resolve_external_preconditions(
     revision_commit: &str,
 ) -> Result<ExternalPreconditions, String> {
     let versions = release_versions(root, matches)?;
-    let action = release_action(matches)?;
     let local = resolve_local_preconditions(
         root,
-        &action,
         revision_commit,
         &versions.source,
         &versions.requested,
@@ -488,7 +485,6 @@ fn resolve_external_preconditions(
         requested_version: versions.requested,
         source_commit: local.source_commit,
         release_commit: local.release_commit,
-        action,
         repository: repository_identity(root, authority.remote())?,
         head: local.head,
         clean: local.clean,
@@ -516,16 +512,6 @@ fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions
         source: source_version,
         observed: release_version,
     })
-}
-
-fn release_action(matches: &ArgMatches) -> Result<ReleaseAction, String> {
-    Ok(
-        match matches.get_one::<String>("action").map(String::as_str) {
-            None | Some("publish") => ReleaseAction::Publish,
-            Some("tag-and-announce") => ReleaseAction::TagAndAnnounce,
-            Some(other) => return Err(format!("unsupported release action {other:?}")),
-        },
-    )
 }
 
 fn resolve_external_refs(
@@ -593,7 +579,6 @@ fn ensure_release_ref_absent(
 
 fn resolve_local_preconditions(
     root: &Path,
-    action: &ReleaseAction,
     revision_commit: &str,
     source_version: &ProductVersion,
     requested_version: &ProductVersion,
@@ -602,15 +587,11 @@ fn resolve_local_preconditions(
     let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let status = tracked_worktree_status(root)?;
     if head != revision_commit || !status.is_empty() {
-        return Err(format!(
-            "{} requires the clean selected release commit at HEAD",
-            action.as_str()
-        ));
+        return Err("release requires the clean selected release commit at HEAD".to_owned());
     }
     if source_version != requested_version || observed_version != requested_version {
         return Err(format!(
-            "{} requires requested, compiled, and tracked product version {requested_version} to agree; compiled={source_version} tracked={observed_version}",
-            action.as_str()
+            "release requires requested, compiled, and tracked product version {requested_version} to agree; compiled={source_version} tracked={observed_version}"
         ));
     }
     Ok(LocalPreconditions {
@@ -638,28 +619,7 @@ fn bind_external_plan(
     )
     .map_err(|error| error.to_string())?;
     let package = package.preview();
-    let package_ref = normalize_converged_ref(external.package_ref.clone(), &package.git_tree);
-    let registry = if external.action == ReleaseAction::TagAndAnnounce {
-        let visible = external.package_ref.ok_or_else(|| {
-            format!(
-                "package v{} is not visible at the release authority",
-                external.requested_version
-            )
-        })?;
-        if visible != package.git_tree {
-            return Err(format!(
-                "package v{} names {visible}, not {}",
-                external.requested_version, package.git_tree
-            ));
-        }
-        Some(RegistryEvidence {
-            version: external.requested_version.clone(),
-            release_commit: external.release_commit.clone(),
-            package: package.identity.clone(),
-        })
-    } else {
-        None
-    };
+    let package_ref = normalize_converged_ref(external.package_ref, &package.git_tree);
     let observations = ReleaseObservations {
         head: external.head,
         clean: external.clean,
@@ -670,11 +630,9 @@ fn bind_external_plan(
         package_ref,
         tag_ref: external.tag_ref,
         announcement_ref: external.announcement_ref,
-        registry,
     };
     dist::plan_release(dist::PlanInput {
         repository: external.repository,
-        action: external.action,
         requested_version: external.requested_version,
         source_commit: external.source_commit,
         release_commit: external.release_commit,

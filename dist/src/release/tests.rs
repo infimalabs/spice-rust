@@ -11,17 +11,11 @@ fn digest(domain: Domain, value: &[u8]) -> Digest {
     Digest::compute(domain, value)
 }
 
-fn input(action: ReleaseAction) -> PlanInput {
+fn input() -> PlanInput {
     let version = ProductVersion::parse("1.2.3").expect("fixture version");
     let package = digest(Domain::DistReleasePackage, b"package");
-    let registry = (action == ReleaseAction::TagAndAnnounce).then(|| RegistryEvidence {
-        version: version.clone(),
-        release_commit: SOURCE.to_owned(),
-        package: package.clone(),
-    });
     PlanInput {
         repository: digest(Domain::DistSourceCommit, b"repository"),
-        action,
         requested_version: version.clone(),
         source_commit: SOURCE.to_owned(),
         release_commit: SOURCE.to_owned(),
@@ -57,7 +51,6 @@ fn input(action: ReleaseAction) -> PlanInput {
             package_ref: None,
             tag_ref: None,
             announcement_ref: None,
-            registry,
         },
     }
 }
@@ -216,14 +209,12 @@ impl EffectPort for FakeEffects {
 
 #[test]
 fn preview_is_pure_and_spells_the_complete_order() {
-    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
-    assert_eq!(plan.operations, PUBLISH_OPERATIONS);
+    let plan = plan_release(input()).expect("plan");
+    assert_eq!(plan.operations, OPERATIONS);
     assert_eq!(
         plan.notes_document,
         "## Highlights\n\n- Exact curated prose.\n"
     );
-    assert_eq!(ReleaseAction::Publish.as_str(), "publish");
-    assert_eq!(ReleaseAction::TagAndAnnounce.as_str(), "tag-and-announce");
     assert!(
         plan.operations
             .iter()
@@ -251,18 +242,13 @@ fn preview_is_pure_and_spells_the_complete_order() {
 
 #[test]
 fn every_bound_value_moves_the_plan_digest() {
-    let baseline = plan_release(input(ReleaseAction::Publish)).expect("baseline");
-    let mut changed = input(ReleaseAction::Publish);
+    let baseline = plan_release(input()).expect("baseline");
+    let mut changed = input();
     changed.notes_document.push('!');
     assert_ne!(
         baseline.key,
         plan_release(changed).expect("notes variant").key
     );
-    let recovery = plan_release(input(ReleaseAction::TagAndAnnounce)).expect("recovery");
-    assert_ne!(baseline.key, recovery.key);
-    assert_eq!(recovery.operations, RECOVERY_OPERATIONS);
-    assert!(!recovery.operations.contains(&Operation::UploadPackage));
-
     let moved = |plan: ReleasePlan| {
         let result = verify_plan(&plan);
         assert!(
@@ -310,25 +296,25 @@ fn every_bound_value_moves_the_plan_digest() {
 
 #[test]
 fn all_no_effect_preconditions_refuse_during_planning() {
-    let mut dirty = input(ReleaseAction::Publish);
+    let mut dirty = input();
     dirty.observations.clean = false;
     assert!(matches!(plan_release(dirty), Err(PlanError::Dirty)));
 
-    let mut local = input(ReleaseAction::Publish);
+    let mut local = input();
     local.observations.unrecorded_local_commits = 1;
     assert!(matches!(
         plan_release(local),
         Err(PlanError::UnrecordedLocalCommits(1))
     ));
 
-    let mut non_head = input(ReleaseAction::Publish);
+    let mut non_head = input();
     non_head.observations.head = RELEASE.to_owned();
     assert!(matches!(
         plan_release(non_head),
         Err(PlanError::NonHeadPublication { .. })
     ));
 
-    let mut version = input(ReleaseAction::Publish);
+    let mut version = input();
     version.observations.release_version =
         ProductVersion::parse("1.2.1").expect("different release version");
     assert!(matches!(
@@ -336,7 +322,7 @@ fn all_no_effect_preconditions_refuse_during_planning() {
         Err(PlanError::VersionDisagreement { .. })
     ));
 
-    let mut compiled = input(ReleaseAction::Publish);
+    let mut compiled = input();
     compiled.observations.source_version =
         ProductVersion::parse("1.2.2").expect("different compiled version");
     assert!(matches!(
@@ -344,14 +330,14 @@ fn all_no_effect_preconditions_refuse_during_planning() {
         Err(PlanError::VersionDisagreement { .. })
     ));
 
-    let mut split_commit = input(ReleaseAction::Publish);
+    let mut split_commit = input();
     split_commit.release_commit = RELEASE.to_owned();
     assert!(matches!(
         plan_release(split_commit),
         Err(PlanError::CommitDisagreement { .. })
     ));
 
-    let mut package = input(ReleaseAction::Publish);
+    let mut package = input();
     package.observations.package_ref = Some(RELEASE.to_owned());
     assert!(matches!(
         plan_release(package),
@@ -361,18 +347,18 @@ fn all_no_effect_preconditions_refuse_during_planning() {
         })
     ));
 
-    let mut tag = input(ReleaseAction::Publish);
+    let mut tag = input();
     tag.observations.tag_ref = Some(RELEASE.to_owned());
     assert!(matches!(plan_release(tag), Err(PlanError::RefMoved { .. })));
 
-    let mut credentials = input(ReleaseAction::Publish);
+    let mut credentials = input();
     credentials.observations.credentials_valid = false;
     assert!(matches!(
         plan_release(credentials),
         Err(PlanError::Credentials)
     ));
 
-    let mut object = input(ReleaseAction::Publish);
+    let mut object = input();
     object.package_object = "not-a-tree".to_owned();
     assert!(matches!(
         plan_release(object),
@@ -381,7 +367,7 @@ fn all_no_effect_preconditions_refuse_during_planning() {
         })
     ));
 
-    let mut short_object = input(ReleaseAction::Publish);
+    let mut short_object = input();
     short_object.package_object = "111111".to_owned();
     assert!(matches!(
         plan_release(short_object),
@@ -390,7 +376,7 @@ fn all_no_effect_preconditions_refuse_during_planning() {
         })
     ));
 
-    let mut converged = input(ReleaseAction::Publish);
+    let mut converged = input();
     converged.observations.package_ref = Some(PACKAGE_OBJECT.to_owned());
     converged.observations.tag_ref = Some(SOURCE.to_owned());
     converged.observations.announcement_ref = Some(SOURCE.to_owned());
@@ -398,29 +384,8 @@ fn all_no_effect_preconditions_refuse_during_planning() {
 }
 
 #[test]
-fn recovery_requires_exact_registry_visible_evidence() {
-    let mut absent = input(ReleaseAction::TagAndAnnounce);
-    absent.observations.registry = None;
-    assert!(matches!(
-        plan_release(absent),
-        Err(PlanError::RegistryEvidenceAbsent)
-    ));
-    let mut moved = input(ReleaseAction::TagAndAnnounce);
-    moved
-        .observations
-        .registry
-        .as_mut()
-        .expect("fixture evidence")
-        .release_commit = RELEASE.to_owned();
-    assert!(matches!(
-        plan_release(moved),
-        Err(PlanError::RegistryEvidenceMoved)
-    ));
-}
-
-#[test]
 fn moved_digest_and_observations_refuse_before_any_operation() {
-    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
+    let plan = plan_release(input()).expect("plan");
     let mut journal = MemoryJournal::default();
     let mut effects = FakeEffects::new(&plan);
     let moved = digest(Domain::DistReleasePlan, b"moved");
@@ -442,7 +407,7 @@ fn moved_digest_and_observations_refuse_before_any_operation() {
 
 #[test]
 fn one_executor_orders_remote_publication_after_local_proof() {
-    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
+    let plan = plan_release(input()).expect("plan");
     let mut journal = MemoryJournal::default();
     let mut effects = FakeEffects::new(&plan);
     let execution = ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
@@ -472,7 +437,7 @@ fn one_executor_orders_remote_publication_after_local_proof() {
 
 #[test]
 fn interruption_at_every_boundary_resumes_without_duplicate_effects() {
-    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
+    let plan = plan_release(input()).expect("plan");
     for interrupted in &plan.operations {
         let mut journal = MemoryJournal::default();
         let mut effects = FakeEffects::new(&plan);
@@ -507,7 +472,7 @@ fn interruption_at_every_boundary_resumes_without_duplicate_effects() {
 
 #[test]
 fn installed_and_registry_receipts_are_exact_not_recognition_only() {
-    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
+    let plan = plan_release(input()).expect("plan");
     let mut journal = MemoryJournal::default();
     let mut effects = FakeEffects::new(&plan);
     effects.converged.insert(
@@ -524,7 +489,7 @@ fn installed_and_registry_receipts_are_exact_not_recognition_only() {
 
 #[test]
 fn completed_receipts_remain_bound_to_the_exact_plan_and_result() {
-    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
+    let plan = plan_release(input()).expect("plan");
     let mut journal = MemoryJournal::default();
     let mut effects = FakeEffects::new(&plan);
     let execution = ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
@@ -564,5 +529,148 @@ fn completed_receipts_remain_bound_to_the_exact_plan_and_result() {
     assert!(matches!(
         ReleaseExecutor::verify_completion(&plan, &moved_registry),
         Err(ExecuteError::RegistryEvidenceMoved)
+    ));
+}
+
+fn observed(plan: &ReleasePlan, operations: &[Operation]) -> FakeEffects {
+    let mut effects = FakeEffects::new(plan);
+    for operation in operations {
+        effects
+            .converged
+            .insert(*operation, FakeEffects::result(plan, *operation));
+    }
+    effects
+}
+
+#[test]
+fn a_visible_package_supersedes_the_publication_prefix() {
+    let plan = plan_release(input()).expect("plan");
+    let mut journal = MemoryJournal::default();
+    let mut effects = observed(&plan, &[Operation::AwaitRegistryVisibility]);
+    let execution = ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
+        .expect("a visible package converges");
+    assert_eq!(
+        effects.calls,
+        [
+            Operation::ResolvePreconditionsAndCredentials,
+            Operation::CreateImmutableTag,
+            Operation::Announce,
+        ],
+        "visibility must not rerun the gate or republish"
+    );
+    let visible = FakeEffects::result(&plan, Operation::AwaitRegistryVisibility);
+    for receipt in &execution.completed {
+        if PUBLICATION_PREFIX.contains(&receipt.operation) {
+            assert_eq!(receipt.result, visible);
+            assert_eq!(receipt.convergence, Convergence::AlreadyConverged);
+        }
+    }
+    ReleaseExecutor::verify_completion(&plan, &execution.completed)
+        .expect("superseded receipts verify");
+
+    let mut applied = execution.completed;
+    applied[1].convergence = Convergence::Applied;
+    assert!(matches!(
+        ReleaseExecutor::verify_completion(&plan, &applied),
+        Err(ExecuteError::ReceiptMoved(Operation::RunCorrectnessGate))
+    ));
+}
+
+#[test]
+fn an_observed_tag_and_announcement_are_never_repeated() {
+    let plan = plan_release(input()).expect("plan");
+    let mut journal = MemoryJournal::default();
+    let mut effects = observed(
+        &plan,
+        &[
+            Operation::AwaitRegistryVisibility,
+            Operation::CreateImmutableTag,
+            Operation::Announce,
+        ],
+    );
+    ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
+        .expect("a converged release resumes");
+    assert_eq!(
+        effects.calls,
+        [Operation::ResolvePreconditionsAndCredentials]
+    );
+}
+
+#[test]
+fn contradictory_or_non_prefix_state_refuses_before_effects() {
+    let plan = plan_release(input()).expect("plan");
+    let refuses = |mut effects: FakeEffects, journal: &mut MemoryJournal| {
+        let accepted = journal.accepted.len();
+        let error = ReleaseExecutor::execute(&plan, &plan.key, journal, &mut effects)
+            .expect_err("admission refuses");
+        assert!(effects.calls.is_empty(), "{error} crossed an effect");
+        assert_eq!(journal.accepted.len(), accepted, "{error} journaled");
+        error
+    };
+
+    let tag_first = refuses(
+        observed(&plan, &[Operation::CreateImmutableTag]),
+        &mut MemoryJournal::default(),
+    );
+    assert!(matches!(
+        tag_first,
+        ExecuteError::NotPrefix {
+            converged: Operation::CreateImmutableTag,
+            unmet: Operation::RunCorrectnessGate,
+        }
+    ));
+
+    let untagged_announcement = refuses(
+        observed(
+            &plan,
+            &[Operation::AwaitRegistryVisibility, Operation::Announce],
+        ),
+        &mut MemoryJournal::default(),
+    );
+    assert!(matches!(
+        untagged_announcement,
+        ExecuteError::NotPrefix {
+            converged: Operation::Announce,
+            unmet: Operation::CreateImmutableTag,
+        }
+    ));
+
+    let mut other_package = FakeEffects::new(&plan);
+    other_package.converged.insert(
+        Operation::AwaitRegistryVisibility,
+        OperationState::Registry {
+            evidence: Some(RegistryEvidence {
+                version: plan.requested_version.clone(),
+                release_commit: plan.release_commit.clone(),
+                package: digest(Domain::DistReleasePackage, b"another package"),
+            }),
+        },
+    );
+    assert!(matches!(
+        refuses(other_package, &mut MemoryJournal::default()),
+        ExecuteError::RegistryEvidenceMoved
+    ));
+
+    let mut moved_tag = FakeEffects::new(&plan);
+    moved_tag.converged.insert(
+        Operation::CreateImmutableTag,
+        OperationState::RemoteRef {
+            reference: format!("refs/tags/v{}", plan.requested_version),
+            object: Some(RELEASE.to_owned()),
+        },
+    );
+    assert!(matches!(
+        refuses(moved_tag, &mut MemoryJournal::default()),
+        ExecuteError::ExternalMoved(Operation::CreateImmutableTag)
+    ));
+
+    let mut journal = MemoryJournal::default();
+    let mut effects = FakeEffects::new(&plan);
+    ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
+        .expect("fixture release converges");
+    let deleted_tag = observed(&plan, &[Operation::AwaitRegistryVisibility]);
+    assert!(matches!(
+        refuses(deleted_tag, &mut journal),
+        ExecuteError::Contradicted(Operation::CreateImmutableTag)
     ));
 }

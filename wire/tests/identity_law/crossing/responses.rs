@@ -286,12 +286,11 @@ fn cover_release_plan_observations() {
         clean: true,
         unrecorded_local_commits: 0,
         source_version: version.clone(),
-        release_version: version.clone(),
+        release_version: version,
         credentials_valid: true,
         package_ref: None,
         tag_ref: None,
         announcement_ref: None,
-        registry: None,
     };
     law(
         "ReleaseObservations",
@@ -301,11 +300,6 @@ fn cover_release_plan_observations() {
                 package_ref: Some("3".repeat(40)),
                 tag_ref: Some("4".repeat(40)),
                 announcement_ref: Some("5".repeat(40)),
-                registry: Some(RegistryEvidence {
-                    version,
-                    release_commit: "6".repeat(40),
-                    package: digest("9"),
-                }),
                 ..base
             },
         ],

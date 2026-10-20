@@ -1,6 +1,6 @@
 use wire::manifest::ProductVersion;
 use wire::output::Exhausted;
-use wire::release::{Operation, ReleaseAction, ReleaseObservations};
+use wire::release::{Operation, ReleaseObservations};
 use wire::{Domain, ReleaseNotesEntry, body::PublishedTarget};
 
 use super::*;
@@ -152,7 +152,6 @@ fn plan(notes_document: String) -> ReleasePlan {
     ReleasePlan {
         key: digest(b"key"),
         repository: digest(b"repository"),
-        action: ReleaseAction::Publish,
         requested_version: version.clone(),
         source_commit: "b".repeat(40),
         release_commit: "c".repeat(40),
@@ -178,7 +177,6 @@ fn plan(notes_document: String) -> ReleasePlan {
             package_ref: None,
             tag_ref: Some("e".repeat(40)),
             announcement_ref: None,
-            registry: None,
         },
     }
 }
@@ -194,7 +192,7 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
         bytes: 1,
         digest: Digest::compute(Domain::CliExport, b"plan"),
     };
-    let words = ["release", "publish", "--action", "publish"].map(str::to_owned);
+    let words = ["release", "publish", "--version", "0.40.0"].map(str::to_owned);
     let preview = PlanPreview::new(&plan, export.clone(), &words);
     let text = preview.text().expect("a publish preview has text");
 
@@ -225,7 +223,7 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
     )));
     assert!(!text.contains(&format!("curated line {NOTE_LINES}\n")));
     assert!(text.ends_with(&format!(
-        "next: spice release publish --action publish --apply={}",
+        "next: spice release publish --version 0.40.0 --apply={}",
         plan.key
     )));
     assert!(

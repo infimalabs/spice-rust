@@ -39,26 +39,35 @@ common directory before it prints, names that file, and ends with the exact
 `--apply=KEY` command; that key is the only accepted authority.
 
 **Invariant —** One executor and one plan and receipt grammar serve preview,
-execution, and recovery. The executor records an operation's exact prior state
-before crossing its effect boundary and a typed receipt after convergence, and
-resumption admits only the same plan and receipt prefix. A parallel
-verification or publication body would be a second release authority.
+fresh execution, and every resumption. There is one release action and one
+ordered operation graph. Before the first effect, admission proves the
+converged prefix: each operation is met by its durable receipt or by
+authoritative external state. An exact visible package meets every operation
+through registry visibility, a tag at the release commit meets tagging, and an
+announcement at the release commit meets announcing. A receipt whose own
+registry, tag, or announcement state is absent, external state naming another
+release, or a met operation after an unmet one refuses before any effect. A met
+operation is receipted as already converged without crossing its effect, so
+no resumption reruns the gate, republishes a visible package, retags, or
+repeats an announcement. Every other operation records its exact prior state
+before crossing its effect boundary and a typed receipt after convergence. A
+journal written under an earlier journal schema refuses before any effect,
+naming the release that last wrote it, and is never decoded for execution. A
+parallel verification or publication body would be a second release authority.
 
 ### A versioned commit is sealed before publication
 
-**Invariant —** Version activation is an ordinary task landing. Both release
-actions require clean HEAD at the release commit, already integrated in the
+**Invariant —** Version activation is an ordinary task landing. Release
+requires clean HEAD at the release commit, already integrated in the
 tracked source branch, with requested, compiled, and tracked product versions
 in agreement; every other shape refuses. Release never edits `dist/VERSION`,
 synthesizes a commit, or infers task ownership from the board, and a red
 candidate publishes nothing.
 
-**Invariant —** Fresh publish executes the complete canonical strict battery
-over the exact source commit the plan names, and every arm must admit. This
-host-side battery is distinct from sealed target proof replay. Tag-and-announce
-recovery instead resolves preconditions and credentials, awaits registry
-visibility, then tags and announces, without rerunning the battery or
-republishing the package.
+**Invariant —** A release whose package is not yet visible executes the
+complete canonical strict battery over the exact source commit the plan names,
+and every arm must admit. This host-side battery is distinct from sealed target
+proof replay.
 
 **Invariant —** The artifact gate proves composition and use without rebuilding
 after authorization. The package materializes from sealed content-addressed

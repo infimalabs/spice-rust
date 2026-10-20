@@ -331,7 +331,7 @@ fn plan_text(
 ) -> String {
     let observations = &plan.observations;
     let mut text = format!(
-        "release publish preview: {} {} (nothing published)\n\
+        "release publish preview: {} (nothing published)\n\
          key                {}\n\
          repository         {}\n\
          source commit      {}\n\
@@ -339,7 +339,6 @@ fn plan_text(
          manifest           {}\n\
          package            {} object {}\n\
          installed artifact {}",
-        plan.action,
         plan.requested_version,
         plan.key,
         plan.repository,
@@ -380,13 +379,6 @@ fn plan_text(
         present(observations.tag_ref.as_ref()),
         present(observations.announcement_ref.as_ref()),
     );
-    if let Some(registry) = &observations.registry {
-        let _ = write!(
-            text,
-            "\n  registry {} at {} package {}",
-            registry.version, registry.release_commit, registry.package
-        );
-    }
     let _ = write!(
         text,
         "\nnotes {} ({} bytes, {} lines):",

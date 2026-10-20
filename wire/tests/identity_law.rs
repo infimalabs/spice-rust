@@ -45,7 +45,7 @@ use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 use wire::manifest::{ProductVersion, ReleaseTarget};
-use wire::release::{RegistryEvidence, ReleaseObservations};
+use wire::release::ReleaseObservations;
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, AgentProviderError,
     Answer, AnyFact, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition,
