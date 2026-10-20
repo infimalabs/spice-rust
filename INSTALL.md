@@ -41,6 +41,47 @@ test "$(command -v spice)" = "$SPICE_BIN" || exit
 spice --json doctor || exit
 ```
 
+### Windows PowerShell
+
+Use the same digest-bound flow from PowerShell. Git for Windows must be in its
+system Program Files location because the installer deliberately ignores
+`PATH` when it activates hooks:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$Git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
+
+cargo build --locked --target-dir target -p spice
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+.\target\debug\spice.exe install
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+.\target\debug\spice.exe install --apply=DIGEST_PRINTED_BY_PREVIEW
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$SpiceCommon = & $Git rev-parse --path-format=absolute --git-common-dir
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$SpiceCommon = $SpiceCommon.Trim()
+$SpiceBin = Join-Path $SpiceCommon '.spice-install\bin\spice.exe'
+if ((Get-FileHash .\target\debug\spice.exe).Hash -ne
+    (Get-FileHash $SpiceBin).Hash) {
+    throw 'installed Spice does not match the built executable'
+}
+$ExpectedHooks = $SpiceCommon.TrimEnd('/', '\') + '/.spice-install/git-hooks'
+$ObservedHooks = & $Git config --local --get core.hooksPath
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$ObservedHooks = $ObservedHooks.Trim()
+if ($ObservedHooks -ne $ExpectedHooks) {
+    throw "unexpected core.hooksPath: $ObservedHooks"
+}
+
+$env:PATH = "$(Split-Path -Parent $SpiceBin);$env:PATH"
+if ((Get-Command spice.exe).Source -ne $SpiceBin) {
+    throw 'operator shell did not select the installed appliance'
+}
+spice.exe --json doctor
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+```
+
 ## Hook authority
 
 One repository has one effective hook authority. Preview inspects every linked
@@ -62,6 +103,14 @@ The installed launchers `exec` the absolute Git-common appliance
 ([SHELL.md](SHELL.md#generated-git-hook-launchers)). Neither they nor recovery
 search `PATH` or substitute Cargo, `xtask`, or a nearby executable.
 
+On Windows, run the same inspection through the admitted Git for Windows
+executable:
+
+```powershell
+$Git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
+& $Git -C C:\absolute\path\to\worktree config --show-origin --show-scope --get-all core.hooksPath
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+```
 ## Upgrade
 
 An installed appliance verifies a sealed release package (index, manifest,
@@ -97,6 +146,50 @@ The shortcut refuses with `resident::operator-install-only` when run from a
 lane the repository seats, because that lane runs the appliance it would
 replace. A lane may refresh a scratch repository that has never seated it.
 
+### Windows PowerShell
+
+The installed Windows appliance uses the same package and digest contract:
+
+```powershell
+$Git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
+$SpiceCommon = & $Git rev-parse --path-format=absolute --git-common-dir
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$SpiceCommon = $SpiceCommon.Trim()
+$SpiceBin = Join-Path $SpiceCommon '.spice-install\bin\spice.exe'
+
+& $SpiceBin install --package C:\absolute\path\to\spice-release-package
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $SpiceBin install --package C:\absolute\path\to\spice-release-package --apply=DIGEST_PRINTED_BY_PREVIEW
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+```
+
+For a source refresh, publish the app and build through the installed
+appliance, then preview and apply with the resulting worktree executable:
+
+```powershell
+& $SpiceBin dev xtask -- app
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $SpiceBin dev cargo -- build --locked --target-dir target -p spice
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+.\target\debug\spice.exe install
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+.\target\debug\spice.exe install --apply=DIGEST_PRINTED_BY_PREVIEW
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+```
+
+Restart explicitly after apply, or use the operator shortcut:
+
+```powershell
+& $SpiceBin down
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $SpiceBin up
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+# Alternatively, perform the source refresh and resident lifecycle together.
+& $SpiceBin dev xtask -- install --port PORT
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+```
+
 ## macOS symbols
 
 A macOS install keeps the executable's dSYM, and the receipt records the
@@ -112,8 +205,17 @@ sample "$(pgrep -n -f "$SPICE_BIN")" 1 -file "$TMPDIR/spice-sample.txt"
 
 ## Reversal
 
+POSIX shell:
+
 ```sh
 "$SPICE_BIN" install --unapply
+```
+
+Windows PowerShell:
+
+```powershell
+& $SpiceBin install --unapply
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 Deleting `<git-common>/.spice-rs`, `<git-dir>/.spice-rs`,
