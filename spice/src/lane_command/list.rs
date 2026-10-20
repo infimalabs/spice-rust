@@ -52,13 +52,17 @@ pub(super) fn run(
 
 /// One bounded page of lanes, each with the peer address it offers.
 ///
-/// Text form speaks one line per lane; `--json` keeps the typed rows.
+/// Text form speaks one line per lane, or names the command that seats the
+/// first lane; `--json` keeps only the typed rows.
 #[derive(Debug, serde::Serialize)]
 #[serde(transparent)]
 pub(crate) struct LanePage(wire::output::Bounded<LaneListRow>);
 
 impl fmt::Display for LanePage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.rows.is_empty() && self.0.omission.is_none() {
+            return formatter.write_str("no lanes are seated; next: spice lane add [WORKTREE]");
+        }
         let mut lines = self
             .0
             .rows
