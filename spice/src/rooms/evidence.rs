@@ -1,4 +1,4 @@
-//! Bounded evidence one conversation offers to passive Design matching.
+//! Bounded evidence one conversation offers to open Design matching.
 //!
 //! A session's relevant knowledge may sit in any task it finished or in what
 //! it said in ordinary conversation, so a session is matched through every
@@ -23,8 +23,7 @@ use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use wire::TaskStamp;
 
 use super::awareness::{
-    FrequencyProfile, Generation, GenerationMismatch, MATCH_SCORE_FLOOR, Prepared, TermCounts,
-    utf8_prefix,
+    FrequencyProfile, Generation, GenerationMismatch, Prepared, TermCounts, utf8_prefix,
 };
 
 /// Most UTF-8 bytes of cleaned prose one conversation card retains.
@@ -256,20 +255,28 @@ impl<K> Evidence<K> {
         self.kind
     }
 }
-/// One passive Design, weighted under the fit the profile is scored against.
+
+/// One open Design, weighted under the fit and floor it is scored against.
 pub struct DesignCandidate<'a, T> {
     identity: &'a TaskStamp,
     value: &'a T,
     vector: &'a Prepared,
+    score_floor: f64,
 }
 
 impl<'a, T> DesignCandidate<'a, T> {
     #[must_use]
-    pub fn new(identity: &'a TaskStamp, value: &'a T, vector: &'a Prepared) -> Self {
+    pub fn new(
+        identity: &'a TaskStamp,
+        value: &'a T,
+        vector: &'a Prepared,
+        score_floor: f64,
+    ) -> Self {
         Self {
             identity,
             value,
             vector,
+            score_floor,
         }
     }
 }
@@ -287,7 +294,7 @@ pub struct ProfileMatch<'p, 'a, K, T> {
     pub digest: Digest,
     /// The winning card's bounded authored excerpt.
     pub excerpt: &'p str,
-    /// The winning cosine, at least [`MATCH_SCORE_FLOOR`].
+    /// The winning cosine, at least that Design candidate's floor.
     pub score: f64,
     /// The strongest shared terms, sorted.
     pub terms: Vec<String>,
@@ -400,9 +407,9 @@ impl<K> EvidenceProfile<K> {
     /// The Design this profile is most relevant to under `frequency`.
     ///
     /// A Design's relevance is the maximum cosine over every view of every
-    /// card; a Design qualifies at [`MATCH_SCORE_FLOOR`]. Ties prefer the lower
-    /// Design identity, then the newer card, then the earlier view, so the same
-    /// profile and candidates always select the same match.
+    /// card; each Design qualifies against its candidate-owned floor. Ties
+    /// prefer the lower Design identity, then the newer card, then the earlier
+    /// view, so the same profile and candidates always select the same match.
     ///
     /// # Errors
     ///
@@ -425,6 +432,9 @@ impl<K> EvidenceProfile<K> {
                     right: generation,
                 });
             }
+            if !candidate.score_floor.is_finite() {
+                continue;
+            }
             for (card_index, card) in self.cards.iter().enumerate() {
                 let Some((_, vectors)) = &card.prepared else {
                     continue;
@@ -434,7 +444,7 @@ impl<K> EvidenceProfile<K> {
                         continue;
                     };
                     let score = candidate.vector.cosine(vector)?;
-                    if !score.is_finite() || score < MATCH_SCORE_FLOOR {
+                    if !score.is_finite() || score < candidate.score_floor {
                         continue;
                     }
                     let found = Best {

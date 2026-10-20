@@ -542,13 +542,16 @@ owns each rule summarized here.
   Declaration, newly stored evidence, readiness, and Design-statement changes
   expose bounded cursor-addressed selection opportunities.
 - **Design awareness.** Before allocation, a completion, settled assistant
-  message, passive Design filing or revision, completed profile warm, or
-  session resume compares one continuing session's bounded evidence with open
-  passive Designs. Retained task statement/completion and message/passage
+  message, filing or revision of an open Design, completed profile warm, or
+  session resume compares one continuing session's bounded evidence with every
+  filed open Design. Retained task statement/completion and message/passage
   views use the same 256-statement corpus, logarithmic term frequency, smooth
-  inverse document frequency, L2 normalization, 0.15 floor, and durable
-  Design-identity tie break. One opportunity selects one Design at most; one
-  session has one unanswered request at most.
+  inverse document frequency, L2 normalization, and durable Design-identity
+  tie break. Each candidate owns its stance-weighted cosine floor: passive uses
+  the balanced 0.15 base, Explore uses 0.10, and Converge uses 0.20. The floor
+  decides qualification only; finite cosine score still decides ranking. One
+  opportunity selects one Design at most; one session has one unanswered
+  request at most.
   A `room::noticed` record names the exact Design statement, session,
   compaction race witness, opportunity, evidence and immutable identity, plus
   at most six strongest weighted overlaps. A Design is requested once per
@@ -561,9 +564,10 @@ owns each rule summarized here.
   prefix of whole open questions. Contribution or `spice room leave --clause`
   answers it. Selection, `task next`, and room catch-up share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced
-  transcript source, lost task statement, completion, or claim evidence, or
-  non-passive standing releases it on all three surfaces. Compaction does not,
-  but one landing between selection and recording refuses the recording;
+  transcript source, or lost task statement, completion, or claim evidence
+  releases it on all three surfaces. Stance and group movement do not release
+  an otherwise-current open Design request. Compaction does not either, but
+  one landing between selection and recording refuses the recording;
   unrelated writes do not release it. The request grants no claim, work,
   workflow state, or wake. `spice room awareness HANDLE` shows its exact
   opportunity, evidence, statement, session, compaction, and matched terms.

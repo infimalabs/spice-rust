@@ -1,4 +1,5 @@
 use super::*;
+use crate::rooms::awareness::MATCH_SCORE_BASE;
 
 fn word(index: usize) -> String {
     let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);
@@ -150,6 +151,7 @@ fn relevance_is_the_best_view_unchanged_by_unrelated_or_repeated_evidence() {
                     &design_identity,
                     &design,
                     &design_vector,
+                    MATCH_SCORE_BASE,
                 )],
             )
             .unwrap()
@@ -258,8 +260,8 @@ fn ties_prefer_the_lower_design_then_the_newer_card_then_the_earlier_view() {
         .select(
             &frequency,
             [
-                DesignCandidate::new(&late, &higher, &vector),
-                DesignCandidate::new(&early, &lower, &vector),
+                DesignCandidate::new(&late, &higher, &vector, MATCH_SCORE_BASE),
+                DesignCandidate::new(&early, &lower, &vector, MATCH_SCORE_BASE),
             ],
         )
         .unwrap()
@@ -274,10 +276,84 @@ fn ties_prefer_the_lower_design_then_the_newer_card_then_the_earlier_view() {
         .insert(Evidence::task(21, subject, None, &[], "the"))
         .unwrap();
     let found = profile
-        .select(&frequency, [DesignCandidate::new(&early, &lower, &vector)])
+        .select(
+            &frequency,
+            [DesignCandidate::new(
+                &early,
+                &lower,
+                &vector,
+                MATCH_SCORE_BASE,
+            )],
+        )
         .unwrap()
         .unwrap();
     assert_eq!(*found.evidence, 21, "an equal newer card wins");
+}
+
+#[test]
+fn candidate_floors_admit_the_boundary_without_changing_score_order() {
+    let evidence_text = words(0..10);
+    let lower_text = format!("{} {}", words(0..5), words(10..15));
+    let corpus = format!("{} {}", words(0..15), words(20..25));
+    let frequency = FrequencyProfile::of([TermCounts::from_texts([corpus.as_str()])]);
+    let evidence_counts = TermCounts::from_texts([evidence_text.as_str()]);
+    let higher_vector = frequency.prepare(&evidence_counts).unwrap();
+    let lower_counts = TermCounts::from_texts([lower_text.as_str()]);
+    let lower_vector = frequency.prepare(&lower_counts).unwrap();
+    let lower_score = frequency.score(&evidence_counts, &lower_counts).unwrap();
+    let higher_score = frequency.score(&evidence_counts, &evidence_counts).unwrap();
+    let above_lower_score = f64::from_bits(lower_score.to_bits() + 1);
+    let (lower_identity, higher_identity) = (stamp(1), stamp(2));
+
+    let mut profile = EvidenceProfile::default();
+    profile
+        .insert(Evidence::task(22_u32, &evidence_text, None, &[], ""))
+        .unwrap();
+    assert!(
+        profile
+            .select(
+                &frequency,
+                [DesignCandidate::new(
+                    &lower_identity,
+                    &"lower",
+                    &lower_vector,
+                    lower_score,
+                )],
+            )
+            .unwrap()
+            .is_some(),
+        "a score exactly on its candidate's floor qualifies"
+    );
+    assert!(
+        profile
+            .select(
+                &frequency,
+                [DesignCandidate::new(
+                    &lower_identity,
+                    &"lower",
+                    &lower_vector,
+                    above_lower_score,
+                )],
+            )
+            .unwrap()
+            .is_none(),
+        "a score below its candidate's floor does not qualify"
+    );
+
+    let found = profile
+        .select(
+            &frequency,
+            [
+                DesignCandidate::new(&lower_identity, &"lower", &lower_vector, 0.0),
+                DesignCandidate::new(&higher_identity, &"higher", &higher_vector, higher_score),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        *found.design, "higher",
+        "candidate floors decide qualification, not ranking"
+    );
 }
 
 #[test]
@@ -318,7 +394,12 @@ fn vectors_from_another_frequency_generation_are_refused() {
         profile
             .select(
                 &second,
-                [DesignCandidate::new(&identity, &"design", &stale)]
+                [DesignCandidate::new(
+                    &identity,
+                    &"design",
+                    &stale,
+                    MATCH_SCORE_BASE,
+                )],
             )
             .is_err()
     );
@@ -326,7 +407,12 @@ fn vectors_from_another_frequency_generation_are_refused() {
         profile
             .select(
                 &second,
-                [DesignCandidate::new(&identity, &"design", &current)]
+                [DesignCandidate::new(
+                    &identity,
+                    &"design",
+                    &current,
+                    MATCH_SCORE_BASE,
+                )],
             )
             .unwrap()
             .is_some(),

@@ -1,5 +1,5 @@
 //! Deterministic recent-window TF-IDF matching between completed work and
-//! passive Designs.
+//! open Designs.
 //!
 //! Documents use lowercase alphabetic terms from authored task fields. Digit
 //! runs, short words, and function words are inert; one trailing `s` is folded.
@@ -28,8 +28,8 @@ pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
 /// Most recently revised task statements, open or completed, in the frequency
 /// corpus.
 pub const FREQUENCY_WINDOW: usize = 256;
-/// Minimum cosine similarity that can create a Design request.
-pub const MATCH_SCORE_FLOOR: f64 = 0.15;
+/// Balanced cosine-similarity base for stance-weighted Design request floors.
+pub const MATCH_SCORE_BASE: f64 = 0.15;
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
@@ -265,7 +265,7 @@ impl FrequencyProfile {
             let Ok(score) = design.cosine(&completion) else {
                 continue;
             };
-            if !score.is_finite() || score < MATCH_SCORE_FLOOR {
+            if !score.is_finite() || score < MATCH_SCORE_BASE {
                 continue;
             }
             let replace =
@@ -634,7 +634,7 @@ mod tests {
             .chain((64..127).map(generated_word))
             .collect::<Vec<_>>()
             .join(" ");
-        assert!(profile.score(&document(&left), &document(&right)).unwrap() < MATCH_SCORE_FLOOR);
+        assert!(profile.score(&document(&left), &document(&right)).unwrap() < MATCH_SCORE_BASE);
         let identity = TaskStamp::for_micros(1).unwrap();
         let candidate = 1_u8;
         assert!(
@@ -645,7 +645,7 @@ mod tests {
                 )
                 .is_none()
         );
-        assert_eq!(MATCH_SCORE_FLOOR, 0.15);
+        assert_eq!(MATCH_SCORE_BASE, 0.15);
     }
 
     #[test]
