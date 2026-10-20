@@ -502,7 +502,7 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         .payload
         .inventory
         .iter()
-        .find(|entry| entry.path == "symbols/spice.dSYM.json")
+        .find(|entry| entry.path == "symbols/spice.symbols")
         .expect("Darwin inventory binds symbols");
     let metadata = build
         .staged

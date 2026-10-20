@@ -399,7 +399,7 @@ impl ReleaseTarget {
     #[must_use]
     pub const fn debug_path(self) -> Option<&'static str> {
         match self {
-            Self::Aarch64AppleDarwin => Some("symbols/spice.dSYM.json"),
+            Self::Aarch64AppleDarwin => Some("symbols/spice.symbols"),
             Self::X86_64UnknownLinuxMusl => None,
             Self::X86_64PcWindowsMsvc => Some("symbols/spice.pdb"),
         }

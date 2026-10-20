@@ -292,7 +292,7 @@ fn stage_target(
     let native = Digest::compute(Domain::DistArtifact, &executable);
     let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
         let metadata = MacSymbolMetadata {
-            path: "symbols/spice.dSYM.json".to_owned(),
+            path: "symbols/spice.symbols".to_owned(),
             mode: 0o644,
             bytes: 14,
             digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),

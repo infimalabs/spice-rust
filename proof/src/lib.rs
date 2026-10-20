@@ -68,7 +68,7 @@ pub(crate) mod test_support {
         match target {
             ReleaseTarget::Aarch64AppleDarwin => {
                 let metadata = MacSymbolMetadata {
-                    path: "symbols/spice.dSYM.json".to_owned(),
+                    path: "symbols/spice.symbols".to_owned(),
                     mode: 0o644,
                     bytes: 14,
                     digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
