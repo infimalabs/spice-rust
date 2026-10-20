@@ -67,7 +67,7 @@ pub(super) fn render_standing(
             }
             {cycle.as_ref().map_or_else(Html::default, |cycle| render_cycle(room, cycle))}
             <p class="room-standing-next" data-room-next="">
-                {next_action(settled, lifecycle.as_ref(), coordination.as_ref(), &participants, cycle.as_ref())}
+                {next_action(settled, lifecycle.as_ref(), coordination.as_ref(), cycle.as_ref())}
             </p>
             {coordination.as_ref().map_or_else(Html::default, render_coordination)}
             {render_lanes(runtime, &participants)}
@@ -87,26 +87,16 @@ fn next_action(
     settled: bool,
     lifecycle: Option<&DesignStanding>,
     coordination: Option<&CoordinationStanding<'_>>,
-    participants: &[RoomParticipant],
     cycle: Option<&DesignCyclePresentation>,
 ) -> String {
     if settled {
         return "The anchor is settled; nothing remains to coordinate.".to_owned();
     }
-    let owed = participants.iter().any(|participant| {
-        participant.reasons.iter().any(|reason| {
-            matches!(
-                reason,
-                ParticipantReason::Receipt(_) | ParticipantReason::Result(_)
-            )
-        })
-    });
     match (coordination, cycle) {
         (Some(standing), _) if standing.request == Some(Disposition::Live) => format!(
             "Wait for {} to acknowledge request {}.",
             standing.record.value.target, standing.record.value.key
         ),
-        _ if owed => "Wait for the receipts and results lanes owe below.".to_owned(),
         (Some(standing), _) if matches!(standing.automation, ResumeAutomation::Armed { .. }) => {
             format!(
                 "Wait for new input from another party; the rule then resumes {}.",
@@ -332,11 +322,6 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "Active",
             format!("Latest room message {publication} is inside the activity window"),
         ),
-        ParticipantReason::Invitation(key) => (
-            "invitation",
-            "Invited",
-            format!("A room packet addressed this lane under key {key}"),
-        ),
         ParticipantReason::Asked(
             DesignNoticeEvidence::Task { task, .. } | DesignNoticeEvidence::TaskClaim { task, .. },
         ) => (
@@ -364,16 +349,6 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "requested",
             "Requested",
             format!("Live coordination request {key}"),
-        ),
-        ParticipantReason::Receipt(key) => (
-            "receipt",
-            "Owes receipt",
-            format!("Delivery {key} awaits acknowledgment"),
-        ),
-        ParticipantReason::Result(result) => (
-            "result",
-            "Owes result",
-            format!("ASK result {result} awaits an answer"),
         ),
         ParticipantReason::Stop(key) => (
             "responsibility",

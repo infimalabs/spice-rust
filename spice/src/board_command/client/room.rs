@@ -245,7 +245,10 @@ fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
         )
     }];
     if answer.kept.is_empty() {
-        lines.push("no longer listening; a new invitation restores listening".to_owned());
+        lines.push(
+            "no longer listening; a later room message or Design request restores listening"
+                .to_owned(),
+        );
         return lines.join("\n");
     }
     lines.push("still listening until these native duties end; leaving ends none:".to_owned());
@@ -258,8 +261,6 @@ fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
                 format!("  coordination {key}: live room coordination request")
             }
             Duty::Stop { key } => format!("  stop {key}: live stop request for this lane's claim"),
-            Duty::Receipt { key } => format!("  receipt {key}: owed ACK or NAK of a room delivery"),
-            Duty::Result { key } => format!("  result {key}: owed answer to a room ASK"),
         });
     }
     lines.join("\n")

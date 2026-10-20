@@ -53,7 +53,7 @@ REPLY ...]` needs ACK only. `sender unproved` proves no address. Peer traffic
 never wakes a lane.
 
 `# Room catch-up` states why you listen and its leave command. When done/low
-value, `spice room leave HANDLE --clause TEXT`; later addressing/contribution
+value, `spice room leave HANDLE --clause TEXT`; a later MSG/Design request
 resumes listening. Leaving does not free claims or settle deliveries,
 questions, or native duties.
 

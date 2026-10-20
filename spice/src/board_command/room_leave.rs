@@ -124,17 +124,15 @@ pub(crate) fn room_leave(
     committed(bus, write, CommandAnswer::RoomLeave(answer))
 }
 
-/// The lane's leave still in force: one no later invitation or Design request
-/// has restored listening since.
+/// The lane's leave still in force: one no later Design request has restored
+/// listening since.
 fn leave_in_force(
     row: &spice::rooms::RoomLaneAttention,
 ) -> Option<wire::rooms::RoomAuthorityStamp> {
-    let restored = row.attention.iter().any(|reason| {
-        matches!(
-            reason,
-            AttentionReason::Invitation { .. } | AttentionReason::Asked { .. }
-        )
-    });
+    let restored = row
+        .attention
+        .iter()
+        .any(|reason| matches!(reason, AttentionReason::Asked { .. }));
     row.left.clone().filter(|_| !restored)
 }
 
@@ -153,13 +151,7 @@ fn kept_duties(reasons: &[AttentionReason], entries: &[Entry]) -> Vec<RoomListen
                 Some(RoomListeningDuty::Coordination { key: key.clone() })
             }
             AttentionReason::Stop { key } => Some(RoomListeningDuty::Stop { key: key.clone() }),
-            AttentionReason::Delivery { key } => {
-                Some(RoomListeningDuty::Receipt { key: key.clone() })
-            }
-            AttentionReason::Result { key } => Some(RoomListeningDuty::Result { key: key.clone() }),
-            AttentionReason::Activity { .. }
-            | AttentionReason::Invitation { .. }
-            | AttentionReason::Asked { .. } => None,
+            AttentionReason::Activity { .. } | AttentionReason::Asked { .. } => None,
         })
         .collect::<Vec<_>>();
     kept.sort();

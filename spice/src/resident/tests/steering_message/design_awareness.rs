@@ -754,11 +754,6 @@ fn compaction_preserves_participation_and_settled_request_history() {
         &first_notice.session,
         &stamp(&design),
     ));
-    assert_eq!(
-        lanes.post_listeners(51, &config, &design),
-        vec![test_uuid(FIRST)],
-        "the durable contribution keeps ordinary room context available"
-    );
 
     let after = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&after, MATCHING);
@@ -771,7 +766,6 @@ fn compaction_preserves_participation_and_settled_request_history() {
     assert!(lanes.request(&config, FIRST).is_none());
 
     lanes.leave(52, &config, FIRST, &design);
-    assert!(lanes.post_listeners(53, &config, &design).is_empty());
     let later = lanes.claimed("dVrD245Kq", FIRST);
     lanes.complete(&later, MATCHING);
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);

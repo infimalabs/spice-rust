@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spice::rooms::{CatchUpBudget, CatchUpKind, CatchUpSource, select_catch_up};
-use wire::rooms::{
-    CoordinationControl, QuestionResultRef, RoomDelivered, RoomHorizon, RoomQuestionClosed,
-    RoomQuestionTimedOut, TextRange, TranscriptHunk,
-};
+use wire::rooms::{CoordinationControl, RoomDelivered, RoomHorizon, TextRange, TranscriptHunk};
 use wire::{
     Actor, AnyFact, CanonicalUuid, Producer, Seq, SequenceCode, SteeringHead, TaskHandle, TaskStamp,
 };
@@ -84,10 +81,7 @@ fn listening(
             Reason::Activity { publication, .. } => {
                 format!("recent room message {publication}")
             }
-            Reason::Invitation { key } => format!("invitation {key}"),
             Reason::Asked { source } => format!("asked from {source}"),
-            Reason::Delivery { key } => format!("owed receipt {key}"),
-            Reason::Result { key } => format!("owed result {key}"),
             Reason::Coordination { key } => format!("coordination request {key}"),
             Reason::Stop { key } => format!("stop request {key}"),
         })
@@ -319,13 +313,7 @@ pub(in crate::resident) fn changes(
                 if let Some(key) = steer::directives::affected_key(envelope)
                     && let Some(head) = read.steering_key(key.as_str())?
                 {
-                    extend_steering_rooms(&mut changes.rooms, head.body());
-                }
-                if let Some(result) = changed_question_result(fact)
-                    && let Some((record, _)) = read.question_result(&result)?
-                    && let Some(room) = record.context()
-                {
-                    changes.rooms.insert(room.clone());
+                    extend_control_rooms(&mut changes.rooms, head.body());
                 }
             }
             let Some(overflow) = page.overflow else {
@@ -349,8 +337,9 @@ fn changes_task_attention(fact: &AnyFact) -> bool {
         || fact.kind() == wire::FactKind::PreparationDecided
 }
 
-fn extend_steering_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
-    rooms.extend(head.room.iter().cloned());
+/// A live coordination or stop request is the only steering that changes room
+/// attention; routing a packet into a room subscribes no one.
+fn extend_control_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
     let Some(control) = head
         .control
         .as_deref()
@@ -361,25 +350,6 @@ fn extend_steering_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
     rooms.insert(match control {
         CoordinationControl::Coordinate(room) | CoordinationControl::Stop { room, .. } => room,
     });
-}
-
-fn changed_question_result(fact: &AnyFact) -> Option<QuestionResultRef> {
-    fact.read::<RoomQuestionClosed>()
-        .map(|closed| closed.result)
-        .or_else(|| {
-            fact.read::<RoomQuestionTimedOut>()
-                .map(|timed_out| timed_out.result)
-        })
-        .or_else(|| {
-            fact.read::<wire::body::SteerDeclined>()
-                .and_then(|declined| {
-                    declined
-                        .key
-                        .parse::<wire::rooms::RoomAuthorityStamp>()
-                        .ok()
-                        .map(QuestionResultRef::new)
-                })
-        })
 }
 
 fn plan(
@@ -941,41 +911,5 @@ mod tests {
             Some(&landed),
             "source-backed delivery"
         ));
-    }
-}
-
-#[cfg(test)]
-mod listening_tests {
-    use spice::rooms::{AttentionReason, LaneAvailability, RoomLaneAttention};
-
-    use super::*;
-
-    #[test]
-    fn each_room_names_why_the_lane_listens_and_how_it_leaves() {
-        let handle: TaskHandle = "ROOMS-dVxHkZhQY".parse().expect("fixture handle");
-        let row = RoomLaneAttention {
-            lane: "018f82d4-6f59-7d06-92e3-bce913116301"
-                .parse()
-                .expect("fixture lane"),
-            availability: LaneAvailability::Occupied,
-            participation: Vec::new(),
-            attention: vec![
-                AttentionReason::Invitation {
-                    key: "dVxJpSbV9".to_owned(),
-                },
-                AttentionReason::Result {
-                    key: "dVxJkvVCV".to_owned(),
-                },
-            ],
-            left: None,
-            leave_intervals: Vec::new(),
-        };
-        let block = listening(&handle, Some(&row), &[]);
-        assert!(block.contains("invitation dVxJpSbV9"), "{block}");
-        assert!(block.contains("owed result dVxJkvVCV"), "{block}");
-        assert!(
-            block.contains("spice room leave ROOMS-dVxHkZhQY --clause"),
-            "{block}"
-        );
     }
 }

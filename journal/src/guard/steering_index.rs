@@ -56,37 +56,10 @@ impl JournalRead<'_> {
         self.steering_row("steer_key", key)
     }
 
-    /// The newest steering one lane was told through a route into `room`, in
-    /// any disposition: the latest such `MSG`/`ASK` that addressed the lane
-    /// there. The typed room column seeks it directly; no other head decodes.
-    pub fn latest_room_route(
-        &self,
-        lane: wire::CanonicalUuid,
-        room: &wire::TaskStamp,
-    ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
-        self.require_current_steering_index()?;
-        let row = self
-            .connection
-            .query_row(
-                "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-                 room, head_seq, body FROM steering_heads \
-                 WHERE lane = ?1 AND room = ?2 ORDER BY created_seq DESC LIMIT 1",
-                params![lane.to_string(), room.to_string()],
-                read_steering_columns,
-            )
-            .optional()
-            .map_err(GuardError::Store)?;
-        read_metrics::observe_query();
-        if row.is_some() {
-            read_metrics::observe_row();
-        }
-        row.map(|row| self.decode_steering_row(row)).transpose()
-    }
-
-    /// Live steering bound to `room`, in creation order: routes told into it,
-    /// and its coordination and stop requests. At most `limit` rows return;
-    /// a caller that receives `limit` rows cannot know the set is complete.
-    pub fn live_room_steering(
+    /// Live coordination and stop requests bound to `room`, in creation order.
+    /// At most `limit` rows return; a caller that receives `limit` rows cannot
+    /// know the set is complete.
+    pub fn live_room_controls(
         &self,
         room: &wire::TaskStamp,
         limit: usize,
@@ -101,18 +74,15 @@ impl JournalRead<'_> {
             .prepare(
                 "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
                  room, head_seq, body FROM steering_heads \
-                 WHERE disposition = 'live' AND (room = ?1 \
-                 OR json_extract(CAST(body AS TEXT), '$.control') = ?2 \
-                 OR json_extract(CAST(body AS TEXT), '$.control') LIKE ?3) \
-                 ORDER BY created_seq LIMIT ?4",
+                 WHERE disposition = 'live' \
+                 AND (json_extract(CAST(body AS TEXT), '$.control') = ?1 \
+                 OR json_extract(CAST(body AS TEXT), '$.control') LIKE ?2) \
+                 ORDER BY created_seq LIMIT ?3",
             )
             .map_err(GuardError::Store)?;
         read_metrics::observe_query();
         let rows = statement
-            .query_map(
-                params![room.to_string(), coordinate, stop, limit],
-                read_steering_columns,
-            )
+            .query_map(params![coordinate, stop, limit], read_steering_columns)
             .map_err(GuardError::Store)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(GuardError::Store)?;
@@ -120,18 +90,17 @@ impl JournalRead<'_> {
             .map(|row| {
                 read_metrics::observe_row();
                 let head = self.decode_steering_row(row)?;
-                let bound = head.body.room.as_ref() == Some(room)
-                    || head
-                        .body
-                        .control
-                        .as_deref()
-                        .and_then(|control| control.parse().ok())
-                        .is_some_and(|control| match control {
-                            wire::rooms::CoordinationControl::Coordinate(anchor)
-                            | wire::rooms::CoordinationControl::Stop { room: anchor, .. } => {
-                                anchor == *room
-                            }
-                        });
+                let bound = head
+                    .body
+                    .control
+                    .as_deref()
+                    .and_then(|control| control.parse().ok())
+                    .is_some_and(|control| match control {
+                        wire::rooms::CoordinationControl::Coordinate(anchor)
+                        | wire::rooms::CoordinationControl::Stop { room: anchor, .. } => {
+                            anchor == *room
+                        }
+                    });
                 if !bound {
                     return Err(GuardError::Invalid(format!(
                         "steering {} indexed into room {room} is not bound to it",

@@ -119,16 +119,9 @@ pub enum RoomDutyStanding {
 /// Kind and existing public key of one room-scoped duty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoomDutyKind {
-    /// An explicit request for involvement told at `at`; it is not a
-    /// contribution, and a later leave ends it.
-    Invitation { key: String, at: Instant },
     /// A recorded Design request asked the lane about this room at `at`;
     /// `source` names the retained task or conversation that supported it.
     Asked { source: String, at: Instant },
-    /// A directed delivery awaiting disposition.
-    Delivery { key: String },
-    /// A correlated substantive result awaiting the named lane.
-    Result { key: String },
     /// A live room coordination request addressing the lane.
     Coordination { key: String },
     /// A live stop request addressing the lane's claim.
@@ -266,15 +259,10 @@ pub enum AttentionReason {
         publication: RoomAuthorityStamp,
         at: Instant,
     },
-    /// An explicit invitation remains owed; it does not make a participant.
-    Invitation { key: String },
     /// A recorded Design request asked the lane using `source`; it does not
-    /// make a participant, and only a leave ends it.
+    /// make a participant, and the lane's next room publication or leave
+    /// answers or declines it.
     Asked { source: String },
-    /// A directed delivery remains owed.
-    Delivery { key: String },
-    /// A correlated substantive result remains owed.
-    Result { key: String },
     /// A live room coordination request addresses the lane.
     Coordination { key: String },
     /// A live stop request addresses the lane's claim.
@@ -287,10 +275,7 @@ impl AttentionReason {
     /// Whether this reason is a native duty a leave cannot end.
     #[must_use]
     pub const fn is_native(&self) -> bool {
-        !matches!(
-            self,
-            Self::Activity { .. } | Self::Invitation { .. } | Self::Asked { .. }
-        )
+        !matches!(self, Self::Activity { .. } | Self::Asked { .. })
     }
 }
 
@@ -379,7 +364,7 @@ pub struct RoomAttention {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RoomAttentionPoint {
     at: Instant,
-    /// Invitations have no room publication identity and are admitted only
+    /// Design requests have no room publication identity and are admitted only
     /// when their instant is strictly later than the leave they restore.
     publication: Option<RoomAuthorityStamp>,
 }
@@ -396,6 +381,9 @@ struct LaneFold {
     attention: BTreeSet<AttentionReason>,
     latest_activity: Option<(Instant, RoomAuthorityStamp)>,
     latest_leave: Option<(Instant, RoomAuthorityStamp)>,
+    /// The lane's newest room publication of any kind; a Design request it
+    /// does not postdate is answered or declined.
+    latest_publication: Option<Instant>,
     derived_listening: Vec<(RoomAttentionPoint, DerivedListeningEvent)>,
 }
 
@@ -596,6 +584,7 @@ fn fold_publications(
         }
         seen.insert(publication.clone(), (lane, envelope.at));
         let folded = lane_fold(lanes, lane, maximum)?;
+        folded.latest_publication = folded.latest_publication.max(Some(envelope.at));
         let observed = (envelope.at, publication.clone());
         let event = RoomAttentionPoint {
             at: envelope.at,
@@ -656,22 +645,27 @@ fn fold_attention(
     {
         let folded = lane_fold(lanes, duty.lane, maximum)?;
         let reason = match &duty.kind {
-            RoomDutyKind::Invitation { key, at } => {
-                if !restores(folded, *at) {
-                    continue;
-                }
-                AttentionReason::Invitation { key: key.clone() }
-            }
             RoomDutyKind::Asked { source, at } => {
-                if !restores(folded, *at) {
+                // The lane's next room publication, a leave included, answers
+                // or declines the request; an owed one postdates every leave
+                // and reopens catch-up from `at`.
+                if folded
+                    .latest_publication
+                    .is_some_and(|answered| answered >= *at)
+                {
                     continue;
                 }
+                folded.derived_listening.push((
+                    RoomAttentionPoint {
+                        at: *at,
+                        publication: None,
+                    },
+                    DerivedListeningEvent::Restore,
+                ));
                 AttentionReason::Asked {
                     source: source.clone(),
                 }
             }
-            RoomDutyKind::Delivery { key } => AttentionReason::Delivery { key: key.clone() },
-            RoomDutyKind::Result { key } => AttentionReason::Result { key: key.clone() },
             RoomDutyKind::Coordination { key } => {
                 AttentionReason::Coordination { key: key.clone() }
             }
@@ -691,23 +685,6 @@ fn fold_attention(
             });
     }
     Ok(())
-}
-
-/// Whether a non-native request told at `at` restores the lane's listening:
-/// it must postdate the lane's latest leave, and then it reopens catch-up
-/// from `at`.
-fn restores(folded: &mut LaneFold, at: Instant) -> bool {
-    if folded.leave().is_some_and(|(left, _)| at <= *left) {
-        return false;
-    }
-    folded.derived_listening.push((
-        RoomAttentionPoint {
-            at,
-            publication: None,
-        },
-        DerivedListeningEvent::Restore,
-    ));
-    true
 }
 
 fn finish_lanes(
@@ -879,12 +856,12 @@ mod tests {
         }
     }
 
-    fn invitation(room: &TaskStamp, lane: CanonicalUuid, key: &str, told: Instant) -> RoomDuty {
+    fn asked(room: &TaskStamp, lane: CanonicalUuid, source: &str, told: Instant) -> RoomDuty {
         RoomDuty {
             room: room.clone(),
             lane,
-            kind: RoomDutyKind::Invitation {
-                key: key.to_owned(),
+            kind: RoomDutyKind::Asked {
+                source: source.to_owned(),
                 at: told,
             },
             standing: RoomDutyStanding::Owed,
@@ -922,7 +899,7 @@ mod tests {
         let missed = publication(&room, "1kKRRsDR3", peer, at(42), 3);
         let returned_contribution = publication(&room, "1kKRRsDR4", lane_id, at(43), 4);
         let after_return = publication(&room, "1kKRRsDR5", peer, at(44), 5);
-        let earlier = invitation(&room, lane_id, "1kKRRsDS0", at(40));
+        let earlier = asked(&room, lane_id, "task 1kKRRsDS0", at(40));
 
         let participant = project_one(
             &room,
@@ -946,23 +923,24 @@ mod tests {
         assert!(row.participates(), "history survives the leave");
         assert_eq!(row.left, Some("1kKRRsDR2".parse().expect("leave identity")));
 
-        let later = invitation(&room, lane_id, "1kKRRsDS1", at(42));
-        let invited = project_one(
+        let later = asked(&room, lane_id, "task 1kKRRsDS1", at(42));
+        let requested = project_one(
             &room,
             &[contributed.clone(), left.clone()],
             &[],
-            &[earlier, later],
+            &[earlier, later.clone()],
             &topology,
         );
         assert_eq!(
-            invited.attention,
-            vec![AttentionReason::Invitation {
-                key: "1kKRRsDS1".to_owned()
-            }]
+            requested.attention,
+            vec![AttentionReason::Asked {
+                source: "task 1kKRRsDS1".to_owned()
+            }],
+            "only the request no publication answered stays owed"
         );
         let candidate = "1kKRRsDR3".parse().expect("candidate publication identity");
-        assert!(!invited.listens_to(at(41), &candidate));
-        assert!(invited.listens_to(at(42), &candidate));
+        assert!(!requested.listens_to(at(41), &candidate));
+        assert!(requested.listens_to(at(42), &candidate));
 
         let returned = project_one(
             &room,
@@ -974,7 +952,7 @@ mod tests {
                 after_return,
             ],
             &[],
-            &[],
+            &[later],
             &topology,
         );
         assert_eq!(
@@ -982,7 +960,10 @@ mod tests {
             Some("1kKRRsDR2".parse().expect("leave identity"))
         );
         assert!(returned.participates());
-        assert!(!returned.listens(), "{returned:?}");
+        assert!(
+            !returned.listens(),
+            "the answering contribution ends the request: {returned:?}"
+        );
 
         let source = |seq: u64, publication: &str, minute| CatchUpSource {
             seq: Seq::new(seq).expect("positive source position"),
@@ -1031,14 +1012,11 @@ mod tests {
             standing: RoomDutyStanding::Owed,
         };
         let duties = vec![
-            owed(RoomDutyKind::Delivery {
-                key: "1kKRRsDS0".to_owned(),
-            }),
-            owed(RoomDutyKind::Result {
-                key: "1kKRRsDS1".to_owned(),
-            }),
             owed(RoomDutyKind::Coordination {
                 key: "1kKRRsDS2".to_owned(),
+            }),
+            owed(RoomDutyKind::Stop {
+                key: "1kKRRsDS3".to_owned(),
             }),
         ];
         let row = project_one(
@@ -1052,7 +1030,7 @@ mod tests {
             &topology,
         );
         assert!(row.left.is_some());
-        assert_eq!(row.attention.len(), 4, "{row:?}");
+        assert_eq!(row.attention.len(), 3, "{row:?}");
         assert!(row.attention.iter().all(AttentionReason::is_native));
     }
 
@@ -1206,24 +1184,14 @@ mod tests {
             )
             .expect("active associated task is relevant"),
         ];
-        let duties = vec![
-            RoomDuty {
-                room: room.clone(),
-                lane: lane_id,
-                kind: RoomDutyKind::Delivery {
-                    key: "1kKRRsDS0".to_owned(),
-                },
-                standing: RoomDutyStanding::Owed,
+        let duties = vec![RoomDuty {
+            room: room.clone(),
+            lane: lane_id,
+            kind: RoomDutyKind::Coordination {
+                key: "1kKRRsDS0".to_owned(),
             },
-            RoomDuty {
-                room: room.clone(),
-                lane: lane_id,
-                kind: RoomDutyKind::Result {
-                    key: "1kKRRsDS1".to_owned(),
-                },
-                standing: RoomDutyStanding::Owed,
-            },
-        ];
+            standing: RoomDutyStanding::Owed,
+        }];
         let responsibilities = vec![RoomResponsibility {
             room: room.clone(),
             lane: lane_id,
@@ -1244,7 +1212,7 @@ mod tests {
         assert!(row.listens());
         assert_eq!(row.availability, LaneAvailability::Occupied);
         assert_eq!(row.participation.len(), 1);
-        assert_eq!(row.attention.len(), 4);
+        assert_eq!(row.attention.len(), 3);
     }
 
     #[test]
@@ -1283,7 +1251,7 @@ mod tests {
         let duties = vec![RoomDuty {
             room: room.clone(),
             lane: old_lane,
-            kind: RoomDutyKind::Result {
+            kind: RoomDutyKind::Coordination {
                 key: "1kKRRsDS0".to_owned(),
             },
             standing: RoomDutyStanding::Owed,
@@ -1327,18 +1295,10 @@ mod tests {
     }
 
     #[test]
-    fn invitation_only_and_unknown_lanes_stay_explicit() {
+    fn request_only_and_unknown_lanes_stay_explicit() {
         let room = task("1kKRRsDR0");
-        let invited = uuid("01");
-        let duties = vec![RoomDuty {
-            room: room.clone(),
-            lane: invited,
-            kind: RoomDutyKind::Invitation {
-                key: "1kKRRsDS0".to_owned(),
-                at: at(29),
-            },
-            standing: RoomDutyStanding::Owed,
-        }];
+        let requested = uuid("01");
+        let duties = vec![asked(&room, requested, "task 1kKRRsDS0", at(29))];
         let topology = residency(Vec::new());
         let projected = derive_room_attention(
             &room,
@@ -1346,20 +1306,17 @@ mod tests {
             &sources(&[], &[], &duties, &[], &topology),
             RoomProjectionBudget::STANDARD,
         )
-        .expect("invitation projects");
+        .expect("request projects");
 
-        let row = projected.lanes.first().expect("invited lane row");
+        let row = projected.lanes.first().expect("requested lane row");
         assert!(!row.participates());
         assert!(row.listens());
         assert_eq!(row.availability, LaneAvailability::Unknown);
-        assert!(matches!(
-            row.attention[0],
-            AttentionReason::Invitation { .. }
-        ));
+        assert!(matches!(row.attention[0], AttentionReason::Asked { .. }));
     }
 
     #[test]
-    fn replay_renewal_and_settled_receipts_do_not_refresh_activity() {
+    fn replay_renewal_and_settled_duties_do_not_refresh_activity() {
         let room = task("1kKRRsDR0");
         let lane_id = uuid("01");
         let admitted = publication(&room, "1kKRRsDR1", lane_id, at(10), 1);
@@ -1367,7 +1324,7 @@ mod tests {
         let settled = vec![RoomDuty {
             room: room.clone(),
             lane: lane_id,
-            kind: RoomDutyKind::Delivery {
+            kind: RoomDutyKind::Coordination {
                 key: "1kKRRsDS0".to_owned(),
             },
             standing: RoomDutyStanding::Settled,

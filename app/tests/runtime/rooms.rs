@@ -925,62 +925,85 @@ fn a_leave_ends_activity_until_the_lane_contributes_again() {
 }
 
 #[test]
-fn an_asked_lane_stands_asked_until_it_leaves() {
+fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = AppRuntime::new(&accepted);
-    for frame in opening(&session) {
-        runtime.apply_stream(&frame);
-    }
+    let evidence = wire::rooms::DesignNoticeEvidence::Task {
+        task: room(),
+        statement: wire::Seq::new(1).expect("fixture evidence statement"),
+        completed: wire::Seq::new(8).expect("fixture completion"),
+        support: wire::rooms::DesignSupport::Implemented,
+    };
+    let asked = || {
+        let mut runtime = AppRuntime::new(&accepted);
+        for frame in opening(&session) {
+            runtime.apply_stream(&frame);
+        }
+        live(
+            &mut runtime,
+            &session,
+            envelope(
+                9,
+                "room::noticed",
+                &wire::rooms::DesignNoticed {
+                    design: room(),
+                    statement: wire::Seq::new(1).expect("fixture statement"),
+                    lane: uuid(THIRD_LANE),
+                    occupant: uuid(REQUEST),
+                    session: wire::rooms::DesignSession {
+                        vendor: "omp".parse().expect("fixture vendor"),
+                        identity: "fixture-session".to_owned(),
+                    },
+                    compaction: None,
+                    opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
+                    evidence: evidence.clone(),
+                    excerpt: "fixture rooms".to_owned(),
+                    terms: vec!["rooms".to_owned()],
+                },
+            ),
+        );
+        runtime
+    };
     let reasons = |runtime: &AppRuntime| {
         participants(runtime, after_message(2))
             .into_iter()
             .find(|participant| participant.lane == uuid(THIRD_LANE))
             .map(|participant| participant.reasons)
     };
+
+    let mut answered = asked();
+    assert_eq!(
+        reasons(&answered),
+        Some(vec![app::ParticipantReason::Asked(evidence.clone())])
+    );
+    let contribution = later_publication(1);
     live(
-        &mut runtime,
+        &mut answered,
         &session,
         envelope(
-            9,
-            "room::noticed",
-            &wire::rooms::DesignNoticed {
-                design: room(),
-                statement: wire::Seq::new(1).expect("fixture statement"),
+            10,
+            "room::contributed",
+            &wire::rooms::RoomContributed {
+                room: room(),
+                publication: contribution.clone(),
                 lane: uuid(THIRD_LANE),
-                occupant: uuid(REQUEST),
-                session: wire::rooms::DesignSession {
-                    vendor: "omp".parse().expect("fixture vendor"),
-                    identity: "fixture-session".to_owned(),
-                },
-                compaction: None,
-                opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
-                evidence: wire::rooms::DesignNoticeEvidence::Task {
-                    task: room(),
-                    statement: wire::Seq::new(1).expect("fixture evidence statement"),
-                    completed: wire::Seq::new(8).expect("fixture completion"),
-                    support: wire::rooms::DesignSupport::Implemented,
-                },
-                excerpt: "fixture rooms".to_owned(),
-                terms: vec!["rooms".to_owned()],
+                contribution: wire::rooms::RoomContributionKind::Evidence,
+                statement: None,
+                text: "the fold already covers this".to_owned(),
+                sources: Vec::new(),
             },
         ),
     );
     assert_eq!(
-        reasons(&runtime),
-        Some(vec![app::ParticipantReason::Asked(
-            wire::rooms::DesignNoticeEvidence::Task {
-                task: room(),
-                statement: wire::Seq::new(1).expect("fixture evidence statement"),
-                completed: wire::Seq::new(8).expect("fixture completion"),
-                support: wire::rooms::DesignSupport::Implemented,
-            }
-        )])
+        reasons(&answered),
+        Some(vec![app::ParticipantReason::Contribution(contribution)]),
+        "a contribution answers the request and subscribes no one"
     );
 
+    let mut declined = asked();
     let left = later_publication(1);
     live(
-        &mut runtime,
+        &mut declined,
         &session,
         envelope(
             10,
@@ -994,12 +1017,12 @@ fn an_asked_lane_stands_asked_until_it_leaves() {
         ),
     );
     assert_eq!(
-        reasons(&runtime),
+        reasons(&declined),
         Some(vec![app::ParticipantReason::Left {
             publication: left,
             clause: "not my problem space".to_owned(),
         }]),
-        "a leave ends the asked reason"
+        "a leave declines the request"
     );
 }
 

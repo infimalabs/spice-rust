@@ -4,10 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use wire::rooms::{
-    self as authority, QuestionResultState, ROOM_ACTIVITY_SECONDS, RoomDestination,
-    RoomPublicationKind,
-};
+use wire::rooms::{self as authority, ROOM_ACTIVITY_SECONDS};
 use wire::{CanonicalUuid, Disposition, Seq, TaskStamp};
 
 use super::{
@@ -79,11 +76,11 @@ pub struct CoordinationStanding<'a> {
 impl RoomProjection {
     /// Current logical-lane participants and the exact reasons for their
     /// presence at `now_micros`. Contribution history and native duties stay;
-    /// only activity and invitations leave once they age past
-    /// [`ROOM_ACTIVITY_SECONDS`]. Activity comes only from authored room
-    /// messages: a typed contribution is participation, never attention, and
-    /// does not end a leave. A leave later than the lane's latest room message
-    /// ends its activity and every invitation or Design request it postdates.
+    /// activity leaves once it ages past [`ROOM_ACTIVITY_SECONDS`]. Activity
+    /// comes only from authored room messages: a typed contribution is
+    /// participation, never attention, and does not end a leave. A leave later
+    /// than the lane's latest room message ends its activity. A Design request
+    /// stands until the lane's next room publication answers or declines it.
     pub fn participants(
         &self,
         room: &TaskStamp,
@@ -96,77 +93,31 @@ impl RoomProjection {
         if let Some(state) = self.rooms.get(room) {
             let mut latest = BTreeMap::new();
             let mut leaves = BTreeMap::new();
-            let mut invitations = Vec::new();
+            let mut published = BTreeMap::<CanonicalUuid, Seq>::new();
             for (publication, event) in &state.events {
-                let (directed, conversation) = match &event.kind {
-                    RoomEventKind::Messaged {
-                        source,
-                        directed,
-                        conversation,
-                        ..
-                    } => {
-                        add(
-                            source.head.lane,
-                            ParticipantReason::Contribution(publication.clone()),
-                        );
-                        latest.insert(source.head.lane, publication);
-                        (directed.as_slice(), conversation.as_ref())
+                let lane = match &event.kind {
+                    RoomEventKind::Messaged { source, .. } => {
+                        let lane = source.head.lane;
+                        add(lane, ParticipantReason::Contribution(publication.clone()));
+                        latest.insert(lane, publication);
+                        lane
                     }
-                    RoomEventKind::Posted { .. } => (
-                        self.conversation
-                            .conversation(publication)
-                            .map_or(&[][..], |posted| posted.directed.as_slice()),
-                        Some(publication),
-                    ),
                     RoomEventKind::Left { lane, clause } => {
-                        leaves.insert(*lane, (publication, clause, event.position));
-                        continue;
+                        leaves.insert(*lane, (publication, clause));
+                        *lane
                     }
                     RoomEventKind::Contributed { lane, .. } => {
                         add(*lane, ParticipantReason::Contribution(publication.clone()));
-                        continue;
+                        *lane
                     }
                     _ => continue,
                 };
-                let answer = conversation
-                    .and_then(|stamp| self.conversation.conversation(stamp))
-                    .is_some_and(|conversation| {
-                        matches!(
-                            conversation.publication.kind(),
-                            RoomPublicationKind::Ans { .. }
-                        )
-                    });
-                let invites = !answer && publication.micros() >= since;
-                for delivery in directed
-                    .iter()
-                    .filter_map(|directive| self.conversation.delivery(directive))
-                {
-                    let delivery = &delivery.value;
-                    if invites {
-                        invitations.push((delivery.lane, publication, delivery.key.clone()));
-                    }
-                    if delivery.disposition == Disposition::Live {
-                        add(
-                            delivery.lane,
-                            ParticipantReason::Receipt(delivery.key.clone()),
-                        );
-                    }
-                }
+                let newest = published.entry(lane).or_insert(event.position);
+                *newest = (*newest).max(event.position);
             }
-            leaves.retain(|lane, (left, ..)| latest.get(lane).is_none_or(|latest| *left > *latest));
-            for (lane, publication, key) in invitations {
-                if leaves
-                    .get(&lane)
-                    .is_none_or(|(left, ..)| publication > *left)
-                {
-                    add(lane, ParticipantReason::Invitation(key));
-                }
-            }
+            leaves.retain(|lane, (left, _)| latest.get(lane).is_none_or(|latest| *left > *latest));
             for (lane, (asked, task)) in &state.asked {
-                if leaves
-                    .get(lane)
-                    .is_none_or(|(.., position)| asked > position)
-                {
+                if published.get(lane).is_none_or(|answered| asked > answered) {
                     add(*lane, ParticipantReason::Asked(task.clone()));
                 }
             }
@@ -175,7 +126,7 @@ impl RoomProjection {
                     add(lane, ParticipantReason::Activity(publication.clone()));
                 }
             }
-            for (lane, (publication, clause, _)) in leaves {
+            for (lane, (publication, clause)) in leaves {
                 add(
                     lane,
                     ParticipantReason::Left {
@@ -198,8 +149,8 @@ impl RoomProjection {
 
     /// Whether any lane currently has a reason to receive bounded catch-up.
     ///
-    /// Participation and a leave never listen; activity, invitations, Design
-    /// requests, and native duties do, matching the resident's attention.
+    /// Participation and a leave never listen; activity, Design requests, and
+    /// native duties do, matching the resident's attention.
     #[must_use]
     pub fn has_current_listener(
         &self,
@@ -213,12 +164,9 @@ impl RoomProjection {
             .any(|reason| match reason {
                 ParticipantReason::Contribution(_) | ParticipantReason::Left { .. } => false,
                 ParticipantReason::Activity(_)
-                | ParticipantReason::Invitation(_)
                 | ParticipantReason::Asked(_)
                 | ParticipantReason::Work(_)
                 | ParticipantReason::Coordination(_)
-                | ParticipantReason::Receipt(_)
-                | ParticipantReason::Result(_)
                 | ParticipantReason::Stop(_) => true,
             })
     }
@@ -255,24 +203,14 @@ impl RoomProjection {
                 .is_none_or(|position| position <= post.position)
     }
 
-    /// Reasons a lane listens regardless of any leave: a pending result it
-    /// owes, a claim on associated work, a live coordination request, and the
-    /// stop it holds.
+    /// Reasons a lane listens regardless of any leave: a claim on associated
+    /// work, a live coordination request, and the stop it holds.
     fn native_reasons(
         &self,
         room: &TaskStamp,
         board: Option<&BoardView>,
         add: &mut impl FnMut(CanonicalUuid, ParticipantReason),
     ) {
-        for result in self.conversation.results() {
-            let record = &result.value.record;
-            if let (RoomDestination::Lane { lane }, QuestionResultState::Pending {}) =
-                (record.respondent(), &result.value.state)
-                && record.context() == Some(room)
-            {
-                add(*lane, ParticipantReason::Result(record.result().clone()));
-            }
-        }
         for task in board.into_iter().flat_map(|board| &board.tasks) {
             let statement = &task.statement.body;
             if associated(statement, room)
