@@ -184,7 +184,7 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
         "contributions and conversation interleave as the journal admitted them"
     );
 
-    let credited = participants(&runtime, aged())
+    let credited = participants(&runtime)
         .into_iter()
         .find(|participant| participant.lane == uuid(LANE))
         .expect("the contributing lane participates");

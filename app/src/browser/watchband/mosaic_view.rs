@@ -38,23 +38,18 @@ pub(in crate::browser) enum ActivityCard {
         member: crate::runtime::LaneMember,
         boundary: crate::runtime::LaneLifecycleBoundary,
     },
-    /// One working-group room publication or listener transition, accented by
-    /// its design channel. The group surface renders its body; the plane owns
-    /// only placement.
+    /// One working-group room publication, accented by its design channel. The
+    /// group surface renders its body; the plane owns only placement.
     Room {
         accent: usize,
         design: wire::TaskStamp,
-        /// Stable route identity. A publication and each listener transition
-        /// it causes have distinct identities.
+        /// Stable route identity.
         source_id: Rc<str>,
         /// Display time inherited from the exact authority that caused it.
         display_millis: i64,
         position: wire::Seq,
-        /// Deterministic order among cards admitted by one fact. A listener
-        /// transition precedes the publication that caused it.
-        event: u32,
-        /// A full-width divider rather than a message card: a lane's listener
-        /// transition, as a compaction is in a team.
+        /// A full-width divider rather than a message card: a lane's leave, as
+        /// a compaction is in a team.
         divider: bool,
         /// Everything that can change the card's measured geometry. Receipt
         /// state is excluded: its slots keep one geometry in every state.
@@ -122,7 +117,6 @@ impl PartialEq for ActivityCard {
                     source_id: left_source_id,
                     display_millis: left_display_millis,
                     position: left_position,
-                    event: left_event,
                     divider: left_divider,
                     shape: left_shape,
                     body: left_body,
@@ -133,7 +127,6 @@ impl PartialEq for ActivityCard {
                     source_id: right_source_id,
                     display_millis: right_display_millis,
                     position: right_position,
-                    event: right_event,
                     divider: right_divider,
                     shape: right_shape,
                     body: right_body,
@@ -144,7 +137,6 @@ impl PartialEq for ActivityCard {
                     && left_source_id == right_source_id
                     && left_display_millis == right_display_millis
                     && left_position == right_position
-                    && left_event == right_event
                     && left_divider == right_divider
                     && left_shape == right_shape
                     && left_body == right_body
@@ -294,9 +286,8 @@ impl ActivityCard {
             Self::Room {
                 display_millis,
                 position,
-                event,
                 ..
-            } => (*display_millis, 2, None, 0, 0, position.get(), *event),
+            } => (*display_millis, 2, None, 0, 0, position.get(), 0),
         }
     }
 
