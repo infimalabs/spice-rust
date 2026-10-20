@@ -436,6 +436,35 @@ struct Temporary {
     temporary: PathBuf,
 }
 
+/// Restore this process's access to every real directory in its private tree.
+///
+/// `symlink_metadata` and `DirEntry::file_type` both inspect links themselves,
+/// so a member cannot make cleanup chmod or descend into a target outside the
+/// runner-owned root.
+fn restore_owner_directory_access(root: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let metadata = fs::symlink_metadata(root)?;
+        if !metadata.file_type().is_dir() {
+            return Ok(());
+        }
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(permissions.mode() | 0o700);
+        fs::set_permissions(root, permissions)?;
+        for entry in fs::read_dir(root)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                restore_owner_directory_access(&entry.path())?;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = root;
+    Ok(())
+}
+
 impl Temporary {
     fn fresh(challenge: &Challenge) -> Result<Self, String> {
         let root = Path::new("/private/tmp").join(format!("spice-proof-native-{challenge}"));
@@ -485,12 +514,14 @@ impl Temporary {
     }
 
     fn remove(self) -> Result<(), String> {
-        fs::remove_dir_all(&self.root).map_err(|error| {
-            format!(
-                "cannot remove native proof root {}: {error}",
-                self.root.display()
-            )
-        })
+        restore_owner_directory_access(&self.root)
+            .and_then(|()| fs::remove_dir_all(&self.root))
+            .map_err(|error| {
+                format!(
+                    "cannot remove native proof root {}: {error}",
+                    self.root.display()
+                )
+            })
     }
 }
 

@@ -28,7 +28,10 @@ and runs the battery under `sandbox-exec`: routes off the host denied (loopback
 stays, because the battery's own corpus binds it), the repository read-only,
 host Cargo caches and the library prefixes `-sys` build scripts probe
 unreadable, neighbouring checkouts neither readable nor writable, and fresh
-Cargo home, target, and mutation-output directories removed afterward.
+Cargo home, target, and mutation-output directories removed afterward. Cleanup
+restores owner access only on real directories inside that private root, so
+member-created read-only trees cannot leak the root and symlink targets are
+never traversed.
 
 The profile opens with `(allow default)`, so it denies named things and still
 denies less than the container half, which has no host filesystem at all: it
