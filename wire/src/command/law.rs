@@ -583,9 +583,9 @@ impl CommandKind {
             | Self::TaskTimeline
             | Self::BoardGraph
             | Self::DocLedger
-            | Self::RoomContributionSources => Law::READ,
-            Self::WorkingGroupRead
-            | Self::GlobalSettingsRead
+            | Self::RoomContributionSources
+            | Self::WorkingGroupRead => Law::READ,
+            Self::GlobalSettingsRead
             | Self::VendorCatalog
             | Self::BoardHandout
             | Self::RoomCoordinationRead

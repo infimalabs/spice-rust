@@ -612,11 +612,13 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "room::awareness"
     ),
-    operator!(
+    row!(
         ["group", "list"],
         "group list",
+        OperatorOrLane,
         Read,
         [],
+        [Resident],
         Reply,
         "group::read"
     ),

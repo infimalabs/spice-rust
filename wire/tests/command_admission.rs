@@ -330,6 +330,44 @@ fn wake_claim_requires_capture_authority_and_decodes_the_atomic_request() {
 }
 
 #[test]
+fn a_lane_reads_working_groups_but_cannot_mutate_them() {
+    let lane = accepted(Actor::Lane(uuid(4)));
+    let read = Command {
+        v: WireVersion::CURRENT,
+        id: uuid(2),
+        epoch: uuid(1),
+        kind: CommandKind::WorkingGroupRead,
+        expected: vec![],
+        body: serde_json::json!({}),
+    };
+    read.admit(&lane, &PrincipalRoles::default())
+        .expect("a lane reads the working-group partition");
+
+    for kind in [
+        CommandKind::WorkingGroupMove,
+        CommandKind::WorkingGroupArrange,
+        CommandKind::WorkingGroupDisband,
+        CommandKind::WorkingGroupFast,
+        CommandKind::WorkingGroupStance,
+    ] {
+        let command = Command {
+            v: WireVersion::CURRENT,
+            id: uuid(2),
+            epoch: uuid(1),
+            kind,
+            expected: vec![],
+            body: serde_json::json!({}),
+        };
+        let Err(CommandRejection::Refusal(refusal)) =
+            command.admit(&lane, &PrincipalRoles::default())
+        else {
+            panic!("a lane must not mutate working groups");
+        };
+        assert_eq!(refusal.reason(), "command::authority");
+    }
+}
+
+#[test]
 fn a_lane_cannot_inspect_or_terminate_keeper_jobs() {
     for kind in [
         CommandKind::LaneJobsRead,
