@@ -610,8 +610,8 @@ pub struct MacSymbolArtifact {
 }
 
 impl MacSymbolArtifact {
-    /// Encode the sole current canonical artifact by streaming one deterministic
-    /// deflate stream through canonical base64.
+    /// Encode the sole current canonical artifact: its metadata header, then
+    /// one deterministic deflate stream over both members.
     ///
     /// # Errors
     ///
