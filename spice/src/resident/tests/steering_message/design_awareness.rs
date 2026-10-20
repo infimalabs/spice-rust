@@ -1,5 +1,6 @@
-//! Session-profile Design requests are durable, singular, and released by
-//! substantive room publication, source replacement, or a Design statement change.
+//! Session-profile Design requests are durable, singular, replaced only by a
+//! strictly better match, and released by substantive room publication, source
+//! replacement, or a Design statement change.
 
 use wire::rooms::DesignNoticed;
 
@@ -9,6 +10,9 @@ const PITCH: &str = "Lanes page retained publications through bounded cursors.";
 const MATCHING: &str = "Retained publications page through bounded cursors.";
 const TASK_TITLE: &str = "Page room catch-up";
 const TASK_DESCRIPTION: &str = "Bound the cursor of retained publications per lane.";
+
+#[path = "design_awareness/replacement.rs"]
+mod replacement;
 
 /// Resident seats for each `(lane, occupant)`.
 fn seats(occupants: &[(u8, CanonicalUuid)]) -> Seats {
@@ -1312,6 +1316,7 @@ fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed
 fn retain_conversation(
     profiles: &std::sync::Mutex<crate::resident::message_surface::MessageState>,
     source: CanonicalUuid,
+    offset: u64,
     prose: &str,
 ) {
     let conversation = spice::rooms::evidence::Conversation::read(prose)
@@ -1322,7 +1327,7 @@ fn retain_conversation(
         spice::rooms::profile::EvidenceKey::Conversation {
             source,
             member: 0,
-            offset: 0,
+            offset,
             length: 1,
         },
         &conversation,
@@ -1363,7 +1368,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         .source;
     let prose = "Windows native runner validates archive compression headers libraries toolchain \
                  manifests receipts deployment replay smoke";
-    retain_conversation(&profiles, source, prose);
+    retain_conversation(&profiles, source, 0, prose);
     let first = lanes.design(
         "dVrD245Kd",
         "Validate Windows native runner archives",
@@ -1394,7 +1399,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
     assert_eq!(
         lanes.noticed().len(),
         1,
-        "the current request blocks another"
+        "a match no better than the owed Design leaves it owed"
     );
     let shown = spice::rooms::awareness::request_text(
         &lanes
@@ -1433,6 +1438,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
     retain_conversation(
         &profiles,
         replacement,
+        0,
         "A second Windows native runner validates archive compression headers libraries \
          toolchain manifests receipts deployment replay smoke",
     );
