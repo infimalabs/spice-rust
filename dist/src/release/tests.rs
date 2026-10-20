@@ -674,3 +674,53 @@ fn contradictory_or_non_prefix_state_refuses_before_effects() {
         ExecuteError::Contradicted(Operation::CreateImmutableTag)
     ));
 }
+
+#[test]
+fn every_stored_receipt_is_validated_before_the_first_effect() {
+    let plan = plan_release(input()).expect("plan");
+    let forged = OperationReceipt {
+        plan: plan.key.clone(),
+        operation: Operation::RunCorrectnessGate,
+        prior: OperationState::Gate { receipt: None },
+        result: OperationState::Gate {
+            receipt: Some(digest(Domain::GateReceipt, b"another gate")),
+        },
+        convergence: Convergence::Applied,
+    };
+    let mut journal = MemoryJournal::default();
+    journal.receipts.insert(forged.operation, forged);
+    let mut effects = observed(&plan, &[Operation::AwaitRegistryVisibility]);
+    let error = ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
+        .expect_err("a forged later receipt refuses");
+    assert!(matches!(
+        error,
+        ExecuteError::ReceiptMoved(Operation::RunCorrectnessGate)
+    ));
+    assert!(
+        effects.calls.is_empty(),
+        "an earlier operation crossed its effect"
+    );
+    assert!(journal.accepted.is_empty());
+
+    let mut journal = MemoryJournal::default();
+    let misfiled = OperationReceipt {
+        plan: plan.key.clone(),
+        operation: Operation::ResolvePreconditionsAndCredentials,
+        prior: OperationState::Binding {
+            identity: plan.repository.clone(),
+        },
+        result: OperationState::Binding {
+            identity: plan.repository.clone(),
+        },
+        convergence: Convergence::Applied,
+    };
+    journal
+        .receipts
+        .insert(Operation::RunCorrectnessGate, misfiled);
+    let mut effects = FakeEffects::new(&plan);
+    assert!(matches!(
+        ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects),
+        Err(ExecuteError::ReceiptMoved(_))
+    ));
+    assert!(effects.calls.is_empty());
+}
