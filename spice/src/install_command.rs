@@ -29,13 +29,17 @@ pub(crate) struct PlanPreview {
 }
 
 impl PlanPreview {
-    fn source(preview: InstallPreview) -> Self {
-        let apply = format!("spice install --apply={}", preview.digest());
+    fn source(preview: InstallPreview, program: &str) -> Self {
+        let apply = format!(
+            "{} install --apply={}",
+            program_word(program),
+            preview.digest()
+        );
         Self { preview, apply }
     }
 
-    fn package(preview: InstallPreview, package: &str) -> Self {
-        let apply = package_apply_command(package, preview.digest());
+    fn package(preview: InstallPreview, program: &str, package: &str) -> Self {
+        let apply = package_apply_command(program, package, preview.digest());
         Self { preview, apply }
     }
 }
@@ -89,7 +93,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
                 Ok(outcome) => Answer::Plan(match outcome {
                     Outcome::Reply(Reply { position, body }) => Outcome::Reply(Reply {
                         position,
-                        body: PlanPreview::package(body, package),
+                        body: PlanPreview::package(body, &invoked_program(), package),
                     }),
                     Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
                     Outcome::Fault(fault) => Outcome::Fault(fault),
@@ -111,7 +115,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             Answer::Plan(result(
                 spice::install::plan(&repository, Some(&executable))
                     .and_then(InstallPreview::from_plan)
-                    .map(PlanPreview::source),
+                    .map(|preview| PlanPreview::source(preview, &invoked_program())),
             ))
         }
         Request::Apply(spelling) => {
@@ -461,11 +465,39 @@ fn inspect_path(path: &Path) -> String {
     format!("icacls \"{}\"", path.display())
 }
 
+/// The program word that reruns this executable as this invocation named it.
+///
+/// A preview names its plan from this executable's bytes, so a bare `spice`
+/// that resolves elsewhere (or nowhere, before `.spice-install/bin` is on
+/// `PATH`) would derive another digest; replaying argv[0] reaches the same file.
+fn invoked_program() -> String {
+    std::env::args_os().next().map_or_else(
+        || "spice".to_owned(),
+        |program| program.to_string_lossy().into_owned(),
+    )
+}
+
+#[cfg(unix)]
+fn program_word(program: &str) -> String {
+    shell_words::quote(program).into_owned()
+}
+
+/// PowerShell runs a quoted program only through its call operator.
+#[cfg(windows)]
+fn program_word(program: &str) -> String {
+    if program.contains(char::is_whitespace) {
+        format!("& \"{program}\"")
+    } else {
+        program.to_owned()
+    }
+}
+
 /// The command that reopens `package` and applies its previewed `digest`.
 #[cfg(unix)]
-fn package_apply_command(package: &str, digest: &Digest) -> String {
+fn package_apply_command(program: &str, package: &str, digest: &Digest) -> String {
     format!(
-        "spice install --package {} --apply={digest}",
+        "{} install --package {} --apply={digest}",
+        program_word(program),
         shell_words::quote(package)
     )
 }
@@ -475,8 +507,11 @@ fn package_apply_command(package: &str, digest: &Digest) -> String {
 /// Windows paths cannot contain `"`, so one double-quoted word stays one
 /// argument, matching the other guidance this installer prints there.
 #[cfg(windows)]
-fn package_apply_command(package: &str, digest: &Digest) -> String {
-    format!("spice install --package \"{package}\" --apply={digest}")
+fn package_apply_command(program: &str, package: &str, digest: &Digest) -> String {
+    format!(
+        "{} install --package \"{package}\" --apply={digest}",
+        program_word(program)
+    )
 }
 
 #[cfg(test)]
