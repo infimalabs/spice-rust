@@ -44,7 +44,7 @@ impl SymbolBundle {
         )?;
         let resources_path = contents_path.join("Resources");
         let resources = open_directory_at(&contents, OsStr::new("Resources"), &resources_path)?;
-        require_entries(&resources, &resources_path, &[OsStr::new("DWARF")])?;
+        validate_resources(&resources, &resources_path, name)?;
         let dwarf_path = resources_path.join("DWARF");
         let dwarf_root = open_directory_at(&resources, OsStr::new("DWARF"), &dwarf_path)?;
         require_entries(&dwarf_root, &dwarf_path, &[name])?;
@@ -285,14 +285,66 @@ fn open_file_at(parent: &File, name: &OsStr, path: &Path) -> Result<File, BuildE
     )
 }
 
-fn require_entries(directory: &File, path: &Path, expected: &[&OsStr]) -> Result<(), BuildError> {
+fn validate_resources(resources: &File, path: &Path, executable: &OsStr) -> Result<(), BuildError> {
+    let mut entries = directory_entries(resources, path, 2)?;
+    entries.sort();
+    let has_relocations = match entries.as_slice() {
+        [dwarf] if dwarf == "DWARF" => false,
+        [dwarf, relocations] if dwarf == "DWARF" && relocations == "Relocations" => true,
+        _ => {
+            return Err(BuildError::new(format!(
+                "dSYM directory {} contains {entries:?}, expected [\"DWARF\"] or \
+                 [\"DWARF\", \"Relocations\"]",
+                path.display()
+            )));
+        }
+    };
+    if !has_relocations {
+        return Ok(());
+    }
+
+    let relocations = OsStr::new("Relocations");
+    let relocations_path = path.join(relocations);
+    let relocations_root = open_directory_at(resources, relocations, &relocations_path)?;
+    let architectures = directory_entries(&relocations_root, &relocations_path, 1)?;
+    let architecture = architectures.first().ok_or_else(|| {
+        BuildError::new(format!(
+            "dSYM directory {} contains no architecture",
+            relocations_path.display()
+        ))
+    })?;
+    let architecture_path = relocations_path.join(architecture);
+    let architecture_root = open_directory_at(&relocations_root, architecture, &architecture_path)?;
+    let mut map = executable.to_os_string();
+    map.push(".yml");
+    require_entries(&architecture_root, &architecture_path, &[&map])?;
+    let map_path = architecture_path.join(&map);
+    let map_file = open_file_at(&architecture_root, &map, &map_path)?;
+    let metadata = map_file
+        .metadata()
+        .map_err(|error| path_error("inspect", &map_path, error))?;
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(BuildError::new(format!(
+            "dSYM member {} is not a regular file",
+            map_path.display()
+        )))
+    }
+}
+
+fn directory_entries(
+    directory: &File,
+    path: &Path,
+    limit: usize,
+) -> Result<Vec<OsString>, BuildError> {
     let mut directory = Directory::open(directory, path)?;
-    let mut entries = Vec::with_capacity(expected.len());
+    let mut entries = Vec::with_capacity(limit);
     while let Some(name) = directory.next(path)? {
         if matches!(name.as_bytes(), b"." | b"..") {
             continue;
         }
-        if entries.len() == expected.len() {
+        if entries.len() == limit {
             return Err(BuildError::new(format!(
                 "dSYM directory {} exceeds its fixed entry count",
                 path.display()
@@ -300,6 +352,11 @@ fn require_entries(directory: &File, path: &Path, expected: &[&OsStr]) -> Result
         }
         entries.push(name);
     }
+    Ok(entries)
+}
+
+fn require_entries(directory: &File, path: &Path, expected: &[&OsStr]) -> Result<(), BuildError> {
+    let mut entries = directory_entries(directory, path, expected.len())?;
     entries.sort();
     let mut expected = expected
         .iter()
@@ -439,4 +496,122 @@ fn path_error(operation: &str, path: &Path, error: std::io::Error) -> BuildError
         "cannot {operation} dSYM member {}: {error}",
         path.display()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use wire::Domain;
+
+    use super::*;
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    const UUID: &str = "11111111-2222-3333-4444-555555555555";
+    const COMMIT: &str = "1111111111111111111111111111111111111111";
+
+    struct Fixture {
+        root: PathBuf,
+        executable: PathBuf,
+        bundle: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "spice-release-symbols-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let executable = root.join("spice");
+            let bundle = root.join("spice.dSYM");
+            let dwarf = bundle.join("Contents/Resources/DWARF/spice");
+            fs::create_dir_all(dwarf.parent().expect("DWARF parent")).expect("create fixture dSYM");
+            fs::write(bundle.join("Contents/Info.plist"), b"fixture plist")
+                .expect("write fixture plist");
+            fs::write(dwarf, b"fixture DWARF").expect("write fixture DWARF");
+            Self {
+                root,
+                executable,
+                bundle,
+            }
+        }
+
+        fn relocations(&self) -> PathBuf {
+            self.bundle.join("Contents/Resources/Relocations")
+        }
+
+        fn add_relocation(&self, architecture: &str, name: &str) {
+            let map = self.relocations().join(architecture).join(name);
+            fs::create_dir_all(map.parent().expect("relocation parent"))
+                .expect("create relocation architecture");
+            fs::write(map, b"fixture relocation map").expect("write relocation map");
+        }
+
+        fn artifact(&self) -> Vec<u8> {
+            SymbolBundle::capture(&self.bundle, &self.executable)
+                .expect("capture fixture dSYM")
+                .encode(
+                    UUID,
+                    Digest::compute(Domain::DistArtifact, b"fixture executable"),
+                    COMMIT,
+                )
+                .expect("encode fixture symbols")
+        }
+
+        fn refuses(&self) {
+            assert!(
+                SymbolBundle::capture(&self.bundle, &self.executable).is_err(),
+                "unexpectedly admitted {}",
+                self.bundle.display()
+            );
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("remove symbol fixture");
+        }
+    }
+
+    #[test]
+    fn relocation_map_is_admitted_without_entering_the_symbol_artifact() {
+        let plain = Fixture::new();
+        let expected = plain.artifact();
+        let relocated = Fixture::new();
+        relocated.add_relocation("aarch64", "spice.yml");
+        assert_eq!(relocated.artifact(), expected);
+    }
+
+    #[test]
+    fn relocation_map_shape_remains_exact() {
+        let empty = Fixture::new();
+        fs::create_dir_all(empty.relocations()).expect("create empty relocations");
+        empty.refuses();
+
+        let multiple_architectures = Fixture::new();
+        multiple_architectures.add_relocation("aarch64", "spice.yml");
+        multiple_architectures.add_relocation("x86_64", "spice.yml");
+        multiple_architectures.refuses();
+
+        let wrong_name = Fixture::new();
+        wrong_name.add_relocation("aarch64", "other.yml");
+        wrong_name.refuses();
+
+        let extra_map = Fixture::new();
+        extra_map.add_relocation("aarch64", "spice.yml");
+        extra_map.add_relocation("aarch64", "other.yml");
+        extra_map.refuses();
+
+        let directory_map = Fixture::new();
+        fs::create_dir_all(
+            directory_map
+                .relocations()
+                .join("aarch64")
+                .join("spice.yml"),
+        )
+        .expect("create non-file relocation map");
+        directory_map.refuses();
+    }
 }

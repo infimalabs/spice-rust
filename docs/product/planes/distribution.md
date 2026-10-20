@@ -104,6 +104,11 @@ staged ZIP bytes from it. The Windows target inventory names `bin/spice.exe`
 and the matching `symbols/spice.pdb`; both are package members, while
 `proof.json` is the package's detached signature artifact.
 
+The Darwin target inventories a versioned symbol artifact containing only the
+captured `Info.plist` and `DWARF/spice` bytes. Capture admits `dsymutil`'s
+optional `Relocations/<one-architecture>/spice.yml` by-product but does not
+publish it; any other extra dSYM entry refuses staging.
+
 Windows deliberately admits no embedded Authenticode certificate. The
 executable, PDB, payload, linked app archive, build pins, provider run, runner
 image, and toolchain are instead bound by the public GitHub Sigstore
