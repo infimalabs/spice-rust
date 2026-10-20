@@ -125,17 +125,23 @@ impl Authority {
             }
         };
         match reader.read_with(|read| -> Result<AuthoritySnapshot, String> {
-            let (_, facts) = read
-                .verified_fact_snapshot()
-                .map_err(|error| format!("journal authority verification failed: {error}"))?;
             let _ = read
                 .cursor()
                 .map_err(|error| format!("journal cursor is invalid: {error}"))?;
+            let steering = read
+                .pending_operator_steering(journal::FactPageStart::After(None))
+                .map(|_| ())
+                .map_err(|error| format!("steering index read failed: {error}"));
+            let release_published = read
+                .latest_fact(FactKind::ReleasePublished)
+                .map_err(|error| format!("journal release facts are invalid: {error}"))?
+                .is_some();
             let tasks = read
                 .task_head_page(None, journal::FactReadBudget::RETAINED)
                 .map_err(|error| format!("journal task heads are invalid: {error}"))?;
             Ok(AuthoritySnapshot {
-                facts,
+                steering,
+                release_published,
                 task_heads: tasks.rows,
                 task_continuation: tasks.continuation,
                 residency: read
@@ -152,7 +158,9 @@ impl Authority {
     fn observation(&self) -> DoctorObservation {
         match self {
             Self::Absent => not_applicable("journal authority is not initialized"),
-            Self::Unavailable(reason) => unavailable(reason.clone()),
+            Self::Unavailable(reason) => unavailable(format!(
+                "{reason}; run spice journal verify for the full verification"
+            )),
             Self::Ready(_) => ready(),
         }
     }
@@ -171,7 +179,8 @@ impl Authority {
 }
 
 struct AuthoritySnapshot {
-    facts: journal::FactSnapshot,
+    steering: Result<(), String>,
+    release_published: bool,
     task_heads: Vec<journal::TaskHeads>,
     task_continuation: Option<wire::TaskStamp>,
     residency: Option<ResidencyHead>,
@@ -182,9 +191,9 @@ fn steering(authority: &Authority) -> DoctorObservation {
         Ok(snapshot) => snapshot,
         Err(observation) => return observation,
     };
-    match steer::Ledger::from_snapshot(&snapshot.facts) {
-        Ok(_) => ready(),
-        Err(error) => unavailable(format!("steering replay failed: {error}")),
+    match &snapshot.steering {
+        Ok(()) => ready(),
+        Err(reason) => unavailable(reason.clone()),
     }
 }
 
@@ -393,12 +402,7 @@ fn release(authority: &Authority) -> DoctorObservation {
         Ok(snapshot) => snapshot,
         Err(observation) => return observation,
     };
-    if snapshot
-        .facts
-        .facts()
-        .iter()
-        .any(|envelope| envelope.fact.kind() == FactKind::ReleasePublished)
-    {
+    if snapshot.release_published {
         ready()
     } else {
         not_applicable("no release publication has been recorded")
