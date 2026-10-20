@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use atomic::RootedPublish;
 use wire::manifest::{
-    BuildPins, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, MacSymbolMetadata,
-    ProductVersion, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    BuildPins, InventoryEntry, MacSymbolArtifact, MacSymbolMetadata, ProductVersion, ReleaseTarget,
+    TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -250,14 +250,11 @@ fn symbol_artifact(
     bytes: Vec<u8>,
     native: &Digest,
 ) -> Result<(Artifact, MacSymbolMetadata), StageError> {
-    let document: MacSymbolArtifact = wire::decode(&bytes)
+    let document = MacSymbolArtifact::decode(&bytes)
         .map_err(|error| native_build_error(format!("symbol artifact does not decode: {error}")))?;
-    if document.version != MAC_SYMBOL_ARTIFACT_VERSION
-        || document.executable != *native
-        || wire::encode(&document).ok().as_deref() != Some(bytes.as_slice())
-    {
+    if document.executable != *native {
         return Err(native_build_error(
-            "symbol artifact is noncanonical or has stale executable binding",
+            "symbol artifact has stale executable binding",
         ));
     }
     let artifact = artifact(MAC_SYMBOL_PATH, DATA_MODE, bytes);
