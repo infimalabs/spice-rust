@@ -2,10 +2,11 @@
 //!
 //! This module projects presentation state from authorities owned elsewhere. It
 //! cannot create claims, lane or team membership, wake permission, task
-//! visibility, or browser state. A room is still its anchor task; a lane joins
-//! only by an admitted lane-authored publication. Current work, duties,
-//! responsibilities, and recent substantive publications explain why a lane is
-//! listening without creating another work lifecycle.
+//! visibility, or browser state. A room is still its anchor task; admitted
+//! lane-authored messages and contributions establish participation, not
+//! listening. Current work, duties, responsibilities, addressed packet
+//! invitations, and recorded Design requests explain why a lane is listening
+//! without creating another work lifecycle.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
