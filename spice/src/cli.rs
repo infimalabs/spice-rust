@@ -291,6 +291,7 @@ pub enum Landing {
 
 mod contracts;
 use contracts::*;
+mod summaries;
 
 /// The complete registry in the order used by help and Doctor rendering.
 ///
@@ -553,104 +554,6 @@ fn leaf_help(path: &[&str]) -> Option<&'static str> {
     }
 }
 
-/// The help row of a top-level name only repository configuration mounts.
-const MOUNTED_SUMMARY: &str = "Run a command this repository's configuration mounts";
-
-/// The one-line help row of each registered top-level command.
-const COMMAND_SUMMARIES: &[(&str, &str)] = &[
-    (
-        "backup",
-        "Write a backup bundle of the journal and task artifacts",
-    ),
-    ("board", "Read the task board, its graphs, and handouts"),
-    ("config", "Read or change repository configuration"),
-    ("consent", "Review and decide pending consent requests"),
-    (
-        "demo",
-        "Serve the installed appliance from an isolated demo repository",
-    ),
-    (
-        "dev",
-        "Run repository Cargo and xtask commands with the admitted Cargo home",
-    ),
-    (
-        "doc",
-        "Apply an authored task document, or read a task's ledger",
-    ),
-    ("doctor", "Report appliance and repository health"),
-    ("down", "Drain the resident and release its lock"),
-    (
-        "gate",
-        "Prove commit checks and run the Git hook entry points",
-    ),
-    ("group", "Group Designs and set each group's stance"),
-    ("inbox", "Read pending steering for a lane"),
-    (
-        "install",
-        "Preview, apply, or reverse this repository's installation",
-    ),
-    ("journal", "Inspect, verify, or reindex the event journal"),
-    ("lane", "Add, wake, drain, and list agent lanes"),
-    ("lock", "Report resource locks, or run a command under one"),
-    (
-        "preparation",
-        "Propose, critique, and decide Design preparations",
-    ),
-    (
-        "principal",
-        "Admit human principals and manage their profiles and roles",
-    ),
-    (
-        "proof",
-        "Seal or replay the compiled target's detached proof",
-    ),
-    (
-        "quote",
-        "Resolve a quote target to its recorded message and author",
-    ),
-    (
-        "recall",
-        "Read one lane's continuity account, or every lane's",
-    ),
-    (
-        "release",
-        "Write release notes, then seal and publish release packages",
-    ),
-    ("restore", "Verify or restore a journal backup bundle"),
-    ("retro", "Page preserved agent transcripts, newest first"),
-    (
-        "room",
-        "Coordinate in task rooms: post, ask, answer, and leave",
-    ),
-    ("rtk", "Query an agent's RTK command history"),
-    ("run", "Run one command through supervised-shell routing"),
-    (
-        "session",
-        "Read agent sessions: briefings, turns, and transcripts",
-    ),
-    (
-        "steer",
-        "Send steering to a lane, or cancel, resend, or recover it",
-    ),
-    ("task", "Create, claim, complete, review, and read tasks"),
-    ("taste", "Read tastes and file curation proposals"),
-    ("thread", "Read the journal facts of one thread"),
-    (
-        "trust",
-        "Grant, pend, or revoke trust in executable configuration",
-    ),
-    ("up", "Start the resident and print its endpoint"),
-    ("version", "Print the appliance and app versions"),
-    ("watch", "Snapshot or follow the live transcript"),
-];
-
-fn command_summary(name: &str) -> Option<&'static str> {
-    COMMAND_SUMMARIES
-        .iter()
-        .find(|(command, _)| *command == name)
-        .map(|(_, summary)| *summary)
-}
-
 fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
@@ -672,17 +575,7 @@ fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
         );
 
     for child in child_names(contracts, mounts, &[]) {
-        let registered = contracts
-            .iter()
-            .any(|contract| contract.path.first() == Some(&child.as_str()));
-        let summary = match command_summary(&child) {
-            Some(summary) => summary,
-            None if registered => panic!("registered command {child:?} has no help summary"),
-            None => MOUNTED_SUMMARY,
-        };
-        root = root.subcommand(
-            branch(contracts, mounts, &child, std::slice::from_ref(&child)).about(summary),
-        );
+        root = root.subcommand(summarized(contracts, mounts, &[child]));
     }
     root
 }
@@ -723,10 +616,29 @@ fn branch(contracts: &[Contract], mounts: &[Mount], name: &str, path: &[String])
 
     for child in children {
         let mut child_path = path.to_vec();
-        child_path.push(child.clone());
-        command = command.subcommand(branch(contracts, mounts, &child, &child_path));
+        child_path.push(child);
+        command = command.subcommand(summarized(contracts, mounts, &child_path));
     }
     command.subcommand_precedence_over_arg(true)
+}
+
+/// One branch under its help row; a registered path without one refuses.
+fn summarized(contracts: &[Contract], mounts: &[Mount], path: &[String]) -> Command {
+    let registered = contracts.iter().any(|contract| {
+        contract.path.len() >= path.len()
+            && contract
+                .path
+                .iter()
+                .zip(path)
+                .all(|(word, name)| *word == name.as_str())
+    });
+    let summary = match summaries::summary(path) {
+        Some(summary) => summary,
+        None if registered => panic!("registered command {path:?} has no help summary"),
+        None => summaries::MOUNTED_SUMMARY,
+    };
+    let name = path.last().expect("a branch path names its command");
+    branch(contracts, mounts, name, path).about(summary)
 }
 
 fn child_names(contracts: &[Contract], mounts: &[Mount], path: &[&str]) -> BTreeSet<String> {

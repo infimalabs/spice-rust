@@ -72,8 +72,8 @@ fn a_registered_command_without_a_summary_refuses_the_parser() {
         .iter()
         .find(|contract| contract.path == ["doctor"])
         .expect("doctor contract exists");
-    novel.path = &["unsummarized"];
-    novel.syntax = "unsummarized";
+    novel.path = &["task", "unsummarized"];
+    novel.syntax = "task unsummarized";
     contracts.push(novel);
 
     let _ = command_from(&contracts, &[]);
