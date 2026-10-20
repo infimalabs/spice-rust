@@ -161,6 +161,8 @@ flowchart LR
   stays gated by the Design, and carries the contract to record an explicit
   disposition, through `task done --disposition` when no change is warranted,
   and to construct child work when it is.
+  An ordinary claimed duplicate is not a Plan disposition; remove it through
+  `task delete HANDLE REASON --force-claimed`.
 - `task add --draft` (and `task plan --draft`, `task design --draft`) records a
   typed Draft: prospective work under an admitted public project, distinct from
   Filed work. Default reads show it only to the operator and its origin thread,

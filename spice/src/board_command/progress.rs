@@ -436,6 +436,15 @@ fn admit_disposition(
         ));
     }
     let owner = planning::construction_owner(plan, entry.statement().preparation.as_ref());
+    if entry.statement().intent.is_none() {
+        return Err(refusal(
+            "task::disposition-refused",
+            Some(entry.handle().to_string()),
+            "record a no-construction disposition only when completing a Plan's own plan phase; \
+             remove an ordinary claimed duplicate with `spice task delete HANDLE REASON \
+             --force-claimed`",
+        ));
+    }
     if owner != plan
         || entry.workflow().phase.as_str() != "plan"
         || !planning::requires_construction(entry.statement().intent, &entry.workflow().flow)
