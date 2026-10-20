@@ -1070,11 +1070,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "lane::drain"
     ),
-    operator!(
+    row!(
         ["lane", "wake"],
         "lane wake ID",
+        Operator,
         Command,
         [LaneSessionDeclared, LaneStarted, ClaimCarried],
+        [Resident, OperatorCapability, Toolful],
+        OCCUPANT_LAUNCH_TOOLS,
         Reply,
         "lane::wake"
     ),
@@ -1118,11 +1121,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "lane::purge"
     ),
-    operator!(
+    row!(
         ["lane", "import"],
         "lane import ID WORKTREE",
+        Operator,
         Command,
         [LaneImported, LaneSessionDeclared, LaneStarted, ClaimCarried],
+        [Resident, OperatorCapability, Toolful],
+        OCCUPANT_LAUNCH_TOOLS,
         Reply,
         "lane::import"
     ),

@@ -292,6 +292,9 @@ pub enum DoctorToolSource {
     SymbolLookupContract,
     /// A worktree-local integration seam supplies the executable.
     WorktreeConfiguration,
+    /// Repository vendor configuration supplies the agent program each lane
+    /// occupant runs.
+    VendorConfiguration,
 }
 
 impl DoctorToolSource {
@@ -308,6 +311,7 @@ impl DoctorToolSource {
         Self::AdjudicationContract,
         Self::SymbolLookupContract,
         Self::WorktreeConfiguration,
+        Self::VendorConfiguration,
     ];
 }
 

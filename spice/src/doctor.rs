@@ -248,6 +248,18 @@ fn tool_observation(
                 },
             }
         }
+        DoctorToolSource::VendorConfiguration => {
+            let program = configuration.vendor().omp().binary().as_str();
+            match probe.configured(program) {
+                Ok(()) => DoctorObservation::Ready {},
+                Err(reason) => DoctorObservation::Unavailable {
+                    reason: format!(
+                        "configured vendor {} program {program:?} is unavailable: {reason}",
+                        tool.name
+                    ),
+                },
+            }
+        }
     }
 }
 
@@ -295,12 +307,18 @@ trait ExecutableProbe {
     fn named(&self, name: &str) -> Result<(), String>;
     fn exact(&self, path: &Path) -> Result<(), String>;
 
-    fn rtk(&self, executable: &str) -> Result<(), String> {
+    /// Locate a configured program without running it: an absolute path is
+    /// checked exactly, and a bare name is searched for on the search path.
+    fn configured(&self, executable: &str) -> Result<(), String> {
         if Path::new(executable).is_absolute() {
             self.exact(Path::new(executable))
         } else {
             self.named(executable)
         }
+    }
+
+    fn rtk(&self, executable: &str) -> Result<(), String> {
+        self.configured(executable)
     }
 }
 
@@ -579,6 +597,36 @@ mod tests {
                         reason: "git is absent".to_owned(),
                     }
         }));
+    }
+
+    #[test]
+    fn an_absent_vendor_program_leaves_occupant_launches_unavailable() {
+        let mut with_vendor = probe(Ok(()));
+        with_vendor.named.insert("omp".to_owned(), Ok(()));
+        let mut without_vendor = probe(Ok(()));
+        without_vendor
+            .named
+            .insert("omp".to_owned(), Err("omp is absent".to_owned()));
+
+        for path in [&["lane", "wake"][..], &["lane", "import"]] {
+            let contract = cli::contracts()
+                .iter()
+                .find(|contract| contract.path == path)
+                .expect("occupant launch contract exists");
+            assert_eq!(
+                default_command_report(contract, &with_vendor).observation,
+                DoctorObservation::Ready {},
+                "{path:?}"
+            );
+            assert!(
+                matches!(
+                    default_command_report(contract, &without_vendor).observation,
+                    DoctorObservation::Unavailable { ref reason }
+                        if reason.contains("\"omp\"") && reason.contains("omp is absent")
+                ),
+                "{path:?}"
+            );
+        }
     }
 
     #[test]
