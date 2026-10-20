@@ -287,7 +287,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::BinaryNotRegular(path) | InstallError::BinaryEmpty(path) => format!(
-            "inspect the selected executable with `{}`; from the worktree root, rebuild it with `cargo build --locked --target-dir target -p spice`, then rerun `target/debug/spice install`",
+            "inspect the selected executable with `{}`; from the worktree root, rebuild it with `cargo build --locked --target-dir target -p spice`, then rerun `{WORKTREE_SPICE} install`",
             inspect_path(path),
         ),
         InstallError::HookPathUnrepresentable { path, .. } => format!(
@@ -301,13 +301,12 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             "inspect the package symbol input with `{}`; re-acquire the release package so its executable, payload, and `symbols/spice.dSYM.json` come from one sealed build, then rerun `spice install --package`",
             inspect_path(path),
         ),
-        InstallError::BinaryContextChanged => concat!(
-            "the `.spice-install/bin/spice` asset was planned from another executable; preview ",
-            "and apply through the same freshly built executable: from the worktree root, run ",
-            "`cargo build --locked --target-dir target -p spice`, rerun `target/debug/spice install`, then pass ",
-            "that preview's digest to `target/debug/spice install --apply=<digest>`",
-        )
-        .to_owned(),
+        InstallError::BinaryContextChanged => format!(
+            "the `{INSTALLED_SPICE}` asset was planned from another executable; preview \
+             and apply through the same freshly built executable: from the worktree root, run \
+             `cargo build --locked --target-dir target -p spice`, rerun `{WORKTREE_SPICE} install`, then pass \
+             that preview's digest to `{WORKTREE_SPICE} install --apply=<digest>`",
+        ),
         InstallError::DigestMismatch { .. } => concat!(
             "rerun this executable's `install` preview and pass its newly printed digest to ",
             "the same executable as `install --apply=<digest>`; do not reuse the refused digest",
@@ -389,6 +388,15 @@ fn state_remedy(error: &InstallError) -> Option<String> {
 const GIT: &str = "/usr/bin/git";
 #[cfg(windows)]
 const GIT: &str = r#""%ProgramFiles%\Git\cmd\git.exe""#;
+
+#[cfg(unix)]
+const INSTALLED_SPICE: &str = ".spice-install/bin/spice";
+#[cfg(windows)]
+const INSTALLED_SPICE: &str = ".spice-install/bin/spice.exe";
+#[cfg(unix)]
+const WORKTREE_SPICE: &str = "target/debug/spice";
+#[cfg(windows)]
+const WORKTREE_SPICE: &str = "target/debug/spice.exe";
 
 #[cfg(unix)]
 fn inspect_path(path: &Path) -> String {
