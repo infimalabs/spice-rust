@@ -200,8 +200,8 @@ impl Journal {
                 .execute(
                     "INSERT INTO steering_heads(\
                         directive, steer_key, lane, disposition, created_seq, minted_micros, \
-                        head_seq, body\
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        room, head_seq, body\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         head.directive.to_string(),
                         head.key,
@@ -209,6 +209,7 @@ impl Journal {
                         disposition_name(head.disposition),
                         to_sql(head.created).map_err(commit_fault_to_guard)?,
                         head.minted_micros,
+                        head.room.as_ref().map(ToString::to_string),
                         to_sql(position).map_err(commit_fault_to_guard)?,
                         bytes,
                     ],
@@ -802,13 +803,13 @@ fn apply_heads(
                 .execute(
                     "INSERT INTO steering_heads(\
                         directive, steer_key, lane, disposition, created_seq, minted_micros, \
-                        head_seq, body\
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+                        room, head_seq, body\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
                      ON CONFLICT(directive) DO UPDATE SET \
                         steer_key = excluded.steer_key, lane = excluded.lane, \
                         disposition = excluded.disposition, created_seq = excluded.created_seq, \
-                        minted_micros = excluded.minted_micros, head_seq = excluded.head_seq, \
-                        body = excluded.body",
+                        minted_micros = excluded.minted_micros, room = excluded.room, \
+                        head_seq = excluded.head_seq, body = excluded.body",
                     params![
                         directive,
                         steering.key,
@@ -816,6 +817,7 @@ fn apply_heads(
                         steering.disposition,
                         to_sql(steering.created)?,
                         steering.minted_micros,
+                        steering.room,
                         to_sql(row.seq)?,
                         row.body,
                     ],

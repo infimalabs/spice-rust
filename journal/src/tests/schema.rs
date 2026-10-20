@@ -135,11 +135,24 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let typed_rooms: bool = journal
+        .connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('steering_heads') WHERE name = 'room')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("steering head shape reads");
+    let steering = if typed_rooms {
+        PREDECESSOR_STEERING_HEADS
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
             "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} {evidence} \
-             {relevance} {principals} {oops_generation}
+             {relevance} {principals} {oops_generation} {steering}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -321,7 +334,7 @@ fn a_predecessor_omitting_task_creation_context_refuses_before_crossing() {
         journal
             .connection
             .execute_batch(&format!(
-                "{omit};
+                "{omit}; {PREDECESSOR_STEERING_HEADS}
                  UPDATE journal_schema SET version = 35 WHERE singleton = 1;
                  PRAGMA user_version = 35;"
             ))

@@ -19,7 +19,11 @@ fn coherent_steering_fold_verifies_head_miss_and_cursor() {
 
 #[test]
 fn verification_rejects_predicate_column_corruption_without_mutation() {
-    for (column, corrupt) in [("disposition", "canceled"), ("lane", OTHER_LANE)] {
+    for (column, corrupt) in [
+        ("disposition", "canceled"),
+        ("lane", OTHER_LANE),
+        ("room", "1kKRRsDP"),
+    ] {
         let journal = steering_fixture();
         journal
             .connection
