@@ -40,7 +40,36 @@ pub(in crate::browser) fn render_task_room(
         }
         RoomProjectionStatus::Available => {
             let has_current_listener = projection.has_current_listener(room, runtime.board());
-            let events = projection.room(room).map(|room| room.in_journal_order());
+            let mut cards = projection
+                .room(room)
+                .map(|room| room.in_journal_order())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(publication, event)| {
+                    let card = card::render_card(
+                        runtime,
+                        None,
+                        room,
+                        has_current_listener,
+                        publication,
+                        event,
+                    );
+                    (event.position, card)
+                })
+                .chain(
+                    projection
+                        .preparation()
+                        .candidates
+                        .values()
+                        .filter(|proposal| proposal.value.candidate.controller == *room)
+                        .map(|proposal| {
+                            let card =
+                                super::approval::render_proposal_card(runtime, room, proposal);
+                            (proposal.position, card)
+                        }),
+                )
+                .collect::<Vec<_>>();
+            cards.sort_by_key(|(position, _)| std::cmp::Reverse(*position));
             html! {
                 <>
                     if design {
@@ -54,21 +83,12 @@ pub(in crate::browser) fn render_task_room(
                     <section class="room-history" aria-label="Room conversation">
                         <header>
                             <strong>{"Conversation"}</strong>
-                            <span>{events.as_ref().map_or(0, Vec::len)}</span>
+                            <span>{cards.len()}</span>
                         </header>
-                        if let Some(events) = events.filter(|events| !events.is_empty()) {
-                            {for events.into_iter().rev().map(|(publication, event)| {
-                                card::render_card(
-                                    runtime,
-                                    None,
-                                    room,
-                                    has_current_listener,
-                                    publication,
-                                    event,
-                                )
-                            })}
-                        } else {
+                        if cards.is_empty() {
                             <p class="room-empty">{"No room publications."}</p>
+                        } else {
+                            {for cards.into_iter().map(|(_, card)| card)}
                         }
                     </section>
                 </>

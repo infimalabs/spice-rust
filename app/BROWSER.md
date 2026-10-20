@@ -233,6 +233,14 @@ vacant, unavailable, acked, declined, expired, or cancelled). These receipts
 are not styled as review evidence or output authorization, which stay on their
 exact proposal version and in immutable preparation authority.
 
+Each recorded Design pass proposal also joins its room's conversation and its
+group's plane at its journal position as one card: the proposing lane, the
+recommendation and justification, its decision standing as tab-style badges
+(Undecided, Withdrawn, Returned, Accepted, or a resolved proposal's Accepted
+and Rejected output counts), and links that focus that version, its statement,
+and each output on the Design's read view. The card carries no decision
+controls; those stay on the version.
+
 The operator's inbox sits in the Spice sidebar's Principals section, inside
 their own principal row beneath its avatar, name, and email, above Jobs, and
 not in the shared Working groups catalog. Its

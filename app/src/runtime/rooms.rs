@@ -290,6 +290,8 @@ pub struct PreparationProjection {
     /// Design pass proposals by stable candidate identity.
     pub candidates:
         BTreeMap<authority::CandidateRef, RoomPositioned<authority::DesignPassProposal>>,
+    /// The authenticated actor that recorded each proposal.
+    pub proposers: BTreeMap<authority::CandidateRef, wire::Actor>,
     /// Critiques by stable critique identity.
     pub critiques: BTreeMap<authority::CritiqueRef, RoomPositioned<authority::CandidateCritique>>,
     /// Coverage by stable coverage identity.
@@ -910,12 +912,18 @@ impl RoomProjection {
         match fact.kind() {
             FactKind::DesignProposed => Some(fact.read::<authority::DesignProposed>().is_some_and(
                 |body| {
+                    let candidate = body.candidate.candidate.clone();
+                    let author = self
+                        .preparation
+                        .proposers
+                        .insert(candidate.clone(), fact.actor().clone())
+                        .is_none_or(|previous| previous != *fact.actor());
                     replace(
                         &mut self.preparation.candidates,
-                        body.candidate.candidate.clone(),
+                        candidate,
                         fact.seq(),
                         body.candidate,
-                    )
+                    ) | author
                 },
             )),
             FactKind::CandidateCritiqued => Some(

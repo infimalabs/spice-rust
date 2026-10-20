@@ -148,27 +148,30 @@ fn render_cycle(room: &TaskStamp, cycle: &DesignCyclePresentation) -> Html {
 /// it focuses that record in place; elsewhere it opens the read view.
 fn fact_link(room: &TaskStamp, fact: SequenceCode) -> Html {
     let code = fact.to_string();
-    let onclick = {
-        let selector = format!("[data-fact=\"{code}\"]");
-        Callback::from(move |event: MouseEvent| {
-            let Some(element) = web_sys::window()
-                .and_then(|window| window.document())
-                .and_then(|document| document.query_selector(&selector).ok().flatten())
-            else {
-                return;
-            };
-            event.prevent_default();
-            element.scroll_into_view();
-            if let Ok(element) = element.dyn_into::<web_sys::HtmlElement>() {
-                let _ = element.focus();
-            }
-        })
-    };
+    let onclick = focus_in_place(format!("[data-fact=\"{code}\"]"));
     html! {
         <a href={crate::view::design_href(room)} data-cycle-fact={code.clone()} {onclick}>
             <code>{code}</code>
         </a>
     }
+}
+
+/// Focus the element `selector` names when this page shows it; otherwise
+/// let the link open the Design's read view, which does.
+pub(super) fn focus_in_place(selector: String) -> Callback<MouseEvent> {
+    Callback::from(move |event: MouseEvent| {
+        let Some(element) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.query_selector(&selector).ok().flatten())
+        else {
+            return;
+        };
+        event.prevent_default();
+        element.scroll_into_view();
+        if let Ok(element) = element.dyn_into::<web_sys::HtmlElement>() {
+            let _ = element.focus();
+        }
+    })
 }
 
 fn render_coordination(standing: &CoordinationStanding<'_>) -> Html {
