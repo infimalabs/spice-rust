@@ -730,6 +730,36 @@ fn an_ordinary_disposition_refusal_names_claimed_task_deletion() {
 }
 
 #[test]
+fn an_intentless_plan_flow_still_records_a_disposition() {
+    let (root, bus, epoch, seats) = fixture("intentless-plan-disposition", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let plan = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "PLAN-flow",
+        "Plan by flow alone",
+        "board.test",
+        Some("plan,review"),
+        &["The need is planned"],
+    );
+    claim_task(&bus, epoch, seat, &lane, &plan);
+
+    assert_committed(dispose(
+        &bus,
+        epoch,
+        seat,
+        &plan,
+        wire::body::PlanDisposition::NoWork {},
+        None,
+    ));
+    let disposed = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&disposed, &plan).workflow.body.phase.as_str(), "review");
+    clean(&root, bus);
+}
+
+#[test]
 fn a_disposed_plan_settles_on_clean_review_without_constructing_or_authorizing_work() {
     let (root, bus, epoch, seats) = fixture("planning-disposition", 1);
     let seat = &seats[0];
