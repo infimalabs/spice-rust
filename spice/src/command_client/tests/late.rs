@@ -216,14 +216,20 @@ fn open_against_peer(fixture: &mut Fixture, lose_publisher: bool) -> (ClientResu
 
     let read = DiscoveryRead::open(&fixture.serve, &resident_lock_path(&fixture.serve))
         .expect("fixture discovery reads");
-    let outcome = open_session_with(&COMMAND_CONTRACT, read, OPENING_BOUND, || {
-        connected
-            .recv_timeout(PEER_BOUND)
-            .expect("peer accepts the connection before the publisher is decided");
-        if lose_publisher {
-            fixture.release_publisher();
-        }
-    })
+    let outcome = open_session_with(
+        &COMMAND_CONTRACT,
+        read,
+        Instant::now() + OPENING_BOUND,
+        OPENING_BOUND,
+        || {
+            connected
+                .recv_timeout(PEER_BOUND)
+                .expect("peer accepts the connection before the publisher is decided");
+            if lose_publisher {
+                fixture.release_publisher();
+            }
+        },
+    )
     // Dropping the session closes the client end, which is what lets the peer
     // finish; the opening either completed or it did not.
     .map(drop);

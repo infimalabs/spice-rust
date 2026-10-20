@@ -23,14 +23,19 @@ pub(super) struct IoFailure {
 
 pub(super) struct DeadlineStream {
     stream: TcpStream,
+    /// The caller's declared bound, which faults name; `deadline` may be
+    /// nearer when an earlier attempt already spent part of it.
     pub(super) bound: Duration,
     deadline: Instant,
     pub(super) last_failure: Option<IoFailure>,
 }
 
 impl DeadlineStream {
-    pub(super) fn connect(address: &SocketAddr, bound: Duration) -> io::Result<Self> {
-        let deadline = Instant::now() + bound;
+    pub(super) fn connect(
+        address: &SocketAddr,
+        deadline: Instant,
+        bound: Duration,
+    ) -> io::Result<Self> {
         let stream = TcpStream::connect_timeout(address, remaining(deadline)?)?;
         Ok(Self {
             stream,

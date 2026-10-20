@@ -602,9 +602,9 @@ fn acquire_session_attempt(
     bound: Duration,
 ) -> ClientResult<AuthenticatedSession> {
     DiscoveryRead::open(discovery_path, resident_lock).and_then(|discovery| {
-        let attempt_bound = remaining(deadline)
+        remaining(deadline)
             .map_err(|_| acquisition_deadline(bound, "opening the current discovery"))?;
-        open_session(contract, discovery, attempt_bound)
+        open_session(contract, discovery, deadline, bound)
     })
 }
 
@@ -885,11 +885,13 @@ fn transport_fault(
         direction: assumed,
         deadline_elapsed: false,
     });
+    // An elapsed bound is the whole story: the detail it arrives with is only
+    // the socket's own timeout errno.
     if failure.deadline_elapsed {
         return environment_fault(
             "serve::deadline-elapsed",
             &format!(
-                "resident did not answer within the {:?} client bound: {detail}",
+                "resident did not answer within the {:?} client bound",
                 stream.bound
             ),
         );
@@ -920,7 +922,7 @@ fn opening_fault(opening: OpeningBound, detail: &str) -> Outcome<CommandAnswer> 
         return environment_fault(
             "serve::deadline-elapsed",
             &format!(
-                "resident did not open a socket within the {:?} client bound: {detail}",
+                "resident did not open a socket within the {:?} client bound",
                 opening.bound
             ),
         );
