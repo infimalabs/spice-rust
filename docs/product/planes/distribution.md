@@ -101,7 +101,15 @@ image, and toolchain are instead bound by the public GitHub Sigstore
 attestation over the hosted result. The PE image is re-admitted after the
 link—the only byte-changing Windows step—and its content digest is re-admitted
 when packaged, so neither symbol capture nor detached signing can mutate the
-image. The same complete Windows appliance exposes ordinary commands,
+image.
+
+The release adapter opens each native executable and Windows PDB once, admits
+the held regular object's cross-platform identity, reads its exact admitted
+length through that handle, and then requires both the handle and its final
+no-follow name to retain the same identity. A link, reparse point, mutation, or
+name replacement therefore refuses before artifact publication.
+
+The same complete Windows appliance exposes ordinary commands,
 resident, journal, board, app serving, and distribution surfaces through their
 native filesystem, process, and local-IPC adapters.
 
