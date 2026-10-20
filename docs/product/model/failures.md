@@ -61,7 +61,6 @@ Recovery messages follow the [refusal grammar](decisions.md#refusal-grammar-repa
 | **controller** | the root Plan or Design whose positive conclusion governs an output | every ancestor, origin, or dependency |
 | **gated output** | pending output of a Design that lacks execution authorization | a held claim, a deferral, another task status, or a Plan's task awaiting review |
 | **execution authorization** | operator-attributed permission for one exact Design output selected by an exact candidate decision | a working-group move, claim release, wake, receipt, review, coverage record, or closure |
-| **question result** | an ASK's substantive outcome under an immutable deadline | the ASK's delivery receipt |
 | **footprint** | the task-owned path boundary defined by [landing](boundaries.md#landing-refusals) | the integrated diff |
 | **baseline** | shared line a lane integrates with | an agent-facing upstream |
 | **battery** | deterministic ordered selection of verifications for one run | mutable selection |

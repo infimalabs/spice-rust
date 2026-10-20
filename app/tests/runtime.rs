@@ -251,7 +251,6 @@ fn board_task(
             body: wire::intent::BoardStatement {
                 intent: None,
                 preparation: None,
-                evidence: Vec::new(),
                 handle: wire::TaskHandle::for_filing(project, &born, filing),
                 born: born.clone(),
                 queue_origin: seq(1),

@@ -119,8 +119,8 @@ pub(super) async fn send_room_post(
     .await
 }
 
-/// The resident guards every item and result head it reads, so a control
-/// proposes no witness.
+/// The resident guards every item head it reads, so a control proposes no
+/// witness.
 pub(super) async fn send_room_control(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -141,18 +141,6 @@ pub(super) async fn send_room_control(
                 CommandKind::RoomControl,
                 Vec::new(),
                 control.clone(),
-            )
-            .await
-        }
-        crate::client_action::RoomControlRequest::Close(close) => {
-            send_typed(
-                principal,
-                writer,
-                actions,
-                pending,
-                CommandKind::RoomClose,
-                Vec::new(),
-                close.clone(),
             )
             .await
         }

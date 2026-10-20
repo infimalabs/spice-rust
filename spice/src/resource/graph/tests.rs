@@ -28,7 +28,6 @@ fn entries() -> Vec<board::Entry> {
             let phase = "todo".parse::<wire::Phase>().expect("phase");
             let statement = wire::TaskHead {
                 preparation: None,
-                evidence: Vec::new(),
                 intent: None,
                 born: born.clone(),
                 queue_origin: Seq::new(1).expect("sequence"),

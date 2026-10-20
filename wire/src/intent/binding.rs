@@ -27,7 +27,7 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneJobAnswer,
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
-    ReleasePublish, ReportAnswer, ReportRead, RoomClose, RoomContribute, RoomContributeAnswer,
+    ReleasePublish, ReportAnswer, ReportRead, RoomContribute, RoomContributeAnswer,
     RoomContributionSources, RoomContributionSourcesAnswer, RoomControl, RoomControlAnswer,
     RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
     RoomCoordinationView, RoomLeave, RoomLeaveAnswer, RoomPutAside, StateAnswer, SteerDispose,
@@ -77,8 +77,6 @@ pub enum BodyShape {
     RoomContributionSources,
     /// [`RoomControl`]
     RoomControl,
-    /// [`RoomClose`]
-    RoomClose,
     /// [`WorkingGroupRead`]
     WorkingGroupRead,
     /// [`WorkingGroupMove`]
@@ -531,8 +529,7 @@ impl CommandKind {
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionSources
-            | Self::RoomControl
-            | Self::RoomClose => self.room_binding(),
+            | Self::RoomControl => self.room_binding(),
             Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
@@ -789,8 +786,6 @@ pub enum Intent {
     RoomContributionSources(RoomContributionSources),
     /// [`BodyShape::RoomControl`]
     RoomControl(RoomControl),
-    /// [`BodyShape::RoomClose`]
-    RoomClose(RoomClose),
     /// [`BodyShape::WorkingGroupRead`]
     WorkingGroupRead(WorkingGroupRead),
     /// [`BodyShape::WorkingGroupMove`]
@@ -960,8 +955,7 @@ impl Intent {
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
             | Self::RoomContributionSources(_)
-            | Self::RoomControl(_)
-            | Self::RoomClose(_) => self.room_shape(),
+            | Self::RoomControl(_) => self.room_shape(),
             Self::DesignPropose(_)
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
@@ -1173,7 +1167,6 @@ impl BodyShape {
                 | Self::RoomContribute
                 | Self::RoomContributionSources
                 | Self::RoomControl
-                | Self::RoomClose
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupMove
                 | Self::WorkingGroupArrange
@@ -1231,7 +1224,6 @@ impl BodyShape {
                 | Self::RoomContribute
                 | Self::RoomContributionSources
                 | Self::RoomControl
-                | Self::RoomClose
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupMove
                 | Self::WorkingGroupArrange
@@ -1278,8 +1270,7 @@ impl BodyShape {
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionSources
-            | Self::RoomControl
-            | Self::RoomClose => return self.decode_room_body(bytes),
+            | Self::RoomControl => return self.decode_room_body(bytes),
             Self::WorkingGroupRead
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange

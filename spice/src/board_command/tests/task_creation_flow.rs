@@ -443,7 +443,6 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
         requirements: None,
         priority: None,
         project: None,
-        evidence: None,
         intent: Some(wire::TaskIntentEdit::Set {
             intent: wire::TaskIntent::Plan,
         }),

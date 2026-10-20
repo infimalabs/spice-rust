@@ -419,7 +419,6 @@ fn a_design_pass_names_the_claim_head_a_stale_reclaim_rewrote() {
                 revision: u32::try_from(head.revision.get() + 1).expect("fixture revision fits"),
                 dependencies: None,
                 intent: None,
-                evidence: None,
             },
             FactCause::Root,
         )

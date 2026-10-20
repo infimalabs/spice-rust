@@ -102,32 +102,6 @@ pub(super) fn client_require(
             .then(|| written.unwrap_or_else(|| board.appliance.clone()));
         let clear = matches.get_flag("clear");
         let named = schema.is_some() || trust.is_some() || appliance.is_some();
-        if let Some(evidence) = evidence_edit(matches)? {
-            if named || clear {
-                return Err(refusal(
-                    "task::require-shape",
-                    None,
-                    "name environmental requirements or one evidence change, never both",
-                ));
-            }
-            return Ok((
-                CommandKind::TaskEdit,
-                vec![statement_witness(heads)],
-                serde_json::to_value(TaskEdit {
-                    intent: None,
-                    evidence: Some(evidence),
-                    task,
-                    title: None,
-                    description: None,
-                    acceptance: Vec::new(),
-                    requirements: None,
-                    priority: None,
-                    project: None,
-                    flow: None,
-                })
-                .expect("typed intent encodes"),
-            ));
-        }
         let requirements = match (named, clear) {
             (true, false) => wire::intent::TaskRequirementsEdit::Set {
                 requirements: environment_requirements(
@@ -148,7 +122,8 @@ pub(super) fn client_require(
                 return Err(refusal(
                     "task::require-shape",
                     None,
-                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or --appliance-after [VERSION] to replace requirements, --clear to remove them, or one evidence change",
+                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or \
+                     --appliance-after [VERSION] to replace requirements, or --clear to remove them",
                 ));
             }
         };
@@ -157,7 +132,6 @@ pub(super) fn client_require(
             witnesses(heads),
             serde_json::to_value(TaskEdit {
                 intent: None,
-                evidence: None,
                 task,
                 title: None,
                 description: None,
@@ -170,47 +144,6 @@ pub(super) fn client_require(
             .expect("typed intent encodes"),
         ))
     })
-}
-
-/// The explicit required-evidence change one `task require` names, if any.
-fn evidence_edit(
-    matches: &ArgMatches,
-) -> Result<Option<wire::TaskEvidenceEdit>, Outcome<CommandAnswer>> {
-    let result = |name: &str| {
-        matches
-            .get_one::<String>(name)
-            .map(|text| {
-                text.parse()
-                    .map(wire::rooms::QuestionResultRef::new)
-                    .map_err(|error: wire::rooms::RoomAuthorityStampError| {
-                        refusal(
-                            "task::evidence-invalid",
-                            Some(error.to_string()),
-                            "name a question result by the key its ASK was delivered under",
-                        )
-                    })
-            })
-            .transpose()
-    };
-    let shape = (
-        result("evidence")?,
-        result("replace")?,
-        result("with")?,
-        result("waive")?,
-    );
-    Ok(Some(match shape {
-        (None, None, None, None) => return Ok(None),
-        (Some(result), None, None, None) => wire::TaskEvidenceEdit::Require { result },
-        (None, Some(result), Some(with), None) => wire::TaskEvidenceEdit::Replace { result, with },
-        (None, None, None, Some(result)) => wire::TaskEvidenceEdit::Waive { result },
-        _ => {
-            return Err(refusal(
-                "task::require-shape",
-                None,
-                "name one of --evidence RESULT, --replace RESULT --with RESULT, or --waive RESULT",
-            ));
-        }
-    }))
 }
 
 #[cfg(test)]

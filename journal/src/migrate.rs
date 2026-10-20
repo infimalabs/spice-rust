@@ -20,6 +20,7 @@ mod preparation_edges;
 mod provenance;
 mod residual;
 mod retained_notes;
+mod room_questions;
 mod settings_receipts;
 mod steering_rooms;
 mod task_markers;
@@ -88,10 +89,10 @@ const PREPARED: &str = "prepared";
 /// a missing creating fact, a copy already contradicting that reason, and any
 /// boundary on an unregistered transcript stream. Last, every steering head
 /// takes its body's room as a typed indexed column.
-const PREDECESSOR_SCHEMAS: [u32; 53] = [
+const PREDECESSOR_SCHEMAS: [u32; 54] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85,
+    81, 82, 83, 84, 85, 86,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -127,8 +128,6 @@ pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
 /// First schema whose baseline carries operator items in place of per-route
 /// room receipts.
 pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
-/// First schema whose baseline carries required task evidence.
-pub(crate) const TASK_EVIDENCE_SCHEMA: u32 = 48;
 /// First schema whose baseline carries room relevance shadow observations.
 pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
 /// First schema whose baseline carries the working-group partition in place
@@ -145,9 +144,11 @@ const DESIGN_PASS_SCHEMA: u32 = 73;
 pub(crate) const RETAINED_NOTES_SCHEMA: u32 = 76;
 /// First schema whose baseline carries the repository OOPS-generation head.
 pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
+/// Only retained schema whose executable authority still carries room questions.
+pub(crate) const ROOM_QUESTION_SCHEMA: u32 = 86;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 11] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (
@@ -160,7 +161,6 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 11] = [
         crate::rooms::CONVERSATION_SCHEMA_SQL,
     ),
     (ROOM_ITEM_SCHEMA, crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL),
-    (TASK_EVIDENCE_SCHEMA, crate::rooms::EVIDENCE_SCHEMA_SQL),
     (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
     (GROUP_PARTITION_SCHEMA, crate::rooms::GROUP_SCHEMA_SQL),
     (DESIGN_MATURITY_SCHEMA, crate::rooms::MATURITY_SCHEMA_SQL),
@@ -389,17 +389,10 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    cross_room_questions(&transaction, version)?;
     preparation_edges::strip_authorization(&transaction)?;
     let taste_audits = cross_current_rows(&transaction)?;
-    if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
-        cross_shape_predecessor(&transaction, version)?;
-    } else {
-        create_room_schemas(&transaction, version)?;
-        if version < DESIGN_PASS_SCHEMA {
-            decisions::cross_design_passes(&transaction)?;
-            decisions::cross_output_decisions(&transaction)?;
-        }
-    }
+    cross_schema_shape(&transaction, version)?;
     cross_room_successors(&transaction, version)?;
     create_principal_heads(&transaction, version)?;
     working_groups::cross(&transaction)?;
@@ -420,6 +413,31 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+fn cross_schema_shape(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
+        return cross_shape_predecessor(transaction, version);
+    }
+    create_room_schemas(transaction, version)?;
+    if version < DESIGN_PASS_SCHEMA {
+        decisions::cross_design_passes(transaction)?;
+        decisions::cross_output_decisions(transaction)?;
+    }
+    Ok(())
+}
+
+fn cross_room_questions(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version == ROOM_QUESTION_SCHEMA {
+        room_questions::cross(transaction)?;
+    }
+    Ok(())
 }
 
 fn cross_room_successors(
@@ -446,7 +464,18 @@ fn cross_retained_notes(
 /// Index every settled steering head's room, then name the crossed authority
 /// the current schema.
 fn advance_identity(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
-    steering_rooms::cross(transaction)?;
+    let room_is_typed = transaction
+        .query_row(
+            "SELECT EXISTS(\
+                 SELECT 1 FROM pragma_table_info('steering_heads') WHERE name = 'room'\
+             )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(OpenError::Sqlite)?;
+    if !room_is_typed {
+        steering_rooms::cross(transaction)?;
+    }
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -1384,8 +1413,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 86, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 87, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 86;
+PRAGMA user_version = 87;
 "#;

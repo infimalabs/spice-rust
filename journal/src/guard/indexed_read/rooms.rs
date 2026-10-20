@@ -3,10 +3,9 @@
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, CandidateWithdrawal, DesignPassProposal,
-    ExecutionAuthorization, PreparationDecision, ProposalRef, QuestionResultHead,
-    QuestionResultRecord, QuestionResultRef, RoomAuthorityStamp, RoomCoordinationStarted,
-    RoomDelivered, RoomDestination, RoomHorizon, RoomLeft, RoomMessaged, RoomPublication,
-    RoomPublicationKind, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
+    ExecutionAuthorization, PreparationDecision, ProposalRef, RoomAuthorityStamp,
+    RoomCoordinationStarted, RoomDelivered, RoomDestination, RoomHorizon, RoomLeft, RoomMessaged,
+    RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
     RoomReceiptRef, WorkingGroupPartition,
 };
 
@@ -547,28 +546,6 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
-    /// One question's immutable result record and current guarded result
-    /// head, absent before its ASK; the head's position is its latest move.
-    pub fn question_result(
-        &self,
-        result: &QuestionResultRef,
-    ) -> Result<Option<(QuestionResultRecord, JournalHead<QuestionResultHead>)>, GuardError> {
-        let key = result.to_string();
-        let head = self.conversation_head::<QuestionResultRecord, QuestionResultHead>(
-            "room_results",
-            "result",
-            &key,
-        )?;
-        if let Some((record, head)) = &head
-            && (record.result() != result || head.body.result() != result)
-        {
-            return Err(GuardError::Invalid(format!(
-                "question result indexed as {key} names another result"
-            )));
-        }
-        Ok(head)
-    }
-
     fn conversation_head<R, H>(
         &self,
         table: &'static str,
@@ -598,54 +575,6 @@ impl JournalRead<'_> {
         };
         self.conversation_row(table, key_column, key, position, &record, &head)
             .map(Some)
-    }
-
-    /// Every pending question result's immutable record and current guarded
-    /// head, in result order.
-    pub fn pending_question_results(
-        &self,
-    ) -> Result<Vec<(QuestionResultRecord, JournalHead<QuestionResultHead>)>, GuardError> {
-        let rows = self.conversation_rows::<QuestionResultRecord, QuestionResultHead>(
-            "room_results",
-            "result",
-            "pending = 1",
-        )?;
-        rows.into_iter()
-            .map(|(key, record, head)| {
-                if record.result().to_string() != key || head.body.result().to_string() != key {
-                    return Err(GuardError::Invalid(format!(
-                        "question result indexed as {key} names another result"
-                    )));
-                }
-                Ok((record, head))
-            })
-            .collect()
-    }
-
-    /// Every settled question result in a task room that no shadow relevance
-    /// observation names yet, in result order. The observation shares its
-    /// result's identity, so each result is observed at most once.
-    pub fn unobserved_question_results(
-        &self,
-    ) -> Result<Vec<(QuestionResultRecord, JournalHead<QuestionResultHead>)>, GuardError> {
-        let rows = self.conversation_rows::<QuestionResultRecord, QuestionResultHead>(
-            "room_results",
-            "result",
-            "pending = 0 \
-             AND NOT EXISTS (SELECT 1 FROM room_relevance_observations AS observed \
-                             WHERE observed.observation = room_results.result) \
-             AND json_extract(CAST(record AS TEXT), '$.context') IS NOT NULL",
-        )?;
-        rows.into_iter()
-            .map(|(key, record, head)| {
-                if record.result().to_string() != key || head.body.result().to_string() != key {
-                    return Err(GuardError::Invalid(format!(
-                        "question result indexed as {key} names another result"
-                    )));
-                }
-                Ok((record, head))
-            })
-            .collect()
     }
 
     /// Every operator item that still owes a disposition, pending or lapsed,
@@ -826,40 +755,13 @@ impl JournalRead<'_> {
     }
 
     /// The recorded actor whose operator inbox `publication`'s operator item
-    /// reaches, absent when it opens none.
-    ///
-    /// A lane's operator route reaches the sender of the direction it names,
-    /// and an answer returned to the operator reaches the actor that asked.
-    /// A retained operator route that names no direction reaches the
-    /// historical operator.
+    /// reaches, absent when it opens none. A lane's operator route reaches the
+    /// sender of the direction it names; a retained operator route with no
+    /// direction reaches the historical operator.
     pub fn room_operator_requester(
         &self,
         publication: &RoomPublication,
     ) -> Result<Option<wire::Actor>, GuardError> {
-        if let RoomPublicationKind::Ans { result, .. } = publication.kind() {
-            let (question, _) = self.question_result(result)?.ok_or_else(|| {
-                GuardError::Invalid(format!(
-                    "answer {} names unknown result {result}",
-                    publication.publication()
-                ))
-            })?;
-            if question.requester() != &(RoomDestination::Operator {}) {
-                return Ok(None);
-            }
-            return self
-                .recorded_actor(
-                    "SELECT f.actor FROM room_conversations c \
-                     JOIN fact_envelopes f ON f.seq = c.head_seq WHERE c.publication = ?1",
-                    &question.question().to_string(),
-                )?
-                .map(Some)
-                .ok_or_else(|| {
-                    GuardError::Invalid(format!(
-                        "result {result} names unadmitted question {}",
-                        question.question()
-                    ))
-                });
-        }
         let Some(route) = publication
             .routes()
             .iter()

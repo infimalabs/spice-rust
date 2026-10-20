@@ -3,9 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::rooms::{
-    QuestionClosure, QuestionResultRef, RoomAnchor, RoomAuthorityStamp, RoomContributionKind,
-    RoomReceiptDisposition, RoomReceiptRef, RoomRelevanceVerdict, RoomSource,
-    RoomSourceUnavailable, RoomSourceView,
+    RoomAnchor, RoomAuthorityStamp, RoomContributionKind, RoomReceiptDisposition, RoomReceiptRef,
+    RoomRelevanceVerdict, RoomSource, RoomSourceUnavailable, RoomSourceView,
 };
 pub use crate::rooms::{
     WorkingGroupArrange, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
@@ -277,29 +276,19 @@ pub enum RoomConversationContent {
     Unavailable { unavailable: RoomSourceUnavailable },
 }
 
-/// One operator control over its own operator items or the questions it
-/// answers.
+/// One operator control over its own operator items.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "control", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RoomControl {
-    /// ACK settles exact pending operator items; NAK settles them and declines
-    /// an operator ASK's pending result.
+    /// ACK or NAK exact pending operator items.
     Dispose {
         disposition: RoomReceiptDisposition,
         keys: Vec<RoomReceiptRef>,
         clause: String,
     },
-    /// Answer one pending question whose stored respondent is the operator.
-    Answer {
-        result: QuestionResultRef,
-        /// Optional asserted context; it must equal the stored one.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        context: Option<TaskHandle>,
-        text: String,
-    },
-    /// Reply to one pending operator item a lane's MSG or ANS opened: the
-    /// text is operator direction to that lane in the item's room, and the
-    /// item settles acked.
+    /// Reply to one pending operator item a lane's MSG opened: the text is
+    /// operator direction to that lane in the item's room, and the item
+    /// settles acked.
     Reply { item: RoomReceiptRef, text: String },
     /// Return one lapsed operator item to pending under the same key.
     Recover { item: RoomReceiptRef },
@@ -311,34 +300,16 @@ pub enum RoomControl {
     },
 }
 
-/// Decline or cancel one pending question result.
-///
-/// The stored respondent declines and the stored requester cancels; the
-/// operator closes for the other party only when `override` says so.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomClose {
-    pub result: QuestionResultRef,
-    pub closure: QuestionClosure,
-    pub clause: String,
-    /// The operator acts for a stored lane party.
-    #[serde(rename = "override")]
-    pub override_party: bool,
-}
-
-/// What one room control or close moved.
+/// What one room control moved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomControlAnswer {
     /// Each operator item moved, with the state it moved to.
     pub items: Vec<RoomItemMove>,
-    /// Each question result moved, in the corresponding input-item order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub results: Vec<RoomResultMove>,
-    /// The publication an operator answer or reply recorded.
+    /// The publication an operator reply recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub answer: Option<RoomAuthorityStamp>,
-    /// Key of the directive an answer or reply returned to its lane.
+    pub publication: Option<RoomAuthorityStamp>,
+    /// Key of the directive a reply returned to its lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub returned: Option<String>,
     /// The shadow observation an assessment settled, with its verdict.
@@ -354,16 +325,6 @@ pub struct RoomItemMove {
     pub item: RoomReceiptRef,
     /// Its state after the control: `acked`, `declined`, `cancelled`, or
     /// `pending` after recovery.
-    pub state: String,
-}
-
-/// One question result a control moved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomResultMove {
-    /// The result.
-    pub result: QuestionResultRef,
-    /// Its state after the control: `answered`, `declined`, or `cancelled`.
     pub state: String,
 }
 

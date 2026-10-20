@@ -452,7 +452,7 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
 
 #[test]
 fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
-    let commands: [&[&str]; 10] = [
+    let commands: [&[&str]; 9] = [
         &[
             "task",
             "show",
@@ -511,7 +511,6 @@ fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
             "8192",
         ],
         &["room", "inbox", "--limit", "1", "--after", "dVv51t4wR"],
-        &["room", "result", "dVv51t4Dd"],
         &[
             "session",
             "turns",

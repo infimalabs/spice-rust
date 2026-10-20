@@ -69,7 +69,6 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
     let dependencies = shape.dependencies;
     write.task_head(fact, move |revision| wire::TaskHead {
         preparation,
-        evidence: Vec::new(),
         intent: shape.intent,
         born,
         queue_origin: revision,

@@ -476,12 +476,11 @@ owns each rule summarized here.
   record. The operator or any lane records an observation, text the room's
   fact owns, with `spice room post` or `spice task note` in any task's room
   that is not deleted; writing one makes its author no listener, and it
-  changes no task generation. The operator answers a retained question with
-  `spice room answer`
-  and replies to a lane's MSG or retained ANS item with `spice room reply`, operator
-  direction to that lane. When the source packet speaks in exactly one room,
-  the reply records there too. A tool call's intent may retire a key, but
-  publishes only as the narrow fallback for a message with no text block.
+  changes no task generation. The operator replies to a lane's MSG item with
+  `spice room reply`, sending operator direction back to that lane. When the
+  source packet speaks in exactly one room, the reply records there too. A tool
+  call's intent may retire a key, but publishes only as the narrow fallback for
+  a message with no text block.
 - **Delivery.** A directed route is a native steering directive bound to the
   logical lane: vacancy, resume, and renewal keep its key, body, and expiry for
   whichever occupant sits there next, while a replacement lane inherits
@@ -490,14 +489,11 @@ owns each rule summarized here.
   ([routing](invariants/identity.md#identity-an-operator-item-reaches-the-principal-it-answers)).
   Room-only traffic reaches current listeners as one bounded catch-up aside at
   a safe boundary. Recording is not receipt.
-- **Receipt, answer, and authorization stay apart.** ACK/NAK settles a
-  delivery, and an operator ACK/NAK clause reaches no lane; only a reply does.
-  A question result has one immutable deadline and ends answered,
-  declined, cancelled, or timed out; recovery of a lapsed delivery or item
-  never reopens or extends it. Answered means available for assessment: a task
-  that requires a result names it with `spice task require --evidence`, and
-  only `preparation` records carry review coverage and execution
-  authorization.
+- **Receipt, reply, and authorization stay apart.** ACK/NAK settles a delivery,
+  and an operator ACK/NAK clause reaches no lane; only a reply does. Recovery
+  returns a lapsed item to pending with the same key and a fresh expiry. Review
+  coverage and execution authorization remain preparation authority, never
+  conversation traffic.
 - **Coordination.** `spice room start|resume HANDLE ADDRESS` sends one scoped
   operator direction naming the criterion, contribution, and stop condition;
   the recipient acquires the anchor through ordinary native possession. A
@@ -507,9 +503,9 @@ owns each rule summarized here.
   standing.
 - **Attention.** An authored room message or contribution makes its lane a
   participant; neither subscribes that lane, grants permission to post, nor
-  restores listening. Routing a packet into a room, an owed receipt, and a
-  pending ASK result subscribe no one: steering delivers each directly, and
-  room history stays readable on demand. Listening is derived from native
+  restores listening. Routing a packet into a room and an owed receipt
+  subscribe no one: steering delivers each directly, and room history stays
+  readable on demand. Listening is derived from native
   work, a live coordination request, and a stop request. Each native reason
   starts at the journal authority that created the current duty: a claim keeps
   its original win across renewal and occupant carry, ends with that claim,
@@ -763,7 +759,7 @@ refusals and repairs, are
   participant and grant no claim, read permission, team membership, or wake.
 - No automation beyond the `--auto-resume` rule: nothing else starts work,
   claims, decides, or authorizes.
-- Agreement, silence, message count, elapsed time, ACK, and ANS never count as
+- Agreement, silence, message count, elapsed time, and ACK never count as
   progress or approval.
 - No timed deferral coordinates a room, and gating adds no task status.
 - A working group has no name, is never empty, and is never removed as an

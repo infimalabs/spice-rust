@@ -1172,7 +1172,6 @@ mod tests {
                 controller: room.clone(),
                 construction: room.clone(),
             }),
-            evidence: Vec::new(),
             provenance: format!("task:{room}").parse().expect("fixture provenance"),
             creation: wire::body::TaskCreationContext::unavailable(
                 wire::body::TaskCreationUnavailable::SpiceActor,

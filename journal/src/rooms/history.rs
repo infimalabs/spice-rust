@@ -9,7 +9,7 @@ use wire::{
 
 use super::{
     Authority, Change, CoordinationRecord, Direction, Projection, Refusal, claims, conversation,
-    dependencies, evidence, fold, relevance,
+    dependencies, fold, relevance,
 };
 
 /// Every task, transcript generation, proposal author, and room-coordination
@@ -48,10 +48,6 @@ impl History {
             // independent of it.
             if fact.read::<DesignProposed>().is_some() {
                 history.authors.insert(seq.get(), actor.clone());
-            }
-            if let Err(refusal) = evidence::fold(&mut history, seq, actor, fact) {
-                refusals.push((seq, refusal));
-                continue;
             }
             if let Err(refusal) = fold(&mut history, seq, at, actor, fact) {
                 refusals.push((seq, refusal));
@@ -250,23 +246,6 @@ impl Authority for History {
         Ok(self.projection.conversation.items.get(item).cloned())
     }
 
-    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
-        Ok(self.projection.conversation.results.get(result).cloned())
-    }
-
-    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal> {
-        evidence::parse(
-            self.projection
-                .evidence
-                .keys()
-                .filter(|(owner, _)| owner == task.as_str())
-                .map(|(_, result)| result.clone()),
-        )
-    }
-
-    fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
-        Ok(self.projection.conversation.pending_results(requester))
-    }
     fn relevance_observation(
         &self,
         observation: &str,

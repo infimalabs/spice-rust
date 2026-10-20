@@ -197,7 +197,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::RoomContribute
         | CommandKind::RoomContributionSources
         | CommandKind::RoomControl
-        | CommandKind::RoomClose
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

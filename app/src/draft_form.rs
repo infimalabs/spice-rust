@@ -183,7 +183,6 @@ impl DraftForm {
                 Some(intent) => TaskIntentEdit::Set { intent },
                 None => TaskIntentEdit::Clear {},
             }),
-            evidence: None,
             priority: None,
             project: moved(DraftField::Project, &statement.project),
             flow: moved(DraftField::Flow, &flow(&self.basis)),

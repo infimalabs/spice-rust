@@ -1,30 +1,27 @@
-//! One sender-to-destination card family for room MSG, ASK, and ANS.
+//! One sender-to-destination card family for room MSG publications.
 //!
 //! A card keeps its publication identity through every echo and move. Being
-//! recorded in the room, each route's receipt, and a question's substantive
-//! result are separate statuses; none of them is review or authorization.
+//! recorded in the room and each route's receipt are separate statuses; neither
+//! is review or authorization.
 
 use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
-use web_sys::{Element, HtmlElement, HtmlInputElement, HtmlTextAreaElement};
-use wire::intent::{RoomClose, RoomControl, RoomControlAnswer, RoomConversationContent};
+use web_sys::{Element, HtmlElement, HtmlInputElement};
+use wire::intent::{RoomControl, RoomControlAnswer, RoomConversationContent};
 use wire::rooms::{
-    QuestionClosure, QuestionResultRef, QuestionResultState, ROOM_PENDING_RESULT_LIMIT,
-    RoomAuthorityStamp, RoomDelivery, RoomDestination, RoomPublicationContent, RoomPublicationKind,
-    RoomReceiptDisposition, RoomReceiptRef, RoomReceiptState, RoomSource, RoomSourceUnavailable,
-    TranscriptHunk,
+    RoomAuthorityStamp, RoomDestination, RoomPublicationContent, RoomReceiptDisposition,
+    RoomReceiptRef, RoomReceiptState, RoomSource, RoomSourceUnavailable, TranscriptHunk,
 };
 use wire::{CanonicalUuid, CommandKind, Disposition};
 use yew::prelude::*;
 
-use super::card::{Badge, Face, Packet, Speaker};
+use super::card::{Badge, Face, Speaker};
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomControlRequest};
 use crate::runtime::{
-    Conversation, ConversationText, Delivery, ItemConcern, OperatorItem, QuestionResult, RoomEvent,
-    RoomEventKind,
+    Conversation, ConversationText, Delivery, ItemConcern, OperatorItem, RoomEvent, RoomEventKind,
 };
 
 /// What a card reads, and what its controls act through. A card without
@@ -53,8 +50,8 @@ pub(super) struct Spoken<'a> {
     packet: Option<&'a [CanonicalUuid]>,
 }
 
-/// The speaker and words of one MSG, ASK, ANS, or plain post, or `None` for
-/// an event outside this family.
+/// The speaker and words of one MSG or plain post, or `None` for an event
+/// outside this family.
 pub(super) fn spoken<'a>(
     runtime: &'a AppRuntime,
     publication: &RoomAuthorityStamp,
@@ -148,24 +145,16 @@ pub(super) fn face(
         conversation,
         packet,
     } = spoken(runtime, publication, event)?;
-    let (badge, routes, result) = match conversation {
-        Some(conversation) => (
-            packet_badge(conversation),
-            routes(act, conversation),
-            result(act, conversation),
-        ),
-        // A packet that admitted no conversation still delivers its directed
-        // messages under native steering receipts.
-        None => (
-            None,
+    let routes = conversation.map_or_else(
+        || {
             packet
                 .unwrap_or_default()
                 .iter()
                 .map(|directive| directive_route(runtime, *directive, None, ""))
-                .collect(),
-            Html::default(),
-        ),
-    };
+                .collect()
+        },
+        |conversation| routes(act, conversation),
+    );
     let receivers = routes
         .iter()
         .map(|route| route.destination.as_str())
@@ -174,27 +163,19 @@ pub(super) fn face(
     Some(Face {
         speaker: Some(Speaker { name: author, lane }),
         receivers,
-        badge: if unheard {
-            Some(Badge::Unheard)
-        } else {
-            badge.map(Badge::Packet)
-        },
+        badge: unheard.then_some(Badge::Unheard),
         words: text.unwrap_or_else(|| "Source remains in the author's lane transcript.".to_owned()),
         tail: html! {
-            <>
-                <ul class="room-flow-statuses" aria-label="Delivery status">
-                    <li class="room-chip" data-status="recorded">{"Recorded in room"}</li>
-                    {for routes.into_iter().map(|route| route.html)}
-                </ul>
-                {result}
-            </>
+            <ul class="room-flow-statuses" aria-label="Delivery status">
+                <li class="room-chip" data-status="recorded">{"Recorded in room"}</li>
+                {for routes.into_iter().map(|route| route.html)}
+            </ul>
         },
     })
 }
 
-/// This principal's operator receipts and answer duties, each with the words
-/// it carries and its exact controls, as the open count and the inbox body.
-/// An ACKed ASK remains here until its separate result terminates.
+/// This principal's operator items, each with the words it carries and its
+/// exact controls, as the open count and the inbox body.
 pub(super) fn render_inbox(
     runtime: &AppRuntime,
     report: &Callback<String>,
@@ -210,25 +191,18 @@ pub(super) fn render_inbox(
     let body = html! {
         <>
             if open.is_empty() {
-                <p class="room-empty">{"No receipt or answer awaits action."}</p>
+                <p class="room-empty">{"No room item awaits action."}</p>
             }
             {for open.into_iter().map(|entry| {
                 let publication = entry.item.value.record.publication();
                 let conversation = projection.conversation(publication);
                 let summary = conversation.map_or_else(String::new, |conversation| {
-                    format!(
-                        "{} from {}",
-                        verb(conversation),
-                        party(runtime, conversation.publication.author()),
-                    )
+                    format!("MSG from {}", party(runtime, conversation.publication.author()))
                 });
                 let words = conversation.map_or_else(
                     || "The publication this item stands for is not loaded.".to_owned(),
                     |conversation| inbox_words(runtime, conversation),
                 );
-                let asked = entry.result.map(|result| {
-                    party(runtime, result.value.record.requester())
-                });
                 let (concern, direction) = match runtime.item_concern(&entry.item.value.record) {
                     ItemConcern::Direction { key, text } => {
                         (format!("About your direction {key}"), text)
@@ -237,21 +211,6 @@ pub(super) fn render_inbox(
                         (format!("About {}", super::anchor_label(runtime, &task)), None)
                     }
                     ItemConcern::Unnamed => ("Retained item · no recorded concern".to_owned(), None),
-                };
-                let result = entry.result.map_or_else(Html::default, |result| {
-                    question_result(
-                        act,
-                        result.value.record.result(),
-                        &result.value,
-                        true,
-                    )
-                });
-                let guide = match &asked {
-                    Some(requester) => format!(
-                        "Answer sends your reply back to {requester} and settles the receipt; \
-                         Decline refuses the question. ACK only marks it seen; NAK also declines it."
-                    ),
-                    None => "ACK marks this message seen; NAK declines it. Nothing is asked of you.".to_owned(),
                 };
                 html! {
                     <article
@@ -270,11 +229,12 @@ pub(super) fn render_inbox(
                             <blockquote class="room-flow-concern">{direction}</blockquote>
                         }
                         <p class="room-flow-text">{words}</p>
-                        {result}
                         <ul class="room-flow-statuses" aria-label="Receipt">
                             {item_status(act, entry.key, &entry.item.value, "You")}
                         </ul>
-                        <p class="room-flow-guide">{guide}</p>
+                        <p class="room-flow-guide">
+                            {"Reply sends operator direction and settles the item; ACK or NAK settles it without a reply."}
+                        </p>
                     </article>
                 }
             })}
@@ -330,42 +290,7 @@ struct Route {
     html: Html,
 }
 
-fn verb(conversation: &Conversation) -> &'static str {
-    match conversation.publication.kind() {
-        RoomPublicationKind::Msg {} => "MSG",
-        RoomPublicationKind::Ask { .. } => "ASK",
-        RoomPublicationKind::Ans { .. } => "ANS",
-    }
-}
-
-/// The badge a question or its answer wears; a MSG wears none, as in a team.
-fn packet_badge(conversation: &Conversation) -> Option<Packet> {
-    match conversation.publication.kind() {
-        RoomPublicationKind::Msg {} => None,
-        RoomPublicationKind::Ask { .. } => Some(Packet::Ask),
-        RoomPublicationKind::Ans { .. } => Some(Packet::Ans),
-    }
-}
-
 fn routes(act: Act<'_>, conversation: &Conversation) -> Vec<Route> {
-    let projection = act.runtime.room_projection().conversation();
-    if let RoomPublicationKind::Ans { result, .. } = conversation.publication.kind() {
-        // An answer's only receipt is its return to the stored requester.
-        return match projection
-            .result(result)
-            .map(|question| &question.value.state)
-        {
-            Some(QuestionResultState::Answered {
-                return_delivery, ..
-            }) => vec![delivery_route(
-                act,
-                conversation,
-                return_delivery.destination(),
-                return_delivery.delivery(),
-            )],
-            _ => Vec::new(),
-        };
-    }
     let mut directed = conversation.directed.iter();
     conversation
         .publication
@@ -419,29 +344,6 @@ fn operator_destination(runtime: &AppRuntime, conversation: &Conversation) -> St
             .flatten()
     });
     crate::runtime::operator_destination_label(recipient, direction)
-}
-
-/// An answer's return, receipted like any delivery but named as the return.
-fn delivery_route(
-    act: Act<'_>,
-    conversation: &Conversation,
-    destination: &RoomDestination,
-    delivery: &RoomDelivery,
-) -> Route {
-    const LEAD: &str = "Return to ";
-    match delivery {
-        RoomDelivery::Directive { directive } => {
-            let lane = match destination {
-                RoomDestination::Lane { lane } => Some(*lane),
-                _ => None,
-            };
-            directive_route(act.runtime, *directive, lane, LEAD)
-        }
-        RoomDelivery::Item { item } => {
-            let destination = operator_destination(act.runtime, conversation);
-            item_route(act, item, &destination, LEAD)
-        }
-    }
 }
 
 fn unavailable_route(destination: String) -> Route {
@@ -535,14 +437,7 @@ fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destinat
     };
     let control = match (&item.state, act.controls) {
         (RoomReceiptState::Pending { .. }, Some(controls)) => {
-            // An ASK item's key is its result handle and takes an answer.
-            let asked = act
-                .runtime
-                .room_projection()
-                .conversation()
-                .result(&QuestionResultRef::new(key.authority().clone()))
-                .is_some();
-            dispose_controls(act.runtime, controls, key, !asked)
+            dispose_controls(act.runtime, controls, key)
         }
         (RoomReceiptState::Expired { .. }, Some(controls)) => {
             recover_control(act.runtime, controls, key)
@@ -558,82 +453,12 @@ fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destinat
     }
 }
 
-/// A question's substantive result, separate from every receipt.
-fn result(act: Act<'_>, conversation: &Conversation) -> Html {
-    let projection = act.runtime.room_projection().conversation();
-    let (result, lead) = match conversation.publication.kind() {
-        RoomPublicationKind::Ask { result, .. } => (result, "Result"),
-        RoomPublicationKind::Ans { result, .. } => (result, "Answers"),
-        RoomPublicationKind::Msg {} => return Html::default(),
-    };
-    let Some(question) = projection.result(result) else {
-        return html! {
-            <p class="room-flow-result" data-result-state="unavailable">
-                {format!("{lead} {result}: unavailable")}
-            </p>
-        };
-    };
-    let question = &question.value;
-    if lead == "Answers" {
-        return html! {
-            <p class="room-flow-result" data-result-state="answer">
-                {format!(
-                    "Answers {result} from {}",
-                    party(act.runtime, question.record.requester()),
-                )}
-            </p>
-        };
-    }
-    question_result(act, result, question, false)
-}
-
-/// A question's result line and controls. The inbox leads with the answer
-/// owed; a room card also shows the requester's pending-result load.
-fn question_result(
-    act: Act<'_>,
-    result: &QuestionResultRef,
-    question: &QuestionResult,
-    inbox: bool,
-) -> Html {
-    let projection = act.runtime.room_projection().conversation();
-    let state = question.state.name();
-    let requester = party(act.runtime, question.record.requester());
-    let label = match &question.state {
-        QuestionResultState::Pending {} if inbox => format!(
-            "{requester} awaits your answer until {}",
-            question.record.deadline(),
-        ),
-        QuestionResultState::Pending {} => format!(
-            "pending until {} · {requester} holds {} of {ROOM_PENDING_RESULT_LIMIT} pending results",
-            question.record.deadline(),
-            projection.pending_results(question.record.requester()),
-        ),
-        QuestionResultState::Answered { answer, .. } => format!("answered by {answer}"),
-        QuestionResultState::Declined { .. } => "declined".to_owned(),
-        QuestionResultState::Cancelled { .. } => "cancelled".to_owned(),
-        QuestionResultState::TimedOut {} => "timed out".to_owned(),
-    };
-    let controls = match act.controls {
-        Some(controls) if !question.state.is_terminal() => {
-            result_controls(act.runtime, controls, result, question)
-        }
-        _ => Html::default(),
-    };
-    html! {
-        <div class="room-flow-result" data-result-state={state}>
-            <p>{format!("Result {result}: {label}")}</p>
-            <div class="room-flow-slot room-flow-slot--result">{controls}</div>
-        </div>
-    }
-}
-
 /// A reply is operator direction to the item's lane and settles it; ACK and
 /// NAK settle silently, their clause reaching no lane.
 fn dispose_controls(
     runtime: &AppRuntime,
     controls: CardControls<'_>,
     key: &RoomReceiptRef,
-    repliable: bool,
 ) -> Html {
     let text = NodeRef::default();
     let enabled = runtime.offers(CommandKind::RoomControl);
@@ -662,26 +487,18 @@ fn dispose_controls(
         keys: vec![key.clone()],
         clause,
     };
-    let submit = control(if repliable { reply } else { ack });
+    let submit = control(reply);
     let ack = control(ack);
     let nak = control(nak);
-    let prompt = if repliable {
-        "Reply, or a settling clause"
-    } else {
-        "Clause"
-    };
+    let prompt = "Reply, or a settling clause";
     html! {
         <form class="room-flow-control" onsubmit={Callback::from(move |event: SubmitEvent| {
             event.prevent_default();
             submit(&event);
         })}>
             <input ref={text} aria-label={prompt} placeholder={prompt} disabled={!enabled} />
-            if repliable {
-                <button type="submit" disabled={!enabled}>{"Reply"}</button>
-                <button type="button" disabled={!enabled} onclick={Callback::from(move |event: MouseEvent| ack(&event))}>{"ACK"}</button>
-            } else {
-                <button type="submit" disabled={!enabled}>{"ACK"}</button>
-            }
+            <button type="submit" disabled={!enabled}>{"Reply"}</button>
+            <button type="button" disabled={!enabled} onclick={Callback::from(move |event: MouseEvent| ack(&event))}>{"ACK"}</button>
             <button type="button" disabled={!enabled} onclick={Callback::from(move |event: MouseEvent| nak(&event))}>{"NAK"}</button>
         </form>
     }
@@ -699,89 +516,6 @@ fn recover_control(runtime: &AppRuntime, controls: CardControls<'_>, key: &RoomR
     });
     html! {
         <button type="button" class="room-flow-control" disabled={!enabled} {onclick}>{"Recover"}</button>
-    }
-}
-
-/// The operator answers or declines what it was asked, and may close a lane
-/// party's question only explicitly on that party's behalf.
-fn result_controls(
-    runtime: &AppRuntime,
-    controls: CardControls<'_>,
-    result: &QuestionResultRef,
-    question: &QuestionResult,
-) -> Html {
-    let operator = RoomDestination::Operator {};
-    let respondent = *question.record.respondent() == operator;
-    let requester = *question.record.requester() == operator;
-    let answerable = respondent && runtime.offers(CommandKind::RoomControl);
-    let closable = runtime.offers(CommandKind::RoomClose);
-    let text = NodeRef::default();
-    let close = |closure, override_party| {
-        let act = Owned::from(controls);
-        let text = text.clone();
-        let result = result.clone();
-        Callback::from(move |event: MouseEvent| {
-            act.send(
-                &event,
-                RoomControlRequest::Close(RoomClose {
-                    result: result.clone(),
-                    closure,
-                    clause: input_value(&text),
-                    override_party,
-                }),
-            );
-        })
-    };
-    let decline = close(QuestionClosure::Declined, !respondent);
-    let cancel = close(QuestionClosure::Cancelled, !requester);
-    let onsubmit = {
-        let act = Owned::from(controls);
-        let text = text.clone();
-        let result = result.clone();
-        Callback::from(move |event: SubmitEvent| {
-            event.prevent_default();
-            act.send(
-                &event,
-                RoomControlRequest::Control(RoomControl::Answer {
-                    result: result.clone(),
-                    context: None,
-                    text: input_value(&text),
-                }),
-            );
-        })
-    };
-    let decline_label = if respondent {
-        "Decline"
-    } else {
-        "Decline for respondent"
-    };
-    let cancel_label = if requester {
-        "Cancel"
-    } else {
-        "Cancel for requester"
-    };
-    let prompt = if respondent {
-        format!(
-            "Answer to {}, or a decline clause",
-            party(runtime, question.record.requester())
-        )
-    } else {
-        "Clause".to_owned()
-    };
-    html! {
-        <form class="room-flow-control" {onsubmit}>
-            <textarea
-                ref={text}
-                aria-label={prompt.clone()}
-                placeholder={prompt}
-                disabled={!(answerable || closable)}
-            />
-            if respondent {
-                <button type="submit" disabled={!answerable}>{"Answer"}</button>
-            }
-            <button type="button" disabled={!closable} onclick={decline}>{decline_label}</button>
-            <button type="button" disabled={!closable} onclick={cancel}>{cancel_label}</button>
-        </form>
     }
 }
 
@@ -825,15 +559,18 @@ fn control_notice(answer: &RoomControlAnswer) -> String {
         .items
         .iter()
         .map(|moved| format!("item {} {}", moved.item, moved.state))
-        .chain(
-            answer
-                .results
-                .iter()
-                .map(|moved| format!("result {} {}", moved.result, moved.state)),
-        )
         .collect::<Vec<_>>();
-    if let Some(answer) = &answer.answer {
-        moves.push(format!("answer {answer} recorded"));
+    if let Some(publication) = &answer.publication {
+        moves.push(format!("reply {publication} recorded"));
+    }
+    if let Some(returned) = &answer.returned {
+        moves.push(format!("returned as {returned}"));
+    }
+    if let Some((publication, verdict)) = &answer.assessed {
+        moves.push(format!(
+            "publication {publication} assessed {}",
+            verdict.name()
+        ));
     }
     if moves.is_empty() {
         "Room control recorded.".to_owned()
@@ -861,10 +598,6 @@ fn acting_card(event: &Event) -> Option<HtmlElement> {
 fn input_value(node: &NodeRef) -> String {
     node.cast::<HtmlInputElement>()
         .map(|input| input.value())
-        .or_else(|| {
-            node.cast::<HtmlTextAreaElement>()
-                .map(|input| input.value())
-        })
         .unwrap_or_default()
 }
 

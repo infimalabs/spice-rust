@@ -62,8 +62,6 @@ const PINNED: &[(&str, &str)] = &[
     ("RoomConversed", "room::conversed"),
     ("RoomPosted", "room::posted"),
     ("RoomDisposed", "room::disposed"),
-    ("RoomQuestionClosed", "room::closed"),
-    ("RoomQuestionTimedOut", "room::timedout"),
     ("RoomReceiptLapsed", "room::lapsed"),
     ("RoomReceiptRecovered", "room::recovered"),
     ("WorkingGroupMoved", "group::moved"),

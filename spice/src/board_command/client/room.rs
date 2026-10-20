@@ -13,11 +13,9 @@ pub(super) fn dispatch_room_client(
         ["room", "put-aside"] => client_room_put_aside(repository, contract, matches),
         ["room", "leave"] => client_room_leave(repository, contract, matches),
         ["room", "contribute"] => client_room_contribute(repository, contract, matches),
-        [
-            "room",
-            "ack" | "nak" | "answer" | "reply" | "recover" | "assess",
-        ] => client_room_control(repository, contract, matches),
-        ["room", "decline" | "cancel"] => client_room_close(repository, contract, matches),
+        ["room", "ack" | "nak" | "reply" | "recover" | "assess"] => {
+            client_room_control(repository, contract, matches)
+        }
         _ => return None,
     };
     Some(outcome)
@@ -266,7 +264,7 @@ fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
     lines.join("\n")
 }
 
-/// Submit one operator ACK, NAK, answer, reply, or recovery.
+/// Submit one operator ACK, NAK, reply, recovery, or assessment.
 fn client_room_control(
     repository: &Repository,
     contract: &Contract,
@@ -294,25 +292,6 @@ fn room_control(
     let disposition = match path {
         ["room", "ack"] => RoomReceiptDisposition::Ack,
         ["room", "nak"] => RoomReceiptDisposition::Nak,
-        ["room", "answer"] => {
-            let context = matches
-                .get_one::<String>("context")
-                .map(|written| {
-                    written.parse::<TaskHandle>().map_err(|error| {
-                        refusal(
-                            "room::context-invalid",
-                            Some(written.clone()),
-                            &error.to_string(),
-                        )
-                    })
-                })
-                .transpose()?;
-            return Ok(RoomControl::Answer {
-                result: result_ref(&required(matches, "RESULT"))?,
-                context,
-                text: required(matches, "TEXT"),
-            });
-        }
         ["room", "reply"] => {
             return Ok(RoomControl::Reply {
                 item: item_ref(&required(matches, "ITEM"))?,
@@ -361,38 +340,6 @@ fn room_control(
     })
 }
 
-/// Submit one decline or cancellation as the connected party, or as the
-/// operator overriding a lane party.
-fn client_room_close(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let result = match result_ref(&required(matches, "RESULT")) {
-        Ok(result) => result,
-        Err(outcome) => return outcome,
-    };
-    let closure = match contract.path {
-        ["room", "decline"] => wire::rooms::QuestionClosure::Declined,
-        _ => wire::rooms::QuestionClosure::Cancelled,
-    };
-    render_control(crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::RoomClose,
-        Vec::new(),
-        &wire::intent::RoomClose {
-            result,
-            closure,
-            clause: matches
-                .get_one::<String>("clause")
-                .cloned()
-                .unwrap_or_default(),
-            override_party: matches.get_flag("override"),
-        },
-    ))
-}
-
 fn item_ref(written: &str) -> Result<wire::rooms::RoomReceiptRef, Outcome<CommandAnswer>> {
     written
         .parse::<RoomAuthorityStamp>()
@@ -406,20 +353,7 @@ fn item_ref(written: &str) -> Result<wire::rooms::RoomReceiptRef, Outcome<Comman
         })
 }
 
-fn result_ref(written: &str) -> Result<wire::rooms::QuestionResultRef, Outcome<CommandAnswer>> {
-    written
-        .parse::<RoomAuthorityStamp>()
-        .map(wire::rooms::QuestionResultRef::new)
-        .map_err(|error| {
-            refusal(
-                "room::result-invalid",
-                Some(written.to_owned()),
-                &format!("name a question result handle as its ASK minted it: {error}"),
-            )
-        })
-}
-
-/// One line per moved item and result, then the answer and its return key.
+/// One line per moved item, followed by any reply publication and return key.
 fn render_control(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
     let Outcome::Reply(Reply {
         position,
@@ -432,11 +366,8 @@ fn render_control(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
     for moved in &answer.items {
         lines.push(format!("item {} {}", moved.item, moved.state));
     }
-    for moved in &answer.results {
-        lines.push(format!("result {} {}", moved.result, moved.state));
-    }
-    if let Some(publication) = &answer.answer {
-        lines.push(format!("answer {publication}"));
+    if let Some(publication) = &answer.publication {
+        lines.push(format!("publication {publication}"));
     }
     if let Some(key) = &answer.returned {
         lines.push(format!("returned {key}"));

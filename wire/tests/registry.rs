@@ -434,11 +434,5 @@ fn sample_room_witnesses(task: &wire::TaskStamp) -> Vec<Witness> {
             ),
             head: Some(seq(10)),
         },
-        Witness::Question {
-            result: wire::rooms::QuestionResultRef::new(
-                "1kKRRsDR4".parse().expect("a result stamp"),
-            ),
-            head: None,
-        },
     ]
 }

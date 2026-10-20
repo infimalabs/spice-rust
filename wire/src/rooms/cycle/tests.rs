@@ -3,7 +3,7 @@ use crate::body::{DesignConclusion, TaskCompletionTerminal};
 use crate::rooms::{
     CandidateReference, CandidateWithdrawal, DecisionRef, DesignPassProposal,
     DesignPassRecommendation, ExecutionAuthorization, OutputDecision, PreparationDecision,
-    QuestionResultRef, RoomAuthorityStamp, RoomContributionKind, RoomRoute, RoomSource,
+    RoomAuthorityStamp, RoomContributionKind, RoomPublicationKind, RoomRoute, RoomSource,
     TaskPreparation,
 };
 use crate::{Fact, Instant, Name, SequenceCode, TaskStamp};
@@ -59,11 +59,11 @@ fn contributed(room: i64, by: u8, kind: RoomContributionKind) -> AnyFact {
     })
 }
 
-fn posted(operation: RoomPublicationKind, routes: Vec<RoomRoute>) -> AnyFact {
+fn posted(routes: Vec<RoomRoute>) -> AnyFact {
     any(RoomPosted {
         publication: authority(2_000),
         text: "Operator input.".to_owned(),
-        operation,
+        operation: RoomPublicationKind::Msg {},
         routes,
         directed: Vec::new(),
         expires: instant(),
@@ -76,11 +76,6 @@ fn route(destination: RoomDestination, context: Option<TaskStamp>) -> RoomRoute 
         context,
         direction: None,
     }
-}
-
-fn result() -> QuestionResultRef {
-    serde_json::from_value(serde_json::to_value(authority(3_000)).expect("stamp"))
-        .expect("question result")
 }
 
 fn published(content: RoomPublicationContent) -> AnyFact {
@@ -112,7 +107,6 @@ fn proposed(micros: i64, outputs: Vec<TaskStamp>) -> AnyFact {
                     fact: SequenceCode::new(1),
                 },
             }],
-            evidence: Vec::new(),
         },
     })
 }
@@ -275,27 +269,8 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
             contributed(DESIGN, 2, RoomContributionKind::Evidence),
         ),
         ("nudge", true, any(DesignNudged { design: design() })),
-        (
-            "task-routed MSG",
-            true,
-            posted(RoomPublicationKind::Msg {}, task_route()),
-        ),
-        (
-            "context MSG",
-            true,
-            posted(RoomPublicationKind::Msg {}, context_route()),
-        ),
-        (
-            "answer context",
-            true,
-            posted(
-                RoomPublicationKind::Ans {
-                    result: result(),
-                    context: Some(design()),
-                },
-                Vec::new(),
-            ),
-        ),
+        ("task-routed MSG", true, posted(task_route())),
+        ("context MSG", true, posted(context_route())),
         (
             "authored publication",
             true,
@@ -322,22 +297,7 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
     }
 
     let inert: Vec<(&str, bool, AnyFact)> = vec![
-        (
-            "operator ASK",
-            true,
-            posted(
-                RoomPublicationKind::Ask {
-                    result: result(),
-                    deadline: instant(),
-                },
-                task_route(),
-            ),
-        ),
-        (
-            "lane-authored MSG",
-            false,
-            posted(RoomPublicationKind::Msg {}, task_route()),
-        ),
+        ("lane-authored MSG", false, posted(task_route())),
         (
             "linked publication",
             true,

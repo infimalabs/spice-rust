@@ -77,7 +77,6 @@ fn add_routed(
     let born = task.clone();
     write.task_head(added, move |revision| wire::TaskHead {
         preparation,
-        evidence: Vec::new(),
         intent,
         born,
         queue_origin: revision,
@@ -123,7 +122,6 @@ fn depend(journal: &mut Journal, task: &TaskStamp, after: &TaskStamp) {
                 revision: u32::try_from(statement.revision.get() + 1).expect("revision fits"),
                 dependencies: Some(vec![after.clone()]),
                 intent: None,
-                evidence: None,
             },
             crate::FactCause::Root,
         )
@@ -281,7 +279,6 @@ fn retain_crossed_output(
                             fact: wire::SequenceCode::new(1),
                         },
                     }],
-                    evidence: Vec::new(),
                 },
             },
             crate::FactCause::Root,

@@ -685,7 +685,6 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     let workflow_phase = phase.clone();
     write.task_head(added, move |revision| TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: statement_task,
         queue_origin: revision,
@@ -896,7 +895,6 @@ fn seed_oops_task(
     let statement_project = project.to_owned();
     write.task_head(added, move |revision| TaskHead {
         preparation,
-        evidence: Vec::new(),
         intent,
         born: statement_task,
         queue_origin: revision,

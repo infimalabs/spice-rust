@@ -61,10 +61,8 @@ pub enum CommandKind {
     RoomContribute,
     /// Resolve one Design contribution's cited sources at its own position.
     RoomContributionSources,
-    /// Operator ACK, NAK, answer, or recovery of its own room authority.
+    /// Operator ACK, NAK, reply, recovery, or assessment of room authority.
     RoomControl,
-    /// Decline or cancel one pending question by its party or operator override.
-    RoomClose,
     /// Read the current working-group partition.
     WorkingGroupRead,
     /// Move one design into a group, founding it, or out of every group, at

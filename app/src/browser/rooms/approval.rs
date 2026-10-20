@@ -256,7 +256,6 @@ fn opportunistic_candidate(
                     },
                 })
                 .collect(),
-            evidence: Vec::new(),
         },
     })
 }
@@ -329,7 +328,6 @@ fn render_candidate(
             </p>
             {render_inputs(context, candidate)}
             {render_references(candidate)}
-            {render_evidence(context, candidate)}
             {render_critiques(&critiques)}
             {render_coverage(context.runtime, &coverage)}
             <ul class="room-approval-outputs" aria-label="Proposed outputs">
@@ -408,33 +406,6 @@ fn render_references(candidate: &DesignPassProposal) -> Html {
                         {" · "}<code>{source_label(&reference.source)}</code>
                         <span class="room-reference-state">{"exact link; availability is not resolved by this view"}</span>
                     </li>
-                })}
-            </ul>
-        </div>
-    }
-}
-
-fn render_evidence(context: &Context<'_>, candidate: &DesignPassProposal) -> Html {
-    if candidate.evidence.is_empty() {
-        return html! { <p class="room-approval-evidence">{"Question evidence: none cited."}</p> };
-    }
-    let conversation = context.runtime.room_projection().conversation();
-    html! {
-        <div class="room-approval-evidence">
-            <strong>{"Question evidence"}</strong>
-            <ul>
-                {for candidate.evidence.iter().map(|result| match conversation.result(result) {
-                    Some(question) => html! {
-                        <li key={result.to_string()}>
-                            <code>{result.to_string()}</code>
-                            {format!(" · {}", question.value.state.name().replace('_', " "))}
-                        </li>
-                    },
-                    None => html! {
-                        <li key={result.to_string()} data-reference-state="unavailable">
-                            <code>{result.to_string()}</code>{" · unavailable in the current room projection"}
-                        </li>
-                    },
                 })}
             </ul>
         </div>

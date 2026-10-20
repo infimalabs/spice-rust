@@ -228,24 +228,21 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("retro", "Page preserved agent transcripts, newest first"),
     (
         "room",
-        "Coordinate in task rooms: post, ask, answer, and leave",
+        "Coordinate in task rooms: post, reply, assess, and leave",
     ),
     (
         "room ack",
         "Acknowledge room delivery items as the operator",
     ),
-    ("room answer", "Answer one pending question result"),
     ("room assess", "Assess one room relevance observation"),
     (
         "room awareness",
         "Page a Design's awareness requests and maturity",
     ),
-    ("room cancel", "Cancel a pending question result"),
     (
         "room contribute",
         "Contribute one typed record to an open Design's room",
     ),
-    ("room decline", "Decline a pending question result"),
     ("room history", "Page one task room's publications"),
     ("room inbox", "Page open room items awaiting the operator"),
     ("room leave", "Stop listening to a room, with a clause"),
@@ -258,7 +255,6 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("room recover", "Recover one lapsed room item"),
     ("room relevance", "Page a room's relevance observations"),
     ("room reply", "Reply to a lane's room item as the operator"),
-    ("room result", "Read one question result"),
     (
         "room resume",
         "Resume a room's coordination through one lane",

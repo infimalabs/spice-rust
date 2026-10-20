@@ -18,6 +18,7 @@ mod probe;
 mod provenance;
 mod retained;
 mod retained_notes;
+mod room_questions;
 mod settings_receipts;
 mod task_markers;
 mod task_standing;
@@ -81,7 +82,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
         ""
     };
     let conversations = if predecessor < crate::migrate::ROOM_CONVERSATION_SCHEMA {
-        "DROP TABLE room_conversations; DROP TABLE room_items; DROP TABLE room_results;"
+        "DROP TABLE room_conversations; DROP TABLE room_items; DROP TABLE IF EXISTS room_results;"
     } else if predecessor < crate::migrate::ROOM_ITEM_SCHEMA {
         "DROP TABLE room_items;
          CREATE TABLE room_receipts (
@@ -93,11 +94,6 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
              head BLOB NOT NULL
          ) STRICT;
          CREATE INDEX room_receipts_open ON room_receipts(destination, open, head_seq);"
-    } else {
-        ""
-    };
-    let evidence = if predecessor < crate::migrate::TASK_EVIDENCE_SCHEMA {
-        "DROP TABLE task_evidence;"
     } else {
         ""
     };
@@ -143,7 +139,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
             |row| row.get(0),
         )
         .expect("steering head shape reads");
-    let steering = if typed_rooms {
+    let steering = if typed_rooms && predecessor < crate::migrate::ROOM_QUESTION_SCHEMA {
         PREDECESSOR_STEERING_HEADS
     } else {
         ""
@@ -151,7 +147,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} {evidence} \
+            "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} \
              {relevance} {principals} {oops_generation} {steering}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",

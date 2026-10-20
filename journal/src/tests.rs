@@ -860,7 +860,6 @@ fn insert_receipt(journal: &Journal) {
 fn task_head() -> TaskHead {
     TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: "1kKRRsDP".parse().expect("task stamp"),
         queue_origin: Seq::new(1).expect("queue origin"),
@@ -1140,12 +1139,10 @@ fn expected_tables() -> BTreeSet<String> {
         "room_publications",
         "room_relevance_assessments",
         "room_relevance_observations",
-        "room_results",
         "room_shelvings",
         "steering_heads",
         "steering_index",
         "steering_misses",
-        "task_evidence",
         "task_generations",
         "task_heads",
         "thread_index",

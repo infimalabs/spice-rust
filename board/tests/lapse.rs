@@ -391,7 +391,6 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     let statement_origin = wire::TaskProvenance::Task(born());
     write.task_head(fact, move |position| TaskHead {
         preparation: None,
-        evidence: Vec::new(),
         intent: None,
         born: born(),
         queue_origin: position,
