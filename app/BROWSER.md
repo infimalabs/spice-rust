@@ -349,6 +349,11 @@ quote starts another hunk with its source's controls and attribution; the
 rule applies recursively to agent prose and resolved operator, agent, and peer
 quotes.
 
+Non-prose cards keep one attribution-and-action island in their card corner.
+Its actions use the same control size as prose hunk actions, and its inline end
+meets the card edge so that edge closes the open action pair. A single-image
+cover retains its deliberately inset overlay controls instead.
+
 Every visible inline atom keeps its hunk's `1.25` line pitch: links, task
 handles, emphasis, emoji, superscript and subscript, inline math, and quote
 attribution never enlarge a line box. The image row therefore begins after
