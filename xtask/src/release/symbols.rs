@@ -7,14 +7,13 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use wire::Digest;
-use wire::manifest::{MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact};
+use wire::manifest::{
+    MAC_SYMBOL_ARTIFACT_VERSION, MAC_SYMBOL_MEMBER_BYTES_LIMIT, MAC_SYMBOL_RAW_BYTES_LIMIT,
+    MacSymbolArtifact,
+};
 
 use super::BuildError;
 
-const MAC_SYMBOL_ARTIFACT_BYTES_LIMIT: u64 = 512 * 1024 * 1024;
-const MAC_SYMBOL_ENCODING_OVERHEAD: u64 = 4096;
-const MAC_SYMBOL_RAW_BYTES_LIMIT: u64 =
-    (MAC_SYMBOL_ARTIFACT_BYTES_LIMIT - MAC_SYMBOL_ENCODING_OVERHEAD) / 4;
 const INHERITED_DESCRIPTOR_MINIMUM: libc::c_int = 10;
 
 pub(super) struct SymbolBundle {
@@ -52,19 +51,9 @@ impl SymbolBundle {
         let info_path = contents_path.join("Info.plist");
         let info = SymbolMember::open(&contents, OsStr::new("Info.plist"), info_path)?;
         let dwarf = SymbolMember::open(&dwarf_root, name, dwarf_path.join(name))?;
-        let raw_bytes = info
-            .identity
-            .length
-            .checked_add(dwarf.identity.length)
-            .filter(|bytes| *bytes <= MAC_SYMBOL_RAW_BYTES_LIMIT)
-            .ok_or_else(|| BuildError::new("dSYM bundle exceeds its fixed encoded byte limit"))?;
-        if raw_bytes
-            .checked_mul(4)
-            .and_then(|bytes| bytes.checked_add(MAC_SYMBOL_ENCODING_OVERHEAD))
-            .is_none_or(|bytes| bytes > MAC_SYMBOL_ARTIFACT_BYTES_LIMIT)
-        {
+        if !raw_symbol_bytes_admitted(info.identity.length, dwarf.identity.length) {
             return Err(BuildError::new(
-                "dSYM bundle exceeds its fixed encoded byte limit",
+                "dSYM bundle exceeds its fixed raw byte limit",
             ));
         }
 
@@ -92,7 +81,7 @@ impl SymbolBundle {
     ) -> Result<Vec<u8>, BuildError> {
         // Release refuses dirty checkouts before building, so the linked
         // executable always derives from the clean commit named here.
-        let artifact = wire::encode(&MacSymbolArtifact {
+        let artifact = MacSymbolArtifact {
             version: MAC_SYMBOL_ARTIFACT_VERSION,
             uuid: uuid.to_owned(),
             executable: executable_digest,
@@ -100,13 +89,9 @@ impl SymbolBundle {
             dirty: false,
             info: self.info.read()?,
             dwarf: self.dwarf.read()?,
-        })
-        .map_err(|error| BuildError::new(error.to_string()))?;
-        if artifact.len() as u64 > MAC_SYMBOL_ARTIFACT_BYTES_LIMIT {
-            return Err(BuildError::new(
-                "encoded dSYM artifact exceeds its fixed byte limit",
-            ));
         }
+        .encode()
+        .map_err(|error| BuildError::new(error.to_string()))?;
         let contents_path = self.bundle.join("Contents");
         let resources_path = contents_path.join("Resources");
         let dwarf_path = resources_path.join("DWARF");
@@ -169,7 +154,7 @@ impl SymbolMember {
             )));
         }
         let identity = FileIdentity::from_metadata(&metadata);
-        if identity.length > MAC_SYMBOL_RAW_BYTES_LIMIT {
+        if identity.length > MAC_SYMBOL_MEMBER_BYTES_LIMIT {
             return Err(BuildError::new(format!(
                 "dSYM member {} exceeds its fixed byte limit",
                 path.display()
@@ -257,6 +242,14 @@ impl FileIdentity {
             inode: metadata.ino(),
         }
     }
+}
+
+fn raw_symbol_bytes_admitted(info: u64, dwarf: u64) -> bool {
+    info <= MAC_SYMBOL_MEMBER_BYTES_LIMIT
+        && dwarf <= MAC_SYMBOL_MEMBER_BYTES_LIMIT
+        && info
+            .checked_add(dwarf)
+            .is_some_and(|bytes| bytes <= MAC_SYMBOL_RAW_BYTES_LIMIT)
 }
 
 fn open_directory(path: &Path) -> Result<File, BuildError> {
@@ -613,5 +606,22 @@ mod tests {
         )
         .expect("create non-file relocation map");
         directory_map.refuses();
+    }
+
+    #[test]
+    fn raw_symbol_size_bound_admits_its_edge_only() {
+        assert!(raw_symbol_bytes_admitted(0, MAC_SYMBOL_RAW_BYTES_LIMIT));
+        assert!(!raw_symbol_bytes_admitted(
+            0,
+            MAC_SYMBOL_RAW_BYTES_LIMIT + 1
+        ));
+        assert!(raw_symbol_bytes_admitted(
+            MAC_SYMBOL_RAW_BYTES_LIMIT / 2,
+            MAC_SYMBOL_RAW_BYTES_LIMIT - MAC_SYMBOL_RAW_BYTES_LIMIT / 2,
+        ));
+        assert!(!raw_symbol_bytes_admitted(
+            MAC_SYMBOL_RAW_BYTES_LIMIT / 2 + 1,
+            MAC_SYMBOL_RAW_BYTES_LIMIT - MAC_SYMBOL_RAW_BYTES_LIMIT / 2,
+        ));
     }
 }

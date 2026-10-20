@@ -531,8 +531,8 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         inventory.digest, inventory.mode
     )))
     .expect("staged symbol artifact reads");
-    let artifact: wire::manifest::MacSymbolArtifact =
-        wire::decode(&bytes).expect("symbol artifact decodes");
+    let artifact =
+        wire::manifest::MacSymbolArtifact::decode(&bytes).expect("symbol artifact decodes");
     assert_eq!(artifact.uuid, UUID);
     assert_eq!(artifact.executable, build.staged.payload.native);
     assert_eq!(artifact.commit, COMMIT);

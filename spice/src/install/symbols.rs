@@ -15,8 +15,8 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use wire::manifest::{
-    MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, MacSymbolMetadata, ReleaseTarget,
-    git_commit_is_canonical, macho_uuid_is_canonical,
+    MacSymbolArtifact, MacSymbolMetadata, ReleaseTarget, git_commit_is_canonical,
+    macho_uuid_is_canonical,
 };
 use wire::{Digest, Domain};
 
@@ -424,14 +424,9 @@ fn read_artifact(
         return Err(refused(path, "differs from the authenticated payload"));
     }
 
-    let artifact: MacSymbolArtifact = wire::decode(&bytes)
+    let artifact = MacSymbolArtifact::decode(&bytes)
         .map_err(|error| InstallError::InvalidRecord(format!("symbol artifact: {error}")))?;
-    if artifact.version != MAC_SYMBOL_ARTIFACT_VERSION
-        || wire::encode(&artifact).ok().as_deref() != Some(bytes.as_slice())
-        || !artifact.uuid_is_canonical()
-        || artifact.info.is_empty()
-        || artifact.dwarf.is_empty()
-    {
+    if !artifact.uuid_is_canonical() || artifact.info.is_empty() || artifact.dwarf.is_empty() {
         return Err(refused(path, "is not a canonical current symbol artifact"));
     }
     Ok(artifact)

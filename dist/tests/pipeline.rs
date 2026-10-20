@@ -64,7 +64,7 @@ impl Builder for RecordingBuilder {
         };
         if target == ReleaseTarget::Aarch64AppleDarwin {
             self.symbols = Some(
-                wire::encode(&MacSymbolArtifact {
+                MacSymbolArtifact {
                     version: MAC_SYMBOL_ARTIFACT_VERSION,
                     uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
                     executable: Digest::compute(Domain::DistArtifact, &native),
@@ -72,7 +72,8 @@ impl Builder for RecordingBuilder {
                     dirty: false,
                     info: b"fixture plist".to_vec(),
                     dwarf: b"fixture dwarf".to_vec(),
-                })
+                }
+                .encode()
                 .expect("symbol fixture encodes"),
             );
         }
