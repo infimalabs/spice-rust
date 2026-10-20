@@ -973,6 +973,7 @@ struct SteeringHeadColumns {
     disposition: &'static str,
     created: wire::Seq,
     minted_micros: Option<i64>,
+    room: Option<String>,
 }
 
 impl HeadRow {
@@ -1054,6 +1055,7 @@ impl HeadRow {
                 disposition: disposition_name(head.disposition),
                 created: head.created,
                 minted_micros: head.minted_micros,
+                room: head.room.as_ref().map(ToString::to_string),
             }),
             claim: None,
             transcript_lane: None,

@@ -21,6 +21,7 @@ mod provenance;
 mod residual;
 mod retained_notes;
 mod settings_receipts;
+mod steering_rooms;
 mod task_markers;
 mod task_standing;
 mod task_tags;
@@ -85,11 +86,12 @@ const PREPARED: &str = "prepared";
 /// holds a retired unavailable reason on its creating fact or statement head
 /// takes the reason its creating actor proves on both, refusing a lane creator,
 /// a missing creating fact, a copy already contradicting that reason, and any
-/// boundary on an unregistered transcript stream.
-const PREDECESSOR_SCHEMAS: [u32; 52] = [
+/// boundary on an unregistered transcript stream. Last, every steering head
+/// takes its body's room as a typed indexed column.
+const PREDECESSOR_SCHEMAS: [u32; 53] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84,
+    81, 82, 83, 84, 85,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -441,8 +443,10 @@ fn cross_retained_notes(
     Ok(())
 }
 
-/// Name the crossed authority the current schema.
+/// Index every settled steering head's room, then name the crossed authority
+/// the current schema.
 fn advance_identity(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    steering_rooms::cross(transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -1318,7 +1322,8 @@ CREATE TABLE steering_heads (
     created_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     minted_micros INTEGER,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
+    body BLOB NOT NULL,
+    room TEXT
 ) STRICT;
 CREATE INDEX steering_heads_lane_disposition_created
     ON steering_heads(lane, disposition, created_seq);
@@ -1326,6 +1331,8 @@ CREATE INDEX steering_heads_disposition_created
     ON steering_heads(disposition, created_seq);
 CREATE INDEX steering_heads_minted_micros
     ON steering_heads(minted_micros) WHERE minted_micros IS NOT NULL;
+CREATE INDEX steering_heads_lane_room_created
+    ON steering_heads(lane, room, created_seq);
 CREATE TABLE steering_misses (
     identity TEXT PRIMARY KEY,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -1377,8 +1384,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 85, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 86, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 85;
+PRAGMA user_version = 86;
 "#;

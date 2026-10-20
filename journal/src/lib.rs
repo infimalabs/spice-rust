@@ -48,8 +48,9 @@
 /// classification and bounded authored excerpt. Schema 85 stores every task
 /// creation context on the registered transcript stream or a current
 /// unavailable reason, retires the gather route, and gates every retained
-/// pending direct Design output on its Design.
-pub const SCHEMA_VERSION: u32 = 85;
+/// pending direct Design output on its Design. Schema 86 indexes each steering
+/// head's room as a typed column for newest-route lookup.
+pub const SCHEMA_VERSION: u32 = 86;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

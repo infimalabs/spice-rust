@@ -272,40 +272,176 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     );
 }
 
-/// A room route read answers the lane's newest route into the room among
-/// heads that may have published inside the window: a head minted before
-/// `since` is skipped even when it is newer, while a head minted at `since`
-/// or carrying no minted moment is a candidate.
+/// A room route read answers one lane's newest route into one room in any
+/// disposition; routes into another room, without a room, or to another lane
+/// never answer, and a typed room disagreeing with its body refuses.
 #[test]
-fn a_room_route_read_skips_heads_minted_before_the_window() {
+fn a_room_route_read_answers_the_lanes_newest_route_into_the_room() {
     let mut journal = Journal::in_memory().expect("steering journal");
-    let room = wire::TaskStamp::for_micros(1_700_000_000_000_000).expect("fixture room");
-    let since = instant();
-    let start = since.get().as_microsecond();
-    let mut route = |index: usize, minted: Option<i64>| {
-        let key = format!("route-{index}");
-        let mut write =
-            JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
-        let mut body = sent(indexed_uuid(index), &key);
-        body.room = Some(room.clone());
-        let pending = write
-            .fact(body.clone(), FactCause::Root)
-            .expect("routed fact builds");
-        write.steering_head(pending, move |seq| SteeringHead {
-            minted_micros: minted,
-            ..live_head(&body, key, seq)
-        });
-        journal.apply(write).expect("room route commits");
-        journal
-            .read(|read| read.latest_room_route(lane(), &room, since))
-            .expect("room route reads")
-            .map(|head| head.body().key.clone())
-    };
+    let [room, other] = rooms();
+    let peer = indexed_uuid(0xff);
+    assert_eq!(latest_route(&journal, lane(), &room), None);
 
-    assert_eq!(route(0, Some(start - 1)), None);
-    assert_eq!(route(1, Some(start)).as_deref(), Some("route-1"));
-    assert_eq!(route(2, Some(start - 1)).as_deref(), Some("route-1"));
-    assert_eq!(route(3, None).as_deref(), Some("route-3"));
+    publish_route(&mut journal, 1, lane(), Some(&other));
+    publish_route(&mut journal, 2, lane(), None);
+    assert_eq!(latest_route(&journal, lane(), &room), None);
+    publish_route(&mut journal, 3, lane(), Some(&room));
+    assert_eq!(
+        latest_route(&journal, lane(), &room).as_deref(),
+        Some("route-3")
+    );
+    let newest = publish_route(&mut journal, 4, lane(), Some(&room));
+    journal
+        .apply(retire_write(&newest, Disposition::Acked))
+        .expect("newest route retires");
+    publish_route(&mut journal, 5, peer, Some(&room));
+    assert_eq!(
+        latest_route(&journal, lane(), &room).as_deref(),
+        Some("route-4"),
+        "the newest route answers in any disposition"
+    );
+    assert_eq!(
+        latest_route(&journal, lane(), &other).as_deref(),
+        Some("route-1")
+    );
+    assert_eq!(
+        latest_route(&journal, peer, &room).as_deref(),
+        Some("route-5")
+    );
+    journal.verify().expect("typed rooms verify");
+
+    journal
+        .connection
+        .execute(
+            "UPDATE steering_heads SET room = ?1 WHERE steer_key = 'route-2'",
+            [other.to_string()],
+        )
+        .expect("corrupt a typed room");
+    assert!(
+        journal
+            .read(|read| read.latest_room_route(lane(), &other))
+            .is_err(),
+        "a typed room disagreeing with its body refuses"
+    );
+}
+
+#[test]
+fn a_rebuilt_steering_index_restores_typed_rooms() {
+    let mut journal = Journal::in_memory().expect("steering journal");
+    let [room, _] = rooms();
+    let heads = [
+        publish_route(&mut journal, 1, lane(), Some(&room)),
+        publish_route(&mut journal, 2, lane(), None),
+    ];
+    journal
+        .connection
+        .execute("UPDATE steering_heads SET room = NULL", [])
+        .expect("forget typed rooms");
+
+    let cursor = journal.read(|read| read.cursor()).expect("cursor reads");
+    journal
+        .rebuild_steering_index(cursor, &heads, &[])
+        .expect("steering index rebuilds");
+    assert_eq!(typed_rooms(&journal), [Some(room.to_string()), None]);
+    assert_eq!(
+        latest_route(&journal, lane(), &room).as_deref(),
+        Some("route-1")
+    );
+    journal.verify().expect("rebuilt rooms verify");
+}
+
+#[test]
+fn a_predecessor_crossing_backfills_typed_rooms_without_rewriting_authority() {
+    let mut journal = Journal::in_memory().expect("steering journal");
+    let [room, _] = rooms();
+    publish_route(&mut journal, 1, lane(), Some(&room));
+    publish_route(&mut journal, 2, lane(), None);
+    let authority = |journal: &Journal| {
+        journal
+            .connection
+            .prepare(
+                "SELECT body AS bytes FROM steering_heads \
+                 UNION ALL SELECT envelope FROM fact_envelopes ORDER BY bytes",
+            )
+            .expect("authority query prepares")
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .expect("authority reads")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("authority decodes")
+    };
+    let before = authority(&journal);
+    let predecessor = SCHEMA_VERSION - 1;
+    journal
+        .connection
+        .execute_batch(&format!(
+            "{PREDECESSOR_STEERING_HEADS}
+             UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
+             PRAGMA user_version = {predecessor};"
+        ))
+        .expect("restore predecessor steering heads");
+
+    let migration = crate::migrate::admit(&mut journal.connection)
+        .expect("predecessor admits")
+        .expect("predecessor crosses");
+    assert_eq!(
+        (migration.from(), migration.to()),
+        (predecessor, SCHEMA_VERSION)
+    );
+    assert_eq!(authority(&journal), before);
+    assert_eq!(typed_rooms(&journal), [Some(room.to_string()), None]);
+    assert_eq!(
+        latest_route(&journal, lane(), &room).as_deref(),
+        Some("route-1")
+    );
+    journal.verify().expect("crossed rooms verify");
+}
+
+fn rooms() -> [wire::TaskStamp; 2] {
+    [
+        wire::TaskStamp::for_micros(1_700_000_000_000_000).expect("fixture room"),
+        wire::TaskStamp::for_micros(1_700_000_000_000_001).expect("other fixture room"),
+    ]
+}
+
+fn publish_route(
+    journal: &mut Journal,
+    index: usize,
+    to: CanonicalUuid,
+    room: Option<&wire::TaskStamp>,
+) -> JournalHead<SteeringHead> {
+    let key = format!("route-{index}");
+    let mut write = JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    let mut body = sent(indexed_uuid(index), &key);
+    body.lane = to;
+    body.room = room.cloned();
+    let pending = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("routed fact builds");
+    let head_key = key.clone();
+    write.steering_head(pending, move |seq| live_head(&body, head_key, seq));
+    journal.apply(write).expect("room route commits");
+    journal
+        .read(|read| read.steering_key(&key))
+        .expect("room route reads")
+        .expect("room route exists")
+}
+
+fn latest_route(journal: &Journal, lane: CanonicalUuid, room: &wire::TaskStamp) -> Option<String> {
+    journal
+        .read(|read| read.latest_room_route(lane, room))
+        .expect("room route reads")
+        .map(|head| head.body().key.clone())
+}
+
+fn typed_rooms(journal: &Journal) -> Vec<Option<String>> {
+    journal
+        .connection
+        .prepare("SELECT room FROM steering_heads ORDER BY created_seq")
+        .expect("typed rooms prepare")
+        .query_map([], |row| row.get(0))
+        .expect("typed rooms read")
+        .collect::<Result<_, _>>()
+        .expect("typed rooms decode")
 }
 
 #[test]

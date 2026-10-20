@@ -22,7 +22,7 @@ impl JournalRead<'_> {
             .prepare(
                 "SELECT steering.directive, steering.steer_key, steering.lane, \
                  steering.disposition, steering.created_seq, steering.minted_micros, \
-                 steering.head_seq, steering.body, COUNT(*) OVER () \
+                 steering.room, steering.head_seq, steering.body, COUNT(*) OVER () \
                  FROM steering_heads AS steering \
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
                  WHERE steering.disposition = 'live' \
@@ -56,34 +56,22 @@ impl JournalRead<'_> {
         self.steering_row("steer_key", key)
     }
 
-    /// The newest steering one lane was told through a route into `room`
-    /// that may have published at or after `since`, in any disposition: the
-    /// latest such `MSG`/`ASK` that addressed the lane there.
-    ///
-    /// A route key is minted at or after its head's publication instant, so
-    /// a head minted before `since` also published before it and is skipped
-    /// without decoding its body. A head whose key carries no minted moment
-    /// stays a candidate; the caller still compares `published` to `since`.
+    /// The newest steering one lane was told through a route into `room`, in
+    /// any disposition: the latest such `MSG`/`ASK` that addressed the lane
+    /// there. The typed room column seeks it directly; no other head decodes.
     pub fn latest_room_route(
         &self,
         lane: wire::CanonicalUuid,
         room: &wire::TaskStamp,
-        since: wire::Instant,
     ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
         self.require_current_steering_index()?;
         let row = self
             .connection
             .query_row(
                 "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-                 head_seq, body FROM steering_heads \
-                 WHERE lane = ?1 AND (minted_micros IS NULL OR minted_micros >= ?3) \
-                 AND json_extract(CAST(body AS TEXT), '$.room') = ?2 \
-                 ORDER BY created_seq DESC LIMIT 1",
-                params![
-                    lane.to_string(),
-                    room.to_string(),
-                    since.get().as_microsecond()
-                ],
+                 room, head_seq, body FROM steering_heads \
+                 WHERE lane = ?1 AND room = ?2 ORDER BY created_seq DESC LIMIT 1",
+                params![lane.to_string(), room.to_string()],
                 read_steering_columns,
             )
             .optional()
@@ -92,16 +80,7 @@ impl JournalRead<'_> {
         if row.is_some() {
             read_metrics::observe_row();
         }
-        let head = row.map(|row| self.decode_steering_row(row)).transpose()?;
-        if let Some(head) = &head
-            && head.body.room.as_ref() != Some(room)
-        {
-            return Err(GuardError::Invalid(format!(
-                "steering {} indexed into room {room} names {:?}",
-                head.body.key, head.body.room
-            )));
-        }
-        Ok(head)
+        row.map(|row| self.decode_steering_row(row)).transpose()
     }
 
     /// Live steering bound to `room`, in creation order: routes told into it,
@@ -121,8 +100,8 @@ impl JournalRead<'_> {
             .connection
             .prepare(
                 "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-                 head_seq, body FROM steering_heads \
-                 WHERE disposition = 'live' AND (json_extract(CAST(body AS TEXT), '$.room') = ?1 \
+                 room, head_seq, body FROM steering_heads \
+                 WHERE disposition = 'live' AND (room = ?1 \
                  OR json_extract(CAST(body AS TEXT), '$.control') = ?2 \
                  OR json_extract(CAST(body AS TEXT), '$.control') LIKE ?3) \
                  ORDER BY created_seq LIMIT ?4",
@@ -177,7 +156,7 @@ impl JournalRead<'_> {
             .query_row(
                 "SELECT steering.directive, steering.steer_key, steering.lane, \
                  steering.disposition, steering.created_seq, steering.minted_micros, \
-                 steering.head_seq, steering.body FROM steering_heads AS steering \
+                 steering.room, steering.head_seq, steering.body FROM steering_heads AS steering \
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
                  WHERE steering.lane = ?1 \
                  AND creating.actor IN (SELECT value FROM json_each(?2)) \
@@ -208,12 +187,12 @@ impl JournalRead<'_> {
         let first = steering_page_start(start)?;
         let sql = if lane.is_some() {
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-             head_seq, body, COUNT(*) OVER () FROM steering_heads \
+             room, head_seq, body, COUNT(*) OVER () FROM steering_heads \
              WHERE disposition = 'live' AND lane = ?1 AND created_seq >= ?2 \
              ORDER BY created_seq LIMIT ?3"
         } else {
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-             head_seq, body, COUNT(*) OVER () FROM steering_heads \
+             room, head_seq, body, COUNT(*) OVER () FROM steering_heads \
              WHERE disposition = 'live' AND created_seq >= ?1 \
              ORDER BY created_seq LIMIT ?2"
         };
@@ -337,7 +316,7 @@ impl JournalRead<'_> {
         self.require_current_steering_index()?;
         let sql = format!(
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-             head_seq, body FROM steering_heads WHERE {column} = ?1"
+             room, head_seq, body FROM steering_heads WHERE {column} = ?1"
         );
         let row = self
             .connection
@@ -384,6 +363,7 @@ impl JournalRead<'_> {
             || disposition_name(head.body.disposition) != row.disposition
             || i64::try_from(head.body.created.get()).ok() != Some(row.created_seq)
             || head.body.minted_micros != row.minted_micros
+            || head.body.room.as_ref().map(ToString::to_string) != row.room
         {
             return Err(GuardError::Invalid(format!(
                 "steering head {} indexed columns disagree with its body",
@@ -543,6 +523,7 @@ struct SteeringColumns {
     disposition: String,
     created_seq: i64,
     minted_micros: Option<i64>,
+    room: Option<String>,
     head_seq: i64,
     body: Vec<u8>,
 }
@@ -555,15 +536,16 @@ fn read_steering_columns(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringCo
         disposition: row.get(3)?,
         created_seq: row.get(4)?,
         minted_micros: row.get(5)?,
-        head_seq: row.get(6)?,
-        body: row.get(7)?,
+        room: row.get(6)?,
+        head_seq: row.get(7)?,
+        body: row.get(8)?,
     })
 }
 
 fn read_steering_page_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringPageRow> {
     Ok(SteeringPageRow {
         columns: read_steering_columns(row)?,
-        total: row.get(8)?,
+        total: row.get(9)?,
     })
 }
 

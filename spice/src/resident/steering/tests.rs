@@ -300,7 +300,7 @@ fn stored_fold(connection: &rusqlite::Connection) -> StoredFold {
     let mut statement = connection
         .prepare(
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-             head_seq, body FROM steering_heads ORDER BY directive",
+             room, head_seq, body FROM steering_heads ORDER BY directive",
         )
         .expect("prepare steering fold read");
     let heads = statement
@@ -312,8 +312,9 @@ fn stored_fold(connection: &rusqlite::Connection) -> StoredFold {
                 disposition: row.get(3)?,
                 created: row.get(4)?,
                 minted_micros: row.get(5)?,
-                position: row.get(6)?,
-                body: row.get(7)?,
+                room: row.get(6)?,
+                position: row.get(7)?,
+                body: row.get(8)?,
             })
         })
         .expect("read steering fold")
@@ -336,6 +337,7 @@ struct StoredHead {
     disposition: String,
     created: i64,
     minted_micros: Option<i64>,
+    room: Option<String>,
     position: i64,
     body: Vec<u8>,
 }

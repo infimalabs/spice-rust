@@ -974,6 +974,10 @@ fn residency_head() -> ResidencyHead {
     }
 }
 
+/// Every predecessor's steering heads carry no typed room column.
+const PREDECESSOR_STEERING_HEADS: &str = "DROP INDEX steering_heads_lane_room_created;
+     ALTER TABLE steering_heads DROP COLUMN room;";
+
 fn schema_fixture(
     version: u32,
     state: &str,
