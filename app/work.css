@@ -921,6 +921,30 @@
   padding: 0;
   list-style: none;
 }
+/* A proposal card names its decision standing as tab-style labels carrying
+   the shared count badge, then links into the version's decision surface. */
+.room-proposal-standing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: var(--app-type-detail);
+}
+.room-proposal-badges { display: inline-flex; gap: 4px; }
+.room-proposal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: var(--app-radius-pill);
+}
+.room-proposal-outputs {
+  margin: 4px 0 0;
+  padding-inline-start: 18px;
+  font-size: var(--app-type-detail);
+}
 /* A room card's words lead with their signoff as a team card's prose does,
    and keep the line breaks their author wrote. */
 .room-card-face .room-card-words { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }

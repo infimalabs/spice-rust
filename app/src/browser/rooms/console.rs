@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use web_sys::HtmlTextAreaElement;
-use wire::rooms::{RoomAuthorityStamp, RoomPublicationContent};
+use wire::rooms::{DesignPassProposal, RoomAuthorityStamp, RoomPublicationContent};
 use wire::{QuoteTarget, TaskStamp};
 use yew::prelude::*;
 
@@ -31,7 +31,9 @@ use crate::browser::watchband::{
 };
 use crate::client_action::{ClientAction, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction};
-use crate::runtime::{RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind};
+use crate::runtime::{
+    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomPositioned,
+};
 use crate::watchband;
 use crate::work::WorkProjection;
 
@@ -272,21 +274,32 @@ fn plane_cards(
         .flat_map(|channel| {
             let has_current_listener =
                 projection.has_current_listener(&channel.stamp, render.runtime.board());
-            let Some(room) = projection.room(&channel.stamp) else {
-                return Vec::new();
-            };
-            room.in_journal_order()
+            let publications = projection
+                .room(&channel.stamp)
+                .map_or_else(Vec::new, |room| {
+                    room.in_journal_order()
+                        .into_iter()
+                        .map(|(publication, event)| {
+                            room_card(
+                                render,
+                                group,
+                                channel,
+                                has_current_listener,
+                                publication,
+                                event,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                });
+            let proposals = projection
+                .preparation()
+                .candidates
+                .values()
+                .filter(|proposal| proposal.value.candidate.controller == channel.stamp)
+                .map(|proposal| proposal_card(render, channel, proposal));
+            publications
                 .into_iter()
-                .map(|(publication, event)| {
-                    room_card(
-                        render,
-                        group,
-                        channel,
-                        has_current_listener,
-                        publication,
-                        event,
-                    )
-                })
+                .chain(proposals)
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -335,6 +348,32 @@ fn room_card(
         divider: event.kind.divides_plane(),
         shape: Rc::from(format!("{:?}", event.kind)),
         body,
+    }
+}
+
+/// One recorded proposal as a plane card, interleaved by its journal position.
+fn proposal_card(
+    render: &GroupRender<'_, '_>,
+    channel: &Channel,
+    proposal: &RoomPositioned<DesignPassProposal>,
+) -> ActivityCard {
+    let candidate = &proposal.value.candidate.candidate;
+    ActivityCard::Room {
+        accent: channel.accent,
+        design: channel.stamp.clone(),
+        source_id: Rc::from(format!("room-proposal-{candidate}")),
+        display_millis: candidate.micros() / 1_000,
+        position: proposal.position,
+        divider: false,
+        shape: Rc::from(super::approval::proposal_shape(
+            render.runtime.room_projection().preparation(),
+            proposal,
+        )),
+        body: html! {
+            <div class="mosaic-message-content">
+                {super::approval::render_proposal_face(render.runtime, &channel.stamp, proposal)}
+            </div>
+        },
     }
 }
 

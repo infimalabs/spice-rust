@@ -19,7 +19,8 @@ use wire::rooms::{
 use wire::{CommandKind, SequenceCode, TaskStamp};
 use yew::prelude::*;
 
-use super::{Controls, conversation::lane_label};
+use super::standing::focus_in_place;
+use super::{Controls, card, conversation::lane_label};
 use crate::AppRuntime;
 use crate::browser::clock::Age;
 use crate::browser::sender::{SenderHandle, admit_action};
@@ -180,6 +181,153 @@ pub(super) fn render_approval(
                 </section>
             }
         </section>
+    }
+}
+
+/// One recorded proposal as its room conversation shows it: who proposed
+/// what, its decision standing as tab-style counts, and links that focus the
+/// version's decision surface on the Design's read view.
+pub(super) fn render_proposal_card(
+    runtime: &AppRuntime,
+    room: &TaskStamp,
+    positioned: &RoomPositioned<DesignPassProposal>,
+) -> Html {
+    let code = positioned.value.candidate.candidate.to_string();
+    html! {
+        <article class="room-card" key={format!("proposal-{code}")} tabindex="0">
+            {render_proposal_face(runtime, room, positioned)}
+        </article>
+    }
+}
+
+/// The proposal card's face, for a surface that supplies its own card.
+pub(super) fn render_proposal_face(
+    runtime: &AppRuntime,
+    room: &TaskStamp,
+    positioned: &RoomPositioned<DesignPassProposal>,
+) -> Html {
+    let preparation = runtime.room_projection().preparation();
+    let candidate = &positioned.value;
+    let code = candidate.candidate.candidate.to_string();
+    let speaker = preparation
+        .proposers
+        .get(&candidate.candidate)
+        .map(|actor| match runtime.room_projection().author(actor) {
+            wire::Actor::Lane(lane) => card::Speaker {
+                name: lane_label(runtime, lane),
+                lane: Some(lane),
+            },
+            other => card::Speaker {
+                name: crate::work::owner_label(&other, None, runtime.principals()),
+                lane: None,
+            },
+        });
+    let tasks = runtime
+        .board()
+        .map_or(&[][..], |board| board.tasks.as_slice());
+    let link = |selector: String, label: Html| {
+        html! {
+            <a href={crate::view::design_href(room)} onclick={focus_in_place(selector)}>{label}</a>
+        }
+    };
+    let version = format!("[data-candidate=\"{code}\"]");
+    let fact = SequenceCode::new(positioned.position.get()).to_string();
+    let statement = SequenceCode::new(candidate.statement.get()).to_string();
+    let tail = html! {
+        <div class="room-proposal" data-proposal-card={code.clone()}>
+            <p class="room-proposal-standing">
+                <span class="room-proposal-badges" role="group" aria-label="Decision">
+                    {render_standing_badges(&standing(preparation, &candidate.candidate))}
+                </span>
+                {link(version.clone(), html! { <>{"Proposal "}<code>{code.clone()}</code></> })}
+                {" · statement "}{link(format!("[data-fact=\"{statement}\"]"), html! { <code>{statement.clone()}</code> })}
+                {" · fact "}{link(version.clone(), html! { <code>{fact}</code> })}
+            </p>
+            if !candidate.outputs.is_empty() {
+                <ul class="room-proposal-outputs" aria-label="Proposed outputs">
+                    {for candidate.outputs.iter().map(|output| {
+                        let title = tasks
+                            .iter()
+                            .find(|task| task.statement.body.born == *output)
+                            .map_or_else(
+                                || html! { <code>{output.to_string()}</code> },
+                                |task| html! {
+                                    <>{task.presentation_title.clone()}{" "}<code>{task.statement.body.handle.to_string()}</code></>
+                                },
+                            );
+                        html! {
+                            <li>{link(format!("{version} [data-approval-output=\"{output}\"]"), title)}</li>
+                        }
+                    })}
+                </ul>
+            }
+        </div>
+    };
+    card::render(
+        runtime,
+        &candidate.candidate.candidate,
+        card::Face {
+            speaker,
+            receivers: String::new(),
+            badge: Some(card::Badge::Kind {
+                kind: "proposal",
+                label: "Proposal",
+            }),
+            words: format!(
+                "{} · {}",
+                recommendation_label(candidate.recommendation),
+                candidate.justification
+            ),
+            tail,
+        },
+        None,
+    )
+}
+
+/// What a proposal's card shape must change with: the version and its standing.
+pub(super) fn proposal_shape(
+    preparation: &PreparationProjection,
+    positioned: &RoomPositioned<DesignPassProposal>,
+) -> String {
+    let standing = standing(preparation, &positioned.value.candidate).label();
+    format!("{:?}|{standing}", positioned.value)
+}
+
+/// A decision's standing as tab-style badges; a resolved work proposal counts
+/// its accepted and rejected outputs.
+fn render_standing_badges(standing: &Standing<'_>) -> Html {
+    let badge = |verdict: &'static str, label: &'static str, count: Option<usize>| {
+        html! {
+            <span class="room-proposal-badge" data-verdict={verdict}>
+                {label}
+                if let Some(count) = count {
+                    <span class="app-count-badge">{count}</span>
+                }
+            </span>
+        }
+    };
+    match standing {
+        Standing::Undecided => badge("undecided", "Undecided", None),
+        Standing::Withdrawn => badge("withdrawn", "Withdrawn", None),
+        Standing::Returned => badge("returned", "Returned", None),
+        Standing::Accepted(_) => badge("accepted", "Accepted", None),
+        Standing::Resolved(decision) => {
+            let DecisionOutcome::Resolved { outputs, .. } = &decision.outcome else {
+                return Html::default();
+            };
+            let count = |verdict| {
+                outputs
+                    .iter()
+                    .filter(|output| output.verdict == verdict)
+                    .count()
+            };
+            html! {
+                <>
+                    {badge("accepted", "Accepted", Some(count(OutputVerdict::Accepted)))}
+                    {badge("rejected", "Rejected", Some(count(OutputVerdict::Rejected)))}
+                </>
+            }
+        }
     }
 }
 
