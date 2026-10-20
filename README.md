@@ -14,6 +14,20 @@ build:
 cargo run --locked -p xtask -- install --no-resident
 ```
 
+After building an appliance above or obtaining a released executable, install
+it into another Git repository by absolute path, previewing before applying:
+
+```sh
+cd /absolute/path/to/target-repository
+SOURCE_SPICE=/absolute/path/to/spice
+"$SOURCE_SPICE" install
+"$SOURCE_SPICE" install --apply=DIGEST_FROM_PREVIEW
+SPICE_COMMON=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)
+export PATH="$SPICE_COMMON/.spice-install/bin:$PATH"
+hash -r
+spice --json doctor
+```
+
 An installed appliance updates from a sealed release-package directory without
 a Rust toolchain or source checkout:
 

@@ -80,6 +80,45 @@ spice.exe --json doctor
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
+## Install into another repository
+
+First build an installable executable with the source flow above or obtain one
+from a release. The executable may live outside the repository that will use
+Spice. From the root of that target repository, invoke the same absolute
+executable for both the read-only preview and the digest-bound apply:
+
+```sh
+cd /absolute/path/to/target-repository
+SOURCE_SPICE=/absolute/path/to/spice
+"$SOURCE_SPICE" install
+"$SOURCE_SPICE" install --apply=DIGEST_FROM_PREVIEW
+```
+
+Replace `DIGEST_FROM_PREVIEW` with the digest printed by the first command.
+Using the absolute source path for the second command avoids depending on an
+older `spice` selected by the shell before the target installation exists. The
+apply copies that appliance and its app into the target repository's Git common
+directory, activates its hooks, wrappers, and bootstrap skill, and leaves the
+source installation unchanged.
+
+Select and verify the target repository's installed appliance:
+
+```sh
+SPICE_COMMON=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
+SPICE_BIN="$SPICE_COMMON/.spice-install/bin/spice"
+test -x "$SPICE_BIN" || exit
+export PATH="${SPICE_BIN%/spice}:$PATH"
+hash -r
+test "$(command -v spice)" = "$SPICE_BIN" || exit
+spice --json doctor || exit
+```
+
+On Windows, set `$SourceSpice = 'C:\absolute\path\to\spice.exe'`, then run
+`& $SourceSpice install` followed by
+`& $SourceSpice install --apply=DIGEST_FROM_PREVIEW`. Use the PowerShell
+verification block above to select the target repository's
+`.spice-install\bin\spice.exe`.
+
 ## Hook authority
 
 One repository has one effective hook authority. Preview inspects every linked
