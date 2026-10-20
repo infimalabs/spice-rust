@@ -1,5 +1,7 @@
 //! The complete daemonless Doctor report.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ConfigSource;
@@ -159,6 +161,32 @@ pub enum DoctorObservation {
     },
 }
 
+impl DoctorObservation {
+    /// Stable status spelling, as the wire tags it.
+    #[must_use]
+    pub const fn status(&self) -> &'static str {
+        match self {
+            Self::Ready {} => "ready",
+            Self::Unavailable { .. } => "unavailable",
+            Self::InputRequired { .. } => "input-required",
+            Self::NotApplicable { .. } => "not-applicable",
+            Self::Unsupported { .. } => "unsupported",
+        }
+    }
+}
+
+impl fmt::Display for DoctorObservation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ready {} => formatter.write_str("ready"),
+            Self::Unavailable { reason }
+            | Self::InputRequired { reason }
+            | Self::NotApplicable { reason }
+            | Self::Unsupported { reason } => write!(formatter, "{}: {reason}", self.status()),
+        }
+    }
+}
+
 /// Stateful subsystem contributing one bounded Doctor diagnosis row.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -190,6 +218,20 @@ impl DoctorSubsystem {
         Self::Installation,
         Self::Release,
     ];
+
+    /// Stable subsystem spelling, as the wire names it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Board => "board",
+            Self::Journal => "journal",
+            Self::Steering => "steering",
+            Self::Lane => "lane",
+            Self::Transport => "transport",
+            Self::Installation => "installation",
+            Self::Release => "release",
+        }
+    }
 }
 
 /// Whether a declared external tool may be launched by its command.
@@ -452,6 +494,18 @@ pub enum DoctorExtensionNamespace {
     Gate,
 }
 
+impl DoctorExtensionNamespace {
+    /// Stable namespace spelling, as the wire names it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vendor => "vendor",
+            Self::Wrapper => "wrapper",
+            Self::Gate => "gate",
+        }
+    }
+}
+
 /// One discovered extension declaration or registry diagnostic.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -486,6 +540,107 @@ pub struct DoctorReport<C> {
     pub commands: Vec<DoctorCommand>,
     /// Deterministically discovered vendor, wrapper, and gate declarations.
     pub extensions: Vec<DoctorExtension>,
+}
+
+/// The person-facing page: every stateful subsystem and extension, counts of
+/// the commands and configuration leaves that need nothing, and each command
+/// whose tools are not ready, with its reason. Ambient variables are optional
+/// inputs, so only the ones present are named; an absent one is no finding.
+impl<C> fmt::Display for DoctorReport<C> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            formatter,
+            "doctor {}-{} repository {}",
+            self.target.os, self.target.architecture, self.locations.repository
+        )?;
+        writeln!(formatter, "subsystems")?;
+        for row in &self.subsystems {
+            writeln!(
+                formatter,
+                "  {} {}",
+                row.subsystem.as_str(),
+                row.observation
+            )?;
+        }
+        writeln!(formatter, "extensions")?;
+        for row in &self.extensions {
+            writeln!(
+                formatter,
+                "  {} {} {}",
+                row.namespace.as_str(),
+                row.name,
+                row.observation
+            )?;
+        }
+        self.fmt_configuration(formatter)?;
+        self.fmt_environment(formatter)?;
+        self.fmt_commands(formatter)
+    }
+}
+
+impl<C> DoctorReport<C> {
+    fn fmt_configuration(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "configuration {} leaves", self.provenance.len())?;
+        for source in ConfigSource::ALL {
+            let leaves = self
+                .provenance
+                .iter()
+                .filter(|row| row.source == *source)
+                .count();
+            if leaves > 0 {
+                write!(formatter, ", {leaves} {}", source.as_str())?;
+            }
+        }
+        writeln!(formatter)?;
+        let locations = &self.locations;
+        writeln!(formatter, "  tracked {}", locations.tracked_configuration)?;
+        writeln!(formatter, "  local {}", locations.local_configuration)?;
+        writeln!(formatter, "  worktree {}", locations.worktree_configuration)
+    }
+
+    fn fmt_environment(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let present = self
+            .environment
+            .iter()
+            .filter(|row| row.observation == DoctorObservation::Ready {})
+            .map(|row| row.variable.as_str())
+            .collect::<Vec<_>>();
+        write!(
+            formatter,
+            "environment {} of {} optional variables set",
+            present.len(),
+            self.environment.len()
+        )?;
+        if present.is_empty() {
+            writeln!(formatter)
+        } else {
+            writeln!(formatter, ": {}", present.join(" "))
+        }
+    }
+
+    fn fmt_commands(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let count = |status: &str| {
+            self.commands
+                .iter()
+                .filter(|row| row.observation.status() == status)
+                .count()
+        };
+        writeln!(
+            formatter,
+            "commands {} ready, {} without external tools",
+            count("ready"),
+            count("not-applicable")
+        )?;
+        for row in self.commands.iter().filter(|row| {
+            !matches!(
+                row.observation,
+                DoctorObservation::Ready {} | DoctorObservation::NotApplicable { .. }
+            )
+        }) {
+            writeln!(formatter, "  {} {}", row.command, row.observation)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -594,5 +749,85 @@ mod tests {
                 "unknown field at {pointer:?} crossed",
             );
         }
+    }
+
+    #[test]
+    fn the_page_surfaces_only_commands_that_need_attention_and_present_variables() {
+        use super::{DoctorCommand, DoctorEnvironment, DoctorLocations, DoctorTarget};
+
+        let command = |command: &str, observation| DoctorCommand {
+            command: command.to_owned(),
+            observation,
+            tools: Vec::new(),
+        };
+        let reason = |text: &str| text.to_owned();
+        let report = DoctorReport {
+            target: DoctorTarget {
+                os: "linux".to_owned(),
+                architecture: "x86_64".to_owned(),
+            },
+            locations: DoctorLocations {
+                working: "/repo".to_owned(),
+                repository: "/repo".to_owned(),
+                repository_common: "/repo/.git".to_owned(),
+                tracked_configuration: "/repo/spice-rust.toml".to_owned(),
+                worktree_configuration: "/repo/.git/worktree.toml".to_owned(),
+                local_configuration: "/repo/.git/config.toml".to_owned(),
+            },
+            environment: vec![
+                DoctorEnvironment {
+                    variable: SpiceVariable::Session,
+                    observation: DoctorObservation::Ready {},
+                },
+                DoctorEnvironment {
+                    variable: SpiceVariable::SourceStamp,
+                    observation: DoctorObservation::Unavailable {
+                        reason: reason("absent"),
+                    },
+                },
+            ],
+            subsystems: Vec::new(),
+            configuration: (),
+            provenance: Vec::new(),
+            commands: vec![
+                command("doctor", DoctorObservation::Ready {}),
+                command(
+                    "board",
+                    DoctorObservation::NotApplicable {
+                        reason: reason("no tools"),
+                    },
+                ),
+                command(
+                    "run",
+                    DoctorObservation::InputRequired {
+                        reason: reason("caller supplies CMD"),
+                    },
+                ),
+            ],
+            extensions: Vec::new(),
+        };
+
+        let page = report.to_string();
+        let listed = |name: &str| {
+            page.lines().any(|line| {
+                line.strip_prefix("  ")
+                    .is_some_and(|row| row.starts_with(name))
+            })
+        };
+        assert!(page.contains("caller supplies CMD"), "{page}");
+        assert!(listed("run "), "a command needing input is listed: {page}");
+        assert!(
+            !listed("doctor "),
+            "a ready command is only counted: {page}"
+        );
+        assert!(
+            !listed("board "),
+            "a tool-less command is only counted: {page}"
+        );
+        assert!(page.contains(SpiceVariable::Session.as_str()), "{page}");
+        assert!(
+            !page.contains(SpiceVariable::SourceStamp.as_str()),
+            "an absent optional variable is no finding: {page}"
+        );
     }
 }
