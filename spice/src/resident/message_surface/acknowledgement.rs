@@ -41,8 +41,6 @@ pub(super) struct PresentedSend {
     pub(super) recipients: Vec<wire::MessageRecipient>,
     pub(super) operator: bool,
     pub(super) contexts: Vec<wire::TaskHandle>,
-    pub(super) kind: wire::MessageSendKind,
-    pub(super) result: Option<wire::rooms::QuestionResultRef>,
 }
 
 /// One placed packet in the source text, ready to present.
@@ -54,8 +52,6 @@ struct PlacedSend {
     recipients: Vec<wire::MessageRecipient>,
     operator: bool,
     contexts: Vec<wire::TaskHandle>,
-    kind: wire::MessageSendKind,
-    result: Option<wire::rooms::QuestionResultRef>,
 }
 
 /// One presented message and the quote blocks the resident itself wrote into it.
@@ -217,27 +213,23 @@ fn append_directive_contexts<'k>(
     Ok(())
 }
 
-/// Every presentable MSG, ASK, or ANS packet in `text`, in source order. Only
-/// an event whose authoring occupant is known presents packets. One unproved
-/// occupant address keeps its whole packet literal; operator, room-only, and
-/// answer routes need no occupant proof.
+/// Every presentable MSG packet in `text`, in source order. Only an event
+/// whose authoring occupant is known presents packets. One unproved occupant
+/// address keeps its whole packet literal; operator and room-only routes need
+/// no occupant proof.
 fn placed_sends(
     text: &str,
     directives: &PresentationDirectives,
     event: PresentationEvent,
 ) -> Vec<PlacedSend> {
-    if event.author.is_none()
-        || !steer::ack::scan::message::MARKERS
-            .iter()
-            .any(|marker| text.contains(marker))
-    {
+    if event.author.is_none() || !text.contains(steer::ack::scan::message::MARKER) {
         return Vec::new();
     }
     steer::ack::scan::scan_messages(text)
         .into_iter()
         .filter_map(|message| {
             let publication = message.publication.ok()?;
-            let routes = publication.routes();
+            let routes = &publication.routes;
             let recipients = routes
                 .iter()
                 .filter_map(|route| match route.audience {
@@ -256,28 +248,12 @@ fn placed_sends(
                     contexts.push(context.clone());
                 }
             }
-            let (kind, result) = match &publication.request {
-                steer::ack::scan::Request::Msg { .. } => (wire::MessageSendKind::Msg, None),
-                steer::ack::scan::Request::Ask { .. } => (wire::MessageSendKind::Ask, None),
-                steer::ack::scan::Request::Ans {
-                    result, context, ..
-                } => {
-                    if let Some(context) = context
-                        && !contexts.contains(context)
-                    {
-                        contexts.push(context.clone());
-                    }
-                    (wire::MessageSendKind::Ans, Some(result.clone()))
-                }
-            };
             Some(PlacedSend {
                 start: send_framing_start(text, message.header.start),
                 body: publication.body,
                 recipients,
                 operator,
                 contexts,
-                kind,
-                result,
             })
         })
         .collect()
@@ -330,8 +306,6 @@ fn append_authored(
             recipients: send.recipients,
             operator: send.operator,
             contexts: send.contexts,
-            kind: send.kind,
-            result: send.result,
         });
         cursor =
             skip_line_breaks(text, skip_horizontal_space(text, send.body.end)).min(segment.end);

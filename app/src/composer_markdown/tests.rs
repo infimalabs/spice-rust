@@ -25,8 +25,7 @@ fn attributed(author: wire::QuoteAuthor) -> wire::QuoteAttribution {
     wire::QuoteAttribution {
         author,
         recipients: Vec::new(),
-        packet: None,
-        result: None,
+        packet: false,
     }
 }
 

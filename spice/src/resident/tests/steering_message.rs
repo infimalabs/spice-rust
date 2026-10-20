@@ -742,7 +742,7 @@ fn sent_queued(
         queued: queued.to_vec(),
         unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
         rooms: Vec::new(),
-        conversed: None,
+        operator: false,
         held_room: false,
     }
 }

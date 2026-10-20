@@ -324,7 +324,7 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
             queued: queued.to_vec(),
             unreached: unreached.to_vec(),
             rooms: vec![room.clone()],
-            conversed: None,
+            operator: false,
             held_room: false,
         })
     };

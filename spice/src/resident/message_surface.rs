@@ -654,11 +654,7 @@ fn packet_destinations<'a>(
     let mut addresses = BTreeSet::new();
     for publication in texts
         .into_iter()
-        .filter(|text| {
-            steer::ack::scan::message::MARKERS
-                .iter()
-                .any(|marker| text.contains(marker))
-        })
+        .filter(|text| text.contains(steer::ack::scan::message::MARKER))
         .flat_map(steer::ack::scan::scan_messages)
         .filter_map(|message| message.publication.ok())
     {
@@ -673,11 +669,7 @@ fn message_addresses<'a>(
 ) -> BTreeSet<wire::OccupantAddress> {
     texts
         .into_iter()
-        .filter(|text| {
-            steer::ack::scan::message::MARKERS
-                .iter()
-                .any(|marker| text.contains(marker))
-        })
+        .filter(|text| text.contains(steer::ack::scan::message::MARKER))
         .flat_map(steer::ack::scan::scan_messages)
         .filter_map(|message| message.publication.ok())
         .flat_map(|publication| publication.addresses().collect::<Vec<_>>())
@@ -1144,8 +1136,6 @@ fn hydrate_sends(
                 recipients: send.recipients.clone(),
                 operator: send.operator,
                 contexts: send.contexts.clone(),
-                kind: send.kind,
-                result: send.result.clone(),
             })
         })
         .collect()

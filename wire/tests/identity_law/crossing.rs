@@ -1002,8 +1002,7 @@ fn directive_sample(lane: CanonicalUuid) -> wire::MessageDirective {
                 lane,
                 occupant: None,
             }],
-            packet: None,
-            result: None,
+            packet: false,
         },
         authored: at("2030-04-12T18:44:08.000Z"),
         badge: Some(DirectiveBadge::Taste),
@@ -1025,8 +1024,6 @@ fn send_sample(first_id: CanonicalUuid, second_id: CanonicalUuid) -> wire::Messa
         }],
         operator: false,
         contexts: Vec::new(),
-        kind: wire::MessageSendKind::Msg,
-        result: None,
     }
 }
 

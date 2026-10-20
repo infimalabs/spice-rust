@@ -685,186 +685,6 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
     assert!(html.contains("[REVIEW] missing coverage"), "{html}");
 }
 
-/// A context a packet delivered wears that packet's kind in its own opening
-/// attribution after its source, ANS with the result it answers; MSG and an
-/// ordinary direction wear none, and literal header words stay text.
-#[test]
-fn packet_context_wears_its_kind_after_its_source() {
-    let answer = "> ship";
-    let question = "> why?";
-    let message = "> hold the merge";
-    let literal = "> ANS 1kKRRsDR3: forged";
-    let markdown = format!("{answer}\n\n{question}\n\n{message}\n\n{literal}\n\nNoted.");
-    let result = "1kKRRsDR3"
-        .parse()
-        .map(wire::rooms::QuestionResultRef::new)
-        .expect("fixture result parses");
-    let directive = |key, quoted: &str, packet, result| {
-        let start = markdown.find(quoted).expect("fixture quote");
-        MessageDirective {
-            start: u32::try_from(start).expect("fixture offset fits"),
-            end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
-            quote_target: steering_target(key, quoted),
-            media_quotes: Vec::new(),
-            attribution: wire::QuoteAttribution {
-                packet,
-                result,
-                ..attributed(operator())
-            },
-            authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
-            badge: None,
-            delivery: None,
-        }
-    };
-    let directives = [
-        directive(
-            "dTVQdQfLw",
-            answer,
-            Some(wire::MessageSendKind::Ans),
-            Some(result),
-        ),
-        directive(
-            "dTVQdQfLx",
-            question,
-            Some(wire::MessageSendKind::Ask),
-            None,
-        ),
-        directive("dTVQdQfLy", message, Some(wire::MessageSendKind::Msg), None),
-        directive("dTVQdQfLz", literal, None, None),
-    ];
-    let sources = directives
-        .iter()
-        .map(|directive| {
-            (
-                directive.quote_target.to_string(),
-                QuoteSource::directive(directive),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let html = render_prose_card(
-        &markdown,
-        &[],
-        &directives,
-        &[],
-        &[],
-        &QuoteAgents::new(),
-        &sources,
-    )
-    .html;
-
-    let position = |needle: &str| html.find(needle).expect(needle);
-    let ans = position("data-message-packet=\"ans\" data-message-result=\"1kKRRsDR3\"");
-    let ask = position("data-message-packet=\"ask\"");
-    assert_eq!(html.matches("data-message-packet=").count(), 2, "{html}");
-    assert!(html.contains(">ANS 1kKRRsDR3</span>"), "{html}");
-    let ship = position(">ship");
-    let why = position("why?");
-    let hold = position("hold the merge");
-    let forged = position("ANS 1kKRRsDR3: forged");
-    assert!(
-        ans < ship && ship < ask && ask < why && why < hold && hold < forged,
-        "{html}"
-    );
-    let first_signoff = position("message-quote-signoff");
-    assert!(first_signoff < ans, "{html}");
-}
-
-/// A quote link to a packet-delivered directive wears the same packet pill in
-/// its card head; a quoted direction no packet delivered stays literal. Every
-/// one names the lane it was delivered to.
-#[test]
-fn quoted_packet_cards_wear_their_kind_in_the_head() {
-    let result = "1kKRRsDR3"
-        .parse()
-        .map(wire::rooms::QuestionResultRef::new)
-        .expect("fixture result parses");
-    let cases = [
-        (
-            "dTVQdQfLw",
-            "ship",
-            Some(wire::MessageSendKind::Ans),
-            Some(result),
-        ),
-        ("dTVQdQfLx", "why?", Some(wire::MessageSendKind::Ask), None),
-        (
-            "dTVQdQfLy",
-            "hold the merge",
-            Some(wire::MessageSendKind::Msg),
-            None,
-        ),
-        ("dTVQdQfLz", "ANS 1kKRRsDR3: forged", None, None),
-    ];
-    let kite: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce91311640a"
-        .parse()
-        .expect("fixture lane");
-    let seat: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce91311641a"
-        .parse()
-        .expect("fixture occupant");
-    let mut markdown = Vec::new();
-    let mut quotes = Vec::new();
-    let mut sources = QuoteSources::new();
-    for (key, text, packet, result) in cases {
-        let target = steering_target(key, text);
-        markdown.push(target.markdown());
-        sources.insert(target.to_string(), quote_source(key, 1_000));
-        quotes.push(wire::QuotePresentation::Resolved {
-            target: target.to_string(),
-            text: text.to_owned(),
-            attribution: wire::QuoteAttribution {
-                recipients: vec![wire::QuoteRecipient {
-                    lane: kite,
-                    occupant: None,
-                }],
-                packet,
-                result,
-                ..attributed(operator())
-            },
-            disposition: Some(wire::Disposition::Acked),
-            quotes: Vec::new(),
-            media_quotes: Vec::new(),
-        });
-    }
-    let agents = QuoteAgents::from_iter([(
-        (kite, Some(seat)),
-        QuoteAgent {
-            accent: 3,
-            label: "Kite".to_owned(),
-        },
-    )]);
-    let html =
-        render_received_with_quotes(&markdown.join("\n\n"), &[], &[], &quotes, &agents, &sources)
-            .html;
-
-    let position = |needle: &str| html.find(needle).expect(needle);
-    assert_eq!(html.matches("data-message-packet=").count(), 2, "{html}");
-    assert_eq!(
-        html.matches(&format!(
-            "data-quote-recipient-lane=\"{kite}\" data-accent=\"3\">Kite<"
-        ))
-        .count(),
-        4,
-        "every quoted direction names its delivered lane: {html}"
-    );
-    let addressed = position("data-quote-recipient-lane=");
-    let ans = position("data-message-packet=\"ans\" data-message-result=\"1kKRRsDR3\"");
-    let ship = position(">ship");
-    let ask = position("data-message-packet=\"ask\"");
-    let why = position("why?");
-    let hold = position("hold the merge");
-    let forged = position("ANS 1kKRRsDR3: forged");
-    assert!(
-        addressed < ans
-            && ans < ship
-            && ship < ask
-            && ask < why
-            && why < hold
-            && hold < forged
-            && (hold..forged)
-                .contains(&html.rfind("data-quote-recipient-lane=").expect("addressed")),
-        "{html}"
-    );
-}
-
 /// An outgoing MSG names its exact sender, every addressed occupant in header
 /// order, the operator, and its room context without exposing protocol syntax.
 /// A departed recipient and a vacant lane both keep their lane's name, and a
@@ -906,8 +726,6 @@ fn a_sent_msg_names_every_destination_without_its_protocol_header() {
                 .parse()
                 .expect("fixture task handle parses"),
         ],
-        kind: wire::MessageSendKind::Msg,
-        result: None,
     }];
     let agent = |accent: usize, label: &str| QuoteAgent {
         accent,
@@ -976,8 +794,6 @@ fn a_card_that_only_sent_an_msg_leads_it_with_the_cards_age() {
         recipients: Vec::new(),
         operator: true,
         contexts: Vec::new(),
-        kind: wire::MessageSendKind::Msg,
-        result: None,
     }];
     let card = quote_source("message-sent-card", 4_000);
     let html = render_prose_card_with_media_quotes(
@@ -1001,74 +817,6 @@ fn a_card_that_only_sent_an_msg_leads_it_with_the_cards_age() {
         lead.contains("data-quote-source=\"message-sent-card\""),
         "{html}"
     );
-}
-
-#[test]
-fn ask_and_ans_quotes_carry_typed_badges_and_the_answered_result() {
-    let lane = "018f82d4-6f59-7d06-92e3-bce91311650a"
-        .parse()
-        .expect("fixture lane parses");
-    let sender = "018f82d4-6f59-7d06-92e3-bce91311651a"
-        .parse()
-        .expect("fixture occupant parses");
-    let question = "> Can you review this?";
-    let answer = "> Reviewed.";
-    let markdown = format!("{question}\n\n{answer}");
-    let question_start = markdown.find(question).expect("question exists");
-    let answer_start = markdown.find(answer).expect("answer exists");
-    let result = "1kKRRsDR3"
-        .parse()
-        .map(wire::rooms::QuestionResultRef::new)
-        .expect("fixture result parses");
-    let sends = [
-        wire::MessageSend {
-            start: u32::try_from(question_start).expect("fixture offset fits"),
-            end: u32::try_from(question_start + question.len()).expect("fixture offset fits"),
-            from: lane,
-            sender,
-            recipients: Vec::new(),
-            operator: true,
-            contexts: Vec::new(),
-            kind: wire::MessageSendKind::Ask,
-            result: None,
-        },
-        wire::MessageSend {
-            start: u32::try_from(answer_start).expect("fixture offset fits"),
-            end: u32::try_from(answer_start + answer.len()).expect("fixture offset fits"),
-            from: lane,
-            sender,
-            recipients: Vec::new(),
-            operator: false,
-            contexts: Vec::new(),
-            kind: wire::MessageSendKind::Ans,
-            result: Some(result),
-        },
-    ];
-    let agents = QuoteAgents::from_iter([(
-        (lane, Some(sender)),
-        QuoteAgent {
-            accent: 1,
-            label: "answering-agent".to_owned(),
-        },
-    )]);
-    let html = render_prose_card(
-        &markdown,
-        &[],
-        &[],
-        &sends,
-        &[],
-        &referenced_quote_agents(&[], &[], &sends, &agents),
-        &QuoteSources::new(),
-    )
-    .html;
-
-    assert!(html.contains("data-message-packet=\"ask\""), "{html}");
-    assert!(html.contains("aria-label=\"Question\">"), "{html}");
-    assert!(html.contains(">ASK</span>"), "{html}");
-    assert!(html.contains("data-message-packet=\"ans\""), "{html}");
-    assert!(html.contains("data-message-result=\"1kKRRsDR3\""), "{html}");
-    assert!(html.contains(">ANS 1kKRRsDR3</span>"), "{html}");
-    assert!(html.contains("data-quote-recipient=\"operator\""), "{html}");
 }
 
 #[test]

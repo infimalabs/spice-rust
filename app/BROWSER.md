@@ -364,10 +364,9 @@ owner stays ordinary Markdown.
 
 A quoted peer MSG keeps its original sender, arrow, and exact destination from
 the creating journal fact; a fanout reply quotes only its own delivered
-destination. An authored MSG, ASK, or ANS appears as an outgoing quote led by
-its card's relative age and lists every addressed occupant in header order.
-ASK and ANS carry typed badges; ANS also names the exact result it answers.
-Their protocol headers remain hidden.
+destination. An authored MSG appears as an outgoing quote led by its card's
+relative age and lists every addressed occupant in header order. Its protocol
+header remains hidden.
 A lane's name and accent belong to the lane, so an occupant that has since left,
 whether its lane is vacant or reseated, still reads under them as a historical
 attribution. A lane absent from the roster reads as unavailable, or as the
@@ -381,14 +380,13 @@ names both ends, speaker → receiver. Several recipients, another lane, or a
 context with no speaker, such as a direction card in the team plane, keep the
 arrow and receivers visible.
 
-A directive that an MSG, ASK, or ANS delivered, quoted as the context an
-acknowledgment answers, shows the packet body without its header. ASK and ANS
-wear their authored-send pills after the source, ANS with the result it
-answers; MSG wears none, as an authored MSG does. The opening room publication
-proves the kind; any other directive stays literal, whatever its words spell.
+A directive that an MSG delivered, quoted as the context an acknowledgment
+answers, shows the packet body without its header and wears no pill, as an
+authored MSG does. The opening room publication proves the packet; any other
+directive stays literal, whatever its words spell.
 An operator packet names the occupant whose acknowledgment the card presents
 as its destination. A quote link to such a directive presents the same way:
-its card shows the packet body, the same pills, and the lane the directive was
+its card shows the packet body and the lane the directive was
 delivered to after the arrow. A quote's head keeps the card head's type scale
 and name color.
 

@@ -242,8 +242,8 @@ impl SteerMessaged {
     }
 }
 
-/// An authored MSG or ASK opened one peer directive while its proved
-/// destination lane was vacant.
+/// An authored MSG (or a retained ASK) opened one peer directive while its
+/// proved destination lane was vacant.
 ///
 /// The original occupant address proves the logical lane but is not a seated
 /// recipient. The directive stays live for that lane's next occupant without
@@ -265,7 +265,7 @@ pub struct SteerQueued {
     pub sender: CanonicalUuid,
     /// The packet's exact body.
     pub text: String,
-    /// Assistant transcript locus of the packet's MSG or ASK header.
+    /// Assistant transcript locus of the packet's header.
     #[serde(with = "sourced_transcript_locus")]
     pub locus: TranscriptLocus,
     /// Frozen room context, when the route named one.

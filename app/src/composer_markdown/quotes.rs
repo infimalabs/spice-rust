@@ -437,44 +437,10 @@ fn send_signoff_html(
         lane: send.from,
         occupant: send.sender,
     };
-    let mut lead = card.map_or_else(String::new, |card| {
+    let lead = card.map_or_else(String::new, |card| {
         quote_age_slot_html(&author, agents, card)
     });
-    lead.push_str(&packet_kind_html(send.kind, send.result.as_ref()));
     packet_signoff_html(&lead, &sender, &recipients, "outgoing", None)
-}
-
-/// The pill a packet's kind wears when not MSG, with the result an ANS names.
-fn packet_kind_html(
-    kind: wire::MessageSendKind,
-    result: Option<&wire::rooms::QuestionResultRef>,
-) -> String {
-    match kind {
-        wire::MessageSendKind::Msg => String::new(),
-        wire::MessageSendKind::Ask => super::acknowledgement_pill_html_with_attributes(
-            "ask",
-            "question",
-            "Question",
-            "ASK",
-            " data-message-packet=\"ask\"",
-        ),
-        wire::MessageSendKind::Ans => {
-            let result = result.map(wire::rooms::QuestionResultRef::as_str);
-            let text = result.map_or_else(|| "ANS".to_owned(), |result| format!("ANS {result}"));
-            let attribute = result.map_or_else(
-                || " data-message-packet=\"ans\"".to_owned(),
-                |result| {
-                    format!(
-                        " data-message-packet=\"ans\" data-message-result=\"{}\"",
-                        super::escape_html_attribute(result),
-                    )
-                },
-            );
-            super::acknowledgement_pill_html_with_attributes(
-                "ans", "answer", "Answer", &text, &attribute,
-            )
-        }
-    }
 }
 
 fn push_recipient_separator(recipients: &mut String) {
@@ -531,27 +497,9 @@ pub(super) fn directive_attribution(
     }
 }
 
-/// The quoted directive's classification, then the kind of the MSG, ASK, or
-/// ANS packet that delivered it, in the card head's own pill group.
+/// The quoted directive's classification, in the card head's own pill group.
 fn directive_badges_html(context: &wire::MessageDirective) -> String {
-    let mut badges = context.badge.map_or_else(String::new, directive_badge_html);
-    badges.push_str(&packet_group_html(&context.attribution));
-    badges
-}
-
-/// The pill group naming the MSG, ASK, or ANS packet that delivered a quoted
-/// directive; empty when no packet delivered it or an MSG wears none.
-fn packet_group_html(attribution: &QuoteAttribution) -> String {
-    let pill = attribution.packet.map_or_else(String::new, |kind| {
-        packet_kind_html(kind, attribution.result.as_ref())
-    });
-    if pill.is_empty() {
-        return pill;
-    }
-    format!(
-        "<span class=\"message-classification-group\" role=\"group\" \
-         aria-label=\"Packet kind\">{pill}</span>"
-    )
+    context.badge.map_or_else(String::new, directive_badge_html)
 }
 
 /// The quoted directive's own kind, where its source marker once stood.
@@ -658,7 +606,7 @@ fn render(
                         controls_target: target.clone(),
                         signoff,
                         disposition,
-                        badge: packet_group_html(attribution),
+                        badge: String::new(),
                         task_tail,
                     },
                     quote_depth,
@@ -701,7 +649,7 @@ fn render(
                         controls_target: target.clone(),
                         signoff,
                         disposition,
-                        badge: packet_group_html(attribution),
+                        badge: String::new(),
                         task_tail,
                     },
                     quote_depth,

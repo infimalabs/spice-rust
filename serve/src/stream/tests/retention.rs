@@ -663,8 +663,7 @@ fn operator_attribution() -> wire::QuoteAttribution {
             actor: wire::Actor::Operator,
         },
         recipients: Vec::new(),
-        packet: None,
-        result: None,
+        packet: false,
     }
 }
 

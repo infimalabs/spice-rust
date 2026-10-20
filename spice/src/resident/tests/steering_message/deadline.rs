@@ -1,16 +1,11 @@
-//! The resident times out a pending question result at its deadline and lapses
-//! a pending operator item at its expiry, each exactly once and only while the
-//! head it armed from is unmoved.
+//! The resident lapses a pending operator item at its expiry exactly once and
+//! only while the head it armed from is unmoved.
 
 use board::ProjectPolicy;
 use journal::{FactCause, JournalWrite};
-use wire::rooms::{
-    QuestionResultRef, QuestionResultState, RoomQuestionTimedOut, RoomReceiptRecovered,
-    RoomReceiptRef, RoomReceiptState,
-};
+use wire::rooms::{RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState};
 use wire::{Actor, Instant, Producer};
 
-use super::conversation::asked;
 use super::*;
 use crate::resident::timers::{Fired, RoomDue, Runtime};
 
@@ -31,16 +26,6 @@ impl Lanes {
         timers
     }
 
-    fn result_state(&self, result: &QuestionResultRef) -> (wire::Seq, QuestionResultState) {
-        let result = result.clone();
-        let (_, head) = self
-            .bus
-            .read(move |read| read.question_result(&result))
-            .expect("question reads")
-            .expect("the ASK opened its result");
-        (head.position(), head.body().state().clone())
-    }
-
     pub(super) fn item_state(&self, item: &RoomReceiptRef) -> RoomReceiptState {
         let item = item.clone();
         let (_, head) = self
@@ -51,14 +36,44 @@ impl Lanes {
         head.body().state().clone()
     }
 
-    fn timeouts(&self) -> usize {
-        self.bus
-            .fact_snapshot()
-            .expect("facts read")
-            .facts()
-            .iter()
-            .filter(|envelope| envelope.fact.read::<RoomQuestionTimedOut>().is_some())
-            .count()
+    /// The operator item an MSG about a fresh direction opens, and its expiry.
+    fn operator_item(&self) -> (RoomReceiptRef, Instant) {
+        let key = self.direct(SENDER, 20, "ship when green");
+        self.say(SENDER, &format!("MSG #{key}: ship it?"))
+            .expect("the operator MSG publishes");
+        let [conversed] = self
+            .conversations()
+            .try_into()
+            .expect("one conversation record");
+        let item = RoomReceiptRef::new(conversed.publication);
+        let RoomReceiptState::Pending { expires } = self.item_state(&item) else {
+            panic!("the operator item opens pending");
+        };
+        (item, expires)
+    }
+
+    /// Commit the operator's recovery of `item` under `origin`, renewing it to
+    /// `renewed`.
+    fn recover_item(&self, item: &RoomReceiptRef, origin: &str, at: Instant, renewed: Instant) {
+        let mut recovery = JournalWrite::new(
+            Actor::Operator,
+            origin.parse().expect("fixture origin"),
+            at,
+            Producer::CommandDoor,
+        );
+        recovery
+            .fact(
+                RoomReceiptRecovered {
+                    receipt: item.clone(),
+                    expires: renewed,
+                },
+                FactCause::Root,
+            )
+            .expect("recovery stages");
+        assert!(matches!(
+            self.bus.commit(recovery).expect("recovery commits"),
+            bus::CommitOutcome::Committed(_)
+        ));
     }
 }
 
@@ -71,120 +86,54 @@ fn shifted(at: Instant, millis: i64) -> Instant {
     .expect("fixture instant is canonical")
 }
 
-/// A result is not due before its deadline and times out once at it, without
-/// moving its deadline or its operator item; the item lapses on its own at its
-/// expiry without moving the result, and the operator's recovery re-arms it.
+/// An item is not due before its expiry and lapses once at it, and the
+/// operator's recovery re-arms it.
 #[test]
-fn due_results_time_out_and_due_items_lapse_once_each() {
+fn due_items_lapse_once_and_recovery_rearms_them() {
     let lanes = Lanes::new("deadline-due");
-    let key = lanes.direct(SENDER, 20, "ship when green");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{key}: ship it?")));
-    let item = RoomReceiptRef::new(result.authority().clone());
-    let (asked_due, item_due) = (RoomDue::Result(result.clone()), RoomDue::Item(item.clone()));
+    let (item, expires) = lanes.operator_item();
+    let due = RoomDue::Item(item.clone());
     let mut timers = lanes.timers();
-    let deadline = lanes.question(&result).0.deadline();
-    assert_eq!(timers.room_deadline(&asked_due), Some(deadline));
-    let RoomReceiptState::Pending { expires } = lanes.item_state(&item) else {
-        panic!("the operator item opens pending");
-    };
-    assert_eq!(timers.room_deadline(&item_due), Some(expires));
-
-    let early = timers.fire_room_at(&lanes.bus, &asked_due, shifted(deadline, -1));
-    assert_eq!(early, Ok(Fired::Stale));
-    assert_eq!(
-        lanes.result_state(&result).1,
-        QuestionResultState::Pending {}
-    );
-    assert_eq!(
-        timers.room_deadline(&asked_due),
-        Some(deadline),
-        "an early wake re-arms its deadline"
-    );
+    assert_eq!(timers.room_deadline(&due), Some(expires));
 
     assert_eq!(
-        timers.fire_room_at(&lanes.bus, &asked_due, deadline),
-        Ok(Fired::Room)
+        timers.fire_room_at(&lanes.bus, &due, shifted(expires, -1)),
+        Ok(Fired::Stale)
     );
-    let (settled, state) = lanes.result_state(&result);
-    assert_eq!(state, QuestionResultState::TimedOut {});
-    assert_eq!(lanes.question(&result).0.deadline(), deadline);
     assert!(matches!(
         lanes.item_state(&item),
         RoomReceiptState::Pending { .. }
     ));
-    timers.synchronize(&lanes.bus).expect("timers re-fold");
-    assert_eq!(timers.room_deadline(&asked_due), None);
     assert_eq!(
-        timers.fire_room_at(&lanes.bus, &asked_due, deadline),
-        Ok(Fired::Stale)
+        timers.room_deadline(&due),
+        Some(expires),
+        "an early wake re-arms its expiry"
     );
-    assert_eq!(lanes.timeouts(), 1);
 
     assert_eq!(
-        timers.fire_room_at(&lanes.bus, &item_due, expires),
+        timers.fire_room_at(&lanes.bus, &due, expires),
         Ok(Fired::Room)
     );
     assert_eq!(
         lanes.item_state(&item),
         RoomReceiptState::Expired { at: expires }
     );
-    assert_eq!(
-        lanes.result_state(&result).0,
-        settled,
-        "a lapse never moves the result"
-    );
     timers.synchronize(&lanes.bus).expect("timers re-fold");
-    assert_eq!(timers.room_deadline(&item_due), None);
-
-    let renewed = shifted(expires, 60_000);
-    let mut recovery = JournalWrite::new(
-        Actor::Operator,
-        format!("resident:{}", lanes.epoch)
-            .parse()
-            .expect("fixture origin"),
-        shifted(expires, 1),
-        Producer::CommandDoor,
-    );
-    recovery
-        .fact(
-            RoomReceiptRecovered {
-                receipt: item.clone(),
-                expires: renewed,
-            },
-            FactCause::Root,
-        )
-        .expect("recovery stages");
-    assert!(matches!(
-        lanes.bus.commit(recovery).expect("recovery commits"),
-        bus::CommitOutcome::Committed(_)
-    ));
-    timers.synchronize(&lanes.bus).expect("timers re-fold");
-    assert_eq!(timers.room_deadline(&item_due), Some(renewed));
-    drop(timers);
-    lanes.finish();
-}
-
-/// An answer that commits before the fired timeout wins, and the timer writes
-/// nothing for its result.
-#[test]
-fn an_answer_committed_first_wins_over_the_timeout() {
-    let lanes = Lanes::new("deadline-race");
-    let first = lanes.address(FIRST);
-    let result = asked(&lanes.say(SENDER, &format!("ASK {first}: why?")));
-    let due = RoomDue::Result(result.clone());
-    let mut timers = lanes.timers();
-    let deadline = timers.room_deadline(&due).expect("the result arms");
-
-    assert!(lanes.say(FIRST, &format!("ANS {result}: because")).is_ok());
+    assert_eq!(timers.room_deadline(&due), None);
     assert_eq!(
-        timers.fire_room_at(&lanes.bus, &due, deadline),
+        timers.fire_room_at(&lanes.bus, &due, expires),
         Ok(Fired::Stale)
     );
-    assert!(matches!(
-        lanes.result_state(&result).1,
-        QuestionResultState::Answered { .. }
-    ));
-    assert_eq!(lanes.timeouts(), 0);
+
+    let renewed = shifted(expires, 60_000);
+    lanes.recover_item(
+        &item,
+        &format!("resident:{}", lanes.epoch),
+        shifted(expires, 1),
+        renewed,
+    );
+    timers.synchronize(&lanes.bus).expect("timers re-fold");
+    assert_eq!(timers.room_deadline(&due), Some(renewed));
     drop(timers);
     lanes.finish();
 }
@@ -194,40 +143,20 @@ fn an_answer_committed_first_wins_over_the_timeout() {
 #[test]
 fn items_written_under_another_origin_still_lapse() {
     let lanes = Lanes::new("deadline-origin");
-    let key = lanes.direct(SENDER, 20, "ship when green");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{key}: ship it?")));
-    let item = RoomReceiptRef::new(result.authority().clone());
+    let (item, expires) = lanes.operator_item();
     let due = RoomDue::Item(item.clone());
-    let RoomReceiptState::Pending { expires } = lanes.item_state(&item) else {
-        panic!("the operator item opens pending");
-    };
     let mut timers = lanes.timers();
     assert_eq!(
         timers.fire_room_at(&lanes.bus, &due, expires),
         Ok(Fired::Room)
     );
     let renewed = shifted(expires, 60_000);
-    let mut recovery = JournalWrite::new(
-        Actor::Operator,
-        "resident:018f82d4-6f59-7d06-92e3-bce913116400"
-            .parse()
-            .expect("earlier epoch origin"),
+    lanes.recover_item(
+        &item,
+        "resident:018f82d4-6f59-7d06-92e3-bce913116400",
         shifted(expires, 1),
-        Producer::CommandDoor,
+        renewed,
     );
-    recovery
-        .fact(
-            RoomReceiptRecovered {
-                receipt: item.clone(),
-                expires: renewed,
-            },
-            FactCause::Root,
-        )
-        .expect("recovery stages");
-    assert!(matches!(
-        lanes.bus.commit(recovery).expect("recovery commits"),
-        bus::CommitOutcome::Committed(_)
-    ));
     timers.synchronize(&lanes.bus).expect("timers re-fold");
     assert_eq!(timers.room_deadline(&due), Some(renewed));
     assert_eq!(
@@ -242,33 +171,28 @@ fn items_written_under_another_origin_still_lapse() {
     lanes.finish();
 }
 
-/// A resident started after a result was opened arms it from durable state
+/// A resident started after an item was opened arms it from durable state
 /// alone, and of two residents holding the same captured head only one writes
-/// its timeout.
+/// its lapse.
 #[test]
-fn restarted_residents_catch_up_one_timeout() {
+fn restarted_residents_catch_up_one_lapse() {
     let lanes = Lanes::new("deadline-restart");
-    let key = lanes.direct(SENDER, 20, "ship when green");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{key}: ship it?")));
-    let due = RoomDue::Result(result.clone());
-    let deadline = lanes.question(&result).0.deadline();
+    let (item, expires) = lanes.operator_item();
+    let due = RoomDue::Item(item.clone());
     let mut before = lanes.timers();
     let mut after = lanes.timers();
-    assert_eq!(after.room_deadline(&due), Some(deadline));
+    assert_eq!(after.room_deadline(&due), Some(expires));
 
+    let late = shifted(expires, 5_000);
+    assert_eq!(after.fire_room_at(&lanes.bus, &due, late), Ok(Fired::Room));
     assert_eq!(
-        after.fire_room_at(&lanes.bus, &due, shifted(deadline, 5_000)),
-        Ok(Fired::Room)
-    );
-    assert_eq!(
-        before.fire_room_at(&lanes.bus, &due, shifted(deadline, 5_000)),
+        before.fire_room_at(&lanes.bus, &due, late),
         Ok(Fired::Stale)
     );
     assert_eq!(
-        lanes.result_state(&result).1,
-        QuestionResultState::TimedOut {}
+        lanes.item_state(&item),
+        RoomReceiptState::Expired { at: late }
     );
-    assert_eq!(lanes.timeouts(), 1);
     drop((before, after));
     lanes.finish();
 }

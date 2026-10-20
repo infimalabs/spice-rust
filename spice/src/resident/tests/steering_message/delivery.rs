@@ -133,9 +133,7 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
             line: 1,
             column: 1,
         },
-        request: steer::ack::scan::Request::Msg {
-            routes: direct(&[first, second]),
-        },
+        routes: direct(&[first, second]),
         body: "raced",
         text: 0..5,
     };
@@ -189,9 +187,7 @@ fn an_expired_address_names_what_its_lane_seats_now() {
             line: 1,
             column: 1,
         },
-        request: steer::ack::scan::Request::Msg {
-            routes: direct(&[first, second, current]),
-        },
+        routes: direct(&[first, second, current]),
         body: "renewed",
         text: 0..7,
     };
@@ -234,9 +230,7 @@ fn an_expired_address_names_what_its_lane_seats_now() {
             line: 2,
             column: 1,
         },
-        request: steer::ack::scan::Request::Msg {
-            routes: direct(&[second, current]),
-        },
+        routes: direct(&[second, current]),
         body: "departed successor",
         text: 0..19,
     };

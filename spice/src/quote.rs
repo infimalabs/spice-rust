@@ -265,8 +265,8 @@ pub fn media_quotes(
 pub struct SteeringSource {
     /// Who said the directive and whom it reached.
     pub attribution: wire::QuoteAttribution,
-    /// Authenticated body of the MSG, ASK, or ANS publication that opened the
-    /// directive, shown without the header its recipient read.
+    /// Authenticated body of the publication that opened the directive, shown
+    /// without the header its recipient read.
     pub body: Option<String>,
 }
 
@@ -276,9 +276,9 @@ pub struct SteeringSource {
 /// of the sending lane never inherits its authorship; any other directive
 /// names the principal on its creating fact. The recipient is the lane the
 /// directive was delivered to, with the occupant a peer message's route
-/// proves was seated there. An opening room publication's typed operation
-/// proves the packet kind, and a peer directive no publication opened is an
-/// MSG. Any other directive is no packet, whatever its words spell.
+/// proves was seated there. An opening room publication or a peer directive
+/// is an MSG packet. Any other directive is no packet, whatever its words
+/// spell.
 #[must_use]
 pub fn steering_source(
     row: &bus::SteeringPresentation,
@@ -304,37 +304,16 @@ pub fn steering_source(
         lane: row.head().body().lane,
         occupant: messaged.map(|message| message.occupant),
     };
-    let (packet, body) = match row.publication() {
-        Some(publication) => (
-            Some(packet_kind(publication.operation())),
-            publication.text().map(str::to_owned),
-        ),
-        None => (peer.map(|_| (wire::MessageSendKind::Msg, None)), None),
-    };
-    let (packet, result) = packet.unzip();
+    let body = row
+        .publication()
+        .and_then(|publication| publication.text().map(str::to_owned));
     SteeringSource {
         attribution: wire::QuoteAttribution {
             author,
             recipients: vec![recipient],
-            packet,
-            result: result.flatten(),
+            packet: row.publication().is_some() || peer.is_some(),
         },
         body,
-    }
-}
-
-fn packet_kind(
-    operation: &wire::rooms::RoomPublicationKind,
-) -> (
-    wire::MessageSendKind,
-    Option<wire::rooms::QuestionResultRef>,
-) {
-    match operation {
-        wire::rooms::RoomPublicationKind::Msg {} => (wire::MessageSendKind::Msg, None),
-        wire::rooms::RoomPublicationKind::Ask { .. } => (wire::MessageSendKind::Ask, None),
-        wire::rooms::RoomPublicationKind::Ans { result, .. } => {
-            (wire::MessageSendKind::Ans, Some(result.clone()))
-        }
     }
 }
 
@@ -460,8 +439,7 @@ fn authored_by(author: QuoteAuthor) -> wire::QuoteAttribution {
     wire::QuoteAttribution {
         author,
         recipients: Vec::new(),
-        packet: None,
-        result: None,
+        packet: false,
     }
 }
 
@@ -568,31 +546,26 @@ impl QuoteStore for ResidentStore<'_> {
             .principal_roles()
             .map_err(|_| SourceError::Unreadable)?
             .author(&envelope.actor);
-        let authored = |text, packet: Option<_>| {
-            let (packet, result) = packet.unzip();
-            SourceQuote {
-                identity: TextIdentity::Presented,
-                text,
-                attribution: wire::QuoteAttribution {
-                    packet,
-                    result: result.flatten(),
-                    ..authored_by(QuoteAuthor::Directive {
-                        actor: actor.clone(),
-                    })
-                },
-                disposition: None,
-                media: Vec::new(),
-                body: None,
-            }
+        let authored = |text, packet| SourceQuote {
+            identity: TextIdentity::Presented,
+            text,
+            attribution: wire::QuoteAttribution {
+                packet,
+                ..authored_by(QuoteAuthor::Directive {
+                    actor: actor.clone(),
+                })
+            },
+            disposition: None,
+            media: Vec::new(),
+            body: None,
         };
         if let Some(posted) = envelope.fact.read::<wire::rooms::RoomPosted>() {
-            let packet = packet_kind(&posted.operation);
-            return Ok(authored(posted.text, Some(packet)));
+            return Ok(authored(posted.text, true));
         }
         if let Some(published) = envelope.fact.read::<wire::rooms::RoomPublished>()
             && let wire::rooms::RoomPublicationContent::Authored { text } = published.content
         {
-            return Ok(authored(text, None));
+            return Ok(authored(text, false));
         }
         let messaged = envelope
             .fact

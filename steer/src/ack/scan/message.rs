@@ -1,18 +1,16 @@
-//! Authored `MSG`, `ASK`, and `ANS` publication packets.
+//! Authored `MSG` publication packets.
 //!
 //! ```text
 //! selector = occupant[#task] | #task | #KEY
 //! occupant = agent-code
 //!
 //! MSG selector+: body
-//! ASK selector: body
-//! ANS RESULT[#task]: body
 //! ```
 //!
-//! Every verb shares the authored-context rules of acknowledgment headers: the
+//! The packet shares the authored-context rules of acknowledgment headers: the
 //! same quotation, code, rendered-source, negation, hypothetical and narration
-//! exclusions decide whether the marker speaks at all. None retires anything;
-//! each body is the source hunk its packet owns.
+//! exclusions decide whether the marker speaks at all. It retires nothing; its
+//! body is the source hunk the packet owns.
 //!
 //! An explicit audience is one [`OccupantAddress`]. A pointer-only selector
 //! reaches the operator through the concern it names: a `#` qualifier with a
@@ -20,29 +18,25 @@
 //! without names the steering [`Key`] of an operator direction to this lane.
 //! The context-free legacy spelling `operator` is recognized only so it can
 //! refuse visibly with pointer guidance. A selector owns its qualifier; an
-//! unqualified route borrows no context from its neighbors. ASK names exactly
-//! one selector. ANS names the public result handle of the question it answers;
-//! its optional qualifier asserts that question's stored context and never
-//! retargets it.
+//! unqualified route borrows no context from its neighbors.
 //!
 //! A body begins after the header's colon and runs to the next placed ACK,
-//! NAK, MSG, ASK, or ANS header or to the end of the scanned prose, with
-//! surrounding whitespace trimmed. When that next header opens its line behind
-//! list or dash framing, the body ends at that line's start, so a later
-//! packet's framing never leaks into an earlier one. A quoted, coded, or
-//! narrated marker is neither a packet nor a boundary. Text before the first
-//! header belongs to no packet.
+//! NAK, or MSG header or to the end of the scanned prose, with surrounding
+//! whitespace trimmed. When that next header opens its line behind list or
+//! dash framing, the body ends at that line's start, so a later packet's
+//! framing never leaks into an earlier one. A quoted, coded, or narrated
+//! marker is neither a packet nor a boundary. Text before the first header
+//! belongs to no packet.
 
 use std::ops::Range;
 
-use wire::rooms::{QuestionResultRef, RoomAuthorityStamp, RoomAuthorityStampError};
 use wire::{OccupantAddress, OccupantAddressError, TaskHandle, TaskHandleError};
 
 use super::{skip_emphasis, skip_header_space};
 use crate::Key;
 
-/// Every word an authored publication packet leads with.
-pub const MARKERS: [&str; 3] = [Verb::Msg.marker(), Verb::Ask.marker(), Verb::Ans.marker()];
+/// The word an authored publication packet leads with.
+pub const MARKER: &str = "MSG";
 
 /// Context-free legacy spelling recognized only to produce a visible refusal.
 const UNSCOPED_OPERATOR: &str = "operator";
@@ -50,42 +44,10 @@ const UNSCOPED_OPERATOR: &str = "operator";
 /// The byte that opens a selector's task context.
 const CONTEXT: u8 = b'#';
 
-/// The publication verb a packet's marker spells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Verb {
-    /// An ordinary message to one or more routes.
-    Msg,
-    /// A question to one audience that opens a correlated result.
-    Ask,
-    /// The answer to one stored question.
-    Ans,
-}
-
-impl Verb {
-    /// The marker word as written.
-    #[must_use]
-    pub const fn marker(self) -> &'static str {
-        match self {
-            Self::Msg => "MSG",
-            Self::Ask => "ASK",
-            Self::Ans => "ANS",
-        }
-    }
-
-    /// The verb whose marker begins `text`.
-    pub(super) fn leading(text: &str) -> Option<Self> {
-        [Self::Msg, Self::Ask, Self::Ans]
-            .into_iter()
-            .find(|verb| text.starts_with(verb.marker()))
-    }
-}
-
-/// One placed packet: its verb, its header, and what it publishes, or why it
-/// publishes nothing.
+/// One placed packet: its header and what it publishes, or why it publishes
+/// nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
-    /// The verb its marker spells.
-    pub verb: Verb,
     /// Header bytes from the marker, including touching emphasis, through the
     /// colon and any emphasis closing it; through the last selector when the
     /// colon is missing.
@@ -94,53 +56,22 @@ pub struct Message {
     pub publication: Result<Publication, MessageRefusal>,
 }
 
-/// A well-formed packet: what it requests and the body hunk it publishes.
+/// A well-formed packet: its routes and the body hunk it publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Publication {
-    /// The verb-specific routing the header spelled.
-    pub request: Request,
+    /// Distinct routes in source order.
+    pub routes: Vec<Route>,
     /// The nonempty trimmed body hunk, protocol headers excluded.
     pub body: Range<usize>,
 }
 
-/// What one well-formed header requests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Request {
-    /// MSG: distinct routes in source order.
-    Msg { routes: Vec<Route> },
-    /// ASK: its one audience route.
-    Ask { route: Route },
-    /// ANS: the question it answers and the context it asserts.
-    Ans {
-        /// Public result handle of the answered question.
-        result: QuestionResultRef,
-        /// Asserted stored context, checked for equality only.
-        context: Option<TaskHandle>,
-        /// Byte range of the whole selector.
-        span: Range<usize>,
-    },
-}
-
 impl Publication {
-    /// Every route in source order; ANS has none, since it inherits its
-    /// question's parties.
-    #[must_use]
-    pub fn routes(&self) -> &[Route] {
-        match &self.request {
-            Request::Msg { routes } => routes,
-            Request::Ask { route } => std::slice::from_ref(route),
-            Request::Ans { .. } => &[],
-        }
-    }
-
     /// Every explicitly addressed occupant, in source order.
     pub fn addresses(&self) -> impl Iterator<Item = OccupantAddress> + '_ {
-        self.routes()
-            .iter()
-            .filter_map(|route| match route.audience {
-                Some(Audience::Occupant(address)) => Some(address),
-                Some(Audience::Operator) | None => None,
-            })
+        self.routes.iter().filter_map(|route| match route.audience {
+            Some(Audience::Occupant(address)) => Some(address),
+            Some(Audience::Operator) | None => None,
+        })
     }
 }
 
@@ -183,19 +114,12 @@ pub struct Route {
 ///
 /// Refusal covers the whole packet: no route is guessed, deduplicated, or
 /// dropped, and no neighboring packet lends its body. The first defect in
-/// source order decides: the header's colon, then the selector count, then
-/// each selector, then the body.
+/// source order decides: the header's colon, then each selector, then the
+/// body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageRefusal {
     /// The selector list is not closed by a colon.
     Unterminated,
-    /// ASK or ANS names other than exactly one selector.
-    Selectors {
-        /// The packet's verb.
-        verb: Verb,
-        /// Selectors the header named.
-        count: usize,
-    },
     /// A selector's explicit recipient is not an occupant address.
     Recipient {
         /// Byte range of the recipient.
@@ -207,18 +131,6 @@ pub enum MessageRefusal {
     Concern {
         /// Byte range of the spelling.
         span: Range<usize>,
-    },
-    /// An ASK selector names no respondent.
-    Respondent {
-        /// Byte range of the selector.
-        span: Range<usize>,
-    },
-    /// An ANS selector does not spell a result handle.
-    Result {
-        /// Byte range of the handle.
-        span: Range<usize>,
-        /// Why it is not a result handle.
-        error: RoomAuthorityStampError,
     },
     /// A selector's `#` qualifier does not spell a task handle.
     Context {
@@ -256,14 +168,8 @@ impl MessageRefusal {
     pub const fn reason(&self) -> &'static str {
         match self {
             Self::Unterminated => "msg::unterminated",
-            Self::Selectors {
-                verb: Verb::Ans, ..
-            } => "ans::selector-count",
-            Self::Selectors { .. } => "ask::selector-count",
             Self::Recipient { .. } => "msg::recipient-malformed",
             Self::Concern { .. } => "msg::concern-missing",
-            Self::Respondent { .. } => "ask::respondent-missing",
-            Self::Result { .. } => "ans::result-malformed",
             Self::Context { .. } => "msg::context-malformed",
             Self::DirectionAudience { .. } => "msg::direction-audience",
             Self::Repeated { .. } => "msg::recipient-repeated",
@@ -275,7 +181,6 @@ impl MessageRefusal {
 
 /// The selector list after one marker, before its body is bounded.
 pub(super) struct Header {
-    pub(super) verb: Verb,
     /// Each selector as a half-open byte range.
     pub(super) tokens: Vec<(usize, usize)>,
     /// Header end: past the colon and closing emphasis, or past the last token.
@@ -283,16 +188,16 @@ pub(super) struct Header {
     pub(super) terminated: bool,
 }
 
-/// The selector list after one `verb` marker, if the marker opens an attempt.
+/// The selector list after one `MSG` marker, if the marker opens an attempt.
 ///
-/// A selector is an ASCII-alphanumeric audience or result run, optionally
-/// followed by `#` and an ASCII-alphanumeric-or-hyphen context run; selectors
-/// are separated by header space or a comma. A colon-closed list is an attempt
+/// A selector is an ASCII-alphanumeric audience run, optionally followed by
+/// `#` and an ASCII-alphanumeric-or-hyphen context run; selectors are
+/// separated by header space or a comma. A colon-closed list is an attempt
 /// when any selector spells a valid route or carries the hyphen required by a
 /// task handle, so a malformed room-only selector is refused rather than
 /// ignored. An unclosed list is one only when its first selector is already
 /// valid.
-pub(super) fn header_after(prose: &str, verb: Verb, marker_end: usize) -> Option<Header> {
+pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
     let marker_boundary = skip_emphasis(prose, marker_end);
     let mut cursor = skip_header_space(prose, marker_boundary);
     if cursor == marker_boundary {
@@ -328,16 +233,11 @@ pub(super) fn header_after(prose: &str, verb: Verb, marker_end: usize) -> Option
     let spells = |&(start, end): &(usize, usize)| {
         let (lead, context) = split(prose, start, end);
         let lead = &prose[lead];
-        let lead_spells = match verb {
-            Verb::Ans => lead.parse::<RoomAuthorityStamp>().is_ok(),
-            Verb::Msg | Verb::Ask => {
-                lead == UNSCOPED_OPERATOR || lead.parse::<OccupantAddress>().is_ok()
-            }
-        };
-        lead_spells
+        lead == UNSCOPED_OPERATOR
+            || lead.parse::<OccupantAddress>().is_ok()
             || context.is_some_and(|context| {
                 let context = &prose[context];
-                context.parse::<TaskHandle>().is_ok() || (verb != Verb::Ans && Key::shaped(context))
+                context.parse::<TaskHandle>().is_ok() || Key::shaped(context)
             })
     };
     let room_like = |&(start, end): &(usize, usize)| {
@@ -350,7 +250,6 @@ pub(super) fn header_after(prose: &str, verb: Verb, marker_end: usize) -> Option
         spells(&first)
     };
     attempt.then(|| Header {
-        verb,
         end: if terminated {
             skip_emphasis(prose, colon + 1)
         } else {
@@ -372,7 +271,6 @@ fn split(prose: &str, start: usize, end: usize) -> (Range<usize>, Option<Range<u
 /// Judge one placed header against the boundary its body runs to.
 pub(super) fn judge(prose: &str, start: usize, header: Header, boundary: usize) -> Message {
     Message {
-        verb: header.verb,
         header: start..header.end,
         publication: publication(prose, &header, boundary),
     }
@@ -386,35 +284,7 @@ fn publication(
     if !header.terminated {
         return Err(MessageRefusal::Unterminated);
     }
-    let request = match header.verb {
-        Verb::Msg => Request::Msg {
-            routes: routes(prose, &header.tokens)?,
-        },
-        Verb::Ask => {
-            let &[(start, end)] = header.tokens.as_slice() else {
-                return Err(selectors(header));
-            };
-            let route = route(prose, start, end)?;
-            if route.audience.is_none() {
-                return Err(MessageRefusal::Respondent { span: start..end });
-            }
-            Request::Ask { route }
-        }
-        Verb::Ans => {
-            let &[(start, end)] = header.tokens.as_slice() else {
-                return Err(selectors(header));
-            };
-            let (lead, context) = split(prose, start, end);
-            let result = prose[lead.clone()]
-                .parse::<RoomAuthorityStamp>()
-                .map_err(|error| MessageRefusal::Result { span: lead, error })?;
-            Request::Ans {
-                result: QuestionResultRef::new(result),
-                context: context.map(|span| task_context(prose, span)).transpose()?,
-                span: start..end,
-            }
-        }
-    };
+    let routes = routes(prose, &header.tokens)?;
     let hunk = &prose[header.end..boundary.max(header.end)];
     let leading = hunk.len() - hunk.trim_start().len();
     let body = hunk.trim();
@@ -423,16 +293,9 @@ fn publication(
     }
     let start = header.end + leading;
     Ok(Publication {
-        request,
+        routes,
         body: start..start + body.len(),
     })
-}
-
-fn selectors(header: &Header) -> MessageRefusal {
-    MessageRefusal::Selectors {
-        verb: header.verb,
-        count: header.tokens.len(),
-    }
 }
 
 /// Judge every MSG selector in source order, refusing the first defect.
