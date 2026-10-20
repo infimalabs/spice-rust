@@ -35,8 +35,30 @@ pub(crate) struct ConfigReport {
 }
 
 impl ConfigReport {
+    /// Text answers a keyed read or change with only its selection, plan, and
+    /// receipt; a bare read prints the full effective document. JSON always
+    /// carries the complete report.
     pub(crate) fn text(&self) -> Result<Vec<u8>, toml::ser::Error> {
-        let mut document = toml::to_string_pretty(self)?.into_bytes();
+        #[derive(Serialize)]
+        struct Focus<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            selected: Option<&'a Selection>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            plan: Option<&'a MutationPlan>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            mutation: Option<&'a MutationReceipt>,
+        }
+        let document = if self.selected.is_some() || self.plan.is_some() || self.mutation.is_some()
+        {
+            toml::to_string_pretty(&Focus {
+                selected: self.selected.as_ref(),
+                plan: self.plan.as_ref(),
+                mutation: self.mutation.as_ref(),
+            })?
+        } else {
+            toml::to_string_pretty(self)?
+        };
+        let mut document = document.into_bytes();
         if document.last() != Some(&b'\n') {
             document.push(b'\n');
         }
@@ -1107,5 +1129,37 @@ mod tests {
         assert!(fs::read_dir(&outside).unwrap().next().is_none());
         drop(admitted);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_keyed_read_answers_only_its_selection_in_text() {
+        let root = std::env::temp_dir().join("spice-config-text-focus");
+        let documents = Documents {
+            tracked: None,
+            worktree: None,
+            local: None,
+            tracked_path: root.join("spice-rust.toml"),
+            worktree_path: root.join("worktree.toml"),
+            local_path: root.join("config.toml"),
+            worktree_parent: ParentWitness::Absent,
+            local_parent: ParentWitness::Absent,
+        };
+        let text = |key: Option<&str>| -> toml::Table {
+            let report = report(documents.resolve_current().unwrap(), key, None, None).unwrap();
+            toml::from_str(std::str::from_utf8(&report.text().unwrap()).unwrap()).unwrap()
+        };
+
+        let keyed = text(Some("vendor.omp.binary"));
+        assert_eq!(keyed.keys().collect::<Vec<_>>(), ["selected"]);
+        assert_eq!(
+            keyed["selected"]["path"].as_str(),
+            Some("vendor.omp.binary")
+        );
+        assert_eq!(keyed["selected"]["value"].as_str(), Some("omp"));
+        assert_eq!(keyed["selected"]["source"].as_str(), Some("builtin"));
+
+        let bare = text(None);
+        assert!(bare.contains_key("effective") && bare.contains_key("provenance"));
+        assert!(!bare.contains_key("selected"));
     }
 }
