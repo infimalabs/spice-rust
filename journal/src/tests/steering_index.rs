@@ -272,6 +272,42 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     );
 }
 
+/// A room route read answers the lane's newest route into the room among
+/// heads that may have published inside the window: a head minted before
+/// `since` is skipped even when it is newer, while a head minted at `since`
+/// or carrying no minted moment is a candidate.
+#[test]
+fn a_room_route_read_skips_heads_minted_before_the_window() {
+    let mut journal = Journal::in_memory().expect("steering journal");
+    let room = wire::TaskStamp::for_micros(1_700_000_000_000_000).expect("fixture room");
+    let since = instant();
+    let start = since.get().as_microsecond();
+    let mut route = |index: usize, minted: Option<i64>| {
+        let key = format!("route-{index}");
+        let mut write =
+            JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+        let mut body = sent(indexed_uuid(index), &key);
+        body.room = Some(room.clone());
+        let pending = write
+            .fact(body.clone(), FactCause::Root)
+            .expect("routed fact builds");
+        write.steering_head(pending, move |seq| SteeringHead {
+            minted_micros: minted,
+            ..live_head(&body, key, seq)
+        });
+        journal.apply(write).expect("room route commits");
+        journal
+            .read(|read| read.latest_room_route(lane(), &room, since))
+            .expect("room route reads")
+            .map(|head| head.body().key.clone())
+    };
+
+    assert_eq!(route(0, Some(start - 1)), None);
+    assert_eq!(route(1, Some(start)).as_deref(), Some("route-1"));
+    assert_eq!(route(2, Some(start - 1)).as_deref(), Some("route-1"));
+    assert_eq!(route(3, None).as_deref(), Some("route-3"));
+}
+
 #[test]
 fn retired_window_keeps_each_lanes_newest_retirements_in_retirement_order() {
     const WINDOW: usize = 4;
