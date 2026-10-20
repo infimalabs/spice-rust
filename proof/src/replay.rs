@@ -164,6 +164,43 @@ impl CheckVerdict {
     pub fn stderr(&self) -> &[u8] {
         &self.stderr
     }
+
+    /// The trailing output that names why this member failed, or `None` when
+    /// it passed.
+    ///
+    /// Each stream contributes at most its last 2 KiB, starting at a line
+    /// boundary: a member's cause is printed near its end, while a complete
+    /// build log would bury it.
+    #[must_use]
+    pub fn diagnosis(&self) -> Option<String> {
+        if self.standing.passes() {
+            return None;
+        }
+        let mut diagnosis = String::new();
+        for (stream, bytes) in [("stderr", &self.stderr), ("stdout", &self.stdout)] {
+            let tail = output_tail(bytes);
+            if !tail.is_empty() {
+                diagnosis.push_str(stream);
+                diagnosis.push_str(":\n");
+                diagnosis.push_str(&String::from_utf8_lossy(tail));
+                diagnosis.push('\n');
+            }
+        }
+        Some(diagnosis)
+    }
+}
+
+/// Most trailing bytes of one stream a failing member's diagnosis carries.
+const DIAGNOSIS_STREAM_BYTES: usize = 2048;
+
+fn output_tail(bytes: &[u8]) -> &[u8] {
+    let bytes = bytes.trim_ascii_end();
+    let start = bytes.len().saturating_sub(DIAGNOSIS_STREAM_BYTES);
+    let tail = &bytes[start..];
+    match tail.iter().position(|byte| *byte == b'\n') {
+        Some(newline) if start > 0 => &tail[newline + 1..],
+        _ => tail,
+    }
 }
 
 /// Exit code for a member whose scope selected nothing.
@@ -1102,6 +1139,49 @@ mod tests {
         assert_eq!(verdict.checks()[1].standing(), CheckStanding::EmptyScope);
         assert_eq!(verdict.checks()[1].standing().code(), Some(5));
         assert_eq!(verdict.standing(), ProofStanding::Refused);
+    }
+
+    /// A refused battery names each failing member's own cause.
+    ///
+    /// The decisive line sits at the end of a member's output, after a build
+    /// log far larger than any refusal should carry, so the diagnosis keeps a
+    /// bounded tail of whole lines and passing members contribute nothing.
+    #[test]
+    fn failing_members_diagnose_from_a_bounded_tail_of_their_own_output() {
+        let mut build_log = (0..400)
+            .map(|line| format!("   Compiling crate-{line} v0.1.0\n"))
+            .collect::<String>();
+        build_log.push_str("553 mutants tested in 7m: 93 missed, 269 caught, 191 unviable\n");
+        let executor = FakeExecutor::new(vec![
+            exited(true, TEST_EVIDENCE),
+            exited(false, build_log.as_bytes()),
+            exited_with_stderr(
+                false,
+                b"",
+                b"error: no test target named `corpus` in `listen` package\n",
+            ),
+            exited(true, TEST_EVIDENCE),
+            exited(true, TEST_EVIDENCE),
+        ]);
+
+        let verdict = run_with(&executor, &Battery::current()).expect("typed refused replay");
+
+        assert_eq!(verdict.standing(), ProofStanding::Refused);
+        assert_eq!(verdict.checks()[0].diagnosis(), None);
+        let mutation = verdict.checks()[1]
+            .diagnosis()
+            .expect("a failed member diagnoses");
+        assert!(mutation.ends_with("93 missed, 269 caught, 191 unviable\n"));
+        assert!(mutation.len() <= super::DIAGNOSIS_STREAM_BYTES + "stdout:\n\n".len());
+        let first = mutation
+            .strip_prefix("stdout:\n")
+            .expect("only stdout carried output");
+        assert!(first.starts_with("   Compiling crate-"));
+        assert!(!mutation.contains("crate-0 "));
+        assert_eq!(
+            verdict.checks()[2].diagnosis().as_deref(),
+            Some("stderr:\nerror: no test target named `corpus` in `listen` package\n"),
+        );
     }
 
     /// A member that announced no corpus proved no corpus.

@@ -396,7 +396,7 @@ impl Failure {
             !failing.is_empty(),
             "a refused battery is refused by a member, so at least one must have failed",
         );
-        let detail = format!(
+        let mut detail = format!(
             "repair {} and rerun the proof leaf",
             failing
                 .iter()
@@ -404,6 +404,16 @@ impl Failure {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        for check in &failing {
+            if let Some(diagnosis) = check.diagnosis() {
+                detail.push_str(&format!(
+                    "\n\n{} {}:\n{}",
+                    check.kind().as_str(),
+                    standing(check.standing()),
+                    diagnosis.trim_end()
+                ));
+            }
+        }
         Self::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "proof::battery-refused",
