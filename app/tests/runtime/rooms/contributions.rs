@@ -191,7 +191,7 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
     assert!(
         credited
             .reasons
-            .contains(&app::ParticipantReason::Contribution(third)),
+            .contains(&app::ParticipantReason::Publication(third)),
         "a typed contribution credits its lane as a participant"
     );
 }

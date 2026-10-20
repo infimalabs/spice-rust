@@ -397,9 +397,9 @@ fn after_message(seconds: i64) -> i64 {
     authority(ROOM_EVENT).micros() + seconds * MICROS_PER_SECOND
 }
 
-/// A moment past the activity window of every fixture publication.
+/// A moment past the invitation window of every fixture publication.
 fn aged() -> i64 {
-    after_message(2 * wire::rooms::ROOM_ACTIVITY_SECONDS)
+    after_message(2 * wire::rooms::ROOM_INVITATION_SECONDS)
 }
 
 /// The frames an operator subscription opens with: its live-start fact page,
@@ -458,6 +458,12 @@ fn unheard_operator_post_tracks_current_listening_and_later_lane_events() {
 
     runtime.apply_board(&room_board(&session, Some("app.rooms"), None, None));
     runtime.apply_stream(&admitted_stream(&session, &live_fact(room_message(2))));
+    assert!(
+        !runtime
+            .room_projection()
+            .has_current_listener(&room(), runtime.board(), after_message(1)),
+        "authoring the message creates participation but no listening authority"
+    );
     let left = authority(COORDINATION_EVENT);
     runtime.apply_stream(&admitted_stream(
         &session,
@@ -544,7 +550,7 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
         vec![
             app::RoomParticipant {
                 lane: uuid(LANE),
-                reasons: vec![app::ParticipantReason::Contribution(authority(ROOM_EVENT))],
+                reasons: vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
             },
             app::RoomParticipant {
                 lane: uuid(SECOND_LANE),
@@ -781,7 +787,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
     assert_eq!(
         participants(&runtime, aged())[0].reasons,
         vec![
-            app::ParticipantReason::Contribution(authority(ROOM_EVENT)),
+            app::ParticipantReason::Publication(authority(ROOM_EVENT)),
             app::ParticipantReason::Work(room()),
             app::ParticipantReason::Stop(STOP_KEY.to_owned()),
         ]
@@ -830,34 +836,33 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
 }
 
 #[test]
-fn activity_ages_out_while_contribution_history_and_native_duties_stay() {
+fn authored_message_records_participation_without_author_attention() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
     for frame in opening(&session) {
         runtime.apply_stream(&frame);
     }
-    let window = wire::rooms::ROOM_ACTIVITY_SECONDS;
     assert_eq!(
-        participants(&runtime, after_message(window))[0].reasons,
-        vec![
-            app::ParticipantReason::Contribution(authority(ROOM_EVENT)),
-            app::ParticipantReason::Activity(authority(ROOM_EVENT)),
-        ],
-        "a contribution at the window's edge is still current activity"
-    );
-    let aged = participants(&runtime, after_message(window + 1));
-    assert_eq!(
-        aged[0].reasons,
-        vec![app::ParticipantReason::Contribution(authority(ROOM_EVENT))],
-        "aging removes only the activity reason, never the contribution"
+        participants(&runtime, after_message(1))[0].reasons,
+        vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
+        "the author's room history is not a reason to deliver later catch-up"
     );
     assert_eq!(
-        aged[1].reasons,
+        participants(&runtime, after_message(1))[1].reasons,
         vec![app::ParticipantReason::Coordination(
             COORDINATION_KEY.to_owned()
         )],
-        "a live coordination duty does not age"
+        "another lane's native duty is unchanged"
+    );
+    let projection = runtime.room_projection();
+    assert!(
+        projection
+            .room(&room())
+            .expect("room")
+            .listener_joins(projection.conversation())
+            .is_empty(),
+        "authorship creates no joined-listener timeline event"
     );
 }
 
@@ -867,7 +872,7 @@ fn later_publication(seconds: i64) -> RoomAuthorityStamp {
 }
 
 #[test]
-fn a_leave_ends_activity_until_the_lane_contributes_again() {
+fn an_authored_message_does_not_end_a_leave() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
@@ -893,13 +898,13 @@ fn a_leave_ends_activity_until_the_lane_contributes_again() {
     assert_eq!(
         current[0].reasons,
         vec![
-            app::ParticipantReason::Contribution(authority(ROOM_EVENT)),
+            app::ParticipantReason::Publication(authority(ROOM_EVENT)),
             app::ParticipantReason::Left {
                 publication: left,
                 clause: "my part is done".to_owned(),
             },
         ],
-        "a leave ends activity and stands with its clause"
+        "the leave stands with its clause"
     );
     assert_eq!(
         current[1].reasons,
@@ -916,11 +921,14 @@ fn a_leave_ends_activity_until_the_lane_contributes_again() {
     assert_eq!(
         participants(&runtime, after_message(4))[0].reasons,
         vec![
-            app::ParticipantReason::Contribution(authority(ROOM_EVENT)),
-            app::ParticipantReason::Contribution(returned.clone()),
-            app::ParticipantReason::Activity(returned),
+            app::ParticipantReason::Publication(authority(ROOM_EVENT)),
+            app::ParticipantReason::Publication(returned),
+            app::ParticipantReason::Left {
+                publication: later_publication(1),
+                clause: "my part is done".to_owned(),
+            },
         ],
-        "a later contribution supersedes the leave"
+        "later authorship adds history without restoring listening"
     );
 }
 

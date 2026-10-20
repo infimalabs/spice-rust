@@ -297,11 +297,11 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
         Some(_) => "vacant",
         None => "unknown",
     };
-    let contributions = participant
+    let publications = participant
         .reasons
         .iter()
         .filter_map(|reason| match reason {
-            ParticipantReason::Contribution(publication) => Some(publication),
+            ParticipantReason::Publication(publication) => Some(publication),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -309,11 +309,11 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
         <li key={participant.lane.to_string()} data-lane={participant.lane.to_string()}>
             <span class="room-standing-lane">{label}</span>
             <span class="room-standing-availability" data-availability={availability}>{availability}</span>
-            if let Some(latest) = contributions.last() {
+            if let Some(latest) = publications.last() {
                 {reason_chip(
-                    "contribution",
-                    &format!("Contributed {}", contributions.len()),
-                    &format!("Authored {} room publications; latest {latest}", contributions.len()),
+                    "history",
+                    &format!("Published {}", publications.len()),
+                    &format!("Authored {} room publications; latest {latest}", publications.len()),
                 )}
             }
             {for participant.reasons.iter().filter_map(|reason| render_reason(runtime, reason))}
@@ -321,17 +321,12 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
     }
 }
 
-/// One non-history reason as a chip naming its source; contribution history
+/// One non-history reason as a chip naming its source; publication history
 /// renders once per lane instead.
 fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Html> {
     let leave;
     let (kind, label, source) = match reason {
-        ParticipantReason::Contribution(_) => return None,
-        ParticipantReason::Activity(publication) => (
-            "activity",
-            "Active",
-            format!("Latest room message {publication} is inside the activity window"),
-        ),
+        ParticipantReason::Publication(_) => return None,
         ParticipantReason::Invitation(key) => (
             "invitation",
             "Invited",

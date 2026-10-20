@@ -157,9 +157,7 @@ fn kept_duties(reasons: &[AttentionReason], entries: &[Entry]) -> Vec<RoomListen
                 Some(RoomListeningDuty::Receipt { key: key.clone() })
             }
             AttentionReason::Result { key } => Some(RoomListeningDuty::Result { key: key.clone() }),
-            AttentionReason::Activity { .. }
-            | AttentionReason::Invitation { .. }
-            | AttentionReason::Asked { .. } => None,
+            AttentionReason::Invitation { .. } | AttentionReason::Asked { .. } => None,
         })
         .collect::<Vec<_>>();
     kept.sort();

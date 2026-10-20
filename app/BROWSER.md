@@ -179,9 +179,9 @@ yet and that starting or directing one will have the post read.
 Its receipts, result, or cited sources follow the words. A lane's first
 event-backed transition into listening, and its first such transition after a
 leave, is a full-width `joined DESIGN` divider immediately before the exact
-contribution or directed packet that established it. The join carries that
-event's durable identity and lane attribution; later publications while the
-lane remains present and replay after reconnect create none. Current native
+directed packet that established it. The join carries that event's durable
+identity and lane attribution; later invitations while the lane remains
+present and replay after reconnect create none. Current native
 work and duties remain standing rather than fabricated timeline events. A
 lane's departure from a design's room is likewise one full-width divider, the
 group's counterpart of a team compaction card and in its compact shape: two

@@ -246,9 +246,9 @@ impl RoomState {
         &self.events
     }
 
-    /// Event-backed transitions into listening, keyed by the exact room
-    /// publication that established each transition. Initial participation
-    /// and post-leave restoration are visible; later publications while the
+    /// Event-backed transitions into listening, keyed by the exact directed
+    /// room publication that established each transition. Initial invitation
+    /// and post-leave restoration are visible; later invitations while the
     /// lane remains present create no duplicate.
     #[must_use]
     pub fn listener_joins<'a>(
@@ -273,22 +273,19 @@ impl RoomState {
     }
 }
 
-/// Lanes whose exact room event establishes listening. An ordinary authored
-/// post observes the room but joins no lane; a packet joins its author and
-/// every lane it actually directed.
+/// Lanes whose exact room event establishes listening. Authorship and room-only
+/// posting join nobody; a packet joins each lane it actually directed.
 fn event_listener_lanes(
     event: &RoomEvent,
     conversation: &ConversationProjection,
 ) -> BTreeSet<CanonicalUuid> {
     let mut lanes = BTreeSet::new();
     if let RoomEventKind::Messaged {
-        source,
         directed,
         conversation: admitted,
         ..
     } = &event.kind
     {
-        lanes.insert(source.head.lane);
         lanes.extend(
             directed
                 .iter()
@@ -307,16 +304,14 @@ fn event_listener_lanes(
 }
 
 /// Why a logical lane currently appears in a room. Each reason names the
-/// admitted source it traces to; only `Activity` and `Invitation` age out of
-/// the activity window, a leave in force ends both and every earlier `Asked`,
-/// and native duties end only through their own dispositions.
+/// admitted source it traces to; only `Invitation` ages out of the invitation
+/// window, a leave in force ends it and every earlier `Asked`, and native
+/// duties end only through their own dispositions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipantReason {
-    /// The lane authored a typed contribution; its participation never ages.
-    Contribution(RoomAuthorityStamp),
-    /// The lane's latest authored room message falls inside the activity window.
-    Activity(RoomAuthorityStamp),
-    /// A room MSG or ASK addressed the lane inside the activity window; it
+    /// The lane authored a room message or typed contribution; history never ages.
+    Publication(RoomAuthorityStamp),
+    /// A room MSG or ASK addressed the lane inside the invitation window; it
     /// requests involvement and is not a contribution.
     Invitation(String),
     /// A recorded Design request asks the lane from this exact retained
@@ -332,7 +327,7 @@ pub enum ParticipantReason {
     Result(authority::QuestionResultRef),
     /// A live stop request addresses the lane's exact claim.
     Stop(String),
-    /// The lane recorded a leave; only later message/request attention and
+    /// The lane recorded a leave; only later addressed request attention and
     /// native duties can make it listen.
     Left {
         /// The leave's publication identity.

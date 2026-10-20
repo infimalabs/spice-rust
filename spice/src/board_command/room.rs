@@ -4,7 +4,7 @@ use spice::rooms::{
     Declared, LaneAvailability, RoomDuty, RoomDutyKind, RoomDutyStanding, RoomProjectionBudget,
     RoomProjectionError, RoomProjectionSources, RoomWork, derive_room_attention,
 };
-use wire::rooms::{ROOM_ACTIVITY_SECONDS, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp};
+use wire::rooms::{ROOM_INVITATION_SECONDS, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp};
 
 const ROOM_PUBLICATION_PAGES: usize =
     spice::rooms::MAX_ROOM_ATTENTION_SIGNALS.div_ceil(journal::MAX_RETAINED_FACT_PAGE_ROWS);
@@ -206,12 +206,11 @@ fn bounded_room_publications(
     Ok(rows)
 }
 
-/// One room's listeners: lanes with native work or duties in it, lanes that
-/// posted in it within the activity window, lanes a `MSG ADDRESS#ROOM` route
-/// addressed within that window, and lanes a recorded Design request asked
-/// about it. An addressed or asked lane hears the room without becoming a
-/// participant until it posts; a lane's leave ends its activity, earlier
-/// invitations, and earlier requests, never its native work or duties.
+/// One room's listeners: lanes with native work or duties, lanes a
+/// `MSG ADDRESS#ROOM` route addressed within the invitation window, and lanes
+/// a recorded Design request asked about it. An addressed or asked lane hears
+/// the room without becoming a participant until it posts; a lane's leave ends
+/// invitations and requests, never its native work or duties.
 pub(crate) fn project_attention(
     bus: &Bus,
     entries: &[Entry],
@@ -226,16 +225,18 @@ pub(crate) fn project_attention(
         .collect::<Vec<_>>();
     let since = at
         .get()
-        .checked_sub(jiff::SignedDuration::from_secs(ROOM_ACTIVITY_SECONDS))
-        .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
-    let since = Instant::new(since)
-        .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
+        .checked_sub(jiff::SignedDuration::from_secs(ROOM_INVITATION_SECONDS))
+        .map_err(|error| {
+            environment_fault("room::invitation-window-invalid", &error.to_string())
+        })?;
+    let since = Instant::new(since).map_err(|error| {
+        environment_fault("room::invitation-window-invalid", &error.to_string())
+    })?;
     let mut duties = room_invitations(bus, room, residency, since)?;
     duties.extend(room_asks(bus, room)?);
     duties.extend(room_native_duties(bus, room)?);
     derive_room_attention(
         room,
-        since,
         &RoomProjectionSources {
             publications: Declared::Available(publications),
             work: Declared::Available(&work),

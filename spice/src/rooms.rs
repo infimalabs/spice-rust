@@ -253,7 +253,7 @@ impl std::error::Error for RoomProjectionError {}
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ParticipationReason {
     /// The authenticated lane authored this admitted publication.
-    Contribution { publication: RoomAuthorityStamp },
+    Publication { publication: RoomAuthorityStamp },
 }
 
 /// Current reason a lane should receive bounded room catch-up.
@@ -261,11 +261,6 @@ pub enum ParticipationReason {
 pub enum AttentionReason {
     /// The lane has current relevant native work.
     Work { task: TaskStamp },
-    /// The lane authored a room message at or after the supplied cutoff.
-    Activity {
-        publication: RoomAuthorityStamp,
-        at: Instant,
-    },
     /// An explicit invitation remains owed; it does not make a participant.
     Invitation { key: String },
     /// A recorded Design request asked the lane using `source`; it does not
@@ -287,10 +282,7 @@ impl AttentionReason {
     /// Whether this reason is a native duty a leave cannot end.
     #[must_use]
     pub const fn is_native(&self) -> bool {
-        !matches!(
-            self,
-            Self::Activity { .. } | Self::Invitation { .. } | Self::Asked { .. }
-        )
+        !matches!(self, Self::Invitation { .. } | Self::Asked { .. })
     }
 }
 
@@ -335,8 +327,8 @@ pub struct RoomLaneAttention {
     pub availability: LaneAvailability,
     pub participation: Vec<ParticipationReason>,
     pub attention: Vec<AttentionReason>,
-    /// The lane's leave in force: no authored room message followed it. Only
-    /// native duties and later requests remain in `attention`.
+    /// The lane's latest leave. Only native duties and later requests remain
+    /// in `attention`; authored room messages do not end it.
     pub left: Option<RoomAuthorityStamp>,
     /// Derived-listening intervals ended by a leave. Retained after a return so
     /// publications skipped while left never become owed retroactively.
@@ -394,19 +386,14 @@ enum DerivedListeningEvent {
 struct LaneFold {
     participation: BTreeSet<ParticipationReason>,
     attention: BTreeSet<AttentionReason>,
-    latest_activity: Option<(Instant, RoomAuthorityStamp)>,
     latest_leave: Option<(Instant, RoomAuthorityStamp)>,
     derived_listening: Vec<(RoomAttentionPoint, DerivedListeningEvent)>,
 }
 
 impl LaneFold {
-    /// The leave no later authored room message ended.
+    /// The lane's latest recorded leave.
     fn leave(&self) -> Option<&(Instant, RoomAuthorityStamp)> {
-        self.latest_leave.as_ref().filter(|leave| {
-            self.latest_activity
-                .as_ref()
-                .is_none_or(|known| *leave > known)
-        })
+        self.latest_leave.as_ref()
     }
 
     fn take_leave_intervals(&mut self) -> Vec<RoomLeaveInterval> {
@@ -440,15 +427,12 @@ impl LaneFold {
 
 /// Derive one room's complete bounded attention view.
 ///
-/// `activity_since` is supplied by the caller, keeping wall-clock policy out of
-/// replay. Only admitted lane-authored MSG packets create activity; contributions
-/// create participation, and leaves bound derived listening. An authored
-/// observation never does.
-/// Replaying them is idempotent. Current duties and work survive vacancy and
-/// activity expiry.
+/// Admitted lane-authored MSG packets create participation without listening;
+/// contributions do the same, and leaves bound derived listening. An authored
+/// observation never does. Replaying them is idempotent. Current duties and
+/// work survive vacancy.
 pub fn derive_room_attention(
     room: &TaskStamp,
-    activity_since: Instant,
     sources: &RoomProjectionSources<'_>,
     budget: RoomProjectionBudget,
 ) -> Result<RoomAttention, RoomProjectionError> {
@@ -460,7 +444,7 @@ pub fn derive_room_attention(
     fold_attention(room, &sources, &mut lanes, budget.lanes)?;
     Ok(RoomAttention {
         room: room.clone(),
-        lanes: finish_lanes(lanes, &topology, activity_since),
+        lanes: finish_lanes(lanes, &topology),
     })
 }
 
@@ -551,8 +535,8 @@ fn fold_publications(
         let left = envelope.fact.read::<RoomLeft>();
         let contributed = envelope.fact.read::<RoomContributed>();
         // An authored observation makes no one a participant, so only MSG
-        // packets, contributions, and leaves fold here. Contributions record
-        // participation without subscribing their author to later publications.
+        // packets, contributions, and leaves fold here. MSG packets and
+        // contributions record participation without subscribing their author.
         let Some((anchor, publication)) = envelope
             .fact
             .read::<RoomMessaged>()
@@ -597,11 +581,11 @@ fn fold_publications(
         seen.insert(publication.clone(), (lane, envelope.at));
         let folded = lane_fold(lanes, lane, maximum)?;
         let observed = (envelope.at, publication.clone());
-        let event = RoomAttentionPoint {
-            at: envelope.at,
-            publication: Some(publication.clone()),
-        };
         if left.is_some() {
+            let event = RoomAttentionPoint {
+                at: envelope.at,
+                publication: Some(publication.clone()),
+            };
             folded
                 .derived_listening
                 .push((event, DerivedListeningEvent::Leave));
@@ -616,22 +600,9 @@ fn fold_publications(
         }
         folded
             .participation
-            .insert(ParticipationReason::Contribution {
+            .insert(ParticipationReason::Publication {
                 publication: publication.clone(),
             });
-        if contributed.is_some() {
-            continue;
-        }
-        folded
-            .derived_listening
-            .push((event, DerivedListeningEvent::Restore));
-        if folded
-            .latest_activity
-            .as_ref()
-            .is_none_or(|known| observed > *known)
-        {
-            folded.latest_activity = Some(observed);
-        }
     }
     Ok(())
 }
@@ -713,21 +684,12 @@ fn restores(folded: &mut LaneFold, at: Instant) -> bool {
 fn finish_lanes(
     lanes: BTreeMap<CanonicalUuid, LaneFold>,
     topology: &BTreeMap<CanonicalUuid, LaneAvailability>,
-    activity_since: Instant,
 ) -> Vec<RoomLaneAttention> {
     lanes
         .into_iter()
         .map(|(lane, mut folded)| {
             let left = folded.leave().map(|(_, publication)| publication.clone());
             let leave_intervals = folded.take_leave_intervals();
-            if left.is_none()
-                && let Some((at, publication)) = folded.latest_activity
-                && at >= activity_since
-            {
-                folded
-                    .attention
-                    .insert(AttentionReason::Activity { publication, at });
-            }
             RoomLaneAttention {
                 lane,
                 availability: topology
@@ -852,6 +814,52 @@ mod tests {
         }
     }
 
+    fn message(
+        room: &TaskStamp,
+        identity: &str,
+        lane: CanonicalUuid,
+        at: Instant,
+        seq: u64,
+    ) -> wire::Envelope<wire::AnyFact> {
+        let fact = Fact {
+            body: RoomMessaged {
+                room: room.clone(),
+                publication: identity.parse().expect("publication identity"),
+                hunk: wire::rooms::TranscriptHunk {
+                    head: wire::TranscriptSourceHead {
+                        lane,
+                        vendor: "omp".parse().expect("fixture vendor"),
+                        stream: "session".to_owned(),
+                        source: uuid("09"),
+                        next: wire::body::TranscriptPosition {
+                            member: 1,
+                            offset: 64,
+                        },
+                    },
+                    locus: wire::MessageLocus {
+                        member: 1,
+                        offset: 8,
+                        length: 32,
+                        event: 0,
+                    },
+                    text: wire::rooms::TextRange { start: 0, end: 12 },
+                },
+                author: uuid("02"),
+                directed: Vec::new(),
+            },
+        };
+        wire::Envelope {
+            v: WireVersion::CURRENT,
+            seq: Seq::new(seq).expect("positive sequence"),
+            at,
+            actor: Actor::Lane(lane),
+            origin: "fixture:room-attention".parse().expect("fixture origin"),
+            cause: None,
+            fact: wire::decode(&wire::encode(&fact).expect("encode message"))
+                .expect("decode opaque message"),
+        }
+    }
+
     fn leave(
         room: &TaskStamp,
         identity: &str,
@@ -900,7 +908,6 @@ mod tests {
     ) -> RoomLaneAttention {
         derive_room_attention(
             room,
-            at(30),
             &sources(publications, work, duties, &[], topology),
             RoomProjectionBudget::STANDARD,
         )
@@ -912,32 +919,27 @@ mod tests {
     }
 
     #[test]
-    fn a_contribution_records_participation_without_restoring_listening() {
+    fn authored_messages_and_contributions_record_participation_without_listening() {
         let room = task("1kKRRsDR0");
         let lane_id = uuid("01");
         let peer = uuid("06");
         let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
-        let contributed = publication(&room, "1kKRRsDR1", lane_id, at(40), 1);
+        let authored = message(&room, "1kKRRsDR1", lane_id, at(40), 1);
         let left = leave(&room, "1kKRRsDR2", lane_id, at(41), 2);
-        let missed = publication(&room, "1kKRRsDR3", peer, at(42), 3);
+        let missed = message(&room, "1kKRRsDR3", peer, at(42), 3);
         let returned_contribution = publication(&room, "1kKRRsDR4", lane_id, at(43), 4);
-        let after_return = publication(&room, "1kKRRsDR5", peer, at(44), 5);
+        let returned_message = message(&room, "1kKRRsDR5", lane_id, at(44), 5);
+        let after_return = message(&room, "1kKRRsDR6", peer, at(45), 6);
         let earlier = invitation(&room, lane_id, "1kKRRsDS0", at(40));
 
-        let participant = project_one(
-            &room,
-            std::slice::from_ref(&contributed),
-            &[],
-            &[],
-            &topology,
-        );
+        let participant = project_one(&room, std::slice::from_ref(&authored), &[], &[], &topology);
         assert!(participant.participates());
         assert!(!participant.listens(), "{participant:?}");
         assert_eq!(participant.left, None);
 
         let row = project_one(
             &room,
-            &[contributed.clone(), left.clone()],
+            &[authored.clone(), left.clone()],
             &[],
             std::slice::from_ref(&earlier),
             &topology,
@@ -949,7 +951,7 @@ mod tests {
         let later = invitation(&room, lane_id, "1kKRRsDS1", at(42));
         let invited = project_one(
             &room,
-            &[contributed.clone(), left.clone()],
+            &[authored.clone(), left.clone()],
             &[],
             &[earlier, later],
             &topology,
@@ -967,10 +969,11 @@ mod tests {
         let returned = project_one(
             &room,
             &[
-                contributed,
+                authored,
                 left,
                 missed,
                 returned_contribution,
+                returned_message,
                 after_return,
             ],
             &[],
@@ -1002,13 +1005,13 @@ mod tests {
                 room: room.clone(),
                 lanes: vec![returned],
             }],
-            vec![source(3, "1kKRRsDR3", 42), source(5, "1kKRRsDR5", 44)],
+            vec![source(3, "1kKRRsDR3", 42), source(6, "1kKRRsDR6", 45)],
             CatchUpBudget::STANDARD,
         )
         .expect("catch-up selects");
         assert!(
             catch_up.items.is_empty(),
-            "a contribution does not subscribe its author: {catch_up:?}"
+            "authorship does not subscribe the lane: {catch_up:?}"
         );
     }
 
@@ -1065,7 +1068,6 @@ mod tests {
         assert!(matches!(
             derive_room_attention(
                 &room,
-                at(30),
                 &sources(&[forged], &[], &[], &[], &topology),
                 RoomProjectionBudget::STANDARD,
             ),
@@ -1233,7 +1235,6 @@ mod tests {
 
         let projected = derive_room_attention(
             &room,
-            at(30),
             &sources(&publications, &work, &duties, &responsibilities, &topology),
             RoomProjectionBudget::STANDARD,
         )
@@ -1261,7 +1262,7 @@ mod tests {
         assert!(RoomWork::from_task(&room, &freed).is_none());
     }
     #[test]
-    fn expiry_and_handoff_preserve_native_duties() {
+    fn handoff_preserves_native_duties_without_adding_author_attention() {
         let room = task("1kKRRsDR0");
         let output = task("1kKRRsDR2");
         let old_lane = uuid("01");
@@ -1297,7 +1298,6 @@ mod tests {
 
         let projected = derive_room_attention(
             &room,
-            at(30),
             &sources(&publications, &work, &duties, &responsibilities, &topology),
             RoomProjectionBudget::STANDARD,
         )
@@ -1311,11 +1311,6 @@ mod tests {
         assert!(old.participates());
         assert_eq!(old.availability, LaneAvailability::Unknown);
         assert_eq!(old.attention.len(), 2);
-        assert!(
-            !old.attention
-                .iter()
-                .any(|reason| matches!(reason, AttentionReason::Activity { .. }))
-        );
         let new = projected
             .lanes
             .iter()
@@ -1342,7 +1337,6 @@ mod tests {
         let topology = residency(Vec::new());
         let projected = derive_room_attention(
             &room,
-            at(30),
             &sources(&[], &[], &duties, &[], &topology),
             RoomProjectionBudget::STANDARD,
         )
@@ -1359,7 +1353,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_renewal_and_settled_receipts_do_not_refresh_activity() {
+    fn replay_renewal_and_settled_receipts_do_not_create_attention() {
         let room = task("1kKRRsDR0");
         let lane_id = uuid("01");
         let admitted = publication(&room, "1kKRRsDR1", lane_id, at(10), 1);
@@ -1377,14 +1371,12 @@ mod tests {
 
         let original = derive_room_attention(
             &room,
-            at(30),
             &sources(&replayed[..1], &[], &settled, &[], &before),
             RoomProjectionBudget::STANDARD,
         )
         .expect("original projects");
         let rebuilt = derive_room_attention(
             &room,
-            at(30),
             &sources(&replayed, &[], &settled, &[], &after),
             RoomProjectionBudget::STANDARD,
         )
@@ -1406,12 +1398,10 @@ mod tests {
         let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
         let source = sources(&publications, &[], &[], &[], &topology);
 
-        let first_view =
-            derive_room_attention(&first, at(30), &source, RoomProjectionBudget::STANDARD)
-                .expect("first room projects");
-        let second_view =
-            derive_room_attention(&second, at(30), &source, RoomProjectionBudget::STANDARD)
-                .expect("second room projects");
+        let first_view = derive_room_attention(&first, &source, RoomProjectionBudget::STANDARD)
+            .expect("first room projects");
+        let second_view = derive_room_attention(&second, &source, RoomProjectionBudget::STANDARD)
+            .expect("second room projects");
 
         assert!(first_view.lanes[0].participates());
         assert!(second_view.lanes[0].participates());
@@ -1431,7 +1421,7 @@ mod tests {
             residency: Declared::Available(&topology),
         };
         assert!(matches!(
-            derive_room_attention(&room, at(30), &unavailable, RoomProjectionBudget::STANDARD),
+            derive_room_attention(&room, &unavailable, RoomProjectionBudget::STANDARD),
             Err(RoomProjectionError::Unavailable(_))
         ));
 
@@ -1443,7 +1433,6 @@ mod tests {
         assert!(matches!(
             derive_room_attention(
                 &room,
-                at(30),
                 &sources(&publications, &[], &[], &[], &topology),
                 RoomProjectionBudget::new(1, 1).expect("small positive budget")
             ),
