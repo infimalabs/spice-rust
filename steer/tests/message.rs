@@ -322,6 +322,23 @@ fn defective_packets_refuse_whole_without_guessing() {
             error: OccupantAddressError::Alphabet("bob".to_owned()),
         }
     );
+    for numbered in [
+        "1. MSG bob 6HmS: numbered.",
+        "  12) MSG bob 6HmS: numbered.",
+    ] {
+        let span = numbered.find("bob").expect("fixture selector");
+        assert_eq!(
+            refusal(numbered),
+            MessageRefusal::Recipient {
+                span: span..span + 3,
+                error: OccupantAddressError::Alphabet("bob".to_owned()),
+            },
+            "{numbered:?}"
+        );
+    }
+    let prose = "2. MSG 6HmS: numbered packet";
+    let [message] = scan_messages(prose).try_into().expect("one packet");
+    assert_eq!(sent(prose, &message), (vec!["6HmS"], "numbered packet"));
     assert_eq!(
         refusal("MSG 6HmS please review this"),
         MessageRefusal::Unterminated

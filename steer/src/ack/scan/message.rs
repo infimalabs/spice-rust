@@ -264,14 +264,25 @@ pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
     })
 }
 
-/// Whether a marker begins an explicit line packet, ignoring Markdown framing.
+/// Whether a marker begins an explicit line packet, ignoring Markdown framing:
+/// indentation, bullet or emphasis characters, and one ordered-list number
+/// closed by `.` or `)`.
 fn marker_starts_line(prose: &str, marker_start: usize) -> bool {
     let line_start = prose[..marker_start]
         .rfind(['\r', '\n'])
         .map_or(0, |index| index + 1);
-    prose[line_start..marker_start]
-        .bytes()
-        .all(|byte| matches!(byte, b' ' | b'\t' | b'-' | b'+' | b'*' | b'_'))
+    let framing = |text: &str| {
+        text.bytes()
+            .all(|byte| matches!(byte, b' ' | b'\t' | b'-' | b'+' | b'*' | b'_'))
+    };
+    let prefix = &prose[line_start..marker_start];
+    let lead = prefix.trim_start_matches([' ', '\t']);
+    let rest = lead.trim_start_matches(|character: char| character.is_ascii_digit());
+    framing(prefix)
+        || (rest.len() < lead.len()
+            && rest
+                .strip_prefix(['.', ')'])
+                .is_some_and(|after| framing(after)))
 }
 
 /// One selector's lead range and, when qualified, its context range.
