@@ -1399,7 +1399,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["release", "publish"],
         "release publish [--notes-file FILE] [--release-commit REV] [--version VERSION] \
-         [--action publish|tag-and-announce] [--apply=<digest>]",
+         [--apply=<digest>]",
         Operator,
         Command,
         [ReleasePublished],

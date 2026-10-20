@@ -12,33 +12,6 @@ use crate::body::PublishedTarget;
 use crate::ident::Digest;
 use crate::manifest::ProductVersion;
 
-/// Which closed release path the operator previewed.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ReleaseAction {
-    /// Prepare, verify, and externally publish a new release.
-    Publish,
-    /// Recover only the immutable tag and announcement after exact visibility.
-    TagAndAnnounce,
-}
-
-impl ReleaseAction {
-    /// The action's command spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Publish => "publish",
-            Self::TagAndAnnounce => "tag-and-announce",
-        }
-    }
-}
-
-impl fmt::Display for ReleaseAction {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
 /// The sole ordered operation vocabulary understood by preview and apply.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -84,7 +57,7 @@ impl fmt::Display for Operation {
     }
 }
 
-/// Exact registry observation required by tag-and-announce recovery.
+/// Exact registry observation proving the planned package is visible.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegistryEvidence {
@@ -133,13 +106,6 @@ pub struct ReleaseObservations {
         deserialize_with = "crate::optional::present"
     )]
     pub announcement_ref: Option<String>,
-    /// Exact package visibility required by tag-and-announce recovery.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub registry: Option<RegistryEvidence>,
 }
 
 /// One exact, complete external-release plan. Its key binds every field below
@@ -151,8 +117,6 @@ pub struct ReleasePlan {
     pub key: Digest,
     /// Identity of the repository authority observed by the planner.
     pub repository: Digest,
-    /// Closed release action.
-    pub action: ReleaseAction,
     /// Canonical semantic version requested by the operator.
     pub requested_version: ProductVersion,
     /// Immutable source commit from which release preparation began.

@@ -2,18 +2,21 @@
 //!
 //! The planner has no effect port. It seals every observation and the complete
 //! operation inventory into one digest. The executor accepts only that digest,
-//! re-observes the entire binding before the first effect, and brackets every
-//! convergent effect with an accepted-operation row and a typed receipt.
+//! re-observes the entire binding before the first effect, admits the already
+//! converged prefix from durable receipts and authoritative external state, and
+//! brackets every remaining effect with an accepted-operation row and a typed
+//! receipt.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use wire::body::PublishedTarget;
 use wire::manifest::{ProductVersion, ReleaseTarget};
-use wire::release::{Operation, RegistryEvidence, ReleaseAction, ReleaseObservations, ReleasePlan};
+use wire::release::{Operation, RegistryEvidence, ReleaseObservations, ReleasePlan};
 use wire::{Digest, Domain};
 
-const PUBLISH_OPERATIONS: &[Operation] = &[
+/// The sole ordered operation graph for fresh and resumed publication.
+const OPERATIONS: &[Operation] = &[
     Operation::ResolvePreconditionsAndCredentials,
     Operation::RunCorrectnessGate,
     Operation::InstallAndProbeArtifacts,
@@ -24,18 +27,21 @@ const PUBLISH_OPERATIONS: &[Operation] = &[
     Operation::Announce,
 ];
 
-const RECOVERY_OPERATIONS: &[Operation] = &[
-    Operation::ResolvePreconditionsAndCredentials,
+/// Operations a package already visible at the release authority proves
+/// crossed: once the exact package is published, nothing before visibility
+/// may run again.
+const PUBLICATION_PREFIX: [Operation; 5] = [
+    Operation::RunCorrectnessGate,
+    Operation::InstallAndProbeArtifacts,
+    Operation::RehearseUpload,
+    Operation::UploadPackage,
     Operation::AwaitRegistryVisibility,
-    Operation::CreateImmutableTag,
-    Operation::Announce,
 ];
 
 /// All caller and repository input from which a release plan is derived.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanInput {
     pub repository: Digest,
-    pub action: ReleaseAction,
     pub requested_version: ProductVersion,
     pub source_commit: String,
     pub release_commit: String,
@@ -51,7 +57,6 @@ pub struct PlanInput {
 #[derive(Serialize)]
 struct PlanBinding<'a> {
     repository: &'a Digest,
-    action: ReleaseAction,
     requested_version: &'a ProductVersion,
     source_commit: &'a str,
     release_commit: &'a str,
@@ -77,17 +82,18 @@ pub fn plan_release(input: PlanInput) -> Result<ReleasePlan, PlanError> {
     validate_object("release commit", &input.release_commit)?;
     validate_object("package object", &input.package_object)?;
     validate_object("HEAD", &input.observations.head)?;
-    validate_preconditions(&input)?;
+    validate_observations(
+        &input.requested_version,
+        &input.source_commit,
+        &input.release_commit,
+        &input.package_object,
+        &input.observations,
+    )?;
     validate_targets(&input.targets)?;
-    let operations = match input.action {
-        ReleaseAction::Publish => PUBLISH_OPERATIONS.to_vec(),
-        ReleaseAction::TagAndAnnounce => RECOVERY_OPERATIONS.to_vec(),
-    };
     let notes = Digest::compute(Domain::DistReleaseNotes, input.notes_document.as_bytes());
     let mut plan = ReleasePlan {
         key: Digest::compute(Domain::DistReleasePlan, b"unsealed"),
         repository: input.repository,
-        action: input.action,
         requested_version: input.requested_version,
         source_commit: input.source_commit,
         release_commit: input.release_commit,
@@ -98,7 +104,7 @@ pub fn plan_release(input: PlanInput) -> Result<ReleasePlan, PlanError> {
         package_object: input.package_object,
         installed_artifact: input.installed_artifact,
         targets: input.targets,
-        operations,
+        operations: OPERATIONS.to_vec(),
         observations: input.observations,
     };
     plan.key = plan_identity(&plan)?;
@@ -125,20 +131,14 @@ pub fn verify_plan(plan: &ReleasePlan) -> Result<(), PlanError> {
     validate_object("package object", &plan.package_object)?;
     validate_object("HEAD", &plan.observations.head)?;
     validate_observations(
-        plan.action,
         &plan.requested_version,
         &plan.source_commit,
         &plan.release_commit,
-        &plan.package,
         &plan.package_object,
         &plan.observations,
     )?;
     validate_targets(&plan.targets)?;
-    let expected_operations = match plan.action {
-        ReleaseAction::Publish => PUBLISH_OPERATIONS,
-        ReleaseAction::TagAndAnnounce => RECOVERY_OPERATIONS,
-    };
-    if plan.operations != expected_operations {
+    if plan.operations != OPERATIONS {
         return Err(PlanError::OperationList);
     }
     let notes = Digest::compute(Domain::DistReleaseNotes, plan.notes_document.as_bytes());
@@ -159,7 +159,6 @@ pub fn verify_plan(plan: &ReleasePlan) -> Result<(), PlanError> {
 fn plan_identity(plan: &ReleasePlan) -> Result<Digest, PlanError> {
     let binding = PlanBinding {
         repository: &plan.repository,
-        action: plan.action,
         requested_version: &plan.requested_version,
         source_commit: &plan.source_commit,
         release_commit: &plan.release_commit,
@@ -177,24 +176,10 @@ fn plan_identity(plan: &ReleasePlan) -> Result<Digest, PlanError> {
     Ok(Digest::compute(Domain::DistReleasePlan, &bytes))
 }
 
-fn validate_preconditions(input: &PlanInput) -> Result<(), PlanError> {
-    validate_observations(
-        input.action,
-        &input.requested_version,
-        &input.source_commit,
-        &input.release_commit,
-        &input.package,
-        &input.package_object,
-        &input.observations,
-    )
-}
-
 fn validate_observations(
-    action: ReleaseAction,
     requested_version: &ProductVersion,
     source_commit: &str,
     release_commit: &str,
-    package: &Digest,
     package_object: &str,
     observed: &ReleaseObservations,
 ) -> Result<(), PlanError> {
@@ -220,14 +205,10 @@ fn validate_observations(
             observed: observed.release_version.clone(),
         });
     }
-    let expected_head = match action {
-        ReleaseAction::Publish => source_commit,
-        ReleaseAction::TagAndAnnounce => release_commit,
-    };
-    if observed.head != expected_head {
+    if observed.head != release_commit {
         return Err(PlanError::NonHeadPublication {
             head: observed.head.clone(),
-            release: expected_head.to_owned(),
+            release: release_commit.to_owned(),
         });
     }
     if !observed.credentials_valid {
@@ -240,18 +221,6 @@ fn validate_observations(
         observed.announcement_ref.as_deref(),
         release_commit,
     )?;
-    if action == ReleaseAction::TagAndAnnounce {
-        let evidence = observed
-            .registry
-            .as_ref()
-            .ok_or(PlanError::RegistryEvidenceAbsent)?;
-        if &evidence.version != requested_version
-            || evidence.release_commit != release_commit
-            || &evidence.package != package
-        {
-            return Err(PlanError::RegistryEvidenceMoved);
-        }
-    }
     Ok(())
 }
 
@@ -336,10 +305,6 @@ pub enum PlanError {
         expected: String,
         observed: String,
     },
-    #[error("tag-and-announce recovery has no registry-visible evidence")]
-    RegistryEvidenceAbsent,
-    #[error("registry-visible evidence does not name the exact release")]
-    RegistryEvidenceMoved,
     #[error("the release has {0} sealed targets instead of three")]
     TargetCount(usize),
     #[error("sealed target {index} is {observed}, expected {expected}")]
@@ -348,7 +313,7 @@ pub enum PlanError {
         expected: ReleaseTarget,
         observed: String,
     },
-    #[error("release plan operation inventory is not canonical for its action")]
+    #[error("release plan operation inventory is not the canonical graph")]
     OperationList,
     #[error("release note bytes disagree with their identity")]
     NotesIdentity,
@@ -503,10 +468,18 @@ impl ReleaseExecutor {
 
     /// Execute or resume exactly the plan whose digest was applied.
     ///
+    /// Admission proves the converged prefix before the first effect: an
+    /// operation is met by its durable receipt or by authoritative external
+    /// state, and met operations must precede every unmet one. A witnessed
+    /// operation is receipted without crossing its effect again, so a visible
+    /// package never reruns the gate or republishes, and an observed tag or
+    /// announcement is never repeated.
+    ///
     /// # Errors
     ///
-    /// Refuses key or observation drift before any operation, preserves
-    /// effect outcome categories, and faults on journal durability failures.
+    /// Refuses key or observation drift and contradictory or non-prefix
+    /// external state before any operation, preserves effect outcome
+    /// categories, and faults on journal durability failures.
     pub fn execute<J: ReleaseJournal, E: EffectPort>(
         plan: &ReleasePlan,
         applied: &Digest,
@@ -524,39 +497,46 @@ impl ReleaseExecutor {
         if observed != plan.observations {
             return Err(ExecuteError::ObservationsMoved);
         }
+        let witnesses = Witnesses::observe(plan, effects)?;
+        admit_prefix(plan, journal, &witnesses)?;
         let mut completed = Vec::with_capacity(plan.operations.len());
         for operation in &plan.operations {
             if let Some(receipt) = journal
                 .receipt(&plan.key, *operation)
-                .map_err(|error| ExecuteError::Journal(error.to_string()))?
+                .map_err(journal_error)?
             {
                 validate_receipt(plan, &receipt)?;
                 completed.push(receipt);
                 continue;
             }
+            let witness = witnesses.proof(*operation);
             let accepted = match journal
                 .accepted(&plan.key, *operation)
-                .map_err(|error| ExecuteError::Journal(error.to_string()))?
+                .map_err(journal_error)?
             {
                 Some(accepted) => accepted,
                 None => {
-                    let prior = effects
-                        .prior(plan, *operation)
-                        .map_err(ExecuteError::Effect)?;
+                    let prior = match witness {
+                        Some(state) => state.clone(),
+                        None => effects
+                            .prior(plan, *operation)
+                            .map_err(ExecuteError::Effect)?,
+                    };
                     let accepted = AcceptedOperation {
                         plan: plan.key.clone(),
                         operation: *operation,
                         prior,
                     };
-                    journal
-                        .accept(&accepted)
-                        .map_err(|error| ExecuteError::Journal(error.to_string()))?;
+                    journal.accept(&accepted).map_err(journal_error)?;
                     accepted
                 }
             };
-            let (result, convergence) = effects
-                .converge(plan, *operation, &accepted.prior)
-                .map_err(ExecuteError::Effect)?;
+            let (result, convergence) = match witness {
+                Some(state) => (state.clone(), Convergence::AlreadyConverged),
+                None => effects
+                    .converge(plan, *operation, &accepted.prior)
+                    .map_err(ExecuteError::Effect)?,
+            };
             let receipt = OperationReceipt {
                 plan: plan.key.clone(),
                 operation: *operation,
@@ -565,13 +545,128 @@ impl ReleaseExecutor {
                 convergence,
             };
             validate_receipt(plan, &receipt)?;
-            journal
-                .complete(&receipt)
-                .map_err(|error| ExecuteError::Journal(error.to_string()))?;
+            journal.complete(&receipt).map_err(journal_error)?;
             completed.push(receipt);
         }
         Self::verify_completion(plan, &completed)?;
         Ok(Execution { completed })
+    }
+}
+
+fn journal_error(error: impl fmt::Display) -> ExecuteError {
+    ExecuteError::Journal(error.to_string())
+}
+
+/// Authoritative external state proving an operation already converged.
+struct Witnesses {
+    registry: Option<OperationState>,
+    tag: Option<OperationState>,
+    announcement: Option<OperationState>,
+}
+
+impl Witnesses {
+    fn observe<E: EffectPort>(plan: &ReleasePlan, effects: &mut E) -> Result<Self, ExecuteError> {
+        let registry = effects
+            .prior(plan, Operation::AwaitRegistryVisibility)
+            .map_err(ExecuteError::Effect)?;
+        let registry = match &registry {
+            OperationState::Registry { evidence: None } => None,
+            OperationState::Registry {
+                evidence: Some(evidence),
+            } if *evidence == registry_evidence(plan) => Some(registry),
+            _ => return Err(ExecuteError::RegistryEvidenceMoved),
+        };
+        Ok(Self {
+            registry,
+            tag: Self::release_object(plan, effects, Operation::CreateImmutableTag)?,
+            announcement: Self::release_object(plan, effects, Operation::Announce)?,
+        })
+    }
+
+    fn release_object<E: EffectPort>(
+        plan: &ReleasePlan,
+        effects: &mut E,
+        operation: Operation,
+    ) -> Result<Option<OperationState>, ExecuteError> {
+        let state = effects
+            .prior(plan, operation)
+            .map_err(ExecuteError::Effect)?;
+        let object = match &state {
+            OperationState::RemoteRef { object, .. } | OperationState::Announcement { object } => {
+                object.as_deref()
+            }
+            _ => return Err(ExecuteError::ExternalMoved(operation)),
+        };
+        match object {
+            None => Ok(None),
+            Some(object) if object == plan.release_commit => Ok(Some(state)),
+            Some(_) => Err(ExecuteError::ExternalMoved(operation)),
+        }
+    }
+
+    fn proof(&self, operation: Operation) -> Option<&OperationState> {
+        match operation {
+            Operation::CreateImmutableTag => self.tag.as_ref(),
+            Operation::Announce => self.announcement.as_ref(),
+            operation if PUBLICATION_PREFIX.contains(&operation) => self.registry.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Operations whose own effect is directly observable, so a receipt
+    /// without that observation contradicts authority. Upload is excluded:
+    /// registry visibility may lag its receipt.
+    const fn observes(operation: Operation) -> bool {
+        matches!(
+            operation,
+            Operation::AwaitRegistryVisibility
+                | Operation::CreateImmutableTag
+                | Operation::Announce
+        )
+    }
+}
+
+/// Refuse unless receipts and external witnesses describe one converged
+/// prefix. Credential resolution re-binds every run, so it is witnessed only by
+/// its own receipt and never orders external state.
+fn admit_prefix<J: ReleaseJournal>(
+    plan: &ReleasePlan,
+    journal: &mut J,
+    witnesses: &Witnesses,
+) -> Result<(), ExecuteError> {
+    let mut unmet = None;
+    for operation in &plan.operations {
+        if *operation == Operation::ResolvePreconditionsAndCredentials {
+            continue;
+        }
+        let witnessed = witnesses.proof(*operation).is_some();
+        let receipted = journal
+            .receipt(&plan.key, *operation)
+            .map_err(journal_error)?
+            .is_some();
+        if receipted && !witnessed && Witnesses::observes(*operation) {
+            return Err(ExecuteError::Contradicted(*operation));
+        }
+        let met = witnessed || receipted;
+        match (met, unmet) {
+            (false, None) => unmet = Some(*operation),
+            (true, Some(unmet)) => {
+                return Err(ExecuteError::NotPrefix {
+                    converged: *operation,
+                    unmet,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn registry_evidence(plan: &ReleasePlan) -> RegistryEvidence {
+    RegistryEvidence {
+        version: plan.requested_version.clone(),
+        release_commit: plan.release_commit.clone(),
+        package: plan.package.clone(),
     }
 }
 
@@ -622,13 +717,15 @@ fn validate_receipt(plan: &ReleasePlan, receipt: &OperationReceipt) -> Result<()
             OperationState::Registry {
                 evidence: Some(evidence),
             },
-        ) => {
-            evidence
-                == &RegistryEvidence {
-                    version: plan.requested_version.clone(),
-                    release_commit: plan.release_commit.clone(),
-                    package: plan.package.clone(),
-                }
+        ) => *evidence == registry_evidence(plan),
+        (
+            operation,
+            OperationState::Registry {
+                evidence: Some(evidence),
+            },
+        ) if PUBLICATION_PREFIX.contains(operation) => {
+            receipt.convergence == Convergence::AlreadyConverged
+                && *evidence == registry_evidence(plan)
         }
         (
             Op::Announce,
@@ -670,6 +767,15 @@ pub enum ExecuteError {
     InstalledArtifactMoved,
     #[error("registry visibility does not name the exact package and release commit")]
     RegistryEvidenceMoved,
+    #[error("authoritative {0} state names another release")]
+    ExternalMoved(Operation),
+    #[error("{converged} is already converged while earlier {unmet} is not")]
+    NotPrefix {
+        converged: Operation,
+        unmet: Operation,
+    },
+    #[error("{0} has a durable receipt but its authoritative state is absent")]
+    Contradicted(Operation),
 }
 
 #[cfg(test)]
