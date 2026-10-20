@@ -77,13 +77,6 @@ impl<'a> Context<'a> {
                 return unavailable(format!("board head admission failed: {error}"));
             }
         }
-        if let Some(continuation) = &snapshot.task_continuation {
-            return DoctorObservation::InputRequired {
-                reason: format!(
-                    "board head inspection is bounded after {continuation}; inspect the complete live board through the resident"
-                ),
-            };
-        }
         ready()
     }
 }
@@ -136,14 +129,10 @@ impl Authority {
                 .latest_fact(FactKind::ReleasePublished)
                 .map_err(|error| format!("journal release facts are invalid: {error}"))?
                 .is_some();
-            let tasks = read
-                .task_head_page(None, journal::FactReadBudget::RETAINED)
-                .map_err(|error| format!("journal task heads are invalid: {error}"))?;
             Ok(AuthoritySnapshot {
                 steering,
                 release_published,
-                task_heads: tasks.rows,
-                task_continuation: tasks.continuation,
+                task_heads: every_task_head(read)?,
                 residency: read
                     .residency_head()
                     .map_err(|error| format!("journal residency head is invalid: {error}"))?
@@ -182,8 +171,23 @@ struct AuthoritySnapshot {
     steering: Result<(), String>,
     release_published: bool,
     task_heads: Vec<journal::TaskHeads>,
-    task_continuation: Option<wire::TaskStamp>,
     residency: Option<ResidencyHead>,
+}
+
+/// Every current task head, read through bounded indexed pages.
+fn every_task_head(read: &journal::JournalRead<'_>) -> Result<Vec<journal::TaskHeads>, String> {
+    let mut heads = Vec::new();
+    let mut after = None;
+    loop {
+        let page = read
+            .task_head_page(after.as_ref(), journal::FactReadBudget::RETAINED)
+            .map_err(|error| format!("journal task heads are invalid: {error}"))?;
+        heads.extend(page.rows);
+        match page.continuation {
+            Some(continuation) => after = Some(continuation),
+            None => return Ok(heads),
+        }
+    }
 }
 
 fn steering(authority: &Authority) -> DoctorObservation {
