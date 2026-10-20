@@ -281,7 +281,7 @@ fn cover_transport_reply_frames() {
 
 fn cover_release_plan_observations() {
     let version = ProductVersion::parse("1.2.3").expect("release version");
-    let base = ReleasePlanObservations {
+    let base = ReleaseObservations {
         head: "1".repeat(40),
         clean: true,
         unrecorded_local_commits: 0,
@@ -294,14 +294,14 @@ fn cover_release_plan_observations() {
         registry: None,
     };
     law(
-        "ReleasePlanObservations",
+        "ReleaseObservations",
         &[
             base.clone(),
-            ReleasePlanObservations {
+            ReleaseObservations {
                 package_ref: Some("3".repeat(40)),
                 tag_ref: Some("4".repeat(40)),
                 announcement_ref: Some("5".repeat(40)),
-                registry: Some(ReleaseRegistryEvidence {
+                registry: Some(RegistryEvidence {
                     version,
                     release_commit: "6".repeat(40),
                     package: digest("9"),

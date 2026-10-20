@@ -8,58 +8,10 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use wire::body::PublishedTarget;
 use wire::manifest::{ProductVersion, ReleaseTarget};
+use wire::release::{Operation, RegistryEvidence, ReleaseAction, ReleaseObservations, ReleasePlan};
 use wire::{Digest, Domain};
-
-/// Which closed release path the operator previewed.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ReleaseAction {
-    /// Prepare, verify, and externally publish a new release.
-    Publish,
-    /// Recover only the immutable tag and announcement after exact visibility.
-    TagAndAnnounce,
-}
-
-impl ReleaseAction {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Publish => "publish",
-            Self::TagAndAnnounce => "tag-and-announce",
-        }
-    }
-}
-
-/// The sole ordered operation vocabulary understood by preview and apply.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Operation {
-    ResolvePreconditionsAndCredentials,
-    RunCorrectnessGate,
-    InstallAndProbeArtifacts,
-    RehearseUpload,
-    UploadPackage,
-    AwaitRegistryVisibility,
-    CreateImmutableTag,
-    Announce,
-}
-
-impl Operation {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ResolvePreconditionsAndCredentials => "resolve-preconditions-and-credentials",
-            Self::RunCorrectnessGate => "run-correctness-gate",
-            Self::InstallAndProbeArtifacts => "install-and-probe-artifacts",
-            Self::RehearseUpload => "rehearse-upload",
-            Self::UploadPackage => "upload-package",
-            Self::AwaitRegistryVisibility => "await-registry-visibility",
-            Self::CreateImmutableTag => "create-immutable-tag",
-            Self::Announce => "announce",
-        }
-    }
-}
 
 const PUBLISH_OPERATIONS: &[Operation] = &[
     Operation::ResolvePreconditionsAndCredentials,
@@ -79,40 +31,6 @@ const RECOVERY_OPERATIONS: &[Operation] = &[
     Operation::Announce,
 ];
 
-/// One sealed target carried through package publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SealedTarget {
-    pub target: String,
-    pub artifact: Digest,
-    pub receipt: Digest,
-}
-
-/// Exact registry observation required by tag-and-announce recovery.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RegistryEvidence {
-    pub version: ProductVersion,
-    pub release_commit: String,
-    pub package: Digest,
-}
-
-/// Complete consequence-free observations bound into a release preview.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseObservations {
-    pub head: String,
-    pub clean: bool,
-    pub unrecorded_local_commits: u64,
-    pub source_version: ProductVersion,
-    pub release_version: ProductVersion,
-    pub credentials_valid: bool,
-    pub package_ref: Option<String>,
-    pub tag_ref: Option<String>,
-    pub announcement_ref: Option<String>,
-    pub registry: Option<RegistryEvidence>,
-}
-
 /// All caller and repository input from which a release plan is derived.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanInput {
@@ -121,34 +39,13 @@ pub struct PlanInput {
     pub requested_version: ProductVersion,
     pub source_commit: String,
     pub release_commit: String,
-    pub notes: Vec<u8>,
+    pub notes_document: String,
     pub manifest: Digest,
     pub package: Digest,
     pub package_object: String,
     pub installed_artifact: Digest,
-    pub targets: Vec<SealedTarget>,
+    pub targets: Vec<PublishedTarget>,
     pub observations: ReleaseObservations,
-}
-
-/// One exact, complete release plan. Its key excludes no field below it.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleasePlan {
-    pub key: Digest,
-    pub repository: Digest,
-    pub action: ReleaseAction,
-    pub requested_version: ProductVersion,
-    pub source_commit: String,
-    pub release_commit: String,
-    pub notes: Vec<u8>,
-    pub notes_identity: Digest,
-    pub manifest: Digest,
-    pub package: Digest,
-    pub package_object: String,
-    pub installed_artifact: Digest,
-    pub targets: Vec<SealedTarget>,
-    pub observations: ReleaseObservations,
-    pub operations: Vec<Operation>,
 }
 
 #[derive(Serialize)]
@@ -158,13 +55,13 @@ struct PlanBinding<'a> {
     requested_version: &'a ProductVersion,
     source_commit: &'a str,
     release_commit: &'a str,
-    notes: &'a [u8],
-    notes_identity: &'a Digest,
+    notes_document: &'a str,
+    notes: &'a Digest,
     manifest: &'a Digest,
     package: &'a Digest,
     package_object: &'a str,
     installed_artifact: &'a Digest,
-    targets: &'a [SealedTarget],
+    targets: &'a [PublishedTarget],
     observations: &'a ReleaseObservations,
     operations: &'a [Operation],
 }
@@ -186,7 +83,7 @@ pub fn plan_release(input: PlanInput) -> Result<ReleasePlan, PlanError> {
         ReleaseAction::Publish => PUBLISH_OPERATIONS.to_vec(),
         ReleaseAction::TagAndAnnounce => RECOVERY_OPERATIONS.to_vec(),
     };
-    let notes_identity = Digest::compute(Domain::DistReleaseNotes, &input.notes);
+    let notes = Digest::compute(Domain::DistReleaseNotes, input.notes_document.as_bytes());
     let mut plan = ReleasePlan {
         key: Digest::compute(Domain::DistReleasePlan, b"unsealed"),
         repository: input.repository,
@@ -194,92 +91,90 @@ pub fn plan_release(input: PlanInput) -> Result<ReleasePlan, PlanError> {
         requested_version: input.requested_version,
         source_commit: input.source_commit,
         release_commit: input.release_commit,
-        notes: input.notes,
-        notes_identity,
         manifest: input.manifest,
+        notes,
+        notes_document: input.notes_document,
         package: input.package,
         package_object: input.package_object,
         installed_artifact: input.installed_artifact,
         targets: input.targets,
-        observations: input.observations,
         operations,
+        observations: input.observations,
     };
-    plan.key = plan.identity()?;
+    plan.key = plan_identity(&plan)?;
     Ok(plan)
 }
 
-impl ReleasePlan {
-    /// Identity written only after this plan's full correctness gate succeeds.
-    #[must_use]
-    pub fn gate_receipt(&self) -> Digest {
-        Digest::compute(
-            Domain::GateReceipt,
-            format!("{}:{}", self.key, Operation::RunCorrectnessGate.as_str()).as_bytes(),
-        )
-    }
+/// Identity written only after this plan's full correctness gate succeeds.
+#[must_use]
+pub fn gate_receipt(plan: &ReleasePlan) -> Digest {
+    Digest::compute(
+        Domain::GateReceipt,
+        format!("{}:{}", plan.key, Operation::RunCorrectnessGate.as_str()).as_bytes(),
+    )
+}
 
-    /// Recompute and compare the complete plan identity.
-    ///
-    /// # Errors
-    ///
-    /// Returns an encoding fault or a moved-key refusal.
-    pub fn verify(&self) -> Result<(), PlanError> {
-        validate_object("source commit", &self.source_commit)?;
-        validate_object("release commit", &self.release_commit)?;
-        validate_object("package object", &self.package_object)?;
-        validate_object("HEAD", &self.observations.head)?;
-        validate_observations(
-            self.action,
-            &self.requested_version,
-            &self.source_commit,
-            &self.release_commit,
-            &self.package,
-            &self.package_object,
-            &self.observations,
-        )?;
-        validate_targets(&self.targets)?;
-        let expected_operations = match self.action {
-            ReleaseAction::Publish => PUBLISH_OPERATIONS,
-            ReleaseAction::TagAndAnnounce => RECOVERY_OPERATIONS,
-        };
-        if self.operations != expected_operations {
-            return Err(PlanError::OperationList);
-        }
-        let notes = Digest::compute(Domain::DistReleaseNotes, &self.notes);
-        if self.notes_identity != notes {
-            return Err(PlanError::NotesIdentity);
-        }
-        let observed = self.identity()?;
-        if observed == self.key {
-            Ok(())
-        } else {
-            Err(PlanError::KeyMoved {
-                expected: self.key.clone(),
-                observed,
-            })
-        }
+/// Recompute and compare the complete plan identity.
+///
+/// # Errors
+///
+/// Returns an encoding fault or a moved-key refusal.
+pub fn verify_plan(plan: &ReleasePlan) -> Result<(), PlanError> {
+    validate_object("source commit", &plan.source_commit)?;
+    validate_object("release commit", &plan.release_commit)?;
+    validate_object("package object", &plan.package_object)?;
+    validate_object("HEAD", &plan.observations.head)?;
+    validate_observations(
+        plan.action,
+        &plan.requested_version,
+        &plan.source_commit,
+        &plan.release_commit,
+        &plan.package,
+        &plan.package_object,
+        &plan.observations,
+    )?;
+    validate_targets(&plan.targets)?;
+    let expected_operations = match plan.action {
+        ReleaseAction::Publish => PUBLISH_OPERATIONS,
+        ReleaseAction::TagAndAnnounce => RECOVERY_OPERATIONS,
+    };
+    if plan.operations != expected_operations {
+        return Err(PlanError::OperationList);
     }
+    let notes = Digest::compute(Domain::DistReleaseNotes, plan.notes_document.as_bytes());
+    if plan.notes != notes {
+        return Err(PlanError::NotesIdentity);
+    }
+    let observed = plan_identity(plan)?;
+    if observed == plan.key {
+        Ok(())
+    } else {
+        Err(PlanError::KeyMoved {
+            expected: plan.key.clone(),
+            observed,
+        })
+    }
+}
 
-    fn identity(&self) -> Result<Digest, PlanError> {
-        let binding = PlanBinding {
-            repository: &self.repository,
-            action: self.action,
-            requested_version: &self.requested_version,
-            source_commit: &self.source_commit,
-            release_commit: &self.release_commit,
-            notes: &self.notes,
-            notes_identity: &self.notes_identity,
-            manifest: &self.manifest,
-            package: &self.package,
-            package_object: &self.package_object,
-            installed_artifact: &self.installed_artifact,
-            targets: &self.targets,
-            observations: &self.observations,
-            operations: &self.operations,
-        };
-        let bytes = wire::encode(&binding).map_err(|error| PlanError::Encode(error.to_string()))?;
-        Ok(Digest::compute(Domain::DistReleasePlan, &bytes))
-    }
+fn plan_identity(plan: &ReleasePlan) -> Result<Digest, PlanError> {
+    let binding = PlanBinding {
+        repository: &plan.repository,
+        action: plan.action,
+        requested_version: &plan.requested_version,
+        source_commit: &plan.source_commit,
+        release_commit: &plan.release_commit,
+        notes_document: &plan.notes_document,
+        notes: &plan.notes,
+        manifest: &plan.manifest,
+        package: &plan.package,
+        package_object: &plan.package_object,
+        installed_artifact: &plan.installed_artifact,
+        targets: &plan.targets,
+        observations: &plan.observations,
+        operations: &plan.operations,
+    };
+    let bytes = wire::encode(&binding).map_err(|error| PlanError::Encode(error.to_string()))?;
+    Ok(Digest::compute(Domain::DistReleasePlan, &bytes))
 }
 
 fn validate_preconditions(input: &PlanInput) -> Result<(), PlanError> {
@@ -375,7 +270,7 @@ fn refuse_moved_ref(
     }
 }
 
-fn validate_targets(targets: &[SealedTarget]) -> Result<(), PlanError> {
+fn validate_targets(targets: &[PublishedTarget]) -> Result<(), PlanError> {
     const EXPECTED: [ReleaseTarget; 3] = [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
@@ -590,7 +485,7 @@ impl ReleaseExecutor {
         plan: &ReleasePlan,
         receipts: &[OperationReceipt],
     ) -> Result<(), ExecuteError> {
-        plan.verify().map_err(ExecuteError::Plan)?;
+        verify_plan(plan).map_err(ExecuteError::Plan)?;
         if receipts.len() != plan.operations.len() {
             return Err(ExecuteError::ReceiptCount {
                 expected: plan.operations.len(),
@@ -618,7 +513,7 @@ impl ReleaseExecutor {
         journal: &mut J,
         effects: &mut E,
     ) -> Result<Execution, ExecuteError> {
-        plan.verify().map_err(ExecuteError::Plan)?;
+        verify_plan(plan).map_err(ExecuteError::Plan)?;
         if applied != &plan.key {
             return Err(ExecuteError::AppliedKeyMoved {
                 expected: plan.key.clone(),
@@ -694,7 +589,7 @@ fn validate_receipt(plan: &ReleasePlan, receipt: &OperationReceipt) -> Result<()
             OperationState::Gate {
                 receipt: Some(receipt),
             },
-        ) => receipt == &plan.gate_receipt(),
+        ) => receipt == &gate_receipt(plan),
         (
             Op::RehearseUpload,
             OperationState::Package {

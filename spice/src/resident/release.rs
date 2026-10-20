@@ -84,8 +84,7 @@ fn prepare_release_publish(
     let app = crate::release_command::app_digest(&paths.worktree)
         .map_err(|error| release_refusal("release::app-stage-refused", &error))?;
     let release = crate::release_command::admit_stage(&paths.stage, &app, notes)
-        .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?
-        .with_key(publish.key.clone());
+        .map_err(|error| release_refusal("release::manifest-refused", &error.to_string()))?;
     if publish.manifest != *release.manifest() || notes != release.notes() {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
@@ -93,7 +92,7 @@ fn prepare_release_publish(
                 Some("publication-plan".to_owned()),
                 Some(format!(
                     "{}:{}:{}",
-                    release.key(),
+                    publish.key,
                     release.manifest(),
                     release.notes()
                 )),
@@ -106,14 +105,14 @@ fn prepare_release_publish(
         .map_err(|error| typed_store_fault("release::journal-unreadable", &error.to_string()))?;
     let state = crate::release_command::observe(snapshot.facts().iter(), &release)
         .map_err(|error| release_refusal("release::evidence-refused", &error.to_string()))?;
-    if !release_witnesses_match(command.expected(), &release, state) {
+    if !release_witnesses_match(command.expected(), &publish.key, &release, state) {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "release::witness-moved".to_owned(),
                 Some("observation-and-seals".to_owned()),
                 Some(format!(
                     "one {} observation at {} and both detached receipts",
-                    release.key(),
+                    publish.key,
                     state.observation()
                 )),
                 Some(format!("{:?}", command.expected())),
@@ -152,8 +151,7 @@ fn propose_release_publish(
         let app = crate::release_command::app_digest(&guarded_worktree)
             .map_err(|_| GuardError::refused("release::app-stage-moved"))?;
         let current = crate::release_command::admit_stage(&guarded_stage, &app, &guarded_notes)
-            .map_err(|_| GuardError::refused("release::manifest-moved"))?
-            .with_key(guarded_release.key().clone());
+            .map_err(|_| GuardError::refused("release::manifest-moved"))?;
         if current != guarded_release {
             return Err(GuardError::refused("release::manifest-moved"));
         }
@@ -203,6 +201,7 @@ fn release_recognition(
 
 fn release_witnesses_match(
     witnesses: &[Witness],
+    key: &wire::Digest,
     release: &crate::release_command::AdmittedRelease,
     state: crate::release_command::PublicationState,
 ) -> bool {
@@ -224,9 +223,7 @@ fn release_witnesses_match(
     let mut receipts = release.receipts().collect::<Vec<_>>();
     sealed.sort_unstable();
     receipts.sort_unstable();
-    witnesses.len() == 3
-        && observations == [(release.key(), state.observation())]
-        && sealed == receipts
+    witnesses.len() == 3 && observations == [(key, state.observation())] && sealed == receipts
 }
 
 fn release_refusal(reason: &str, observed: &str) -> Outcome<CommandAnswer> {

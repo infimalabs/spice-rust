@@ -22,9 +22,9 @@ pub use notes::{
 };
 pub use pins::{PinError, PinName, RequiredPins};
 pub use release::{
-    AcceptedOperation, Convergence, EffectError, EffectPort, ExecuteError, Execution, Operation,
-    OperationReceipt, OperationState, PlanError, PlanInput, RegistryEvidence, ReleaseAction,
-    ReleaseExecutor, ReleaseJournal, ReleaseObservations, ReleasePlan, SealedTarget, plan_release,
+    AcceptedOperation, Convergence, EffectError, EffectPort, ExecuteError, Execution,
+    OperationReceipt, OperationState, PlanError, PlanInput, ReleaseExecutor, ReleaseJournal,
+    gate_receipt, plan_release, verify_plan,
 };
 pub use stage::{
     BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,

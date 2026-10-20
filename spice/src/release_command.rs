@@ -9,9 +9,8 @@ use std::process::Command;
 use clap::ArgMatches;
 use wire::body::{ProofSealed, PublishedTarget, ReleasePublished};
 use wire::manifest::ProductVersion;
-use wire::{
-    Digest, Domain, Fault, FaultClass, Outcome, Refusal, ReleasePlan, Reply, ReplyPosition, Seq,
-};
+use wire::release::{RegistryEvidence, ReleaseAction, ReleaseObservations, ReleasePlan};
+use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
 
 mod view;
 
@@ -20,20 +19,12 @@ pub(crate) use view::{NotesView, PlanPreview};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmittedRelease {
     published: proof::PublishedManifest,
-    key: Option<Digest>,
     notes: Digest,
     native: Digest,
     targets: Vec<PublishedTarget>,
-    external: Option<dist::ReleasePlan>,
 }
 
 impl AdmittedRelease {
-    pub(crate) fn key(&self) -> &Digest {
-        self.key
-            .as_ref()
-            .expect("release stage is bound to exactly one external plan")
-    }
-
     pub(crate) const fn manifest(&self) -> &Digest {
         &self.published.digest
     }
@@ -56,70 +47,6 @@ impl AdmittedRelease {
             notes: self.notes.clone().into(),
             targets: self.targets.clone(),
         }
-    }
-
-    fn plan(&self) -> ReleasePlan {
-        let external = self
-            .external
-            .as_ref()
-            .expect("operator preview binds the admitted stage to an external plan");
-        ReleasePlan {
-            key: self.key().clone(),
-            repository: external.repository.clone(),
-            action: external.action.as_str().to_owned(),
-            requested_version: external.requested_version.clone(),
-            source_commit: external.source_commit.clone(),
-            release_commit: external.release_commit.clone(),
-            manifest: self.published.digest.clone(),
-            source: self.published.manifest.source.clone(),
-            notes: self.notes.clone(),
-            notes_document: String::from_utf8(external.notes.clone())
-                .expect("curated release notes were admitted from UTF-8"),
-            package: external.package.clone(),
-            package_object: external.package_object.clone(),
-            installed_artifact: external.installed_artifact.clone(),
-            targets: self.targets.clone(),
-            operations: external
-                .operations
-                .iter()
-                .map(|operation| operation.as_str().to_owned())
-                .collect(),
-            observations: wire::ReleasePlanObservations {
-                head: external.observations.head.clone(),
-                clean: external.observations.clean,
-                unrecorded_local_commits: external.observations.unrecorded_local_commits,
-                source_version: external.observations.source_version.clone(),
-                release_version: external.observations.release_version.clone(),
-                credentials_valid: external.observations.credentials_valid,
-                package_ref: external.observations.package_ref.clone(),
-                tag_ref: external.observations.tag_ref.clone(),
-                announcement_ref: external.observations.announcement_ref.clone(),
-                registry: external.observations.registry.as_ref().map(|evidence| {
-                    wire::ReleaseRegistryEvidence {
-                        version: evidence.version.clone(),
-                        release_commit: evidence.release_commit.clone(),
-                        package: evidence.package.clone(),
-                    }
-                }),
-            },
-        }
-    }
-
-    fn bind_external(mut self, plan: dist::ReleasePlan) -> Self {
-        self.key = Some(plan.key.clone());
-        self.external = Some(plan);
-        self
-    }
-
-    pub(crate) fn with_key(mut self, key: Digest) -> Self {
-        self.key = Some(key);
-        self
-    }
-
-    pub(crate) fn external_plan(&self) -> &dist::ReleasePlan {
-        self.external
-            .as_ref()
-            .expect("operator apply carries the previewed external plan")
     }
 }
 
@@ -150,7 +77,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
     };
     let Some(apply) = matches.get_one::<String>("apply") else {
         return RunResult::Plan(Box::new(view::plan_preview(
-            prepared.release.plan(),
+            prepared.plan,
             &prepared.common,
             &publish_words(matches),
         )));
@@ -162,18 +89,18 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
                 wire::RefusalDiagnostic::new(
                     "release::apply-digest-refused".to_owned(),
                     Some("publication-plan".to_owned()),
-                    Some(prepared.release.key().to_string()),
+                    Some(prepared.plan.key.to_string()),
                     Some(error.to_string()),
                 ),
             )));
         }
     };
-    if applied != *prepared.release.key() {
+    if applied != prepared.plan.key {
         return RunResult::Published(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "release::plan-moved".to_owned(),
                 Some("publication-plan".to_owned()),
-                Some(prepared.release.key().to_string()),
+                Some(prepared.plan.key.to_string()),
                 Some(applied.to_string()),
             ),
         )));
@@ -181,7 +108,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
     if let Err(outcome) = crate::release_execution::execute(
         &prepared.worktree,
         &prepared.operation_journal,
-        prepared.release.external_plan(),
+        &prepared.plan,
         &applied,
     ) {
         return RunResult::Published(outcome);
@@ -191,6 +118,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
         contract,
         crate::command_client::SelectedCommand::ReleasePublish {
             release: &prepared.release,
+            key: &prepared.plan.key,
             state: prepared.state,
         },
     );
@@ -199,6 +127,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
 
 struct Prepared {
     release: AdmittedRelease,
+    plan: ReleasePlan,
     state: PublicationState,
     serve: PathBuf,
     worktree: PathBuf,
@@ -278,10 +207,10 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         &notes.identity,
     )
     .map_err(|error| Box::new(refusal::<ReleasePlan>("release::manifest-refused", &error)))?;
-    let release = bind_external_plan(
+    let plan = bind_external_plan(
         repository.worktree_root(),
-        &notes.document,
-        release,
+        notes.document,
+        &release,
         external,
     )
     .map_err(|error| {
@@ -309,6 +238,7 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::evidence-refused", &error)))?;
     Ok(Prepared {
         release,
+        plan,
         state,
         serve: state_paths.serve().to_path_buf(),
         worktree: repository.worktree_root().to_path_buf(),
@@ -492,11 +422,9 @@ pub(crate) fn admit_stage(
         .collect();
     Ok(AdmittedRelease {
         published,
-        key: None,
         notes: notes.clone(),
         native,
         targets,
-        external: None,
     })
 }
 
@@ -504,7 +432,7 @@ struct ExternalPreconditions {
     requested_version: ProductVersion,
     source_commit: String,
     release_commit: String,
-    action: dist::ReleaseAction,
+    action: ReleaseAction,
     repository: Digest,
     head: String,
     clean: bool,
@@ -590,11 +518,11 @@ fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions
     })
 }
 
-fn release_action(matches: &ArgMatches) -> Result<dist::ReleaseAction, String> {
+fn release_action(matches: &ArgMatches) -> Result<ReleaseAction, String> {
     Ok(
         match matches.get_one::<String>("action").map(String::as_str) {
-            None | Some("publish") => dist::ReleaseAction::Publish,
-            Some("tag-and-announce") => dist::ReleaseAction::TagAndAnnounce,
+            None | Some("publish") => ReleaseAction::Publish,
+            Some("tag-and-announce") => ReleaseAction::TagAndAnnounce,
             Some(other) => return Err(format!("unsupported release action {other:?}")),
         },
     )
@@ -665,7 +593,7 @@ fn ensure_release_ref_absent(
 
 fn resolve_local_preconditions(
     root: &Path,
-    action: &dist::ReleaseAction,
+    action: &ReleaseAction,
     revision_commit: &str,
     source_version: &ProductVersion,
     requested_version: &ProductVersion,
@@ -696,22 +624,22 @@ fn resolve_local_preconditions(
 
 fn bind_external_plan(
     root: &Path,
-    notes: &str,
-    release: AdmittedRelease,
+    notes_document: String,
+    release: &AdmittedRelease,
     external: ExternalPreconditions,
-) -> Result<AdmittedRelease, String> {
+) -> Result<ReleasePlan, String> {
     admit_manifest_source(&release.published.manifest.source, &external.release_commit)?;
     let package = crate::release_package::ReleaseIndex::admit(
         root,
         &external.requested_version,
         release.notes.clone(),
-        notes.as_bytes(),
+        notes_document.as_bytes(),
         &release.published.digest,
     )
     .map_err(|error| error.to_string())?;
     let package = package.preview();
     let package_ref = normalize_converged_ref(external.package_ref.clone(), &package.git_tree);
-    let registry = if external.action == dist::ReleaseAction::TagAndAnnounce {
+    let registry = if external.action == ReleaseAction::TagAndAnnounce {
         let visible = external.package_ref.ok_or_else(|| {
             format!(
                 "package v{} is not visible at the release authority",
@@ -724,7 +652,7 @@ fn bind_external_plan(
                 external.requested_version, package.git_tree
             ));
         }
-        Some(dist::RegistryEvidence {
+        Some(RegistryEvidence {
             version: external.requested_version.clone(),
             release_commit: external.release_commit.clone(),
             package: package.identity.clone(),
@@ -732,7 +660,7 @@ fn bind_external_plan(
     } else {
         None
     };
-    let observations = dist::ReleaseObservations {
+    let observations = ReleaseObservations {
         head: external.head,
         clean: external.clean,
         unrecorded_local_commits: external.unrecorded_local_commits,
@@ -744,30 +672,21 @@ fn bind_external_plan(
         announcement_ref: external.announcement_ref,
         registry,
     };
-    let plan = dist::plan_release(dist::PlanInput {
+    dist::plan_release(dist::PlanInput {
         repository: external.repository,
         action: external.action,
         requested_version: external.requested_version,
         source_commit: external.source_commit,
         release_commit: external.release_commit,
-        notes: notes.as_bytes().to_vec(),
+        notes_document,
         manifest: release.published.digest.clone(),
         package: package.identity.clone(),
         package_object: package.git_tree.clone(),
         installed_artifact: release.native.clone(),
-        targets: release
-            .targets
-            .iter()
-            .map(|target| dist::SealedTarget {
-                target: target.target.clone(),
-                artifact: target.artifact.clone(),
-                receipt: target.receipt.clone(),
-            })
-            .collect(),
+        targets: release.targets.clone(),
         observations,
     })
-    .map_err(|error| error.to_string())?;
-    Ok(release.bind_external(plan))
+    .map_err(|error| error.to_string())
 }
 
 fn admit_manifest_source(source: &Digest, release_commit: &str) -> Result<(), String> {

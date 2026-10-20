@@ -1,6 +1,7 @@
 use wire::manifest::ProductVersion;
 use wire::output::Exhausted;
-use wire::{Domain, ReleaseNotesEntry, ReleasePlanObservations, body::PublishedTarget};
+use wire::release::{Operation, ReleaseAction, ReleaseObservations};
+use wire::{Domain, ReleaseNotesEntry, body::PublishedTarget};
 
 use super::*;
 
@@ -151,12 +152,11 @@ fn plan(notes_document: String) -> ReleasePlan {
     ReleasePlan {
         key: digest(b"key"),
         repository: digest(b"repository"),
-        action: "publish".to_owned(),
+        action: ReleaseAction::Publish,
         requested_version: version.clone(),
         source_commit: "b".repeat(40),
         release_commit: "c".repeat(40),
         manifest: digest(b"manifest"),
-        source: digest(b"source"),
         notes: digest(notes_document.as_bytes()),
         notes_document,
         package: digest(b"package"),
@@ -167,8 +167,8 @@ fn plan(notes_document: String) -> ReleasePlan {
             artifact: digest(b"artifact"),
             receipt: digest(b"receipt"),
         }],
-        operations: vec!["publish-package".to_owned(), "push-tag".to_owned()],
-        observations: ReleasePlanObservations {
+        operations: vec![Operation::UploadPackage, Operation::CreateImmutableTag],
+        observations: ReleaseObservations {
             head: "c".repeat(40),
             clean: false,
             unrecorded_local_commits: 2,
@@ -204,15 +204,14 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
         plan.source_commit.clone(),
         plan.release_commit.clone(),
         plan.manifest.to_string(),
-        plan.source.to_string(),
         plan.package.to_string(),
         plan.package_object.clone(),
         plan.installed_artifact.to_string(),
         plan.notes.to_string(),
         plan.targets[0].artifact.to_string(),
         plan.targets[0].receipt.to_string(),
-        "1. publish-package".to_owned(),
-        "2. push-tag".to_owned(),
+        "1. upload-package".to_owned(),
+        "2. create-immutable-tag".to_owned(),
         "tracked worktree DIRTY; 2 unrecorded local commits".to_owned(),
         "credentials valid".to_owned(),
         format!("tag ref UNEXPECTED {}", "e".repeat(40)),
@@ -245,7 +244,7 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
     assert!(json.get("notes_document").is_none());
     assert_eq!(json["key"], plan.key.to_string());
     assert_eq!(json["notes"], plan.notes.to_string());
-    assert_eq!(json["operations"][1], "push-tag");
+    assert_eq!(json["operations"][1], "create-immutable-tag");
     assert_eq!(json["observations"]["unrecorded_local_commits"], 2);
     assert_eq!(json["export"]["path"], export.path);
     let excerpt = &json["notes_preview"];

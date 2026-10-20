@@ -45,6 +45,7 @@ use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 use wire::manifest::{ProductVersion, ReleaseTarget};
+use wire::release::{RegistryEvidence, ReleaseObservations};
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, AgentProviderError,
     Answer, AnyFact, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition,
@@ -56,11 +57,10 @@ use wire::{
     LaneResidency, LaneSession, LeaseHead, MessageAcknowledgement, MessageClassification,
     MessageClassificationKind, MessageHistoryCursor, MessageLocus, Name, Origin, Outcome, Overflow,
     Packed, Phase, Producer, ProofEvidence, Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry,
-    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead,
-    ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable, SteeringHead,
-    StreamCursor, StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead,
-    TaskStamp, TeamSubscription, TrustHead, TrustState, TrustView, ViewSubject, WireVersion,
-    Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    Reply, ReplyPosition, ResidencyHead, ResidentState, Response, RestoreVerification, Seq,
+    SeqRange, SpiceVariable, SteeringHead, StreamCursor, StreamFact, StreamFrame, StreamRequest,
+    TapeLocus, TaskHandle, TaskHead, TaskStamp, TeamSubscription, TrustHead, TrustState, TrustView,
+    ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 #[path = "identity_law/laws.rs"]

@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use wire::output::{Admission, Bounded, Budget, ClippedText, Export, INTERACTIVE, Request};
-use wire::{Digest, Outcome, Refusal, ReleaseNotes, ReleasePlan, SpiceCommand};
+use wire::release::ReleasePlan;
+use wire::{Digest, Outcome, Refusal, ReleaseNotes, SpiceCommand};
 
 /// The file a complete note export names by default.
 const NOTES_FILE: &str = "release-notes.md";
@@ -336,7 +337,6 @@ fn plan_text(
          source commit      {}\n\
          release commit     {}\n\
          manifest           {}\n\
-         source             {}\n\
          package            {} object {}\n\
          installed artifact {}",
         plan.action,
@@ -346,7 +346,6 @@ fn plan_text(
         plan.source_commit,
         plan.release_commit,
         plan.manifest,
-        plan.source,
         plan.package,
         plan.package_object,
         plan.installed_artifact,

@@ -25,23 +25,23 @@ fn input(action: ReleaseAction) -> PlanInput {
         requested_version: version.clone(),
         source_commit: SOURCE.to_owned(),
         release_commit: SOURCE.to_owned(),
-        notes: b"## Highlights\n\n- Exact curated prose.\n".to_vec(),
+        notes_document: "## Highlights\n\n- Exact curated prose.\n".to_owned(),
         manifest: digest(Domain::DistReleaseManifest, b"manifest"),
         package,
         package_object: PACKAGE_OBJECT.to_owned(),
         installed_artifact: digest(Domain::DistArtifact, b"native"),
         targets: vec![
-            SealedTarget {
+            PublishedTarget {
                 target: "aarch64-apple-darwin".to_owned(),
                 artifact: digest(Domain::DistArtifact, b"mac native"),
                 receipt: digest(Domain::ProofReceiptV3, b"mac proof"),
             },
-            SealedTarget {
+            PublishedTarget {
                 target: "x86_64-unknown-linux-musl".to_owned(),
                 artifact: digest(Domain::DistArtifact, b"linux native"),
                 receipt: digest(Domain::ProofReceiptV3, b"linux proof"),
             },
-            SealedTarget {
+            PublishedTarget {
                 target: "x86_64-pc-windows-msvc".to_owned(),
                 artifact: digest(Domain::DistArtifact, b"windows native"),
                 receipt: digest(Domain::ProofReceiptV3, b"windows proof"),
@@ -123,7 +123,7 @@ impl FakeEffects {
                 identity: plan.repository.clone(),
             },
             Operation::RunCorrectnessGate => OperationState::Gate {
-                receipt: Some(plan.gate_receipt()),
+                receipt: Some(gate_receipt(plan)),
             },
             Operation::RehearseUpload => OperationState::Package {
                 identity: Some(plan.package.clone()),
@@ -218,7 +218,10 @@ impl EffectPort for FakeEffects {
 fn preview_is_pure_and_spells_the_complete_order() {
     let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
     assert_eq!(plan.operations, PUBLISH_OPERATIONS);
-    assert_eq!(plan.notes, b"## Highlights\n\n- Exact curated prose.\n");
+    assert_eq!(
+        plan.notes_document,
+        "## Highlights\n\n- Exact curated prose.\n"
+    );
     assert_eq!(ReleaseAction::Publish.as_str(), "publish");
     assert_eq!(ReleaseAction::TagAndAnnounce.as_str(), "tag-and-announce");
     assert!(
@@ -243,14 +246,14 @@ fn preview_is_pure_and_spells_the_complete_order() {
             "announce",
         ]
     );
-    plan.verify().expect("identity replays");
+    verify_plan(&plan).expect("identity replays");
 }
 
 #[test]
 fn every_bound_value_moves_the_plan_digest() {
     let baseline = plan_release(input(ReleaseAction::Publish)).expect("baseline");
     let mut changed = input(ReleaseAction::Publish);
-    changed.notes.push(b'!');
+    changed.notes_document.push('!');
     assert_ne!(
         baseline.key,
         plan_release(changed).expect("notes variant").key
@@ -261,7 +264,7 @@ fn every_bound_value_moves_the_plan_digest() {
     assert!(!recovery.operations.contains(&Operation::UploadPackage));
 
     let moved = |plan: ReleasePlan| {
-        let result = plan.verify();
+        let result = verify_plan(&plan);
         assert!(
             matches!(result, Err(PlanError::KeyMoved { .. })),
             "unexpected verification result: {result:?}"
@@ -302,7 +305,7 @@ fn every_bound_value_moves_the_plan_digest() {
     moved(plan);
     let mut plan = baseline;
     plan.operations.swap(0, 1);
-    assert!(matches!(plan.verify(), Err(PlanError::OperationList)));
+    assert!(matches!(verify_plan(&plan), Err(PlanError::OperationList)));
 }
 
 #[test]
