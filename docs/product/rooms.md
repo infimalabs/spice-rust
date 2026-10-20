@@ -37,8 +37,10 @@ owns each rule summarized here.
   delivery, and an operator ACK/NAK clause reaches no lane; only a reply does.
   A question result has one immutable deadline and ends answered,
   declined, cancelled, or timed out; recovery of a lapsed delivery or item
-  never reopens or extends it. Answered means available for assessment; only
-  `preparation` records carry review coverage and execution authorization.
+  never reopens or extends it. Answered means available for assessment: a task
+  that requires a result names it with `spice task require --evidence`, and
+  only `preparation` records carry review coverage and execution
+  authorization.
 - **Coordination.** `spice room start|resume HANDLE ADDRESS` sends one scoped
   operator direction naming the criterion, contribution, and stop condition;
   the recipient acquires the anchor through ordinary native possession. A
