@@ -263,25 +263,18 @@ fn plan_profile_requests(
 ) -> CommandResult<Vec<PlannedRequest>> {
     let entries = &planning.entries;
     let facts = planning.snapshot.facts();
+    let opportunities = {
+        let mut state = message_surface::lock_state(profiles)?;
+        record_design_changes(entries, cursor, &mut state.profiles);
+        take_profile_opportunities(&state.profiles, occupied, cursor)
+    };
+    if opportunities.is_empty() {
+        return Ok(Vec::new());
+    }
     let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
-    let prepared = entries
-        .iter()
-        .filter(|entry| entry.is_filed() && open_design(entry))
-        .filter_map(|entry| {
-            let statement = entry.statement();
-            frequency
-                .prepare(&TermCounts::statement(
-                    &statement.title,
-                    statement.description.as_deref(),
-                    &statement.acceptance,
-                ))
-                .map(|vector| (entry, vector))
-        })
-        .collect::<Vec<_>>();
+    let prepared = prepare_open_designs(entries, &frequency);
 
     let mut state = message_surface::lock_state(profiles)?;
-    record_design_changes(entries, cursor, &mut state.profiles);
-    let opportunities = take_profile_opportunities(&state.profiles, occupied, cursor);
     let mut planned_sessions = BTreeSet::new();
     let mut planned = Vec::new();
     for opportunity in opportunities {
@@ -369,6 +362,27 @@ fn plan_profile_requests(
         });
     }
     Ok(planned)
+}
+
+/// Each filed open Design weighted under `frequency`.
+fn prepare_open_designs<'e>(
+    entries: &'e [board::Entry],
+    frequency: &FrequencyProfile,
+) -> Vec<(&'e board::Entry, spice::rooms::awareness::Prepared)> {
+    entries
+        .iter()
+        .filter(|entry| entry.is_filed() && open_design(entry))
+        .filter_map(|entry| {
+            let statement = entry.statement();
+            frequency
+                .prepare(&TermCounts::statement(
+                    &statement.title,
+                    statement.description.as_deref(),
+                    &statement.acceptance,
+                ))
+                .map(|vector| (entry, vector))
+        })
+        .collect()
 }
 
 fn record_design_changes(
