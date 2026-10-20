@@ -29,7 +29,7 @@ fn contribution(lane: CanonicalUuid, sequence: u64) -> RoomEvent {
 }
 
 #[test]
-fn event_authority_marks_first_entry_and_reentry_without_replay_duplicates() {
+fn contributions_never_mark_listener_joins() {
     let first = lane(1);
     let second = lane(2);
     let first_entry = publication(1_700_000_000_000_001);
@@ -38,8 +38,7 @@ fn event_authority_marks_first_entry_and_reentry_without_replay_duplicates() {
     let reentry = publication(1_700_000_000_000_004);
     let second_entry = publication(1_700_000_000_000_005);
     let mut room = RoomState::default();
-    room.events
-        .insert(first_entry.clone(), contribution(first, 1));
+    room.events.insert(first_entry, contribution(first, 1));
     room.events.insert(repeated, contribution(first, 2));
     room.events.insert(
         left,
@@ -51,18 +50,12 @@ fn event_authority_marks_first_entry_and_reentry_without_replay_duplicates() {
             },
         },
     );
-    room.events.insert(reentry.clone(), contribution(first, 4));
-    room.events
-        .insert(second_entry.clone(), contribution(second, 5));
+    room.events.insert(reentry, contribution(first, 4));
+    room.events.insert(second_entry, contribution(second, 5));
 
-    let joins = room.listener_joins(&ConversationProjection::default());
-    assert_eq!(
-        joins.into_iter().collect::<Vec<_>>(),
-        vec![
-            (&first_entry, vec![first]),
-            (&reentry, vec![first]),
-            (&second_entry, vec![second]),
-        ],
-        "only the first exact event in each listening interval owns a join",
+    assert!(
+        room.listener_joins(&ConversationProjection::default())
+            .is_empty(),
+        "participation does not establish a listening interval",
     );
 }

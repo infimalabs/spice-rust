@@ -501,15 +501,17 @@ owns each rule summarized here.
   `spice room put-aside` cancels unanswered coordination and asks any holder to
   checkpoint or free, without freeing it. `spice room status` reads the
   standing.
-- **Attention.** Participation is derived from contribution, recent activity,
-  invitation by a lane-addressed packet, native work, a live request, an owed
-  receipt or result, and a stop request. A recorded Design request also keeps
-  the asked lane listening without making it a participant. Aging removes only
-  activity and invitation. Each room catch-up names the lane's reasons and the
-  leave command. `spice room leave HANDLE --clause TEXT` is an attributed lane
-  act recorded once in room history and standing. It ends listening from
-  contribution, activity, earlier invitation, and earlier Design requests
-  until the lane contributes again or a later packet addresses it. It never
+- **Attention.** A contribution makes its author a participant; it does not
+  subscribe that lane or grant permission to post. Listening is derived from
+  recent authored MSG activity, invitation by a lane-addressed packet, native
+  work, a live request, an owed receipt or result, and a stop request. A
+  recorded Design request also keeps the asked lane listening without making
+  it a participant. Aging removes only activity and invitation. Each room
+  catch-up names the lane's reasons and the leave command. `spice room leave
+  HANDLE --clause TEXT` is an attributed lane act recorded once in room history
+  and standing. It ends listening from activity, earlier invitation, and
+  earlier Design requests until a later packet addresses it. A contribution
+  neither starts nor restores listening. It never
   frees a claim, settles a delivery, or answers a question, and its reply names
   each native duty that still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
@@ -521,9 +523,11 @@ owns each rule summarized here.
   transcript, contribution, or retained-artifact sources. Its answer carries
   `source`, the exact JSON a candidate reference or later contribution cites
   it by. Room history groups contributions by kind beside the full
-  chronology, and `--contributions` reads only them. A contribution is
-  problem-space record, never a decision: it changes no task, claim, group,
-  candidate, or authorization, and a concluded Design accepts none.
+  chronology, and `--contributions` reads only them. Any lane may contribute
+  without an invitation or subscription; the record makes it a participant,
+  not a listener. A contribution is problem-space record, never a decision: it
+  changes no task, claim, group, candidate, or authorization, and a concluded
+  Design accepts none.
 - **Design statements.** A Design description opens with a plain sentence that
   states the problem, not a one-word heading. Each unresolved question is its
   own item in the statement list; Design surfaces label that typed list
@@ -557,7 +561,7 @@ owns each rule summarized here.
   at most six strongest weighted overlaps. A Design is requested once per
   continuing session. Contribution or leave stays settled across occupants,
   restarts, and compaction. Prior contribution retains bounded room context
-  while optional activity prominence ages; it never becomes recruitment.
+  without creating attention or recruitment.
   Compaction neither resets history nor creates an opportunity. A fresh vendor
   identity may receive a later ordinary offer without deleting the lane.
   The request quotes the first substantive description sentence and a bounded

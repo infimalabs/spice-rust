@@ -352,10 +352,11 @@ pub struct RoomMessaged {
 
 /// A lane stopped listening to one anchor task's room.
 ///
-/// The leave ends listening derived from the lane's contributions, activity,
-/// and invitations until it contributes again or a later route invites it.
-/// It never frees a claim, settles a delivery, or answers a question; native
-/// duties keep the lane listening regardless.
+/// The leave ends listening derived from activity and invitations until a
+/// later route invites it. Contributions remain participation records and
+/// neither create nor restore listening. It never frees a claim, settles a
+/// delivery, or answers a question; native duties keep the lane listening
+/// regardless.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomLeft {
