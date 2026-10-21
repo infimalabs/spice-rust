@@ -381,9 +381,10 @@ broadcast.
 ## Composer and stream
 
 The composer rides in the Chat plane's own scroll content, and its measured
-height is the plane's spacer and scroll padding; exposure follows [Chat scroll
-passively controls composer
-exposure](../docs/product/invariants/lifecycle.md#surface-chat-scroll-passively-controls-composer-exposure).
+height is the plane's spacer and scroll padding; while any of it shows, that
+plane keeps its native scrollbar transparent, restoring the scrollbar once the
+composer has fully collapsed. Exposure follows [Chat scroll passively controls
+composer exposure](../docs/product/invariants/lifecycle.md#surface-chat-scroll-passively-controls-composer-exposure).
 Programmatic focus moves the caret without scrolling the viewport, fleet,
 member strip, or plane; the composer's own focus transition still reveals a
 collapsed draft. The fleet opens at its canonical right edge and holds it
