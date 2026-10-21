@@ -647,7 +647,8 @@ pub(super) fn edit_reply<E: Into<Refusal>>(
         .map_err(|error| format!("the crossed response cannot encode: {error}"))?)
 }
 
-pub(super) fn retained(
+/// The retained-row refusal every migration crossing builds its refusals from.
+pub(crate) fn retained(
     table: &'static str,
     row: String,
     release: &'static str,

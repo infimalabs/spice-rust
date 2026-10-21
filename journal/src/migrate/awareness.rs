@@ -7,7 +7,7 @@ use rusqlite::{Transaction, params};
 use serde_json::{Map, Value};
 use wire::{AnyFact, Envelope, FactKind};
 
-use super::{MigrationError, OpenError};
+use super::{OpenError, residual};
 
 /// Release that made exact statement evidence the notice authority and
 /// removed the superseded delivery-path classification.
@@ -136,11 +136,10 @@ fn cross_notice(
 }
 
 fn refusal(seq: i64, detail: &str) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row: seq.to_string(),
-        release: NOTICE_STATEMENT_RELEASE,
-        detail: detail.to_owned(),
-    }
-    .into()
+    residual::retained(
+        "fact_envelopes",
+        seq.to_string(),
+        NOTICE_STATEMENT_RELEASE,
+        detail.to_owned(),
+    )
 }

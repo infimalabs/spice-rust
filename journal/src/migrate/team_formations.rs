@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::{MigrationError, OpenError, TEAM_FORMATIONS_RELEASE};
+use super::{OpenError, TEAM_FORMATIONS_RELEASE, residual};
 
 /// Recover every live team's latest unteamed-to-teamed instant, under the one
 /// [`wire::head::teamed`] predicate, from immutable topology facts, then
@@ -154,11 +154,10 @@ fn membership_before(
 }
 
 fn formation_error(detail: impl Into<String>) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "residency_head",
-        row: "1".to_owned(),
-        release: TEAM_FORMATIONS_RELEASE,
-        detail: detail.into(),
-    }
-    .into()
+    residual::retained(
+        "residency_head",
+        "1".to_owned(),
+        TEAM_FORMATIONS_RELEASE,
+        detail.into(),
+    )
 }

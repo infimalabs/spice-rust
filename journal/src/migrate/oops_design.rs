@@ -1,6 +1,6 @@
 use rusqlite::{OptionalExtension, params};
 
-use super::{MigrationError, OpenError};
+use super::{OpenError, residual};
 
 const OOPS_DESIGN_RELEASE: &str = "schema-74";
 /// Acceptance this crossing stamped on every retained report it made a Plan.
@@ -471,11 +471,5 @@ fn cross_grooming_evidence(transaction: &rusqlite::Transaction<'_>) -> Result<()
 }
 
 fn retained(table: &'static str, row: String, detail: String) -> OpenError {
-    MigrationError::RetainedRow {
-        table,
-        row,
-        release: OOPS_DESIGN_RELEASE,
-        detail,
-    }
-    .into()
+    residual::retained(table, row, OOPS_DESIGN_RELEASE, detail)
 }

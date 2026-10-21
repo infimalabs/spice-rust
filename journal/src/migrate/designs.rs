@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use rusqlite::{Transaction, params};
 
-use super::{MigrationError, OpenError};
+use super::{OpenError, residual};
 
 /// Last release whose Designs walked `design,review` and concluded through a
 /// lane review or an execution authorization.
@@ -141,11 +141,5 @@ fn update(
 }
 
 fn retained(table: &'static str, stamp: &str, detail: String) -> OpenError {
-    MigrationError::RetainedRow {
-        table,
-        row: stamp.to_owned(),
-        release: DESIGN_PHASES_RELEASE,
-        detail,
-    }
-    .into()
+    residual::retained(table, stamp.to_owned(), DESIGN_PHASES_RELEASE, detail)
 }

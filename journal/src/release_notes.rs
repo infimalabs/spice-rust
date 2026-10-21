@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::guard::{GuardError, JournalRead};
-use crate::migrate::{MigrationError, OpenError};
+use crate::migrate::{OpenError, residual};
 
 /// Release that last wrote task Git boundaries without this projection.
 pub const PRE_PROJECTION_RELEASE: &str = "db7c4cb9c";
@@ -518,11 +518,5 @@ fn sql_seq(seq: wire::Seq) -> i64 {
 }
 
 fn retained(row: String, detail: String) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row,
-        release: PRE_PROJECTION_RELEASE,
-        detail,
-    }
-    .into()
+    residual::retained("fact_envelopes", row, PRE_PROJECTION_RELEASE, detail)
 }

@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use rusqlite::{OptionalExtension, params};
 
+use super::residual;
 use crate::{MigrationError, OpenError};
 
 const RELEASE: &str = "963a54c37";
@@ -70,13 +71,12 @@ pub(super) fn refuse_retained(transaction: &rusqlite::Transaction<'_>) -> Result
         .optional()
         .map_err(OpenError::Sqlite)?;
     if let Some(receipt) = receipt {
-        return Err(MigrationError::RetainedRow {
-            table: "command_receipts",
-            row: receipt,
-            release: RELEASE,
-            detail: "this predecessor cannot retire a room question receipt".to_owned(),
-        }
-        .into());
+        return Err(residual::retained(
+            "command_receipts",
+            receipt,
+            RELEASE,
+            "this predecessor cannot retire a room question receipt".to_owned(),
+        ));
     }
     Ok(())
 }

@@ -12,7 +12,11 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::OpenError;
+use crate::migrate::residual;
 use crate::replay::{ReceiptRow, VerifyError, Violation, ViolationClass};
+
+/// Release that retired the room question commands into inert authority.
+const RETIRED_ROOM_RELEASE: &str = "963a54c37";
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 enum HistoricalKind {
@@ -120,12 +124,10 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
 
     for (id, kind, request) in rows {
         let retired: RetiredCommand = serde_json::from_slice(&request).map_err(|error| {
-            OpenError::Migration(crate::MigrationError::RetainedRow {
-                table: "command_receipts",
-                row: id.clone(),
-                release: "963a54c37",
-                detail: format!("retired room command does not decode: {error}"),
-            })
+            retained(
+                id.clone(),
+                format!("retired room command does not decode: {error}"),
+            )
         })?;
         let historical_kind = match kind.as_str() {
             "room::close" => HistoricalKind::RoomClose,
@@ -133,12 +135,10 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
             _ => unreachable!("query admits only retired room command kinds"),
         };
         if retired.kind.as_str() != Some(kind.as_str()) || retired.id.to_string() != id {
-            return Err(OpenError::Migration(crate::MigrationError::RetainedRow {
-                table: "command_receipts",
-                row: id,
-                release: "963a54c37",
-                detail: "retired room command identity disagrees with its receipt".to_owned(),
-            }));
+            return Err(retained(
+                id,
+                "retired room command identity disagrees with its receipt".to_owned(),
+            ));
         }
         let request = serde_json::to_value(HistoricalCommand {
             v: retired.v,
@@ -158,12 +158,10 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
             serde_json::to_vec(&value)
         })
         .map_err(|error| {
-            OpenError::Migration(crate::MigrationError::RetainedRow {
-                table: "command_receipts",
-                row: id.clone(),
-                release: "963a54c37",
-                detail: format!("retired room command cannot become inert authority: {error}"),
-            })
+            retained(
+                id.clone(),
+                format!("retired room command cannot become inert authority: {error}"),
+            )
         })?;
         let inserted = connection
             .execute(
@@ -180,15 +178,17 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
             .execute("DELETE FROM command_receipts WHERE command_id = ?1", [&id])
             .map_err(OpenError::Sqlite)?;
         if inserted != 1 || deleted != 1 {
-            return Err(OpenError::Migration(crate::MigrationError::RetainedRow {
-                table: "command_receipts",
-                row: id,
-                release: "963a54c37",
-                detail: "retired room receipt changed during exclusive migration".to_owned(),
-            }));
+            return Err(retained(
+                id,
+                "retired room receipt changed during exclusive migration".to_owned(),
+            ));
         }
     }
     Ok(())
+}
+
+fn retained(row: String, detail: String) -> OpenError {
+    residual::retained("command_receipts", row, RETIRED_ROOM_RELEASE, detail)
 }
 
 pub(crate) fn verify(
