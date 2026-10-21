@@ -532,13 +532,16 @@ fn every_open_design_stance_is_invitation_eligible() {
 
         lanes.complete(&task, MATCHING);
         lanes.reconcile_completions(&config, &seated, &mut completions);
+        let request = lanes
+            .request(&config, FIRST)
+            .expect("a filed open Design can be requested in every stance");
+        assert_eq!(request.design, design, "{stance} Design was not eligible");
+        assert_eq!(request.stance, Some(stance), "{stance} was not recorded");
+        let text = spice::rooms::awareness::request_text(&request);
         assert_eq!(
-            lanes
-                .request(&config, FIRST)
-                .expect("a filed open Design can be requested in every stance")
-                .design,
-            design,
-            "{stance} Design was not eligible"
+            text.contains("cast slightly wider"),
+            stance == Explore,
+            "{stance} invitation framing: {text}"
         );
         seated.release_all();
         lanes.finish();

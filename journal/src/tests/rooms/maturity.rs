@@ -56,6 +56,7 @@ fn noticed(
             "maturity".to_owned(),
             "measure".to_owned(),
         ],
+        stance: None,
     };
     let mut write = JournalWrite::new(
         Actor::Spice,

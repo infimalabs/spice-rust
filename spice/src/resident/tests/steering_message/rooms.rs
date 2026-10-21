@@ -657,6 +657,7 @@ fn record_design_request(
                 },
                 excerpt: "context room".to_owned(),
                 terms: vec!["context".to_owned(), "room".to_owned()],
+                stance: None,
             },
             FactCause::Root,
         )
@@ -953,6 +954,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
                     },
                     excerpt: "fixture notice".to_owned(),
                     terms: terms.clone(),
+                    stance: None,
                 },
                 FactCause::Root,
             )
