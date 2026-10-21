@@ -36,7 +36,7 @@ pub(in crate::browser) use composer::{
     ComposerTextarea, focus_after_render, quote_textarea_id, render_quote_shards,
 };
 pub(super) use composer::{
-    PRIMARY_TEXTAREA_PREFIX, PrimaryComposerDragState, agent_message_source_id,
+    PRIMARY_TEXTAREA_PREFIX, PrimaryComposerDragState, agent_message_source_id, lane_composer_href,
     primary_textarea_id, use_primary_composer_drag_state,
 };
 use controls::ArrangementOpener;

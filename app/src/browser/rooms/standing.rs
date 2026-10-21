@@ -251,6 +251,7 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
         Some(_) => "vacant",
         None => "unknown",
     };
+    let href = super::super::watchband::lane_composer_href(runtime.lanes(), participant.lane);
     let publications = participant
         .reasons
         .iter()
@@ -261,7 +262,15 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
         .collect::<Vec<_>>();
     html! {
         <li key={participant.lane.to_string()} data-lane={participant.lane.to_string()}>
-            <span class="room-standing-lane">{label}</span>
+            if let Some(href) = href {
+                <a
+                    class="room-standing-lane"
+                    {href}
+                    aria-label={format!("Open {label} in Chat")}
+                >{label.clone()}</a>
+            } else {
+                <span class="room-standing-lane">{label}</span>
+            }
             <span class="room-standing-availability" data-availability={availability}>{availability}</span>
             if let Some(latest) = publications.last() {
                 {reason_chip(

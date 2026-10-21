@@ -937,6 +937,11 @@
   font-weight: 600;
   line-height: inherit;
 }
+.markdown-body .message-signoff a.message-agent-label { color: inherit; text-decoration: none; }
+.markdown-body .message-signoff a.message-agent-label:is(:hover, :focus-visible) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .markdown-body .message-signoff .relative-age { color: var(--muted); }
 .markdown-body .message-quote-name {
   --message-quote-name-accent: var(--muted);

@@ -151,12 +151,7 @@
   padding: 9px 10px;
   text-align: left;
 }
-.work-relationship-link--external {
-  border: var(--app-edge-soft);
-  border-radius: var(--app-radius-control);
-  background: var(--control-surface-soft);
-}
-.work-relationship-link span { color: var(--muted); font-size: var(--app-type-fact); text-transform: uppercase; }
+.work-relationship-link > span { color: var(--muted); font-size: var(--app-type-fact); text-transform: uppercase; }
 .work-relationship-link strong,
 .work-relationship-link small { max-width: 100%; overflow-wrap: anywhere; }
 .work-relationship-link small { color: var(--muted); }

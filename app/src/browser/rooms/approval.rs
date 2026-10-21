@@ -31,6 +31,8 @@ use crate::preparation_decision::{
 use crate::runtime::{CandidateWithdrawalRecord, PreparationProjection, RoomPositioned};
 
 type DraftChange = Rc<dyn Fn(&mut DecisionDraft)>;
+/// Opens one task's sheet, returning focus to the activating element.
+type OpenTask = Callback<(TaskStamp, web_sys::Element)>;
 type DraftCommand = Box<dyn Fn()>;
 
 /// This page's exact-version decision drafts. One pending version globally
@@ -88,6 +90,7 @@ struct Context<'a> {
     runtime: &'a AppRuntime,
     controls: &'a Controls,
     sender: &'a SenderHandle,
+    open_task: &'a OpenTask,
     preparation: &'a PreparationProjection,
     design: &'a TaskStamp,
     tasks: &'a [BoardTask],
@@ -115,6 +118,7 @@ pub(super) fn render_approval(
     runtime: &AppRuntime,
     controls: &Controls,
     sender: &SenderHandle,
+    open_task: &OpenTask,
     design: &TaskStamp,
 ) -> Html {
     let preparation = runtime.room_projection().preparation();
@@ -141,6 +145,7 @@ pub(super) fn render_approval(
         runtime,
         controls,
         sender,
+        open_task,
         design,
         preparation,
         tasks: &board.tasks,
@@ -174,17 +179,19 @@ pub(super) fn render_approval(
 }
 
 /// One recorded proposal as its room conversation shows it: who proposed
-/// what, its decision standing as tab-style counts, and links that focus the
-/// version's decision surface on the Design's read view.
+/// what, its decision standing as tab-style counts, links that focus the
+/// version's decision surface on the Design's read view, and each output's
+/// handle opening that task's sheet.
 pub(super) fn render_proposal_card(
     runtime: &AppRuntime,
+    open_task: &OpenTask,
     room: &TaskStamp,
     positioned: &RoomPositioned<DesignPassProposal>,
 ) -> Html {
     let code = positioned.value.candidate.candidate.to_string();
     html! {
         <article class="room-card" key={format!("proposal-{code}")} tabindex="0">
-            {render_proposal_face(runtime, room, positioned)}
+            {render_proposal_face(runtime, open_task, room, positioned)}
         </article>
     }
 }
@@ -192,6 +199,7 @@ pub(super) fn render_proposal_card(
 /// The proposal card's face, for a surface that supplies its own card.
 pub(super) fn render_proposal_face(
     runtime: &AppRuntime,
+    open_task: &OpenTask,
     room: &TaskStamp,
     positioned: &RoomPositioned<DesignPassProposal>,
 ) -> Html {
@@ -233,17 +241,18 @@ pub(super) fn render_proposal_face(
             if !candidate.outputs.is_empty() {
                 <ul class="room-proposal-outputs" aria-label="Proposed outputs">
                     {for candidate.outputs.iter().map(|output| {
-                        let title = tasks
-                            .iter()
-                            .find(|task| task.statement.body.born == *output)
-                            .map_or_else(
-                                || html! { <code>{output.to_string()}</code> },
-                                |task| html! {
-                                    <>{task.presentation_title.clone()}{" "}<code>{task.statement.body.handle.to_string()}</code></>
-                                },
-                            );
-                        html! {
-                            <li>{link(format!("{version} [data-approval-output=\"{output}\"]"), title)}</li>
+                        let selector = format!("{version} [data-approval-output=\"{output}\"]");
+                        let task = tasks.iter().find(|task| task.statement.body.born == *output);
+                        match task {
+                            Some(task) => html! {
+                                <li>
+                                    {link(selector, html! { {task.presentation_title.clone()} })}
+                                    {" "}{output_handle(open_task, task)}
+                                </li>
+                            },
+                            None => html! {
+                                <li>{link(selector, html! { <code>{output.to_string()}</code> })}</li>
+                            },
                         }
                     })}
                 </ul>
@@ -738,7 +747,7 @@ fn render_output(
         <li data-approval-output={output.to_string()}>
             <div class="room-approval-output-title">
                 <strong>{task.presentation_title.clone()}</strong>
-                <code>{statement.handle.to_string()}</code>
+                {output_handle(context.open_task, task)}
                 <span data-approval-output-kind="">{kind}</span>
                 <span>{standing}</span>
             </div>
@@ -752,6 +761,30 @@ fn render_output(
                 </ul>
             }
         </li>
+    }
+}
+
+/// An output's handle as a link that opens that task's sheet.
+fn output_handle(open_task: &OpenTask, task: &BoardTask) -> Html {
+    let handle = task.statement.body.handle.to_string();
+    let open = {
+        let (open_task, task) = (open_task.clone(), task.statement.body.born.clone());
+        Callback::from(move |event: MouseEvent| {
+            if let Some(target) = event
+                .current_target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            {
+                open_task.emit((task.clone(), target));
+            }
+        })
+    };
+    html! {
+        <button
+            type="button"
+            class="app-fact-link"
+            aria-label={format!("Open task {handle}")}
+            onclick={open}
+        ><code>{handle}</code></button>
     }
 }
 

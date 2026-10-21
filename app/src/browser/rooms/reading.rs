@@ -23,6 +23,7 @@ pub(in crate::browser) fn render_task_room(
     runtime: &AppRuntime,
     controls: &Controls,
     sender: &SenderHandle,
+    open_task: &Callback<(TaskStamp, web_sys::Element)>,
     detail: &BoardTask,
     composer: Html,
 ) -> Html {
@@ -65,8 +66,9 @@ pub(in crate::browser) fn render_task_room(
                         .values()
                         .filter(|proposal| proposal.value.candidate.controller == *room)
                         .map(|proposal| {
-                            let card =
-                                super::approval::render_proposal_card(runtime, room, proposal);
+                            let card = super::approval::render_proposal_card(
+                                runtime, open_task, room, proposal,
+                            );
                             (proposal.position, card)
                         }),
                 )
@@ -82,7 +84,7 @@ pub(in crate::browser) fn render_task_room(
                             &row.statement.body.acceptance,
                         )}
                         {super::conclusion::render_conclusion(runtime, controls, sender, row)}
-                        {super::approval::render_approval(runtime, controls, sender, room)}
+                        {super::approval::render_approval(runtime, controls, sender, open_task, room)}
                         {super::contributions::render_groups(runtime, room)}
                     }
                     <section class="room-history" aria-label="Room conversation">

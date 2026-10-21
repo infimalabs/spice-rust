@@ -375,7 +375,7 @@ fn proposal_card(
         )),
         body: html! {
             <div class="mosaic-message-content">
-                {super::approval::render_proposal_face(render.runtime, &channel.stamp, proposal)}
+                {super::approval::render_proposal_face(render.runtime, render.open_message_task, &channel.stamp, proposal)}
             </div>
         },
     }

@@ -120,13 +120,7 @@ fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Htm
     let attributes = classes!("app-horn-tab", "app-horn-tab--up", "app-horn-tab__handle");
     let focus_key = format!("group-lane:{lane}");
     let lane_text = lane.to_string();
-    let href = lanes
-        .and_then(|lanes| lanes.chat_target_for_lane(lane))
-        .map(|(_, member)| {
-            crate::view::card_href(&super::super::super::watchband::primary_textarea_id(
-                &member.to_string(),
-            ))
-        });
+    let href = super::super::super::watchband::lane_composer_href(lanes, lane);
     if let Some(href) = href {
         html! {
             <a

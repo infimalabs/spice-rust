@@ -117,8 +117,14 @@ local time on hover, a lane, occupant, team, or resident generation reads by
 name rather than identity, and an absent value reads as a dash. Evidence,
 blockers, relationships, provenance, the task's room, and its closure appear
 together rather than behind tabs or pagination. Activating a
-selected graph node scrolls and focuses its detail section; activating a
-related external task follows that lead in the same overview. Each detail's
+selected graph node scrolls and focuses its detail section. Every identity the
+sheet names navigates: a relationship inside the selection focuses its
+section, while one outside it, a proposal output's handle, and a parent-task
+origin replace the selection with that task; every lane name, from the
+claimant and Standing to each room and contribution card's speaker, opens that
+lane's Chat composer when Chat seats it and stays a plain label otherwise.
+Journal fact codes and steering origins have no card to open and read as text.
+Each detail's
 **Room** section seats its composer directly above the room's conversation,
 newest first, so a submitted observation is published into the task's room
 and appears right beneath the draft that wrote it. A Design's room is the same
