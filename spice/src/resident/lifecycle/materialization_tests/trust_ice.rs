@@ -65,6 +65,168 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
 }
 
 #[test]
+fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
+    let digest = digest();
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    committed(
+        bus.commit(pend_write(&digest, PRODUCER, instant(2)))
+            .expect("pend commits"),
+    );
+    assert!(
+        !park(&bus, PRODUCER),
+        "a lane without a claim parks nothing"
+    );
+    // A finite lease that ends before the wake decision below: only the ice
+    // keeps the claim held, so the grant can wake it.
+    committed(
+        bus.commit(claim_write_until(&bus, instant(3), instant(40), |_, _| {}))
+            .expect("claim commits"),
+    );
+    assert!(
+        !park(&bus, "/other/worktree"),
+        "another worktree's digest parks nothing"
+    );
+
+    assert!(park(&bus, PRODUCER));
+    assert_eq!(required(&bus), Some(digest.clone()));
+    assert!(
+        !park(&bus, PRODUCER),
+        "a repeated turn end records nothing more"
+    );
+    let parked = bus.task_snapshot().expect("parked snapshot reads");
+    let lease = parked.tasks()[0].lease().expect("held lease").body();
+    assert!(spice::claim_lease::is_indefinite(lease));
+    assert_eq!(lease.start, instant(3));
+    projection
+        .advance(&parked, &projects)
+        .expect("parked projection advances");
+    assert_eq!(
+        resolve(
+            &[target(&parked, &projection)],
+            &Backoff::default(),
+            instant(50),
+            lane::WakeOrder::default()
+        ),
+        Resolution::Idle
+    );
+
+    committed(bus.commit(grant_write(&digest)).expect("grant commits"));
+    let granted = bus.task_snapshot().expect("granted snapshot reads");
+    projection
+        .advance(&granted, &projects)
+        .expect("grant projection advances");
+    assert_eq!(
+        resolve(
+            &[target(&granted, &projection)],
+            &Backoff::default(),
+            instant(50),
+            lane::WakeOrder::default()
+        ),
+        Resolution::Attempt {
+            trigger: Trigger::HeldClaim,
+            lane: lane(),
+        }
+    );
+    assert!(!park(&bus, PRODUCER), "a granted digest parks nothing");
+    bus.verify().expect("the parked authority verifies");
+    bus.shutdown().expect("parking fixture stops");
+}
+
+#[test]
+fn a_newer_pended_digest_supersedes_its_worktrees_older_one_but_never_another_worktrees_grant() {
+    let (older, newer) = (digest(), other_digest());
+    let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    committed(
+        bus.commit(pend_write(&older, PRODUCER, instant(2)))
+            .expect("older pend commits"),
+    );
+    committed(
+        bus.commit(held_claim_write(&bus, instant(3), |_, _| {}))
+            .expect("claim commits"),
+    );
+    assert!(park(&bus, PRODUCER));
+    committed(
+        bus.commit(pend_write(&newer, PRODUCER, instant(4)))
+            .expect("newer pend commits"),
+    );
+    assert!(park(&bus, PRODUCER));
+    assert_eq!(required(&bus), Some(newer.clone()));
+    bus.shutdown().expect("supersession fixture stops");
+
+    let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    committed(
+        bus.commit(pend_write(&older, "/other/worktree", instant(2)))
+            .expect("foreign pend commits"),
+    );
+    committed(
+        bus.commit(iced_claim_write(&bus, &older, instant(3)))
+            .expect("foreign-parked claim commits"),
+    );
+    committed(
+        bus.commit(pend_write(&newer, PRODUCER, instant(4)))
+            .expect("own pend commits"),
+    );
+    assert!(!park(&bus, PRODUCER));
+    assert_eq!(required(&bus), Some(older));
+    bus.shutdown().expect("foreign fixture stops");
+}
+
+/// Worktree `grant_write` names as the digest's producer.
+const PRODUCER: &str = "/producer/worktree";
+
+fn park(bus: &Bus, worktree: &str) -> bool {
+    crate::resident::lane_surface::park_on_pended_grant(bus, lane(), worktree, instant(10))
+        .expect("turn-end parking decides")
+}
+
+fn required(bus: &Bus) -> Option<wire::Digest> {
+    let snapshot = bus.task_snapshot().expect("requirement snapshot reads");
+    snapshot.tasks()[0]
+        .statement()
+        .body()
+        .requirements
+        .as_slice()
+        .iter()
+        .find_map(|requirement| match requirement {
+            wire::EnvironmentRequirement::TrustGrant { value } => Some(value.clone()),
+            _ => None,
+        })
+}
+
+fn pend_write(digest: &wire::Digest, worktree: &str, at: Instant) -> JournalWrite {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "repo:genesis".parse().expect("fixture origin"),
+        at,
+        Producer::CommandDoor,
+    );
+    let pended = write
+        .fact(
+            body::TrustPended {
+                surface: "spice".to_owned(),
+                digest: digest.clone(),
+                worktree: Some(worktree.to_owned()),
+                previous: None,
+            },
+            FactCause::Root,
+        )
+        .expect("trust pend builds");
+    let (digest, worktree) = (digest.clone(), worktree.to_owned());
+    write.trust_head(pended, move |_| wire::TrustHead {
+        digest,
+        state: wire::TrustState::Pended,
+        worktree: Some(worktree),
+    });
+    write
+}
+
+fn other_digest() -> wire::Digest {
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        .parse()
+        .expect("fixture digest")
+}
+
+#[test]
 fn held_recovery_preserves_the_ready_deadline_across_projection_restart() {
     let digest = digest();
     let (bus, projects, mut projection) = iced_fixture(&digest);
@@ -211,6 +373,17 @@ pub(super) fn held_claim_write(
     at: Instant,
     edit: impl FnOnce(&mut TaskHead, &mut wire::WorkflowHead),
 ) -> JournalWrite {
+    claim_write_until(bus, at, spice::claim_lease::indefinite_horizon(), edit)
+}
+
+/// Claim the seeded task for `lane()` on a lease expiring at `horizon` after
+/// `edit` revises its statement and workflow.
+fn claim_write_until(
+    bus: &Bus,
+    at: Instant,
+    horizon: Instant,
+    edit: impl FnOnce(&mut TaskHead, &mut wire::WorkflowHead),
+) -> JournalWrite {
     let snapshot = bus.task_snapshot().expect("seed snapshot reads");
     let heads = &snapshot.tasks()[0];
     let task = heads.statement().body().born.clone();
@@ -220,7 +393,6 @@ pub(super) fn held_claim_write(
     edit(&mut statement, &mut workflow);
     let workflow_changed = workflow != original_workflow;
     let phase = workflow.phase.clone();
-    let horizon = spice::claim_lease::indefinite_horizon();
     let occupant = uuid(9);
     let mut write = JournalWrite::new(
         Actor::Lane(lane()),

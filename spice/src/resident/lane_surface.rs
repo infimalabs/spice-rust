@@ -24,6 +24,9 @@ use wire::{
 };
 
 mod automatic;
+mod pended_grant;
+#[cfg(test)]
+pub(in crate::resident) use pended_grant::park_on_pended_grant;
 mod ending;
 mod jobs;
 mod launch;
@@ -1066,9 +1069,9 @@ pub(super) fn occupant_exited(
         .iter()
         .find(|row| row.lane == exit.lane);
     let seated = seats.occupant(exit.lane).map(Occupant::occupant);
-    let vendor = match row {
+    let (vendor, worktree) = match row {
         Some(row) if row.occupant == Some(exit.occupant) && seated == Some(exit.occupant) => {
-            row.vendor.clone()
+            (row.vendor.clone(), row.worktree.clone())
         }
         _ => {
             ending::report_unaccounted_exit(diagnostic, exit, row, seated);
@@ -1104,6 +1107,18 @@ pub(super) fn occupant_exited(
     // occupant left in its final prose is journaled here rather than waiting
     // for a successor to cite it.
     super::steering::dispose_at_exit(bus, paths, epoch, exit.lane, &vendor, diagnostic);
+    // A turn that ended on a trust refusal leaves its held work parked on the
+    // grant its own worktree pended, so nothing wakes the lane until the
+    // operator rules. A failure here leaves the claim as it was.
+    let parked = wire::Instant::new(jiff::Timestamp::now())
+        .map_err(|error| store_fault("lane::exit-clock-invalid", &error.to_string()))
+        .and_then(|at| pended_grant::park_on_pended_grant(bus, exit.lane, &worktree, at));
+    if let Err(error) = parked {
+        let _ = writeln!(
+            diagnostic,
+            "held claim was not parked on its pended trust grant: {error:?}"
+        );
+    }
     Ok(())
 }
 
