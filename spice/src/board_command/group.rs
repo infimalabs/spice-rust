@@ -314,12 +314,8 @@ pub(super) fn arrange_working_groups(
     command: &wire::AdmittedCommand,
     request: &WorkingGroupArrange,
 ) -> Outcome<CommandAnswer> {
-    let current = match bus.read(|read| current_partition(read)) {
-        Ok(current) => current,
-        Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
-    };
-    let revision = match next_revision(command, current.revision) {
-        Ok(revision) => revision,
+    let (current, revision) = match advancing_partition(bus, command) {
+        Ok(found) => found,
         Err(outcome) => return outcome,
     };
     let designs = match designs(&current) {
@@ -342,19 +338,11 @@ pub(super) fn arrange_working_groups(
         partition: stated(&arranged.partition, revision, &current),
         from: current.clone(),
     };
-    change_partition(
+    restate(
         bus,
         command,
-        working_group_origin(),
-        revision,
         WorkingGroupChangeStatus::Arranged,
-        Vec::new(),
-        |write, _| {
-            write
-                .fact(fact, FactCause::Root)
-                .map(drop)
-                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
-        },
+        fact,
         request.clone(),
     )
 }
@@ -366,24 +354,12 @@ pub(super) fn set_working_group_fast(
     command: &wire::AdmittedCommand,
     request: &WorkingGroupFast,
 ) -> Outcome<CommandAnswer> {
-    let current = match bus.read(|read| current_partition(read)) {
-        Ok(current) => current,
-        Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
-    };
-    let revision = match next_revision(command, current.revision) {
-        Ok(revision) => revision,
+    let (current, revision) = match advancing_partition(bus, command) {
+        Ok(found) => found,
         Err(outcome) => return outcome,
     };
-    if !current
-        .groups
-        .iter()
-        .any(|group| group.group == request.group)
-    {
-        return refusal(
-            "group::missing",
-            Some(request.group.to_string()),
-            "the working group no longer stands; read the working groups and retry",
-        );
+    if let Err(outcome) = standing_group(&current, &request.group) {
+        return outcome;
     }
     let mut partition = current.clone();
     partition.revision = revision;
@@ -398,19 +374,11 @@ pub(super) fn set_working_group_fast(
         from: current,
         partition,
     };
-    change_partition(
+    restate(
         bus,
         command,
-        working_group_origin(),
-        revision,
         WorkingGroupChangeStatus::Retuned,
-        Vec::new(),
-        |write, _| {
-            write
-                .fact(fact, FactCause::Root)
-                .map(drop)
-                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
-        },
+        fact,
         request.clone(),
     )
 }
@@ -431,32 +399,13 @@ pub(crate) fn disband_working_group(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let current = match bus.read(|read| current_partition(read)) {
-        Ok(current) => current,
-        Err(error) => {
-            return (
-                store_fault("group::read-unavailable", &error.to_string()),
-                Vec::new(),
-            );
-        }
-    };
-    let revision = match next_revision(command, current.revision) {
-        Ok(revision) => revision,
+    let (current, revision) = match advancing_partition(bus, command) {
+        Ok(found) => found,
         Err(outcome) => return (outcome, Vec::new()),
     };
-    let Some(group) = current
-        .groups
-        .iter()
-        .find(|group| group.group == request.group)
-    else {
-        return (
-            refusal(
-                "group::missing",
-                Some(request.group.to_string()),
-                "the working group no longer stands; read the working groups and retry",
-            ),
-            Vec::new(),
-        );
+    let group = match standing_group(&current, &request.group) {
+        Ok(group) => group,
+        Err(outcome) => return (outcome, Vec::new()),
     };
     let handles = match design_handles(bus, group.anchors.clone()) {
         Ok(handles) => handles,
@@ -472,31 +421,14 @@ pub(crate) fn disband_working_group(
         from: current,
         partition,
     };
-    let mut outcome = change_partition(
+    let outcome = restate(
         bus,
         command,
-        working_group_origin(),
-        revision,
         WorkingGroupChangeStatus::Disbanded,
-        Vec::new(),
-        |write, _| {
-            write
-                .fact(fact, FactCause::Root)
-                .map(drop)
-                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
-        },
+        fact,
         request.clone(),
     );
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(_),
-        body: CommandAnswer::WorkingGroupChange(change),
-    }) = &mut outcome
-    else {
-        return (outcome, Vec::new());
-    };
-    let shelved = shelve(bus, command, config, projects, allocation, handles);
-    change.owed = shelved.owed;
-    (outcome, shelved.lanes)
+    shelve_committed(outcome, bus, command, config, projects, allocation, handles)
 }
 
 /// Set one standing group's shared activity stance. A change to Passive
@@ -513,32 +445,13 @@ pub(crate) fn set_working_group_stance(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let current = match bus.read(|read| current_partition(read)) {
-        Ok(current) => current,
-        Err(error) => {
-            return (
-                store_fault("group::read-unavailable", &error.to_string()),
-                Vec::new(),
-            );
-        }
-    };
-    let revision = match next_revision(command, current.revision) {
-        Ok(revision) => revision,
+    let (current, revision) = match advancing_partition(bus, command) {
+        Ok(found) => found,
         Err(outcome) => return (outcome, Vec::new()),
     };
-    let Some(group) = current
-        .groups
-        .iter()
-        .find(|group| group.group == request.group)
-    else {
-        return (
-            refusal(
-                "group::missing",
-                Some(request.group.to_string()),
-                "the working group no longer stands; read the working groups and retry",
-            ),
-            Vec::new(),
-        );
+    let group = match standing_group(&current, &request.group) {
+        Ok(group) => group,
+        Err(outcome) => return (outcome, Vec::new()),
     };
     let unchanged = group.stance == request.stance;
     if unchanged && request.stance.is_active() {
@@ -576,31 +489,14 @@ pub(crate) fn set_working_group_stance(
         from: current,
         partition,
     };
-    let mut outcome = change_partition(
+    let outcome = restate(
         bus,
         command,
-        working_group_origin(),
-        revision,
         WorkingGroupChangeStatus::Stanced,
-        Vec::new(),
-        |write, _| {
-            write
-                .fact(fact, FactCause::Root)
-                .map(drop)
-                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
-        },
+        fact,
         request.clone(),
     );
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(_),
-        body: CommandAnswer::WorkingGroupChange(change),
-    }) = &mut outcome
-    else {
-        return (outcome, Vec::new());
-    };
-    let shelved = shelve(bus, command, config, projects, allocation, handles);
-    change.owed = shelved.owed;
-    (outcome, shelved.lanes)
+    shelve_committed(outcome, bus, command, config, projects, allocation, handles)
 }
 
 fn stance_unchanged(stance: WorkingGroupStance) -> Outcome<CommandAnswer> {
@@ -800,6 +696,36 @@ fn next_revision(
     })
 }
 
+/// The standing partition and the revision a change to it commits.
+fn advancing_partition(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+) -> Result<(WorkingGroupPartition, u64), Outcome<CommandAnswer>> {
+    let current = bus
+        .read(|read| current_partition(read))
+        .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))?;
+    let revision = next_revision(command, current.revision)?;
+    Ok((current, revision))
+}
+
+/// The standing group `group` names, refusing one that no longer stands.
+fn standing_group<'a>(
+    current: &'a WorkingGroupPartition,
+    group: &RoomAuthorityStamp,
+) -> Result<&'a WorkingGroup, Outcome<CommandAnswer>> {
+    current
+        .groups
+        .iter()
+        .find(|standing| standing.group == *group)
+        .ok_or_else(|| {
+            refusal(
+                "group::missing",
+                Some(group.to_string()),
+                "the working group no longer stands; read the working groups and retry",
+            )
+        })
+}
+
 fn designs(current: &WorkingGroupPartition) -> Result<Designs<'_>, Outcome<CommandAnswer>> {
     Partition::new(current.groups.iter().flat_map(|group| {
         group.anchors.iter().map(|member| Placement {
@@ -938,4 +864,53 @@ where
         return store_fault("group::receipt-invalid", &error.to_string());
     }
     committed(bus, write, CommandAnswer::WorkingGroupChange(answer))
+}
+
+/// Commit one whole-partition restatement at the revision it restates.
+fn restate<B: serde::Serialize>(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    status: WorkingGroupChangeStatus,
+    fact: WorkingGroupsArranged,
+    body: B,
+) -> Outcome<CommandAnswer> {
+    let revision = fact.partition.revision;
+    change_partition(
+        bus,
+        command,
+        working_group_origin(),
+        revision,
+        status,
+        Vec::new(),
+        |write, _| {
+            write
+                .fact(fact, FactCause::Root)
+                .map(drop)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
+        },
+        body,
+    )
+}
+
+/// Shelve `handles` once a partition change committed, carrying the shelving
+/// still owed in its answer; any other outcome shelves nothing.
+fn shelve_committed(
+    mut outcome: Outcome<CommandAnswer>,
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    handles: Vec<TaskHandle>,
+) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(_),
+        body: CommandAnswer::WorkingGroupChange(change),
+    }) = &mut outcome
+    else {
+        return (outcome, Vec::new());
+    };
+    let shelved = shelve(bus, command, config, projects, allocation, handles);
+    change.owed = shelved.owed;
+    (outcome, shelved.lanes)
 }
