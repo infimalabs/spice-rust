@@ -336,9 +336,6 @@ struct ActivityMeasurement {
     fingerprint: ActivityFingerprint,
     candidates: Vec<crate::mosaic::Candidate>,
     latched: Option<crate::mosaic::Candidate>,
-    spans: Vec<usize>,
-    widths: Vec<i32>,
-    heights: Vec<i32>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -351,11 +348,6 @@ pub(super) struct CardLayout {
     pub(super) rows: i32,
     pub(super) lifecycle: crate::mosaic::Lifecycle,
     pub(super) measurement_index: usize,
-    pub(super) measurement_reads: usize,
-    pub(super) measured_spans: String,
-    pub(super) measured_widths: String,
-    pub(super) measured_heights: String,
-    pub(super) candidate_spans: String,
     pub(super) measure_span: usize,
 }
 
@@ -370,11 +362,6 @@ impl CardLayout {
             rows: 2,
             lifecycle: crate::mosaic::Lifecycle::Liquid,
             measurement_index,
-            measurement_reads: 0,
-            measured_spans: String::new(),
-            measured_widths: String::new(),
-            measured_heights: String::new(),
-            candidate_spans: String::new(),
             measure_span: base_span,
         }
     }
@@ -393,31 +380,6 @@ impl CardLayout {
             rows: card.rows,
             lifecycle: card.lifecycle,
             measurement_index,
-            measurement_reads: measurement.heights.len(),
-            measured_spans: measurement
-                .spans
-                .iter()
-                .map(usize::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
-            measured_widths: measurement
-                .widths
-                .iter()
-                .map(i32::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
-            measured_heights: measurement
-                .heights
-                .iter()
-                .map(i32::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
-            candidate_spans: measurement
-                .candidates
-                .iter()
-                .map(|candidate| candidate.span.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
             measure_span: measurement.candidates[0].span,
         }
     }
@@ -1130,7 +1092,6 @@ async fn measure_unknown(
             measurement_clone,
             latched_span,
             spans: Vec::with_capacity(3),
-            widths: Vec::with_capacity(3),
             heights: Vec::with_capacity(3),
         });
     }
@@ -1168,7 +1129,6 @@ struct PendingActivityMeasurement {
     measurement_clone: bool,
     latched_span: Option<usize>,
     spans: Vec<usize>,
-    widths: Vec<i32>,
     heights: Vec<i32>,
 }
 
@@ -1212,9 +1172,6 @@ impl PendingActivityMeasurement {
             fingerprint: self.activity.measurement_fingerprint(),
             candidates,
             latched,
-            spans: self.spans,
-            widths: self.widths,
-            heights: self.heights,
         }
     }
 }
@@ -1234,7 +1191,6 @@ fn measure_pending_tier(
             continue;
         };
         item.spans.push(span);
-        item.widths.push(item.element.offset_width());
         item.heights.push(item.element.offset_height());
     }
 }
@@ -1450,13 +1406,6 @@ fn render_lifecycle_boundary(
             data-base={layout.base.to_string()}
             data-row={layout.row.to_string()}
             data-rows={layout.rows.to_string()}
-            data-creation-index={layout.measurement_index.to_string()}
-            data-mosaic-measure-index={layout.measurement_index.to_string()}
-            data-measurement-reads={layout.measurement_reads.to_string()}
-            data-measured-spans={layout.measured_spans.clone()}
-            data-measured-widths={layout.measured_widths.clone()}
-            data-measured-heights={layout.measured_heights.clone()}
-            data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
