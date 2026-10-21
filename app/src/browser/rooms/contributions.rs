@@ -208,21 +208,12 @@ fn render_source(runtime: &AppRuntime, source: &RoomSource, state: SourceState<'
                 hunk.text.start,
                 hunk.text.end,
             );
-            let message = matches!(state, SourceState::Available)
-                .then(|| {
-                    runtime.messages().iter().find(|message| {
-                        message.lane == hunk.head.lane && message.locus == hunk.locus
-                    })
-                })
+            let href = matches!(state, SourceState::Available)
+                .then(|| super::conversation::transcript_card_href(runtime, hunk))
                 .flatten();
-            let link = message.map_or_else(
+            let link = href.map_or_else(
                 || html! { <span>{label.clone()}</span> },
-                |message| {
-                    let href = crate::view::card_href(
-                        &crate::browser::watchband::agent_message_source_id(message),
-                    );
-                    html! { <a href={href}>{label.clone()}</a> }
-                },
+                |href| html! { <a href={href}>{label.clone()}</a> },
             );
             ("transcript", link)
         }
