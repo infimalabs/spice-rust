@@ -1169,23 +1169,23 @@ fn answered_in_session(
     };
     let mut after = Some(session_declared);
     loop {
-        let page = read.selected_fact_page(
-            &[wire::FactKind::RoomContributed, wire::FactKind::RoomLeft],
-            after,
-            None,
-            journal::FactReadBudget::RETAINED,
-        )?;
+        let page =
+            read.room_publications(&request.design, after, journal::FactReadBudget::RETAINED)?;
         for envelope in &page.rows {
-            let answered = if let Some(contributed) = envelope.fact.read::<RoomContributed>() {
-                contributed.item.as_ref() == Some(&ask.item)
-                    && (contributed.lane, &contributed.room) == (request.lane, &request.design)
-            } else if let Some(left) = envelope.fact.read::<RoomLeft>() {
-                (left.lane, &left.room) == (request.lane, &request.design)
-            } else {
-                return Err(GuardError::Invalid(
-                    "a selected room answer did not decode".to_owned(),
-                ));
-            };
+            let answered = match envelope.fact.kind() {
+                wire::FactKind::RoomContributed => {
+                    envelope.fact.read::<RoomContributed>().map(|contributed| {
+                        contributed.lane == request.lane
+                            && contributed.item.as_ref() == Some(&ask.item)
+                    })
+                }
+                wire::FactKind::RoomLeft => envelope
+                    .fact
+                    .read::<RoomLeft>()
+                    .map(|left| left.lane == request.lane),
+                _ => Some(false),
+            }
+            .ok_or_else(|| GuardError::Invalid("a room answer did not decode".to_owned()))?;
             if answered {
                 return Ok(true);
             }
