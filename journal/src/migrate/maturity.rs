@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use wire::rooms::{DesignMaturity, DesignNoticed, RoomContributed, RoomLeft};
 use wire::{AnyFact, Envelope, FactKind};
 
-use super::{MigrationError, OpenError};
+use super::{OpenError, residual};
 
 /// Release that introduced the bounded Design maturity projection.
 const MATURITY_RELEASE: &str = "ROOMS-dW6GkN3W6";
@@ -93,13 +93,12 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
 }
 
 fn refusal(seq: i64, detail: &str) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row: seq.to_string(),
-        release: MATURITY_RELEASE,
-        detail: detail.to_owned(),
-    }
-    .into()
+    residual::retained(
+        "fact_envelopes",
+        seq.to_string(),
+        MATURITY_RELEASE,
+        detail.to_owned(),
+    )
 }
 
 /// One retained fact the maturity projection folds.

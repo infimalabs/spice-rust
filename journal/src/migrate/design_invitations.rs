@@ -12,7 +12,7 @@ use wire::{
     },
 };
 
-use super::{MigrationError, OpenError};
+use super::{OpenError, residual};
 
 /// Release that made exact Design statement evidence the notice authority.
 const NOTICE_STATEMENT_RELEASE: &str = "ROOMS-dW6GpYK65";
@@ -579,41 +579,37 @@ fn required_string<'a>(
 }
 
 fn refusal(seq: i64, detail: &str) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row: seq.to_string(),
-        release: DESIGN_INVITATION_RELEASE,
-        detail: detail.to_owned(),
-    }
-    .into()
+    residual::retained(
+        "fact_envelopes",
+        seq.to_string(),
+        DESIGN_INVITATION_RELEASE,
+        detail.to_owned(),
+    )
 }
 
 fn context_refusal(seq: i64, detail: &str) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row: seq.to_string(),
-        release: CONTEXT_RELEASE,
-        detail: detail.to_owned(),
-    }
-    .into()
+    residual::retained(
+        "fact_envelopes",
+        seq.to_string(),
+        CONTEXT_RELEASE,
+        detail.to_owned(),
+    )
 }
 
 fn statement_refusal(seq: i64, detail: &str) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row: seq.to_string(),
-        release: NOTICE_STATEMENT_RELEASE,
-        detail: detail.to_owned(),
-    }
-    .into()
+    residual::retained(
+        "fact_envelopes",
+        seq.to_string(),
+        NOTICE_STATEMENT_RELEASE,
+        detail.to_owned(),
+    )
 }
 
 fn presentation_refusal(seq: i64, detail: &str) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "fact_envelopes",
-        row: seq.to_string(),
-        release: PRESENTATION_RELEASE,
-        detail: detail.to_owned(),
-    }
-    .into()
+    residual::retained(
+        "fact_envelopes",
+        seq.to_string(),
+        PRESENTATION_RELEASE,
+        detail.to_owned(),
+    )
 }

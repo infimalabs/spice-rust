@@ -1,6 +1,6 @@
 use rusqlite::{OptionalExtension, params};
 
-use super::{MigrationError, OpenError};
+use super::{OpenError, residual};
 
 const PREDECESSOR_RELEASE: &str = "schema-76";
 
@@ -193,11 +193,5 @@ fn sql(sequence: wire::Seq) -> i64 {
 }
 
 fn retained(table: &'static str, row: String, detail: String) -> OpenError {
-    MigrationError::RetainedRow {
-        table,
-        row,
-        release: PREDECESSOR_RELEASE,
-        detail,
-    }
-    .into()
+    residual::retained(table, row, PREDECESSOR_RELEASE, detail)
 }

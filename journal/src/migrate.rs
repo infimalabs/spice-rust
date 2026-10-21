@@ -20,7 +20,7 @@ mod oops_design;
 mod oops_generation;
 mod preparation_edges;
 mod provenance;
-mod residual;
+pub(crate) mod residual;
 mod retained_notes;
 mod review_status;
 mod room_questions;
@@ -711,13 +711,12 @@ fn derived_subscriptions(
 }
 
 fn residency_error(detail: impl Into<String>) -> OpenError {
-    MigrationError::RetainedRow {
-        table: "residency_head",
-        row: "1".to_owned(),
-        release: RESIDENCY_SUBSCRIPTIONS_RELEASE,
-        detail: detail.into(),
-    }
-    .into()
+    residual::retained(
+        "residency_head",
+        "1".to_owned(),
+        RESIDENCY_SUBSCRIPTIONS_RELEASE,
+        detail.into(),
+    )
 }
 
 fn cross_retired_gate_filed(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
