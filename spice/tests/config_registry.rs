@@ -560,7 +560,12 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         .collect::<Vec<_>>();
     assert_eq!(
         worktree,
-        ["vendor.omp.model", "vendor.omp.effort", "say.voices",]
+        [
+            "vendor.omp.model",
+            "vendor.omp.effort",
+            "say.voices",
+            "proof.runner",
+        ]
     );
 
     let local = descriptors()
