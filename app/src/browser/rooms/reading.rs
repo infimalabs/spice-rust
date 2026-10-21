@@ -6,7 +6,9 @@
 
 use wire::TaskStamp;
 use wire::intent::BoardTask;
-use wire::rooms::{DesignItemStanding, DesignMaturity, DesignMaturityHead, DesignMaturityState};
+use wire::rooms::{
+    DesignItemInput, DesignItemStanding, DesignMaturity, DesignMaturityHead, DesignMaturityState,
+};
 use yew::prelude::*;
 
 use super::{Controls, RoomProjectionStatus, card};
@@ -82,7 +84,6 @@ pub(in crate::browser) fn render_task_room(
                         {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                         {super::approval::render_approval(runtime, controls, sender, room)}
                         {super::contributions::render_groups(runtime, room)}
-                        {super::contribute::render_note(row)}
                     }
                     <section class="room-history" aria-label="Room conversation">
                         <header>
@@ -146,30 +147,7 @@ fn render_maturity(
                 <strong>{"Maturity"}</strong>
                 <span class="room-maturity-state">{state}</span>
             </header>
-            <p>{judged.summary()}</p>
-            <dl>
-                <div>
-                    <dt>{"Contributors"}</dt>
-                    <dd>{bounded_count(maturity.contributing_lanes.len(), maturity.contributing_lanes_truncated)}</dd>
-                </div>
-                <div>
-                    <dt>{"Contributions"}</dt>
-                    <dd>{maturity.contributions}</dd>
-                </div>
-                <div>
-                    <dt>{"Requested reach"}</dt>
-                    <dd>
-                        {format!(
-                            "{} requests · {} lanes",
-                            maturity.requests,
-                            bounded_count(
-                                maturity.requested_lanes.len(),
-                                maturity.requested_lanes_truncated,
-                            ),
-                        )}
-                    </dd>
-                </div>
-            </dl>
+            <p>{summary(&judged)}</p>
             if !items.is_empty() {
                 <div class="room-maturity-heads" aria-label="Maturity by question item">
                     {for items.iter().zip(acceptance).map(|(item, text)| render_item(item, text))}
@@ -198,7 +176,6 @@ fn render_maturity(
                     )}
                 </p>
             }
-            <small>{"Advisory only; this neither blocks nor authorizes a Design decision."}</small>
         </section>
     }
 }
@@ -222,20 +199,55 @@ fn render_head(head: &DesignMaturityHead) -> Html {
     }
 }
 
-/// One current question item's standing in its charge series.
+/// One current question item's standing in its vote series.
 fn render_item(item: &DesignItemStanding, text: &str) -> Html {
     html! {
         <p data-question-item={item.question.to_string()} data-item-state={item.state.label()}>
             <span>{format!("{}. {text}", item.question)}</span>
             <span>
                 {format!(
-                    "{} · {} charges · {} lanes",
+                    "{} · {} votes · {} lanes",
                     item.state.label(),
                     item.charges,
                     item.lanes,
                 )}
             </span>
         </p>
+    }
+}
+
+/// Where the Design stands, naming the vote a steeping item still needs.
+fn summary(state: &DesignMaturityState) -> String {
+    let DesignMaturityState::Steeping {
+        next: Some(need),
+        quiet,
+    } = state
+    else {
+        return state.summary();
+    };
+    format!(
+        "steeping; item {} is {} and needs {}; {quiet} {} quiet",
+        need.question,
+        need.item.label(),
+        vote_needed(need.needs),
+        if *quiet == 1 { "item" } else { "items" },
+    )
+}
+
+/// The vote that would move an item toward concurrence.
+const fn vote_needed(input: DesignItemInput) -> &'static str {
+    match input {
+        DesignItemInput::AnyCharge => "any vote",
+        DesignItemInput::PositiveCharge => "a vote for",
+        DesignItemInput::NegativeCharge => "a vote against",
+        DesignItemInput::PositiveAgreement => {
+            "a vote for from a lane that last voted against, or more lanes for"
+        }
+        DesignItemInput::NegativeAgreement => {
+            "a vote against from a lane that last voted for, or more lanes against"
+        }
+        DesignItemInput::PositiveStrength => "a strongly-for vote",
+        DesignItemInput::NegativeStrength => "a strongly-against vote",
     }
 }
 

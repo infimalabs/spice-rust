@@ -137,9 +137,6 @@ pub(super) fn render_approval(
             .withdrawals
             .contains_key(&candidate.value.candidate)
     });
-    let opportunistic = board.row(design).is_some_and(|task| {
-        task.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
-    });
     let context = Context {
         runtime,
         controls,
@@ -158,15 +155,7 @@ pub(super) fn render_approval(
                 <strong>{"Proposal versions"}</strong>
                 <span>{open.len()}</span>
             </header>
-            if opportunistic {
-                <p class="room-notice">
-                    {"Every candidate is immutable. No displayed line starts decided: accept or reject each line, or every line at once, and the complete decision is previewed before it records authority."}
-                </p>
-            } else {
-                <p class="room-notice">
-                    {"Every proposal is immutable. No work output starts decided: accept or reject each output, or every output at once; only accepted outputs receive authority. Accept the exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
-                </p>
-            }
+
             {for open.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
             if !withdrawn.is_empty() {
                 <section class="room-approval-withdrawn" aria-label="Withdrawn versions" data-room-withdrawn="">
@@ -232,7 +221,6 @@ pub(super) fn render_proposal_face(
     };
     let version = format!("[data-candidate=\"{code}\"]");
     let fact = SequenceCode::new(positioned.position.get()).to_string();
-    let statement = SequenceCode::new(candidate.statement.get()).to_string();
     let tail = html! {
         <div class="room-proposal" data-proposal-card={code.clone()}>
             <p class="room-proposal-standing">
@@ -240,7 +228,6 @@ pub(super) fn render_proposal_face(
                     {render_standing_badges(&standing(preparation, &candidate.candidate))}
                 </span>
                 {link(version.clone(), html! { <>{"Proposal "}<code>{code.clone()}</code></> })}
-                {" · statement "}{link(format!("[data-fact=\"{statement}\"]"), html! { <code>{statement.clone()}</code> })}
                 {" · fact "}{link(version.clone(), html! { <code>{fact}</code> })}
             </p>
             if !candidate.outputs.is_empty() {
@@ -539,7 +526,7 @@ fn editor(controls: &Controls, candidate: &CandidateRef) -> impl Fn(DraftChange)
 
 fn render_inputs(context: &Context<'_>, candidate: &DesignPassProposal) -> Html {
     if candidate.governed_inputs.is_empty() {
-        return html! { <p class="room-approval-inputs">{"Governed inputs: none."}</p> };
+        return Html::default();
     }
     html! {
         <div class="room-approval-inputs">
@@ -582,7 +569,7 @@ fn render_references(candidate: &DesignPassProposal) -> Html {
 
 fn render_critiques(critiques: &[&RoomPositioned<CandidateCritique>]) -> Html {
     if critiques.is_empty() {
-        return html! { <p class="room-approval-critiques">{"Critiques: none recorded."}</p> };
+        return Html::default();
     }
     html! {
         <div class="room-approval-critiques">
@@ -609,7 +596,7 @@ fn render_critiques(critiques: &[&RoomPositioned<CandidateCritique>]) -> Html {
 
 fn render_coverage(runtime: &AppRuntime, coverage: &[&CandidateCoverage]) -> Html {
     if coverage.is_empty() {
-        return html! { <p class="room-approval-coverage">{"Review coverage: none recorded."}</p> };
+        return Html::default();
     }
     html! {
         <div class="room-approval-coverage">
@@ -780,8 +767,6 @@ fn render_output(
                 <ul class="room-approval-acceptance" aria-label="Acceptance">
                     {for statement.acceptance.iter().map(|criterion| html! { <li>{criterion.clone()}</li> })}
                 </ul>
-            } else {
-                <p class="room-approval-acceptance">{"No acceptance criteria recorded."}</p>
             }
         </li>
     }
@@ -818,7 +803,7 @@ fn render_decision_history(
     authorizations: &[&RoomPositioned<ExecutionAuthorization>],
 ) -> Html {
     if decisions.is_empty() && authorizations.is_empty() {
-        return html! { <p class="room-approval-history">{"Earlier decisions: none."}</p> };
+        return Html::default();
     }
     let mut rows = decisions
         .iter()
