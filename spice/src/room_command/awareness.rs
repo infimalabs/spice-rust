@@ -12,7 +12,7 @@ use clap::ArgMatches;
 use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::Bounded;
-use wire::rooms::{DesignMaturity, DesignMaturityState, DesignNoticed};
+use wire::rooms::{DesignItemStanding, DesignMaturity, DesignMaturityState, DesignNoticed};
 use wire::{CanonicalUuid, FaultClass, Outcome, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp};
 
 use super::{Failure, current_handle, discover, fault, store, task_invalid};
@@ -28,7 +28,19 @@ pub(crate) struct DesignAwareness {
     anchor: TaskStamp,
     page: Bounded<Noticed>,
     maturity: DesignMaturity,
+    /// Maturity judged against the Design's current statement.
+    state: DesignMaturityState,
+    /// Each current question item's standing.
+    items: Vec<ItemStanding>,
     effect: &'static str,
+}
+
+/// One current question item with its text.
+#[derive(Debug, Serialize)]
+pub(crate) struct ItemStanding {
+    #[serde(flatten)]
+    standing: DesignItemStanding,
+    text: String,
 }
 
 /// One admitted awareness record.
@@ -125,7 +137,7 @@ fn awareness(
         .transpose()?;
     let after = requested.and_then(|seq| seq.get().checked_sub(1).and_then(Seq::new));
     let retain = page.retain();
-    let (cursor, design, maturity, population, rows) = journal
+    let (cursor, design, maturity, acceptance, population, rows) = journal
         .read_with(|read| -> Result<_, Failure> {
             let design = current_handle(read, &anchor, projects)?;
             let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
@@ -136,6 +148,11 @@ fn awareness(
                 )
             })?;
             let maturity = read.design_maturity(&anchor).map_err(store)?;
+            let acceptance = read
+                .task_head(&anchor)
+                .map_err(store)?
+                .map(|head| head.body().acceptance.clone())
+                .unwrap_or_default();
             let population = read.design_notice_count(&anchor, after).map_err(store)?;
             let budget = journal::FactReadBudget::new(
                 retain.clamp(1, journal::FactReadBudget::RETAINED.rows()),
@@ -155,7 +172,7 @@ fn awareness(
                     None => break,
                 }
             }
-            Ok((cursor, design, maturity, population, rows))
+            Ok((cursor, design, maturity, acceptance, population, rows))
         })
         .map_err(|error| match error {
             journal::ReadError::Journal(error) => store(error),
@@ -173,6 +190,14 @@ fn awareness(
             .collect(),
         population,
     )?;
+    let state = maturity.state(&acceptance);
+    let items = maturity
+        .items
+        .standings(&acceptance)
+        .into_iter()
+        .zip(acceptance)
+        .map(|(standing, text)| ItemStanding { standing, text })
+        .collect();
     Ok((
         ReplyPosition::Snapshot(cursor),
         DesignAwareness {
@@ -180,6 +205,8 @@ fn awareness(
             anchor,
             page,
             maturity,
+            state,
+            items,
             effect: "advisory only; neither blocks nor authorizes a Design decision",
         },
     ))
@@ -220,7 +247,22 @@ impl fmt::Display for DesignAwareness {
             "design {} awareness (background notices; no attention or acknowledgment)",
             self.design
         )?;
-        write!(formatter, "\n{}", maturity_summary(&self.maturity))?;
+        write!(
+            formatter,
+            "\n{}",
+            maturity_summary(&self.maturity, &self.state)
+        )?;
+        for item in &self.items {
+            write!(
+                formatter,
+                "\nitem {} {}: {} charges from {} lanes: {}",
+                item.standing.question,
+                item.standing.state.label(),
+                item.standing.charges,
+                item.standing.lanes,
+                item.text,
+            )?;
+        }
         for head in self.maturity.recent_heads.iter().rev() {
             write!(
                 formatter,
@@ -260,25 +302,11 @@ impl fmt::Display for DesignAwareness {
     }
 }
 
-fn maturity_summary(maturity: &DesignMaturity) -> String {
-    let state = match maturity.state() {
-        DesignMaturityState::Fresh => "fresh".to_owned(),
-        DesignMaturityState::Steeped => "steeped".to_owned(),
-        DesignMaturityState::Steeping { unmet } => format!(
-            "steeping; needs {}",
-            unmet
-                .into_iter()
-                .map(|requirement| requirement.label())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    };
+fn maturity_summary(maturity: &DesignMaturity, state: &DesignMaturityState) -> String {
     format!(
-        "maturity {state}; contributions for={} against={} evidence={} questions={} from {} lanes; requests={} to {} lanes",
-        maturity.contributions.reason_for,
-        maturity.contributions.reason_against,
-        maturity.contributions.evidence,
-        maturity.contributions.question,
+        "maturity {}; {} contributions from {} lanes; requests={} to {} lanes",
+        state.summary(),
+        maturity.contributions,
         maturity.contributing_lanes.len(),
         maturity.requests,
         maturity.requested_lanes.len(),

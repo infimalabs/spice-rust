@@ -1,8 +1,12 @@
 use super::*;
 use wire::rooms::{
-    DesignMaturity, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed, DesignSession,
-    RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomLeft,
+    DesignMaturity, DesignMaturityState, DesignNoticeEvidence, DesignNoticeOpportunity,
+    DesignNoticed, DesignSession, RoomAuthorityStamp, RoomContributed, RoomContributionKind,
+    RoomLeft, RoomQuestion, RoomQuestionItem,
 };
+
+/// The one question item item-bearing fixture posts charge.
+const ITEM: &str = "Which input steeps a Design?";
 
 fn current_statement(journal: &Journal, task: &TaskStamp) -> Seq {
     journal
@@ -79,6 +83,20 @@ fn contributed(
     statement_head: Option<Seq>,
     micros: i64,
 ) -> RoomContributed {
+    contributed_on(journal, design, lane, kind, statement_head, micros, None)
+}
+
+/// [`contributed`] naming question item `(position, text)` of the statement.
+fn contributed_on(
+    journal: &mut Journal,
+    design: &TaskStamp,
+    lane: CanonicalUuid,
+    kind: RoomContributionKind,
+    statement_head: Option<Seq>,
+    micros: i64,
+    item: Option<(u16, &str)>,
+) -> RoomContributed {
+    let question = item.and_then(|(position, _)| RoomQuestion::new(position));
     let head = statement(journal, design);
     let handle = wire::TaskHandle::for_filing(&head.project, design, head.filing);
     let publication = RoomAuthorityStamp::for_micros(micros).expect("publication");
@@ -87,7 +105,8 @@ fn contributed(
         publication: publication.clone(),
         lane,
         contribution: kind,
-        question: None,
+        question,
+        item: item.map(|(_, text)| RoomQuestionItem::of(text)),
         statement: statement_head,
         text: "Substantive contribution.".to_owned(),
         sources: Vec::new(),
@@ -114,7 +133,7 @@ fn contributed(
         body: wire::intent::RoomContribute {
             room: handle.clone(),
             kind,
-            question: None,
+            question,
             text: body.text.clone(),
             sources: Vec::new(),
         },
@@ -176,21 +195,23 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
         noticed(&mut journal, &design, &claimed, lane(5)),
     ];
     let contributions = [
-        contributed(
+        contributed_on(
             &mut journal,
             &design,
             lane(1),
             RoomContributionKind::charge(1),
             Some(statement),
             1_000,
+            Some((1, ITEM)),
         ),
-        contributed(
+        contributed_on(
             &mut journal,
             &design,
             lane(2),
             RoomContributionKind::charge(-1),
             Some(statement),
             1_001,
+            Some((1, ITEM)),
         ),
         contributed(
             &mut journal,
@@ -207,6 +228,15 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
             RoomContributionKind::Question,
             None,
             1_003,
+        ),
+        contributed_on(
+            &mut journal,
+            &design,
+            lane(1),
+            RoomContributionKind::charge(-1),
+            Some(statement),
+            1_005,
+            Some((1, ITEM)),
         ),
     ];
     let declined = left(&mut journal, &design, lane(5), 1_004);
@@ -233,7 +263,10 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     assert_eq!(actual.recent_heads[0].requested_contributors(), 3);
     assert_eq!(actual.recent_heads[0].requested_decliners(), 1);
     assert_eq!(actual.recent_heads[0].requested_unanswered(), 0);
-    assert_eq!(actual.state(), wire::rooms::DesignMaturityState::Steeped);
+    assert_eq!(
+        actual.state(&[ITEM.to_owned()]),
+        DesignMaturityState::Steeped { quiet: 0 }
+    );
 }
 
 /// Schema 89 labelled contributions. The crossing rewrites each label to its
@@ -340,4 +373,86 @@ fn retained_contribution_labels_cross_to_charges_with_their_receipts() {
     drop(journal);
     let reopened = Journal::open(&path).expect("crossed authority reopens");
     assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
+}
+
+/// Schema 90 named a charged item by position alone. The crossing records each
+/// item's text identity from the statement the post witnessed while that
+/// statement is still current, re-folding to the same series; a post whose
+/// witnessed statement the journal no longer keeps refuses, naming the
+/// release that wrote it.
+#[test]
+fn retained_item_positions_cross_to_text_identities_from_their_current_statement() {
+    let items = ["  Which INPUT\tsteeps a Design? ", "Who answers it?"];
+    let fixture = |name: &str| {
+        let scratch = Scratch::new();
+        let path = scratch.path().join(name);
+        let mut journal = authority_file_fixture(&path);
+        let design = design_with_acceptance(&mut journal, 1, &items);
+        let statement = current_statement(&journal, &design);
+        for (micros, (by, value, position)) in
+            (3_000..).zip([(1, 1, 1), (2, -1, 1), (1, -1, 1), (3, 1, 2)])
+        {
+            contributed_on(
+                &mut journal,
+                &design,
+                lane(by),
+                RoomContributionKind::charge(value),
+                Some(statement),
+                micros,
+                Some((position, items[usize::from(position) - 1])),
+            );
+        }
+        let before = journal
+            .read(|read| read.design_maturity(&design))
+            .expect("positioned maturity reads");
+        journal
+            .connection
+            .execute_batch(
+                "UPDATE fact_envelopes
+                 SET envelope = CAST(json_remove(CAST(envelope AS TEXT), '$.fact.item') AS BLOB)
+                 WHERE kind = 'room::contributed'",
+            )
+            .expect("restore the retained position-only shape");
+        (scratch, path, journal, design, before)
+    };
+
+    let (_scratch, path, journal, design, before) = fixture("contribution-items.sqlite3");
+    crate::tests::schema::restore_predecessor(&journal, 90);
+    drop(journal);
+    let journal = Journal::open(&path).expect("positioned contributions cross");
+    journal
+        .verify()
+        .expect("every crossed receipt still proves its fact");
+    let crossed = journal
+        .read(|read| read.design_maturity(&design))
+        .expect("crossed maturity reads");
+    assert_eq!(
+        crossed, before,
+        "each series re-folds under its text identity"
+    );
+    let acceptance = items.map(str::to_owned);
+    assert_eq!(
+        crossed.state(&acceptance),
+        DesignMaturityState::Steeped { quiet: 0 }
+    );
+    drop(journal);
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
+
+    let (_scratch, path, journal, _, _) = fixture("superseded-items.sqlite3");
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes
+             SET envelope = CAST(json_set(CAST(envelope AS TEXT), '$.fact.statement', 999999) AS BLOB)
+             WHERE kind = 'room::contributed'",
+        )
+        .expect("witness a statement the journal no longer keeps");
+    crate::tests::schema::restore_predecessor(&journal, 90);
+    drop(journal);
+    let error = Journal::open(&path).expect_err("a superseded witness refuses");
+    let OpenError::Migration(MigrationError::RetainedRow { release, .. }) = &error else {
+        panic!("expected a retained-row refusal, got {error}");
+    };
+    assert_eq!(*release, "schema-90", "{error}");
 }

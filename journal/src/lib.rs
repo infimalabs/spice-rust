@@ -56,7 +56,9 @@
 /// records on every task review the workflow status its verdict left. Schema 90
 /// retires contribution labels into charges: reason-for is +1, reason-against
 /// is -1, evidence is 0, on each fact and its command receipt.
-pub const SCHEMA_VERSION: u32 = 90;
+/// Schema 91 records on every item-bearing contribution its question item's
+/// text identity, which keys that item's charge series.
+pub const SCHEMA_VERSION: u32 = 91;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

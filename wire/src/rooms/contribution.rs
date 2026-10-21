@@ -97,6 +97,36 @@ impl fmt::Display for RoomQuestion {
     }
 }
 
+/// The identity of one Design question item's text: a digest of the item
+/// trimmed, with whitespace runs collapsed and case folded. Reordering items
+/// keeps an item's identity; rewording it mints a new one.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RoomQuestionItem(Digest);
+
+impl RoomQuestionItem {
+    /// The identity of item text `text`.
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        let mut normalized = String::with_capacity(text.len());
+        for word in text.split_whitespace() {
+            if !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.extend(word.chars().flat_map(char::to_lowercase));
+        }
+        Self(Digest::compute(
+            Domain::RoomQuestionItem,
+            normalized.as_bytes(),
+        ))
+    }
+
+    /// The identity of each item in `acceptance`, in statement order.
+    pub fn each(acceptance: &[String]) -> impl Iterator<Item = Self> + '_ {
+        acceptance.iter().map(|item| Self::of(item))
+    }
+}
+
 /// What a contribution offers the Design: a charge on one question item, or
 /// an open question.
 ///
@@ -343,6 +373,15 @@ pub struct RoomContributed {
         deserialize_with = "crate::optional::present"
     )]
     pub question: Option<RoomQuestion>,
+    /// The text identity of [`Self::question`]'s item at [`Self::statement`],
+    /// recorded at admission so the item keeps one charge series across
+    /// statement reorders. Present exactly when `question` is.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub item: Option<RoomQuestionItem>,
     /// Design statement head already guarded by contribution admission.
     ///
     /// Historical contributions predate this attribution and decode into the

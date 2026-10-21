@@ -3,10 +3,10 @@ use crate::body::{DesignConclusion, TaskCompletionTerminal, Verdict};
 use crate::rooms::{
     CandidateReference, CandidateWithdrawal, DecisionRef, DesignPassProposal,
     DesignPassRecommendation, ExecutionAuthorization, OutputDecision, PreparationDecision,
-    RoomAuthorityStamp, RoomContributionKind, RoomPublicationKind, RoomRoute, RoomSource,
-    TaskPreparation,
+    RoomAuthorityStamp, RoomContributionKind, RoomPublicationKind, RoomQuestion, RoomQuestionItem,
+    RoomRoute, RoomSource, TaskPreparation,
 };
-use crate::{Fact, Instant, Name, SequenceCode, TaskStamp};
+use crate::{CanonicalUuid, Fact, Instant, Name, SequenceCode, TaskStamp};
 
 fn task(micros: i64) -> TaskStamp {
     TaskStamp::for_micros(micros).expect("fixture task")
@@ -54,8 +54,31 @@ fn contributed(room: i64, by: u8, kind: RoomContributionKind) -> AnyFact {
         lane: lane(by),
         contribution: kind,
         question: None,
+        item: None,
         statement: None,
         text: "Substantive contribution.".to_owned(),
+        sources: Vec::new(),
+    })
+}
+
+/// The Design's one current question item.
+const QUESTION: &str = "Does the cycle steep?";
+
+fn acceptance() -> Vec<String> {
+    vec![QUESTION.to_owned()]
+}
+
+/// Lane `by`'s charge `value` on the Design's question item.
+fn charged(by: u8, value: i8) -> AnyFact {
+    any(RoomContributed {
+        room: design(),
+        publication: authority(1_000 + i64::from(by)),
+        lane: lane(by),
+        contribution: RoomContributionKind::charge(value),
+        question: RoomQuestion::new(1),
+        item: Some(RoomQuestionItem::of(QUESTION)),
+        statement: Seq::new(1),
+        text: "Substantive charge.".to_owned(),
         sources: Vec::new(),
     })
 }
@@ -231,8 +254,12 @@ impl Journal {
         self.by(&Actor::Human(lane(200)), fact)
     }
 
+    fn facts(&self) -> DesignCycleFacts {
+        self.cycles.facts(&design(), &acceptance())
+    }
+
     fn cycle(&self, working: bool) -> DesignCycle {
-        self.cycles.facts(&design()).cycle(working)
+        self.facts().cycle(working)
     }
 
     /// One completed pass: proposal, release, and a decision.
@@ -243,14 +270,10 @@ impl Journal {
     }
 }
 
-fn steeping(journal: &mut Journal, lanes: u8) {
-    let kinds = [
-        RoomContributionKind::charge(1),
-        RoomContributionKind::charge(-1),
-        RoomContributionKind::charge(0),
-    ];
-    for by in 1..=lanes {
-        journal.lane(&contributed(DESIGN, by, kinds[usize::from(by - 1) % 3]));
+/// The first `posts` charges of the cheapest steep: A +1, B -1, A -1.
+fn steeping(journal: &mut Journal, posts: usize) {
+    for (by, value) in [(1, 1), (2, -1), (1, -1)].into_iter().take(posts) {
+        journal.lane(&charged(by, value));
     }
 }
 
@@ -259,8 +282,13 @@ fn first_pass_needs_steeped_maturity_or_a_nudge() {
     let mut journal = Journal::new();
     steeping(&mut journal, 2);
     assert_eq!(journal.cycle(false), DesignCycle::GatheringInput);
-    steeping(&mut journal, 3);
+    journal.lane(&charged(1, -1));
     assert_eq!(journal.cycle(false), DesignCycle::ReadyForProposal);
+    assert_eq!(
+        journal.cycles.facts(&design(), &[]).cycle(false),
+        DesignCycle::GatheringInput,
+        "steeping is judged against the current statement's items"
+    );
 
     let mut nudged = Journal::new();
     nudged.lane(&contributed(DESIGN, 1, RoomContributionKind::charge(0)));
@@ -355,10 +383,7 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
     journal.lane(&freed(DESIGN));
     journal.lane(&contributed(DESIGN, 2, RoomContributionKind::charge(0)));
     assert_eq!(journal.cycle(false), DesignCycle::AwaitingDecision);
-    assert_eq!(
-        journal.cycles.facts(&design()).end,
-        Some(DesignPassEnd::Proposed)
-    );
+    assert_eq!(journal.facts().end, Some(DesignPassEnd::Proposed));
 
     let withdrawn = |micros| {
         any(CandidateWithdrawn {
@@ -383,7 +408,7 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
         DesignCycle::AwaitingDecision,
         "a decision of an older proposal leaves the latest one undecided"
     );
-    let facts = stale.cycles.facts(&design());
+    let facts = stale.facts();
     assert_eq!(
         (facts.proposal, facts.decision),
         (Seq::new(2), Seq::new(3)),
@@ -400,7 +425,7 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
         "withdrawing a later proposal leaves an earlier undecided one owed"
     );
     assert_eq!(
-        shadowed.cycles.facts(&design()).proposal,
+        shadowed.facts().proposal,
         Seq::new(1),
         "the owed action cites the earlier proposal, not the withdrawn one"
     );
@@ -520,7 +545,7 @@ fn abandonment_moves_the_horizon_and_settlement_drops_the_fold() {
     let mut journal = Journal::new();
     steeping(&mut journal, 3);
     journal.lane(&freed(DESIGN));
-    let facts = journal.cycles.facts(&design());
+    let facts = journal.facts();
     assert_eq!(facts.end, Some(DesignPassEnd::Abandoned));
     assert_eq!(
         journal.cycle(false),
@@ -535,16 +560,13 @@ fn abandonment_moves_the_horizon_and_settlement_drops_the_fold() {
             expiry: instant(),
         }),
     );
-    assert_eq!(
-        journal.cycles.facts(&design()).end,
-        Some(DesignPassEnd::Abandoned)
-    );
+    assert_eq!(journal.facts().end, Some(DesignPassEnd::Abandoned));
 
     journal.operator(&any(TaskConcluded {
         task: design(),
         conclusion: DesignConclusion::Done {},
     }));
-    assert_eq!(journal.cycles.facts(&design()), DesignCycleFacts::default());
+    assert_eq!(journal.facts(), DesignCycleFacts::default());
     assert!(journal.cycles.designs.is_empty());
 }
 

@@ -160,7 +160,8 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Sources per Design contribution | 8 distinct exact authorities | `room::contribution-sources-exceeded` or `room::contribution-source-duplicate`; two transcript links to the same locus and text range remain one authority when only their accounted boundary differs |
 | Contribution room and proof | an open Design, by a lane, with one source witness per cited authority | `room::contribution-not-design`, `room::contribution-design-concluded`, `room::contribution-lane-only`, or `room::contribution-source-witness`; the journal refuses a contribution without its matching successful command receipt |
 | Exact Design maturity statement heads | current plus three recent heads; older heads fold into one aggregate | display the aggregate instead of expanding history |
-| Distinct lanes per Design maturity set | 64 sorted identities | display the retained count with a bounded marker; maturity's three-lane threshold remains exact |
+| Distinct lanes per Design maturity set | 64 sorted identities | display the retained count with a bounded marker; a lane beyond an item's bound cannot count as conceding |
+| Design maturity question-item series | 32 per Design, least recently charged dropped first | a dropped item reads as quiet until charged again |
 | Post to a deleted room | any anchor that is not deleted, settled included | `room::anchor-deleted`, naming the standing: a deleted anchor's room stays readable, and its open receipts still settle |
 | Terminal Design or negative Plan settlement | every pending downstream dependency branch closes in the same transaction | a held branch refuses `task::controlled-descendant-claimed` and names its holder unless explicit force is permitted |
 | Candidate or decision controller | an open Design | `preparation::controller-not-design` or `preparation::controller-concluded`: a Plan's outputs follow its positive review |

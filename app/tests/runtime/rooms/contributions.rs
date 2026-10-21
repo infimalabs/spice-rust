@@ -23,6 +23,9 @@ fn artifact() -> RoomSource {
     }
 }
 
+/// The Design's first question item, which every fixture charge weighs.
+const ITEM: &str = "Which input steeps the Design?";
+
 /// A contribution as admission writes it: a charge weighs the Design's first
 /// question item, and a question names none.
 fn contributed(
@@ -32,6 +35,7 @@ fn contributed(
     contribution: RoomContributionKind,
     sources: Vec<RoomSource>,
 ) -> serde_json::Value {
+    let charge = matches!(contribution, RoomContributionKind::Charge(_));
     envelope(
         position,
         "room::contributed",
@@ -40,14 +44,15 @@ fn contributed(
             publication: publication.clone(),
             lane: uuid(lane),
             contribution,
-            question: matches!(contribution, RoomContributionKind::Charge(_))
-                .then(|| RoomQuestion::new(1).expect("one-based item")),
+            question: charge.then(|| RoomQuestion::new(1).expect("one-based item")),
+            item: charge.then(|| wire::rooms::RoomQuestionItem::of(ITEM)),
             statement: None,
             text: format!("{} at {position}", contribution.as_str()),
             sources,
         },
     )
 }
+/// [`contributed`] at statement head `statement`.
 fn attributed(
     position: u64,
     statement: u64,
@@ -63,7 +68,8 @@ fn attributed(
             publication: publication.clone(),
             lane: uuid(lane),
             contribution,
-            question: None,
+            question: RoomQuestion::new(1),
+            item: Some(wire::rooms::RoomQuestionItem::of(ITEM)),
             statement: wire::Seq::new(statement),
             text: format!("{} at {position}", contribution.as_str()),
             sources: Vec::new(),
@@ -402,7 +408,7 @@ fn noticed_at(
 fn maturity_projection_is_incremental_bounded_and_standing_neutral() {
     const THIRD: &str = "33333333-3333-4333-8333-333333333333";
     let session = session(OPERATOR, EPOCH);
-    let [first, second, third, ..] = stamps();
+    let [first, second, third, fourth, ..] = stamps();
     let snapshot = [
         noticed_at(1, 10, &room(), LANE),
         noticed_at(2, 10, &room(), SECOND_LANE),
@@ -416,12 +422,16 @@ fn maturity_projection_is_incremental_bounded_and_standing_neutral() {
             RoomContributionKind::charge(-1),
         ),
         attributed(6, 10, &third, THIRD, RoomContributionKind::charge(0)),
+        attributed(7, 10, &fourth, LANE, RoomContributionKind::charge(-1)),
     ];
     let runtime = contribution_runtime(&session, &snapshot);
     let projection = runtime.room_projection();
     let maturity = projection.maturity(&room()).expect("maturity projects");
 
-    assert_eq!(maturity.state(), wire::rooms::DesignMaturityState::Steeped);
+    assert_eq!(
+        maturity.state(&[ITEM.to_owned()]),
+        wire::rooms::DesignMaturityState::Steeped { quiet: 0 }
+    );
     assert_eq!(maturity.recent_heads.len(), 1);
     assert_eq!(maturity.recent_heads[0].requested_contributors(), 3);
     assert!(

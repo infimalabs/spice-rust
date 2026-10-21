@@ -803,6 +803,7 @@ mod tests {
                 lane,
                 contribution: RoomContributionKind::charge(1),
                 question: None,
+                item: None,
                 statement: None,
                 text: "substantive contribution".to_owned(),
                 sources: Vec::new(),

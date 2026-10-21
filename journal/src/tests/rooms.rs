@@ -142,6 +142,27 @@ fn task_with_intent(
     preparation: Option<TaskPreparation>,
     intent: Option<wire::TaskIntent>,
 ) -> TaskStamp {
+    task_with_acceptance(journal, offset, preparation, intent, Vec::new())
+}
+
+/// A Design whose statement names `acceptance` as its question items.
+fn design_with_acceptance(journal: &mut Journal, offset: i64, acceptance: &[&str]) -> TaskStamp {
+    task_with_acceptance(
+        journal,
+        offset,
+        None,
+        Some(wire::TaskIntent::Design),
+        acceptance.iter().map(|item| (*item).to_owned()).collect(),
+    )
+}
+
+fn task_with_acceptance(
+    journal: &mut Journal,
+    offset: i64,
+    preparation: Option<TaskPreparation>,
+    intent: Option<wire::TaskIntent>,
+    acceptance: Vec<String>,
+) -> TaskStamp {
     let task = TaskStamp::for_micros(20_000 + offset).expect("task stamp");
     let current = if intent == Some(wire::TaskIntent::Design) {
         phase("design")
@@ -166,7 +187,7 @@ fn task_with_intent(
                 task: task.clone(),
                 title: format!("Room task {offset}"),
                 description: None,
-                acceptance: Vec::new(),
+                acceptance: acceptance.clone(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: "rooms".to_owned(),
                 filing: wire::TaskFiling::Filed,
@@ -193,7 +214,7 @@ fn task_with_intent(
         queue_origin: revision,
         title: format!("Room task {offset}"),
         description: None,
-        acceptance: Vec::new(),
+        acceptance,
         requirements: wire::EnvironmentRequirements::default(),
         project: "rooms".to_owned(),
         filing: wire::TaskFiling::Filed,
