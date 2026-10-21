@@ -261,7 +261,11 @@ controls; those stay on the version. There, a work proposal's every output
 carries an Accept or Reject verdict the operator must give: no line starts
 decided, **Accept all** and **Reject all** above the output list mark every
 line at once, and Preview refuses, naming the undecided outputs, until each
-has a verdict. Return with feedback needs no per-output verdict.
+has a verdict. The version asks no separate decision: text entered in its
+**Return with feedback** field makes the decision a return, which sets the
+verdicts aside without clearing them, and Preview names the derived outcome
+(the accepted and rejected counts, or the return and its feedback) before
+Submit.
 
 The operator's inbox sits in the Spice sidebar's Principals section, inside
 their own principal row beneath its avatar, name, and email, above Jobs, and

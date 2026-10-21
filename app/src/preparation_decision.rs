@@ -4,7 +4,9 @@
 //!
 //! No output verdict is assumed: every proposed output stays undecided until
 //! the operator marks it, singly or all at once, and a work proposal with an
-//! undecided output refuses to preview rather than deciding for them.
+//! undecided output refuses to preview rather than deciding for them. No
+//! decision kind is chosen either: entered return feedback makes the decision
+//! a return, and otherwise it accepts the proposal through its verdicts.
 //!
 //! The draft never changes rendered authority. A successful command answer
 //! only reports that the write landed; proposal standing moves when the
@@ -18,16 +20,6 @@ use wire::rooms::{
     OutputDecision, OutputVerdict, PreparationDecide, PreparationDecision, ProposalRef, RoomSource,
 };
 use wire::{Seq, SequenceCode, TaskStamp, Witness};
-
-/// The operator's chosen disposition.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DecisionChoice {
-    /// Accept the proposal, resolving every output when it proposes work.
-    #[default]
-    Accept,
-    /// Return the proposal for another pass with material feedback.
-    Return,
-}
 
 /// One decision command and the authority heads its preview observed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,10 +47,10 @@ pub enum DraftNotice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionDraft {
     candidate: CandidateRef,
-    choice: DecisionChoice,
+    comment: String,
+    feedback: String,
     verdicts: BTreeMap<TaskStamp, OutputVerdict>,
     output_comments: BTreeMap<TaskStamp, String>,
-    reason: String,
     phase: DraftPhase,
     notice: Option<DraftNotice>,
 }
@@ -118,10 +110,10 @@ impl DecisionDraft {
     pub const fn new(candidate: CandidateRef) -> Self {
         Self {
             candidate,
-            choice: DecisionChoice::Accept,
+            comment: String::new(),
+            feedback: String::new(),
             verdicts: BTreeMap::new(),
             output_comments: BTreeMap::new(),
-            reason: String::new(),
             phase: DraftPhase::Editing,
             notice: None,
         }
@@ -132,9 +124,11 @@ impl DecisionDraft {
         &self.candidate
     }
 
+    /// Whether return feedback is entered, which makes the decision a return.
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
-    pub const fn choice(&self) -> DecisionChoice {
-        self.choice
+    pub fn returning(&self) -> bool {
+        !self.feedback.trim().is_empty()
     }
 
     /// The verdict the operator gave `output`, if any.
@@ -148,9 +142,17 @@ impl DecisionDraft {
         self.output_comments.get(output).map_or("", String::as_str)
     }
 
+    /// The overall comment an accepted work proposal records.
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
-    pub fn reason(&self) -> &str {
-        &self.reason
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    /// The material feedback that returns the proposal when entered.
+    #[must_use]
+    pub fn feedback(&self) -> &str {
+        &self.feedback
     }
 
     #[must_use]
@@ -166,10 +168,6 @@ impl DecisionDraft {
     #[must_use]
     pub const fn is_pending(&self) -> bool {
         matches!(self.phase, DraftPhase::Pending(_))
-    }
-
-    pub fn set_choice(&mut self, choice: DecisionChoice) {
-        self.edit(|draft| draft.choice = choice);
     }
 
     pub fn set_output_verdict(&mut self, output: TaskStamp, verdict: OutputVerdict) {
@@ -197,8 +195,12 @@ impl DecisionDraft {
         });
     }
 
-    pub fn set_reason(&mut self, reason: String) {
-        self.edit(|draft| draft.reason = reason);
+    pub fn set_comment(&mut self, comment: String) {
+        self.edit(|draft| draft.comment = comment);
+    }
+
+    pub fn set_feedback(&mut self, feedback: String) {
+        self.edit(|draft| draft.feedback = feedback);
     }
 
     /// Preview against the exact candidate fact and current board heads.
@@ -320,63 +322,55 @@ impl DecisionDraft {
     }
 
     fn decision_outcome(&self, candidate: &DesignPassProposal) -> Result<DecisionOutcome, String> {
-        match self.choice {
-            DecisionChoice::Accept => match candidate.recommendation {
-                DesignPassRecommendation::Work => {
-                    if self
-                        .verdicts
-                        .keys()
-                        .any(|output| !candidate.outputs.contains(output))
-                    {
-                        return Err(
-                            "preparation::decision-foreign-output: decide only outputs in this proposal version"
-                                .to_owned(),
-                        );
-                    }
-                    let undecided = candidate
-                        .outputs
-                        .iter()
-                        .filter(|output| !self.verdicts.contains_key(*output))
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>();
-                    if !undecided.is_empty() {
-                        return Err(format!(
-                            "preparation::decision-undecided-output: accept or reject every proposed output before previewing; undecided: {}",
-                            undecided.join(", ")
-                        ));
-                    }
-                    let outputs = candidate
-                        .outputs
-                        .iter()
-                        .map(|output| OutputDecision {
-                            output: output.clone(),
-                            verdict: self.verdicts[output],
-                            comment: trimmed(self.output_comment(output)),
-                        })
-                        .collect();
-                    Ok(DecisionOutcome::Resolved {
-                        candidate: candidate.candidate.clone(),
-                        outputs,
-                        comment: trimmed(&self.reason),
-                    })
-                }
-                DesignPassRecommendation::Conclude | DesignPassRecommendation::Collapse => {
-                    Ok(DecisionOutcome::Accepted {
-                        candidate: candidate.candidate.clone(),
-                    })
-                }
-            },
-            DecisionChoice::Return => {
-                let reason = self.reason.trim();
-                if reason.is_empty() {
+        let feedback = self.feedback.trim();
+        if !feedback.is_empty() {
+            return Ok(DecisionOutcome::Returned {
+                candidate: candidate.candidate.clone(),
+                reason: feedback.to_owned(),
+            });
+        }
+        match candidate.recommendation {
+            DesignPassRecommendation::Work => {
+                if self
+                    .verdicts
+                    .keys()
+                    .any(|output| !candidate.outputs.contains(output))
+                {
                     return Err(
-                        "preparation::return-reason-empty: state the material feedback for the next Design pass"
+                        "preparation::decision-foreign-output: decide only outputs in this proposal version"
                             .to_owned(),
                     );
                 }
-                Ok(DecisionOutcome::Returned {
+                let undecided = candidate
+                    .outputs
+                    .iter()
+                    .filter(|output| !self.verdicts.contains_key(*output))
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                if !undecided.is_empty() {
+                    return Err(format!(
+                        "preparation::decision-undecided-output: accept or reject every proposed output before previewing; undecided: {}",
+                        undecided.join(", ")
+                    ));
+                }
+                let outputs = candidate
+                    .outputs
+                    .iter()
+                    .map(|output| OutputDecision {
+                        output: output.clone(),
+                        verdict: self.verdicts[output],
+                        comment: trimmed(self.output_comment(output)),
+                    })
+                    .collect();
+                Ok(DecisionOutcome::Resolved {
                     candidate: candidate.candidate.clone(),
-                    reason: reason.to_owned(),
+                    outputs,
+                    comment: trimmed(&self.comment),
+                })
+            }
+            DesignPassRecommendation::Conclude | DesignPassRecommendation::Collapse => {
+                Ok(DecisionOutcome::Accepted {
+                    candidate: candidate.candidate.clone(),
                 })
             }
         }
