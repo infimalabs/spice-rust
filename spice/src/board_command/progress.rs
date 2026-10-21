@@ -312,9 +312,8 @@ fn require_lane_progress(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
         Some(entry.handle().to_string()),
         &format!(
             "a Design stays open until the operator concludes it; end this pass with one \
-             `spice preparation propose PROPOSAL_JSON` (recommendation, outputs, \
-             governed_inputs, justification, references), which releases your claim on {}, \
-             or abandon the pass with `spice task free {}`",
+             `spice preparation propose JUSTIFICATION`, which assembles what the pass built and \
+             releases your claim on {}, or abandon the pass with `spice task free {}`",
             entry.handle(),
             entry.handle()
         ),

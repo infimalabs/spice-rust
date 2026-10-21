@@ -83,6 +83,7 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         Witness::Proposal { proposal, head } => {
             Ok(read.proposal_head(proposal)?.map(|head| head.position()) == *head)
         }
+        Witness::Room { room, head } => Ok(read.room_publication_head(room)? == *head),
         Witness::Authorization { output, head } => {
             Ok(read.authorization_head(output)?.map(|head| head.position()) == *head)
         }

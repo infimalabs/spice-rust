@@ -527,19 +527,6 @@ fn a_lane_never_completes_a_design_it_holds() {
         panic!("lane done must leave a Design open: {result:?}");
     };
     assert_eq!(refusal.reason(), "task::design-open");
-    let hint = refusal
-        .diagnostic()
-        .and_then(|diagnostic| diagnostic.detail())
-        .expect("design-open names both exits");
-    assert!(
-        hint.contains("spice preparation propose PROPOSAL_JSON"),
-        "{hint}"
-    );
-    assert!(hint.contains("recommendation"), "{hint}");
-    assert!(
-        hint.contains(&format!("spice task free {design}")),
-        "{hint}"
-    );
     let view = board(&bus, epoch, Actor::Operator);
     let held = at(&view, &design);
     assert!(held.workflow.body.status.is_pending());

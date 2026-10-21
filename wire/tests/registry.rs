@@ -424,6 +424,10 @@ fn sample_room_witnesses(task: &wire::TaskStamp) -> Vec<Witness> {
             proposal: wire::rooms::ProposalRef::Candidate { candidate },
             head: Some(seq(9)),
         },
+        Witness::Room {
+            room: task.clone(),
+            head: Some(seq(11)),
+        },
         Witness::Authorization {
             output: task.clone(),
             head: None,

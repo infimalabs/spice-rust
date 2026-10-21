@@ -376,7 +376,12 @@ impl Law {
     /// boundary in the holder's worktree.
     pub const DESIGN_PROPOSE: Self = Self {
         required: &[WitnessKind::Proposal, WitnessKind::Residency],
-        optional: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
+        optional: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Room,
+        ],
         authority: Authority::Connected,
     };
     /// Exact operator disposition of one immutable candidate. Every decision

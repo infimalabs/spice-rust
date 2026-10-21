@@ -138,7 +138,7 @@ impl DesignCycle {
             ),
             Self::ReadyForProposal => format!(
                 "a lane claims {design} through `spice task next` and ends its pass with one \
-                 `spice preparation propose PROPOSAL_JSON`"
+                 `spice preparation propose JUSTIFICATION`"
             ),
             Self::AwaitingDecision => facts.proposal.map_or_else(
                 || format!("the operator decides the proposal under {design}"),
@@ -222,7 +222,7 @@ impl DesignCyclePresentation {
                 DesignCycleActor::Lane,
                 format!(
                     "the holding lane ends this pass of {design} with one `spice preparation \
-                     propose PROPOSAL_JSON`, which releases its claim"
+                     propose JUSTIFICATION`, which releases its claim"
                 ),
             ),
             _ => (cycle.next_actor(), cycle.next_action(design, facts)),
