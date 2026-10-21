@@ -64,7 +64,7 @@ fn dispose(
     keys: &[RoomReceiptRef],
     clause: &str,
 ) -> Result<Outcome<CommandAnswer>, Outcome<CommandAnswer>> {
-    require_clause(clause)?;
+    bound_clause(clause)?;
     let fact = RoomDisposed {
         disposition,
         keys: keys.to_vec(),
@@ -408,16 +408,10 @@ fn assess(
     Ok(commit(bus, command, control, write, answer))
 }
 
-/// A decision clause must say something and fit the control capacity its
-/// item reserved at admission, so a saturated scope still admits it.
-fn require_clause(clause: &str) -> Result<(), Outcome<CommandAnswer>> {
-    if clause.trim().is_empty() {
-        return Err(refusal(
-            "room::clause-required",
-            None,
-            "pass a nonblank --clause stating the decision",
-        ));
-    }
+/// A decision clause is optional, since it reaches no lane, but it must fit
+/// the control capacity its item reserved at admission, so a saturated scope
+/// still admits it.
+fn bound_clause(clause: &str) -> Result<(), Outcome<CommandAnswer>> {
     if clause.len() > ROOM_CONTROL_RETURN_RESERVE_BYTES {
         return Err(refusal(
             "room::clause-too-large",
