@@ -854,83 +854,40 @@ fn cross_retired_task_guidance(transaction: &rusqlite::Transaction<'_>) -> Resul
         wire::FactKind::TaskDone,
         "json_type(CAST(envelope AS TEXT), '$.fact.terminal.guidance') IS NOT NULL",
         RETIRED_TASK_GUIDANCE_RELEASE,
-        |_, fact| take_retired_guidance(fact.get_mut("terminal")),
+        |_, fact| {
+            take_retired_guidance(
+                fact.get_mut("terminal")
+                    .and_then(serde_json::Value::as_object_mut),
+            )
+        },
     )?;
 
     let command = wire::CommandKind::TaskDone;
-    let receipts = guidance_rows::<String>(
+    residual::rewrite_receipts(
         transaction,
-        "SELECT command_id, response FROM command_receipts WHERE command_kind = ?1 \
-         AND json_type(CAST(response AS TEXT), '$.outcome.body.guidance') IS NOT NULL \
-         ORDER BY command_id",
-        command.as_str(),
-    )?;
-    for (command_id, bytes) in receipts {
-        let refuse = |detail: String| guidance_error("command_receipts", &command_id, detail);
-        let mut response: wire::Response<serde_json::Value> = wire::decode(&bytes)
-            .map_err(|error| refuse(format!("the stored response does not decode: {error}")))?;
-        let wire::Outcome::Reply(reply) = &mut response.outcome else {
-            return Err(refuse("the stored response is not a reply".to_owned()));
-        };
-        take_retired_guidance(Some(&mut reply.body)).map_err(refuse)?;
-        let answer = wire::encode(&reply.body)
-            .and_then(|body| command.binding().answer.decode(&body))
-            .and_then(serde_json::to_value)
-            .map_err(|error| refuse(format!("the crossed answer is not current: {error}")))?;
-        reply.body = answer;
-        let bytes = wire::encode(&response)
-            .map_err(|error| refuse(format!("the crossed response cannot encode: {error}")))?;
-        let changed = transaction
-            .execute(
-                "UPDATE command_receipts SET response = ?1 \
-                 WHERE command_id = ?2 AND command_kind = ?3",
-                params![bytes, command_id, command.as_str()],
-            )
-            .map_err(OpenError::Sqlite)?;
-        if changed != 1 {
-            return Err(refuse(
-                "the row changed under the exclusive crossing".to_owned(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn guidance_rows<K: rusqlite::types::FromSql>(
-    transaction: &rusqlite::Transaction<'_>,
-    sql: &str,
-    kind: &str,
-) -> Result<Vec<(K, Vec<u8>)>, OpenError> {
-    let mut statement = transaction.prepare(sql).map_err(OpenError::Sqlite)?;
-    let rows = statement
-        .query_map([kind], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(OpenError::Sqlite)?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(OpenError::Sqlite)
+        command,
+        Some("json_type(CAST(response AS TEXT), '$.outcome.body.guidance') IS NOT NULL"),
+        RETIRED_TASK_GUIDANCE_RELEASE,
+        |_, response| {
+            let response = residual::edit_reply(command, response, |answer| {
+                take_retired_guidance(Some(answer)).map(|()| true)
+            })?;
+            Ok((None, response))
+        },
+    )
 }
 
 /// Remove the guidance member, refusing anything but the retired spelling.
-fn take_retired_guidance(object: Option<&mut serde_json::Value>) -> Result<(), String> {
-    match object
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|object| object.remove("guidance"))
-    {
+fn take_retired_guidance(
+    object: Option<&mut serde_json::Map<String, serde_json::Value>>,
+) -> Result<(), String> {
+    match object.and_then(|object| object.remove("guidance")) {
         Some(serde_json::Value::String(guidance)) if guidance == RETIRED_TASK_GUIDANCE => Ok(()),
         Some(other) => Err(format!(
             "guidance {other} is not the retired plan-advance spelling"
         )),
         None => Err("guidance is not a member of the completion it was indexed under".to_owned()),
     }
-}
-
-fn guidance_error(table: &'static str, row: &impl ToString, detail: String) -> OpenError {
-    MigrationError::RetainedRow {
-        table,
-        row: row.to_string(),
-        release: RETIRED_TASK_GUIDANCE_RELEASE,
-        detail,
-    }
-    .into()
 }
 
 /// Validate a finalized schema identity before applying the current cutoff.

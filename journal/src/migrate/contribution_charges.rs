@@ -27,14 +27,20 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         |_, fact| relabel(fact, "contribution").map(drop),
     )?;
     let command = wire::CommandKind::RoomContribute;
-    residual::rewrite_receipts(transaction, command, LABEL_RELEASE, |request, response| {
-        Ok((
-            residual::edit_request::<wire::intent::RoomContribute>(request, |body| {
-                relabel(body, "kind")
-            })?,
-            residual::edit_reply(command, response, |answer| relabel(answer, "kind"))?,
-        ))
-    })
+    residual::rewrite_receipts(
+        transaction,
+        command,
+        None,
+        LABEL_RELEASE,
+        |request, response| {
+            Ok((
+                residual::edit_request::<wire::intent::RoomContribute, _>(request, |body| {
+                    relabel(body, "kind")
+                })?,
+                residual::edit_reply(command, response, |answer| relabel(answer, "kind"))?,
+            ))
+        },
+    )
 }
 
 /// Replace `member`'s retired label with its charge, answering whether it held

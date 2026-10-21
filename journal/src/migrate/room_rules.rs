@@ -110,18 +110,26 @@ fn cross_receipts(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         wire::CommandKind::RoomPutAside,
         wire::CommandKind::RoomCoordinationRead,
     ] {
-        residual::rewrite_receipts(transaction, command, RULE_RELEASE, |request, response| {
-            let request = if command == wire::CommandKind::RoomCoordinate {
-                residual::edit_request::<wire::intent::RoomCoordinate>(request, |body| {
-                    Ok(strip(body, &["auto_resume"]))
-                })?
-            } else {
-                None
-            };
-            let response =
-                residual::edit_reply(command, response, |answer| Ok(strip(answer, &["rule"])))?;
-            Ok((request, response))
-        })?;
+        residual::rewrite_receipts(
+            transaction,
+            command,
+            None,
+            RULE_RELEASE,
+            |request, response| {
+                let request = if command == wire::CommandKind::RoomCoordinate {
+                    residual::edit_request::<wire::intent::RoomCoordinate, String>(
+                        request,
+                        |body| Ok(strip(body, &["auto_resume"])),
+                    )?
+                } else {
+                    None
+                };
+                let response = residual::edit_reply(command, response, |answer| {
+                    Ok::<_, String>(strip(answer, &["rule"]))
+                })?;
+                Ok((request, response))
+            },
+        )?;
     }
     Ok(())
 }

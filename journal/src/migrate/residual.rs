@@ -503,21 +503,49 @@ pub(super) fn rewrite_facts(
     }
 }
 
-/// Rewrite each retained `command` receipt through `edit` on its request and
-/// response bytes; `None` for either keeps the stored bytes.
+/// Why one receipt edit refuses its row: the detail, under the crossing's
+/// release unless the edit names the release that wrote the refused shape.
+pub(super) struct Refusal {
+    release: Option<&'static str>,
+    detail: String,
+}
+
+impl Refusal {
+    /// A refusal naming its own release instead of the crossing's.
+    pub(super) const fn under(release: &'static str, detail: String) -> Self {
+        Self {
+            release: Some(release),
+            detail,
+        }
+    }
+}
+
+impl From<String> for Refusal {
+    fn from(detail: String) -> Self {
+        Self {
+            release: None,
+            detail,
+        }
+    }
+}
+
+/// Rewrite each retained `command` receipt `predicate` selects through `edit`
+/// on its request and response bytes; `None` for either keeps the stored
+/// bytes, and no predicate selects every receipt of the command.
 pub(super) fn rewrite_receipts(
     transaction: &Transaction<'_>,
     command: wire::CommandKind,
+    predicate: Option<&str>,
     release: &'static str,
-    edit: impl Fn(&[u8], &[u8]) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), String>,
+    edit: impl Fn(&[u8], &[u8]) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), Refusal>,
 ) -> Result<(), OpenError> {
+    let sql = format!(
+        "SELECT command_id, request, response FROM command_receipts \
+         WHERE command_kind = ?1 AND ({}) ORDER BY command_id",
+        predicate.unwrap_or("1")
+    );
     let receipts = {
-        let mut statement = transaction
-            .prepare(
-                "SELECT command_id, request, response FROM command_receipts \
-                 WHERE command_kind = ?1 ORDER BY command_id",
-            )
-            .map_err(OpenError::Sqlite)?;
+        let mut statement = transaction.prepare(&sql).map_err(OpenError::Sqlite)?;
         let rows = statement
             .query_map(params![command.as_str()], |row| {
                 Ok((
@@ -531,9 +559,15 @@ pub(super) fn rewrite_receipts(
             .map_err(OpenError::Sqlite)?
     };
     for (command_id, request, response) in receipts {
-        let refuse =
-            |detail: String| retained("command_receipts", command_id.clone(), release, detail);
-        let (request, response) = edit(&request, &response).map_err(&refuse)?;
+        let refuse = |refusal: Refusal| {
+            retained(
+                "command_receipts",
+                command_id.clone(),
+                refusal.release.unwrap_or(release),
+                refusal.detail,
+            )
+        };
+        let (request, response) = edit(&request, &response).map_err(refuse)?;
         if request.is_none() && response.is_none() {
             continue;
         }
@@ -547,7 +581,9 @@ pub(super) fn rewrite_receipts(
             .map_err(OpenError::Sqlite)?;
         if changed != 1 {
             return Err(refuse(
-                "the row changed under the exclusive crossing".to_owned(),
+                "the row changed under the exclusive crossing"
+                    .to_owned()
+                    .into(),
             ));
         }
     }
@@ -557,12 +593,13 @@ pub(super) fn rewrite_receipts(
 /// The retained request with its body object edited through `edit`, re-parsed
 /// through the current strict `wire::Command<T>` DTO and re-encoded
 /// canonically; `None` when `edit` answers that it changed nothing.
-pub(super) fn edit_request<T>(
+pub(super) fn edit_request<T, E>(
     bytes: &[u8],
-    edit: impl FnOnce(&mut Map<String, Value>) -> Result<bool, String>,
-) -> Result<Option<Vec<u8>>, String>
+    edit: impl FnOnce(&mut Map<String, Value>) -> Result<bool, E>,
+) -> Result<Option<Vec<u8>>, Refusal>
 where
     T: serde::de::DeserializeOwned + serde::Serialize,
+    E: Into<Refusal>,
 {
     let mut request: Value = wire::decode(bytes)
         .map_err(|error| format!("the stored request does not decode: {error}"))?;
@@ -570,26 +607,26 @@ where
         .get_mut("body")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| "the stored request has no body object".to_owned())?;
-    if !edit(body)? {
+    if !edit(body).map_err(Into::into)? {
         return Ok(None);
     }
     let request: wire::Command<T> = serde_json::from_value(request)
         .map_err(|error| format!("the crossed request is not current: {error}"))?;
-    request
+    Ok(request
         .canonical_json()
         .map(String::into_bytes)
         .map(Some)
-        .map_err(|error| format!("the crossed request cannot encode: {error}"))
+        .map_err(|error| format!("the crossed request cannot encode: {error}"))?)
 }
 
 /// The retained response with its reply object edited through `edit` and
 /// re-checked against `command`'s answer binding; `None` for a refusal or when
 /// `edit` answers that it changed nothing.
-pub(super) fn edit_reply(
+pub(super) fn edit_reply<E: Into<Refusal>>(
     command: wire::CommandKind,
     bytes: &[u8],
-    edit: impl FnOnce(&mut Map<String, Value>) -> Result<bool, String>,
-) -> Result<Option<Vec<u8>>, String> {
+    edit: impl FnOnce(&mut Map<String, Value>) -> Result<bool, E>,
+) -> Result<Option<Vec<u8>>, Refusal> {
     let mut response: wire::Response<Value> = wire::decode(bytes)
         .map_err(|error| format!("the stored response does not decode: {error}"))?;
     let wire::Outcome::Reply(reply) = &mut response.outcome else {
@@ -599,15 +636,15 @@ pub(super) fn edit_reply(
         .body
         .as_object_mut()
         .ok_or_else(|| "the stored answer is not a JSON object".to_owned())?;
-    if !edit(answer)? {
+    if !edit(answer).map_err(Into::into)? {
         return Ok(None);
     }
     wire::encode(&reply.body)
         .and_then(|body| command.binding().answer.decode(&body))
         .map_err(|error| format!("the crossed answer is not current: {error}"))?;
-    wire::encode(&response)
+    Ok(wire::encode(&response)
         .map(Some)
-        .map_err(|error| format!("the crossed response cannot encode: {error}"))
+        .map_err(|error| format!("the crossed response cannot encode: {error}"))?)
 }
 
 pub(super) fn retained(
