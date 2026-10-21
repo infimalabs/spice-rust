@@ -61,7 +61,9 @@ pub use trace::{
     drawn_spans, off_intervals, trace,
 };
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub use weave::{Channel, Edge, Interaction, Thread, Weave, direction_edge, last_heard, weave};
+pub use weave::{
+    Channel, Column, Interaction, Packet, Run, Sample, Weave, depth, last_heard, weave,
+};
 
 /// Accent slots the band cycles through.
 ///

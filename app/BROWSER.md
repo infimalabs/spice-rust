@@ -456,55 +456,66 @@ focuses the card without a visible focus ring.
 
 Each team or working-group lights panel is one weave: an etched well, a
 darkened pane with a soft lip under its top edge and a light catch along its
-bottom, holding one full-width row per channel. One to six rows always fill the
-whole panel, with no per-channel pips and no unused cells. A channel is a set of
-lanes. A team row is its one lane. A working-group row is the distinct lanes
-currently claiming its Design, work gated by it, or selected work that retains
-it as preparation controller; one lane counts once even if several of those
-paths name it, and unrelated workers count not at all. One thread model,
-`watchband::weave`, serves both panels. Each panel supplies only its rows' lane
-sets, labels, accents, and states, so a lane's channel and a Design room's
-channel are the same kind of thing drawn the same way.
+bottom, holding one fixed, equal-width column per channel with a small gutter
+between, in roster order. A channel is a set of lanes. A team column is its one
+lane. A working-group column is the distinct lanes currently claiming its
+Design, work gated by it, or selected work that retains it as preparation
+controller; one lane counts once even if several of those paths name it, and
+unrelated workers count not at all. One model, `watchband::weave`, serves both
+panels. Each panel supplies only its columns' lane sets, labels, accents, and
+states, so a lane's channel and a Design room's channel are the same kind of
+thing drawn the same way.
 
-The weave spans the ten minutes ending now, so activity moves left as time
-passes and leaves once it is ten minutes old. Each row's thread is filled in
-the row's accent, and its thickness follows the channel's summed reasoning,
-tool, and prose rate. Rates sit on one fixed scale shared by every row and
-panel, each activity weighted by its text, through a kernel that slides with
-time so redraws move the thread smoothly. A burst thickens the thread and quiet
-thins it toward a hairline. The thread ends at a last-heard dot. From there, or
-from the window's start when nothing was heard, silence runs as a dotted trail
-to a rail at the panel's right edge. Rail and trail wear the row's status, or
-for a Design its standing; the accent fills only threads and last-heard dots.
-Each row keeps a visually hidden label naming the channel, its state, and how
-long ago it was last heard, or that it was not heard. The drawing itself is
-decorative. The team panel keeps its arrangement by drag, Enter, or Space, and
-the group panel stays a labelled group.
+Time flows down. Now is the top edge of the axis, under the caps, and the axis
+is log-recent: depth grows with `ln(1 + age / 40 s)`, scaled so ten minutes
+reaches the floor, so the last minute takes about the top third and a faint
+dotted rule marks one minute ago. The window never exceeds ten minutes;
+activity sinks as time passes and leaves once it is ten minutes old. Each
+column's activity is a symmetric violin whose width is the channel's reasoning,
+tool, and prose rate on one scale shared by every column and panel, each
+activity weighted by its text. The violin is split side by side into the three
+kinds' tones of the channel accent: reasoning mixed toward the page, tool the
+accent itself, prose mixed toward ink, the same tones the composer rail uses.
+Smoothing widens with age, so recent seconds stay sharp and older minutes
+become texture; nothing steps or quantizes. A violin runs from where the
+channel was last heard down to the floor, thinning to a hairline when heard
+but idle. It closes with a rounded taper where the channel truly stopped, at
+last heard and at either edge of an off span, and is cut square only by the
+ten-minute floor.
 
-Collaboration draws as knots. Where an MSG packet passes between lanes in two
-different rows inside the window, both threads bow toward each other at its
-instant, eased over thirty seconds either side. One packet is one knot per row
-pair whether the sender's card, the recipient's quote, or both retained it. A
-packet within one row, to the operator, or to a room knots nothing. Peer review
-feedback reaches a lane as Spice's own direction, which names no reviewer
-lane, so it knots nothing. Operator direction drops onto a thread from the
-panel's top for upper-half rows and the middle row of an odd-sized panel, and
-rises from the bottom for lower-half rows, so marks never cross a neighbour.
+A status cap sits in each column's top row. Silence runs from the cap as a
+dotted trail down to the last-heard instant, ending in a dot there, or to the
+floor when nothing was heard in the window. Cap and trail wear the column's
+status, or for a Design its standing; the accent is only an identity fill, for
+the violin, the last-heard dot, and the rungs the channel sends; operator
+direction is neutral ink. Each column keeps a visually hidden label naming the
+channel, its state, and how long ago it was last heard, or that it was not
+heard. The drawing itself is decorative. The team panel keeps its arrangement
+by drag, Enter, or Space, and the group panel stays a labelled group.
+
+Collaboration draws as rungs. Where an MSG packet passes between lanes in two
+different columns inside the window, a bold rung in the sender's accent runs
+from the sender's column centre to the recipient's at the send time, with an
+arrowhead at the recipient. One packet is one rung per column pair whether the
+sender's card, the recipient's quote, or both retained it. A packet within one
+column, to the operator, or to a room draws nothing. Peer review feedback
+reaches a lane as Spice's own direction, which names no reviewer lane, so it
+draws no rung. A packet stamped by a clock running ahead sits at now. Operator
+direction is an ink notch on the receiving column's left edge at its time.
 
 Where a team lane was off, from an occupant's end or a vacant seat to the next
-occupant's start, its thread leaves a gap, and a lane off now ends its thread
-where it went off. An interruption shorter than the spacing between two of the
-pane's samples is too brief to see and leaves the thread whole. A reload keeps
-the gaps it had: the stream's first page carries recent occupancy from before
-the load. Before a lane's first retained transition it counts as on, except
-when that transition is an occupant's start: the seat was vacant until then,
-and the thread begins there. A lane with no retained transition has held its
-seat as it is now throughout. Gaps never cut a trail: silence is silence
-whether or not the seat was held. A team lane whose seat is empty now drains
-its row to gray, as the Spice pepper does while Spice is disconnected, whatever
-its status says, and wears its accent again once an occupant holds the seat.
-The weave draws only state the browser already holds, issues no requests, and
-redraws on new activity and every few seconds, so old activity leaves without
+occupant's start, its violin leaves a real gap, and a lane off now has no
+violin above the instant it went off. A reload keeps the gaps it had: the
+stream's first page carries recent occupancy from before the load. Before a
+lane's first retained transition it counts as on, except when that transition
+is an occupant's start: the seat was vacant until then, and the violin begins
+there. A lane with no retained transition has held its seat as it is now
+throughout. Gaps never cut a trail: silence is silence whether or not the seat
+was held. A team lane whose seat is empty now drains its column to gray and
+fades it, as the Spice pepper does while Spice is disconnected, whatever its
+status says, and wears its accent again once an occupant holds the seat. The
+weave draws only state the browser already holds, issues no requests, and
+redraws on new activity and every few seconds, so old activity sinks without
 a new frame.
 
 The lane's own trace runs unframed and flush across the foot of each lane's
@@ -515,7 +526,7 @@ smoothed curve over a fill fading toward the floor, ending in a dot at now; in
 the dark theme the curves glow. Turn, operator direction, provider failure,
 compaction, fresh session, and sign-out draw as markers over the curves. Quiet
 is not off: a running lane with no activity still draws its low line. The rail
-takes no pointer input, drains to gray with the lane's weave row, and fades out
+takes no pointer input, drains to gray with the lane's weave column, and fades out
 once the draft holds text. Quote shards carry no rail. The lane's provider
 emblem is its menu button's glyph, and that button's hover title names the
 provider standing the emblem names.
@@ -527,5 +538,5 @@ keep that policy enforced: a context with `bypassCSP` would hide a drawing that
 draws nothing in production.
 
 Yew's `html!` lowercases literal element names, and SVG recognises
-camel-case elements such as `clipPath` only by their exact case, so the weave
-and the rail write those as dynamic tags (`<@{"clipPath"}>`).
+camel-case elements such as `clipPath` only by their exact case, so the rail
+writes those as dynamic tags (`<@{"clipPath"}>`).

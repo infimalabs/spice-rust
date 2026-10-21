@@ -1,7 +1,7 @@
 //! What one lane, or a pooled set of lanes, has been doing lately.
 //!
 //! A trace is a fixed window of wall time ending at the instant it is drawn,
-//! shared by every weave thread and composer rail so neighbours compare
+//! shared by every weave violin and composer rail so neighbours compare
 //! honestly; activity moves left as time passes and leaves once it is a whole
 //! window old. Work becomes
 //! one curve per kind, reasoning, tool, and prose, whose height is that kind's
@@ -11,7 +11,7 @@
 //! kernel that slides with time, so a redraw moves them smoothly instead of
 //! jumping between buckets. Positions and levels are fractions; the browser
 //! owns every pixel. Intervals one lane was off become gaps in that lane's
-//! thread and rail once they last at least the spacing between two samples.
+//! rail once they last at least the spacing between two samples.
 
 use wire::AgentActivityKind;
 
@@ -169,7 +169,7 @@ pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
         let x = x_of(activity.millis);
         match placement(activity.kind) {
             Placement::Curve(kind) => {
-                let weight = BASE_WEIGHT + text_weight(activity.bytes);
+                let weight = activity_weight(activity.bytes);
                 let sums = &mut sums[kind as usize];
                 for (index, sum) in sums.iter_mut().enumerate() {
                     let at = index as f64 / (samples - 1) as f64;
@@ -214,16 +214,18 @@ fn inside(at: f64, half: f64) -> f64 {
     half - cut(at) - cut(1.0 - at)
 }
 
-/// Weight grows with the square root of text length, so a long reply counts
-/// for more without drowning out a run of terse calls.
+/// What one activity counts for: a base every activity carries, so a terse
+/// call still counts, plus a text weight growing with the square root of its
+/// length, so a long reply counts for more without drowning out a run of terse
+/// calls.
 #[allow(clippy::cast_precision_loss)]
-fn text_weight(bytes: usize) -> f64 {
-    (bytes.min(FULL_WEIGHT_BYTES) as f64 / FULL_WEIGHT_BYTES as f64).sqrt()
+pub(super) fn activity_weight(bytes: usize) -> f64 {
+    BASE_WEIGHT + (bytes.min(FULL_WEIGHT_BYTES) as f64 / FULL_WEIGHT_BYTES as f64).sqrt()
 }
 
 /// The odd sample count at or above `samples`, so the window start, midpoint,
 /// and now are shared samples at every density.
-pub(super) fn grid(samples: usize) -> usize {
+fn grid(samples: usize) -> usize {
     let samples = samples.max(2);
     samples + usize::from(samples.is_multiple_of(2))
 }

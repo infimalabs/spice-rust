@@ -216,13 +216,13 @@ fn render_team_toolbar(
         };
         let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
         let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
-        let rows = standings
+        let channels = standings
             .iter()
             .filter_map(|standing| {
                 let member = team.member(standing.lane)?;
                 let status = member.status(standing.waking);
                 let seated = member.occupant.is_some();
-                Some(super::WeaveRow {
+                Some(super::WeaveChannel {
                     key: member.lane.to_string().into(),
                     label: format!("{}: {}", standing.label, status.label()).into(),
                     accent: standing.accent,
@@ -270,7 +270,7 @@ fn render_team_toolbar(
                     {"Press Enter or Space, or tap, to choose where to move or join this team."}
                 </span>
             }
-            <super::TeamWeave {rows} {interactions} />
+            <super::TeamWeave {channels} {interactions} />
         </span>
         }
     };

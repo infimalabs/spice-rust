@@ -57,7 +57,7 @@ pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
 pub(in crate::browser) use trace::design_activities;
-pub(in crate::browser) use weave::{TeamWeave, WeaveRow, lane_interactions};
+pub(in crate::browser) use weave::{TeamWeave, WeaveChannel, lane_interactions};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
