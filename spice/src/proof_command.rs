@@ -355,11 +355,16 @@ impl Failure {
                 return Self::runtime(error.to_string(), native_disposition(error));
             }
         }
+        let remediation = if matches!(error, EnvironmentError::MissingRunnerPath) {
+            "bind proof.runner to the runner this worktree sealed: spice config set proof.runner PATH writes this worktree's Git-directory .spice-rs/worktree.toml"
+        } else {
+            "set proof.container in Git-common .spice-rs/config.toml"
+        };
         Self::refusal(
             "proof::runner-refused",
             "one configured executable for the compiled proof target",
             error.to_string(),
-            "set the target-selected proof.container or proof.runner local configuration value",
+            remediation,
         )
     }
 

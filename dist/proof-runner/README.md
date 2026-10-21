@@ -16,10 +16,14 @@ closure, and a readable copy of the pins under `target/proof-native-darwin/`,
 then exercises the runner protocol end to end and reports the runner's
 identity.
 
-Bind that path as `proof.runner` in machine-local configuration. Nothing else
-selects a runner: `spice dev xtask -- stage-target aarch64-apple-darwin` refuses
-until the configured runner attests, and proof replay admits it by digesting
-the exact bytes it is about to execute.
+Bind that path as `proof.runner` in the worktree that sealed it:
+`spice config set proof.runner PATH` writes that worktree's Git-directory
+`.spice-rs/worktree.toml`, which wins over a Git-common default in
+`.spice-rs/config.toml`, so worktrees sealing runners from different commits
+never repoint each other. Nothing else selects a runner:
+`spice dev xtask -- stage-target aarch64-apple-darwin` refuses until the
+configured runner attests, and proof replay admits it by digesting the exact
+bytes it is about to execute.
 
 Pins are compiled into the executable, so a runner built without them refuses
 and editing them changes its identity. Before every execution the runner
