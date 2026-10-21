@@ -449,7 +449,7 @@ impl DispatchPolicy {
             "use the release that owns journal schema 11 to retire this legacy ruling, then pend the current digest with this release".to_owned()
         } else {
             format!(
-                "a lane's held claim waits on this digest from its turn end, which pends an absent digest; the operator runs `spice trust grant {}` only after reviewing these exact bytes and command words",
+                "a lane's held claim waits on this digest from its turn end, which pends an absent digest; outside a lane's held work the operator pends an absent digest with `spice trust pend` from that worktree; the operator runs `spice trust grant {}` only after reviewing these exact bytes and command words",
                 self.surface.digest(),
             )
         };
