@@ -320,10 +320,7 @@ fn render_team_total(
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
     use crate::work::{WorkCounts, WorkScope};
-    let counts = tasks
-        .iter()
-        .map(|task| task.availability())
-        .collect::<WorkCounts>();
+    let counts = tasks.iter().copied().collect::<WorkCounts>();
     let title = view::chrome::task_count_title("Open work active on this team", counts);
     let navigate = navigate.clone();
     let open_team = Callback::from(move |_| {
@@ -334,7 +331,7 @@ fn render_team_total(
             key="team-total"
             class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="team"
-            data-needs-operator={view::chrome::operator_mark(counts)}
+            data-work-mark={view::chrome::work_mark(counts)}
         >
             <button
                 class="app-horn-tab__target"

@@ -589,7 +589,30 @@ fn human_owners_read_as_their_short_name_alone() {
 }
 
 #[test]
-fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
+fn a_tab_marks_only_its_partitions_most_actionable_state() {
+    let counts = |blocked, held, selection, proposal_ready| WorkCounts {
+        blocked,
+        held,
+        selection,
+        proposal_ready,
+        ..WorkCounts::default()
+    };
+    assert_eq!(
+        counts(1, 1, 3, 4).mark(),
+        Some((WorkMark::Blocked, 2)),
+        "work only the operator can unblock outranks a decision and a ready pass"
+    );
+    assert_eq!(
+        counts(0, 0, 3, 4).mark(),
+        Some((WorkMark::Decision, 3)),
+        "a proposal awaiting decision outranks a pass ready to propose"
+    );
+    assert_eq!(counts(0, 0, 0, 4).mark(), Some((WorkMark::Proposal, 4)));
+    assert_eq!(counts(0, 0, 0, 0).mark(), None);
+}
+
+#[test]
+fn each_partition_marks_exactly_its_own_operator_transitions() {
     let mut in_flight = task(1, "alpha.quiet");
     in_flight.claim = Some(claim(&in_flight, ClaimDisposition::Active));
     let mut stale = task(2, "alpha.quiet");
@@ -614,6 +637,11 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
     let mut decided = design(11, "gamma.design");
     decided.grouped = true;
     decided.design_active = true;
+    let proposing = design(12, "alpha.design");
+    let mut claimed = design(13, "epsilon.design");
+    claimed.grouped = true;
+    claimed.design_active = true;
+    claimed.claim = Some(claim(&claimed, ClaimDisposition::Active));
     let mut board = board(vec![
         in_flight,
         stale,
@@ -626,59 +654,58 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
         selection,
         passive,
         decided,
+        proposing,
+        claimed,
     ]);
     board.workflow_waiting.insert(stamp(5));
     board.blocked.insert(stamp(8));
     board
         .design_cycles
         .insert(stamp(9), wire::rooms::DesignCycle::AwaitingDecision);
+    for ready in [10, 11, 12, 13] {
+        board
+            .design_cycles
+            .insert(stamp(ready), wire::rooms::DesignCycle::ReadyForProposal);
+    }
     let projection = WorkProjection::from_board(&board);
     let marks = |scope: &WorkScope| {
         projection
             .stem_task_groups(scope)
             .iter()
-            .map(|group| {
-                (
-                    group.stem().stem().to_owned(),
-                    group.counts().needs_operator(),
-                )
-            })
+            .map(|group| (group.stem().stem().to_owned(), group.counts().mark()))
             .collect::<BTreeMap<_, _>>()
     };
 
     assert_eq!(
         marks(&WorkScope::AllOpen),
         BTreeMap::from([
-            ("alpha".to_owned(), 0),
-            ("beta".to_owned(), 0),
-            ("delta".to_owned(), 1),
-            ("gamma".to_owned(), 1),
+            ("alpha".to_owned(), None),
+            ("beta".to_owned(), None),
+            ("delta".to_owned(), Some((WorkMark::Blocked, 1))),
+            ("gamma".to_owned(), Some((WorkMark::Blocked, 1))),
         ]),
         "in-flight, stale, review, ready, neutral waiting, and work intentionally set aside \
          need nothing now; only a blocked wall and an environment hold mark their own stem"
     );
     assert_eq!(
-        projection
-            .scope_counts(&WorkScope::AllOpen)
-            .needs_operator(),
-        2,
-        "the execution total never counts a Design awaiting selection"
+        projection.scope_counts(&WorkScope::AllOpen).mark(),
+        Some((WorkMark::Blocked, 2)),
+        "the execution total never counts a Design"
     );
     assert_eq!(
         marks(&WorkScope::planning()),
         BTreeMap::from([
-            ("alpha".to_owned(), 1),
-            ("beta".to_owned(), 0),
-            ("gamma".to_owned(), 0),
+            ("alpha".to_owned(), Some((WorkMark::Decision, 1))),
+            ("beta".to_owned(), Some((WorkMark::Proposal, 1))),
+            ("epsilon".to_owned(), None),
+            ("gamma".to_owned(), Some((WorkMark::Proposal, 1))),
         ]),
-        "a Design awaiting the operator's decision marks its own Design stem; passive and \
-         decided Designs mark nothing"
+        "a Design awaiting decision outranks a ready pass in its stem; an offered or passive \
+         Design ready for proposal marks its stem; one a lane already holds marks nothing"
     );
     assert_eq!(
-        projection
-            .scope_counts(&WorkScope::planning())
-            .needs_operator(),
-        1,
+        projection.scope_counts(&WorkScope::planning()).mark(),
+        Some((WorkMark::Decision, 1)),
         "the Design total never counts execution work"
     );
     let rail = OperatorQueue::new(&projection)
@@ -696,8 +723,8 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
     assert_eq!(
         rail,
         [stamp(7), stamp(8), stamp(9)],
-        "the rail lists exactly the held, blocked, and selection work the marks count, \
-         and never the deferral"
+        "the rail lists exactly the held, blocked, and selection work the blocked and \
+         decision marks count, and never the deferral or a Design ready for proposal"
     );
 }
 
