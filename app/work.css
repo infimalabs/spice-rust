@@ -1041,19 +1041,9 @@
 .room-decision-refusal { color: var(--danger); }
 .room-reference-state { display: block; color: var(--muted); font-size: var(--app-type-meta); }
 .room-decision { margin-top: 8px; }
-.room-decision-choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin: 0;
-  padding: 6px 8px;
-  min-width: 0;
-  border: var(--app-edge);
-  border-radius: var(--app-radius-compact);
-}
-.room-decision-choices label { display: flex; gap: 6px; align-items: baseline; }
 .room-decision-reason { display: grid; gap: 4px; }
 .room-decision-reason input { width: 100%; box-sizing: border-box; }
+.room-decision-reason + .room-decision-reason { margin-top: 6px; }
 .room-decision-preview { display: grid; gap: 6px; }
 
 /* Room standing: each reason kind keeps its own rail so invitation, activity,

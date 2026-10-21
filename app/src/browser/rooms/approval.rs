@@ -26,7 +26,7 @@ use crate::browser::clock::Age;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, PreparationRequest};
 use crate::preparation_decision::{
-    DecisionChoice, DecisionComposer, DecisionDraft, DraftNotice, DraftPhase, Submission,
+    DecisionComposer, DecisionDraft, DraftNotice, DraftPhase, Submission,
 };
 use crate::runtime::{CandidateWithdrawalRecord, PreparationProjection, RoomPositioned};
 
@@ -482,8 +482,8 @@ fn render_candidate(
             {render_references(candidate)}
             {render_critiques(&critiques)}
             {render_coverage(context.runtime, &coverage)}
-            if interactive && draft.choice() == DecisionChoice::Accept && !candidate.outputs.is_empty() {
-                {render_every_output_verdict(candidate, locked, &edit)}
+            if interactive && !candidate.outputs.is_empty() {
+                {render_every_output_verdict(candidate, locked || draft.returning(), &edit)}
             }
             <ul class="room-approval-outputs" aria-label="Proposed outputs">
                 {for candidate.outputs.iter().map(|output| {
@@ -676,31 +676,14 @@ fn render_output(
         }))
     };
     let comment = {
-        let (composer, candidate, output) = (
-            context.controls.decision.clone(),
-            draft.candidate().clone(),
-            output.clone(),
-        );
-        Callback::from(move |event: InputEvent| {
-            let Some(value) = event
-                .target()
-                .and_then(|target| target.dyn_into::<HtmlInputElement>().ok())
-                .map(|input| input.value())
-            else {
-                return;
-            };
-            composer.dispatch(ComposerEdit {
-                candidate: candidate.clone(),
-                settles: false,
-                change: Box::new({
-                    let output = output.clone();
-                    move |draft| draft.set_output_comment(output, value)
-                }),
-            });
+        let output = output.clone();
+        draft_text(context.controls, draft.candidate(), move |draft, value| {
+            draft.set_output_comment(output.clone(), value);
         })
     };
-    let decisions = interactive && draft.choice() == DecisionChoice::Accept;
-    let controls = decisions.then(|| html! {
+    // Entered return feedback sets the verdicts aside without clearing them.
+    let set_aside = locked || draft.returning();
+    let controls = interactive.then(|| html! {
         <div class="room-output-decision">
             <div
                 class="room-output-verdict"
@@ -712,7 +695,7 @@ fn render_output(
                         type="radio"
                         name={format!("output-verdict-{}-{output}", draft.candidate().candidate)}
                         checked={draft.verdict(output) == Some(OutputVerdict::Accepted)}
-                        disabled={locked}
+                        disabled={set_aside}
                         onchange={Callback::from(move |_: Event| accepted())}
                     />
                     {"Accept"}
@@ -722,7 +705,7 @@ fn render_output(
                         type="radio"
                         name={format!("output-verdict-{}-{output}", draft.candidate().candidate)}
                         checked={draft.verdict(output) == Some(OutputVerdict::Rejected)}
-                        disabled={locked}
+                        disabled={set_aside}
                         onchange={Callback::from(move |_: Event| rejected())}
                     />
                     {"Reject"}
@@ -734,7 +717,7 @@ fn render_output(
                     type="text"
                     value={draft.output_comment(output).to_owned()}
                     oninput={comment}
-                    disabled={locked}
+                    disabled={set_aside}
                     placeholder="Why this output is accepted or rejected"
                 />
             </label>
@@ -851,6 +834,30 @@ fn render_decision_history(
     }
 }
 
+/// Each input event's value applied to the draft of `candidate` through `set`.
+fn draft_text(
+    controls: &Controls,
+    candidate: &CandidateRef,
+    set: impl Fn(&mut DecisionDraft, String) + Clone + 'static,
+) -> Callback<InputEvent> {
+    let (composer, candidate) = (controls.decision.clone(), candidate.clone());
+    Callback::from(move |event: InputEvent| {
+        let Some(value) = event
+            .target()
+            .and_then(|target| target.dyn_into::<HtmlInputElement>().ok())
+            .map(|input| input.value())
+        else {
+            return;
+        };
+        let set = set.clone();
+        composer.dispatch(ComposerEdit {
+            candidate: candidate.clone(),
+            settles: false,
+            change: Box::new(move |draft| set(draft, value)),
+        });
+    })
+}
+
 fn render_controls(
     context: &Context<'_>,
     positioned: &RoomPositioned<DesignPassProposal>,
@@ -864,30 +871,17 @@ fn render_controls(
             controller.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
         });
     // Resolving every line item is the only decision an OOPS candidate
-    // admits, so that choice is implied rather than asked.
-    let choices = (!opportunistic).then(|| render_choices(candidate, draft, locked, edit));
-    let reason = {
-        let (composer, candidate) = (
-            context.controls.decision.clone(),
-            candidate.candidate.clone(),
-        );
-        Callback::from(move |event: InputEvent| {
-            let Some(value) = event
-                .target()
-                .and_then(|target| target.dyn_into::<HtmlInputElement>().ok())
-                .map(|input| input.value())
-            else {
-                return;
-            };
-            composer.dispatch(ComposerEdit {
-                candidate: candidate.clone(),
-                settles: false,
-                change: Box::new(move |draft| draft.set_reason(value)),
-            });
-        })
-    };
-    let show_reason = draft.choice() == DecisionChoice::Return
-        || candidate.recommendation == DesignPassRecommendation::Work;
+    // admits, so it offers no return.
+    let comment = draft_text(
+        context.controls,
+        &candidate.candidate,
+        DecisionDraft::set_comment,
+    );
+    let feedback = draft_text(
+        context.controls,
+        &candidate.candidate,
+        DecisionDraft::set_feedback,
+    );
     let mut previewed = draft.clone();
     let next_decision = SequenceCode::new(
         context
@@ -915,24 +909,27 @@ fn render_controls(
     };
     html! {
         <div class="room-decision" data-proposal-decision={candidate.candidate.candidate.to_string()}>
-            {choices}
-            if show_reason {
+            if candidate.recommendation == DesignPassRecommendation::Work {
                 <label class="room-decision-reason">
-                    <span>{if draft.choice() == DecisionChoice::Accept {
-                        "Overall comment (optional)"
-                    } else {
-                        "Material feedback"
-                    }}</span>
+                    <span>{"Overall comment (optional)"}</span>
                     <input
                         type="text"
-                        value={draft.reason().to_owned()}
-                        oninput={reason}
+                        value={draft.comment().to_owned()}
+                        oninput={comment}
+                        disabled={locked || draft.returning()}
+                        placeholder="Comment on the proposal as a whole"
+                    />
+                </label>
+            }
+            if !opportunistic {
+                <label class="room-decision-reason">
+                    <span>{"Return with feedback"}</span>
+                    <input
+                        type="text"
+                        value={draft.feedback().to_owned()}
+                        oninput={feedback}
                         disabled={locked}
-                        placeholder={if draft.choice() == DecisionChoice::Accept {
-                            "Comment on the proposal as a whole"
-                        } else {
-                            "What must change in the next Design pass"
-                        }}
+                        placeholder="What must change in the next Design pass; entering it returns this proposal"
                     />
                 </label>
             }
@@ -947,40 +944,6 @@ fn render_controls(
             </div>
             {render_phase(context, candidate, draft, edit)}
         </div>
-    }
-}
-
-fn render_choices(
-    candidate: &DesignPassProposal,
-    draft: &DecisionDraft,
-    locked: bool,
-    edit: &impl Fn(DraftChange) -> DraftCommand,
-) -> Html {
-    let choose = |choice| edit(Rc::new(move |draft| draft.set_choice(choice)));
-    let accept = choose(DecisionChoice::Accept);
-    let return_with_feedback = choose(DecisionChoice::Return);
-    html! {
-        <fieldset class="room-decision-choices" disabled={locked}>
-            <legend>{"Decision"}</legend>
-            <label>
-                <input
-                    type="radio"
-                    name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                    checked={draft.choice() == DecisionChoice::Accept}
-                    onchange={Callback::from(move |_: Event| accept())}
-                />
-                {"Accept proposal"}
-            </label>
-            <label>
-                <input
-                    type="radio"
-                    name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                    checked={draft.choice() == DecisionChoice::Return}
-                    onchange={Callback::from(move |_: Event| return_with_feedback())}
-                />
-                {"Return with feedback"}
-            </label>
-        </fieldset>
     }
 }
 
@@ -1027,7 +990,7 @@ fn render_phase(
                     }
                 }
                 DecisionOutcome::Returned { reason, .. } => format!(
-                    "Return this exact proposal version for another preparation pass: {reason}. No output is released, and the Design remains open."
+                    "Return with feedback: {reason}. This exact proposal version goes back for another preparation pass; no output is released, and the Design remains open."
                 ),
                 DecisionOutcome::Resolved {
                     outputs, comment, ..
