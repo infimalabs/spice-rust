@@ -111,20 +111,27 @@ fn mixed_verdicts_preview_every_comment_and_authorize_only_accepted_outputs() {
 }
 
 #[test]
-fn untouched_outputs_default_to_rejected_and_authorize_nothing() {
+fn an_undecided_output_refuses_preview_until_every_output_is_marked() {
     let candidate = candidate();
     let mut draft = DecisionDraft::new(candidate_ref());
     for output in &candidate.outputs {
-        assert_eq!(draft.verdict(output), OutputVerdict::Rejected);
+        assert_eq!(draft.verdict(output), None);
     }
     draft.set_output_verdict(stamp(3), OutputVerdict::Accepted);
-    assert_eq!(draft.verdict(&stamp(3)), OutputVerdict::Accepted);
-    draft.set_output_verdict(stamp(3), OutputVerdict::Rejected);
-    assert_eq!(draft.verdict(&stamp(3)), OutputVerdict::Rejected);
+    preview(&mut draft, &candidate, 1);
+    assert!(matches!(draft.phase(), DraftPhase::Editing));
+    assert_eq!(refusal(&draft), "preparation::decision-undecided-output");
+    assert!(
+        matches!(draft.notice(), Some(DraftNotice::Refused(reason)) if reason.contains(&stamp(4).to_string())),
+        "the refusal names the undecided output"
+    );
 
+    draft.set_every_output_verdict(candidate.outputs.iter().cloned(), OutputVerdict::Rejected);
+    assert_eq!(draft.verdict(&stamp(3)), Some(OutputVerdict::Rejected));
+    assert_eq!(draft.verdict(&stamp(4)), Some(OutputVerdict::Rejected));
     preview(&mut draft, &candidate, 1);
     let DraftPhase::Previewing(submission) = draft.phase() else {
-        panic!("default-rejected decision previews");
+        panic!("a fully rejected decision previews: {:?}", draft.notice());
     };
     assert!(
         !submission
@@ -136,6 +143,17 @@ fn untouched_outputs_default_to_rejected_and_authorize_nothing() {
         &submission.request.decision.outcome,
         DecisionOutcome::Resolved { outputs, .. }
             if outputs.iter().all(|output| output.verdict == OutputVerdict::Rejected)
+    ));
+
+    draft.set_every_output_verdict(candidate.outputs.iter().cloned(), OutputVerdict::Accepted);
+    preview(&mut draft, &candidate, 1);
+    let DraftPhase::Previewing(submission) = draft.phase() else {
+        panic!("a fully accepted decision previews: {:?}", draft.notice());
+    };
+    assert!(matches!(
+        &submission.request.decision.outcome,
+        DecisionOutcome::Resolved { outputs, .. }
+            if outputs.iter().all(|output| output.verdict == OutputVerdict::Accepted)
     ));
 }
 

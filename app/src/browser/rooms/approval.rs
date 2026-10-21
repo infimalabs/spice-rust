@@ -160,11 +160,11 @@ pub(super) fn render_approval(
             </header>
             if opportunistic {
                 <p class="room-notice">
-                    {"Every candidate is immutable. Every displayed line starts rejected; accept the lines that should receive authority. The complete decision is previewed before it records authority."}
+                    {"Every candidate is immutable. No displayed line starts decided: accept or reject each line, or every line at once, and the complete decision is previewed before it records authority."}
                 </p>
             } else {
                 <p class="room-notice">
-                    {"Every proposal is immutable. Work outputs start rejected; select Accept only for outputs that should receive authority. Accept the exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
+                    {"Every proposal is immutable. No work output starts decided: accept or reject each output, or every output at once; only accepted outputs receive authority. Accept the exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
                 </p>
             }
             {for open.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
@@ -495,6 +495,9 @@ fn render_candidate(
             {render_references(candidate)}
             {render_critiques(&critiques)}
             {render_coverage(context.runtime, &coverage)}
+            if interactive && draft.choice() == DecisionChoice::Accept && !candidate.outputs.is_empty() {
+                {render_every_output_verdict(candidate, locked, &edit)}
+            }
             <ul class="room-approval-outputs" aria-label="Proposed outputs">
                 {for candidate.outputs.iter().map(|output| {
                     render_output(context, output, draft, interactive, locked, &edit)
@@ -635,6 +638,36 @@ fn render_coverage(runtime: &AppRuntime, coverage: &[&CandidateCoverage]) -> Htm
     }
 }
 
+/// One control per verdict that marks every proposed output at once, so the
+/// operator who read the list need not visit each line.
+fn render_every_output_verdict(
+    candidate: &DesignPassProposal,
+    locked: bool,
+    edit: &impl Fn(DraftChange) -> DraftCommand,
+) -> Html {
+    let all = |verdict: OutputVerdict| {
+        let outputs = candidate.outputs.clone();
+        let apply = edit(Rc::new(move |draft| {
+            draft.set_every_output_verdict(outputs.iter().cloned(), verdict);
+        }));
+        Callback::from(move |_: MouseEvent| apply())
+    };
+    html! {
+        <div
+            class="room-inline-actions room-output-verdict-all"
+            role="group"
+            aria-label="Verdict for every output"
+        >
+            <button type="button" disabled={locked} onclick={all(OutputVerdict::Accepted)}>
+                {"Accept all"}
+            </button>
+            <button type="button" disabled={locked} onclick={all(OutputVerdict::Rejected)}>
+                {"Reject all"}
+            </button>
+        </div>
+    }
+}
+
 fn render_output(
     context: &Context<'_>,
     output: &TaskStamp,
@@ -691,7 +724,7 @@ fn render_output(
                     <input
                         type="radio"
                         name={format!("output-verdict-{}-{output}", draft.candidate().candidate)}
-                        checked={draft.verdict(output) == OutputVerdict::Accepted}
+                        checked={draft.verdict(output) == Some(OutputVerdict::Accepted)}
                         disabled={locked}
                         onchange={Callback::from(move |_: Event| accepted())}
                     />
@@ -701,7 +734,7 @@ fn render_output(
                     <input
                         type="radio"
                         name={format!("output-verdict-{}-{output}", draft.candidate().candidate)}
-                        checked={draft.verdict(output) == OutputVerdict::Rejected}
+                        checked={draft.verdict(output) == Some(OutputVerdict::Rejected)}
                         disabled={locked}
                         onchange={Callback::from(move |_: Event| rejected())}
                     />
@@ -845,9 +878,9 @@ fn render_controls(
         && context.controller.is_some_and(|controller| {
             controller.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
         });
-    let choose = |choice| edit(Rc::new(move |draft| draft.set_choice(choice)));
-    let accept = choose(DecisionChoice::Accept);
-    let return_with_feedback = choose(DecisionChoice::Return);
+    // Resolving every line item is the only decision an OOPS candidate
+    // admits, so that choice is implied rather than asked.
+    let choices = (!opportunistic).then(|| render_choices(candidate, draft, locked, edit));
     let reason = {
         let (composer, candidate) = (
             context.controls.decision.clone(),
@@ -897,29 +930,7 @@ fn render_controls(
     };
     html! {
         <div class="room-decision" data-proposal-decision={candidate.candidate.candidate.to_string()}>
-            <fieldset class="room-decision-choices" disabled={locked}>
-                <legend>{"Decision"}</legend>
-                <label>
-                    <input
-                        type="radio"
-                        name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                        checked={draft.choice() == DecisionChoice::Accept}
-                        onchange={Callback::from(move |_: Event| accept())}
-                    />
-                    {if opportunistic {"Resolve line items"} else {"Accept proposal"}}
-                </label>
-                if !opportunistic {
-                    <label>
-                        <input
-                            type="radio"
-                            name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                            checked={draft.choice() == DecisionChoice::Return}
-                            onchange={Callback::from(move |_: Event| return_with_feedback())}
-                        />
-                        {"Return with feedback"}
-                    </label>
-                }
-            </fieldset>
+            {choices}
             if show_reason {
                 <label class="room-decision-reason">
                     <span>{if draft.choice() == DecisionChoice::Accept {
@@ -951,6 +962,40 @@ fn render_controls(
             </div>
             {render_phase(context, candidate, draft, edit)}
         </div>
+    }
+}
+
+fn render_choices(
+    candidate: &DesignPassProposal,
+    draft: &DecisionDraft,
+    locked: bool,
+    edit: &impl Fn(DraftChange) -> DraftCommand,
+) -> Html {
+    let choose = |choice| edit(Rc::new(move |draft| draft.set_choice(choice)));
+    let accept = choose(DecisionChoice::Accept);
+    let return_with_feedback = choose(DecisionChoice::Return);
+    html! {
+        <fieldset class="room-decision-choices" disabled={locked}>
+            <legend>{"Decision"}</legend>
+            <label>
+                <input
+                    type="radio"
+                    name={format!("proposal-decision-{}", candidate.candidate.candidate)}
+                    checked={draft.choice() == DecisionChoice::Accept}
+                    onchange={Callback::from(move |_: Event| accept())}
+                />
+                {"Accept proposal"}
+            </label>
+            <label>
+                <input
+                    type="radio"
+                    name={format!("proposal-decision-{}", candidate.candidate.candidate)}
+                    checked={draft.choice() == DecisionChoice::Return}
+                    onchange={Callback::from(move |_: Event| return_with_feedback())}
+                />
+                {"Return with feedback"}
+            </label>
+        </fieldset>
     }
 }
 

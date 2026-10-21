@@ -83,9 +83,10 @@ On an open Design, an operator chooses one action for an exact undecided
 version:
 
 - **Resolve outputs** assigns **Accept** or **Reject** to every output with
-  native radios. Every work output starts visibly **Rejected**, the
-  conservative default that grants no authorization until the operator selects
-  **Accept**. Each
+  native radios. No output starts decided: **Accept all** and **Reject all**
+  above the list mark every output at once, and Preview refuses, naming the
+  undecided outputs, until each carries a verdict, so no silent default ever
+  grants or withholds authorization. Each
   output may carry its own comment, and the version may carry an optional
   overall comment. Only accepted outputs are released; rejected outputs stay
   gated, and the Design remains open. Rejecting every output releases nothing,
