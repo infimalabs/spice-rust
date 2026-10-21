@@ -744,9 +744,10 @@
   z-index: 3;
   inset: 6px 0 auto auto;
 }
-/* Message card actions form one cutout rather than separate circles. The pair
-   has no gap: Quote is square and Play rounds both inline-start corners into a
-   finger. Every pair wears the same edges wherever it stands.
+/* Message card actions form one cutout rather than separate circles. The row
+   has no gap: whichever control leads it, Play or a lone Quote, rounds both
+   inline-start corners into a finger, and later controls stay square. Every
+   row wears the same edges wherever it stands.
 
    Both controls leave their right edge open, so Quote's left edge is the pair's
    one seam and the depth-compensated pair meets the card's inline-end without
@@ -758,8 +759,9 @@
    the control fills at the 10% hover strength and its glyph lights to ink;
    nothing else changes.
 
-   An image's Quote action uses this exact quote half, seated flush against the
-   image's inline edge so that edge closes the control as the card edge does. */
+   An image's Quote action leads a row of its own: the same tapered quote
+   control, seated flush against the image's inline edge so that edge closes
+   the control as the card edge does. */
 .team-surface .mosaic-message-card .message-actions.app-control-rail {
   gap: 0;
   overflow: visible;
@@ -778,7 +780,8 @@
   box-shadow: none;
   color: var(--muted);
 }
-.team-surface .mosaic-message-card .message-actions > .app-card-action--speak {
+.team-surface .mosaic-message-card .message-actions > .app-card-action:first-child,
+.team-surface .mosaic-message-card .message-image-quote {
   border-radius: var(--app-radius-circle) 0 0 var(--app-radius-circle);
 }
 .team-surface .mosaic-message-card .message-actions > .app-card-action:is(:hover, :active, .active),
