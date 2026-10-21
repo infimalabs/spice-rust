@@ -1,6 +1,7 @@
 //! A team's or working group's lights panel drawn as log-time kind violins:
-//! one fixed-width column per channel, time flowing down from now at the
-//! top. Each channel's work is a symmetric violin split side by side into
+//! one fixed-width column per channel, painted from the right edge in channel
+//! order so each column stands over its composer, with time flowing down from
+//! now at the top. Each channel's work is a symmetric violin split side by side into
 //! reasoning, tool, and prose tones of its accent, closing with a rounded
 //! taper where it truly stopped. A status cap sits in the column's top row,
 //! a dotted silence trail in the same status colour runs from it down to the
@@ -254,9 +255,12 @@ impl Pane {
         (self.width - 2.0 * PAD - self.gutter() * (columns - 1.0)) / columns
     }
 
+    /// Columns run from the right edge in channel order, as the composers
+    /// below them paint canonical member zero at the control-adjacent edge.
     #[allow(clippy::cast_precision_loss)]
     fn left(self, index: usize) -> f64 {
-        PAD + index as f64 * (self.column_width() + self.gutter())
+        let from_right = self.columns.saturating_sub(index + 1) as f64;
+        PAD + from_right * (self.column_width() + self.gutter())
     }
 
     fn center(self, index: usize) -> f64 {
