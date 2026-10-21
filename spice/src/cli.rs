@@ -369,7 +369,6 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["down"]
             | ["run"]
             | ["config"]
-            | ["config", "migrate-tasks"]
             | ["trust"]
             | ["trust", "pend"]
             | ["trust", "grant"]

@@ -15,7 +15,6 @@ mod mounts;
 mod pre_commit;
 mod registry;
 mod resolve;
-mod task_migration;
 
 /// Maximum bytes admitted from one repository configuration document.
 pub const DOCUMENT_BYTE_LIMIT: u64 = 1024 * 1024;
@@ -38,13 +37,6 @@ pub use registry::{
 pub use resolve::{
     ConcretePath, Document, FlagError, FlagOverride, FlagValue, Inputs, Issue, IssueKind,
     Provenance, ResolveError, Resolved, resolve,
-};
-pub use task_migration::{
-    MigrationDecision as TaskMigrationDecision, MigrationError as TaskMigrationError,
-    MigrationErrorKind as TaskMigrationErrorKind, MigrationProvenance as TaskMigrationProvenance,
-    MigrationSource as TaskMigrationSource, PREDECESSOR_TASK_RELEASE, PredecessorTaskMigration,
-    RAW_OVERRIDE_MAPPINGS, RawOverrideMapping, TASK_MIGRATION_SCHEMA_VERSION, TaskMigrationReport,
-    migrate_predecessor_tasks,
 };
 
 /// Every release-one configuration domain.
@@ -291,19 +283,6 @@ impl TaskMetadata {
     #[must_use]
     pub const fn project_max_depth(&self) -> u64 {
         self.project_max_depth
-    }
-
-    fn migrated(hidden_additions: Vec<String>) -> Result<Self, board::ProjectPolicyError> {
-        let defaults = Self::default();
-        let projects = board::ProjectPolicy::new(
-            hidden_additions,
-            defaults.project_min_depth,
-            defaults.project_max_depth,
-        )?;
-        Ok(Self {
-            hidden_stems: projects.hidden_stems().to_vec(),
-            ..defaults
-        })
     }
 }
 

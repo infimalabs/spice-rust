@@ -1,26 +1,5 @@
 use super::*;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn deliver_task_migration(
-    outcome: &Outcome<spice::config::TaskMigrationReport>,
-    form: Form,
-) -> ! {
-    if form == Form::Text
-        && let Outcome::Reply(reply) = outcome
-    {
-        match reply.body.text() {
-            Ok(document) => {
-                let mut stdout = io::stdout().lock();
-                let _ = stdout.write_all(&document);
-                let _ = stdout.flush();
-                terminate_code(REPLY_EXIT);
-            }
-            Err(error) => deliver_fault(render_fault(error.to_string()), Form::Text),
-        }
-    }
-    deliver(outcome, form)
-}
-
 /// Acquire one ambient bootstrap value before typed configuration crosses
 /// into the library graph.
 #[expect(
@@ -154,10 +133,6 @@ mod tests {
             (&["lock", "run"][..], "lock::target-unsupported"),
             (&["restore", "verify"][..], "restore::target-unsupported"),
             (&["release", "notes"][..], "release::target-unsupported"),
-            (
-                &["config", "migrate-tasks"][..],
-                "task-migration::target-unsupported",
-            ),
         ] {
             let fault = target_unsupported(path)
                 .unwrap_or_else(|| panic!("{} needs a wasm refusal", path.join(" ")));

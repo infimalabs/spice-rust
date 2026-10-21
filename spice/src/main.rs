@@ -96,8 +96,6 @@ mod steering_read;
 #[cfg(not(target_arch = "wasm32"))]
 mod task_artifact_command;
 #[cfg(not(target_arch = "wasm32"))]
-mod task_migration_command;
-#[cfg(not(target_arch = "wasm32"))]
 mod task_next_delivery;
 #[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
@@ -391,9 +389,6 @@ impl NativeInvocation<'_> {
             },
             ["install", "symbols"] => deliver(&install_symbols_command::run(leaf), form),
             ["config"] => deliver_config(&config_command::run(leaf), form),
-            ["config", "migrate-tasks"] => {
-                deliver_task_migration(&task_migration_command::run(leaf), form)
-            }
             _ => {}
         }
     }
@@ -691,10 +686,6 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["restore", "verify"] => (
             "restore::target-unsupported",
             "reading and verifying a restore archive is unavailable on wasm32",
-        ),
-        ["config", "migrate-tasks"] => (
-            "task-migration::target-unsupported",
-            "reading a predecessor task export is unavailable on wasm32",
         ),
         ["retro"] => (
             "retro::target-unsupported",
@@ -1131,4 +1122,4 @@ mod main_tail;
 pub(crate) use main_tail::terminate_code;
 pub use main_tail::{bootstrap_environment, terminate};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use main_tail::{deliver_task_migration, session_environment, working_directory};
+pub(crate) use main_tail::{session_environment, working_directory};
