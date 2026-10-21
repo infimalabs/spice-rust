@@ -182,16 +182,21 @@ owns each rule summarized here.
   A Design plans Plans; a Plan plans executable tasks.
 
   Each claimed Design pass ends with exactly one `preparation propose
-  PROPOSAL_JSON` or with the existing proposal-less free/lapse abandonment.
-  The body holds only what the pass decides: recommendation, outputs,
-  governed inputs, justification, and references. The client derives the
-  Design from the caller's sole active Design claim (`--design HANDLE` when it
-  holds several), mints the candidate stamp, and witnesses the Design
-  statement and active claim heads it read; the resident records the
+  JUSTIFICATION` or with the existing proposal-less free/lapse abandonment.
+  The client assembles the proposal from what the pass built and what the
+  Design's room holds, leaving the holder only the justification and, for a
+  pass that built nothing, a conclude or collapse recommendation. Its outputs
+  are the pending tasks prepared under the Design that no decision resolved,
+  its governed inputs their other pending dependencies, and its references
+  every room contribution and earlier decision; `--cite RELATION=KEY` adds or
+  relabels one. The client derives the Design from the caller's sole active
+  Design claim (`--design HANDLE` when it holds several), mints the candidate
+  stamp, and witnesses the Design statement and active claim heads, the
+  outputs and inputs, and the room head it read; the resident records the
   completed pass horizon against those heads and releases that claim in the
-  same guarded transaction. A work recommendation names one or more acceptance-bearing
-  outputs of any intent still gated by the Design, such as ordinary tasks or
-  Plans it constructed directly, with source-backed
+  same guarded transaction. A work recommendation names one or more
+  acceptance-bearing outputs of any intent still gated by the Design, such as
+  ordinary tasks or Plans it constructed directly, with source-backed
   justification. A conclude or collapse recommendation names no output or
   governed input and carries the same source-backed justification. A mistaken
   undecided proposal can be retracted by its author with `preparation withdraw

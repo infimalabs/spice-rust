@@ -3,6 +3,8 @@ use super::*;
 mod group;
 mod preparation;
 #[cfg(test)]
+pub(in crate::board_command) use preparation::assemble::{PassRecord, assemble, pass_record};
+#[cfg(test)]
 pub(in crate::board_command) use preparation::{derive_proposal, held_design};
 mod principal;
 mod requirements;

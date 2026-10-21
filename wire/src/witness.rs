@@ -722,6 +722,19 @@ pub enum Witness {
         )]
         head: Option<Seq>,
     },
+    /// One room's newest publication position, or witnessed absence, so a
+    /// command assembled from the room refuses when anything lands after.
+    Room {
+        /// Room anchor task.
+        room: TaskStamp,
+        /// Newest publication position, absent before the room's first.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        head: Option<Seq>,
+    },
     /// A selected output's latest authorization head, or witnessed absence.
     Authorization {
         /// Gated output whose exact selection is constrained.
@@ -819,6 +832,8 @@ pub enum WitnessKind {
     OopsGeneration,
     /// One candidate, critique, coverage, or decision authority head.
     Proposal,
+    /// One room's newest publication position.
+    Room,
     /// A selected output's latest authorization head.
     Authorization,
     /// One directed route's semantic receipt head.
@@ -859,6 +874,7 @@ impl WitnessKind {
         Self::Group,
         Self::OopsGeneration,
         Self::Proposal,
+        Self::Room,
         Self::Authorization,
         Self::Delivery,
         Self::Transition,
@@ -897,6 +913,7 @@ impl Witness {
                 singleton.singleton_kind()
             }
             Self::Proposal { .. } => WitnessKind::Proposal,
+            Self::Room { .. } => WitnessKind::Room,
             Self::Authorization { .. } => WitnessKind::Authorization,
             Self::Delivery { .. } => WitnessKind::Delivery,
             Self::Transition { .. } => WitnessKind::Transition,

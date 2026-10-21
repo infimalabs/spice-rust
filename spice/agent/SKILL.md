@@ -99,9 +99,9 @@ name continuations.
   A Plan creates an acceptance-bearing executable task, else `task done
   --disposition KIND [--cover REF]`; positive review releases outputs to
   dependencies without selection/authorization. A Design pass ends with
-  `preparation propose` JSON: recommendation, acceptance-bearing outputs of
-  any intent, governed_inputs, justification, references; Design and heads
-  are derived. Keep Designs open: checkpoint/free; only the operator
+  `preparation propose JUSTIFICATION`, assembled from acceptance-bearing
+  outputs built under the claim and the room (none: `--recommend
+  conclude|collapse`). Keep Designs open: checkpoint/free; only the operator
   concludes. Outputs await exact `preparation decide`; dependencies, origin,
   closure, deletion, findings, and group movement never bypass it. No
   reciprocal controller/output edge. Stop means checkpoint/free.

@@ -542,18 +542,22 @@ A Design is itself a question: phrase TITLE as the question under Design.
 Each --acceptance value is one open question for evidence and proposals to
 answer, not an implementation completion criterion.";
 
-/// The body `preparation propose` takes and what the client derives around it.
+/// What `preparation propose` assembles and what its holder still authors.
 const PREPARATION_PROPOSE_HELP: &str = "\
-PROPOSAL_JSON is one canonical object holding only what this pass decides:
-recommendation (work, conclude, or collapse), outputs (one or more
-acceptance-bearing tasks gated by the Design; work only), governed_inputs
-(tasks a work proposal assumes; may be empty), justification (nonempty,
-trimmed), and references (one or more {relation, source} links). Unknown
-fields refuse. The Design is the open Design this capability holds an active
-claim on, or --design HANDLE when it holds several; its identity, statement
-head, and claim head are read and witnessed here, so a statement or claim that
-moves before the write still refuses. The proposal releases that claim; the
-Design stays open for the operator's decision.";
+Ends the pass of the open Design this capability holds (--design HANDLE when it
+holds several) and releases that claim; the Design stays open for the
+operator's decision. The proposal is assembled, not typed: its outputs are the
+pending tasks the pass built under the claim that no decision has resolved,
+its governed inputs their other pending dependencies, and its references every
+contribution in the Design's room (for, against, evidence, or question by its
+kind) plus every earlier decision. JUSTIFICATION is the holder's own argument.
+A pass that built nothing recommends --recommend conclude or collapse; one
+that built outputs recommends that work. --cite RELATION=KEY adds a source
+(the keys room contribute --cite takes, or any publication stamp the room
+prints) or relabels an assembled one; RELATION is one lower-case word.
+--dry-run prints the proposal and records nothing. The Design, its outputs and
+inputs, and its room are witnessed, so any of them moving before the write
+refuses it.";
 
 /// Usage notes for a leaf whose bounds its syntax line cannot carry.
 fn leaf_help(path: &[&str]) -> Option<&'static str> {

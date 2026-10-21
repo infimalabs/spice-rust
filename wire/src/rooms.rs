@@ -498,10 +498,10 @@ pub enum DesignPassRecommendation {
     Collapse,
 }
 
-/// What a lane decides when ending one Design pass: the recommendation and
-/// everything supporting it. The proposal's identity, statement head, and
-/// claim head are derived by the client from the Design the lane holds, never
-/// restated. This is the `preparation propose` body.
+/// What a lane's Design pass proposes: the recommendation and everything
+/// supporting it. The client assembles it from the pass and the Design's
+/// room; the proposal's identity, statement head, and claim head are derived
+/// from the Design the lane holds, never restated.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DesignPassBodyWire", into = "DesignPassBodyWire")]
 pub struct DesignPassBody {
@@ -525,6 +525,30 @@ struct DesignPassBodyWire {
     outputs: Vec<TaskStamp>,
     justification: String,
     references: Vec<CandidateReference>,
+}
+
+impl DesignPassBody {
+    /// The body these parts make, refused by the same rules a retained
+    /// proposal decodes under.
+    ///
+    /// # Errors
+    ///
+    /// Returns the rule the parts break.
+    pub fn new(
+        recommendation: DesignPassRecommendation,
+        governed_inputs: Vec<TaskStamp>,
+        outputs: Vec<TaskStamp>,
+        justification: String,
+        references: Vec<CandidateReference>,
+    ) -> Result<Self, &'static str> {
+        Self::try_from(DesignPassBodyWire {
+            recommendation,
+            governed_inputs,
+            outputs,
+            justification,
+            references,
+        })
+    }
 }
 
 impl TryFrom<DesignPassBodyWire> for DesignPassBody {

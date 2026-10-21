@@ -63,6 +63,21 @@ const OPTIONS: &[(&str, &str, &str)] = &[
         "design",
         "Name the held Design when this capability holds several",
     ),
+    (
+        "preparation propose",
+        "recommend",
+        "End a pass that built nothing by recommending conclude or collapse",
+    ),
+    (
+        "preparation propose",
+        "cite",
+        "Add a source, or relabel an assembled one, as RELATION=KEY",
+    ),
+    (
+        "preparation propose",
+        "dry-run",
+        "Print the assembled proposal and record nothing",
+    ),
 ];
 
 /// Attach every registered option row for `path`, refusing a row that names no

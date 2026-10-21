@@ -1,9 +1,11 @@
 //! The proposal `preparation propose` derives from the Design its caller
 //! holds, and the resident refusing it once a witnessed head has moved.
 
+use super::contribution::{contribute, contributed, contribution_body};
 use super::*;
 
 use crate::board_command::client::{derive_proposal, held_design};
+use wire::rooms::RoomContributionKind;
 
 /// The proposal the client derives from `board` for the Design it holds.
 fn derived(board: &BoardAnswer, output: &TaskHandle, micros: i64) -> DesignPassProposal {
@@ -25,7 +27,15 @@ fn derived(board: &BoardAnswer, output: &TaskHandle, micros: i64) -> DesignPassP
     .expect("a held Design derives its proposal")
 }
 
-/// Issue `proposal` from `seat` with witnesses read from the current board.
+/// `design`'s newest room publication, as the client reads it to assemble.
+fn room_head(bus: &Bus, design: &TaskHandle) -> Option<wire::Seq> {
+    let room = design.born().expect("design stamp");
+    bus.read(move |read| read.room_publication_head(&room))
+        .expect("room head reads")
+}
+
+/// Issue `proposal` from `seat` with witnesses read from the current board
+/// and the room witnessed at `room`.
 fn propose(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -33,6 +43,7 @@ fn propose(
     design: &TaskHandle,
     output: &TaskHandle,
     proposal: DesignPassProposal,
+    room: Option<wire::Seq>,
 ) -> Outcome<CommandAnswer> {
     let current = board(bus, epoch, Actor::Lane(seat.lane));
     let mut expected = vec![Witness::Proposal {
@@ -43,6 +54,10 @@ fn propose(
     }];
     expected.extend(transition_witnesses(at(&current, design)));
     expected.extend(transition_witnesses(at(&current, output)));
+    expected.push(Witness::Room {
+        room: design.born().expect("design stamp"),
+        head: room,
+    });
     expected.push(residency(&current, seat));
     issue(
         bus,
@@ -53,6 +68,49 @@ fn propose(
         &DesignPropose {
             candidate: proposal,
         },
+    )
+}
+
+/// Propose `proposal` witnessing the room as read before a late contribution,
+/// which refuses as a moved witness, then again witnessing the current room.
+fn propose_past_late_contribution(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    root: &Path,
+    seat: &Seat,
+    design: &TaskHandle,
+    output: &TaskHandle,
+    proposal: DesignPassProposal,
+) -> Outcome<CommandAnswer> {
+    let assembled_at = room_head(bus, design);
+    contributed(contribute(
+        bus,
+        epoch,
+        root,
+        Actor::Lane(seat.lane),
+        contribution_body(design, RoomContributionKind::charge(1), "Late.", Vec::new()),
+    ));
+    let moved = propose(
+        bus,
+        epoch,
+        seat,
+        design,
+        output,
+        proposal.clone(),
+        assembled_at,
+    );
+    assert!(
+        matches!(&moved, Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"),
+        "{moved:?}"
+    );
+    propose(
+        bus,
+        epoch,
+        seat,
+        design,
+        output,
+        proposal,
+        room_head(bus, design),
     )
 }
 
@@ -108,7 +166,7 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
         },
     ));
     assert!(matches!(
-        propose(&bus, epoch, &seats[0], &design, &output, proposal),
+        propose(&bus, epoch, &seats[0], &design, &output, proposal, room_head(&bus, &design)),
         Outcome::Refusal(refusal)
             if refusal.reason() == "preparation::proposal-statement-moved"
     ));
@@ -119,7 +177,15 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
     let edited = board(&bus, epoch, lane.clone());
     let stale = derived(&edited, &output, 1_760_000_000_000_202);
     assert_eq!(stale.statement, at(&edited, &design).statement.position);
-    let stale_outcome = propose(&bus, epoch, &seats[0], &design, &output, stale.clone());
+    let stale_outcome = propose(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &output,
+        stale.clone(),
+        room_head(&bus, &design),
+    );
     assert!(
         matches!(&stale_outcome, Outcome::Refusal(refusal) if refusal.reason() == "preparation::proposal-claim-stale"),
         "{stale_outcome:?}"
@@ -137,13 +203,22 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
             .map(|claim| claim.position)
     );
     assert!(matches!(
-        propose(&bus, epoch, &seats[0], &design, &output, stale),
+        propose(&bus, epoch, &seats[0], &design, &output, stale, room_head(&bus, &design)),
         Outcome::Refusal(refusal) if refusal.reason() == "preparation::proposal-claim-moved"
     ));
 
-    // Derived from the current heads, the pass records and releases the claim.
+    // A contribution landing after the room was read refuses the write until
+    // it witnesses the current room; then the pass records and frees the claim.
     let fresh = derived(&current, &output, 1_760_000_000_000_204);
-    assert_committed(propose(&bus, epoch, &seats[0], &design, &output, fresh));
+    assert_committed(propose_past_late_contribution(
+        &bus,
+        epoch,
+        root.as_ref(),
+        &seats[0],
+        &design,
+        &output,
+        fresh,
+    ));
     let after = board(&bus, epoch, Actor::Operator);
     assert_eq!(
         at(&after, &design)

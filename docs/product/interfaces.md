@@ -65,11 +65,13 @@ commands mean; this section fixes their operand bodies and bounds.
 
 ### Preparation command bodies
 
-`preparation propose`, `critique`, `cover`, `decide`, and `withdraw` each take
-one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
+`preparation critique`, `cover`, `decide`, and `withdraw` each take one
+canonical JSON object. Unknown fields refuse, nothing is lenient, and a
 malformed body refuses with `preparation::argument-invalid`, giving the parse
-detail and a complete body that command accepts. `preparation adopt` takes two
-task handles instead, and `preparation nudge` one open Design's handle.
+detail and a complete body that command accepts. `preparation propose`
+assembles its body and takes only the holder's justification, `preparation
+adopt` takes two task handles, and `preparation nudge` one open Design's
+handle.
 
 - **Values.** A task is its bare birth stamp, without the project prefix
   (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`): nine characters, or eight for a
@@ -84,24 +86,39 @@ task handles instead, and `preparation nudge` one open Design's handle.
   "publication": STAMP}` (the `source` a `room contribute` answer prints,
   pasted unchanged), `{"kind": "artifact", "digest": HEX}`, or a transcript
   hunk.
-- **`propose PROPOSAL_JSON [--design HANDLE]`.** The body holds only what the
-  pass decides: `recommendation` is `work`, `conclude`, or `collapse`; work
-  names one or more unique `outputs` plus any `governed_inputs`, while conclude
-  and collapse name neither. Every work output must carry acceptance and still
-  depend on the Design; any intent qualifies. `justification` is nonblank and
-  `references` contains at least one `{"relation": NAME, "source": SOURCE}`.
-  Inputs and outputs are unique and disjoint. Every reference must lie in the
+- **`propose [--design HANDLE] [--recommend conclude|collapse] [--cite
+  RELATION=KEY...] [--dry-run] JUSTIFICATION`.** The client assembles the
+  proposal from the board and the Design's room; the holder writes only the
+  nonblank justification. Outputs are every pending task whose preparation
+  names the Design as parent and itself as construction, as creation under
+  the held Design claim or `--preparation` records it, except those an earlier
+  decision under the Design resolved; a returned or withdrawn proposal's
+  outputs assemble again. Governed inputs are the outputs' other pending
+  dependencies. Outputs make the recommendation `work`; a pass with none
+  passes `--recommend conclude` or `collapse`, and the flag beside outputs
+  refuses `preparation::recommend-with-outputs`, while neither refuses
+  `preparation::proposal-empty`. An output without acceptance refuses
+  `preparation::output-unaccepted`, and one that lost its edge to the Design
+  refuses `preparation::output-ungated` naming it. References are every
+  contribution in the room, related `for`, `against`, `evidence`, or
+  `question` by its charge or kind, plus every earlier decision under the
+  Design as `decision`; `--cite RELATION=KEY` adds a source, or relabels an
+  assembled one, from any key `room contribute --cite` takes or a room
+  publication stamp, and a quiet room with no cite refuses
+  `preparation::proposal-unreferenced`. Every reference must lie in the
   controlling Design's scope: a contribution in its room, or a journal fact of
   its room, the Design, a governed input, an output, or a task prepared under
-  it. The client derives the rest: the Design is the open Design the caller
-  holds an active claim on (`--design HANDLE` names it when the caller holds
-  several; holding none refuses `preparation::design-unheld`), the candidate
-  stamp is minted fresh, and the Design's statement and claim heads are read
-  and witnessed, so a statement edit or claim move between that read and the
-  write refuses `preparation::proposal-statement-moved` or
-  `proposal-claim-moved`, and an unacknowledged Design generation refuses
-  `proposal-claim-stale`. The command records the immutable proposal and
-  releases that exact claim atomically.
+  it. The Design is the open Design the caller holds an active claim on
+  (`--design HANDLE` names it when the caller holds several; holding none
+  refuses `preparation::design-unheld`), the candidate stamp is minted fresh,
+  and the Design's statement and claim heads, each output and input, and the
+  room's newest publication are witnessed, so a statement edit, claim move, or
+  room publication between that read and the write refuses
+  (`preparation::proposal-statement-moved`, `proposal-claim-moved`, or
+  `board::witness-moved`), and an unacknowledged Design generation refuses
+  `proposal-claim-stale`. `--dry-run` prints the assembled proposal and
+  records nothing. The write records the immutable proposal and releases that
+  exact claim atomically.
 - **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
   SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
   `material-finding`).

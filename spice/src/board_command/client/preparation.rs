@@ -5,15 +5,18 @@ use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority, DesignPassBody,
-    DesignPassProposal, DesignPropose, OutputAdopt, PreparationDecide, PreparationDecision,
-    ProposalRef, RoomAuthorityStamp, RoomSource,
+    CandidateRef, CandidateReference, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority,
+    DesignPassBody, DesignPassProposal, DesignPassRecommendation, DesignPropose, OutputAdopt,
+    PreparationDecide, PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomSource,
 };
 
 use super::*;
 
+pub(in crate::board_command) mod assemble;
 #[cfg(test)]
 mod tests;
+
+use assemble::{PassRecord, assemble, pass_record};
 
 /// One canonical-JSON command operand: its argument name and a complete body
 /// the command accepts. A malformed body refuses with that body beside the
@@ -51,10 +54,8 @@ impl<T: DeserializeOwned> JsonOperand<T> {
     }
 }
 
-const PROPOSAL_JSON: JsonOperand<DesignPassBody> = JsonOperand::new(
-    "PROPOSAL_JSON",
-    r#"{"recommendation":"work","governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}],"justification":"The cited contract supports this pass."}"#,
-);
+const PROPOSE_DRY_RUN: &str =
+    "dry run: nothing recorded; the write mints its own candidate identity";
 const CRITIQUE_JSON: JsonOperand<CandidateCritique> = JsonOperand::new(
     "CRITIQUE_JSON",
     r#"{"critique":{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"critique":"1"},"category":"composition","source":{"kind":"journal","fact":"6dth"},"standing":"clean"}"#,
@@ -102,10 +103,6 @@ pub(super) fn client_design_propose(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let pass = match PROPOSAL_JSON.argument(matches) {
-        Ok(pass) => pass,
-        Err(outcome) => return outcome,
-    };
     let named = match matches.get_one::<String>("design") {
         Some(written) => match written.parse::<TaskHandle>() {
             Ok(handle) => Some(handle),
@@ -113,53 +110,139 @@ pub(super) fn client_design_propose(
         },
         None => None,
     };
-    let tasks = named
-        .iter()
-        .map(|handle| {
-            handle
-                .born()
-                .expect("a parsed handle carries a canonical task stamp")
-        })
-        .chain(pass.governed_inputs.iter().cloned())
-        .chain(pass.outputs.iter().cloned())
-        .collect::<Vec<_>>();
-    let mut design = None;
-    let outcome = submit_with_tasks(repository, contract, tasks, true, |board| {
-        let heads = held_design(board, named.as_ref())?;
-        let proposal = derive_proposal(heads, pass, mint_candidate()?)?;
-        design = Some(proposal.candidate.controller.clone());
-        // The proposal releases the holder's claim at its task Git boundary,
-        // which resolves the holder's worktree from this witness.
-        let (lane, occupant) = actor_seat(board)?;
-        let mut expected = vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-        ];
-        for stamp in proposal.governed_inputs.iter().chain(&proposal.outputs) {
-            let heads = task(board, stamp)?;
-            expected.push(statement_witness(heads));
-            expected.push(workflow_witness(heads));
-        }
-        expected.push(Witness::Proposal {
-            proposal: ProposalRef::Candidate {
-                candidate: proposal.candidate.clone(),
-            },
-            head: None,
+    let recommend = matches
+        .get_one::<String>("recommend")
+        .map(|written| match written.as_str() {
+            "conclude" => DesignPassRecommendation::Conclude,
+            "collapse" => DesignPassRecommendation::Collapse,
+            _ => unreachable!("clap admits only conclude or collapse"),
         });
-        expected.push(residency_witness(board, lane, occupant));
-        Ok((
-            CommandKind::DesignPropose,
-            expected,
-            DesignPropose {
-                candidate: proposal,
-            },
-        ))
-    });
-    match design {
-        Some(design) => with_cycle(repository, &design, outcome),
-        None => outcome,
+    let mut written_cites = Vec::new();
+    for written in matches.get_many::<String>("cite").into_iter().flatten() {
+        match cite_pair(written) {
+            Ok(pair) => written_cites.push(pair),
+            Err(outcome) => return outcome,
+        }
     }
+    let board = match current_board(repository, BoardRead::Open) {
+        Ok(board) => board,
+        Err(outcome) => return outcome,
+    };
+    let design = match held_design(&board, named.as_ref()) {
+        Ok(design) => design,
+        Err(outcome) => return outcome,
+    };
+    let born = design.statement.body.born.clone();
+    let mut cites = Vec::new();
+    for (relation, key) in written_cites {
+        match super::room::cite(&board, &born, key) {
+            Ok(source) => cites.push(CandidateReference { relation, source }),
+            Err(outcome) => return outcome,
+        }
+    }
+    let (record, room_head) = match read_pass_record(repository, &born, &mut cites) {
+        Ok(read) => read,
+        Err(outcome) => return outcome,
+    };
+    let proposal = match assemble(
+        design,
+        &board.tasks,
+        &record,
+        recommend,
+        cites,
+        required(matches, "JUSTIFICATION"),
+    )
+    .and_then(|pass| derive_proposal(design, pass, mint_candidate()?))
+    {
+        Ok(proposal) => proposal,
+        Err(outcome) => return outcome,
+    };
+    if matches.get_flag("dry-run") {
+        let json = serde_json::to_string_pretty(&proposal).expect("a proposal encodes");
+        return Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(board.cursor),
+            body: CommandAnswer::Text(TextAnswer {
+                text: format!("{PROPOSE_DRY_RUN}\n{json}"),
+            }),
+        });
+    }
+    // The proposal releases the holder's claim at its task Git boundary,
+    // which resolves the holder's worktree from this witness.
+    let (lane, occupant) = match actor_seat(&board) {
+        Ok(seat) => seat,
+        Err(outcome) => return outcome,
+    };
+    let mut expected = vec![
+        statement_witness(design),
+        workflow_witness(design),
+        claim_witness(design),
+    ];
+    for stamp in proposal.governed_inputs.iter().chain(&proposal.outputs) {
+        match task(&board, stamp) {
+            Ok(heads) => {
+                expected.push(statement_witness(heads));
+                expected.push(workflow_witness(heads));
+            }
+            Err(outcome) => return outcome,
+        }
+    }
+    expected.push(Witness::Proposal {
+        proposal: ProposalRef::Candidate {
+            candidate: proposal.candidate.clone(),
+        },
+        head: None,
+    });
+    expected.push(Witness::Room {
+        room: born.clone(),
+        head: room_head,
+    });
+    expected.push(residency_witness(&board, lane, occupant));
+    let outcome = crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::DesignPropose,
+        expected,
+        &DesignPropose {
+            candidate: proposal,
+        },
+    );
+    with_cycle(repository, &born, outcome)
+}
+
+/// One `--cite RELATION=KEY` split into its relation word and its key, which
+/// resolves the way `room contribute --cite` resolves it.
+fn cite_pair(written: &str) -> Result<(wire::Name, &str), Outcome<CommandAnswer>> {
+    let Some((relation, key)) = written.split_once('=') else {
+        return Err(refusal(
+            "preparation::cite-invalid",
+            Some(written.to_owned()),
+            "cite as RELATION=KEY, such as evidence=dWcNrYRX0",
+        ));
+    };
+    let relation = relation.parse::<wire::Name>().map_err(|error| {
+        refusal(
+            "preparation::cite-invalid",
+            Some(written.to_owned()),
+            &error.to_string(),
+        )
+    })?;
+    Ok((relation, key))
+}
+
+/// [`pass_record`] for `design`, read from the repository journal.
+fn read_pass_record(
+    repository: &Repository,
+    design: &TaskStamp,
+    cites: &mut [CandidateReference],
+) -> Result<(PassRecord, Option<Seq>), Outcome<CommandAnswer>> {
+    journal_reader(repository, &format!("Design {design}"))?
+        .read(|read| pass_record(read, design, cites))
+        .map_err(|error| {
+            store_fault(
+                "preparation::authority-unreadable",
+                &format!("cannot read Design {design}'s room and decisions: {error}"),
+            )
+        })
 }
 
 /// The open Design whose pass the caller is ending: the one it names, or the
@@ -418,7 +501,7 @@ fn proposal_heads(
     first: &ProposalRef,
     second: &ProposalRef,
 ) -> Result<(Option<Seq>, Option<Seq>), Outcome<CommandAnswer>> {
-    let reader = candidate_reader(repository, candidate)?;
+    let reader = journal_reader(repository, &format!("candidate {}", candidate.candidate))?;
     reader
         .read(|read| {
             Ok::<_, journal::GuardError>((
@@ -434,9 +517,10 @@ fn proposal_heads(
         })
 }
 
-fn candidate_reader(
+/// The repository journal, read-only, for inspecting `subject`.
+fn journal_reader(
     repository: &Repository,
-    candidate: &CandidateRef,
+    subject: &str,
 ) -> Result<journal::JournalReader, Outcome<CommandAnswer>> {
     let state = repository
         .admit_state()
@@ -444,7 +528,7 @@ fn candidate_reader(
     journal::JournalReader::open(state.journal()).map_err(|error| {
         store_fault(
             "preparation::journal-unreadable",
-            &format!("cannot inspect candidate {}: {error}", candidate.candidate),
+            &format!("cannot inspect {subject}: {error}"),
         )
     })
 }
@@ -453,7 +537,7 @@ fn retained_candidate(
     repository: &Repository,
     candidate: &CandidateRef,
 ) -> Result<(DesignPassProposal, Seq), Outcome<CommandAnswer>> {
-    let reader = candidate_reader(repository, candidate)?;
+    let reader = journal_reader(repository, &format!("candidate {}", candidate.candidate))?;
     let subject = ProposalRef::Candidate {
         candidate: candidate.clone(),
     };

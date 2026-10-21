@@ -368,6 +368,35 @@ impl JournalRead<'_> {
             .transpose()
     }
 
+    /// Journal position of `room`'s newest publication through the current
+    /// horizon, absent before its first.
+    pub fn room_publication_head(
+        &self,
+        room: &wire::TaskStamp,
+    ) -> Result<Option<wire::Seq>, GuardError> {
+        let Some(horizon) = self.room_horizon()? else {
+            return Ok(None);
+        };
+        read_metrics::observe_query();
+        let seq = self
+            .connection
+            .query_row(
+                "SELECT max(seq) FROM room_publications WHERE room = ?1 AND seq <= ?2",
+                params![room.as_str(), horizon],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(GuardError::Store)?;
+        seq.map(|seq| {
+            u64::try_from(seq)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| {
+                    GuardError::Invalid(format!("room publication seq {seq} is invalid"))
+                })
+        })
+        .transpose()
+    }
+
     /// How many publications `room` holds strictly after `after`, through
     /// the current horizon.
     pub fn room_publication_count(
