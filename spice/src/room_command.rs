@@ -230,29 +230,55 @@ fn open(
     Ok((state, journal))
 }
 
+/// The working configuration's task project policy beside the admitted state
+/// and journal reader of `repository`, opened for one room page read.
+fn open_page(
+    repository: &Repository,
+) -> Result<
+    (
+        board::ProjectPolicy,
+        spice::repository::StatePaths,
+        journal::JournalReader,
+    ),
+    Failure,
+> {
+    let projects = spice::config::capture_repository_scoped(repository, &[], None)
+        .map_err(|error| {
+            fault(
+                FaultClass::Environment,
+                "room::configuration-invalid",
+                error,
+            )
+        })?
+        .resolved()
+        .root()
+        .tasks()
+        .project_policy();
+    let (state, journal) = open(repository)?;
+    Ok((projects, state, journal))
+}
+
+/// The task handle `matches` names and the birth stamp anchoring its room.
+fn named_room(matches: &ArgMatches) -> Result<(TaskHandle, TaskStamp), Failure> {
+    let named = matches
+        .get_one::<String>("HANDLE")
+        .expect("generated room parser requires HANDLE");
+    let named = named
+        .parse::<TaskHandle>()
+        .map_err(|error| task_invalid(named, &error))?;
+    let anchor = named
+        .born()
+        .map_err(|error| task_invalid(named.as_str(), &error))?;
+    Ok((named, anchor))
+}
+
 /// [`run`] against `repository`.
 pub(crate) fn run_at(
     repository: &Repository,
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
 ) -> Outcome<RoomHistory> {
-    let opened = || -> Result<_, Failure> {
-        let projects = spice::config::capture_repository_scoped(repository, &[], None)
-            .map_err(|error| {
-                fault(
-                    FaultClass::Environment,
-                    "room::configuration-invalid",
-                    error,
-                )
-            })?
-            .resolved()
-            .root()
-            .tasks()
-            .project_policy();
-        let (state, journal) = open(repository)?;
-        Ok((projects, state, journal))
-    };
-    match opened() {
+    match open_page(repository) {
         Ok((projects, state, journal)) => {
             let artifacts =
                 artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
@@ -294,15 +320,7 @@ fn history(
     } else {
         Selection::Publications
     };
-    let named = matches
-        .get_one::<String>("HANDLE")
-        .expect("generated room parser requires HANDLE");
-    let named = named
-        .parse::<TaskHandle>()
-        .map_err(|error| task_invalid(named, &error))?;
-    let anchor = named
-        .born()
-        .map_err(|error| task_invalid(named.as_str(), &error))?;
+    let (named, anchor) = named_room(matches)?;
     let after = page
         .after()
         .map(|after| {

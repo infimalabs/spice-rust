@@ -20,7 +20,7 @@ use wire::rooms::{
 };
 use wire::{FaultClass, Outcome, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp};
 
-use super::{Failure, Source, Unavailable, current_handle, discover, fault, store, task_invalid};
+use super::{Failure, Source, Unavailable, current_handle, discover, fault, store};
 use crate::read_page::Page;
 
 /// What a continuation's `--after` names.
@@ -83,24 +83,8 @@ pub(crate) fn run_at(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
 ) -> Outcome<RoomRelevance> {
-    let opened = || -> Result<_, Failure> {
-        let projects = spice::config::capture_repository_scoped(repository, &[], None)
-            .map_err(|error| {
-                fault(
-                    FaultClass::Environment,
-                    "room::configuration-invalid",
-                    error,
-                )
-            })?
-            .resolved()
-            .root()
-            .tasks()
-            .project_policy();
-        let (_, journal) = super::open(repository)?;
-        Ok((projects, journal))
-    };
-    match opened() {
-        Ok((projects, journal)) => answer(&journal, &projects, matches, contract.path),
+    match super::open_page(repository) {
+        Ok((projects, _, journal)) => answer(&journal, &projects, matches, contract.path),
         Err(failure) => failure.outcome(),
     }
 }
@@ -125,15 +109,7 @@ fn relevance(
     path: &[&str],
 ) -> Result<(ReplyPosition, RoomRelevance), Failure> {
     let page = Page::from_matches(matches, path)?;
-    let named = matches
-        .get_one::<String>("HANDLE")
-        .expect("generated room parser requires HANDLE");
-    let named = named
-        .parse::<TaskHandle>()
-        .map_err(|error| task_invalid(named, &error))?;
-    let anchor = named
-        .born()
-        .map_err(|error| task_invalid(named.as_str(), &error))?;
+    let (named, anchor) = super::named_room(matches)?;
     let from = page
         .after()
         .map(|after| {
