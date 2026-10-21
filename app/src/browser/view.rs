@@ -193,6 +193,7 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
                 grant_trust: render.grant_trust.clone(),
                 request_task: render.request_task.clone(),
                 open_overview: render.open_overview.clone(),
+                open_message_task: render.open_message_task.clone(),
                 retry_relations: render.retry_relations.clone(),
             })
         }

@@ -1,6 +1,7 @@
 //! Graph-first contextual overview for one complete selected task set.
 
 use super::super::clock::{TaskTimePresentation, task_time, task_time_millis};
+use super::super::watchband::lane_composer_href;
 use super::*;
 use crate::composer_markdown::inline::LineControls;
 use crate::runtime::LaneView;
@@ -29,6 +30,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub grant_trust: Callback<task_detail::TrustGrantRequest>,
     pub request_task: Callback<TaskStamp>,
     pub open_overview: Callback<TaskOverviewSelection>,
+    /// Opens a task's sheet from a card, returning focus to the activating element.
+    pub open_message_task: Callback<(TaskStamp, web_sys::Element)>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -370,7 +373,11 @@ fn render_available(
             {render_room(render, answer)}
             <section class="app-sheet-section">
                 <h3>{"Relationships"}</h3>
-                {render_relationships(render.work, projected, statement, render.selection, focus_task)}
+                {render_relationships(render.work, projected, statement, &RelationTargets {
+                    selection: render.selection,
+                    focus: focus_task,
+                    navigate: render.navigate,
+                })}
             </section>
             <section class="app-sheet-section">
                 <h3>{"Provenance"}</h3>
@@ -382,7 +389,7 @@ fn render_available(
                     {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref()))}
                     {instant_fact("Completion", completion.as_ref())}
                     {possession_facts(row)}
-                    {origin_fact(&statement.provenance, answer.origin_request.as_ref())}
+                    {origin_fact(render, &statement.provenance, answer.origin_request.as_ref())}
                     {fact("Origin thread", row.origin_thread.clone())}
                     {creator_team_fact(row.creator_team, render)}
                     {fact("Queue fact", statement.queue_origin.to_string())}
@@ -462,6 +469,7 @@ fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDet
             runtime,
             render.room_controls,
             render.sender,
+            &render.open_message_task,
             &answer.task,
             composer,
         ),
@@ -501,26 +509,45 @@ fn taste_review_text(hold: &wire::TasteHold) -> String {
         .join("; ")
 }
 
-/// The task's origin key, followed by the request a steering origin names.
+/// The task's origin key, followed by the request a steering origin names. A
+/// parent task's origin opens that task's sheet; no other origin has one.
 fn origin_fact(
+    render: &WorkDetailRender<'_, '_>,
     origin: &wire::TaskProvenance,
     request: Option<&wire::intent::OriginRequest>,
 ) -> Html {
-    let Some(request) = request else {
-        return fact("Origin", origin.to_string());
+    let key = match origin {
+        wire::TaskProvenance::Task(parent) => {
+            let navigate = render.navigate.clone();
+            let parent = parent.clone();
+            html! {
+                <button
+                    type="button"
+                    class="app-fact-link"
+                    aria-label={format!("Open origin task {parent}")}
+                    onclick={Callback::from(move |_| {
+                        navigate.emit(navigation::Intent::Task(parent.clone()));
+                    })}
+                >{origin.to_string()}</button>
+            }
+        }
+        _ if request.is_some() => html! { <code>{origin.to_string()}</code> },
+        _ => html! { {origin.to_string()} },
     };
-    html! {
-        <div>
-            <dt>{"Origin"}</dt>
-            <dd>
-                <code>{origin.to_string()}</code>
-                <p class="app-origin-request">
-                    {request.text.clone()}
-                    if request.truncated { {"…"} }
-                </p>
-            </dd>
-        </div>
-    }
+    html_fact(
+        "Origin",
+        html! {
+            <>
+                {key}
+                if let Some(request) = request {
+                    <p class="app-origin-request">
+                        {request.text.clone()}
+                        if request.truncated { {"…"} }
+                    </p>
+                }
+            </>
+        },
+    )
 }
 
 fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
@@ -550,36 +577,29 @@ fn creator_team_fact(team: Option<wire::CanonicalUuid>, render: &WorkDetailRende
         return fact("Creator team", ABSENT.to_owned());
     };
     let lanes = render.lanes.map_or(&[][..], |view| &view.lanes);
-    let destination = render
+    let href = render
         .lanes
-        .and_then(|lanes| lanes.chat_target_for_team(team));
+        .and_then(|view| view.chat_target_for_team(team))
+        .and_then(|(_team, member)| lane_composer_href(render.lanes, member));
     html_fact(
         "Creator team",
         identity_link(
             crate::watchband::team_label_in(lanes, team),
             team.to_string(),
-            destination,
+            href,
         ),
     )
 }
 
 /// A name the reader knows, its durable spelling on hover, linked to the Chat
 /// composer that reaches it when one exists.
-fn identity_link(
-    display: String,
-    identity: String,
-    destination: Option<(wire::CanonicalUuid, wire::CanonicalUuid)>,
-) -> Html {
-    let Some((_team, member)) = destination else {
+fn identity_link(display: String, identity: String, href: Option<String>) -> Html {
+    let Some(href) = href else {
         return html! { <span title={identity}>{display}</span> };
     };
-    let href = crate::view::card_href(&super::super::watchband::primary_textarea_id(
-        &member.to_string(),
-    ));
     html! {
         <a
             class="app-fact-link"
-            data-task-chat-link={member.to_string()}
             title={identity}
             {href}
             aria-label={format!("Open {display} in Chat")}
@@ -606,13 +626,11 @@ fn deadline_value(instant: Option<&wire::Instant>) -> Html {
 
 /// One actor by the name the reader knows, linked to its lane's Chat composer.
 fn actor_link(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> Html {
-    let destination = match actor {
-        wire::Actor::Lane(lane) => render
-            .lanes
-            .and_then(|lanes| lanes.chat_target_for_lane(*lane)),
+    let href = match actor {
+        wire::Actor::Lane(lane) => lane_composer_href(render.lanes, *lane),
         wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
     };
-    identity_link(actor_name(actor, render), actor.to_string(), destination)
+    identity_link(actor_name(actor, render), actor.to_string(), href)
 }
 
 fn actor_name(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> String {
@@ -639,29 +657,30 @@ fn possession_facts(row: &wire::intent::BoardTask) -> Html {
     }
 }
 
+/// What activating a relation does: focus a task already in the selection, or
+/// replace the selection with one outside it.
+struct RelationTargets<'a> {
+    selection: &'a TaskOverviewSelection,
+    focus: &'a Callback<TaskStamp>,
+    navigate: &'a Callback<navigation::Intent>,
+}
+
 fn render_relationships(
     work: &WorkProjection<'_>,
     task: Option<&WorkTask<'_>>,
     statement: &wire::intent::BoardStatement,
-    selection: &TaskOverviewSelection,
-    focus: &Callback<TaskStamp>,
+    targets: &RelationTargets<'_>,
 ) -> Html {
     let dependencies = statement
         .dependencies
         .iter()
-        .map(|born| render_task_link(work, born, "Dependency", selection, focus));
+        .map(|born| render_task_link(work, born, "Dependency", targets));
     let dependents = task
         .into_iter()
         .flat_map(|task| task.dependents().iter())
         .map(|dependent| {
             let row = work.tasks()[dependent.task()].row();
-            render_task_link(
-                work,
-                &row.statement.body.born,
-                "Dependent",
-                selection,
-                focus,
-            )
+            render_task_link(work, &row.statement.body.born, "Dependent", targets)
         });
     if statement.dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
         return html! { <p class="muted">{"No dependencies or dependents."}</p> };
@@ -673,52 +692,42 @@ fn selection_has(selection: &TaskOverviewSelection, born: &TaskStamp) -> bool {
     selection.tasks().contains(born)
 }
 
+/// One related task as a button: a selected relation focuses its sheet, and
+/// one outside the selection replaces the selection with it.
 fn render_task_link(
     work: &WorkProjection<'_>,
     born: &TaskStamp,
     relationship: &'static str,
-    selection: &TaskOverviewSelection,
-    focus: &Callback<TaskStamp>,
+    targets: &RelationTargets<'_>,
 ) -> Html {
     let row = work
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == *born)
         .map(WorkTask::row);
-    let selected = selection_has(selection, born);
-    // A selected relation is itself a button, so its title holds no control.
-    let resolves = |task: &wire::TaskHandle| {
-        task.born()
-            .is_ok_and(|stamp| selection_has(selection, &stamp))
-    };
-    let controls = if selected {
-        LineControls::Nested
-    } else {
-        LineControls::Live {
-            resolves: &resolves,
-        }
-    };
-    let contents = html! {
-        <>
-            <span>{if selected { relationship } else { "Outside selection" }}</span>
-            <strong>{row.map_or_else(|| born.to_string(), |row| row.statement.body.handle.to_string())}</strong>
-            if let Some(row) = row {
-                <small>{task_detail::render_task_title(&row.presentation_title, &controls)}</small>
-            }
-        </>
-    };
-    if !selected {
-        return html! {
-            <article class="work-relationship-link work-relationship-link--external">{contents}</article>
-        };
-    }
+    let selected = selection_has(targets.selection, born);
     let target = born.clone();
-    let activate = {
-        let focus = focus.clone();
+    let activate = if selected {
+        let focus = targets.focus.clone();
         Callback::from(move |_| focus.emit(target.clone()))
+    } else {
+        let navigate = targets.navigate.clone();
+        Callback::from(move |_| navigate.emit(navigation::Intent::Task(target.clone())))
     };
     html! {
-        <button type="button" class="work-relationship-link" onclick={activate}>{contents}</button>
+        <button type="button" class="work-relationship-link" onclick={activate}>
+            <span>
+                {relationship}
+                if !selected {
+                    {" · outside selection"}
+                }
+            </span>
+            <strong>{row.map_or_else(|| born.to_string(), |row| row.statement.body.handle.to_string())}</strong>
+            // The relation is itself a button, so its title holds no control.
+            if let Some(row) = row {
+                <small>{task_detail::render_task_title(&row.presentation_title, &LineControls::Nested)}</small>
+            }
+        </button>
     }
 }
 

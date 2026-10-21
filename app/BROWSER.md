@@ -170,7 +170,8 @@ is paged or opened separately; durable task and publication stamps key the
 cards, and linked bytes that are not present stay labeled source
 placeholders. Each room card is a single top-level card shaped like a team
 message card, with no card nested inside it and no publication key shown. Its
-words lead with the relative age, the speaker in their lane's team accent, an
+words lead with the relative age, the speaker in their lane's team accent and
+linked to that lane's Chat composer when Chat seats it, an
 arrow to any receivers, and, where applicable, the contribution's vote
 (strongly for, for, evidence, against, or strongly against) or question, or Unheard on an operator post that
 no current or later lane authority proves was heard. The Unheard pill's tooltip

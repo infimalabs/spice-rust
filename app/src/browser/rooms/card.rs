@@ -161,15 +161,27 @@ pub(super) fn render_words(
     }
 }
 
+/// The speaker in its lane's accent, linked to that lane's Chat composer when
+/// Chat seats it; the operator and an unseated lane stay a plain label.
 fn render_speaker(runtime: &AppRuntime, speaker: Speaker) -> Html {
-    let accent = speaker.lane.and_then(|lane| {
-        runtime
-            .lanes()
-            .and_then(|lanes| watchband::lane_accent(&lanes.lanes, lane))
-    });
+    let lanes = runtime.lanes();
+    let accent = speaker
+        .lane
+        .and_then(|lane| lanes.and_then(|lanes| watchband::lane_accent(&lanes.lanes, lane)));
+    let href = speaker
+        .lane
+        .and_then(|lane| super::super::watchband::lane_composer_href(lanes, lane));
     html! {
         <span class="message-agent-name" data-accent={accent.map(|accent| accent.to_string())}>
-            <span class="message-agent-label">{speaker.name}</span>
+            if let Some(href) = href {
+                <a
+                    class="message-agent-label"
+                    {href}
+                    aria-label={format!("Open {} in Chat", speaker.name)}
+                >{speaker.name}</a>
+            } else {
+                <span class="message-agent-label">{speaker.name}</span>
+            }
         </span>
     }
 }

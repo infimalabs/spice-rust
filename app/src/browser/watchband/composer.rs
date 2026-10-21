@@ -300,6 +300,17 @@ pub(in crate::browser) fn primary_textarea_id(lane_key: &str) -> String {
     format!("{PRIMARY_TEXTAREA_PREFIX}{lane_key}")
 }
 
+/// The Chat route to one lane's primary composer, when Chat seats the lane in
+/// a team; an independent seat or a lane this browser has not loaded has none.
+pub(in crate::browser) fn lane_composer_href(
+    lanes: Option<&crate::runtime::LaneView>,
+    lane: CanonicalUuid,
+) -> Option<String> {
+    let (_team, member) = lanes?.chat_target_for_lane(lane)?;
+    let composer = primary_textarea_id(&member.to_string());
+    Some(crate::view::card_href(&composer))
+}
+
 pub(in crate::browser) fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
