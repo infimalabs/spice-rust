@@ -85,7 +85,7 @@
 }
 .agent-menu-button::-webkit-details-marker { display: none; }
 /* The lane's provider mark is the menu glyph; the button carries its title. */
-.agent-menu-button > .app-provider-emblem { width: 12px; height: 12px; cursor: inherit; }
+.agent-menu-button > .app-provider-emblem { width: 12.5px; height: 12.5px; cursor: inherit; }
 /* Renewal keeps its recipient-colored status dot, not a colored control rim. */
 .agent-menu[data-renewal-pending="true"] > .agent-menu-button {
   position: relative;
