@@ -136,6 +136,52 @@ pub(super) fn use_ended_group_closing(
     });
 }
 
+/// Read the contribution sources of every Design an open group console
+/// shows. The console draws each Design's contribution cards from the
+/// partition's anchors, not from the task-detail selection, so it owes those
+/// reads itself; a wake pumps them at once rather than on the next frame.
+#[hook]
+pub(super) fn use_console_design_reads(
+    surface: &UseStateHandle<super::SurfaceData>,
+    controls: &Controls,
+    sender: &SenderHandle,
+) {
+    let (designs, scope) = surface.read().as_ref().map_or_else(
+        || (Vec::new(), None),
+        |runtime| {
+            (
+                console_designs(runtime, controls.views.groups()),
+                Some(runtime.principal().scope()),
+            )
+        },
+    );
+    let (surface, sender) = (surface.clone(), sender.clone());
+    use_effect_with((designs, scope), move |(designs, _)| {
+        let owed = surface
+            .write()
+            .as_mut()
+            .is_some_and(|runtime| runtime.show_console_designs(designs.iter().cloned()));
+        if owed {
+            let _admitted = admit_action(&sender, ClientAction::TaskDetails);
+        }
+    });
+}
+
+/// The Designs the open consoles show, in console then anchor order.
+fn console_designs(runtime: &AppRuntime, views: &[GroupView]) -> Vec<TaskStamp> {
+    let partition = runtime.room_projection().partition();
+    views
+        .iter()
+        .filter_map(|view| {
+            partition
+                .groups
+                .iter()
+                .find(|group| group.group == view.group)
+        })
+        .flat_map(|group| group.anchors.iter().cloned())
+        .collect()
+}
+
 /// The working-group partition of a completed room snapshot, absent while room
 /// authority loads or awaits a reconnect.
 fn settled_partition(runtime: &AppRuntime) -> Option<&wire::rooms::WorkingGroupPartition> {

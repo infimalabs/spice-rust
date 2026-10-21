@@ -17,7 +17,8 @@ use wire::principal::PrincipalDirectory;
 use wire::rooms::RoomAuthorityStamp;
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, Digest, FactKind,
-    MessageLocus, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, ViewSubject,
+    MessageLocus, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, TaskStamp,
+    ViewSubject,
 };
 
 use crate::pane::Principal;
@@ -593,6 +594,9 @@ pub struct AppRuntime {
     conversation_texts: BTreeMap<RoomAuthorityStamp, ConversationText>,
     /// Resolved sources of contributions in shown Designs.
     contribution_reads: BTreeMap<RoomAuthorityStamp, ContributionRead>,
+    /// Designs the open working-group consoles show, which read their
+    /// contributions' sources alongside the task-detail-shown Designs.
+    console_designs: BTreeSet<TaskStamp>,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
@@ -656,6 +660,7 @@ impl AppRuntime {
             task_relations_revision: 0,
             conversation_texts: BTreeMap::new(),
             contribution_reads: BTreeMap::new(),
+            console_designs: BTreeSet::new(),
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
