@@ -615,7 +615,7 @@ fn render_design_composer(
                     />
                     <ComposerFocus id={textarea_id} active={focused} {requested} {settle} />
                 </div>
-                {render_quote_shards(&key, &draft, None, None, render.drafts, onkeydown, &placeholder)}
+                {render_quote_shards(&key, &draft, None, render.drafts, onkeydown, &placeholder)}
             </div>
         </section>
     }

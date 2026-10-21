@@ -1,27 +1,48 @@
-//! The composer's provider glyph, optionally badged for a fast-mode launch,
-//! or omp's pi when the model has no recognized provider.
+//! A lane's provider glyph, optionally badged for a fast-mode launch, or
+//! omp's pi when the model has no recognized provider.
 
 use wire::CanonicalUuid;
 use yew::prelude::*;
 
 use crate::watchband::{self, Emblem, Provider, Standing};
 
-/// The emblem for `standing` as drawn on `surface`.
-///
-/// Gradient ids are named by surface and lane: the mosaic stays mounted while
-/// hidden, so a lane drawn on two surfaces would otherwise mint one id twice
-/// and `url(#id)` would resolve to the hidden copy. `instance` distinguishes
-/// repeated icons for one lane on the same surface.
+/// What hovering a lane's provider emblem names: its standing title, plus
+/// Fast mode when the lane launched in it under a recognized provider.
+pub(in crate::browser) fn provider_title(standing: &Standing) -> String {
+    let mut title = watchband::standing_title(standing);
+    if fast_mode(standing)
+        && matches!(
+            watchband::emblem(standing.model.as_deref()),
+            Emblem::Provider(_)
+        )
+    {
+        title.push_str("; Fast mode");
+    }
+    title
+}
+
+/// The emblem for `standing` as drawn on `surface`, titled and labelled with
+/// its [`provider_title`].
 pub(in crate::browser) fn render_provider_emblem(
     standing: &Standing,
     surface: &'static str,
-    instance: Option<usize>,
 ) -> Html {
-    let mut label = watchband::standing_title(standing);
-    let fast_mode = standing.thread.is_some() && standing.fast_mode;
+    render(standing, surface, Some(provider_title(standing)))
+}
+
+/// The same emblem without its own title or label, for a control that
+/// carries [`provider_title`] itself.
+pub(in crate::browser) fn render_provider_mark(standing: &Standing, surface: &'static str) -> Html {
+    render(standing, surface, None)
+}
+
+/// Gradient ids are named by surface and lane: the mosaic stays mounted while
+/// hidden, so a lane drawn on two surfaces would otherwise mint one id twice
+/// and `url(#id)` would resolve to the hidden copy.
+fn render(standing: &Standing, surface: &'static str, title: Option<String>) -> Html {
     let (mark, provider) = match watchband::emblem(standing.model.as_deref()) {
         Emblem::Provider(provider) => {
-            let badge = if fast_mode {
+            let badge = if fast_mode(standing) {
                 render_fast_badge()
             } else {
                 Html::default()
@@ -31,25 +52,27 @@ pub(in crate::browser) fn render_provider_emblem(
                 Some(provider),
             )
         }
-        Emblem::Pi => (render_omp_mark(surface, standing.lane, instance), None),
+        Emblem::Pi => (render_omp_mark(surface, standing.lane), None),
     };
-    if fast_mode && provider.is_some() {
-        label.push_str("; Fast mode");
-    }
-    let title = label.clone();
     let provider_class =
         provider.map(|provider| format!("app-provider-emblem--{}", provider.key()));
+    let labelled = title.is_some();
     html! {
         <span
             class={classes!("app-provider-emblem", provider_class)}
             data-provider={provider.map(|provider| provider.key().to_owned())}
-            {title}
-            aria-label={label}
-            role="img"
+            title={title.clone()}
+            aria-label={title}
+            role={labelled.then_some("img")}
+            aria-hidden={(!labelled).then_some("true")}
         >
             {mark}
         </span>
     }
+}
+
+const fn fast_mode(standing: &Standing) -> bool {
+    standing.thread.is_some() && standing.fast_mode
 }
 
 /// The vendor's glyph on the 16-unit canvas it publishes, wearing `badge`
@@ -64,10 +87,10 @@ fn render_vendor_glyph(path: &'static str, badge: Html) -> Html {
 }
 
 /// oh-my-pi's mark filling the emblem on its own.
-fn render_omp_mark(surface: &str, lane: CanonicalUuid, instance: Option<usize>) -> Html {
+fn render_omp_mark(surface: &str, lane: CanonicalUuid) -> Html {
     html! {
         <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            {render_omp_pi(surface, lane, instance)}
+            {render_omp_pi(surface, lane)}
         </svg>
     }
 }
@@ -92,14 +115,10 @@ const OMP_PI: &str = "M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z";
 /// oh-my-pi's pi as omp.sh draws it, under one diagonal gradient on its
 /// 64-unit canvas.
 ///
-/// Every standalone pi carries its own gradient, named by its surface, lane,
-/// and same-surface instance, so the fill resolves inside the icon that paints
-/// it.
-fn render_omp_pi(surface: &str, lane: CanonicalUuid, instance: Option<usize>) -> Html {
-    let gradient = match instance {
-        Some(instance) => format!("{surface}-vendor-gradient-{lane}-{instance}"),
-        None => format!("{surface}-vendor-gradient-{lane}"),
-    };
+/// Every standalone pi carries its own gradient, named by its surface and
+/// lane, so the fill resolves inside the icon that paints it.
+fn render_omp_pi(surface: &str, lane: CanonicalUuid) -> Html {
+    let gradient = format!("{surface}-vendor-gradient-{lane}");
     let fill = format!("url(#{gradient})");
     html! {
         <>

@@ -354,6 +354,7 @@ fn render_compose(
                             sender,
                             attention: attention.lane(member.lane),
                         }),
+                        trace::render_composer_rail(runtime, member),
                         sender,
                         composer_drag,
                         drafts,
@@ -772,6 +773,7 @@ fn render_agent_composer(
     authority: SubmissionAuthority,
     can_arrange: bool,
     menu: Html,
+    rail: Html,
     sender: &SenderHandle,
     composer_drag: &PrimaryComposerDragState,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -850,6 +852,7 @@ fn render_agent_composer(
                     drafts,
                     onkeydown.clone(),
                     menu,
+                    rail,
                     stream,
                     prose,
                     dragging,
@@ -857,7 +860,6 @@ fn render_agent_composer(
                 {render_quote_shards(
                     &lane_key,
                     &draft,
-                    Some(standing),
                     Some(status),
                     drafts,
                     onkeydown,
@@ -886,6 +888,7 @@ fn render_composer_body(
     drafts: &UseReducerHandle<ComposerDrafts>,
     onkeydown: Callback<KeyboardEvent>,
     menu: Html,
+    rail: Html,
     stream: ComposerStreamLink,
     prose: String,
     dragging: PrimaryComposerDragging,
@@ -929,7 +932,7 @@ fn render_composer_body(
                 drag_start,
                 drag_lost_capture,
             )}
-            {render_provider_emblem(standing, "composer", None)}
+            {rail}
             <ComposerTextarea
                 key={draft.body.clone()}
                 id={primary_textarea_id(lane_key)}

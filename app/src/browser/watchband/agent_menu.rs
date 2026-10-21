@@ -396,6 +396,12 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
     } else {
         format!("Menu for {}", standing.label)
     };
+    let provider = super::provider_emblem::provider_title(standing);
+    let title = if renewal.pressed {
+        format!("{provider}\n{}", renewal.detail)
+    } else {
+        provider
+    };
     html! {
         <details
             class="agent-menu"
@@ -403,14 +409,8 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
             data-renewal-pending={renewal.pressed.to_string()}
             onkeydown={Callback::from(crate::browser::overlay::dismiss_disclosure_on_escape)}
         >
-            <summary
-                class="agent-menu-button"
-                aria-label={label}
-                title={renewal.pressed.then_some(renewal.detail)}
-            >
-                <span class="composer-menu-icon" aria-hidden="true">
-                    <span></span><span></span><span></span>
-                </span>
+            <summary class="agent-menu-button" aria-label={label} {title}>
+                {super::provider_emblem::render_provider_mark(standing, "menu")}
             </summary>
             <div
                 class="agent-menu-panel app-overlay-panel app-overlay-panel--seated"

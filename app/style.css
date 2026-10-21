@@ -396,11 +396,14 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 /* A team or group cell is one pane in a shared microscopic surface. The grid
    leaves a one-device-pixel transparent outer and inter-cell gap; cells add no
    rails, rounded edges, or individual frames. Tools wear the accent, prose
-   lifts toward ink, and reasoning sinks toward the page. */
-.team-lights > .app-presence-pip--trace {
+   lifts toward ink, and reasoning sinks toward the page, in a pip and across
+   its lane's composer rail alike. */
+:is(.team-lights > .app-presence-pip--trace, .composer-trace-rail) {
   --trace-tool: var(--accent-slot);
   --trace-prose: color-mix(in srgb, var(--accent-slot) 45%, var(--ink));
   --trace-reasoning: color-mix(in srgb, var(--accent-slot) 45%, var(--page));
+}
+.team-lights > .app-presence-pip--trace {
   --well-top: color-mix(in srgb, var(--app-shadow-source) 6%, transparent);
   --well-floor: color-mix(in srgb, var(--app-shadow-source) 2%, transparent);
   position: relative;
@@ -420,7 +423,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 }
 /* A lane with nobody in its seat drains to gray, as the Spice chili does while
    Spice is disconnected, so only running lanes wear their accent. */
-.team-lights > .app-presence-pip--trace[data-lane-seated="false"] { filter: grayscale(1); }
+:is(.team-lights > .app-presence-pip--trace, .composer-trace-rail)[data-lane-seated="false"] { filter: grayscale(1); }
 /* Half a CSS pixel rasterizes to one device pixel at 2x and a single
    antialiased device pixel at 1x, returning the rest to the curve. */
 .activity-trace { position: absolute; inset: .5px; }
