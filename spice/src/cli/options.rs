@@ -49,6 +49,16 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ("lane add", "model", "Launch with this model"),
     ("lane add", "effort", "Launch with this reasoning effort"),
     (
+        "task add",
+        "description",
+        "Open with one plain unlabeled sentence saying why this task matters, then the detail",
+    ),
+    (
+        "task modify",
+        "description",
+        "Open with one plain unlabeled sentence saying why this task matters, then the detail",
+    ),
+    (
         "preparation propose",
         "design",
         "Name the held Design when this capability holds several",

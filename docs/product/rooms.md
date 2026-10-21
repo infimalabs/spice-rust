@@ -115,7 +115,8 @@ owns each rule summarized here.
   without creating attention or recruitment.
   Compaction neither resets history nor creates an opportunity. A fresh vendor
   identity may receive a later ordinary offer without deleting the lane.
-  The request quotes the first substantive description sentence and a bounded
+  The request quotes the first substantive description sentence (the opening
+  hook every description is authored to carry) and a bounded
   prefix of whole open questions. Contribution or `spice room leave --clause`
   answers it. Selection, `task next`, and room catch-up share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced

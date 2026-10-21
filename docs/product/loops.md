@@ -163,6 +163,14 @@ flowchart LR
   and to construct child work when it is.
   An ordinary claimed duplicate is not a Plan disposition; remove it through
   `task delete HANDLE REASON --force-claimed`.
+- A description opens with one plain, unlabeled, accessible sentence or short
+  paragraph saying why the task matters, before any mechanism, history, or
+  invariant, so a reader can decide whether to spend more attention; a Design's
+  opener is its problem sentence. This is an authoring contract carried by
+  `task add`/`task modify` help and the bootstrap skill, not a field: no
+  record changes, the appliance never rewrites an existing description, and
+  the Design request pitch quotes that opener as the first substantive
+  description sentence.
 - `task add --draft` (and `task plan --draft`, `task design --draft`) records a
   typed Draft: prospective work under an admitted public project, distinct from
   Filed work. Default reads show it only to the operator and its origin thread,
