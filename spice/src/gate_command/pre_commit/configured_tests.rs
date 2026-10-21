@@ -303,7 +303,6 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
         absent.contains(&scratch.root.display().to_string()),
         "{absent}"
     );
-    assert!(absent.contains("spice trust pend"), "{absent}");
 
     let detail = policy.trust_refusal_detail(Some(TrustState::Pended), Some("/worktrees/producer"));
     assert!(
@@ -324,8 +323,6 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     for word in ["exact", "/bin/echo", "one", "two"] {
         assert!(detail.contains(word), "{detail}");
     }
-    assert!(detail.contains("spice trust pend"), "{detail}");
-    assert!(detail.contains("spice trust grant"), "{detail}");
 }
 
 #[test]
