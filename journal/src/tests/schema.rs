@@ -19,6 +19,7 @@ mod provenance;
 mod release_notes;
 mod retained;
 mod retained_notes;
+mod review_status;
 mod room_questions;
 mod settings_receipts;
 mod task_evidence;
@@ -143,8 +144,11 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
-    let release_notes =
-        "DROP TABLE IF EXISTS release_corrections; DROP TABLE IF EXISTS release_landings;";
+    let release_notes = if predecessor < crate::migrate::RELEASE_NOTES_SCHEMA {
+        "DROP TABLE IF EXISTS release_corrections; DROP TABLE IF EXISTS release_landings;"
+    } else {
+        ""
+    };
     let typed_rooms: bool = journal
         .connection
         .query_row(

@@ -25,7 +25,7 @@ use super::{
 };
 use crate::body::{
     ClaimFreed, ClaimLapsed, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
-    TaskDeleted, TaskDone,
+    TaskDeleted, TaskDone, TaskReviewed,
 };
 use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
 
@@ -492,6 +492,7 @@ impl DesignCycles {
                 | FactKind::ClaimFreed
                 | FactKind::ClaimLapsed
                 | FactKind::TaskDone
+                | FactKind::TaskReviewed
                 | FactKind::TaskClosed
                 | FactKind::TaskDeleted
                 | FactKind::TaskConcluded
@@ -549,6 +550,7 @@ impl DesignCycles {
             FactKind::ClaimFreed
             | FactKind::ClaimLapsed
             | FactKind::TaskDone
+            | FactKind::TaskReviewed
             | FactKind::TaskClosed
             | FactKind::TaskDeleted
             | FactKind::TaskConcluded => self.observe_task(seq, fact),
@@ -626,6 +628,8 @@ impl DesignCycles {
         }
     }
 
+    /// A completed `task::done` or `task::reviewed` positively settles its
+    /// task; a phase advance or a finding leaves released work pending.
     fn observe_task(&mut self, seq: Seq, fact: &AnyFact) {
         let settled = if let Some(freed) = fact.as_body::<ClaimFreed>() {
             self.design(&freed.task).released(seq);
@@ -642,6 +646,11 @@ impl DesignCycles {
                 return;
             }
             &done.task
+        } else if let Some(reviewed) = fact.as_body::<TaskReviewed>() {
+            if reviewed.status != TaskCompletionStatus::Completed {
+                return;
+            }
+            &reviewed.task
         } else if let Some(closed) = fact.as_body::<TaskClosed>() {
             &closed.task
         } else if let Some(deleted) = fact.as_body::<TaskDeleted>() {

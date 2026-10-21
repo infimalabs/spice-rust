@@ -1,5 +1,5 @@
 use super::*;
-use crate::body::{DesignConclusion, TaskCompletionTerminal};
+use crate::body::{DesignConclusion, TaskCompletionTerminal, Verdict};
 use crate::rooms::{
     CandidateReference, CandidateWithdrawal, DecisionRef, DesignPassProposal,
     DesignPassRecommendation, ExecutionAuthorization, OutputDecision, PreparationDecision,
@@ -165,15 +165,33 @@ fn freed(subject: i64) -> AnyFact {
 }
 
 fn completed(subject: i64) -> AnyFact {
+    done(subject, TaskCompletionStatus::Completed)
+}
+
+fn done(subject: i64, status: TaskCompletionStatus) -> AnyFact {
     any(TaskDone {
         task: task(subject),
         validation: "checked".to_owned(),
         disposition: None,
         terminal: Some(TaskCompletionTerminal {
             operation: lane(9),
-            status: TaskCompletionStatus::Completed,
+            status,
             next: None,
         }),
+        git: None,
+        source: crate::body::SourceBoundary::Proven { heads: Vec::new() },
+    })
+}
+
+fn reviewed(subject: i64, verdict: Verdict, status: TaskCompletionStatus) -> AnyFact {
+    any(TaskReviewed {
+        task: task(subject),
+        reviewer: Actor::Lane(lane(2)),
+        verdict,
+        status,
+        finding: (verdict == Verdict::Finding).then(|| "finding".to_owned()),
+        note: None,
+        followups: Vec::new(),
         git: None,
         source: crate::body::SourceBoundary::Proven { heads: Vec::new() },
     })
@@ -456,6 +474,43 @@ fn decisions_wait_on_released_work_unless_feedback_or_later_input_arrives() {
         let mut journal = Journal::new();
         journal.passed(outcome, outputs());
         assert_eq!(journal.cycle(true), DesignCycle::ReadyForProposal, "{name}");
+    }
+}
+
+/// Work whose flow ends in review completes through its clean review: the
+/// phase `task::done` before it is pending. Only a review that positively
+/// settled the workflow counts; a finding or a clean phase advance leaves
+/// the Design waiting on its released work.
+#[test]
+fn a_clean_final_review_settles_released_work() {
+    let settle = |verdict, status| {
+        let mut journal = Journal::new();
+        journal.passed(
+            resolved(10, &[(OUTPUT, OutputVerdict::Accepted)]),
+            vec![task(OUTPUT)],
+        );
+        journal.operator(&authorized(1, 10, &[OUTPUT]));
+        journal.lane(&done(OUTPUT, TaskCompletionStatus::Pending));
+        assert_eq!(journal.cycle(true), DesignCycle::WaitingOnSelectedWork);
+        journal.by(&Actor::Lane(lane(2)), &reviewed(OUTPUT, verdict, status));
+        journal
+    };
+    let settled = settle(Verdict::Clean, TaskCompletionStatus::Completed);
+    assert_eq!(settled.cycle(false), DesignCycle::ReadyForProposal);
+    for (name, verdict, status) in [
+        ("finding", Verdict::Finding, TaskCompletionStatus::Pending),
+        (
+            "clean advance",
+            Verdict::Clean,
+            TaskCompletionStatus::Pending,
+        ),
+    ] {
+        let journal = settle(verdict, status);
+        assert_eq!(
+            journal.cycle(true),
+            DesignCycle::WaitingOnSelectedWork,
+            "{name}"
+        );
     }
 }
 

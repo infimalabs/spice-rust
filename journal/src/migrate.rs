@@ -20,6 +20,7 @@ mod preparation_edges;
 mod provenance;
 mod residual;
 mod retained_notes;
+mod review_status;
 mod room_questions;
 mod settings_receipts;
 mod steering_rooms;
@@ -89,14 +90,15 @@ const PREPARED: &str = "prepared";
 /// takes the reason its creating actor proves on both, refusing a lane creator,
 /// a missing creating fact, a copy already contradicting that reason, and any
 /// boundary on an unregistered transcript stream. Last, every steering head
-/// takes its body's room as a typed indexed column, and every retained task Git
+/// takes its body's room as a typed indexed column, every retained task review
+/// takes the workflow status its verdict left, and every retained task Git
 /// boundary and review correction enters the release-note projection. Before
 /// any of that, the question-result protocol and required question-result
 /// evidence retire into inert historical authority.
-const PREDECESSOR_SCHEMAS: [u32; 55] = [
+const PREDECESSOR_SCHEMAS: [u32; 56] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85, 86, 87,
+    81, 82, 83, 84, 85, 86, 87, 88,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -151,6 +153,8 @@ pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
 /// First schema whose baseline indexes each steering head's room, and the only
 /// retained schema whose executable authority still carries room questions.
 pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
+/// First schema whose baseline carries the release-note projection.
+pub(crate) const RELEASE_NOTES_SCHEMA: u32 = 88;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
 const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
@@ -404,6 +408,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     cross_room_questions(&transaction, version)?;
     strip_retired_members(&transaction)?;
     let taste_audits = cross_current_rows(&transaction)?;
+    review_status::cross(&transaction)?;
     cross_schema_shape(&transaction, version)?;
     cross_room_successors(&transaction, version)?;
     create_principal_heads(&transaction, version)?;
@@ -419,7 +424,9 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     maturity::cross(&transaction)?;
     cross_retained_notes(&transaction, version)?;
     preparation_edges::cross(&transaction)?;
-    crate::release_notes::cross(&transaction)?;
+    if version < RELEASE_NOTES_SCHEMA {
+        crate::release_notes::cross(&transaction)?;
+    }
     advance_identity(&transaction)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
@@ -1446,8 +1453,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 88, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 89, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 88;
+PRAGMA user_version = 89;
 "#;

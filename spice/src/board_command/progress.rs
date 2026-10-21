@@ -920,11 +920,17 @@ fn commit_review(
         creation.guard(&mut write);
     }
     let verdict = record.verdict;
-    let reviewed = match append_reviewed_fact(&mut write, command, &entry, record, git, source) {
-        Ok(reviewed) => reviewed,
-        Err(outcome) => return outcome,
-    };
     let workflow = review_workflow(&entry, &transition, verdict);
+    let completion = if workflow.status.is_pending() {
+        body::TaskCompletionStatus::Pending
+    } else {
+        body::TaskCompletionStatus::Completed
+    };
+    let reviewed =
+        match append_reviewed_fact(&mut write, command, &entry, record, completion, git, source) {
+            Ok(reviewed) => reviewed,
+            Err(outcome) => return outcome,
+        };
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
@@ -980,6 +986,7 @@ fn append_reviewed_fact(
     command: &wire::AdmittedCommand,
     entry: &Entry,
     record: ReviewRecord,
+    status: body::TaskCompletionStatus,
     git: Option<body::GitBoundary>,
     source: body::SourceBoundary,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
@@ -989,6 +996,7 @@ fn append_reviewed_fact(
                 task: entry.born().clone(),
                 reviewer: command.actor().clone(),
                 verdict: record.verdict,
+                status,
                 finding: record.finding,
                 note: record.note,
                 followups: record.followups,

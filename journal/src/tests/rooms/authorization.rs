@@ -591,6 +591,7 @@ fn task_review_fact_is_candidate_evidence_and_never_an_authorization_gate() {
             task: preparation.input.clone(),
             reviewer: Actor::Operator,
             verdict: wire::body::Verdict::Finding,
+            status: wire::body::TaskCompletionStatus::Pending,
             finding: Some("candidate should account for this finding".to_owned()),
             note: None,
             followups: Vec::new(),

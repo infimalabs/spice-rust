@@ -47,6 +47,24 @@ fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
     task_heads(answer, task).expect("fixture task is visible")
 }
 
+/// The workflow status the newest `task::reviewed` fact for `task` recorded.
+fn latest_review_status(bus: &Bus, task: &TaskHandle) -> body::TaskCompletionStatus {
+    let born = task.born().expect("fixture handle carries a birth stamp");
+    bus.fact_snapshot()
+        .expect("review facts read")
+        .facts()
+        .iter()
+        .rev()
+        .find_map(|envelope| {
+            envelope
+                .fact
+                .read::<body::TaskReviewed>()
+                .filter(|reviewed| reviewed.task == born)
+        })
+        .expect("the task was reviewed")
+        .status
+}
+
 fn residency(answer: &BoardAnswer, seat: &Seat) -> Witness {
     residency_witness(answer, seat.lane, seat.occupant)
 }

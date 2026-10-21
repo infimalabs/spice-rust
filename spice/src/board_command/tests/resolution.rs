@@ -447,6 +447,11 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
         ),
         "the word clean recorded a finding named after the verdict"
     );
+    assert_eq!(
+        latest_review_status(&bus, &task),
+        wire::body::TaskCompletionStatus::Completed,
+        "the clean review that ends a todo,review flow records the settlement it made"
+    );
     clean(&root, bus);
 }
 

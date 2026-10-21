@@ -91,8 +91,8 @@ fn history(facts: Vec<StreamFact>) -> History {
 #[test]
 fn a_finding_stays_terminal_until_its_parent_statement_is_causally_revised() {
     let finding = json!({"kind": "task::reviewed", "task": PARENT,
-        "reviewer": format!("lane:{LANE}"), "verdict": "finding", "finding": "fixture",
-        "source": proven()});
+        "reviewer": format!("lane:{LANE}"), "verdict": "finding", "status": "pending",
+        "finding": "fixture", "source": proven()});
     let mut history = history(vec![
         added(1, None, PARENT),
         done(2, 1, PARENT),

@@ -52,8 +52,9 @@
 /// head's room as a typed column for newest-route lookup. Schema 87 retires the
 /// question-result protocol and required question-result evidence while preserving
 /// their receipts and facts as inert authority. Schema 88 materializes task Git
-/// boundaries and review corrections as typed release-note authority.
-pub const SCHEMA_VERSION: u32 = 88;
+/// boundaries and review corrections as typed release-note authority. Schema 89
+/// records on every task review the workflow status its verdict left.
+pub const SCHEMA_VERSION: u32 = 89;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

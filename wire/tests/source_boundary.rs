@@ -115,6 +115,7 @@ fn every_lifecycle_fact_refuses_an_absent_or_unproven_boundary() {
         task: won.task,
         reviewer: Actor::Operator,
         verdict: body::Verdict::Clean,
+        status: body::TaskCompletionStatus::Completed,
         finding: None,
         note: None,
         followups: Vec::new(),
