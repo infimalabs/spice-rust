@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use journal::crossing::rooms::RoomQuestionItem;
+
 mod allocation;
 mod disposition;
 mod persistent_index;
@@ -220,19 +222,38 @@ struct Indexes {
             journal::crossing::rooms::DesignNoticed,
         ),
     >,
-    noticed_designs: Arc<
+    /// Each continuing session's asked Design items; `None` is a whole-Design
+    /// ask.
+    noticed_asks: Arc<
         HashMap<
             (
                 journal::crossing::CanonicalUuid,
                 journal::crossing::rooms::DesignSession,
             ),
-            Arc<HashSet<journal::crossing::TaskStamp>>,
+            Arc<HashSet<(journal::crossing::TaskStamp, Option<RoomQuestionItem>)>>,
         >,
     >,
     room_publications:
         Arc<HashMap<journal::crossing::Actor, Arc<HashSet<journal::crossing::TaskStamp>>>>,
     room_publication_positions:
         HashMap<(journal::crossing::Actor, journal::crossing::TaskStamp), journal::crossing::Seq>,
+    /// Each lane's newest contribution against one Design's question item.
+    item_contributions: HashMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::TaskStamp,
+            RoomQuestionItem,
+        ),
+        journal::crossing::Seq,
+    >,
+    /// Each lane's newest leave of one Design room.
+    room_leaves: HashMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::TaskStamp,
+        ),
+        journal::crossing::Seq,
+    >,
     context_anchors: HashMap<
         (
             journal::crossing::CanonicalUuid,
@@ -320,13 +341,22 @@ impl Indexes {
         &mut self,
         row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
     ) {
-        if let Some(room) = row.fact.room_record() {
-            let rooms = Arc::make_mut(&mut self.room_publications)
-                .entry(row.actor.clone())
-                .or_default();
-            Arc::make_mut(rooms).insert(room.clone());
-            self.room_publication_positions
-                .insert((row.actor.clone(), room.clone()), row.seq);
+        let Some(room) = row.fact.room_record() else {
+            return;
+        };
+        let rooms = Arc::make_mut(&mut self.room_publications)
+            .entry(row.actor.clone())
+            .or_default();
+        Arc::make_mut(rooms).insert(room.clone());
+        self.room_publication_positions
+            .insert((row.actor.clone(), room.clone()), row.seq);
+        if let Some(contributed) = row.fact.read::<journal::crossing::rooms::RoomContributed>() {
+            if let Some(item) = contributed.item {
+                self.item_contributions
+                    .insert((contributed.lane, contributed.room, item), row.seq);
+            }
+        } else if let Some(left) = row.fact.read::<journal::crossing::rooms::RoomLeft>() {
+            self.room_leaves.insert((left.lane, left.room), row.seq);
         }
     }
 
@@ -488,10 +518,13 @@ impl Indexes {
             self.replace_partition(arranged.partition);
         } else if let Some(noticed) = row.fact.read::<journal::crossing::rooms::DesignNoticed>() {
             let session_key = (noticed.lane, noticed.session.clone());
-            let designs = Arc::make_mut(&mut self.noticed_designs)
+            let asked = Arc::make_mut(&mut self.noticed_asks)
                 .entry(session_key.clone())
                 .or_default();
-            Arc::make_mut(designs).insert(noticed.design.clone());
+            Arc::make_mut(asked).insert((
+                noticed.design.clone(),
+                noticed.ask.as_ref().map(|ask| ask.item.clone()),
+            ));
             self.design_notices.insert(session_key, (row.seq, noticed));
         }
     }
@@ -795,18 +828,20 @@ impl TaskFacts {
             .map(|(at, notice)| (*at, notice))
     }
 
-    /// Whether this continuing session was already invited to this Design.
+    /// Whether this continuing session was already asked about this Design's
+    /// `item`, or about the whole Design when `item` is absent.
     #[must_use]
-    pub fn design_was_noticed_in_session(
+    pub fn design_was_asked_in_session(
         &self,
         lane: journal::crossing::CanonicalUuid,
         session: &journal::crossing::rooms::DesignSession,
         design: &journal::crossing::TaskStamp,
+        item: Option<&RoomQuestionItem>,
     ) -> bool {
         self.indexes
-            .noticed_designs
+            .noticed_asks
             .get(&(lane, session.clone()))
-            .is_some_and(|designs| designs.contains(design))
+            .is_some_and(|asked| asked.contains(&(design.clone(), item.cloned())))
     }
 
     /// Whether this actor has ever published in this room.
@@ -822,39 +857,56 @@ impl TaskFacts {
             .is_some_and(|rooms| rooms.contains(room))
     }
 
-    /// Whether this lane published in the room during this continuing session.
+    /// Whether `lane` answered an ask about `room`'s `item` after `after`: a
+    /// contribution against that item, or a leave of the room. A whole-Design
+    /// ask, with no item, is answered by any record the lane makes there.
     #[must_use]
-    pub fn published_in_room_for_session(
+    pub fn design_ask_answered_after(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        room: &journal::crossing::TaskStamp,
+        item: Option<&RoomQuestionItem>,
+        after: journal::crossing::Seq,
+    ) -> bool {
+        let later = |at: Option<&journal::crossing::Seq>| at.is_some_and(|at| *at > after);
+        let Some(item) = item else {
+            return later(
+                self.indexes
+                    .room_publication_positions
+                    .get(&(journal::crossing::Actor::Lane(lane), room.clone())),
+            );
+        };
+        later(
+            self.indexes
+                .item_contributions
+                .get(&(lane, room.clone(), item.clone())),
+        ) || later(self.indexes.room_leaves.get(&(lane, room.clone())))
+    }
+
+    /// Whether `lane` answered an ask about `room`'s `item` during this
+    /// continuing session, as [`Self::design_ask_answered_after`] judges.
+    #[must_use]
+    pub fn design_ask_answered_in_session(
         &self,
         lane: journal::crossing::CanonicalUuid,
         session: &journal::crossing::rooms::DesignSession,
         room: &journal::crossing::TaskStamp,
+        item: Option<&RoomQuestionItem>,
     ) -> bool {
-        let declared = self
-            .indexes
+        self.indexes
             .session_declarations
             .get(&(lane, session.clone()))
-            .copied();
-        let actor = journal::crossing::Actor::Lane(lane);
-        self.indexes
-            .room_publication_positions
-            .get(&(actor, room.clone()))
-            .zip(declared)
-            .is_some_and(|(published, declared)| *published > declared)
+            .is_some_and(|declared| self.design_ask_answered_after(lane, room, item, *declared))
     }
 
-    /// Whether this lane published in the room after one exact notice.
+    /// Each charged question item's series for `design`, if any item was
+    /// charged.
     #[must_use]
-    pub fn published_in_room_after(
+    pub fn design_items(
         &self,
-        lane: journal::crossing::CanonicalUuid,
-        room: &journal::crossing::TaskStamp,
-        notice: journal::crossing::Seq,
-    ) -> bool {
-        self.indexes
-            .room_publication_positions
-            .get(&(journal::crossing::Actor::Lane(lane), room.clone()))
-            .is_some_and(|published| *published > notice)
+        design: &journal::crossing::TaskStamp,
+    ) -> Option<&journal::crossing::rooms::DesignItems> {
+        self.indexes.design_cycles.items(design)
     }
 
     /// Whether this task's current claim head was established by an explicit release.

@@ -32,6 +32,26 @@ pub struct DesignRequest {
     /// record kept it; Explore admits on a slightly wider cast.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stance: Option<crate::rooms::WorkingGroupStance>,
+    /// The question item asked; absent asks about the whole Design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<DesignRequestAsk>,
+}
+
+/// The one question item a Design request asks about, at its statement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignRequestAsk {
+    /// The item's 1-based position.
+    pub question: crate::rooms::RoomQuestion,
+    /// The item verbatim.
+    pub text: String,
+    /// Where the item stood when asked; contested asks a lane already in
+    /// its series for a strength-2 re-charge.
+    pub state: crate::rooms::DesignItemState,
+    /// Charged posts the item holds.
+    pub charges: u64,
+    /// Distinct lanes those posts came from, as retained.
+    pub lanes: usize,
 }
 
 /// Whether the current heads describe an open Design.

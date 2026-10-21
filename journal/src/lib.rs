@@ -57,8 +57,10 @@
 /// retires contribution labels into charges: reason-for is +1, reason-against
 /// is -1, evidence is 0, on each fact and its command receipt.
 /// Schema 91 records on every item-bearing contribution its question item's
-/// text identity, which keys that item's charge series.
-pub const SCHEMA_VERSION: u32 = 91;
+/// text identity, which keys that item's charge series. Schema 92 lets a
+/// Design invitation name the one question item it asks, which an older
+/// release would refuse.
+pub const SCHEMA_VERSION: u32 = 92;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

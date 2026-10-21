@@ -107,22 +107,35 @@ owns each rule summarized here.
   the balanced 0.15 base, Explore uses 0.10, and Converge uses 0.20. The floor
   decides qualification only; finite cosine score still decides ranking. One
   opportunity selects one Design at most; one session has one unanswered
-  request at most.
+  request at most. Whether a lane is asked is decided on the whole statement;
+  what it is asked is one question item. Passive and Explore ask a lane about
+  quiet and unopposed items whose charge series does not hold it; while an
+  item is contested, Converge instead asks a lane already in that item's
+  series to re-charge it at strength 2, and otherwise asks as Explore does. A
+  concurred item is never asked. Of the items still owed, the request names the
+  one whose text, read with the problem sentence, scores best against any
+  retained card view at or above the floor, else the lowest-index one.
   A `room::noticed` record names the exact Design statement, session,
   compaction race witness, opportunity, evidence and immutable identity, the
-  stance whose floor admitted the match, plus at most six strongest weighted
-  overlaps. An invitation admitted under Explore says so: its match was cast
-  slightly wider than usual under the lower floor, so the invited lane weighs
-  the listed terms accordingly. A Design is requested once per
-  continuing session. Contribution or leave stays settled across occupants,
-  restarts, and compaction. Prior contribution retains bounded room context
-  without creating attention or recruitment.
+  stance whose floor admitted the match, at most six strongest weighted
+  overlaps, and the asked item. An invitation admitted under Explore says so:
+  its match was cast slightly wider than usual under the lower floor, so the
+  invited lane weighs the listed terms accordingly. Each item is asked once per
+  continuing session, and a Design with no item the lane may be asked is asked
+  as a whole once. An item ask settles only on the lane's own contribution
+  against that item or its leave; a whole-Design ask settles on any room record
+  by the lane. Answers stay settled across occupants, restarts, and compaction.
+  Prior contribution retains bounded room context without creating attention
+  or recruitment.
   Compaction neither resets history nor creates an opportunity. A fresh vendor
   identity may receive a later ordinary offer without deleting the lane.
   The request quotes the first substantive description sentence (the opening
-  hook every description is authored to carry) and a bounded
-  prefix of whole open questions. Contribution or `spice room leave --clause`
-  answers it. Selection, `task next`, and room catch-up share one owed-request
+  hook every description is authored to carry). An item request then quotes
+  the item with its position and its charged posts and lanes, names the two
+  answers, and offers the supporting task as a `--cite` key; conversation
+  evidence is not citable. A whole-Design request lists a bounded prefix of
+  whole open questions. Contribution or `spice room leave --clause` answers it.
+  Selection, `task next`, and room catch-up share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced
   transcript source, or lost task statement, completion, or claim evidence
   releases it on all three surfaces. Stance and group movement do not release

@@ -504,6 +504,13 @@ impl DesignCycles {
             .unwrap_or_default()
     }
 
+    /// Each charged question item's series for `design`, if anything touched
+    /// it.
+    #[must_use]
+    pub fn items(&self, design: &TaskStamp) -> Option<&DesignItems> {
+        self.designs.get(design).map(|fold| &fold.items)
+    }
+
     /// Every Design whose cycle evidence `fact` may change and that the fact
     /// does not already name as its task subject or a mutated task.
     ///

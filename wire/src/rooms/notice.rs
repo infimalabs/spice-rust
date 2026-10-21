@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{DecisionRef, WorkingGroupStance};
+use super::{DecisionRef, DesignItemState, RoomQuestion, RoomQuestionItem, WorkingGroupStance};
 use crate::{CanonicalUuid, Digest, Name, Seq, SequenceCode, TaskStamp};
 
 /// Most bytes of completion validation retained for Design request matching.
@@ -176,6 +176,19 @@ pub enum DesignNoticeEvidence {
     Conversation { source: DesignConversationEvidence },
 }
 
+/// The one question item a Design request asks a lane about.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignAsk {
+    /// The item's 1-based position in the noticed statement's acceptance.
+    pub question: RoomQuestion,
+    /// The item's text identity, which keys its charge series.
+    pub item: RoomQuestionItem,
+    /// Where the item stood when asked. A contested item is asked only of a
+    /// lane already in its series, for a strength-2 re-charge.
+    pub state: DesignItemState,
+}
+
 /// One continuing session was invited to contribute to a passive Design.
 ///
 /// The opportunity and supporting evidence are independent: a new completion
@@ -212,6 +225,10 @@ pub struct DesignNoticed {
     /// lowers it, Converge raises it. Absent on records older than the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stance: Option<WorkingGroupStance>,
+    /// The question item asked. Absent asks about the whole Design: no
+    /// current item was askable of the lane, or the record predates items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<DesignAsk>,
 }
 
 /// The resident handed an active Design's holder the operator's newest return
