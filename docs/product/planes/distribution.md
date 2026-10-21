@@ -153,6 +153,14 @@ the `canvas` feature that names its symbols, so
 no compile step reads a file outside the selected tree. A resident whose
 executable carries no archive refuses installed serving at startup.
 
+An operator may make a separate built Darwin executable directly shareable
+with `spice dev xtask -- share-darwin`: that local command applies a Developer
+ID signature, submits an archive of the signed file to Apple notarization, and
+verifies the bare Mach-O through Gatekeeper. The bare executable cannot carry a
+stapled ticket, so its recipient's first assessment is online. This is not a
+release operation: signing changes the executable digest, the release pipeline
+never invokes this command, and its result is not admitted as a sealed artifact.
+
 **Invariant —** Proof replays the complete current battery against the
 candidate checkout: Linux mounts it read-only in the pinned OCI environment,
 Darwin passes it to the attested native runner, and Windows dispatches the
