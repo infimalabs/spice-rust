@@ -223,15 +223,19 @@ and it wakes nobody. Lanes contribute with `spice room contribute` from their
 own sessions; the operator reads contributions and decides through the
 ordinary Design controls.
 
-The Design read view groups contributions by kind, each with its lane,
-time, vote, the question item it weighs, text, and every cited source,
-while room history keeps them in journal order among the ordinary
-conversation. The resident resolves each cited source for the shown Design,
-and the card says whether it is available or why not (missing, hidden,
-changed, unreadable, or retained in an unsupported shape), the same states
-any actor's `spice room history` prints. It also gives the item's text while
-the statement the contribution witnessed is still current, and otherwise only
-the item's number, because the journal keeps no superseded statement text.
+The Design read view shows each contribution once, in the room conversation
+at its journal position, with its lane, time, vote, text, and every cited
+source; the Conversation header's count is the sheet's only contribution
+count. The question item a contribution weighs reads as a `Q N` link that
+focuses item N in the sheet's Contract list, so the item's words appear in
+that list and nowhere else on the card. The resident resolves each cited
+source for the shown Design, and the card says whether it is available or why
+not (missing, hidden, changed, unreadable, or retained in an unsupported
+shape), the same states any actor's `spice room history` prints. It also
+gives the item's text as the link's title while the statement the
+contribution witnessed is still current, and otherwise says the item belongs
+to an earlier statement, because the journal keeps no superseded statement
+text.
 Both come from the `room::contribution-read` read, which any authenticated
 session may issue and the app issues once per contribution of a shown Design
 that cites a source or names an item, at most eight in flight, and again

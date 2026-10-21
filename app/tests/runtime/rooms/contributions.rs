@@ -1,7 +1,6 @@
-//! Typed Design contributions: grouped by kind and interleaved with ordinary
-//! conversation in journal order, crediting their lanes, with each cited
-//! source and weighed question item resolved once per shown Design by the
-//! resident that owns it.
+//! Typed Design contributions: interleaved with ordinary conversation in
+//! journal order, crediting their lanes, with each cited source and weighed
+//! question item resolved once per shown Design by the resident that owns it.
 
 use super::*;
 use app::{ContributionRead, RoomEventKind};
@@ -97,7 +96,7 @@ fn stamps() -> [RoomAuthorityStamp; 5] {
 }
 
 #[test]
-fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order() {
+fn contributions_interleave_with_conversation_in_journal_order() {
     let session = session(OPERATOR, EPOCH);
     let [first, second, third, fourth, fifth] = stamps();
     let snapshot = [
@@ -141,37 +140,6 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
     let runtime = contribution_runtime(&session, &snapshot);
     let projection = runtime.room_projection();
 
-    let groups = projection
-        .contribution_groups(&room())
-        .into_iter()
-        .map(|group| {
-            (
-                group.kind,
-                group
-                    .entries
-                    .iter()
-                    .map(|entry| (entry.position.get(), entry.lane))
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        groups,
-        vec![
-            (
-                RoomContributionKind::charge(1),
-                vec![(5, uuid(SECOND_LANE))]
-            ),
-            (
-                RoomContributionKind::charge(0),
-                vec![(1, uuid(LANE)), (6, uuid(SECOND_LANE))]
-            ),
-            (RoomContributionKind::charge(-1), vec![(4, uuid(LANE))]),
-            (RoomContributionKind::Question, vec![(3, uuid(SECOND_LANE))]),
-        ],
-        "every kind groups in canonical order, each oldest first by journal position"
-    );
-
     let chronology = projection
         .room(&room())
         .expect("fixture room")
@@ -199,19 +167,6 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
             .contains(&app::ParticipantReason::Publication(third)),
         "a typed contribution credits its lane as a participant"
     );
-}
-
-#[test]
-fn an_empty_room_has_no_contribution_groups() {
-    let session = session(OPERATOR, EPOCH);
-    let runtime = contribution_runtime(&session, &[room_message(1)]);
-    assert!(
-        runtime
-            .room_projection()
-            .contribution_groups(&room())
-            .is_empty()
-    );
-    assert!(runtime.room_projection().contributions(&room()).is_empty());
 }
 
 fn sources_reply(

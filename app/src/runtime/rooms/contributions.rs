@@ -1,6 +1,7 @@
-//! A Design room's typed contributions, in journal order or grouped by kind
-//! exactly as `spice room history` groups them. Reading them moves no task,
-//! claim, working group, candidate, decision, or authorization.
+//! A Design room's typed contributions as their facts state them; the room
+//! history reads them at their journal positions beside ordinary conversation.
+//! Reading them moves no task, claim, working group, candidate, decision, or
+//! authorization.
 
 use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomQuestion, RoomSource};
 use wire::{CanonicalUuid, Seq, TaskStamp};
@@ -24,15 +25,6 @@ pub struct Contribution<'a> {
     pub text: &'a str,
     /// Its cited sources, in the author's order.
     pub sources: &'a [RoomSource],
-}
-
-/// One kind's contributions, in journal order.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContributionGroup<'a> {
-    /// The kind every entry shares.
-    pub kind: RoomContributionKind,
-    /// The kind's contributions, oldest first.
-    pub entries: Vec<Contribution<'a>>,
 }
 
 impl RoomProjection {
@@ -65,23 +57,5 @@ impl RoomProjection {
             .collect::<Vec<_>>();
         contributions.sort_by_key(|contribution| contribution.position);
         contributions
-    }
-
-    /// `room`'s contributions grouped in [`RoomContributionKind::ALL`]
-    /// order, each group oldest first; a kind with none is absent.
-    #[must_use]
-    pub fn contribution_groups(&self, room: &TaskStamp) -> Vec<ContributionGroup<'_>> {
-        let contributions = self.contributions(room);
-        RoomContributionKind::ALL
-            .into_iter()
-            .filter_map(|kind| {
-                let entries = contributions
-                    .iter()
-                    .filter(|contribution| contribution.contribution == kind)
-                    .copied()
-                    .collect::<Vec<_>>();
-                (!entries.is_empty()).then_some(ContributionGroup { kind, entries })
-            })
-            .collect()
     }
 }

@@ -14,7 +14,7 @@ mod conversation;
 mod design_standing_tests;
 mod standing;
 
-pub use contributions::{Contribution, ContributionGroup};
+pub use contributions::Contribution;
 pub use conversation::{
     Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem,
 };

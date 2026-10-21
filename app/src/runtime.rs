@@ -47,11 +47,11 @@ pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
 pub use rooms::{
-    CandidateWithdrawalRecord, Contribution, ContributionGroup, Conversation,
-    ConversationProjection, CoordinationStanding, Delivery, DesignStanding, OperatorItem,
-    ParticipantReason, PreparationProjection, Relevance, RoomAnchorAuthority, RoomAnchorSettlement,
-    RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection,
-    RoomProjectionStatus, RoomState, associated, design_dependent_count,
+    CandidateWithdrawalRecord, Contribution, Conversation, ConversationProjection,
+    CoordinationStanding, Delivery, DesignStanding, OperatorItem, ParticipantReason,
+    PreparationProjection, Relevance, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent,
+    RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus,
+    RoomState, associated, design_dependent_count,
 };
 use scoped::ScopedValue;
 pub use stale::{Stale, stale_reads};
