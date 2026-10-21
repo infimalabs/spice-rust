@@ -468,13 +468,18 @@ fn assistant(message: &Object, locus: Locus) -> Events {
     let content = array(message, "content")?;
     // A provider can settle the prose before a tool call as a paraphrased
     // reasoning block. The call's intent then holds the message's only
-    // verbatim assistant words; beside visible text it is a caption.
+    // verbatim assistant words; beside visible text it is a caption. A blank
+    // text block is not visible text.
     let spoken = content.iter().any(|value| {
-        value
-            .as_object()
+        let block = value.as_object();
+        block
             .and_then(|block| block.get("type"))
             .and_then(Value::as_str)
             == Some("text")
+            && block
+                .and_then(|block| block.get("text"))
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty())
     });
     let mut events = Vec::new();
     for value in content {
