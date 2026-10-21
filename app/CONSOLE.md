@@ -320,12 +320,14 @@ Beside the drafts, one control panel holds team TURBO, the team arrangement
 menu, the speech and allocation sliders, and SEND, with fixed geometry. The
 arrangement menu opens swap and join beside the panel and stays disabled,
 naming why, when no other team exists. Team TURBO and the Spice view's global
-TURBO are separately admitted controls. Every engaged TURBO, team, group, or
-global, wears the fast-mode flame as a mini badge tucked behind the foot
-corner of its lettering, peeking out past the final letter the way a lane's
-provider emblem carries the same glyph over its foot corner when it launched
-fast; the badge is decorative and leaves the button's pressed state and label
-as the accessible truth.
+TURBO are separately admitted controls. Every TURBO, team, group, or global,
+splits its fixed lettering box into a two-word lockup the way SEND becomes FULL
+SEND: off it reads NO|TURBO with NO in the blue focus accent, on it reads
+TURBO|ON with ON in amber. A toggle mirrors the lockup: the accent word and
+TURBO slide past each other, the accent word turning edge-on at the crossing
+where NO becomes ON, while the box itself never moves or resizes; reduced
+motion swaps the two lockups at once. The words are decorative and leave the
+button's pressed state and label as the accessible truth.
 
 The team menu can hide its team surface without changing membership, lane
 state, claims, drafts, or running work. Activating any of that team's agent

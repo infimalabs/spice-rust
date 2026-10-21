@@ -95,7 +95,10 @@ fn render_omp_mark(surface: &str, lane: CanonicalUuid) -> Html {
     }
 }
 
-/// The platform flame glyph over the provider glyph's foot corner.
+/// The platform flame glyph marking a fast-mode launch.
+const FAST_FLAME: &str = "🔥";
+
+/// [`FAST_FLAME`] over the provider glyph's foot corner.
 fn render_fast_badge() -> Html {
     html! {
         <text
@@ -104,7 +107,7 @@ fn render_fast_badge() -> Html {
             y="15"
             aria-hidden="true"
         >
-            {crate::browser::view::chrome::FAST_FLAME}
+            {FAST_FLAME}
         </text>
     }
 }

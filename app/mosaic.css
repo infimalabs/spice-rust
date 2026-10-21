@@ -906,17 +906,18 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-turbo[data-lit="true"]:not(:disabled),
 .app-spice-sidebar-anchor .app-spice-turbo[data-lit="true"]:not(:disabled) { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); color: var(--ink); }
 .team-composer .team-turbo[data-lit="false"], .app-spice-sidebar-anchor .app-spice-turbo[data-lit="false"] { color: var(--muted); }
-/* An engaged TURBO's fast flame is tucked behind the foot corner of its lettering, peeking past the
-   final letter as a provider emblem's fast badge rides its glyph. The button's backdrop filter is a
-   stacking context, so the negative layer paints over the glass and under the in-flow word. */
-.app-turbo-button__fire {
-  position: absolute; bottom: 12.5px; inset-inline-end: 5px; z-index: -1; line-height: 1; pointer-events: none;
-  font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: var(--app-type-small-copy);
-  filter: drop-shadow(0 .5px .5px color-mix(in srgb, var(--app-shadow-source) 45%, transparent));
-}
+/* TURBO's lockup splits its fixed lettering box by letter share, as FULL SEND does: NO|TURBO off, TURBO|ON on; the accent word mirrors across TURBO, edge-on at the centre where NO becomes ON. */
+.app-turbo-button .turbo-lockup { --turbo-lockup-half: calc(var(--app-motion-settle) / 2); --turbo-lockup-no-delay: var(--turbo-lockup-half); --turbo-lockup-on-delay: 0s; position: relative; display: block; inline-size: 22px; block-size: 8px; }
+.app-turbo-button[data-lit="true"] .turbo-lockup { --turbo-lockup-no-delay: 0s; --turbo-lockup-on-delay: var(--turbo-lockup-half); }
+.app-turbo-button .turbo-lockup > * { position: absolute; inset: 0; transform-origin: left center; transition: transform var(--turbo-lockup-half) var(--app-ease-standard), color var(--app-motion-settle) var(--app-ease-standard); }
+.app-turbo-button .turbo-lockup__turbo { transform: translateX(calc(22px * 2 / 7)) scaleX(calc(5 / 7)); transition-duration: var(--app-motion-settle); }
+.app-turbo-button .turbo-lockup__no { color: var(--focus); transform: translateX(0) scaleX(calc(2 / 7)); transition-delay: var(--turbo-lockup-no-delay); }
+.app-turbo-button .turbo-lockup__on { color: var(--warning); transform: translateX(11px) scaleX(0); transition-delay: var(--turbo-lockup-on-delay); }
+.app-turbo-button[data-lit="true"] .turbo-lockup__turbo { transform: translateX(0) scaleX(calc(5 / 7)); }
+.app-turbo-button[data-lit="true"] .turbo-lockup__no { transform: translateX(11px) scaleX(0); }
+.app-turbo-button[data-lit="true"] .turbo-lockup__on { transform: translateX(calc(22px * 5 / 7)) scaleX(calc(2 / 7)); }
 .team-composer .team-menu[aria-expanded="true"]:not(:disabled), .agent-menu[open] > .agent-menu-button { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); }
 .team-composer .fit-word, .app-spice-turbo .fit-word { filter: drop-shadow(0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent)); }
-.app-turbo-button .fit-word { transition: color var(--app-motion-settle) var(--app-ease-standard); }
 .team-composer .team-send::before {
   position: absolute; inset: 0; border-radius: inherit; opacity: 0; content: ""; pointer-events: none;
   background: linear-gradient(180deg, color-mix(in srgb, var(--app-shadow-source) 18%, transparent), transparent 55%, color-mix(in srgb, var(--app-highlight-source) 10%, transparent));
@@ -1012,7 +1013,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 @media (prefers-reduced-motion: reduce) {
   .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
-  .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button, .app-turbo-button .fit-word, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
+  .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button, .app-turbo-button .turbo-lockup > *, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
   .team-composer :is(.team-send-full, .team-send-word) { transition: none; }
 }
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
