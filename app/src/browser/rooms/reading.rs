@@ -238,8 +238,8 @@ fn summary(state: &DesignMaturityState) -> String {
 const fn vote_needed(input: DesignItemInput) -> &'static str {
     match input {
         DesignItemInput::AnyCharge => "any vote",
-        DesignItemInput::PositiveCharge => "a vote for",
-        DesignItemInput::NegativeCharge => "a vote against",
+        DesignItemInput::PositiveLanes => "more lanes for",
+        DesignItemInput::NegativeLanes => "more lanes against",
         DesignItemInput::PositiveAgreement => {
             "a vote for from a lane that last voted against, or more lanes for"
         }

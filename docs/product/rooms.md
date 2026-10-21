@@ -151,12 +151,14 @@ owns each rule summarized here.
   question item. A charged contribution records its item's text identity
   (trimmed, whitespace collapsed, case-folded) at admission, so a reorder
   keeps a series and a reword starts a new one. Over nonzero charges in
-  journal order, an item is quiet with no charge, unopposed while one sign
-  has been seen, concurred when both signs have been seen and the current
-  one-signed run holds two distinct lanes one of which earlier charged the
-  opposite sign, or three distinct lanes, and else contested. A run cannot
-  bury the opposite side's last strength-2 charge without a strength-2 charge
-  of its own. Zero charges and questions never enter a series. Steeping is
+  journal order, an item is quiet with no charge. While only one sign has been
+  seen, it concurs once three distinct lanes, or two with a strength-2 charge,
+  have charged it, and is otherwise unopposed and needs more lanes of that
+  sign. Once both signs have been seen, it concurs when the current one-signed
+  run holds two distinct lanes one of which earlier charged the opposite sign,
+  or three distinct lanes, and is otherwise contested. A run cannot bury the
+  opposite side's last strength-2 charge without a strength-2 charge of its
+  own. Zero charges and questions never enter a series. Steeping is
   judged against the current statement's items: fresh means no
   contribution; steeped means some current item concurs and none is
   contested; anything else is steeping and names the lowest contested item,
