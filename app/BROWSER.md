@@ -349,10 +349,12 @@ rule applies recursively to agent prose and resolved operator, agent, and peer
 quotes.
 
 Every message Play and Quote action uses the shared message control size and
-the same open-edge pair docked at the card's inline end. Non-prose cards keep
-one attribution-and-action island in their card corner. A single-image cover
-places that same unframed island over its image; it does not introduce another
-inset panel or action treatment.
+the same open-edge pair docked at the card's inline end. Provider failures lead
+their exact error text with the card's relative age and name, without prose
+punctuation rewriting. Other non-prose cards keep one attribution-and-action
+island in their card corner. A single-image cover places that same unframed
+island over its image; it does not introduce another inset panel or action
+treatment.
 
 Every visible inline atom keeps its hunk's `1.25` line pitch: links, task
 handles, emphasis, emoji, superscript and subscript, inline math, and quote
