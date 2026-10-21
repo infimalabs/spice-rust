@@ -1345,10 +1345,6 @@ impl lane::occupant::DetachedProcess for SeatedInProcess {
         i32::MAX.unsigned_abs()
     }
 
-    fn runtime_remaining(&self) -> Duration {
-        Duration::from_secs(60)
-    }
-
     fn termination_grace(&self) -> Duration {
         Duration::ZERO
     }

@@ -112,37 +112,6 @@ impl JournalRead<'_> {
             .collect()
     }
 
-    /// The newest direction sent one lane, in any disposition, by an actor
-    /// whose principal currently holds the operator role.
-    pub fn latest_operator_direction(
-        &self,
-        lane: wire::CanonicalUuid,
-    ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
-        self.require_current_steering_index()?;
-        let operators = self.role_holder_spellings(wire::principal::PrincipalRole::Operator)?;
-        let row = self
-            .connection
-            .query_row(
-                "SELECT steering.directive, steering.steer_key, steering.lane, \
-                 steering.disposition, steering.created_seq, steering.minted_micros, \
-                 steering.room, steering.head_seq, steering.body FROM steering_heads AS steering \
-                 JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
-                 WHERE steering.lane = ?1 \
-                 AND creating.actor IN (SELECT value FROM json_each(?2)) \
-                 AND json_extract(CAST(steering.body AS TEXT), '$.fanout') IS NOT NULL \
-                 ORDER BY steering.created_seq DESC LIMIT 1",
-                [lane.to_string(), operators],
-                read_steering_columns,
-            )
-            .optional()
-            .map_err(GuardError::Store)?;
-        read_metrics::observe_query();
-        if row.is_some() {
-            read_metrics::observe_row();
-        }
-        row.map(|row| self.decode_steering_row(row)).transpose()
-    }
-
     /// One fixed page of live steering for one lane or every lane.
     ///
     /// Heads remain in publication order and overflow names the first omitted
@@ -252,29 +221,6 @@ impl JournalRead<'_> {
             .map_err(GuardError::Store)?;
         read_metrics::observe_row();
         Ok(maximum)
-    }
-
-    /// Whether this exact missed-recognition body was already recorded.
-    pub fn steering_miss_recorded(
-        &self,
-        miss: &wire::body::SteerMissed,
-    ) -> Result<bool, GuardError> {
-        self.require_current_steering_index()?;
-        let identity = canonical_identity(miss)?;
-        read_metrics::observe_query();
-        let recorded = self
-            .connection
-            .query_row(
-                "SELECT 1 FROM steering_misses WHERE identity = ?1",
-                [identity],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(GuardError::Store)?;
-        if recorded.is_some() {
-            read_metrics::observe_row();
-        }
-        Ok(recorded.is_some())
     }
 
     fn steering_row(

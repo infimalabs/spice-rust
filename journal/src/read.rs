@@ -76,12 +76,6 @@ impl FactSnapshot {
     pub const fn horizon(&self) -> Option<wire::Seq> {
         self.horizon
     }
-
-    /// Consume this snapshot into its canonical ascending fact stream.
-    #[must_use]
-    pub fn into_facts(self) -> Vec<wire::Envelope<wire::AnyFact>> {
-        self.facts
-    }
 }
 
 impl Journal {

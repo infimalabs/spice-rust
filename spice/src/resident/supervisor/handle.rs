@@ -11,9 +11,7 @@ use lane::occupant::{DetachedProcess, DetachedWait};
 use sill::{GroupSignal, WaitError, WaitOutcome};
 
 use super::events::StateEvents;
-use super::{
-    CommandResult, Phase, State, command, environment_fault, now_millis, read_state, required,
-};
+use super::{CommandResult, Phase, State, command, environment_fault, read_state, required};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
@@ -26,8 +24,6 @@ pub(super) struct Handle {
     door: PathBuf,
     owner: String,
     group: u32,
-    started_millis: u64,
-    runtime: Duration,
     grace: Duration,
     reap: Duration,
     pub(super) events: Option<StateEvents>,
@@ -45,8 +41,6 @@ impl Handle {
             door,
             owner: format!("lane {} detached supervisor", state.lane),
             group: required(state.group, "group")?,
-            started_millis: required(state.started_millis, "start instant")?,
-            runtime: Duration::from_millis(required(state.runtime_millis, "runtime")?),
             grace: Duration::from_millis(required(state.grace_millis, "termination grace")?),
             reap: Duration::from_millis(required(state.reap_millis, "reap bound")?),
             events,
@@ -108,15 +102,6 @@ impl DetachedProcess for Handle {
         self.group
     }
 
-    fn runtime_remaining(&self) -> Duration {
-        let elapsed = now_millis()
-            .ok()
-            .and_then(|now| now.checked_sub(self.started_millis))
-            .map(Duration::from_millis)
-            .unwrap_or_default();
-        self.runtime.saturating_sub(elapsed)
-    }
-
     fn termination_grace(&self) -> Duration {
         self.grace
     }
@@ -165,7 +150,6 @@ impl DetachedProcess for Handle {
 /// its ending is the status the group signal that did leaves.
 #[cfg(test)]
 pub(super) struct StandInOccupant {
-    runtime: Duration,
     grace: Duration,
     reap: Duration,
     ending: std::sync::OnceLock<GroupSignal>,
@@ -179,7 +163,6 @@ impl StandInOccupant {
 
     pub(super) fn new(spec: &sill::Spec) -> Self {
         Self {
-            runtime: spec.deadlines.runtime(),
             grace: spec.grace,
             reap: spec.deadlines.reap(),
             ending: std::sync::OnceLock::new(),
@@ -218,10 +201,6 @@ fn signalled_raw(signal: GroupSignal) -> i32 {
 impl DetachedProcess for StandInOccupant {
     fn group(&self) -> u32 {
         Self::GROUP
-    }
-
-    fn runtime_remaining(&self) -> Duration {
-        self.runtime
     }
 
     fn termination_grace(&self) -> Duration {

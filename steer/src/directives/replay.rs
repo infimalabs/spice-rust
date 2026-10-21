@@ -328,21 +328,6 @@ impl Ledger {
             .to_head(origin, created))
     }
 
-    /// Build one new claim-warning directive head without unrelated history.
-    pub fn claim_warned_head(
-        body: &ClaimLeaseWarned,
-        origin: wire::Origin,
-        published: Instant,
-        created: wire::Seq,
-    ) -> Result<wire::SteeringHead, Refusal> {
-        let mut ledger = Self::new();
-        ledger.absorb_recorded(Steering::ClaimWarned(body), Some(published))?;
-        Ok(ledger
-            .directive(body.directive)
-            .expect("claim warning fact created its directive")
-            .to_head(origin, created))
-    }
-
     /// Build one judge-confirmed taste directive without unrelated history.
     pub fn judged_head(
         body: &TasteJudged,

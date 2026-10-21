@@ -218,10 +218,6 @@ impl lane::occupant::DetachedProcess for SeatedProcess {
         79
     }
 
-    fn runtime_remaining(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(60)
-    }
-
     fn termination_grace(&self) -> std::time::Duration {
         std::time::Duration::ZERO
     }

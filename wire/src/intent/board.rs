@@ -716,13 +716,6 @@ impl BoardTask {
         self
     }
 
-    /// Attach pending work this task still gates through preparation control.
-    #[must_use]
-    pub fn with_controlled(mut self, controlled: Vec<TaskHandle>) -> Self {
-        self.controlled = controlled;
-        self
-    }
-
     /// Attach compact recovery references derived from the same authoritative snapshot.
     #[must_use]
     pub fn with_context(

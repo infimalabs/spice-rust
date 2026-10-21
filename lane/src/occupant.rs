@@ -19,10 +19,7 @@ use std::io;
 use std::time::{Duration, Instant as Monotonic};
 
 use journal::crossing::CanonicalUuid;
-use sill::{
-    Observation, ProcessGroup, Running, Spec, WaitError, WaitOutcome, WaitStep, spawn,
-    spawn_observed,
-};
+use sill::{ProcessGroup, Running, Spec, WaitError, WaitOutcome, WaitStep, spawn};
 
 /// Non-owning resident handle to a process owned by a detached supervisor.
 ///
@@ -32,9 +29,6 @@ use sill::{
 pub trait DetachedProcess: Send + 'static {
     /// Agent process-group identity owned by the supervisor.
     fn group(&self) -> u32;
-
-    /// Remaining configured agent runtime, independent of resident lifetime.
-    fn runtime_remaining(&self) -> Duration;
 
     /// Grace after an explicit lane termination request.
     fn termination_grace(&self) -> Duration;
@@ -124,15 +118,6 @@ impl Occupant {
         match &self.process {
             OccupantProcess::Direct(running) => running.id(),
             OccupantProcess::Detached(process) => process.group(),
-        }
-    }
-
-    /// Remaining configured runtime available for graceful drain.
-    #[must_use]
-    pub fn drain_remaining(&self) -> Duration {
-        match &self.process {
-            OccupantProcess::Direct(running) => running.runtime_remaining(),
-            OccupantProcess::Detached(process) => process.runtime_remaining(),
         }
     }
 
@@ -402,23 +387,6 @@ impl Seats {
         self.seat_with(lane, occupant, spec, spawn)
     }
 
-    /// Opens the sole observed SILL door for a lane and supervises its group.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same occupancy, group, and door errors as [`Self::seat`].
-    pub fn seat_observed(
-        &mut self,
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        spec: Spec,
-        observation: Observation,
-    ) -> Result<&Occupant, SeatError> {
-        self.seat_with(lane, occupant, spec, |spec| {
-            spawn_observed(spec, observation)
-        })
-    }
-
     /// Admit a process already owned by a detached lane supervisor.
     ///
     /// Dropping the returned resident seat never signals the process; only an
@@ -564,10 +532,6 @@ mod tests {
     impl DetachedProcess for Detached {
         fn group(&self) -> u32 {
             self.0
-        }
-
-        fn runtime_remaining(&self) -> Duration {
-            Duration::from_secs(60)
         }
 
         fn termination_grace(&self) -> Duration {

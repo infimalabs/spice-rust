@@ -210,12 +210,6 @@ impl Residue {
             kind,
         }
     }
-
-    /// Number of source bytes this residue accounts for.
-    #[must_use]
-    pub const fn accounted_bytes(&self) -> u64 {
-        self.locus.length
-    }
 }
 
 /// Closed reasons a complete input record remains residue.
