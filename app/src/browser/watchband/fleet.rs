@@ -216,25 +216,21 @@ fn render_team_toolbar(
         };
         let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
         let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
-        let channels = standings
-            .iter()
-            .filter_map(|standing| {
-                let member = team.member(standing.lane)?;
-                let status = member.status(standing.waking);
-                let seated = member.occupant.is_some();
-                Some(super::WeaveChannel {
-                    key: member.lane.to_string().into(),
-                    label: format!("{}: {}", standing.label, status.label()).into(),
-                    accent: standing.accent,
-                    state: status.key(),
-                    seated,
-                    lanes: Rc::from([member.lane]),
-                    activities: super::trace::lane_activities(render.runtime, member.lane),
-                    off: super::trace::lane_off(render.runtime, member.lane, seated),
-                })
+        let render_pip = |standing: &Standing| {
+            let member = team.member(standing.lane)?;
+            let status = member.status(standing.waking);
+            let label = format!("{}: {}", standing.label, status.label());
+            Some(html! {
+                <span
+                    class={classes!("app-presence-pip", "app-presence-pip--status", status.key())}
+                    role="img"
+                    data-lane-light-target-id={member.lane.to_string()}
+                    data-lane-status={status.key()}
+                    aria-label={label.clone()}
+                    title={label}
+                ></span>
             })
-            .collect::<Rc<[_]>>();
-        let interactions = super::lane_interactions(render.runtime);
+        };
         let dragging = team_dragging(
             id,
             can_arrange,
@@ -270,7 +266,7 @@ fn render_team_toolbar(
                     {"Press Enter or Space, or tap, to choose where to move or join this team."}
                 </span>
             }
-            <super::TeamWeave {channels} {interactions} />
+            {for standings.iter().filter_map(render_pip)}
         </span>
         }
     };

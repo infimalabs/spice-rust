@@ -429,7 +429,7 @@ path.image-annotation-hit { fill: none; }
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
-  --team-lights-inset: 1px;
+  --team-pip-gap: calc(var(--app-presence-pip-size) / 2);
   --team-toolbar-inline-inset: 8px;
   --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
@@ -455,7 +455,6 @@ path.image-annotation-hit { fill: none; }
 }
 /* In dark mode, lift the stream and status band from control toward panel. */
 :root[data-app-effective-theme="dark"] .team-surface { --message-stream-surface: color-mix(in srgb, var(--control) 50%, var(--panel)); }
-@media (min-resolution: 1.5dppx) { .team-surface { --team-lights-inset: .5px; } }
 .team-surface[data-team-weight="1"] { --team-weight: 1; }
 .team-surface[data-team-weight="2"] { --team-weight: 2; }
 .team-surface[data-team-weight="3"] { --team-weight: 3; }
@@ -475,16 +474,21 @@ path.image-annotation-hit { fill: none; }
   block-size: var(--team-header-size);
   padding: 0;
 }
-.team-toolbar > .team-status-row {
-  grid-area: status; display: grid; grid-template-columns: minmax(0, 1fr) var(--team-control-inline-size);
-  box-sizing: border-box; min-width: 0; padding-inline: 0;
-}
+/* The ticker runs over TURBO; the pips sit over the team menu, no wider than a round control. */
+.team-toolbar > .team-status-row { grid-area: status; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--team-control-inline-size) / 2); box-sizing: border-box; min-width: 0; padding-inline: 0; }
 .team-toolbar > .team-status-row:not(:has(> .team-lights)) { grid-template-columns: minmax(0, 1fr); padding-inline-end: var(--team-toolbar-inline-inset); }
 .team-status-row > .team-lights {
-  position: relative; grid-column: 2; box-sizing: border-box; inline-size: var(--team-control-inline-size); min-width: 0; margin: 0;
+  --team-pip-columns: 3; position: relative; display: grid; grid-auto-flow: column dense; direction: rtl; place-content: center; gap: var(--team-pip-gap);
+  grid-template: repeat(2, var(--app-presence-pip-size)) / repeat(var(--team-pip-columns), var(--app-presence-pip-size));
+  grid-column: 2; justify-self: center; inline-size: var(--app-round-control-size); min-width: 0; margin: 0; padding: 0;
 }
-/* The weave fills the panel inside a one-device-pixel inset at every size. */
-.team-lights > .team-weave { position: absolute; inset: var(--team-lights-inset); }
+/* Members fill bottom-up from the right; three and five nest their shorter top row half a pitch in, like stacked shot. */
+.team-lights > :nth-child(odd of .app-presence-pip) { grid-row: 2; }
+.team-lights > :nth-child(even of .app-presence-pip) { grid-row: 1; }
+.team-lights:is([data-team-size="1"], [data-team-size="2"]) { --team-pip-columns: 1; }
+.team-lights[data-team-size="1"] > .app-presence-pip { grid-row: 1 / -1; align-self: center; }
+.team-lights:is([data-team-size="3"], [data-team-size="4"]) { --team-pip-columns: 2; }
+.team-lights:is([data-team-size="3"], [data-team-size="5"]) > :nth-child(even of .app-presence-pip) { transform: translateX(calc(-1 * (var(--app-presence-pip-size) + var(--team-pip-gap)) / 2)); }
 /* The trailing total holds the right edge; tasks flow leftward from it, fading in at the rail's left edge and sliding under the total. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);

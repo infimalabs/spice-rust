@@ -1,25 +1,22 @@
-//! What one lane, or a pooled set of lanes, has been doing lately.
+//! What one lane has been doing lately.
 //!
 //! A trace is a fixed window of wall time ending at the instant it is drawn,
-//! shared by every weave violin and composer rail so neighbours compare
-//! honestly; activity moves left as time passes and leaves once it is a whole
-//! window old. Work becomes
+//! shared by every composer rail so neighbours compare honestly; activity moves
+//! left as time passes and leaves once it is a whole window old. Work becomes
 //! one curve per kind, reasoning, tool, and prose, whose height is that kind's
-//! recent rate on one fixed scale; lifecycle activity becomes markers. Pooling
-//! lane events before this calculation adds their rates without introducing a
-//! second scale. The curves are sampled at evenly spaced instants through a
-//! kernel that slides with time, so a redraw moves them smoothly instead of
-//! jumping between buckets. Positions and levels are fractions; the browser
-//! owns every pixel. Intervals one lane was off become gaps in that lane's
-//! rail once they last at least the spacing between two samples.
+//! recent rate on one fixed scale; lifecycle activity becomes markers. The
+//! curves are sampled at evenly spaced instants through a kernel that slides
+//! with time, so a redraw moves them smoothly instead of jumping between
+//! buckets. Positions and levels are fractions; the browser owns every pixel.
+//! Intervals the lane was off become gaps in its rail once they last at least
+//! the spacing between two samples.
 
 use wire::AgentActivityKind;
 
 /// Wall time one trace spans, ending at the instant it is drawn.
 pub const TRACE_WINDOW_MILLIS: i64 = 10 * 60 * 1_000;
 
-/// Redraw cadence of a non-empty trace: about one device pixel of drift at the
-/// widest pip on a 2x display.
+/// Redraw cadence of a non-empty trace.
 pub const TRACE_STEP_MILLIS: u32 = 4_000;
 
 /// Text length at which an activity reaches full weight.
