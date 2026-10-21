@@ -9,7 +9,7 @@
 //! same kind. Retained posts gain no question item, so they stay Design-level
 //! and owe no citation.
 
-use rusqlite::{Transaction, params};
+use rusqlite::Transaction;
 use serde_json::{Map, Value};
 
 use super::{OpenError, residual};
@@ -26,7 +26,10 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         LABEL_RELEASE,
         |_, fact| relabel(fact, "contribution").map(drop),
     )?;
-    cross_receipts(transaction)
+    let command = wire::CommandKind::RoomContribute;
+    residual::rewrite_receipts(transaction, command, LABEL_RELEASE, |request, response| {
+        Ok((cross_request(request)?, cross_response(command, response)?))
+    })
 }
 
 /// Replace `member`'s retired label with its charge, answering whether it held
@@ -43,58 +46,6 @@ fn relabel(object: &mut Map<String, Value>, member: &str) -> Result<bool, String
     };
     object.insert(member.to_owned(), Value::from(charge));
     Ok(true)
-}
-
-fn cross_receipts(transaction: &Transaction<'_>) -> Result<(), OpenError> {
-    let command = wire::CommandKind::RoomContribute;
-    let receipts = {
-        let mut statement = transaction
-            .prepare(
-                "SELECT command_id, request, response FROM command_receipts \
-                 WHERE command_kind = ?1 ORDER BY command_id",
-            )
-            .map_err(OpenError::Sqlite)?;
-        let rows = statement
-            .query_map(params![command.as_str()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Vec<u8>>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                ))
-            })
-            .map_err(OpenError::Sqlite)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(OpenError::Sqlite)?
-    };
-    for (command_id, request, response) in receipts {
-        let refuse = |detail: String| {
-            residual::retained(
-                "command_receipts",
-                command_id.clone(),
-                LABEL_RELEASE,
-                detail,
-            )
-        };
-        let request = cross_request(&request).map_err(&refuse)?;
-        let response = cross_response(command, &response).map_err(&refuse)?;
-        if request.is_none() && response.is_none() {
-            continue;
-        }
-        let changed = transaction
-            .execute(
-                "UPDATE command_receipts \
-                 SET request = coalesce(?1, request), response = coalesce(?2, response) \
-                 WHERE command_id = ?3 AND command_kind = ?4",
-                params![request, response, command_id, command.as_str()],
-            )
-            .map_err(OpenError::Sqlite)?;
-        if changed != 1 {
-            return Err(refuse(
-                "the row changed under the exclusive crossing".to_owned(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// The request with its label crossed, through the current strict DTO, or
