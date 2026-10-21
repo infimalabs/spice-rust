@@ -4,8 +4,8 @@ use journal::JournalHead;
 use wire::{
     CanonicalUuid, OccupantAddress,
     rooms::{
-        CoordinationControl, ROOM_RESUME_LIMIT, RoomAuthorityStamp, RoomAutomatedResume,
-        RoomCoordinationStarted, RoomPutAside as RoomPutAsideFact, RoomResumeRule, RoomStopRequest,
+        CoordinationControl, RoomCoordinationStarted, RoomPutAside as RoomPutAsideFact,
+        RoomStopRequest,
     },
 };
 
@@ -20,9 +20,6 @@ pub(crate) fn coordination_lane(bus: &Bus, target: OccupantAddress) -> Option<Ca
 }
 
 use super::room::mint_publication;
-
-mod automation;
-pub(crate) use automation::room_resumes_by_rule;
 
 /// A room's latest coordination records, read beside the board snapshot.
 struct Coordination {
@@ -131,21 +128,14 @@ pub(crate) fn room_coordinate_with(
     allocation: &board::NextConfig,
     before_commit: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let rule = match admit_request(request) {
-        Ok(rule) => rule,
-        Err(outcome) => return outcome,
-    };
+    if let Err(outcome) = admit_request(request) {
+        return outcome;
+    }
     let (snapshot, anchor, heads, coordination) =
         match context(bus, &request.room, projects, allocation) {
             Ok(context) => context,
             Err(outcome) => return outcome,
         };
-    let issue = Issue {
-        author: command.actor().clone(),
-        directive: command.id(),
-        rule,
-        automated: None,
-    };
     let (mut write, view, _) = match stage(
         bus,
         config,
@@ -154,7 +144,8 @@ pub(crate) fn room_coordinate_with(
         &heads,
         &coordination,
         request,
-        issue,
+        command.actor().clone(),
+        command.id(),
     ) {
         Ok(staged) => staged,
         Err(outcome) => return outcome,
@@ -163,21 +154,12 @@ pub(crate) fn room_coordinate_with(
     commit_coordinate(bus, command, request, write, view, before_commit)
 }
 
-/// Who issues one coordination request and what its record carries.
-struct Issue {
-    /// The principal the direction is written as.
-    author: Actor,
-    directive: CanonicalUuid,
-    rule: Option<RoomResumeRule>,
-    automated: Option<RoomAutomatedResume>,
-}
-
 /// Stage one Start or Resume: refuse what the room or target cannot take,
 /// then write the direction and its `room::directed` record under the guards
 /// that keep the room, its records, and the target's claim slot as read.
 #[allow(
     clippy::too_many_arguments,
-    reason = "staging reads the board, anchor, and coordination its two issuers resolve"
+    reason = "staging reads the board, anchor, and coordination the command resolves"
 )]
 fn stage(
     bus: &Bus,
@@ -187,7 +169,8 @@ fn stage(
     heads: &wire::intent::BoardTask,
     coordination: &Coordination,
     request: &wire::intent::RoomCoordinate,
-    issue: Issue,
+    author: Actor,
+    directive: CanonicalUuid,
 ) -> Result<
     (
         JournalWrite,
@@ -232,15 +215,9 @@ fn stage(
     let publication = mint_publication(bus, anchor.born(), now.as_microsecond())?;
     let room = anchor.born().clone();
     let origin = task_origin(&room)?;
-    let message = direction(
-        anchor.handle(),
-        heads,
-        lane,
-        request,
-        issue.automated.as_ref(),
-    );
+    let message = direction(anchor.handle(), heads, lane, request);
     let control = CoordinationControl::Coordinate(room.clone()).to_string();
-    let mut write = JournalWrite::new(issue.author, origin.clone(), at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(author, origin.clone(), at, Producer::CommandDoor);
     coordination.guard(&room, &mut write);
     guard_target_claim(&mut write, lane, &room);
     let (key, _) = crate::resident::append_operator_directive(
@@ -249,7 +226,7 @@ fn stage(
         config,
         &mut write,
         crate::resident::OperatorDirective {
-            directive: issue.directive,
+            directive,
             fanout: None,
             lane,
             text: &message,
@@ -264,10 +241,7 @@ fn stage(
         publication,
         key: key.clone(),
         target: request.target,
-        rule: issue.rule,
-        automated: issue.automated,
     };
-    let rule = budget(&started);
     write
         .fact(started, FactCause::Root)
         .map_err(|error| store_fault("room::coordination-build", &error.to_string()))?;
@@ -279,27 +253,11 @@ fn stage(
             target: request.target,
         }],
         stop: None,
-        rule,
         design: heads.design_standing(),
         cycle: None,
         hide: false,
     };
     Ok((write, view, lane))
-}
-
-/// The resume budget one record carries: its rule's limit and the steps
-/// spent through this record.
-fn budget(started: &RoomCoordinationStarted) -> Option<wire::intent::RoomResumeBudget> {
-    started
-        .rule
-        .as_ref()
-        .map(|rule| wire::intent::RoomResumeBudget {
-            limit: rule.limit,
-            spent: started
-                .automated
-                .as_ref()
-                .map_or(0, |automated| automated.step),
-        })
 }
 
 fn commit_coordinate(
@@ -408,7 +366,6 @@ pub(crate) fn room_put_aside(
         room: anchor.handle().clone(),
         requests: Vec::new(),
         stop: visible_stop,
-        rule: None,
         design: heads.design_standing(),
         cycle: None,
         hide: true,
@@ -805,10 +762,8 @@ fn context(
     Ok((snapshot, anchor, heads, coordination))
 }
 
-/// Admit the request's scope and the resume rule it authorizes, if any.
-fn admit_request(
-    request: &wire::intent::RoomCoordinate,
-) -> Result<Option<RoomResumeRule>, Outcome<CommandAnswer>> {
+/// Admit the request's scope.
+fn admit_request(request: &wire::intent::RoomCoordinate) -> Result<(), Outcome<CommandAnswer>> {
     for (name, value) in [
         ("criterion", &request.criterion),
         ("contribution", &request.contribution),
@@ -829,22 +784,7 @@ fn admit_request(
             ));
         }
     }
-    let Some(limit) = request.auto_resume else {
-        return Ok(None);
-    };
-    if !(1..=ROOM_RESUME_LIMIT).contains(&limit) {
-        return Err(refusal(
-            "room::auto-resume-out-of-range",
-            Some(limit.to_string()),
-            "authorize from 1 through 8 automated resumes",
-        ));
-    }
-    Ok(Some(RoomResumeRule {
-        limit,
-        criterion: request.criterion.clone(),
-        contribution: request.contribution.clone(),
-        stop: request.stop.clone(),
-    }))
+    Ok(())
 }
 
 /// Resolve `target` to the lane and occupant of the occupied seat it names.
@@ -935,7 +875,6 @@ fn direction(
     heads: &wire::intent::BoardTask,
     lane: CanonicalUuid,
     request: &wire::intent::RoomCoordinate,
-    automated: Option<&RoomAutomatedResume>,
 ) -> String {
     let action = match request.action {
         wire::intent::RoomCoordinateAction::Start => "Start",
@@ -950,17 +889,8 @@ fn direction(
             "Run `spice task capture {handle}` to acquire this anchor through its ordinary native claim path; any refusal leaves this request pending without possession."
         )
     };
-    let input = automated.map_or_else(String::new, |automated| {
-        format!(
-            "\nNew input: room publication {} arrived after your last contribution; this is automated resume {} of {} under operator rule {}.",
-            automated.evidence,
-            automated.step,
-            request.auto_resume.unwrap_or(automated.step),
-            automated.rule,
-        )
-    });
     format!(
-        "{action} task room {handle}. Before acting, re-read its current task and cited authority; push back or redirect if the ground changed.\nUnresolved criterion: {}\nBounded contribution: {}\nStop condition: {}{input}\n{capture}",
+        "{action} task room {handle}. Before acting, re-read its current task and cited authority; push back or redirect if the ground changed.\nUnresolved criterion: {}\nBounded contribution: {}\nStop condition: {}\n{capture}",
         request.criterion, request.contribution, request.stop,
     )
 }
@@ -1005,21 +935,10 @@ fn project(
             target: stop.target,
             claim: stop.claim,
         });
-    let rule = coordination
-        .directed
-        .as_ref()
-        .filter(|directed| {
-            coordination
-                .shelved
-                .as_ref()
-                .is_none_or(|shelved| shelved.position() < directed.position())
-        })
-        .and_then(|directed| budget(directed.body()));
     Ok(wire::intent::RoomCoordinationView {
         room: handle.clone(),
         requests,
         stop,
-        rule,
         design: heads.design_standing(),
         cycle: None,
         hide,

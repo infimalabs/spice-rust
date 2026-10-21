@@ -1,6 +1,5 @@
-//! Operator room coordination and put-aside markers, the bounded rule that
-//! lets the resident resume a coordination, and the steering controls they
-//! drive.
+//! Operator room coordination and put-aside markers and the steering controls
+//! they drive.
 
 use std::fmt;
 use std::str::FromStr;
@@ -26,51 +25,6 @@ pub struct RoomCoordinationStarted {
     pub key: String,
     /// Exact base-52 occupant address asked to make the bounded contribution.
     pub target: crate::OccupantAddress,
-    /// Operator rule letting the resident resume this coordination on new
-    /// input; every automated record repeats the rule it spends.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub rule: Option<RoomResumeRule>,
-    /// Present exactly on a record the resident wrote under `rule`.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub automated: Option<RoomAutomatedResume>,
-}
-
-/// Most automated resumes one operator rule may authorize.
-pub const ROOM_RESUME_LIMIT: u8 = 8;
-
-/// An operator's bounded authority for the resident to resume one room's
-/// coordination, to the same target and scope, each time new input arrives.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomResumeRule {
-    /// Automated resumes authorized, from 1 through [`ROOM_RESUME_LIMIT`].
-    pub limit: u8,
-    /// Unresolved criterion every resume repeats.
-    pub criterion: String,
-    /// Bounded contribution every resume repeats.
-    pub contribution: String,
-    /// Stop condition every resume repeats.
-    pub stop: String,
-}
-
-/// Provenance of one automated resume.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomAutomatedResume {
-    /// Publication of the operator record whose rule this resume spends.
-    pub rule: RoomAuthorityStamp,
-    /// This resume's count under that rule, from 1 through its limit.
-    pub step: u8,
-    /// Room publication by another party that brought the new input.
-    pub evidence: RoomAuthorityStamp,
 }
 
 /// A live anchor holder asked to checkpoint and release through native task

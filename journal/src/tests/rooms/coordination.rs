@@ -3,7 +3,7 @@
 use wire::body::{SteerCanceled, SteerSent, SteeringStage};
 use wire::rooms::{
     CoordinationControl, DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession,
-    RoomAutomatedResume, RoomCoordinationStarted, RoomPutAside, RoomResumeRule, RoomStopRequest,
+    RoomCoordinationStarted, RoomPutAside, RoomStopRequest,
 };
 use wire::{Disposition, SteeringHead};
 
@@ -89,8 +89,6 @@ fn started(room: &TaskStamp, micros: i64, key: &str) -> RoomCoordinationStarted 
         publication: authority(micros),
         key: key.to_owned(),
         target: target(),
-        rule: None,
-        automated: None,
     }
 }
 
@@ -538,105 +536,144 @@ fn room_authority_pages_the_first_principal_admission_only() {
     );
 }
 
-/// An operator record may authorize 1 through 8 automated resumes; each
-/// automated record spends the room's latest rule one step at a time, to the
-/// same target, citing a room publication, and none follows a put-aside.
+/// Schema 92 let a coordination record carry an automated-resume rule and
+/// the step an automated record spent. The crossing drops both from the
+/// retained record, its direction head, and the receipts that carried the
+/// request's repeat count or the view's budget; the record reads back as the
+/// plain coordination it links, and nothing re-folds a rule.
 #[test]
-fn an_automated_record_spends_its_rooms_live_rule_one_step_at_a_time() {
-    let mut journal = Journal::in_memory().expect("journal");
+fn retained_resume_rules_cross_out_of_their_records_heads_and_receipts() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("room-rules.sqlite3");
+    let mut journal = authority_file_fixture(&path);
     let room = task(&mut journal, 1, None);
-    let coordinate = || Some(CoordinationControl::Coordinate(room.clone()));
-    let rule = |limit| RoomResumeRule {
-        limit,
-        criterion: "criterion".to_owned(),
-        contribution: "contribution".to_owned(),
-        stop: "stop".to_owned(),
-    };
-    let resumed = |rule: i64, step, evidence: i64| RoomAutomatedResume {
-        rule: authority(rule),
-        step,
-        evidence: authority(evidence),
-    };
-    let ruled = |micros, index: usize, rule, automated| {
-        let mut body = started(&room, micros, KEYS[index]);
-        body.rule = rule;
-        body.automated = automated;
-        record(Actor::Operator, &[(index, coordinate())], body)
-    };
-
-    for refusal in [
-        ruled(1, 0, Some(rule(0)), None),
-        ruled(1, 0, Some(rule(9)), None),
-        ruled(1, 0, Some(rule(3)), Some(resumed(1, 1, 1))),
-    ] {
-        let result = journal.apply(refusal);
-        refused(&journal, result);
-    }
     journal
-        .apply(ruled(1, 0, Some(rule(3)), None))
-        .expect("operator rule commits");
-
-    for refusal in [
-        ruled(2, 1, Some(rule(3)), Some(resumed(1, 2, 1))),
-        ruled(2, 1, Some(rule(3)), Some(resumed(7, 1, 1))),
-        ruled(2, 1, Some(rule(4)), Some(resumed(1, 1, 1))),
-        ruled(2, 1, None, Some(resumed(1, 1, 1))),
-        ruled(2, 1, Some(rule(3)), Some(resumed(1, 1, 77))),
-    ] {
-        let result = journal.apply(refusal);
-        refused(&journal, result);
-    }
-    journal
-        .apply(ruled(2, 1, Some(rule(3)), Some(resumed(1, 1, 1))))
-        .expect("first automated step commits");
-    journal
-        .apply(ruled(3, 2, Some(rule(3)), Some(resumed(1, 2, 1))))
-        .expect("second automated step commits");
-
-    journal
-        .apply(put_aside(
-            &journal,
+        .apply(start(
             Actor::Operator,
             &room,
-            &[KEYS[2]],
-            &[KEYS[2]],
-            None,
+            1,
+            &[(0, Some(CoordinationControl::Coordinate(room.clone())))],
+            KEYS[0],
         ))
-        .expect("room put aside");
-    let result = journal.apply(ruled(4, 3, Some(rule(3)), Some(resumed(1, 3, 1))));
-    refused(&journal, result);
-    journal.verify().expect("ruled coordination verifies");
+        .expect("coordination commits");
+    let before = journal
+        .read(|read| read.room_direction(&room))
+        .expect("direction reads")
+        .expect("direction exists");
+    let rule = json!({
+        "limit": 3,
+        "criterion": "criterion",
+        "contribution": "contribution",
+        "stop": "stop",
+    });
+    let automated = json!({"rule": "dVwVYC9yR", "step": 1, "evidence": "dVwVYC9yS"});
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+             '$.fact.rule', json(?1), '$.fact.automated', json(?2)) AS BLOB) \
+             WHERE kind = 'room::directed'",
+            params![rule.to_string(), automated.to_string()],
+        )
+        .expect("restore the retained ruled record");
+    journal
+        .connection
+        .execute(
+            "UPDATE room_directions SET body = CAST(json_set(CAST(body AS TEXT), \
+             '$.rule', json(?1), '$.automated', json(?2)) AS BLOB)",
+            params![rule.to_string(), automated.to_string()],
+        )
+        .expect("restore the retained ruled head");
+    plant_ruled_receipt(&journal, &room, before.position());
+    crate::tests::schema::restore_predecessor(&journal, 92);
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("ruled coordination crosses");
+    journal
+        .verify()
+        .expect("the crossed record, head, and receipt verify");
+    let crossed = journal
+        .read(|read| read.room_direction(&room))
+        .expect("direction reads")
+        .expect("direction still exists");
+    assert_eq!(crossed, before, "the record reads back without its rule");
+    let (request, response): (Vec<u8>, Vec<u8>) = journal
+        .connection
+        .query_row(
+            "SELECT request, response FROM command_receipts WHERE command_id = ?1",
+            [RULED_COMMAND],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("receipt reads");
+    let request: wire::Command<wire::intent::RoomCoordinate> =
+        wire::decode(&request).expect("the crossed request is current");
+    assert_eq!(request.body.criterion, "criterion");
+    let response: Response<wire::intent::RoomCoordinationView> =
+        wire::decode(&response).expect("the crossed answer is current");
+    let Outcome::Reply(reply) = response.outcome else {
+        panic!("the receipt kept its reply");
+    };
+    assert!(reply.body.requests.is_empty());
+    drop(journal);
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
 }
 
-/// No automated record spends more steps than its rule authorizes.
-#[test]
-fn an_automated_record_beyond_its_rules_limit_is_refused() {
-    let mut journal = Journal::in_memory().expect("journal");
-    let room = task(&mut journal, 1, None);
-    let rule = RoomResumeRule {
-        limit: 1,
-        criterion: "criterion".to_owned(),
-        contribution: "contribution".to_owned(),
-        stop: "stop".to_owned(),
-    };
-    let ruled = |micros, index: usize, step| {
-        let mut body = started(&room, micros, KEYS[index]);
-        body.rule = Some(rule.clone());
-        body.automated = (step > 0).then(|| RoomAutomatedResume {
-            rule: authority(1),
-            step,
-            evidence: authority(1),
-        });
-        record(
-            Actor::Operator,
-            &[(index, Some(CoordinationControl::Coordinate(room.clone())))],
-            body,
-        )
+const RULED_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce9131163d2";
+
+/// A schema-92 `room::coordinate` receipt whose request carried a repeat
+/// count and whose reply carried the rule's budget, committed at `position`.
+fn plant_ruled_receipt(journal: &Journal, room: &TaskStamp, position: Seq) {
+    const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
+    let handle = format!("ROOMS-{room}");
+    let request = json!({
+        "v": 1,
+        "id": RULED_COMMAND,
+        "epoch": EPOCH,
+        "kind": "room::coordinate",
+        "expected": [],
+        "body": {
+            "room": handle,
+            "target": "6SNy",
+            "action": "start",
+            "criterion": "criterion",
+            "contribution": "contribution",
+            "stop": "stop",
+            "auto_resume": 3,
+        },
+    });
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id: uuid(RULED_COMMAND),
+        epoch: uuid(EPOCH),
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: position,
+                last: position,
+            }),
+            body: json!({
+                "room": handle,
+                "requests": [],
+                "rule": {"limit": 3, "spent": 1},
+                "hide": false,
+            }),
+        }),
     };
     journal
-        .apply(ruled(1, 0, 0))
-        .expect("operator rule commits");
-    journal.apply(ruled(2, 1, 1)).expect("the one step commits");
-    let result = journal.apply(ruled(3, 2, 2));
-    refused(&journal, result);
+        .connection
+        .execute(
+            "INSERT INTO command_receipts \
+             (command_id, actor, command_kind, request, evaluated_witnesses, response, \
+              first_seq, last_seq, snapshot_seq, epoch) \
+             VALUES (?1, 'operator', 'room::coordinate', ?2, ?3, ?4, ?5, ?5, NULL, ?6)",
+            params![
+                RULED_COMMAND,
+                serde_json::to_vec(&request).unwrap(),
+                wire::encode(&Vec::<Witness>::new()).unwrap(),
+                wire::encode(&response).unwrap(),
+                i64::try_from(position.get()).unwrap(),
+                EPOCH,
+            ],
+        )
+        .expect("restore the retained ruled receipt");
 }

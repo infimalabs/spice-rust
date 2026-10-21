@@ -147,7 +147,6 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a committed disband can name ungrouped Designs still owed shelving, each repaired with `spice room put-aside HANDLE` |
 | Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
 | Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: a move records nothing, while a stance change commits and names that Design owed; free or reseat the holder, then retry the move or set the group Passive again |
-| Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
 | Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |
 | Activity-only attention | one day | aging drops the reason, never history or duties |

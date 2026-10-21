@@ -356,24 +356,6 @@ impl Authority for Stored<'_> {
         self.operator_directions.insert(key.to_owned(), lane);
     }
 
-    fn coordination(
-        &self,
-        record: CoordinationRecord,
-        room: &str,
-    ) -> Result<Option<(u64, Vec<u8>)>, Refusal> {
-        Ok(self
-            .connection
-            .query_row(
-                &format!(
-                    "SELECT head_seq, body FROM {} WHERE room = ?1",
-                    record.table()
-                ),
-                [room],
-                |row| Ok((unsql(row.get::<_, i64>(0)?), row.get::<_, Vec<u8>>(1)?)),
-            )
-            .optional()?)
-    }
-
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal> {
         conversation::stored_publication(self.connection, publication)
     }

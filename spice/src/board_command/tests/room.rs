@@ -10,7 +10,6 @@ use wire::rooms::{
     RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
-mod automation;
 mod conversation;
 mod design_standing;
 
@@ -56,17 +55,6 @@ fn coordinate_command(
     seat: &Seat,
     action: RoomCoordinateAction,
 ) -> wire::AdmittedCommand {
-    ruled_coordinate_command(bus, epoch, room, seat, action, None)
-}
-
-fn ruled_coordinate_command(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    room: &TaskHandle,
-    seat: &Seat,
-    action: RoomCoordinateAction,
-    auto_resume: Option<u8>,
-) -> wire::AdmittedCommand {
     let current = board(bus, epoch, Actor::Operator);
     let heads = at(&current, room);
     let target = current
@@ -91,7 +79,6 @@ fn ruled_coordinate_command(
             criterion: "Choose the exact retained candidate.".to_owned(),
             contribution: "Inspect and capture only this anchor.".to_owned(),
             stop: "Stop after recording the native disposition.".to_owned(),
-            auto_resume,
         },
     )
 }
@@ -241,31 +228,6 @@ fn publication_page(bus: &Bus, room: &TaskHandle) -> journal::SelectedFactPage {
         )
     })
     .expect("room publication page reads")
-}
-
-fn publish_observation(bus: &Bus, room: &TaskHandle, lane: CanonicalUuid, micros: i64) {
-    let room = room.born().expect("fixture room has a birth stamp");
-    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
-    let origin = format!("task:{room}").parse().expect("fixture task origin");
-    let mut write = JournalWrite::new(Actor::Lane(lane), origin, at, Producer::CommandDoor);
-    write
-        .fact(
-            RoomPublished {
-                room,
-                publication: RoomAuthorityStamp::for_micros(micros)
-                    .expect("fixture publication identity"),
-                content: RoomPublicationContent::Authored {
-                    text: "another party's observation".to_owned(),
-                },
-            },
-            FactCause::Root,
-        )
-        .expect("fixture room publication builds");
-    assert!(matches!(
-        bus.commit(write)
-            .expect("fixture publication reaches writer"),
-        CommitOutcome::Committed(_)
-    ));
 }
 
 fn vacate(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) {

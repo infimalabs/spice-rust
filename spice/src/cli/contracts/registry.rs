@@ -498,8 +498,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["room", "start"],
-        "room start HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP] \
-         [--auto-resume N]",
+        "room start HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP]",
         Command,
         [SteerSent, RoomCoordinationStarted],
         Reply,
@@ -507,8 +506,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["room", "resume"],
-        "room resume HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP] \
-         [--auto-resume N]",
+        "room resume HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP]",
         Command,
         [SteerSent, RoomCoordinationStarted],
         Reply,

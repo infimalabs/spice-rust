@@ -155,8 +155,8 @@ these commands while the Design is open and active. A passive Design shows
 instead that no lane can claim it or be coordinated onto it until it moves
 into a working group, and a concluded or deleted one shows no form. A lane
 address field suggests each occupied seat's address with its lane name;
-Criterion, Contribution, Stop when, and an optional Auto-resume limit from 1
-through 8 complete Start and Resume, and Put aside needs only the room. Each
+Criterion, Contribution, and Stop when complete Start and Resume, and Put
+aside needs only the room. Each
 button stays disabled while the resident does not offer its command. Before
 submitting, the browser resolves the address against the board's residency
 and addresses with the resident's own rule: an unknown, vacant, or simulated
@@ -164,15 +164,16 @@ seat refuses in place with the resident's reason and explanation, and nothing
 is written. The submission
 witnesses the anchor's statement, workflow, and claim heads and the target
 seat's residency, so a moved anchor or seat refuses with the resident's
-reason. The composer's report names the request key and target, any remaining
-auto-resume budget, or after Put aside the stop request's key, target, and
-claim, which stays held until its holder settles it.
+reason. The composer's report names the request key and target, or after Put
+aside the stop request's key, target, and claim, which stays held until its
+holder settles it.
 
 The native command surface is `spice room status HANDLE`,
 `spice room start|resume HANDLE ADDRESS --criterion TEXT --contribution TEXT
---stop TEXT [--auto-resume N]`, and `spice room put-aside HANDLE`. An
-`--auto-resume` rule lets the resident repeat that Resume up to N times as
-[new room input arrives](../docs/product/invariants/identity.md#identity-an-operator-rule-bounds-automated-room-resumes).
+--stop TEXT`, and `spice room put-aside HANDLE`. Nothing repeats a Start or
+Resume on the operator's behalf: each asks one lane to hold and propose, and
+only another operator command, or Design outreach's own one-request-per-item
+bound, asks again.
 
 ## Room standing
 
@@ -180,11 +181,8 @@ Each design's menu and read view open with the room's standing, derived from
 the room snapshot, its live facts, the board, and lane topology on every render:
 
 - **Next action**: the one next useful action that authority supports.
-- **Latest coordination**: its request and that request's disposition. For a
-  ruled record, its subject, scope, and stop text. For an automated record,
-  the publication that triggered it. Then whether automation is off, armed
-  with steps spent of its limit, or stopped by a spent budget, a put-aside, or
-  a request retired without acknowledgment.
+- **Latest coordination**: its request and that request's disposition, and
+  whether a put-aside followed it.
 - **Lanes**: each involved lane with whether it is seated, vacant, or unknown,
   plus one chip per reason, each naming its source:
   - authored message and contribution history;
@@ -203,8 +201,8 @@ the room snapshot, its live facts, the board, and lane topology on every render:
 
 Agreement, silence, message count, elapsed time, ACK, and ANS never read as
 progress or approval. The section only renders inside an explicitly opened menu
-or read view: a status, relevance, or automation update changes its text in
-place and never mounts a room, moves a console, or wakes a lane.
+or read view: a status or relevance update changes its text in place and
+never mounts a room, moves a console, or wakes a lane.
 
 ## Design contributions
 

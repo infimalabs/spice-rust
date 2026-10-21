@@ -18,7 +18,7 @@ pub use contributions::{Contribution, ContributionGroup};
 pub use conversation::{
     Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem,
 };
-pub use standing::{CoordinationStanding, Relevance, ResumeAutomation};
+pub use standing::{CoordinationStanding, Relevance};
 
 /// Whether the room snapshot can be rendered as current authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
