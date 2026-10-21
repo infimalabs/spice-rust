@@ -16,15 +16,15 @@ pub const DESIGN_MATURITY_HEAD_LIMIT: usize = 4;
 /// Lane identities retained in each bounded maturity set.
 pub const DESIGN_MATURITY_LANE_LIMIT: usize = 64;
 
-/// Counts of each typed contribution kind.
+/// Counts of contributions by the sign of their charge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignContributionCounts {
-    /// Reasons to take the direction.
+    /// Positive charges: reasons to take the direction.
     pub reason_for: u64,
-    /// Reasons against the direction.
+    /// Negative charges: reasons against the direction.
     pub reason_against: u64,
-    /// Observations bearing on the problem.
+    /// Zero charges: observations bearing on the problem.
     pub evidence: u64,
     /// Open questions, counted but never required for maturity.
     pub question: u64,
@@ -39,9 +39,11 @@ impl DesignContributionCounts {
 
     pub(crate) fn observe(&mut self, kind: RoomContributionKind) {
         let count = match kind {
-            RoomContributionKind::ReasonFor => &mut self.reason_for,
-            RoomContributionKind::ReasonAgainst => &mut self.reason_against,
-            RoomContributionKind::Evidence => &mut self.evidence,
+            RoomContributionKind::Charge(charge) => match charge.get().signum() {
+                1 => &mut self.reason_for,
+                -1 => &mut self.reason_against,
+                _ => &mut self.evidence,
+            },
             RoomContributionKind::Question => &mut self.question,
         };
         *count = count.saturating_add(1);
@@ -195,9 +197,9 @@ impl DesignMaturityRequirement {
     pub const fn label(self) -> &'static str {
         match self {
             Self::ThreeContributingLanes => "three distinct contributing lanes",
-            Self::ReasonFor => "a reason for",
-            Self::ReasonAgainst => "a reason against",
-            Self::Evidence => "evidence",
+            Self::ReasonFor => "a positive charge",
+            Self::ReasonAgainst => "a negative charge",
+            Self::Evidence => "a 0 charge",
         }
     }
 }
@@ -450,6 +452,7 @@ mod tests {
             .expect("publication"),
             lane: self::lane(lane),
             contribution: kind,
+            question: None,
             statement: statement.and_then(Seq::new),
             text: "Substantive contribution.".to_owned(),
             sources: Vec::new(),
@@ -490,7 +493,7 @@ mod tests {
         for lane in 1..=3 {
             maturity.observe_request(&notice(10, lane));
         }
-        maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::Evidence));
+        maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::charge(0)));
         let state = maturity.state();
         maturity.observe_leave(&leave(2));
         assert_eq!(answers(&maturity), [(10, 3, 1, 1, 1)]);
@@ -542,13 +545,9 @@ mod tests {
                 ],
             }
         );
-        maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::ReasonFor));
-        maturity.observe_contribution(&contribution(
-            Some(10),
-            2,
-            RoomContributionKind::ReasonAgainst,
-        ));
-        maturity.observe_contribution(&contribution(Some(10), 3, RoomContributionKind::Evidence));
+        maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::charge(1)));
+        maturity.observe_contribution(&contribution(Some(10), 2, RoomContributionKind::charge(-1)));
+        maturity.observe_contribution(&contribution(Some(10), 3, RoomContributionKind::charge(0)));
         assert_eq!(maturity.state(), DesignMaturityState::Steeped);
         assert_eq!(maturity.contributing_lanes, vec![lane(1), lane(2), lane(3)]);
     }
@@ -562,10 +561,10 @@ mod tests {
             maturity.observe_contribution(&contribution(
                 Some(statement),
                 2,
-                RoomContributionKind::Evidence,
+                RoomContributionKind::charge(0),
             ));
         }
-        maturity.observe_contribution(&contribution(None, 9, RoomContributionKind::ReasonAgainst));
+        maturity.observe_contribution(&contribution(None, 9, RoomContributionKind::charge(-1)));
 
         assert_eq!(maturity.recent_heads.len(), DESIGN_MATURITY_HEAD_LIMIT);
         assert_eq!(
@@ -611,7 +610,7 @@ mod tests {
 
     #[test]
     fn historical_contribution_omission_decodes_explicitly() {
-        let current = contribution(Some(10), 1, RoomContributionKind::Evidence);
+        let current = contribution(Some(10), 1, RoomContributionKind::charge(0));
         let mut value = serde_json::to_value(current).expect("encodes");
         value.as_object_mut().expect("object").remove("statement");
         let historical: RoomContributed = serde_json::from_value(value).expect("decodes");

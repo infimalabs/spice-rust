@@ -2,7 +2,7 @@
 //! exactly as `spice room history` groups them. Reading them moves no task,
 //! claim, working group, candidate, decision, or authorization.
 
-use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomSource};
+use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomQuestion, RoomSource};
 use wire::{CanonicalUuid, Seq, TaskStamp};
 
 use super::{RoomEventKind, RoomProjection};
@@ -16,8 +16,10 @@ pub struct Contribution<'a> {
     pub position: Seq,
     /// Logical lane that authored it.
     pub lane: CanonicalUuid,
-    /// What it offers.
+    /// What it offers: a charge or a question.
     pub contribution: RoomContributionKind,
+    /// The Design question item it weighs, when it names one.
+    pub question: Option<RoomQuestion>,
     /// Its complete text.
     pub text: &'a str,
     /// Its cited sources, in the author's order.
@@ -46,6 +48,7 @@ impl RoomProjection {
                 RoomEventKind::Contributed {
                     lane,
                     contribution,
+                    question,
                     text,
                     sources,
                 } => Some(Contribution {
@@ -53,6 +56,7 @@ impl RoomProjection {
                     position: event.position,
                     lane: *lane,
                     contribution: *contribution,
+                    question: *question,
                     text,
                     sources,
                 }),

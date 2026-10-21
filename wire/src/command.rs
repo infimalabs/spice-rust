@@ -59,8 +59,9 @@ pub enum CommandKind {
     RoomLeave,
     /// A lane records one typed problem-space contribution in an open Design.
     RoomContribute,
-    /// Resolve one Design contribution's cited sources at its own position.
-    RoomContributionSources,
+    /// Resolve one Design contribution's cited sources at its own position
+    /// and the question item it names.
+    RoomContributionRead,
     /// Operator ACK, NAK, reply, recovery, or assessment of room authority.
     RoomControl,
     /// Read the current working-group partition.

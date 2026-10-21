@@ -14,9 +14,9 @@ const HISTORY_RECORD_LIMIT: usize = 32;
 /// Outstanding task detail reads, kept below [`ACTION_RECORD_LIMIT`] so a
 /// large selection never crowds out current reads and mutations.
 pub(super) const TASK_DETAIL_READ_LIMIT: usize = 16;
-/// Outstanding contribution source reads, bounded like task detail reads.
+/// Outstanding contribution reads, bounded like task detail reads.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
-const CONTRIBUTION_SOURCE_READ_LIMIT: usize = 8;
+const CONTRIBUTION_READ_LIMIT: usize = 8;
 const TEXT_ALLOWANCE_BYTES: usize = wire::media::MAX_MEDIA_BYTES;
 const MEDIA_URL_BYTES: usize = wire::media::MAX_MEDIA_BYTES.div_ceil(3) * 4 + 64;
 const ACTION_PAYLOAD_LIMIT: usize =
@@ -171,17 +171,17 @@ impl ActionQueue {
             matches!(&entry.kind, PendingKind::TaskDetail { task: pending } if pending == task)
         })
     }
-    /// How many more contribution source reads may be outstanding.
+    /// How many more contribution reads may be outstanding.
     #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
-    pub(super) fn contribution_source_slots(&self) -> usize {
+    pub(super) fn contribution_read_slots(&self) -> usize {
         let outstanding = self
             .mailbox
             .borrow()
             .pending
             .values()
-            .filter(|entry| matches!(entry.kind, PendingKind::ContributionSources { .. }))
+            .filter(|entry| matches!(entry.kind, PendingKind::ContributionRead { .. }))
             .count();
-        CONTRIBUTION_SOURCE_READ_LIMIT.saturating_sub(outstanding)
+        CONTRIBUTION_READ_LIMIT.saturating_sub(outstanding)
     }
     #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
     pub(super) fn has_task_relations(&self, key: &crate::TaskRelationsKey) -> bool {
@@ -258,7 +258,7 @@ impl PendingKind {
             Self::Principals => Some(CurrentRead::Principals),
             Self::TaskDetail { .. }
             | Self::ConversationText { .. }
-            | Self::ContributionSources { .. }
+            | Self::ContributionRead { .. }
             | Self::Job { .. }
             | Self::Jobs { .. }
             | Self::WorkingGroup { .. }

@@ -25,7 +25,7 @@ use crate::socket::Admitted;
 use crate::watchband;
 
 mod consent;
-mod contribution_sources;
+mod contribution_read;
 mod conversation_text;
 mod lanes;
 mod member_control;
@@ -39,7 +39,7 @@ mod stale;
 mod stream;
 mod task_detail;
 pub use consent::ConsentRuling;
-pub use contribution_sources::ContributionSources;
+pub use contribution_read::ContributionRead;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use conversation_text::operator_destination_label;
 pub use conversation_text::{ConversationText, ItemConcern};
@@ -592,7 +592,7 @@ pub struct AppRuntime {
     /// publication's bytes never change, so a settled read stands.
     conversation_texts: BTreeMap<RoomAuthorityStamp, ConversationText>,
     /// Resolved sources of contributions in shown Designs.
-    contribution_sources: BTreeMap<RoomAuthorityStamp, ContributionSources>,
+    contribution_reads: BTreeMap<RoomAuthorityStamp, ContributionRead>,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
@@ -655,7 +655,7 @@ impl AppRuntime {
             blocker_actions: BTreeMap::new(),
             task_relations_revision: 0,
             conversation_texts: BTreeMap::new(),
-            contribution_sources: BTreeMap::new(),
+            contribution_reads: BTreeMap::new(),
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
@@ -722,7 +722,7 @@ impl AppRuntime {
                 .retain(|_, state| refresh_task_relations(state, false));
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
             self.forget_conversation_text_reads();
-            self.forget_contribution_sources();
+            self.forget_contribution_reads();
             false
         } else {
             *self = Self::new(accepted);

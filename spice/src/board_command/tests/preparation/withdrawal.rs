@@ -133,7 +133,7 @@ fn a_contribution_answer_is_the_source_retain_accepts_only_under_its_own_design(
             epoch,
             root.as_ref(),
             lane.clone(),
-            contribution_body(room, RoomContributionKind::Evidence, "Measured.", sources),
+            contribution_body(room, RoomContributionKind::charge(1), "Measured.", sources),
         ))
     };
     let answer = evidence(&design, Vec::new());
@@ -163,7 +163,7 @@ fn a_contribution_answer_is_the_source_retain_accepts_only_under_its_own_design(
         lane.clone(),
         contribution_body(
             &design,
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(1),
             "Cites nothing real.",
             vec![invented.clone()],
         ),

@@ -38,8 +38,8 @@ use wire::output::{Bounded, Export};
 use wire::principal::{NamedActor, PrincipalCode, PrincipalDirectory};
 use wire::rooms::{
     RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomCoordinationStarted, RoomLeft,
-    RoomMessaged, RoomPosted, RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource,
-    RoomSourceUnavailable, RoomSourceView, TranscriptHunk,
+    RoomMessaged, RoomPosted, RoomPublicationContent, RoomPublished, RoomPutAside, RoomQuestion,
+    RoomSource, RoomSourceUnavailable, RoomSourceView, TranscriptHunk,
 };
 use wire::{
     Actor, CanonicalUuid, Disposition, Fault, FaultClass, Instant, Outcome, Refusal, Reply,
@@ -148,6 +148,8 @@ enum Content {
     /// The authoring lane's typed problem-space contribution.
     Contribution {
         kind: RoomContributionKind,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        question: Option<QuestionView>,
         text: String,
         sources: Vec<RoomSourceView>,
     },
@@ -155,6 +157,16 @@ enum Content {
         source: RoomSource,
         unavailable: RoomSourceUnavailable,
     },
+}
+
+/// The Design question item a contribution answers. Its text is shown only
+/// while the statement the post witnessed is still the Design's current one,
+/// because the journal keeps no superseded statement text.
+#[derive(Debug, Serialize)]
+struct QuestionView {
+    item: RoomQuestion,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
 }
 
 /// One directed delivery and its receipt.
@@ -399,6 +411,7 @@ enum Record {
     /// A typed contribution, owning its text and citing its sources.
     Contributed {
         kind: RoomContributionKind,
+        question: Option<QuestionView>,
         text: String,
         sources: Vec<RoomSource>,
     },
@@ -576,10 +589,18 @@ fn row(
                 None,
             )
         } else if let Some(contributed) = envelope.fact.read::<RoomContributed>() {
+            let question = match contributed.question {
+                Some(item) => Some(QuestionView {
+                    item,
+                    text: question_text(read, &contributed).map_err(store)?,
+                }),
+                None => None,
+            };
             (
                 contributed.publication,
                 Record::Contributed {
                     kind: contributed.contribution,
+                    question,
                     text: contributed.text,
                     sources: contributed.sources,
                 },
@@ -661,11 +682,13 @@ impl Row {
             Record::Body(body) => project_body(body, tape),
             Record::Contributed {
                 kind,
+                question,
                 text,
                 sources: cited,
             } => (
                 Content::Contribution {
                     kind,
+                    question,
                     text,
                     sources: cited
                         .into_iter()
@@ -866,11 +889,12 @@ pub(crate) fn conversation_text(
 }
 
 /// One contribution's cited sources, resolved at its own journal position
-/// exactly as [`answer`] resolves them; an unknown contribution refuses.
-pub(crate) fn contribution_sources(
+/// exactly as [`answer`] resolves them, with the text of the question item it
+/// names under the same rule; an unknown contribution refuses.
+pub(crate) fn contribution_read(
     bus: &bus::Bus,
     owners: SourceOwners<'_>,
-    request: &wire::intent::RoomContributionSources,
+    request: &wire::intent::RoomContributionRead,
 ) -> Outcome<wire::intent::CommandAnswer> {
     let (room, publication) = (request.room.clone(), request.publication.clone());
     let read = bus.read(move |read| {
@@ -883,13 +907,17 @@ pub(crate) fn contribution_sources(
             seq,
             journal::FactReadBudget::RETAINED,
         )?;
-        let contributed = page
+        let Some(contributed) = page
             .rows
             .into_iter()
             .next()
             .and_then(|envelope| envelope.fact.read::<RoomContributed>())
-            .filter(|contributed| contributed.publication == publication);
-        Ok((cursor, contributed.map(|contributed| (seq, contributed))))
+            .filter(|contributed| contributed.publication == publication)
+        else {
+            return Ok((cursor, None));
+        };
+        let question = question_text(read, &contributed)?;
+        Ok((cursor, Some((seq, contributed, question))))
     });
     let (cursor, contributed) = match read {
         Ok((Some(cursor), contributed)) => (cursor, contributed),
@@ -905,7 +933,7 @@ pub(crate) fn contribution_sources(
             return fault(FaultClass::Store, "room::journal-unreadable", error).outcome();
         }
     };
-    let Some((seq, contributed)) = contributed else {
+    let Some((seq, contributed, question)) = contributed else {
         return Outcome::Refusal(crate::read_page::refusal(
             "room",
             "contribution-missing",
@@ -916,17 +944,34 @@ pub(crate) fn contribution_sources(
     let mut sources = RoomSources::new(Some(owners), &request.room);
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
-        body: wire::intent::CommandAnswer::RoomContributionSources(
-            wire::intent::RoomContributionSourcesAnswer {
+        body: wire::intent::CommandAnswer::RoomContributionRead(
+            wire::intent::RoomContributionReadAnswer {
                 publication: request.publication.clone(),
                 sources: contributed
                     .sources
                     .into_iter()
                     .map(|source| sources.view(source, seq))
                     .collect(),
+                question,
             },
         ),
     })
+}
+
+/// The text of the question item `contributed` names, only while the
+/// statement it witnessed is still its Design's current one: the journal keeps
+/// no superseded statement text.
+fn question_text(
+    read: &journal::JournalRead<'_>,
+    contributed: &RoomContributed,
+) -> Result<Option<String>, journal::GuardError> {
+    let Some(item) = contributed.question else {
+        return Ok(None);
+    };
+    Ok(read
+        .task_head(&contributed.room)?
+        .filter(|head| Some(head.position()) == contributed.statement)
+        .and_then(|head| item.item(&head.body().acceptance).map(str::to_owned)))
 }
 
 impl fmt::Display for RoomHistory {
@@ -995,10 +1040,21 @@ fn write_content(formatter: &mut fmt::Formatter<'_>, content: &Content) -> fmt::
         Content::Left { clause } => write!(formatter, "\n  left the room: {clause}"),
         Content::Contribution {
             kind,
+            question,
             text,
             sources,
         } => {
             write!(formatter, "\n  {kind}")?;
+            match question {
+                Some(QuestionView {
+                    item,
+                    text: Some(asked),
+                }) => write!(formatter, " on item {item}: {asked}")?,
+                Some(QuestionView { item, text: None }) => {
+                    write!(formatter, " on item {item} of an earlier statement")?;
+                }
+                None => {}
+            }
             for line in text.lines() {
                 write!(formatter, "\n  | {line}")?;
             }

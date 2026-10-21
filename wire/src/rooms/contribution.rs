@@ -1,14 +1,17 @@
 //! Typed problem-space contributions to an open Design room.
 //!
-//! A contribution is one immutable, lane-authored record: its kind, its
-//! author, its text, and the exact sources it cites. It is evidence for the
-//! operator's Design judgment, never authority: recording or reading one moves
-//! no task, claim, working group, candidate, decision, or authorization.
+//! A contribution is one immutable, lane-authored record: a charge on one of
+//! the Design's question items or an open question, its author, its text, and
+//! the exact sources it cites. It is evidence for the operator's Design
+//! judgment, never authority: recording or reading one moves no task, claim,
+//! working group, candidate, decision, or authorization.
 
 use std::fmt;
+use std::num::NonZeroU16;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{RoomAnchor, RoomAuthorityStamp, RoomSource};
 use crate::{CanonicalUuid, Digest, Domain};
@@ -18,36 +21,128 @@ pub const ROOM_CONTRIBUTION_TEXT_LIMIT: usize = 4_096;
 /// Maximum sources one contribution may cite.
 pub const ROOM_CONTRIBUTION_SOURCE_LIMIT: usize = 8;
 
-/// What a contribution offers the Design.
+/// A contribution's signed weight on one Design question item.
+///
+/// +1 and -1 are opinions and need no citation; 0 is a neutral observation and
+/// +2 and -2 are strong charges, and each of those must cite a source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RoomCharge(i8);
+
+impl RoomCharge {
+    /// Every charge from strongest for to strongest against.
+    pub const ALL: [Self; 5] = [Self(2), Self(1), Self(0), Self(-1), Self(-2)];
+
+    /// The charge `value` names, if it lies in -2..=2.
+    #[must_use]
+    pub const fn new(value: i8) -> Option<Self> {
+        if value >= -2 && value <= 2 {
+            Some(Self(value))
+        } else {
+            None
+        }
+    }
+
+    /// The signed weight.
+    #[must_use]
+    pub const fn get(self) -> i8 {
+        self.0
+    }
+
+    /// Whether this charge is an opinion that needs no citation: +1 or -1.
+    #[must_use]
+    pub const fn is_opinion(self) -> bool {
+        self.0 == 1 || self.0 == -1
+    }
+}
+
+impl fmt::Display for RoomCharge {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 > 0 {
+            write!(formatter, "+{}", self.0)
+        } else {
+            write!(formatter, "{}", self.0)
+        }
+    }
+}
+
+/// One-based position of a Design question item: the acceptance item of the
+/// statement head a contribution witnesses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(transparent)]
+pub struct RoomQuestion(NonZeroU16);
+
+impl RoomQuestion {
+    /// The item at one-based `position`, if positive.
+    #[must_use]
+    pub fn new(position: u16) -> Option<Self> {
+        NonZeroU16::new(position).map(Self)
+    }
+
+    /// The item's offset in its statement's acceptance list.
+    #[must_use]
+    pub fn offset(self) -> usize {
+        usize::from(self.0.get() - 1)
+    }
+
+    /// The item this position names in `acceptance`, if the list holds it.
+    #[must_use]
+    pub fn item(self, acceptance: &[String]) -> Option<&str> {
+        acceptance.get(self.offset()).map(String::as_str)
+    }
+}
+
+impl fmt::Display for RoomQuestion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// What a contribution offers the Design: a charge on one question item, or
+/// an open question.
+///
+/// On the wire a charge is its integer and a question is the word `question`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RoomContributionKind {
-    /// A reason to take the direction under consideration.
-    ReasonFor,
-    /// A reason against the direction under consideration.
-    ReasonAgainst,
-    /// An observation that bears on the problem.
-    Evidence,
+    /// A signed weight on one question item.
+    Charge(RoomCharge),
     /// An open question the Design has not answered.
     Question,
 }
 
 impl RoomContributionKind {
     /// Every kind, in the order reads group them.
-    pub const ALL: [Self; 4] = [
-        Self::ReasonFor,
-        Self::ReasonAgainst,
-        Self::Evidence,
+    pub const ALL: [Self; 6] = [
+        Self::Charge(RoomCharge::ALL[0]),
+        Self::Charge(RoomCharge::ALL[1]),
+        Self::Charge(RoomCharge::ALL[2]),
+        Self::Charge(RoomCharge::ALL[3]),
+        Self::Charge(RoomCharge::ALL[4]),
         Self::Question,
     ];
 
-    /// The kind as it is spelled on the wire and the command line.
+    /// The charge `value` names.
+    ///
+    /// # Panics
+    ///
+    /// When `value` lies outside -2..=2.
+    #[must_use]
+    pub const fn charge(value: i8) -> Self {
+        match RoomCharge::new(value) {
+            Some(charge) => Self::Charge(charge),
+            None => panic!("a room charge lies in -2..=2"),
+        }
+    }
+
+    /// The kind as reads and the command line spell it: a signed charge or
+    /// `question`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ReasonFor => "reason-for",
-            Self::ReasonAgainst => "reason-against",
-            Self::Evidence => "evidence",
+            Self::Charge(RoomCharge(2)) => "+2",
+            Self::Charge(RoomCharge(1)) => "+1",
+            Self::Charge(RoomCharge(0)) => "0",
+            Self::Charge(RoomCharge(-1)) => "-1",
+            Self::Charge(_) => "-2",
             Self::Question => "question",
         }
     }
@@ -59,12 +154,59 @@ impl fmt::Display for RoomContributionKind {
     }
 }
 
-/// A spelling outside the closed contribution vocabulary.
+impl Serialize for RoomContributionKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Charge(charge) => serializer.serialize_i8(charge.0),
+            Self::Question => serializer.serialize_str("question"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RoomContributionKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Kind;
+
+        impl Visitor<'_> for Kind {
+            type Value = RoomContributionKind;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an integer charge in -2..=2 or \"question\"")
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                i8::try_from(value)
+                    .ok()
+                    .and_then(RoomCharge::new)
+                    .map(RoomContributionKind::Charge)
+                    .ok_or_else(|| E::invalid_value(de::Unexpected::Signed(value), &self))
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                i8::try_from(value)
+                    .ok()
+                    .and_then(RoomCharge::new)
+                    .map(RoomContributionKind::Charge)
+                    .ok_or_else(|| E::invalid_value(de::Unexpected::Unsigned(value), &self))
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                if value == "question" {
+                    Ok(RoomContributionKind::Question)
+                } else {
+                    Err(E::invalid_value(de::Unexpected::Str(value), &self))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Kind)
+    }
+}
+
+/// A spelling outside the closed charge vocabulary.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "invalid contribution kind {0:?}; expected reason-for, reason-against, evidence, or question"
-)]
-pub struct RoomContributionKindError(String);
+#[error("invalid contribution charge {0:?}; expected -2, -1, 0, +1, or +2")]
+pub struct RoomChargeError(String);
 
 /// Canonical immutable authority behind one room-source link. A transcript's
 /// moving accounted boundary is deliberately absent.
@@ -91,16 +233,19 @@ enum RoomSourceAuthority<'a> {
     },
 }
 
-impl FromStr for RoomContributionKind {
-    type Err = RoomContributionKindError;
+impl FromStr for RoomCharge {
+    type Err = RoomChargeError;
 
+    /// A signed or bare integer in -2..=2: `+2`, `1`, `0`, `-1`.
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|kind| kind.as_str() == value)
-            .ok_or_else(|| RoomContributionKindError(value.to_owned()))
+        value
+            .parse::<i8>()
+            .ok()
+            .and_then(Self::new)
+            .ok_or_else(|| RoomChargeError(value.to_owned()))
     }
 }
+
 impl RoomSource {
     /// Whether two links name the same immutable source authority.
     ///
@@ -186,8 +331,18 @@ pub struct RoomContributed {
     pub publication: RoomAuthorityStamp,
     /// The logical lane that authored the contribution.
     pub lane: CanonicalUuid,
-    /// What the contribution offers.
+    /// What the contribution offers: a charge or a question.
     pub contribution: RoomContributionKind,
+    /// The question item a charge answers at [`Self::statement`].
+    ///
+    /// Contributions written before charges named an item carry none and stay
+    /// Design-level.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub question: Option<RoomQuestion>,
     /// Design statement head already guarded by contribution admission.
     ///
     /// Historical contributions predate this attribution and decode into the
@@ -223,15 +378,28 @@ pub enum RoomContributionError {
     /// One source is cited twice.
     #[error("contribution cites one source twice")]
     DuplicateSource,
+    /// A new charge names no question item.
+    #[error("a charge names no question item")]
+    Unplaced,
+    /// A charge of 0, +2, or -2 on a question item cites nothing.
+    #[error("a charge of 0, +2, or -2 cites no source")]
+    Uncited,
 }
 
 impl RoomContributed {
-    /// Refuse a contribution whose text or source list is out of bounds.
+    /// Refuse a contribution whose text, sources, or citation duty is out of
+    /// bounds. Every retained record satisfies this rule; a charge without a
+    /// question item predates the citation duty and stays Design-level.
     ///
     /// # Errors
     ///
     /// Returns the first bound the contribution violates.
-    pub fn admit(text: &str, sources: &[RoomSource]) -> Result<(), RoomContributionError> {
+    pub fn admit(
+        kind: RoomContributionKind,
+        question: Option<RoomQuestion>,
+        text: &str,
+        sources: &[RoomSource],
+    ) -> Result<(), RoomContributionError> {
         if text.trim().is_empty() {
             return Err(RoomContributionError::Empty);
         }
@@ -251,7 +419,32 @@ impl RoomContributed {
         }) {
             return Err(RoomContributionError::DuplicateSource);
         }
+        if let RoomContributionKind::Charge(charge) = kind
+            && question.is_some()
+            && !charge.is_opinion()
+            && sources.is_empty()
+        {
+            return Err(RoomContributionError::Uncited);
+        }
         Ok(())
+    }
+
+    /// Refuse a contribution a lane may not write now: [`Self::admit`], and
+    /// every charge names the question item it answers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first bound the contribution violates.
+    pub fn admit_new(
+        kind: RoomContributionKind,
+        question: Option<RoomQuestion>,
+        text: &str,
+        sources: &[RoomSource],
+    ) -> Result<(), RoomContributionError> {
+        if matches!(kind, RoomContributionKind::Charge(_)) && question.is_none() {
+            return Err(RoomContributionError::Unplaced);
+        }
+        Self::admit(kind, question, text, sources)
     }
 
     /// Whether one successful command receipt proves this exact record.
@@ -286,6 +479,7 @@ impl RoomContributed {
             && workflow_matches
             && source_witnesses_match(&self.sources, expected)
             && request.kind == self.contribution
+            && request.question == self.question
             && request.text.trim() == self.text
             && request.sources == self.sources
             && answer.room == request.room
@@ -329,8 +523,9 @@ mod tests {
 
     #[test]
     fn canonical_contributions_use_exact_source_authority() {
+        let opinion = RoomContributionKind::charge(1);
         assert_eq!(
-            RoomContributed::admit(" evidence ", &[]),
+            RoomContributed::admit(opinion, None, " evidence ", &[]),
             Err(RoomContributionError::Untrimmed)
         );
         let first = transcript(50);
@@ -338,9 +533,83 @@ mod tests {
         assert!(first.same_authority(&advanced));
         assert_eq!(first.authority_digest(), advanced.authority_digest());
         assert_eq!(
-            RoomContributed::admit("Evidence.", &[first, advanced]),
+            RoomContributed::admit(opinion, None, "Evidence.", &[first, advanced]),
             Err(RoomContributionError::DuplicateSource)
         );
+    }
+
+    /// Only +1 and -1 are anecdotal: a new 0, +2, or -2 on a question item
+    /// must cite, every new charge names its item, and a retained item-less
+    /// charge stays admissible however it is weighted.
+    #[test]
+    fn a_question_bound_charge_cites_unless_it_is_an_opinion() {
+        let item = RoomQuestion::new(2);
+        let cited = [transcript(50)];
+        for charge in RoomCharge::ALL {
+            let kind = RoomContributionKind::Charge(charge);
+            let uncited = RoomContributed::admit_new(kind, item, "Text.", &[]);
+            if charge.is_opinion() {
+                assert_eq!(uncited, Ok(()), "{charge} needs no citation");
+            } else {
+                assert_eq!(uncited, Err(RoomContributionError::Uncited), "{charge}");
+            }
+            assert_eq!(
+                RoomContributed::admit_new(kind, item, "Text.", &cited),
+                Ok(())
+            );
+            assert_eq!(
+                RoomContributed::admit_new(kind, None, "Text.", &cited),
+                Err(RoomContributionError::Unplaced),
+                "a new {charge} names its item"
+            );
+            assert_eq!(
+                RoomContributed::admit(kind, None, "Text.", &[]),
+                Ok(()),
+                "a retained item-less {charge} predates the citation duty"
+            );
+        }
+        for question in [None, item] {
+            assert_eq!(
+                RoomContributed::admit_new(RoomContributionKind::Question, question, "Why?", &[]),
+                Ok(()),
+                "a question carries no charge and needs no item or source"
+            );
+        }
+    }
+
+    /// A charge travels as its integer and a question as its word; nothing
+    /// else, including the retired label vocabulary, decodes.
+    #[test]
+    fn a_contribution_kind_has_one_wire_spelling() {
+        for (kind, wire) in [
+            (RoomContributionKind::charge(2), serde_json::json!(2)),
+            (RoomContributionKind::charge(0), serde_json::json!(0)),
+            (RoomContributionKind::charge(-1), serde_json::json!(-1)),
+            (
+                RoomContributionKind::Question,
+                serde_json::json!("question"),
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(kind).expect("encodes"), wire);
+            assert_eq!(
+                serde_json::from_value::<RoomContributionKind>(wire).expect("decodes"),
+                kind
+            );
+        }
+        for refused in [
+            serde_json::json!(3),
+            serde_json::json!(-3),
+            serde_json::json!("reason-for"),
+            serde_json::json!("evidence"),
+            serde_json::json!("+1"),
+        ] {
+            assert!(serde_json::from_value::<RoomContributionKind>(refused).is_err());
+        }
+        assert_eq!("+2".parse(), Ok(RoomCharge::ALL[0]));
+        assert_eq!("-2".parse(), Ok(RoomCharge::ALL[4]));
+        assert_eq!("1".parse(), Ok(RoomCharge::ALL[1]));
+        assert!("3".parse::<RoomCharge>().is_err());
+        assert!("question".parse::<RoomCharge>().is_err());
     }
 
     #[test]
@@ -351,7 +620,7 @@ mod tests {
         let answer = crate::intent::RoomContributeAnswer::new(
             room,
             publication.clone(),
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(0),
         )
         .expect("answer");
         let own = RoomSource::Contribution {

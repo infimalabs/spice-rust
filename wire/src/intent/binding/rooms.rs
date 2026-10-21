@@ -12,7 +12,7 @@ impl AnswerShape {
             Self::RoomCoordination => CommandAnswer::RoomCoordination(body.read()?),
             Self::RoomLeave => CommandAnswer::RoomLeave(body.read()?),
             Self::RoomContribute => CommandAnswer::RoomContribute(body.read()?),
-            Self::RoomContributionSources => CommandAnswer::RoomContributionSources(body.read()?),
+            Self::RoomContributionRead => CommandAnswer::RoomContributionRead(body.read()?),
             Self::RoomControl => CommandAnswer::RoomControl(body.read()?),
             Self::RoomConversationText => CommandAnswer::RoomConversationText(body.read()?),
             _ => unreachable!("room answer decode partition is closed"),
@@ -35,8 +35,8 @@ impl CommandKind {
             Self::RoomPutAside => Binding::of(B::RoomPutAside, A::RoomCoordination),
             Self::RoomLeave => Binding::of(B::RoomLeave, A::RoomLeave),
             Self::RoomContribute => Binding::of(B::RoomContribute, A::RoomContribute),
-            Self::RoomContributionSources => {
-                Binding::of(B::RoomContributionSources, A::RoomContributionSources)
+            Self::RoomContributionRead => {
+                Binding::of(B::RoomContributionRead, A::RoomContributionRead)
             }
             Self::RoomControl => Binding::of(B::RoomControl, A::RoomControl),
             _ => panic!("room command binding partition is closed"),
@@ -54,7 +54,7 @@ impl Intent {
             Self::RoomPutAside(_) => BodyShape::RoomPutAside,
             Self::RoomLeave(_) => BodyShape::RoomLeave,
             Self::RoomContribute(_) => BodyShape::RoomContribute,
-            Self::RoomContributionSources(_) => BodyShape::RoomContributionSources,
+            Self::RoomContributionRead(_) => BodyShape::RoomContributionRead,
             Self::RoomControl(_) => BodyShape::RoomControl,
             _ => panic!("room intent shape partition is closed"),
         }
@@ -71,7 +71,7 @@ impl BodyShape {
             Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
             Self::RoomLeave => Intent::RoomLeave(crate::decode(bytes)?),
             Self::RoomContribute => Intent::RoomContribute(crate::decode(bytes)?),
-            Self::RoomContributionSources => Intent::RoomContributionSources(crate::decode(bytes)?),
+            Self::RoomContributionRead => Intent::RoomContributionRead(crate::decode(bytes)?),
             Self::RoomControl => Intent::RoomControl(crate::decode(bytes)?),
             _ => unreachable!("only room shapes decode as room bodies"),
         })

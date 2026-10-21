@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use wire::intent::{Intent, RoomContribute, RoomContributeAnswer};
 use wire::rooms::{
     ROOM_CONTRIBUTION_SOURCE_LIMIT, ROOM_CONTRIBUTION_TEXT_LIMIT, RoomContributed,
-    RoomContributionKind, RoomPost, TranscriptHunk,
+    RoomContributionKind, RoomPost, RoomQuestion, TranscriptHunk,
 };
 
 use crate::room_command::SourceOwners;
@@ -46,6 +46,8 @@ fn retain(root: &Path, task: &TaskStamp, bytes: &[u8]) -> wire::Digest {
         .digest
 }
 
+/// A contribution of `kind`: a charge weighs the fixture Design's one
+/// question item, and a question names none.
 pub(super) fn contribution_body(
     room: &TaskHandle,
     kind: RoomContributionKind,
@@ -55,6 +57,8 @@ pub(super) fn contribution_body(
     RoomContribute {
         room: room.clone(),
         kind,
+        question: matches!(kind, RoomContributionKind::Charge(_))
+            .then(|| RoomQuestion::new(1).expect("one-based item")),
         text: text.to_owned(),
         sources,
     }
@@ -221,29 +225,57 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
         first["content"],
         json!({
             "state": "contribution",
-            "kind": "reason-for",
+            "kind": 1,
+            "question": { "item": 1, "text": "The exact selected output is justified" },
             "text": "Reuse the journal index.",
             "sources": [{ "state": "available", "source": cited }],
         })
     );
     assert_eq!(
+        rows[2]["content"]["kind"], "question",
+        "a question weighs no item"
+    );
+    assert!(rows[2]["content"].get("question").is_none());
+    assert_eq!(
         rows[4]["content"]["text"], "Pages already exist.",
         "the recorded text is the trimmed contribution"
     );
     let grouped = json!([
-        { "kind": "reason-for", "publications": [written[0], written[3]] },
-        { "kind": "reason-against", "publications": [written[4]] },
-        { "kind": "evidence", "publications": [written[2]] },
+        { "kind": 1, "publications": [written[0], written[3]] },
+        { "kind": 0, "publications": [written[2]] },
+        { "kind": -1, "publications": [written[4]] },
         { "kind": "question", "publications": [written[1]] },
     ]);
     assert_eq!(page["contributions"], grouped);
 
     assert_contribution_pages(root.as_ref(), &design, &written, &grouped);
 
-    // An artifact the reader's store no longer retains reads as a typed
-    // unavailable link, never as fabricated text.
-    let elsewhere = root.as_ref().join("pruned");
-    let pruned = history(root.as_ref(), &elsewhere, &[design.as_str()]);
+    let (elsewhere, pruned) = assert_unretained_artifact_reads(root.as_ref(), &design, &digest);
+
+    assert_sources_read_as_history(
+        &bus,
+        root.as_ref(),
+        &born,
+        (&elsewhere, &pruned),
+        &written,
+        &publications(&page)[0],
+    );
+
+    assert_moved_statement_keeps_the_item(&bus, epoch, root.as_ref(), &design);
+    clean(&root, bus);
+}
+
+/// An artifact the reader's store no longer retains reads as a typed
+/// unavailable link, never as fabricated text, and a retained authority from a
+/// store generation this release cannot decode stays distinct from missing or
+/// unreadable bytes. Returns the pruned reader root and its history page.
+fn assert_unretained_artifact_reads(
+    root: &Path,
+    design: &TaskHandle,
+    digest: &wire::Digest,
+) -> (std::path::PathBuf, Value) {
+    let elsewhere = root.join("pruned");
+    let pruned = history(root, &elsewhere, &[design.as_str()]);
     assert_eq!(
         pruned["page"]["rows"][3]["content"]["sources"],
         json!([{
@@ -252,13 +284,10 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
             "unavailable": { "reason": "missing" },
         }])
     );
-
-    // A retained authority from a store generation this release cannot decode
-    // stays distinct from missing or unreadable source bytes.
-    let unsupported = root.as_ref().join("unsupported");
+    let unsupported = root.join("unsupported");
     let legacy = unsupported.join("artifacts").join(design.as_str());
     fs::create_dir_all(&legacy).expect("legacy retained directory exists");
-    let retained = history(root.as_ref(), &unsupported, &[design.as_str()]);
+    let retained = history(root, &unsupported, &[design.as_str()]);
     assert_eq!(
         retained["page"]["rows"][3]["content"]["sources"],
         json!([{
@@ -271,16 +300,31 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
         pruned["page"]["rows"][3]["content"]["text"],
         "Measured under load."
     );
+    (elsewhere, pruned)
+}
 
-    assert_sources_read_as_history(
-        &bus,
-        root.as_ref(),
-        &born,
-        (&elsewhere, &pruned),
-        &written,
-        &publications(&page)[0],
+/// Once the Design's statement moves, the journal keeps no text of the
+/// statement a charge weighed, so the item stands without borrowed text.
+fn assert_moved_statement_keeps_the_item(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    root: &Path,
+    design: &TaskHandle,
+) {
+    assert_committed(super::super::edit::correct(
+        bus,
+        epoch,
+        Actor::Operator,
+        &TaskEdit {
+            acceptance: vec!["A different question".to_owned()],
+            ..super::super::edit::only(design)
+        },
+    ));
+    let revised = history(root, root, &[design.as_str()]);
+    assert_eq!(
+        revised["page"]["rows"][1]["content"]["question"],
+        json!({ "item": 1 })
     );
-    clean(&root, bus);
 }
 
 /// The browser's per-contribution read resolves each source exactly as the
@@ -297,13 +341,13 @@ fn assert_sources_read_as_history(
     let resolved = |artifacts_root: &Path, publication: &str| {
         let store = artifacts(artifacts_root);
         let tape = root.join("tape");
-        crate::room_command::contribution_sources(
+        crate::room_command::contribution_read(
             bus,
             SourceOwners {
                 tape: &tape,
                 artifacts: &store,
             },
-            &wire::intent::RoomContributionSources {
+            &wire::intent::RoomContributionRead {
                 room: born.clone(),
                 publication: publication.parse().expect("fixture publication"),
             },
@@ -313,7 +357,7 @@ fn assert_sources_read_as_history(
         let Outcome::Reply(reply) = resolved(elsewhere, publication) else {
             panic!("the sources read answers {publication}");
         };
-        let CommandAnswer::RoomContributionSources(answer) = reply.body else {
+        let CommandAnswer::RoomContributionRead(answer) = reply.body else {
             panic!("another answer shape: {:?}", reply.body);
         };
         let row = &shown["page"]["rows"][index + 1]["content"];
@@ -345,7 +389,7 @@ fn write_contributions(
     };
     [
         (
-            RoomContributionKind::ReasonFor,
+            RoomContributionKind::charge(1),
             "Reuse the journal index.",
             vec![cited.clone()],
         ),
@@ -355,17 +399,17 @@ fn write_contributions(
             Vec::new(),
         ),
         (
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(0),
             "Measured under load.",
             vec![artifact],
         ),
         (
-            RoomContributionKind::ReasonFor,
+            RoomContributionKind::charge(1),
             "  Pages already exist.\n",
             Vec::new(),
         ),
         (
-            RoomContributionKind::ReasonAgainst,
+            RoomContributionKind::charge(-1),
             "Index rebuilds are slow.",
             Vec::new(),
         ),
@@ -397,7 +441,7 @@ fn assert_contribution_pages(
     assert_eq!(
         first_page["contributions"],
         json!([
-            { "kind": "reason-for", "publications": [written[0]] },
+            { "kind": 1, "publications": [written[0]] },
             { "kind": "question", "publications": [written[1]] },
         ]),
         "a page groups only the contributions it shows"
@@ -431,7 +475,7 @@ fn contribution_admission_refuses_typed_and_writes_nothing() {
         fact: wire::SequenceCode::new(fact),
     };
     let attempt = |actor: Actor, room: &TaskHandle, text: &str, sources: Vec<RoomSource>| {
-        let body = contribution_body(room, RoomContributionKind::ReasonFor, text, sources);
+        let body = contribution_body(room, RoomContributionKind::charge(1), text, sources);
         contribute(&bus, epoch, root.as_ref(), actor, body)
     };
     let operator = attempt(Actor::Operator, &design, "Operator view.", Vec::new());
@@ -465,6 +509,30 @@ fn contribution_admission_refuses_typed_and_writes_nothing() {
         ),
     ] {
         let outcome = attempt(lane.clone(), &design, text, sources);
+        assert_eq!(refused(&outcome), reason, "{outcome:?}");
+    }
+    // The Design has one question item; a charge must name it, and only an
+    // opinion may stand without a source.
+    let charged = |kind: i8, question: Option<u16>| {
+        let body = RoomContribute {
+            question: question.and_then(RoomQuestion::new),
+            ..contribution_body(
+                &design,
+                RoomContributionKind::charge(kind),
+                "Charged.",
+                Vec::new(),
+            )
+        };
+        contribute(&bus, epoch, root.as_ref(), lane.clone(), body)
+    };
+    for (kind, question, reason) in [
+        (1, None, "room::contribution-question-missing"),
+        (-1, Some(2), "room::contribution-question-unknown"),
+        (0, Some(1), "room::contribution-uncited"),
+        (2, Some(1), "room::contribution-uncited"),
+        (-2, Some(1), "room::contribution-uncited"),
+    ] {
+        let outcome = charged(kind, question);
         assert_eq!(refused(&outcome), reason, "{outcome:?}");
     }
     assert_exact_source_refusals(&bus, epoch, root.as_ref(), &lane, &design, seats[0].lane);
@@ -505,7 +573,7 @@ fn assert_exact_source_refusals(
         lane.clone(),
         contribution_body(
             design,
-            RoomContributionKind::ReasonFor,
+            RoomContributionKind::charge(1),
             "Same transcript bytes twice.",
             vec![
                 RoomSource::Transcript(first),
@@ -519,7 +587,7 @@ fn assert_exact_source_refusals(
     let cited = journal_source(&visible, design);
     let body = contribution_body(
         design,
-        RoomContributionKind::Evidence,
+        RoomContributionKind::charge(0),
         "Unwitnessed citation.",
         vec![cited],
     );
@@ -603,7 +671,8 @@ fn the_journal_admits_only_a_lane_own_bounded_contribution_to_an_open_design() {
                     room,
                     publication,
                     lane: author,
-                    contribution: RoomContributionKind::Evidence,
+                    contribution: RoomContributionKind::charge(0),
+                    question: None,
                     statement: None,
                     text: text.to_owned(),
                     sources,
@@ -682,7 +751,7 @@ fn verification_binds_a_contribution_fact_to_its_successful_answer() {
         Actor::Lane(seats[0].lane),
         contribution_body(
             &design,
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(1),
             "The receipt proves this record.",
             Vec::new(),
         ),
@@ -720,4 +789,60 @@ fn verification_binds_a_contribution_fact_to_its_successful_answer() {
     );
     drop(journal);
     fs::remove_dir_all(root.as_ref()).expect("fixture cleanup");
+}
+
+/// Each `--cite` key resolves by its form against the board the command
+/// reads: a task by handle or stamp to its statement head fact, a stamp no
+/// task bears to a contribution in this room, a journal code to that fact,
+/// and a digest to an artifact; any other key refuses rather than guessing.
+#[test]
+fn cite_keys_resolve_by_form_against_the_board() {
+    let (root, bus, epoch, seats) = fixture("design-contribution-cite", 1);
+    let design = add_controller(&bus, epoch, "Cited design", wire::TaskIntent::Design, None);
+    let born = design.born().expect("fixture Design has a birth");
+    let publication = contributed(contribute(
+        &bus,
+        epoch,
+        root.as_ref(),
+        Actor::Lane(seats[0].lane),
+        contribution_body(
+            &design,
+            RoomContributionKind::charge(1),
+            "An opinion to cite.",
+            Vec::new(),
+        ),
+    ))
+    .publication;
+    let visible = board(&bus, epoch, Actor::Operator);
+    let cite = |key: &str| crate::board_command::cite(&visible, &born, key);
+    let statement = RoomSource::Journal {
+        fact: wire::SequenceCode::new(at(&visible, &design).statement.position.get()),
+    };
+    let digest = "ab".repeat(32);
+
+    assert_eq!(cite(design.as_str()).ok(), Some(statement.clone()));
+    assert_eq!(cite(&born.to_string()).ok(), Some(statement));
+    assert_eq!(
+        cite(&publication.to_string()).ok(),
+        Some(RoomSource::Contribution {
+            room: born.clone(),
+            publication,
+        }),
+        "a stamp no task bears cites a contribution in this room"
+    );
+    assert_eq!(
+        cite("b").ok(),
+        Some(RoomSource::Journal {
+            fact: "b".parse().expect("journal code"),
+        })
+    );
+    assert_eq!(
+        cite(&digest).ok(),
+        Some(RoomSource::Artifact {
+            digest: digest.parse().expect("artifact digest"),
+        })
+    );
+    let invalid = cite("not a key").expect_err("an unreadable key refuses");
+    assert_eq!(refused(&invalid), "room::contribution-cite-invalid");
+    clean(&root, bus);
 }

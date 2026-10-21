@@ -26,7 +26,7 @@ impl CommandKind {
         Self::RoomPutAside,
         Self::RoomLeave,
         Self::RoomContribute,
-        Self::RoomContributionSources,
+        Self::RoomContributionRead,
         Self::RoomControl,
         Self::WorkingGroupRead,
         Self::WorkingGroupMove,
@@ -133,7 +133,7 @@ impl CommandKind {
             | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
-            | Self::RoomContributionSources
+            | Self::RoomContributionRead
             | Self::RoomControl
             | Self::WorkingGroupRead
             | Self::WorkingGroupMove
@@ -235,7 +235,7 @@ impl CommandKind {
             | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
-            | Self::RoomContributionSources
+            | Self::RoomContributionRead
             | Self::RoomControl
             | Self::WorkingGroupRead
             | Self::WorkingGroupMove
@@ -278,7 +278,7 @@ impl CommandKind {
             Self::RoomPutAside => "room::put-aside",
             Self::RoomLeave => "room::leave",
             Self::RoomContribute => "room::contribute",
-            Self::RoomContributionSources => "room::contribution-sources",
+            Self::RoomContributionRead => "room::contribution-read",
             Self::RoomControl => "room::control",
             Self::WorkingGroupRead => "group::read",
             Self::WorkingGroupMove => "group::move",
@@ -397,7 +397,7 @@ impl CommandKind {
                 | Self::WorkingGroupRead
                 | Self::RoomCoordinationRead
                 | Self::RoomConversationText
-                | Self::RoomContributionSources
+                | Self::RoomContributionRead
                 | Self::LaneRecall
                 | Self::PrincipalRead
         )

@@ -331,8 +331,8 @@ impl<'a> Surface<'a> {
             (CommandKind::RoomConversationText, Intent::RoomConversationText(request)) => {
                 crate::room_command::conversation_text(self.bus, &self.paths.tape, request)
             }
-            (CommandKind::RoomContributionSources, Intent::RoomContributionSources(request)) => {
-                crate::room_command::contribution_sources(
+            (CommandKind::RoomContributionRead, Intent::RoomContributionRead(request)) => {
+                crate::room_command::contribution_read(
                     self.bus,
                     crate::room_command::SourceOwners {
                         tape: &self.paths.tape,

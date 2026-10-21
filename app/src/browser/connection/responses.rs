@@ -395,10 +395,10 @@ fn apply_mutating_response(
             runtime.apply_conversation_text(&publication, &admitted);
             CommandApplication::ordinary(false)
         }
-        PendingKind::ContributionSources { publication } => {
-            let admitted: crate::Admitted<Response<wire::intent::RoomContributionSourcesAnswer>> =
+        PendingKind::ContributionRead { publication } => {
+            let admitted: crate::Admitted<Response<wire::intent::RoomContributionReadAnswer>> =
                 admit_response(session, bytes)?;
-            runtime.apply_contribution_sources(&publication, &admitted);
+            runtime.apply_contribution_read(&publication, &admitted);
             CommandApplication::ordinary(false)
         }
         PendingKind::TeamConfigure {

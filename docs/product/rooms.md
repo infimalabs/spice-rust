@@ -65,12 +65,16 @@ owns each rule summarized here.
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
 - **Contribution.** A lane records its reasoning on an open Design with
-  `spice room contribute HANDLE KIND TEXT [--source SOURCE...]`: a
+  `spice room contribute HANDLE --charge=C --question N [--cite KEY...] TEXT`
+  or `spice room contribute HANDLE --ask [--question N] TEXT`: a
   [typed](invariants/identity.md#identity-a-lane-contributes-typed-problem-space-records-to-an-open-design)
-  reason for, reason against, evidence, or question citing exact journal,
-  transcript, contribution, or retained-artifact sources. Its answer carries
-  `source`, the exact JSON a candidate reference or later contribution cites
-  it by. Room history groups contributions by kind beside the full
+  charge from -2 to +2 weighing one question item of the Design statement it
+  witnessed, or a question. A ±1 charge is an opinion; 0 and ±2 cite at least
+  one source. Each KEY resolves by form: a task handle or stamp cites that
+  task's statement head fact, a publication stamp a contribution in this
+  room, a base-52 code that journal fact, and a hex digest a retained
+  artifact. Its answer carries `source`, the exact JSON a candidate reference
+  cites it by. Room history groups contributions by kind beside the full
   chronology, and `--contributions` reads only them. Any lane may contribute
   without an invitation or subscription; the record makes it a participant,
   not a listener. A contribution is problem-space record, never a decision: it
@@ -131,10 +135,11 @@ owns each rule summarized here.
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and
   same-statement requested/contributing lane intersections. Fresh means no
-  contribution; steeped requires reason-for, reason-against, evidence, and
-  three distinct contributing lanes; every other contributed Design is
-  steeping and names every missing dimension. Questions and requested reach
-  are evidence but do not satisfy maturity. `spice room awareness HANDLE` and
+  contribution; steeped requires a positive charge, a negative charge, a 0
+  charge, and three distinct contributing lanes; every other contributed
+  Design is steeping and names every missing dimension. Questions and
+  requested reach are evidence but do not satisfy maturity. `spice room
+  awareness HANDLE` and
   the browser room read that projection, and steeped maturity makes a
   Design's first pass ready. Beyond that the state is advisory: it never
   changes standing, possession, grouping, selection, or authorization.
