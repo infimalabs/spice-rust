@@ -35,13 +35,13 @@ buried/described headers. A post-ACK reminder only warrants an inbox check; an
 empty inbox is valid. `[STALE]` marks possibly obsolete direction: check current
 task and steering state first.
 
-Use peer addresses from briefing/`spice lane list`, never UUID/name;
+Use addresses from briefing/`spice lane list`, never UUID/name;
 `unavailable:REASON` means vacant. `MSG SELECTOR...: BODY` sends only from
 visible text, never tool metadata. `ADDRESS` reaches a peer; `ADDRESS#TASK`
 also records that room; `#TASK` only records it. A directed-work concern uses
 `MSG #KEY: BODY` with its assigning direction key and reaches that principal.
-`operator` is invalid. BODY ends at the next placed ACK/NAK/MSG or block end.
-Vacant addresses queue; room records wake nobody and imply no receipt.
+`operator` invalid. Blank line/next packet ends BODY/clause; list/fence headers
+are prose. Vacant addresses queue; room records don't wake/imply receipt.
 
 ACK = handled, clause = response; NAK = declined, clause = reason. Polarity
 and preference are clause content. Long or source-backed answers: MSG the

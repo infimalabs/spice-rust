@@ -20,12 +20,11 @@
 //! refuse visibly with pointer guidance. A selector owns its qualifier; an
 //! unqualified route borrows no context from its neighbors.
 //!
-//! A body begins after the header's colon and runs to the next placed ACK,
-//! NAK, or MSG header or to the end of the scanned prose, with surrounding
-//! whitespace trimmed. When that next header opens its line behind list or
-//! dash framing, the body ends at that line's start, so a later packet's
-//! framing never leaks into an earlier one. A quoted, coded, or narrated
-//! marker is neither a packet nor a boundary. Text before the first header
+//! A body begins after the header's colon and runs through the rest of that
+//! paragraph, ending earlier at the next placed ACK, NAK, or MSG header, with
+//! surrounding whitespace trimmed. A blank line always returns following prose
+//! to the author. A header in a Markdown list item or fenced block is quoted
+//! prose: it opens no packet and bounds no body. Text before the first header
 //! belongs to no packet.
 
 use std::ops::Range;
@@ -402,8 +401,8 @@ fn same_task(known: Option<&TaskHandle>, context: &TaskHandle) -> bool {
 
 /// Where a body preceding the header at `start` ends.
 ///
-/// List bullets, dashes, brackets, and item numbers that alone precede a header
-/// on its line frame that header, so the body ends at the line start.
+/// Presentation framing that alone precedes a placed header on its line belongs
+/// to that header, so the earlier body ends at the line start.
 pub(super) fn boundary_before(prose: &str, floor: usize, start: usize) -> usize {
     let line_start = prose[..start]
         .rfind('\n')
