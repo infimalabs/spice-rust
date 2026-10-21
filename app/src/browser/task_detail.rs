@@ -225,11 +225,13 @@ pub(super) fn render_task_title(
 }
 
 /// A task's authored contract: quick detail shows the description alone, and
-/// deep detail adds every acceptance criterion or open Design question.
+/// deep detail adds every acceptance criterion or open Design question, each
+/// question beside its standing in `items` when the room projection knows it.
 pub(super) fn render_contract(
     statement: &wire::intent::BoardStatement,
     resolves: impl Fn(&TaskStamp) -> bool + Copy,
     acceptance: bool,
+    items: &[wire::rooms::DesignItemStanding],
 ) -> Html {
     let design = statement.intent == Some(wire::TaskIntent::Design);
     html! {
@@ -251,10 +253,25 @@ pub(super) fn render_contract(
                 } else {
                     <h4>{if design { "Questions" } else { "Acceptance" }}</h4>
                     <ul data-task-contract={statement.born.to_string()}>
-                        {for statement.acceptance.iter().enumerate().map(|(index, criterion)| html! {
-                            <li data-contract-question={(index + 1).to_string()} tabindex="-1">
-                                {render_task_text(criterion, "work-detail-criterion", resolves)}
-                            </li>
+                        {for statement.acceptance.iter().enumerate().map(|(index, criterion)| {
+                            let standing = items.get(index);
+                            html! {
+                                <li
+                                    data-contract-question={(index + 1).to_string()}
+                                    data-item-state={standing.map(|item| item.state.label())}
+                                    tabindex="-1"
+                                >
+                                    {render_task_text(criterion, "work-detail-criterion", resolves)}
+                                    if let Some(item) = standing {
+                                        <span class="work-detail-item-standing">{format!(
+                                            "{} · {} votes · {} lanes",
+                                            item.state.label(),
+                                            item.charges,
+                                            item.lanes,
+                                        )}</span>
+                                    }
+                                </li>
+                            }
                         })}
                     </ul>
                 }

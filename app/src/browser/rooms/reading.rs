@@ -1,24 +1,23 @@
-//! A task's room read in place: the composer that publishes into it, a
-//! Design's authority — its standing, positive conclusion control, immutable
-//! proposal versions and exact decisions, and kind-grouped contributions —
-//! and the room's conversation newest first, for open and settled tasks
-//! alike. Showing the view joins, groups, or wakes nothing.
+//! A task's room read in place: a Design's Standing and Maturity side by
+//! side beneath the room heading, the composer that publishes into the room,
+//! the Design's positive conclusion control, immutable proposal versions and
+//! exact decisions, and the room's conversation newest first, for open and
+//! settled tasks alike. Showing the view joins, groups, or wakes nothing.
 
 use wire::TaskStamp;
 use wire::intent::BoardTask;
-use wire::rooms::{
-    DesignItemInput, DesignItemStanding, DesignMaturity, DesignMaturityHead, DesignMaturityState,
-};
+use wire::rooms::{DesignItemInput, DesignMaturity, DesignMaturityHead, DesignMaturityState};
 use yew::prelude::*;
 
 use super::{Controls, RoomProjectionStatus, card};
 use crate::AppRuntime;
 use crate::browser::sender::SenderHandle;
 
-/// The read view of one task's room beneath `composer`. `detail` is the
+/// The read view of one task's room around `composer`. `detail` is the
 /// task's row from its task detail; the board's row wins while the board
 /// carries it, since only the board follows working-group moves. A Design's
-/// room adds its Design authority above the same conversation.
+/// room pairs its Standing and Maturity above the composer and adds its
+/// Design authority above the same conversation.
 pub(in crate::browser) fn render_task_room(
     runtime: &AppRuntime,
     controls: &Controls,
@@ -33,13 +32,15 @@ pub(in crate::browser) fn render_task_room(
         .unwrap_or(detail);
     let design = row.design_standing().is_some();
     let projection = runtime.room_projection();
-    let body = match projection.status() {
-        RoomProjectionStatus::Loading => {
-            html! { <p class="room-empty" aria-busy="true">{"Loading room…"}</p> }
-        }
-        RoomProjectionStatus::RequiresSnapshot => {
-            html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> }
-        }
+    let (pair, body) = match projection.status() {
+        RoomProjectionStatus::Loading => (
+            Html::default(),
+            html! { <p class="room-empty" aria-busy="true">{"Loading room…"}</p> },
+        ),
+        RoomProjectionStatus::RequiresSnapshot => (
+            Html::default(),
+            html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> },
+        ),
         RoomProjectionStatus::Available => {
             let has_current_listener = projection.has_current_listener(room, runtime.board());
             let mut cards = projection
@@ -72,15 +73,23 @@ pub(in crate::browser) fn render_task_room(
                 )
                 .collect::<Vec<_>>();
             cards.sort_by_key(|(position, _)| std::cmp::Reverse(*position));
-            html! {
-                <>
-                    if design {
+            let pair = if design {
+                html! {
+                    <div class="room-design-pair">
                         {super::standing::render_standing(runtime, room, Some(row))}
                         {render_maturity(
                             projection.maturity(room),
                             room,
                             &row.statement.body.acceptance,
                         )}
+                    </div>
+                }
+            } else {
+                Html::default()
+            };
+            let body = html! {
+                <>
+                    if design {
                         {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                         {super::approval::render_approval(runtime, controls, sender, room)}
                     }
@@ -96,7 +105,8 @@ pub(in crate::browser) fn render_task_room(
                         }
                     </section>
                 </>
-            }
+            };
+            (pair, body)
         }
     };
     html! {
@@ -113,6 +123,7 @@ pub(in crate::browser) fn render_task_room(
                     <h3>{"Room"}</h3>
                 }
             </div>
+            {pair}
             {composer}
             {body}
         </section>
@@ -120,7 +131,7 @@ pub(in crate::browser) fn render_task_room(
 }
 
 /// `design`'s maturity judged against `acceptance`, its current statement's
-/// question items.
+/// question items; each item's own standing reads in the Contract list.
 fn render_maturity(
     maturity: Option<&DesignMaturity>,
     design: &TaskStamp,
@@ -134,7 +145,6 @@ fn render_maturity(
         DesignMaturityState::Steeping { .. } => "steeping",
         DesignMaturityState::Steeped { .. } => "steeped",
     };
-    let items = maturity.items.standings(acceptance);
     html! {
         <section
             class="room-maturity"
@@ -147,11 +157,6 @@ fn render_maturity(
                 <span class="room-maturity-state">{state}</span>
             </header>
             <p>{summary(&judged)}</p>
-            if !items.is_empty() {
-                <div class="room-maturity-heads" aria-label="Maturity by question item">
-                    {for items.iter().zip(acceptance).map(|(item, text)| render_item(item, text))}
-                </div>
-            }
             if !maturity.recent_heads.is_empty() {
                 <div class="room-maturity-heads" aria-label="Maturity by statement">
                     {for maturity.recent_heads.iter().rev().map(render_head)}
@@ -192,23 +197,6 @@ fn render_head(head: &DesignMaturityHead) -> Html {
                     head.requested_decliners(),
                     head.requested_unanswered(),
                     if head.yield_truncated() { " (bounded)" } else { "" },
-                )}
-            </span>
-        </p>
-    }
-}
-
-/// One current question item's standing in its vote series.
-fn render_item(item: &DesignItemStanding, text: &str) -> Html {
-    html! {
-        <p data-question-item={item.question.to_string()} data-item-state={item.state.label()}>
-            <span>{format!("{}. {text}", item.question)}</span>
-            <span>
-                {format!(
-                    "{} · {} votes · {} lanes",
-                    item.state.label(),
-                    item.charges,
-                    item.lanes,
                 )}
             </span>
         </p>

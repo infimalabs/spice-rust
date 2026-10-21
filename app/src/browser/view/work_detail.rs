@@ -353,7 +353,12 @@ fn render_available(
         <div class="app-sheet-body">
             <section class="app-sheet-section">
                 <h3>{"Contract"}</h3>
-                {task_detail::render_contract(statement, |task| selection_has(render.selection, task), true)}
+                {task_detail::render_contract(
+                    statement,
+                    |task| selection_has(render.selection, task),
+                    true,
+                    &item_standings(render.runtime, statement),
+                )}
             </section>
             {super::super::drafts::render_editor(
                 render.runtime,
@@ -389,6 +394,26 @@ fn render_available(
             </section>
         </div>
     }
+}
+
+/// A Design's current question items with their standings, once the room
+/// projection is current; nothing for another task or before the snapshot.
+fn item_standings(
+    runtime: Option<&AppRuntime>,
+    statement: &wire::intent::BoardStatement,
+) -> Vec<wire::rooms::DesignItemStanding> {
+    let Some(projection) = runtime.map(AppRuntime::room_projection) else {
+        return Vec::new();
+    };
+    if statement.intent != Some(wire::TaskIntent::Design)
+        || projection.status() != crate::runtime::RoomProjectionStatus::Available
+    {
+        return Vec::new();
+    }
+    projection.maturity(&statement.born).map_or_else(
+        || wire::rooms::DesignItems::default().standings(&statement.acceptance),
+        |maturity| maturity.items.standings(&statement.acceptance),
+    )
 }
 
 /// The task's room beneath the composer that publishes into it, so a
