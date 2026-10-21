@@ -224,13 +224,12 @@ pub(super) fn render_task_title(
     }
 }
 
-/// A task's authored contract: quick detail shows the description alone, and
-/// deep detail adds every acceptance criterion or open Design question, each
-/// question beside its standing in `items` when the room projection knows it.
+/// A task's authored contract: its description and every acceptance criterion
+/// or open Design question, each question beside its standing in `items` when
+/// the room projection knows it.
 pub(super) fn render_contract(
     statement: &wire::intent::BoardStatement,
     resolves: impl Fn(&TaskStamp) -> bool + Copy,
-    acceptance: bool,
     items: &[wire::rooms::DesignItemStanding],
 ) -> Html {
     let design = statement.intent == Some(wire::TaskIntent::Design);
@@ -241,40 +240,38 @@ pub(super) fn render_contract(
             } else {
                 <p class="muted">{"No description was recorded."}</p>
             }
-            if acceptance {
-                if statement.acceptance.is_empty() {
-                    <p class="muted">{
-                        if design {
-                            "No open questions were recorded."
-                        } else {
-                            "No acceptance criteria were recorded."
+            if statement.acceptance.is_empty() {
+                <p class="muted">{
+                    if design {
+                        "No open questions were recorded."
+                    } else {
+                        "No acceptance criteria were recorded."
+                    }
+                }</p>
+            } else {
+                <h4>{if design { "Questions" } else { "Acceptance" }}</h4>
+                <ul data-task-contract={statement.born.to_string()}>
+                    {for statement.acceptance.iter().enumerate().map(|(index, criterion)| {
+                        let standing = items.get(index);
+                        html! {
+                            <li
+                                data-contract-question={(index + 1).to_string()}
+                                data-item-state={standing.map(|item| item.state.label())}
+                                tabindex="-1"
+                            >
+                                {render_task_text(criterion, "work-detail-criterion", resolves)}
+                                if let Some(item) = standing {
+                                    <span class="work-detail-item-standing">{format!(
+                                        "{} · {} votes · {} lanes",
+                                        item.state.label(),
+                                        item.charges,
+                                        item.lanes,
+                                    )}</span>
+                                }
+                            </li>
                         }
-                    }</p>
-                } else {
-                    <h4>{if design { "Questions" } else { "Acceptance" }}</h4>
-                    <ul data-task-contract={statement.born.to_string()}>
-                        {for statement.acceptance.iter().enumerate().map(|(index, criterion)| {
-                            let standing = items.get(index);
-                            html! {
-                                <li
-                                    data-contract-question={(index + 1).to_string()}
-                                    data-item-state={standing.map(|item| item.state.label())}
-                                    tabindex="-1"
-                                >
-                                    {render_task_text(criterion, "work-detail-criterion", resolves)}
-                                    if let Some(item) = standing {
-                                        <span class="work-detail-item-standing">{format!(
-                                            "{} · {} votes · {} lanes",
-                                            item.state.label(),
-                                            item.charges,
-                                            item.lanes,
-                                        )}</span>
-                                    }
-                                </li>
-                            }
-                        })}
-                    </ul>
-                }
+                    })}
+                </ul>
             }
         </>
     }
@@ -338,7 +335,7 @@ pub(super) fn render_media(media: &[wire::Media]) -> Html {
                         <button
                             key={identity.clone()}
                             type="button"
-                            class="message-image message-image--openable"
+                            class="app-fact-link message-image message-image--openable"
                             title={action.clone()}
                             aria-label={action}
                             data-image-preview=""
@@ -467,9 +464,9 @@ pub(super) fn render_closure_record(
     html! {
         <article class="work-note-card work-closure-card" data-closure-position={closure.position.to_string()}>
             <header>
-                <strong title={closure.author.to_string()}>
+                <h4 title={closure.author.to_string()}>
                     {format!("Closed by {} at {}", name(&closure.author), closure.phase)}
-                </strong>
+                </h4>
                 {task_time(&closure.at, TaskTimePresentation::Elapsed)}
             </header>
             {render_task_text(&closure.validation, "work-note-body", resolves)}
@@ -499,9 +496,9 @@ pub(super) fn render_disposition_record(
     html! {
         <article class="work-note-card work-closure-card" data-disposition={kind}>
             <header>
-                <strong title={record.author.to_string()}>
+                <h4 title={record.author.to_string()}>
                     {format!("No work constructed ({kind}) by {}", name(&record.author))}
-                </strong>
+                </h4>
                 {task_time(&record.at, TaskTimePresentation::Elapsed)}
             </header>
             if let Some(cover) = cover {
@@ -556,15 +553,15 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
 
 /// The one room composer every surface showing `task` renders, bound to that
 /// task and preserving only that task's draft while feedback uses its
-/// task-owned toast. Typed input enters that retained draft immediately, so a
-/// connection loss can leave the same composer visible and read-only until it
-/// returns. Its draft publishes an observation in the task's room; with a
-/// `closure`, the same draft can instead close the task as its validation.
-/// `actions` are the task's own further controls, kept in the composer's action
-/// row so they follow an observation.
+/// task-owned toast. It is a single Observe control until opened, unless it
+/// already holds a draft, a refusal, or a submission. Typed input enters that
+/// retained draft immediately, so a connection loss can leave the same
+/// composer visible and read-only until it returns. Its draft publishes an
+/// observation in the task's room; with a `closure`, the same draft can
+/// instead close the task as its validation.
 #[expect(
     clippy::too_many_arguments,
-    reason = "one composer binds its task, capabilities, draft, and action row"
+    reason = "one composer binds its task, capabilities, draft, and opener"
 )]
 pub(super) fn render_note_composer(
     id: String,
@@ -576,14 +573,24 @@ pub(super) fn render_note_composer(
     composer: &NoteComposer,
     input: Callback<InputEvent>,
     submit: &Callback<(TaskStamp, SubmitEvent)>,
-    actions: Html,
+    open: Callback<MouseEvent>,
 ) -> Html {
     if connected && !can_note {
         return html! {
-            <>
-                <p class="work-note-capability">{"This capability can read this room but cannot publish observations."}</p>
-                <div class="team-composer-controls work-note-actions">{actions}</div>
-            </>
+            <p class="work-note-capability">{"This capability can read this room but cannot publish observations."}</p>
+        };
+    }
+    let form_key = task.to_string();
+    if !composer.expanded() {
+        return html! {
+            <div key={form_key} class="work-note-observe">
+                <button
+                    type="button"
+                    class="app-compact-control"
+                    aria-label={format!("Observe {handle}")}
+                    onclick={open}
+                >{"Observe"}</button>
+            </div>
         };
     }
     let busy = composer.submission.busy();
@@ -591,7 +598,6 @@ pub(super) fn render_note_composer(
     let posting = composer.submission == NoteSubmission::Posting;
     let closing = composer.submission == NoteSubmission::Closing;
     let deleting = composer.submission == NoteSubmission::Deleting;
-    let form_key = task.to_string();
     let task = task.clone();
     let label_id = id.clone();
     html! {
@@ -610,14 +616,14 @@ pub(super) fn render_note_composer(
                 onkeydown={note_keyboard_submit(!locked)}
             />
             <div class="team-composer-controls work-note-actions">
-                <button type="submit" class="team-send" disabled={locked}>
+                <button type="submit" class="app-compact-control" disabled={locked}>
                     {if posting { "Posting…" } else { "Add" }}
                 </button>
                 if let Some(closure) = closure {
                     if closure.closable {
                         <button
                             type="submit"
-                            class="team-send"
+                            class="app-compact-control"
                             value={CLOSE_SUBMITTER}
                             disabled={locked}
                             title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
@@ -627,7 +633,7 @@ pub(super) fn render_note_composer(
                     }
                     <button
                         type="submit"
-                        class="team-send"
+                        class="app-compact-control"
                         value={DELETE_SUBMITTER}
                         disabled={locked}
                         title={closure.holder.as_ref().map(|holder| format!("Deleting takes this task from {holder}"))}
@@ -635,7 +641,6 @@ pub(super) fn render_note_composer(
                         {if deleting { "Deleting…" } else { "Delete" }}
                     </button>
                 }
-                {actions}
             </div>
         </form>
     }

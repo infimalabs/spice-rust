@@ -157,7 +157,7 @@ pub(super) fn render_approval(
     html! {
         <section class="room-approval" aria-label="Proposal versions" data-room-proposals="">
             <header>
-                <strong>{"Proposal versions"}</strong>
+                <h4>{"Proposal versions"}</h4>
                 <span>{open.len()}</span>
             </header>
 
@@ -165,7 +165,7 @@ pub(super) fn render_approval(
             if !withdrawn.is_empty() {
                 <section class="room-approval-withdrawn" aria-label="Withdrawn versions" data-room-withdrawn="">
                     <header>
-                        <strong>{"Withdrawn versions"}</strong>
+                        <h4>{"Withdrawn versions"}</h4>
                         <span>{withdrawn.len()}</span>
                     </header>
                     <p class="room-notice">
@@ -474,7 +474,7 @@ fn render_candidate(
             tabindex="0"
         >
             <header>
-                <strong>{format!("Proposal {code}")}</strong>
+                <h4>{format!("Proposal {code}")}</h4>
                 <span data-approval-standing="">{standing.label()}</span>
                 <code title="Retaining journal fact">{fact.to_string()}</code>
             </header>
@@ -654,10 +654,10 @@ fn render_every_output_verdict(
             role="group"
             aria-label="Verdict for every output"
         >
-            <button type="button" disabled={locked} onclick={all(OutputVerdict::Accepted)}>
+            <button type="button" class="app-compact-control" disabled={locked} onclick={all(OutputVerdict::Accepted)}>
                 {"Accept all"}
             </button>
-            <button type="button" disabled={locked} onclick={all(OutputVerdict::Rejected)}>
+            <button type="button" class="app-compact-control" disabled={locked} onclick={all(OutputVerdict::Rejected)}>
                 {"Reject all"}
             </button>
         </div>
@@ -969,6 +969,7 @@ fn render_controls(
             <div class="room-inline-actions">
                 <button
                     type="button"
+                    class="app-compact-control"
                     onclick={Callback::from(move |_: MouseEvent| preview())}
                     disabled={locked}
                 >
@@ -1050,8 +1051,8 @@ fn render_phase(
                 <div class="room-decision-preview" data-decision-preview={outcome_key(&submission.request.decision.outcome)}>
                     <p>{effect}</p>
                     <div class="room-inline-actions">
-                        <button type="button" onclick={submit}>{"Submit decision"}</button>
-                        <button type="button" onclick={Callback::from(move |_: MouseEvent| cancel())}>{"Cancel"}</button>
+                        <button type="button" class="app-compact-control" onclick={submit}>{"Submit decision"}</button>
+                        <button type="button" class="app-compact-control" onclick={Callback::from(move |_: MouseEvent| cancel())}>{"Cancel"}</button>
                     </div>
                 </div>
             }

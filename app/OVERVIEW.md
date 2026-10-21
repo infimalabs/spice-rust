@@ -116,7 +116,11 @@ with no sub-headings. There an instant reads as a relative age with its full
 local time on hover, a lane, occupant, team, or resident generation reads by
 name rather than identity, and an absent value reads as a dash. Evidence,
 blockers, relationships, provenance, the task's room, and its closure appear
-together rather than behind tabs or pagination. Activating a
+together rather than behind tabs or pagination. A section with nothing to show
+(no contract text, no relationships, no room publications) collapses to one
+muted line without a heading. Sections head with the sheet's h3 and their
+parts with h4, and every sheet action is a compact control or a fact link, so
+the sheet reads as one page. Activating a
 selected graph node scrolls and focuses its detail section. Every identity the
 sheet names navigates: a relationship inside the selection focuses its
 section, while one outside it, a proposal output's handle, and a parent-task
@@ -128,7 +132,10 @@ Each detail's
 **Room** section seats its composer directly above the room's conversation,
 newest first, so a submitted observation is published into the task's room
 and appears right beneath the draft that wrote it. A Design's room is the same
-section with its Design authority added. The composer records each input as its
+section with its Design authority added and its permalink as a compact control
+beside the heading. The composer is a single **Observe** control until the
+operator opens it or it holds a draft, a refusal, or a submission; a landed
+observation folds it back. It records each input as its
 task-owned browser draft. A connection loss keeps that composer visible with
 its exact text read-only and no publish action until the resident returns;
 reconnect makes the same draft editable, and a generation reload hands it to
@@ -141,8 +148,9 @@ read; opening that task again reads its current detail.
 
 A pending Filed task's **Deferral** fact changes when it returns in place, on
 the fact's own line. **Clear**, shown only while the task is deferred, wakes it
-through `task::wake`; the calendar button opens the browser's date-time picker,
-and the chosen local time defers the task until then through `task::defer`.
+through `task::wake`; **Defer**, labelled **Change deferral** while deferred,
+opens the browser's date-time picker, and the chosen local time defers the
+task until then through `task::defer`.
 Each witnesses the workflow and deferral heads the fact was drawn from, so a
 change made against a stale view refuses. A landed change re-reads the board,
 so the fact shows the new time, or a dash once cleared, without a reload. The
@@ -242,18 +250,6 @@ starts from that Draft's latest admitted content.
 refusal names the field or filing option to repair and leaves the Draft
 unchanged. Success replaces the Draft with its Filed task, which the allocator
 can offer at once.
-
-The **OOPS** section follows Drafts and lists each open OOPS report the
-operator can read, each opening its task detail. There **File** sits in the
-room composer's action row beside **Add**, so the operator can read a
-report, publish observations, and file it in one place. File takes no input: it
-files the report under its current project, and the allocator can offer the
-result at once. Filing witnesses the statement, workflow, and deferral heads
-the control was drawn from, so a report that changed meanwhile refuses. A
-refusal is shown beneath the composer and leaves the report parked. Success
-replaces the report with its Filed task under that project's handle.
-Re-homing a report under another project, filing under a Design's preparation,
-or filing and claiming at once stays with `spice task file`.
 
 ## Resident topology in the global menu
 

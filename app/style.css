@@ -185,7 +185,7 @@ body {
 
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 
-button, select, input, textarea {
+button, select, input, textarea, :where(a.app-compact-control) {
   border: var(--app-control-edge);
   background: var(--control);
   color: var(--ink);
@@ -723,6 +723,8 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   padding: 18px 0;
   border-top: var(--app-edge-soft);
 }
+.app-sheet-empty { padding: 10px 0; color: var(--muted); font-size: var(--app-type-detail); }
+.app-sheet-empty > p { margin: 0; }
 .app-sheet-section h3 {
   margin: 0 0 12px;
   font-size: var(--app-type-section);
@@ -777,7 +779,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
    as a card. Capsule geometry belongs to the compact-control role: a control
    class that owns its shape, or app-compact-control for a compact action
    with no class of its own. */
-button {
+button, :where(a.app-compact-control) {
   border-radius: var(--app-radius-control);
   min-height: 36px;
   padding: 0 12px;
@@ -785,8 +787,12 @@ button {
   font-weight: 650;
 }
 
-button:hover { border-color: var(--accent); }
+button:hover, a.app-compact-control:hover { border-color: var(--accent); }
 .app-compact-control { border-radius: var(--app-radius-pill); }
+/* A link in the compact-control role, such as a permalink, wears the same
+   face as the buttons beside it. */
+a.app-compact-control { display: inline-flex; align-items: center; color: var(--ink); text-decoration: none; }
+a.app-compact-control:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 2px; }
 button:is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; opacity: .5; }
 
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {

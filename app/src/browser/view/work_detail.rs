@@ -354,15 +354,18 @@ fn render_available(
     let completion = workflow.status.completion();
     html! {
         <div class="app-sheet-body">
-            <section class="app-sheet-section">
-                <h3>{"Contract"}</h3>
-                {task_detail::render_contract(
-                    statement,
-                    |task| selection_has(render.selection, task),
-                    true,
-                    &item_standings(render.runtime, statement),
-                )}
-            </section>
+            if statement.description.is_none() && statement.acceptance.is_empty() {
+                {empty_section("No contract text was recorded.")}
+            } else {
+                <section class="app-sheet-section">
+                    <h3>{"Contract"}</h3>
+                    {task_detail::render_contract(
+                        statement,
+                        |task| selection_has(render.selection, task),
+                        &item_standings(render.runtime, statement),
+                    )}
+                </section>
+            }
             {super::super::drafts::render_editor(
                 render.runtime,
                 render.draft_controls,
@@ -371,14 +374,11 @@ fn render_available(
             )}
             {task_detail::render_media(&answer.media)}
             {render_room(render, answer)}
-            <section class="app-sheet-section">
-                <h3>{"Relationships"}</h3>
-                {render_relationships(render.work, projected, statement, &RelationTargets {
-                    selection: render.selection,
-                    focus: focus_task,
-                    navigate: render.navigate,
-                })}
-            </section>
+            {render_relationships(render.work, projected, statement, &RelationTargets {
+                selection: render.selection,
+                focus: focus_task,
+                navigate: render.navigate,
+            })}
             <section class="app-sheet-section">
                 <h3>{"Provenance"}</h3>
                 <dl class="app-fact-grid">
@@ -427,6 +427,7 @@ fn item_standings(
 /// submitted observation lands directly above the conversation it joins.
 fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDetailAnswer) -> Html {
     let statement = &answer.task.statement.body;
+    let note_id = format!("work-detail-note-{}", statement.born);
     let composer = html! {
         <>
             {task_detail::render_closure_record(
@@ -451,7 +452,7 @@ fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDet
                 |task| selection_has(render.selection, task),
             )}
             {task_detail::render_note_composer(
-                format!("work-detail-note-{}", statement.born),
+                note_id.clone(),
                 statement.handle.as_str(),
                 &statement.born,
                 render.connected,
@@ -460,7 +461,7 @@ fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDet
                 &render.notes.shown(&statement.born),
                 render.notes.draft_input(&statement.born),
                 &render.submit_note,
-                Html::default(),
+                render.notes.opener(&statement.born, note_id),
             )}
         </>
     };
@@ -683,9 +684,20 @@ fn render_relationships(
             render_task_link(work, &row.statement.body.born, "Dependent", targets)
         });
     if statement.dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
-        return html! { <p class="muted">{"No dependencies or dependents."}</p> };
+        return empty_section("No dependencies or dependents.");
     }
-    html! { <div class="work-relationship-links">{for dependencies.chain(dependents)}</div> }
+    html! {
+        <section class="app-sheet-section">
+            <h3>{"Relationships"}</h3>
+            <div class="work-relationship-links">{for dependencies.chain(dependents)}</div>
+        </section>
+    }
+}
+
+/// A section with nothing to show, collapsed to one muted line without the
+/// heading and spacing of a populated section.
+fn empty_section(text: &'static str) -> Html {
+    html! { <section class="app-sheet-section app-sheet-empty"><p>{text}</p></section> }
 }
 
 fn selection_has(selection: &TaskOverviewSelection, born: &TaskStamp) -> bool {
@@ -715,7 +727,7 @@ fn render_task_link(
         Callback::from(move |_| navigate.emit(navigation::Intent::Task(target.clone())))
     };
     html! {
-        <button type="button" class="work-relationship-link" onclick={activate}>
+        <button type="button" class="app-fact-link work-relationship-link" onclick={activate}>
             <span>
                 {relationship}
                 if !selected {
