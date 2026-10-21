@@ -1108,11 +1108,19 @@ pub(super) fn occupant_exited(
     // for a successor to cite it.
     super::steering::dispose_at_exit(bus, paths, epoch, exit.lane, &vendor, diagnostic);
     // A turn that ended on a trust refusal leaves its held work parked on the
-    // grant its own worktree pended, so nothing wakes the lane until the
-    // operator rules. A failure here leaves the claim as it was.
+    // grant its own worktree pended for its current surface, so nothing wakes
+    // the lane until the operator rules. A failure here, including an
+    // unreadable surface, leaves the claim as it was.
+    let surface = || {
+        let repository = Repository::discover(&worktree)
+            .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
+        crate::trust_command::Surface::load(&repository)
+            .map(|surface| surface.digest().clone())
+            .map_err(|error| store_fault("trust::surface-unreadable", &error.to_string()))
+    };
     let parked = wire::Instant::new(jiff::Timestamp::now())
         .map_err(|error| store_fault("lane::exit-clock-invalid", &error.to_string()))
-        .and_then(|at| pended_grant::park_on_pended_grant(bus, exit.lane, &worktree, at));
+        .and_then(|at| pended_grant::park_on_pended_grant(bus, exit.lane, &worktree, surface, at));
     if let Err(error) = parked {
         let _ = writeln!(
             diagnostic,

@@ -2,29 +2,34 @@
 //!
 //! An executable-configuration trust refusal is the one point where lane
 //! automation stops for the operator. When an occupant's turn ends while its
-//! lane holds a claim and the lane's worktree has an ungranted digest, the held
+//! lane holds a claim and the lane's worktree still presents a digest it pended
+//! and nobody granted as its current executable-configuration surface, the held
 //! task acquires that grant as its trust requirement and its live lease is iced
 //! on the indefinite horizon, exactly as `task require --trust-grant` records
-//! them. The held-claim wake projection already parks a claim on an
-//! unsatisfied grant and thaws it once the grant lands, so nothing wakes the
-//! lane for that task until the operator rules.
+//! them. A pended head stays pended after its worktree moves on, so only the
+//! current surface names a live refusal. The held-claim wake projection already
+//! parks a claim on an unsatisfied grant and thaws it once the grant lands, so
+//! nothing wakes the lane for that task until the operator rules.
 
 use super::automatic::{guard_held_claim, held_claim_authority};
 use super::*;
 use journal::JournalHead;
 use wire::{EnvironmentRequirement, EnvironmentRequirements, TrustHead, TrustState};
 
-/// Record the newest ungranted digest `worktree` pended as the held task's
-/// trust requirement.
+/// Record `worktree`'s current surface digest as the held task's trust
+/// requirement when that worktree pended it and it is still ungranted.
 ///
-/// Answers whether a requirement was recorded. A lane without an active
-/// claim, a claim whose lease already expired, a worktree with no ungranted
-/// digest, a task already requiring that digest, and a task already parked on
-/// another worktree's ungranted digest all record nothing.
+/// Answers whether a requirement was recorded. `surface` reads the worktree's
+/// current digest and runs only once a live claim and a pended head from this
+/// worktree exist. A lane without an active claim, a claim whose lease already
+/// expired, a current surface this worktree has not pended or that is no
+/// longer pended, a task already requiring that digest, and a task already
+/// parked on another worktree's ungranted digest all record nothing.
 pub(in crate::resident) fn park_on_pended_grant(
     bus: &Bus,
     lane: CanonicalUuid,
     worktree: &str,
+    surface: impl FnOnce() -> CommandResult<wire::Digest>,
     at: wire::Instant,
 ) -> CommandResult<bool> {
     let snapshot = bus
@@ -37,8 +42,20 @@ pub(in crate::resident) fn park_on_pended_grant(
     if lease.expiry <= at {
         return Ok(false);
     }
+    let pended_here = |head: &JournalHead<TrustHead>| {
+        head.body().state == TrustState::Pended && head.body().worktree.as_deref() == Some(worktree)
+    };
+    if !snapshot.trust().iter().any(pended_here) {
+        return Ok(false);
+    }
+    let surface = surface()?;
     let statement = authority.statement.body();
-    let Some(requirements) = parked(&statement.requirements, snapshot.trust(), worktree) else {
+    let Some(requirements) = parked(
+        &statement.requirements,
+        snapshot.trust(),
+        worktree,
+        &surface,
+    ) else {
         return Ok(false);
     };
     let iced = (!spice::claim_lease::is_indefinite(lease)).then(|| spice::claim_lease::iced(lease));
@@ -75,24 +92,26 @@ pub(in crate::resident) fn park_on_pended_grant(
     commit(bus, write).map(|_| true)
 }
 
-/// The held task's requirements with its trust slot naming the newest
-/// ungranted digest `worktree` pended, or `None` when nothing should change.
+/// The held task's requirements with its trust slot naming `surface`, the
+/// worktree's current digest, when `worktree` pended it and it is still
+/// ungranted, or `None` when nothing should change.
 ///
 /// Requirements hold one entry per environmental fact, so the trust slot names
-/// one digest. A newer digest from the same worktree supersedes an older one,
+/// one digest. The current digest replaces an older one from the same worktree,
 /// and a granted digest no longer parks anything, but an ungranted digest from
 /// another worktree already parks the task on a grant this lane did not cause.
 fn parked(
     requirements: &EnvironmentRequirements,
     trust: &[JournalHead<TrustHead>],
     worktree: &str,
+    surface: &wire::Digest,
 ) -> Option<EnvironmentRequirements> {
     let ours = |head: &TrustHead| head.worktree.as_deref() == Some(worktree);
     let pended = &trust
         .iter()
-        .filter(|head| head.body().state == TrustState::Pended && ours(head.body()))
-        .max_by_key(|head| head.position())?
-        .body()
+        .map(JournalHead::body)
+        .find(|head| &head.digest == surface)
+        .filter(|head| head.state == TrustState::Pended && ours(head))?
         .digest;
     let current = requirements
         .as_slice()
