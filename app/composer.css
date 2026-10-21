@@ -84,6 +84,8 @@
   cursor: pointer;
 }
 .agent-menu-button::-webkit-details-marker { display: none; }
+/* The lane's provider mark is the menu glyph; the button carries its title. */
+.agent-menu-button > .app-provider-emblem { width: 13px; height: 13px; cursor: inherit; }
 /* Renewal keeps its recipient-colored status dot, not a colored control rim. */
 .agent-menu[data-renewal-pending="true"] > .agent-menu-button {
   position: relative;
@@ -312,17 +314,23 @@
 }
 
 
-/* Each provider mark is a behind-text watermark, not a heading control. */
-.composer-shard > .app-provider-emblem {
+/* The lane's activity trace runs flush across its composer's foot, behind the
+   draft, and leaves once typing starts: the draft owns the whole field. */
+.composer-shard > .composer-trace-rail {
   position: absolute;
-  right: 9px;
-  bottom: 7px;
-  width: 16px;
-  height: 16px;
-  opacity: .32;
+  inset: auto 0 0;
+  height: 30px;
+  border-top: 1px solid color-mix(in srgb, var(--accent-slot) 14%, transparent);
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--app-shadow-source) 18%, transparent));
   pointer-events: none;
+  transition: opacity var(--app-motion-settle) var(--app-ease-standard);
 }
-/* Every draft's field is see-through and stays above its shard's watermark. */
+.composer-shard > .composer-trace-rail > .activity-trace { inset: 3px 0 0; }
+.composer-shard:has(> textarea:not(:placeholder-shown)) > .composer-trace-rail { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .composer-shard > .composer-trace-rail { transition: none; }
+}
+/* Every draft's field is see-through and stays above its shard's trace. */
 .composer-shard > textarea {
   position: relative;
   z-index: 1;

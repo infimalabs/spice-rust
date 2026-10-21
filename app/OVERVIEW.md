@@ -403,9 +403,10 @@ topology; cancellation or a removed source sends nothing.
 
 ## Lane menu
 
-Each Chat lane's compact menu button uses a smaller three-bar glyph than the
-team menu, matching its smaller control without shrinking the pointer target.
-It swaps that lane's composer for its seat panel. The panel leads with what the
+Each Chat lane's compact menu button shows that lane's provider emblem, or
+omp's pi when the model names no recognized provider, and its hover title
+names the model, effort, and fast mode the emblem stands for. It swaps that
+lane's composer for its seat panel. The panel leads with what the
 agent needs from the operator — consent requests to Allow or Deny in place,
 held tasks iced, blocked, or in review, Designs awaiting a decision, a lease
 near expiry, and direction left waiting — then the Wake, Drain, Remove, Renew,

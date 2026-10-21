@@ -1069,13 +1069,11 @@ fn render_message_controls(
     }
 }
 
-/// The quote shards above one composer. A lane composer passes its standing
-/// and status; a design composer has neither, so its shards carry no provider
-/// emblem or lane status.
+/// The quote shards above one composer. A lane composer passes its status; a
+/// design composer has none, so its shards carry no lane status.
 pub(in crate::browser) fn render_quote_shards(
     lane_key: &str,
     draft: &ComposerDraft,
-    standing: Option<&Standing>,
     status: Option<crate::runtime::LaneStatus>,
     drafts: &UseReducerHandle<ComposerDrafts>,
     target_submit: Callback<KeyboardEvent>,
@@ -1084,7 +1082,7 @@ pub(in crate::browser) fn render_quote_shards(
     let status_key = status.map(crate::runtime::LaneStatus::key);
     html! {
         <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
-            {for draft.quotes.iter().enumerate().map(|(quote_index, quote)| {
+            {for draft.quotes.iter().map(|quote| {
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
                 let remove_identity = quote.identity.clone();
@@ -1140,9 +1138,6 @@ pub(in crate::browser) fn render_quote_shards(
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
-                        if let Some(standing) = standing {
-                            {render_provider_emblem(standing, "composer", Some(quote_index))}
-                        }
                         <ComposerTextarea
                             key={quote.body.clone()}
                             id={textarea_id}

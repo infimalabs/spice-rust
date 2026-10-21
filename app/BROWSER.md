@@ -471,6 +471,14 @@ A team lane whose seat is empty now drains its whole pip to gray, as the Spice
 pepper does while Spice is disconnected, whatever its status says, and wears
 its accent again once an occupant holds the seat.
 
+The same trace runs flush across the foot of each lane's primary composer, a
+30-pixel rail behind the draft drawn from the lane's same activities and off
+intervals at the rail's own measured size, so a burst rises to the same
+height in the pip and on the rail. It takes no pointer input, drains to gray
+with the pip, and fades out once the draft holds text. Quote shards carry no
+rail. The lane's provider emblem is its menu button's glyph, and that button's
+hover title names the provider standing the emblem names.
+
 The app's `style-src 'self'` policy refuses inline style attributes, so the
 trace is SVG geometry in the pane's measured CSS pixels and every colour and
 glow comes from the stylesheet. A Playwright check of the trace must keep that

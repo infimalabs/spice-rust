@@ -433,7 +433,7 @@ fn render_topology_agent(
                     <span>{kept}</span>
                 }
             </p>
-            {super::watchband::render_provider_emblem(standing, "sidebar", None)}
+            {super::watchband::render_provider_emblem(standing, "sidebar")}
         </@>
     }
 }

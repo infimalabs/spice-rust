@@ -1,9 +1,10 @@
-//! The activity trace inside a team or working-group pip: a glowing curve per
-//! kind of work over a fading fill, a dot where each curve meets now, and
-//! lifecycle markers. A team's pip traces its lane; a group's pip pools the
-//! distinct lanes working on its Design. Everything is SVG geometry in the
-//! pane's measured CSS pixels, which the app's `style-src 'self'` policy admits
-//! where inline styles are refused; colours and glow stay in the stylesheet.
+//! The activity trace inside a team or working-group pip, and across the foot
+//! of a lane's composer: a glowing curve per kind of work over a fading fill, a
+//! dot where each curve meets now, and lifecycle markers. A team's pip and
+//! composer rail trace its lane; a group's pip pools the distinct lanes working
+//! on its Design. Everything is SVG geometry in the pane's measured CSS pixels,
+//! which the app's `style-src 'self'` policy admits where inline styles are
+//! refused; colours and glow stay in the stylesheet.
 
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -86,6 +87,22 @@ pub(super) fn lane_off(
         seated_now,
     )
     .into()
+}
+
+/// One lane's trace across the foot of its primary composer: the same
+/// activities and off intervals its pip draws, drawn at the rail's own size.
+pub(super) fn render_composer_rail(
+    runtime: &crate::AppRuntime,
+    member: &crate::runtime::LaneMember,
+) -> Html {
+    let seated = member.occupant.is_some();
+    let activities = lane_activities(runtime, member.lane);
+    let off = lane_off(runtime, member.lane, seated);
+    html! {
+        <span class="composer-trace-rail" data-lane-seated={seated.to_string()} aria-hidden="true">
+            <ActivityTrace id={format!("composer-{}", member.lane)} {activities} {off} />
+        </span>
+    }
 }
 
 /// Retained activity from the distinct lanes currently working on one Design.
