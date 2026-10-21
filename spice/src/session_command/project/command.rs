@@ -23,10 +23,9 @@ use super::{flag, refusal};
 use crate::read_page::{Page, Paged};
 use crate::session_command::dataset::stream::{ForwardCursor, ForwardProgress, compressed};
 use crate::session_command::dataset::{
-    DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, OPEN_TOOL_LIMIT,
-    OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget, admit_sources,
-    finish_fold, frontier_limit, recent_compaction_horizon, reduce_record, source_view_text_bytes,
-    text_bytes,
+    DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, ResidueLedger, ResultFrontier,
+    SessionWork, SessionWorkBudget, admit_sources, finish_fold, frontier_limit,
+    recent_compaction_horizon, reduce_record, source_view_text_bytes, text_bytes,
 };
 use crate::session_command::source::ResolvedSource;
 
@@ -460,34 +459,9 @@ fn drain_command_turns(
     fold: &mut FoldState,
     at: &str,
 ) -> Result<(), Refusal> {
-    let retain = fold
-        .current
-        .into_iter()
-        .chain(fold.pending.values().map(|pending| pending.turn))
-        .min()
-        .unwrap_or(scratch.turns.len());
+    let retain = fold.closed_prefix(scratch.turns.len());
     scratch.turns.drain(..retain);
-    if retain > 0 {
-        fold.current = fold.current.map(|index| index - retain);
-        for pending in fold.pending.values_mut() {
-            pending.turn -= retain;
-        }
-    }
-    if scratch.turns.len() > OPEN_TURN_LIMIT {
-        return Err(refusal(
-            "session::aggregate-open-turn-limit",
-            Some(format!("limit={OPEN_TURN_LIMIT} at={at:?}")),
-            "repair unresolved tool spans or narrow the immutable transcript inputs",
-        ));
-    }
-    if fold.pending.len() > OPEN_TOOL_LIMIT {
-        return Err(refusal(
-            "session::aggregate-open-tool-limit",
-            Some(format!("limit={OPEN_TOOL_LIMIT} at={at:?}")),
-            "repair unresolved tool spans or narrow the immutable transcript inputs",
-        ));
-    }
-    Ok(())
+    fold.release(retain, scratch.turns.len(), at)
 }
 
 fn command_view(row: &CommandRecord, page: &Page) -> CommandView {
