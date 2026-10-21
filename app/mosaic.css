@@ -910,7 +910,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
    final letter as a provider emblem's fast badge rides its glyph. The button's backdrop filter is a
    stacking context, so the negative layer paints over the glass and under the in-flow word. */
 .app-turbo-button__fire {
-  position: absolute; bottom: 11px; inset-inline-end: 2px; z-index: -1; line-height: 1; pointer-events: none;
+  position: absolute; bottom: 12.5px; inset-inline-end: 5px; z-index: -1; line-height: 1; pointer-events: none;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: var(--app-type-small-copy);
   filter: drop-shadow(0 .5px .5px color-mix(in srgb, var(--app-shadow-source) 45%, transparent));
 }
