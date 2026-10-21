@@ -168,8 +168,8 @@ plum. Any other selection keeps the page's base.
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band led by
-the live ticker and closed by presence pips, which sit directly above the
-composer's control panel. The ticker's relative age sits in the column of the
+the live ticker and closed by the lights panel's weave, which sits directly
+above the composer's control panel. The ticker's relative age sits in the column of the
 composer ages below it, at every width. The
 status band is the console's top edge, for a team and a working group alike.
 Where two consoles touch, each band rounds its touching top corner with the
@@ -177,16 +177,16 @@ same radius as the lane-top tabs. Only the earlier console draws the dividing
 rule, a hairline half the width of the app's ordinary edge, so its top rule
 turns down its end edge into that faint rule, while the later band's rounded
 top rule tapers away against it. A corner at the browser
-edge stays square. Pips follow canonical member order and distinguish active,
-queued, waiting, bound, and unbound states without encoding agent identity.
-Their one-to-six matrix keeps its existing rows, columns, order, and stagger,
-but each pip fills its grid cell; a one-pixel status-band seam separates
-adjacent cells. The ticker keeps relative age, status, prefix, accent,
+edge stays square. The weave holds one full-width row per member in canonical
+member order, filling the panel for one to six members, and its rails and
+trails distinguish active, queued, waiting, bound, and unbound states; the
+[weave](BROWSER.md#team-and-group-weaves) describes its threads, silence
+trails, and collaboration knots. The ticker keeps relative age, status, prefix, accent,
 accessible label, and live-region semantics. A running command's line opens
 naming its tool, such as `job:`; its latest nonblank output row follows that
 prefix and leads the intent and operation context, so a narrow ticker cuts
 context before the result; the complete bounded line remains available on
-hover. An empty fleet reserves no pips and invents no status.
+hover. An empty fleet draws no weave rows and invents no status.
 
 ## Task strips
 
@@ -294,10 +294,10 @@ tabs do. It maps each team element to a design-side analog:
 | Team total: counts and opens exactly the tasks its members are actively working | Group total: counts and opens exactly all actively claimed work associated with the group's designs, even when one lane holds several tasks |
 | One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
 | A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
-| Presence pips: one per member, by state, each tracing its lane's recent activity | Design lights: one per design in its accent, each the same traced pip tracing its Design room's recent activity, distinguishing open passive, claimed, each of the four pass cycle states (gathering input, ready for proposal, awaiting decision, waiting on selected work), concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row or cycle is unavailable invents no standing |
+| Presence weave: one row per member, its rail and trail by state, its thread tracing the lane's recent activity | Design weave: one row per design in its accent, its thread pooling the activity of the lanes working that design through the same thread model, knotted to other rows where those lanes exchange packets, and its rail and trail distinguishing open passive, claimed, each of the four pass cycle states (gathering input, ready for proposal, awaiting decision, waiting on selected work), concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row or cycle is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest words said across the group's designs, with the same age, prefix, accessible label, and live region; a contribution names its lane and kind, while departures and coordination events do not displace it |
 
-A design light reads its [standing](#design-standing): concluded done,
+A design row reads its [standing](#design-standing): concluded done,
 concluded collapsed, or deleted once terminal, even while a saved group still
 holds it; open passive outside every group. An open active Design then reads
 claimed while a lane actively claims it for a pass, and otherwise the pass
@@ -305,7 +305,7 @@ cycle state the resident judged; awaiting decision, the one state the operator
 owes, carries the warning colour. The Design room's standing names the same
 cycle, who acts next, whether the last pass ended in a proposal or was
 abandoned, and links the exact proposal awaiting decision and the latest
-decision. As a team's pips do, the design lights close the
+decision. As a team's weave does, the design weave closes the
 status row above the control panel; this browser's own move-left, move-right,
 and close controls live in the panel's group arrangement menu.
 

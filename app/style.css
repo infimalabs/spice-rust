@@ -380,59 +380,59 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   border: var(--app-presence-member-border-width) solid color-mix(in srgb, var(--app-presence-color) 25%, var(--panel));
   box-sizing: content-box;
 }
-.app-presence-pip--status {
-  width: var(--app-presence-pip-size);
-  height: var(--app-presence-pip-size);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-semantic-live) 14%, transparent);
-}
-.app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
-/* A working group's pips are its Design channels, each traced as a team's
-   lane is, its rail in its accent shaped by its standing: claimed burns, an
-   active pass dims, passive idles faint, an output owing selection warns,
-   and concluded, deleted, or unavailable fades. */
-.app-presence-pip--status.group-design-pip { --app-presence-color: var(--accent-slot); }
-.group-design-pip:is(.gathering-input, .ready-for-proposal, .waiting-on-selected-work) { --app-presence-opacity: .55; }
-.group-design-pip.passive { --app-presence-opacity: .3; }
-.group-design-pip.awaiting-decision { --app-presence-color: var(--warning); }
-.group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; }
 .group-surface .ticker-age.awaiting-decision { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
 
-/* A team or group cell is one pane in a shared microscopic surface. The grid
-   leaves a one-device-pixel transparent outer and inter-cell gap; cells add no
-   rails, rounded edges, or individual frames. Tools wear the accent, prose
-   lifts toward ink, and reasoning sinks toward the page, in a pip and across
-   its lane's composer rail alike. */
-:is(.team-lights > .app-presence-pip--trace, .composer-trace-rail) {
+/* Tools wear the accent, prose lifts toward ink, and reasoning sinks toward
+   the page across a lane's composer rail. */
+.composer-trace-rail {
   --trace-tool: var(--accent-slot);
   --trace-prose: color-mix(in srgb, var(--accent-slot) 45%, var(--ink));
   --trace-reasoning: color-mix(in srgb, var(--accent-slot) 45%, var(--page));
 }
-.team-lights > .app-presence-pip--trace {
+/* A lane with nobody in its seat drains to gray, as the Spice chili does while
+   Spice is disconnected, so only running lanes wear their accent. */
+:is(.weave-row, .composer-trace-rail)[data-lane-seated="false"] { filter: grayscale(1); }
+/* A team's or working group's weave is one etched well: a darkened pane with a
+   soft lip under its top edge. A row's accent fills only its thread and
+   last-heard dot; its rail and silence trail wear its status or standing.
+   Live by default; queued and awaiting decision warn; waiting dims; a Design
+   gathering input, ready for proposal, or waiting on selected work dims; an
+   unseated lane or passive Design idles faint; and a concluded, deleted, or
+   unavailable Design fades. */
+.team-weave {
   --well-top: color-mix(in srgb, var(--app-shadow-source) 6%, transparent);
   --well-floor: color-mix(in srgb, var(--app-shadow-source) 2%, transparent);
-  position: relative;
   overflow: hidden;
-  opacity: 1;
-  box-sizing: border-box;
-  border: 0;
-  border-radius: 0;
   background:
     linear-gradient(to bottom, color-mix(in srgb, var(--app-highlight-source) 7%, transparent), transparent 50%),
     linear-gradient(var(--well-top), var(--well-floor));
-  box-shadow: none;
 }
-:root[data-app-effective-theme="dark"] .team-lights > .app-presence-pip--trace {
+:root[data-app-effective-theme="dark"] .team-weave {
   --well-top: color-mix(in srgb, var(--app-shadow-source) 26%, transparent);
   --well-floor: color-mix(in srgb, var(--app-shadow-source) 12%, transparent);
 }
-/* A lane with nobody in its seat drains to gray, as the Spice chili does while
-   Spice is disconnected, so only running lanes wear their accent. */
-:is(.team-lights > .app-presence-pip--trace, .composer-trace-rail)[data-lane-seated="false"] { filter: grayscale(1); }
+.team-weave > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.weave-row { --weave-state: var(--app-semantic-live); --weave-state-opacity: 1; }
+.weave-row:is(.queued, .awaiting-decision) { --weave-state: var(--warning); }
+.weave-row.waiting { --weave-state: var(--app-anchor-muted); --weave-state-opacity: .7; }
+.weave-row:is(.gathering-input, .ready-for-proposal, .waiting-on-selected-work) { --weave-state-opacity: .55; }
+.weave-row:is(.bound, .unbound, .passive) { --weave-state: var(--app-anchor-muted); --weave-state-opacity: .35; }
+.weave-row:is(.done, .collapsed, .deleted, .unavailable) { --weave-state: var(--muted); --weave-state-opacity: .35; }
+.weave-thread { fill: var(--accent-slot); fill-opacity: .8; stroke: none; }
+.weave-row:is(.bound, .unbound, .passive, .done, .collapsed, .deleted, .unavailable) .weave-thread { fill-opacity: .45; }
+/* Glow reads as light only in a dark well; a light theme keeps the crisp edge. */
+:root[data-app-effective-theme="dark"] .weave-thread {
+  filter: drop-shadow(0 0 1px color-mix(in srgb, var(--accent-slot) 70%, transparent));
+}
+.weave-heard { fill: var(--accent-slot); }
+.weave-trail { fill: none; stroke: var(--weave-state); stroke-opacity: var(--weave-state-opacity); stroke-width: .7px; stroke-dasharray: .9 .8; }
+.weave-rail { fill: var(--weave-state); fill-opacity: var(--weave-state-opacity); }
+.weave-direction line { stroke: color-mix(in srgb, var(--ink) 40%, transparent); stroke-width: .5px; }
+.weave-direction circle { fill: var(--ink); }
 /* Half a CSS pixel rasterizes to one device pixel at 2x and a single
    antialiased device pixel at 1x, returning the rest to the curve. */
 .activity-trace { position: absolute; inset: .5px; }
-.app-presence-pip--trace:is(.bound, .unbound, .passive, .done, .collapsed, .deleted, .unavailable) > .activity-trace { opacity: .55; }
 .activity-trace > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .activity-trace [data-trace-kind="tool"] { --trace-color: var(--trace-tool); }
 .activity-trace [data-trace-kind="prose"] { --trace-color: var(--trace-prose); }

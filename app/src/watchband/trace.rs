@@ -1,16 +1,17 @@
 //! What one lane, or a pooled set of lanes, has been doing lately.
 //!
 //! A trace is a fixed window of wall time ending at the instant it is drawn,
-//! shared by every pip so neighbouring pips compare honestly; activity moves
-//! left as time passes and leaves once it is a whole window old. Work becomes
+//! shared by every weave thread and composer rail so neighbours compare
+//! honestly; activity moves left as time passes and leaves once it is a whole
+//! window old. Work becomes
 //! one curve per kind, reasoning, tool, and prose, whose height is that kind's
 //! recent rate on one fixed scale; lifecycle activity becomes markers. Pooling
 //! lane events before this calculation adds their rates without introducing a
 //! second scale. The curves are sampled at evenly spaced instants through a
 //! kernel that slides with time, so a redraw moves them smoothly instead of
 //! jumping between buckets. Positions and levels are fractions; the browser
-//! owns every pixel. Intervals one lane was off become gaps in that lane's pip
-//! once they last at least the spacing between two samples.
+//! owns every pixel. Intervals one lane was off become gaps in that lane's
+//! thread and rail once they last at least the spacing between two samples.
 
 use wire::AgentActivityKind;
 
@@ -222,7 +223,7 @@ fn text_weight(bytes: usize) -> f64 {
 
 /// The odd sample count at or above `samples`, so the window start, midpoint,
 /// and now are shared samples at every density.
-fn grid(samples: usize) -> usize {
+pub(super) fn grid(samples: usize) -> usize {
     let samples = samples.max(2);
     samples + usize::from(samples.is_multiple_of(2))
 }
