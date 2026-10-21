@@ -1,15 +1,19 @@
 //! The resident's reading of typed Design contributions. A contribution's
 //! text and question item number arrive with its fact, but whether each cited
 //! transcript, journal fact, or retained artifact still yields its bytes, and
-//! the text of the item it weighs, only the resident can say. A shown Design
-//! reads each such contribution once; the connection's bounded pump takes
-//! owed reads as mailbox capacity allows.
+//! the text of the item it weighs, only the resident can say. A shown Design,
+//! whether a task-detail surface or a working-group console shows it, reads
+//! each such contribution once; the connection's bounded pump takes owed
+//! reads as mailbox capacity allows.
 
+use std::collections::BTreeSet;
+
+use wire::TaskStamp;
 use wire::intent::RoomContributionReadAnswer;
 use wire::rooms::{RoomAnchor, RoomAuthorityStamp, RoomSourceView};
 use wire::{Outcome, Response};
 
-use super::AppRuntime;
+use super::{AppRuntime, Contribution};
 use crate::socket::Admitted;
 
 /// One contribution's sources and question item as the resident resolved them.
@@ -37,25 +41,53 @@ impl AppRuntime {
         self.contribution_reads.get(publication)
     }
 
+    /// Replace the Designs the open working-group consoles show. Returns
+    /// whether any of them now owes a read, so the caller can wake the pump.
+    pub fn show_console_designs(&mut self, designs: impl IntoIterator<Item = TaskStamp>) -> bool {
+        self.console_designs = designs.into_iter().collect();
+        self.console_designs
+            .iter()
+            .any(|room| self.owes_contribution_read(room))
+    }
+
+    /// Whether `room` holds a contribution that owes a read.
+    fn owes_contribution_read(&self, room: &TaskStamp) -> bool {
+        self.rooms
+            .contributions(room)
+            .iter()
+            .any(|contribution| self.contribution_owes_read(contribution))
+    }
+
+    /// A contribution owes a read when it cites any source or names a
+    /// question item and has no read.
+    fn contribution_owes_read(&self, contribution: &Contribution<'_>) -> bool {
+        (!contribution.sources.is_empty() || contribution.question.is_some())
+            && !self
+                .contribution_reads
+                .contains_key(contribution.publication)
+    }
+
     /// Take up to `limit` owed reads, oldest contribution first, each now
-    /// marked loading. A contribution owes one when a surface shows its
-    /// Design, it cites any source or names a question item, and it has no
-    /// read.
+    /// marked loading. A contribution owes one when a task-detail surface or
+    /// a working-group console shows its Design, it cites any source or names
+    /// a question item, and it has no read.
     pub fn take_contribution_reads(
         &mut self,
         limit: usize,
     ) -> Vec<(RoomAnchor, RoomAuthorityStamp)> {
         let mut owed = Vec::new();
-        for room in self.task_details.shown() {
+        let shown: BTreeSet<&TaskStamp> = self
+            .task_details
+            .shown()
+            .iter()
+            .chain(&self.console_designs)
+            .collect();
+        for room in shown {
             for contribution in self.rooms.contributions(room) {
                 if owed.len() == limit {
                     break;
                 }
-                if (!contribution.sources.is_empty() || contribution.question.is_some())
-                    && !self
-                        .contribution_reads
-                        .contains_key(contribution.publication)
-                {
+                if self.contribution_owes_read(&contribution) {
                     owed.push((room.clone(), contribution.publication.clone()));
                 }
             }

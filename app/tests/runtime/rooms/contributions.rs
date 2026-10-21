@@ -371,6 +371,75 @@ fn shown_designs_resolve_each_cited_or_placed_contribution_once() {
     );
 }
 
+/// A Design an open working-group console shows owes the same reads as a
+/// task-detail-shown one: showing it reports the owed read, the pump takes
+/// each contribution once however many surfaces show its Design, and a Design
+/// no surface shows draws no further reads.
+#[test]
+fn console_shown_designs_resolve_contributions_once() {
+    let session = session(OPERATOR, EPOCH);
+    let [first, second, third, ..] = stamps();
+    let snapshot = [
+        contributed(
+            1,
+            &first,
+            LANE,
+            RoomContributionKind::charge(-1),
+            vec![journal(2)],
+        ),
+        contributed(2, &second, LANE, RoomContributionKind::Question, Vec::new()),
+        contributed(
+            3,
+            &third,
+            SECOND_LANE,
+            RoomContributionKind::charge(1),
+            vec![artifact()],
+        ),
+    ];
+    let mut runtime = contribution_runtime(&session, &snapshot);
+    assert!(
+        !runtime.show_console_designs([]),
+        "a console showing no Design owes nothing"
+    );
+    assert!(
+        runtime.show_console_designs([room()]),
+        "a console showing a Design with cited sources owes a read"
+    );
+    assert_eq!(
+        runtime.take_contribution_reads(8),
+        vec![(room(), first.clone()), (room(), third.clone())],
+        "the console's Design reads its cited contributions oldest first"
+    );
+    assert!(
+        !runtime.show_console_designs([room()]),
+        "reads in flight are not owed again"
+    );
+
+    runtime.show_task_details([room()]);
+    runtime.restore_contribution_read(&third);
+    assert_eq!(
+        runtime.take_contribution_reads(8),
+        vec![(room(), third.clone())],
+        "a Design both surfaces show reads each contribution once"
+    );
+
+    runtime.show_task_details([]);
+    runtime.show_console_designs([]);
+    runtime.restore_contribution_read(&first);
+    assert!(
+        runtime.take_contribution_reads(8).is_empty(),
+        "a Design no surface shows draws no read"
+    );
+    assert!(
+        runtime.show_console_designs([room()]),
+        "reopening the console owes the unsent read again"
+    );
+    assert_eq!(
+        runtime.take_contribution_reads(8),
+        vec![(room(), first.clone())]
+    );
+}
+
 fn noticed_at(
     position: u64,
     statement: u64,

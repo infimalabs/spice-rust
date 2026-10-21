@@ -743,6 +743,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     use_voice_roster(&state.surface, speech_runtime.roster.clone());
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     rooms::use_ended_group_closing(&state.surface, &state.room_controls);
+    rooms::use_console_design_reads(&state.surface, &state.room_controls, &state.sender);
     use_page_hide_speech_stop(speech_runtime);
     use_speech_failure_toast(&state.speech_status);
     card_target::use_target(
