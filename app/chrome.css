@@ -199,6 +199,21 @@ body:has(.shell),
 .app-spice-quota-well { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .app-spice-quota-account { fill: var(--accent-slot); stroke: none; }
 .app-spice-button[data-quota-stale] .app-spice-quota-account { filter: saturate(.35); }
+/* Messages waiting in the operator's inbox wear the same small status dot an
+   agent menu wears for a pending renewal, in the needs-you color. The round
+   button centers it on its rim at 45 degrees: 1 - 1/sqrt(2) of the radius. */
+.app-spice-button[data-inbox-waiting]::after {
+  position: absolute;
+  top: calc(14.6% - 3.5px);
+  right: calc(14.6% - 3.5px);
+  z-index: 2;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--app-radius-circle);
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--panel);
+  content: "";
+}
 .app-spice-button:not([data-accent]):is([data-connection="starting"], [data-connection="connecting"]) {
   --app-spice-edge: var(--focus);
 }

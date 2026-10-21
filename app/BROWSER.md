@@ -272,6 +272,10 @@ row keeps one geometry in every state. Acting moves keyboard focus to the acting
 card,
 and its outcome or refusal is reported in the composer toast for a console card
 and beside the inbox for an inbox item.
+While that open count is nonzero, the closed Spice button wears one small
+needs-you dot, the same shape as an agent menu's pending-renewal dot, and its
+label names how many messages wait; the dot clears with the last open item and
+never shows while room authority loads or reconnects.
 
 **Close group** and the group order controls change only this browser.
 Opened groups, their order, each design composer's draft, and the last focused
