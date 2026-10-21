@@ -232,7 +232,6 @@ impl BatteryCapture<'_> {
             InputMode::Strict,
             None,
             None,
-            None,
         )
     }
 
@@ -257,7 +256,6 @@ impl BatteryCapture<'_> {
             rim,
             hygiene,
             InputMode::Generic,
-            None,
             None,
             None,
         )
@@ -287,7 +285,6 @@ impl BatteryCapture<'_> {
             InputMode::Strict,
             Some(gate_id),
             None,
-            None,
         )
     }
 
@@ -311,129 +308,6 @@ impl BatteryCapture<'_> {
             InputMode::Generic,
             Some(gate_id),
             None,
-            None,
-        )
-    }
-
-    /// Capture one arm into an existing enclosing state transaction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the shared state run accompanies six independent capture authorities"
-    )]
-    pub fn capture_arm_in_state(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        gate_id: crate::GateId,
-        state_run: BatteryStateRun,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            Some(gate_id),
-            None,
-            Some(state_run),
-        )
-    }
-
-    /// Capture one generic installed arm into an enclosing state transaction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the shared state run accompanies six independent capture authorities"
-    )]
-    pub fn capture_generic_arm_in_state(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        gate_id: crate::GateId,
-        state_run: BatteryStateRun,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            Some(gate_id),
-            None,
-            Some(state_run),
-        )
-    }
-
-    /// Capture one strict selected arm with its validated authored reach in an
-    /// existing state transaction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the reach and shared state accompany six independent capture authorities"
-    )]
-    pub fn capture_arm_in_state_reached(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        selection: &crate::ChangeSelectionReport,
-        gate_id: crate::GateId,
-        state_run: BatteryStateRun,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner_with_reach(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            Some(gate_id),
-            None,
-            Some(state_run),
-            Some(selection),
-        )
-    }
-
-    /// Capture one generic selected arm with its validated authored reach in
-    /// an existing state transaction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the reach and shared state accompany six independent capture authorities"
-    )]
-    pub fn capture_generic_arm_in_state_reached(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        selection: &crate::ChangeSelectionReport,
-        gate_id: crate::GateId,
-        state_run: BatteryStateRun,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner_with_reach(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            Some(gate_id),
-            None,
-            Some(state_run),
-            Some(selection),
         )
     }
 }
@@ -464,7 +338,6 @@ impl<'trace> BatteryCapture<'trace> {
             InputMode::Strict,
             None,
             Some(trace),
-            None,
         )
     }
 
@@ -488,66 +361,6 @@ impl<'trace> BatteryCapture<'trace> {
             InputMode::Generic,
             None,
             Some(trace),
-            None,
-        )
-    }
-
-    /// Capture a complete battery into an existing state transaction while
-    /// exposing production execution events.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the observer and shared state accompany six independent capture authorities"
-    )]
-    pub fn capture_in_state_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        state_run: BatteryStateRun,
-        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            None,
-            Some(trace),
-            Some(state_run),
-        )
-    }
-
-    /// Capture a traced generic installed battery in one state transaction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the observer and shared state accompany six independent capture authorities"
-    )]
-    pub fn capture_generic_in_state_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        state_run: BatteryStateRun,
-        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            None,
-            Some(trace),
-            Some(state_run),
         )
     }
 
@@ -580,7 +393,6 @@ impl<'trace> BatteryCapture<'trace> {
             InputMode::Strict,
             Some(gate_id),
             Some(trace),
-            None,
         )
     }
 
@@ -609,7 +421,6 @@ impl<'trace> BatteryCapture<'trace> {
             InputMode::Generic,
             Some(gate_id),
             Some(trace),
-            None,
         )
     }
 
@@ -627,30 +438,6 @@ impl<'trace> BatteryCapture<'trace> {
         input_mode: InputMode,
         selected: Option<crate::GateId>,
         trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
-        state_run: Option<BatteryStateRun>,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner_with_reach(
-            repository, selector, claim, actor, rim, hygiene, input_mode, selected, trace,
-            state_run, None,
-        )
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the execution mode and optional reach accompany six independent capture authorities"
-    )]
-    fn capture_inner_with_reach(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        input_mode: InputMode,
-        selected: Option<crate::GateId>,
-        trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
-        state_run: Option<BatteryStateRun>,
-        selection: Option<&crate::ChangeSelectionReport>,
     ) -> Result<Self, BatteryError> {
         let repository: PathBuf = repository.into();
         // Read before the capture consumes the observation, and both before the
@@ -658,10 +445,7 @@ impl<'trace> BatteryCapture<'trace> {
         // refusal, and refusing it here costs no private tree.
         let resolved_actor = run_actor(&actor)?;
         let scope = selected_scope(selector, &repository)?;
-        let state_run = match state_run {
-            Some(state_run) => state_run,
-            None => BatteryStateRun::capture(&repository)?,
-        };
+        let state_run = BatteryStateRun::capture(&repository)?;
         let repository_source = RepositorySelection::capture(&repository, selector, input_mode)?;
         let rim = match (
             rim.derives_staged_changes(),
@@ -684,7 +468,7 @@ impl<'trace> BatteryCapture<'trace> {
             rim,
             hygiene,
         };
-        Self::capture_from_source(source_capture, selected, trace, state_run, selection)
+        Self::capture_from_source(source_capture, selected, trace, state_run, None)
     }
 
     fn capture_from_source(
@@ -920,12 +704,6 @@ impl<'trace> BatteryCapture<'trace> {
     /// integrity refusal. No second selected tree or mutation runner is used.
     pub fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
         self.executor.execute_kill()
-    }
-
-    /// Shared durable-state transaction this capture contributed to.
-    #[must_use]
-    pub fn state_run(&self) -> BatteryStateRun {
-        self.state_run.clone()
     }
 
     /// Publish this enclosing run's accumulated state after total acceptance.

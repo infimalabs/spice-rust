@@ -12,9 +12,9 @@ use std::path::Path;
 use std::process::Command;
 
 use ::gate::{
-    ActorCapture, BatteryArmResult, BatteryCapture, BatteryReport, ChangeSelectionReport,
-    ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, KillRun,
-    RepositoryExecutionEvent, RimCapture, Selector, StateRunScope,
+    ActorCapture, BatteryCapture, BatteryReport, ChangeSelectionReport, ClaimCapture,
+    FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
+    Selector, StateRunScope,
 };
 use gix::bstr::ByteSlice as _;
 use wire::Digest;
@@ -280,12 +280,6 @@ impl PreparedArm<'_> {
             .map_err(|error| RunError::refusal("gate::capture-refused", error))
     }
 
-    /// Shared state transaction for additional focused captures in this run.
-    #[must_use]
-    pub fn state_run(&self) -> ::gate::BatteryStateRun {
-        self.capture.state_run()
-    }
-
     /// Publish all focused observations after the enclosing run accepts.
     pub fn accept_state(&self, scope: StateRunScope) -> Result<(), RunError> {
         self.capture
@@ -466,27 +460,6 @@ fn prepare_with_mode(
     })
 }
 
-/// Capture a traced complete battery into an existing state transaction.
-pub fn prepare_in_state_traced<'trace>(
-    selector: Selector,
-    state_run: ::gate::BatteryStateRun,
-    trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-) -> Result<PreparedBattery<'trace>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture_inner(
-        selector,
-        InputMode::Generic,
-        None,
-        Some(trace),
-        Some(state_run),
-    )
-    .map(|capture| PreparedBattery {
-        capture,
-        compiler_environment,
-        cargo_jobs: None,
-    })
-}
-
 /// Capture one selected source for exactly one canonical battery arm.
 ///
 /// # Errors
@@ -507,30 +480,14 @@ pub fn prepare_arm_with_claim(
     claim: ClaimCapture,
 ) -> Result<PreparedArm<'static>, RunError> {
     let compiler_environment = compiler_environment();
-    capture::capture_inner_with_reach_and_claim(
-        selector,
-        InputMode::Generic,
-        Some(gate_id),
-        None,
-        None,
-        None,
-        claim,
+    capture::capture_inner(selector, InputMode::Generic, Some(gate_id), None, claim).map(
+        |capture| PreparedArm {
+            capture,
+            gate_id,
+            compiler_environment,
+            cargo_jobs: None,
+        },
     )
-    .map(|capture| PreparedArm {
-        capture,
-        gate_id,
-        compiler_environment,
-        cargo_jobs: None,
-    })
-}
-
-/// Capture one selected arm from an explicitly admitted repository directory.
-pub fn prepare_arm_at(
-    directory: &Path,
-    selector: Selector,
-    gate_id: GateId,
-) -> Result<PreparedArm<'static>, RunError> {
-    prepare_arm_at_with_claim(directory, selector, gate_id, ClaimCapture::Idle)
 }
 
 /// Capture one selected arm at an admitted directory with an exact board claim.
@@ -541,13 +498,11 @@ pub fn prepare_arm_at_with_claim(
     claim: ClaimCapture,
 ) -> Result<PreparedArm<'static>, RunError> {
     let compiler_environment = compiler_environment();
-    capture::capture_at_inner_with_claim(
+    capture::capture_at_inner(
         directory,
         selector,
         InputMode::Generic,
         Some(gate_id),
-        None,
-        None,
         None,
         claim,
     )
@@ -574,77 +529,6 @@ fn prepare_arm_with_mode(
 ) -> Result<PreparedArm<'static>, RunError> {
     let compiler_environment = compiler_environment();
     capture(selector, input_mode, Some(gate_id), None).map(|capture| PreparedArm {
-        capture,
-        gate_id,
-        compiler_environment,
-        cargo_jobs: None,
-    })
-}
-
-/// Capture one focused arm into an existing enclosing state transaction.
-pub fn prepare_arm_in_state(
-    selector: Selector,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-) -> Result<PreparedArm<'static>, RunError> {
-    prepare_arm_in_state_with_mode(selector, gate_id, state_run, InputMode::Generic)
-}
-
-/// Capture one current-source arm into an existing state transaction.
-pub fn prepare_arm_in_state_strict(
-    selector: Selector,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-) -> Result<PreparedArm<'static>, RunError> {
-    prepare_arm_in_state_with_mode(selector, gate_id, state_run, InputMode::Strict)
-}
-
-/// Capture one generic installed arm with its validated authored reach in an
-/// existing state transaction.
-pub fn prepare_arm_in_state_reached(
-    selector: Selector,
-    selection: &ChangeSelectionReport,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-) -> Result<PreparedArm<'static>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture_reached_in_state(selector, InputMode::Generic, selection, gate_id, state_run).map(
-        |capture| PreparedArm {
-            capture,
-            gate_id,
-            compiler_environment,
-            cargo_jobs: None,
-        },
-    )
-}
-
-/// Capture one strict current-source arm with its validated authored reach in
-/// an existing state transaction.
-pub fn prepare_arm_in_state_reached_strict(
-    selector: Selector,
-    selection: &ChangeSelectionReport,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-) -> Result<PreparedArm<'static>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture_reached_in_state(selector, InputMode::Strict, selection, gate_id, state_run).map(
-        |capture| PreparedArm {
-            capture,
-            gate_id,
-            compiler_environment,
-            cargo_jobs: None,
-        },
-    )
-}
-
-fn prepare_arm_in_state_with_mode(
-    selector: Selector,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-    input_mode: InputMode,
-) -> Result<PreparedArm<'static>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture_in_state(selector, input_mode, gate_id, state_run).map(|capture| PreparedArm {
         capture,
         gate_id,
         compiler_environment,
@@ -688,12 +572,7 @@ fn prepare_traced_with_mode<'trace>(
 /// Returns the exact rim acquisition or battery refusal. No alternate command
 /// or predecessor implementation is attempted.
 pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
-    run_with_mode(selector, InputMode::Generic)
-}
-
-/// Execute the current source repository's strict self-hosting battery.
-pub fn run_strict(selector: Selector) -> Result<BatteryReport, RunError> {
-    run_with_mode(selector, InputMode::Strict)
+    run_prepared(prepare(selector)?)
 }
 
 /// Execute the strict self-hosting battery from one explicitly admitted
@@ -711,18 +590,13 @@ pub fn run_strict_at(directory: &Path, selector: Selector) -> Result<BatteryRepo
         InputMode::Strict,
         None,
         None,
-        None,
-        None,
+        ClaimCapture::Idle,
     )?;
     run_prepared(PreparedBattery {
         capture,
         compiler_environment,
         cargo_jobs: None,
     })
-}
-
-fn run_with_mode(selector: Selector, input_mode: InputMode) -> Result<BatteryReport, RunError> {
-    run_prepared(prepare_with_mode(selector, input_mode)?)
 }
 
 fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunError> {
@@ -735,21 +609,11 @@ fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunE
     Ok(report)
 }
 
-/// Execute one named canonical gate arm over one selected source.
-///
-/// # Errors
-///
-/// Returns the same acquisition and arm refusal as [`run`], without executing
-/// sibling battery arms.
-pub fn run_arm(selector: Selector, gate_id: GateId) -> Result<BatteryArmResult, RunError> {
-    run_arm_report(selector, gate_id).map(FocusedArmReport::into_result)
-}
-
 /// Execute one named canonical gate arm and retain its verifiable input context.
 ///
 /// # Errors
 ///
-/// Returns the same acquisition and arm refusal as [`run_arm`], without
+/// Returns the same acquisition and arm refusal as [`run`], without
 /// executing sibling battery arms.
 pub fn run_arm_report(selector: Selector, gate_id: GateId) -> Result<FocusedArmReport, RunError> {
     run_arm_report_with_mode(selector, gate_id, InputMode::Generic)
@@ -800,49 +664,13 @@ pub fn run_traced(
     Ok(report)
 }
 
-fn capture_in_state(
-    selector: Selector,
-    input_mode: InputMode,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-) -> Result<BatteryCapture<'static>, RunError> {
-    capture_inner(selector, input_mode, Some(gate_id), None, Some(state_run))
-}
-
-fn capture_reached_in_state(
-    selector: Selector,
-    input_mode: InputMode,
-    selection: &ChangeSelectionReport,
-    gate_id: GateId,
-    state_run: ::gate::BatteryStateRun,
-) -> Result<BatteryCapture<'static>, RunError> {
-    capture::capture_inner_with_reach(
-        selector,
-        input_mode,
-        Some(gate_id),
-        None,
-        Some(state_run),
-        Some(selection),
-    )
-}
-
 fn capture<'trace>(
     selector: Selector,
     input_mode: InputMode,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
-    capture_inner(selector, input_mode, selected, trace, None)
-}
-
-fn capture_inner<'trace>(
-    selector: Selector,
-    input_mode: InputMode,
-    selected: Option<GateId>,
-    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
-    state_run: Option<::gate::BatteryStateRun>,
-) -> Result<BatteryCapture<'trace>, RunError> {
-    capture::capture_inner_with_reach(selector, input_mode, selected, trace, state_run, None)
+    capture::capture_inner(selector, input_mode, selected, trace, ClaimCapture::Idle)
 }
 
 #[expect(
