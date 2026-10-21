@@ -344,11 +344,36 @@ impl<'p, 'a> StemTaskGroup<'p, 'a> {
 
     #[must_use]
     pub fn counts(&self) -> WorkCounts {
-        self.tasks.iter().map(|task| task.availability()).collect()
+        self.tasks.iter().copied().collect()
     }
 }
 
-/// Exclusive lifecycle totals for one scope.
+/// The most actionable state one Work partition holds, which marks its tab.
+/// Variants run from most to least actionable; the first one present wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkMark {
+    /// Work only the operator can unblock: a dependency or controller wall
+    /// with no advancing path, or an environment hold such as a trust grant.
+    Blocked,
+    /// A Design holding a proposal the operator has not decided.
+    Decision,
+    /// A steeped or nudged Design no lane holds, ready for a new proposal.
+    Proposal,
+}
+
+impl WorkMark {
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Blocked => "blocked",
+            Self::Decision => "decision",
+            Self::Proposal => "proposal",
+        }
+    }
+}
+
+/// Exclusive lifecycle totals for one scope, plus the unpossessed Designs
+/// among them whose pass cycle is ready for a proposal.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WorkCounts {
     in_flight: usize,
@@ -363,10 +388,13 @@ pub struct WorkCounts {
     deferred: usize,
     parked: usize,
     terminal: usize,
+    /// Overlaps `ready` and `passive`; never part of [`Self::open`].
+    proposal_ready: usize,
 }
 
 impl WorkCounts {
-    fn record(&mut self, availability: WorkAvailability) {
+    fn record(&mut self, availability: WorkAvailability, proposal_ready: bool) {
+        self.proposal_ready += usize::from(proposal_ready);
         match availability {
             WorkAvailability::InFlight => self.in_flight += 1,
             WorkAvailability::Ready => self.ready += 1,
@@ -441,16 +469,25 @@ impl WorkCounts {
             + self.parked
     }
 
-    /// Open work only the operator can move now, which carries the danger
-    /// mark: a dependency or controller wall with no advancing path, an
-    /// environment hold such as a trust grant, or a Design awaiting the
-    /// operator's decision on its candidate. Deferral is an intentional
-    /// set-aside; neutral workflow waiting, passive Designs, and parked work
-    /// need no intervention.
+    /// The partition's tab mark and how many tasks carry it: work only the
+    /// operator can unblock, then a Design awaiting the operator's decision,
+    /// then an unpossessed Design ready for a proposal. Deferral is an
+    /// intentional set-aside; neutral workflow waiting, parked work, and a
+    /// passive Design with no ready pass need nothing and mark nothing.
     #[must_use]
-    pub const fn needs_operator(self) -> usize {
-        self.blocked + self.held + self.selection
+    pub const fn mark(self) -> Option<(WorkMark, usize)> {
+        let blocked = self.blocked + self.held;
+        if blocked > 0 {
+            Some((WorkMark::Blocked, blocked))
+        } else if self.selection > 0 {
+            Some((WorkMark::Decision, self.selection))
+        } else if self.proposal_ready > 0 {
+            Some((WorkMark::Proposal, self.proposal_ready))
+        } else {
+            None
+        }
     }
+
     #[must_use]
     pub const fn open(self) -> usize {
         self.in_flight + self.ready + self.review + self.stale + self.blocked + self.waiting()
@@ -462,11 +499,11 @@ impl WorkCounts {
     }
 }
 
-impl FromIterator<WorkAvailability> for WorkCounts {
-    fn from_iter<I: IntoIterator<Item = WorkAvailability>>(availabilities: I) -> Self {
+impl<'p, 'a> FromIterator<&'p WorkTask<'a>> for WorkCounts {
+    fn from_iter<I: IntoIterator<Item = &'p WorkTask<'a>>>(tasks: I) -> Self {
         let mut counts = Self::default();
-        for availability in availabilities {
-            counts.record(availability);
+        for task in tasks {
+            counts.record(task.availability, task.proposal_ready);
         }
         counts
     }
@@ -527,6 +564,9 @@ pub struct WorkTask<'a> {
     /// A Design held for the operator's selection of an output it constructed,
     /// whether or not a lane still holds its claim.
     awaiting_selection: bool,
+    /// An unpossessed Design, offered or passive, whose pass cycle is ready
+    /// for a proposal.
+    proposal_ready: bool,
     /// Position in the resident's offer order, when the allocator offers it.
     offer_rank: Option<usize>,
     dependencies: Vec<WorkDependency<'a>>,
@@ -770,7 +810,7 @@ impl<'a> WorkProjection<'a> {
         for task in &self.tasks {
             if self.in_scope(task, scope) {
                 matched = true;
-                counts.record(task.availability);
+                counts.record(task.availability, task.proposal_ready);
             }
         }
         if matched {
@@ -859,7 +899,7 @@ impl<'a> WorkProjection<'a> {
         let mut counts = WorkCounts::default();
         let mut workers = Vec::new();
         for task in self.scope_strip(scope) {
-            counts.record(task.availability());
+            counts.record(task.availability, task.proposal_ready);
             let Some(lane) = task.working_lane() else {
                 continue;
             };
@@ -934,6 +974,7 @@ impl<'a> WorkProjection<'a> {
             .map(|(index, task)| classify(board, task, environment_blocked[index]))
             .collect::<Vec<_>>();
 
+        let proposal_ready = proposal_ready(board, &availability);
         let dependent_indexes = dependent_indexes(board, &by_born, &availability);
         let design_owned = design_owned_indexes(board, &dependent_indexes);
         let offer_ranks = offer_ranks(board, &by_born);
@@ -941,15 +982,18 @@ impl<'a> WorkProjection<'a> {
         let mut counts = WorkCounts::default();
         let mut stem_builders = BTreeMap::<StemKey<'a>, StemBuilder<'a>>::new();
         for (index, task) in board.tasks.iter().enumerate() {
-            counts.record(availability[index]);
+            counts.record(availability[index], proposal_ready[index]);
             let key = stem_key(task);
             let stem = stem_builders.entry(key).or_default();
-            stem.counts.record(availability[index]);
+            stem.counts
+                .record(availability[index], proposal_ready[index]);
             let project = stem
                 .projects
                 .entry(task.statement.body.project.as_str())
                 .or_default();
-            project.counts.record(availability[index]);
+            project
+                .counts
+                .record(availability[index], proposal_ready[index]);
             project.tasks.push(index);
         }
 
@@ -1004,6 +1048,7 @@ impl<'a> WorkProjection<'a> {
                     project: project_by_task[index],
                     environment_blocked: environment_blocked[index],
                     awaiting_selection: board.awaiting_selection(&row.statement.body.born),
+                    proposal_ready: proposal_ready[index],
                     offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
@@ -1096,6 +1141,23 @@ fn offer_ranks(board: &BoardView, by_born: &BTreeMap<&TaskStamp, usize>) -> Vec<
         }
     }
     ranks
+}
+
+/// Whether each task, by index, is an unpossessed Design, offered or passive,
+/// whose pass cycle is ready for a proposal.
+fn proposal_ready(board: &BoardView, availability: &[WorkAvailability]) -> Vec<bool> {
+    board
+        .tasks
+        .iter()
+        .zip(availability)
+        .map(|(task, availability)| {
+            matches!(
+                availability,
+                WorkAvailability::Ready | WorkAvailability::Passive
+            ) && board.design_cycles.get(&task.statement.body.born)
+                == Some(&wire::rooms::DesignCycle::ReadyForProposal)
+        })
+        .collect()
 }
 
 /// Every task index in the resident's offer order.

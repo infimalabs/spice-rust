@@ -95,7 +95,7 @@ fn render_total(
             key="group-total"
             class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="group"
-            data-needs-operator={view::chrome::operator_mark(counts)}
+            data-work-mark={view::chrome::work_mark(counts)}
         >
             <button
                 class="app-horn-tab__target"

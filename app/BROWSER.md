@@ -201,6 +201,18 @@ the associated task handle. Activating an admitted lane opens its composer in
 Chat, whose team plane holds its history; a lane with no Chat seat stays a
 plain label.
 
+Every Work tab's count badge, the global and stem totals, a team's total, and
+a group's total, carries at most one dot on its corner, coloured by the most
+actionable state its own partition holds: danger for work only the operator
+can unblock (a human-actionable wall or an environment hold), warning for a
+Design whose proposal awaits the operator's decision, and the live tone for a
+Design no lane holds whose pass cycle is ready for a new proposal. A blocked
+state outranks a decision and a decision outranks a ready pass, so a tab never
+shows two dots. The tab's title and accessible name lead with the winning
+state's count, `2 need you`, `1 awaiting your decision`, or `1 ready for
+proposal`, so the state never rests on colour alone; forced-colors mode draws
+every dot in the system text colour.
+
 A design's composer posts the guarded native room-post command to exactly that
 design's room on **Post** or Control/Command+Enter. Its empty back uses three
 plain lines ordered from durable context to live detail, never middot-joined:

@@ -16,7 +16,7 @@
 use super::*;
 use crate::browser::clock::Age;
 use crate::watchband;
-use crate::work::{WorkCounts, WorkProjection, WorkScope};
+use crate::work::{WorkCounts, WorkMark, WorkProjection, WorkScope};
 /// Characters the ticker's `aria-live` label announces.
 pub(in crate::browser) const TICKER_SPOKEN_BUDGET: usize = 160;
 
@@ -241,15 +241,14 @@ fn count_breakdown(counts: WorkCounts) -> String {
     )
 }
 
-/// Whether a Work tab carries the danger dot: exactly when the partition it
-/// opens holds work only the operator can move.
-pub(in crate::browser) fn operator_mark(counts: WorkCounts) -> Option<&'static str> {
-    (counts.needs_operator() > 0).then_some("true")
+/// A Work tab's mark: the most actionable state the partition it opens holds,
+/// or none.
+pub(in crate::browser) fn work_mark(counts: WorkCounts) -> Option<&'static str> {
+    counts.mark().map(|(mark, _)| mark.key())
 }
 
-/// A Work tab's title and accessible name, led by the count of tasks needing
-/// the operator when it carries the mark, so the state never rests on the dot
-/// alone.
+/// A Work tab's title and accessible name, led by the count of tasks in the
+/// state its mark shows, so that state never rests on the mark's colour alone.
 pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> String {
     let open = counts.open();
     let title = format!(
@@ -257,9 +256,13 @@ pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> S
         if open == 1 { "task" } else { "tasks" },
         count_breakdown(counts),
     );
-    match counts.needs_operator() {
-        0 => title,
-        needed => format!("{needed} need you; {title}"),
+    match counts.mark() {
+        None => title,
+        Some((WorkMark::Blocked, count)) => format!("{count} need you; {title}"),
+        Some((WorkMark::Decision, count)) => {
+            format!("{count} awaiting your decision; {title}")
+        }
+        Some((WorkMark::Proposal, count)) => format!("{count} ready for proposal; {title}"),
     }
 }
 
@@ -407,7 +410,7 @@ fn render_aggregate_pill(
             title={title.clone()}
             aria-label={title}
             data-work-scope={rail.data_scope()}
-            data-needs-operator={operator_mark(counts)}
+            data-work-mark={work_mark(counts)}
             data-designs-active={designs.map(|split| split.active.to_string())}
             data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}
@@ -446,7 +449,7 @@ fn render_stem_pill(
             aria-label={title}
             data-task-stem={identity.stem().to_owned()}
             data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
-            data-needs-operator={operator_mark(counts)}
+            data-work-mark={work_mark(counts)}
             data-designs-active={designs.map(|split| split.active.to_string())}
             data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}

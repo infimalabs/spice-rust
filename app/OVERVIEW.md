@@ -152,8 +152,10 @@ appliance version) needs the operator, unless that task is already set aside
 human-actionable Blocked gate or the task where its dependency chain stops. A
 deferred task keeps its own explicit standing without entering this danger
 queue merely for waiting; it enters only when a Blocked dependency chain
-reaches it. Every task that marks a tab is listed here or holds behind a listed
-wall, so the rail reads **Needs attention** whenever any tab is marked. Each
+reaches it. Every task behind a blocked or decision tab mark is listed here or
+holds behind a listed wall, so the rail reads **Needs attention** whenever any
+tab carries either. A Design ready for proposal marks its tab as a notice but
+never enters this queue: a lane, not the operator, acts next. Each
 queue item appears once, in board order, however many reasons or held tasks
 reach it. A dependency on work an agent can claim or is working, or on an open
 Design whose underlying gate can advance, is ordinary **Waiting** and never
