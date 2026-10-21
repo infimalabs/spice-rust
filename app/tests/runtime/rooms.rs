@@ -941,6 +941,7 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
                     evidence: evidence.clone(),
                     excerpt: "fixture rooms".to_owned(),
                     terms: vec!["rooms".to_owned()],
+                    stance: None,
                 },
             ),
         );

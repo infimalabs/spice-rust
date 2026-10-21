@@ -433,6 +433,7 @@ mod tests {
                 "maturity".to_owned(),
                 "measure".to_owned(),
             ],
+            stance: None,
         }
     }
 

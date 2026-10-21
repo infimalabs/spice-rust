@@ -534,6 +534,13 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         Opportunity::SessionResumed { .. } => "this resumed session".to_owned(),
     };
     let support = supporting_work(request);
+    let cast = match request.stance {
+        Some(wire::rooms::WorkingGroupStance::Explore) => {
+            " Its working group is exploring, so this match was cast slightly wider than usual: \
+             a lower relevance floor admitted it."
+        }
+        _ => "",
+    };
     let mut questions = String::new();
     for question in &request.questions {
         questions.push_str("\n- ");
@@ -543,7 +550,7 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         questions.push_str("\n- none recorded");
     }
     format!(
-        "Design request {design} \"{}\" at statement revision {} matched your work on: {}. \
+        "Design request {design} \"{}\" at statement revision {} matched your work on: {}.{cast} \
          The profile was evaluated at {opportunity}.\nSupporting work: {support}\nPitch: {}\n\
          Open questions:{questions}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). A \

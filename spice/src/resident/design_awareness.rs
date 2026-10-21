@@ -60,6 +60,7 @@ struct PlannedRequest {
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
+    stance: Option<WorkingGroupStance>,
     horizon: Option<Seq>,
 }
 
@@ -334,6 +335,7 @@ fn plan_profile_requests(
             evidence,
             excerpt,
             terms,
+            stance,
         }) = selected
         else {
             continue;
@@ -350,6 +352,7 @@ fn plan_profile_requests(
             design,
             statement,
             terms,
+            stance: Some(stance),
             horizon: planning.horizon,
         });
     }
@@ -391,6 +394,7 @@ struct Selection {
     evidence: DesignNoticeEvidence,
     excerpt: String,
     terms: Vec<String>,
+    stance: WorkingGroupStance,
 }
 
 /// The best Design `kind` admits that this session was never offered and never
@@ -455,6 +459,7 @@ fn select_design(
         evidence: durable_evidence(matched.evidence, matched.digest),
         excerpt: matched.excerpt.to_owned(),
         terms: matched.terms,
+        stance: facts.design_stance(matched.design.born()),
     }))
 }
 
@@ -795,6 +800,7 @@ fn restated_request(
         design: notice.design.clone(),
         statement: notice.statement,
         terms: notice.terms.clone(),
+        stance: notice.stance,
         horizon: planning.horizon,
     }))
 }
@@ -830,6 +836,7 @@ fn design_request(design: &board::Entry, notice: &DesignNoticed) -> DesignReques
             .into_iter()
             .map(str::to_owned)
             .collect(),
+        stance: notice.stance,
     }
 }
 
@@ -1099,6 +1106,7 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 evidence: request.evidence.clone(),
                 excerpt: request.excerpt.clone(),
                 terms: request.terms.clone(),
+                stance: request.stance,
             },
             FactCause::Root,
         )

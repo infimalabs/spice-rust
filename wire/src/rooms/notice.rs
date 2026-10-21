@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::DecisionRef;
+use super::{DecisionRef, WorkingGroupStance};
 use crate::{CanonicalUuid, Digest, Name, Seq, SequenceCode, TaskStamp};
 
 /// Most bytes of completion validation retained for Design request matching.
@@ -208,6 +208,10 @@ pub struct DesignNoticed {
     pub excerpt: String,
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
+    /// Working-group stance whose relevance floor admitted the match: Explore
+    /// lowers it, Converge raises it. Absent on records older than the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stance: Option<WorkingGroupStance>,
 }
 
 /// The resident handed an active Design's holder the operator's newest return

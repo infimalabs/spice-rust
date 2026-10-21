@@ -28,6 +28,10 @@ pub struct DesignRequest {
     pub questions: Vec<String>,
     /// Distinctive shared terms that selected this Design.
     pub terms: Vec<String>,
+    /// Working-group stance whose relevance floor admitted the match, when the
+    /// record kept it; Explore admits on a slightly wider cast.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stance: Option<crate::rooms::WorkingGroupStance>,
 }
 
 /// Whether the current heads describe an open Design.

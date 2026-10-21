@@ -105,8 +105,11 @@ owns each rule summarized here.
   opportunity selects one Design at most; one session has one unanswered
   request at most.
   A `room::noticed` record names the exact Design statement, session,
-  compaction race witness, opportunity, evidence and immutable identity, plus
-  at most six strongest weighted overlaps. A Design is requested once per
+  compaction race witness, opportunity, evidence and immutable identity, the
+  stance whose floor admitted the match, plus at most six strongest weighted
+  overlaps. An invitation admitted under Explore says so: its match was cast
+  slightly wider than usual under the lower floor, so the invited lane weighs
+  the listed terms accordingly. A Design is requested once per
   continuing session. Contribution or leave stays settled across occupants,
   restarts, and compaction. Prior contribution retains bounded room context
   without creating attention or recruitment.
