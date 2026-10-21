@@ -26,7 +26,6 @@ use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 mod approval;
 mod conclusion;
 mod console;
-mod contribute;
 mod contributions;
 mod coordination;
 mod reading;
@@ -713,7 +712,7 @@ pub(in crate::browser) fn event_headline(
         let speaker = format!(
             "{} {}",
             conversation::lane_label(runtime, *lane),
-            contributions::kind_label(*contribution).to_lowercase()
+            contributions::kind_label(*contribution)
         );
         return (speaker, text.clone());
     }

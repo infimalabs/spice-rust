@@ -1,6 +1,6 @@
 //! Typed Design contributions read in place: grouped by kind, and in the
 //! room history in journal order beside ordinary conversation. Each entry
-//! names its lane, time, charge, the question item it weighs, text, and every
+//! names its lane, time, vote, the question item it weighs, text, and every
 //! cited source as an exact link or the typed reason the resident cannot
 //! resolve it. Contributions are evidence for the operator's Design judgment,
 //! never authority; reading them writes nothing.
@@ -14,19 +14,18 @@ use crate::AppRuntime;
 use crate::browser::view::chrome::CopyButton;
 use crate::runtime::{Contribution, ContributionRead, RoomEvent, RoomEventKind};
 
-/// Words naming one contribution kind: a charge's signed weight and sense,
-/// or a question.
+/// Words naming one contribution kind as the vote it casts, or a question.
 pub(super) const fn kind_label(kind: RoomContributionKind) -> &'static str {
     match kind {
         RoomContributionKind::Charge(charge) => match charge.get() {
-            2 => "+2 strongly for",
-            1 => "+1 for",
-            0 => "0 evidence",
-            -1 => "-1 against",
-            -2 => "-2 strongly against",
-            _ => panic!("a charge lies in -2..=2"),
+            2 => "strongly for",
+            1 => "for",
+            0 => "evidence",
+            -1 => "against",
+            -2 => "strongly against",
+            _ => panic!("a vote lies in -2..=2"),
         },
-        RoomContributionKind::Question => "Question",
+        RoomContributionKind::Question => "question",
     }
 }
 

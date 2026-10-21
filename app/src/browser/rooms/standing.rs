@@ -7,8 +7,8 @@
 use wasm_bindgen::JsCast as _;
 use wire::intent::{BoardTask, DesignStanding};
 use wire::rooms::{
-    DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd, RoomProgressStanding,
-    RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
+    DesignAvailability, DesignCycle, DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd,
+    RoomProgressStanding, RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
 };
 use wire::{Disposition, SequenceCode, TaskStamp};
 use yew::prelude::*;
@@ -18,8 +18,6 @@ use crate::runtime::{
     CoordinationStanding, ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant,
 };
 use crate::watchband;
-
-const NOT_PROGRESS: &str = "Agreement, silence, message count, elapsed time, ACK and ANS never count as progress or approval.";
 
 /// The standing section of one design's menu and of its read view; `row` is
 /// the Design's current task row, when one is known.
@@ -61,7 +59,12 @@ pub(super) fn render_standing(
             }
             {cycle.as_ref().map_or_else(Html::default, |cycle| render_cycle(room, cycle))}
             <p class="room-standing-next" data-room-next="">
-                {next_action(settled, lifecycle.as_ref(), coordination.as_ref(), cycle.as_ref())}
+                {next_action(
+                    settled,
+                    lifecycle.as_ref(),
+                    coordination.as_ref(),
+                    cycle.as_ref().zip(row).map(|(cycle, row)| (cycle.cycle, row.design_availability())),
+                )}
             </p>
             {coordination.as_ref().map_or_else(Html::default, render_coordination)}
             {render_lanes(runtime, &participants)}
@@ -70,18 +73,18 @@ pub(super) fn render_standing(
                     {for relevance.iter().rev().map(|relevance| render_observation(&relevance.value))}
                 </ul>
             }
-            <p class="room-standing-note">{NOT_PROGRESS}</p>
         </section>
     }
 }
 
-/// The one next useful action the current authority supports. An open
-/// Design's cycle names it once no coordination obligation is outstanding.
+/// The one next useful action the current authority supports, as one
+/// sentence naming who acts and on what. An open Design's cycle names it
+/// once no coordination obligation is outstanding.
 fn next_action(
     settled: bool,
     lifecycle: Option<&DesignStanding>,
     coordination: Option<&CoordinationStanding<'_>>,
-    cycle: Option<&DesignCyclePresentation>,
+    cycle: Option<(DesignCycle, DesignAvailability)>,
 ) -> String {
     if settled {
         return "The anchor is settled; nothing remains to coordinate.".to_owned();
@@ -91,7 +94,7 @@ fn next_action(
             "Wait for {} to acknowledge request {}.",
             standing.record.value.target, standing.record.value.key
         ),
-        (_, Some(cycle)) => format!("Next ({}): {}", cycle.actor.label(), cycle.action),
+        (_, Some((cycle, availability))) => cycle_next(cycle, availability).to_owned(),
         _ if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group to \
             Explore or Converge before coordinating a lane onto it; if ungrouped, group it first."
             .to_owned(),
@@ -100,6 +103,29 @@ fn next_action(
             standing.record.value.target
         ),
         _ => "Start coordination to ask one lane for the next contribution.".to_owned(),
+    }
+}
+
+/// Who moves an open Design's pass cycle forward next, and how.
+const fn cycle_next(cycle: DesignCycle, availability: DesignAvailability) -> &'static str {
+    match (cycle, availability) {
+        (DesignCycle::GatheringInput, _) => {
+            "Lanes or you add input next: a vote, a question, or a post in this room."
+        }
+        (DesignCycle::ReadyForProposal, DesignAvailability::Passive) => {
+            "You activate this Design by moving its working group to Explore or Converge, so a \
+             lane can claim it."
+        }
+        (DesignCycle::ReadyForProposal, DesignAvailability::Unclaimed) => {
+            "A lane claims this Design next and ends its pass with one proposal."
+        }
+        (DesignCycle::ReadyForProposal, DesignAvailability::Claimed) => {
+            "The holding lane ends this pass with one proposal."
+        }
+        (DesignCycle::AwaitingDecision, _) => "You decide the proposal awaiting decision next.",
+        (DesignCycle::WaitingOnSelectedWork, _) => {
+            "The work this Design selected finishes next, unless lanes or you add new input."
+        }
     }
 }
 
