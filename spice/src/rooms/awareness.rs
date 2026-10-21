@@ -542,9 +542,8 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         _ => "",
     };
     let mut questions = String::new();
-    for question in &request.questions {
-        questions.push_str("\n- ");
-        questions.push_str(question);
+    for (item, question) in request.questions.iter().enumerate() {
+        questions.push_str(&format!("\n{}. {question}", item + 1));
     }
     if questions.is_empty() {
         questions.push_str("\n- none recorded");
@@ -555,9 +554,12 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
          Open questions:{questions}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). A \
          concrete observation, risk, or counterexample helps, and declining is equally fine: \
-         answer exactly once with `spice room contribute {design} \
-         reason-for|reason-against|evidence|question TEXT` or decline with `spice room leave \
-         {design} --clause TEXT`. Until either answer publishes, `spice task next` returns this \
+         answer exactly once with `spice room contribute {design} --charge=C --question N \
+         [--cite KEY...] TEXT`, where C from -2 to +2 weighs open question N, ±1 is an opinion, \
+         and 0 or ±2 cites a task, journal code, contribution stamp, or artifact digest; pose a \
+         new question with `spice room contribute {design} --ask TEXT`; or decline with `spice \
+         room leave {design} --clause TEXT`. Until one answer publishes, `spice task next` \
+         returns this \
          request instead of allocating. It grants no claim and starts no work; you hear this \
          room's later posts until you leave it.",
         request.title,

@@ -710,8 +710,9 @@ fn begin(
 }
 
 /// A contribution is its own lane's bounded text, and each source it cites is
-/// authority that exists before it. Its Design's openness is checked against
-/// stored heads at commit, by [`require_open_controllers`].
+/// authority that exists before it. A question item is named only at a
+/// recorded statement head. Its Design's openness is checked against stored
+/// heads at commit, by [`require_open_controllers`].
 fn contribute(
     authority: &mut impl Authority,
     seq: Seq,
@@ -724,8 +725,16 @@ fn contribute(
             body.room, body.lane
         ));
     }
-    if let Err(error) = RoomContributed::admit(&body.text, &body.sources) {
+    if let Err(error) =
+        RoomContributed::admit(body.contribution, body.question, &body.text, &body.sources)
+    {
         return unsound(format!("contribution in {}: {error}", body.room));
+    }
+    if body.question.is_some() && body.statement.is_none() {
+        return unsound(format!(
+            "contribution in {} names a question item without its statement head",
+            body.room
+        ));
     }
     for source in &body.sources {
         require_source(authority, seq, source)?;

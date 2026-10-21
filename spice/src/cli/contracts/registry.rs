@@ -534,7 +534,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["room", "contribute"],
-        "room contribute HANDLE KIND TEXT [--source SOURCE...]",
+        "room contribute HANDLE [--charge=C|--ask] [--question N] [--cite KEY...] TEXT",
         Lane,
         Command => SnapshotOrCommitted,
         [RoomContributed],

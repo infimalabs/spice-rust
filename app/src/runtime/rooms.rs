@@ -190,8 +190,11 @@ pub enum RoomEventKind {
     Contributed {
         /// Logical lane that contributed.
         lane: CanonicalUuid,
-        /// What the contribution offers.
+        /// What the contribution offers: a charge or a question.
         contribution: authority::RoomContributionKind,
+        /// The Design question item a charge weighs, absent on a question
+        /// or a retained Design-level post.
+        question: Option<authority::RoomQuestion>,
         /// The complete contributed text.
         text: String,
         /// Cited sources, in the author's order.
@@ -724,6 +727,7 @@ impl RoomProjection {
                                 kind: RoomEventKind::Contributed {
                                     lane: body.lane,
                                     contribution: body.contribution,
+                                    question: body.question,
                                     text: body.text,
                                     sources: body.sources,
                                 },

@@ -95,8 +95,15 @@ pub enum RoomListeningDuty {
 pub struct RoomContribute {
     /// Current rendered handle of the Design anchor.
     pub room: TaskHandle,
-    /// What the contribution offers.
+    /// What the contribution offers: a charge or a question.
     pub kind: RoomContributionKind,
+    /// The question item a charge answers at the witnessed statement head.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub question: Option<crate::rooms::RoomQuestion>,
     /// The lane's complete contributed text.
     pub text: String,
     /// Exact transcript, journal, or retained-artifact sources it cites.
@@ -188,10 +195,11 @@ impl From<RoomContributeAnswer> for RoomContributeAnswerWire {
     }
 }
 
-/// Resolve one recorded contribution's cited sources at its own position.
+/// Resolve one recorded contribution's cited sources at its own position,
+/// and the text of the question item it names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RoomContributionSources {
+pub struct RoomContributionRead {
     /// The Design room the contribution belongs to.
     pub room: RoomAnchor,
     /// The recorded contribution.
@@ -202,11 +210,15 @@ pub struct RoomContributionSources {
 /// it can still follow or the typed reason it cannot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RoomContributionSourcesAnswer {
+pub struct RoomContributionReadAnswer {
     /// The contribution read.
     pub publication: RoomAuthorityStamp,
     /// Its sources at the read barrier.
     pub sources: Vec<RoomSourceView>,
+    /// The text of the question item the contribution names, present only
+    /// while the statement it witnessed is still the Design's current one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
 }
 
 /// Read one room's current coordination projection.

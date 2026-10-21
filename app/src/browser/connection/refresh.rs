@@ -223,23 +223,23 @@ pub(super) async fn send_operator_item_texts(
     Ok(())
 }
 
-/// Read the sources of contributions in shown Designs while the mailbox can
-/// hold their answers; a read the pool cannot hold stays owed for the next
-/// settled response.
-pub(super) async fn send_contribution_source_reads(
+/// Read the sources and question items of contributions in shown Designs
+/// while the mailbox can hold their answers; a read the pool cannot hold
+/// stays owed for the next settled response.
+pub(super) async fn send_contribution_reads(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
     data: &SurfaceData,
 ) -> Result<(), String> {
     let pane = SteerPane::over(principal);
-    if !pane.offers(CommandKind::RoomContributionSources) {
+    if !pane.offers(CommandKind::RoomContributionRead) {
         return Ok(());
     }
     let owed = data
         .write()
         .as_mut()
-        .map(|runtime| runtime.take_contribution_source_reads(actions.contribution_source_slots()))
+        .map(|runtime| runtime.take_contribution_reads(actions.contribution_read_slots()))
         .unwrap_or_default();
     let mut owed = owed.into_iter();
     while let Some((room, publication)) = owed.next() {
@@ -247,9 +247,9 @@ pub(super) async fn send_contribution_source_reads(
         let command = pane
             .command(
                 id,
-                CommandKind::RoomContributionSources,
+                CommandKind::RoomContributionRead,
                 vec![],
-                wire::intent::RoomContributionSources {
+                wire::intent::RoomContributionRead {
                     room,
                     publication: publication.clone(),
                 },
@@ -258,7 +258,7 @@ pub(super) async fn send_contribution_source_reads(
         let bytes = wire::encode(&command).map_err(|error| error.to_string())?;
         match actions.reserve_pending(
             id,
-            PendingKind::ContributionSources {
+            PendingKind::ContributionRead {
                 publication: publication.clone(),
             },
             bytes.len(),
@@ -269,7 +269,7 @@ pub(super) async fn send_contribution_source_reads(
                     std::iter::once(publication)
                         .chain(owed.map(|(_, publication)| publication))
                         .for_each(|publication| {
-                            runtime.restore_contribution_source_read(&publication);
+                            runtime.restore_contribution_read(&publication);
                         });
                 }
                 return Ok(());

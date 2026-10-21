@@ -240,8 +240,9 @@ impl Lanes {
     fn contribute(&self, id: u8, config: &SurfaceConfig, lane: u8, design: &wire::TaskHandle) {
         let request = wire::intent::RoomContribute {
             room: design.clone(),
-            kind: wire::rooms::RoomContributionKind::Evidence,
-            text: "The catch-up page already bounds its cursor.".to_owned(),
+            kind: wire::rooms::RoomContributionKind::Question,
+            question: None,
+            text: "Does the catch-up page already bound its cursor?".to_owned(),
             sources: Vec::new(),
         };
         let task = stamp(design);

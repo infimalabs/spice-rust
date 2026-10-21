@@ -10,10 +10,11 @@ use super::room::mint_publication;
 
 /// Record the commanding lane's contribution in `contribute.room`.
 ///
-/// The anchor must be an open Design and every cited source must resolve
-/// through `owners` at the same snapshot. A contribution authorizes nothing:
-/// it is one immutable room record, never a task, workflow, claim, group,
-/// candidate, decision, or authorization change.
+/// The anchor must be an open Design, a charge must name one of its current
+/// question items, and every cited source must resolve through `owners` at the
+/// same snapshot. A contribution authorizes nothing: it is one immutable room
+/// record, never a task, workflow, claim, group, candidate, decision, or
+/// authorization change.
 pub(crate) fn room_contribute(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -30,7 +31,12 @@ pub(crate) fn room_contribute(
         );
     };
     let text = contribute.text.trim();
-    if let Err(error) = RoomContributed::admit(text, &contribute.sources) {
+    if let Err(error) = RoomContributed::admit_new(
+        contribute.kind,
+        contribute.question,
+        text,
+        &contribute.sources,
+    ) {
         return malformed(error);
     }
     let expected = match contribution_witnesses(command, &contribute.sources) {
@@ -54,7 +60,8 @@ pub(crate) fn room_contribute(
             "read the board and name one current task handle",
         );
     };
-    if let Some(refused) = not_open_design(anchor) {
+    if let Some(refused) = not_open_design(anchor).or_else(|| unknown_question(anchor, contribute))
+    {
         return refused;
     }
     let room = anchor.born().clone();
@@ -109,6 +116,7 @@ pub(crate) fn room_contribute(
             publication,
             lane,
             contribution: contribute.kind,
+            question: contribute.question,
             statement: Some(statement),
             text: text.to_owned(),
             sources: contribute.sources.clone(),
@@ -147,6 +155,14 @@ fn malformed(error: RoomContributionError) -> Outcome<CommandAnswer> {
         RoomContributionError::DuplicateSource => (
             "room::contribution-source-duplicate",
             "cite each source once",
+        ),
+        RoomContributionError::Unplaced => (
+            "room::contribution-question-missing",
+            "name the question item this charge weighs with --question N",
+        ),
+        RoomContributionError::Uncited => (
+            "room::contribution-uncited",
+            "only +1 and -1 are opinions; cite what a 0, +2, or -2 rests on with --cite KEY",
         ),
     };
     refusal(reason, Some(error.to_string()), hint)
@@ -200,6 +216,24 @@ fn not_open_design(anchor: &Entry) -> Option<Outcome<CommandAnswer>> {
                 anchor.workflow().phase
             )),
             "contribute only after the Design reaches its open design phase",
+        )
+    })
+}
+
+/// The refusal when `contribute` names a question item outside the anchor's
+/// current statement acceptance.
+fn unknown_question(anchor: &Entry, contribute: &RoomContribute) -> Option<Outcome<CommandAnswer>> {
+    let question = contribute.question?;
+    let acceptance = &anchor.statement().acceptance;
+    question.item(acceptance).is_none().then(|| {
+        refusal(
+            "room::contribution-question-unknown",
+            Some(format!(
+                "question {question} of {} in {}",
+                acceptance.len(),
+                anchor.handle()
+            )),
+            "read the Design's acceptance and name one of its items by position",
         )
     })
 }
@@ -263,7 +297,7 @@ fn unpublished_contribution(
         Ok(Some(source)) => Some(refusal(
             "room::contribution-source-unavailable",
             Some(serde_json::to_string(&source).unwrap_or_default()),
-            "cite a contribution by the `source` its `spice room contribute` answer returned",
+            "cite a contribution in this room by its publication stamp",
         )),
         Err(error) => Some(store_fault("room::journal-unreadable", &error.to_string())),
     }

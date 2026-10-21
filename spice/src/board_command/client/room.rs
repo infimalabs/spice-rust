@@ -1,5 +1,5 @@
 use super::*;
-use wire::rooms::RoomAuthorityStamp;
+use wire::rooms::{RoomAuthorityStamp, RoomCharge, RoomContributionKind, RoomQuestion, RoomSource};
 
 pub(super) fn dispatch_room_client(
     repository: &Repository,
@@ -134,40 +134,59 @@ pub(super) fn client_room_put_aside(
     })
 }
 
-/// Contribute one typed record to an open Design's room as the connected
-/// lane, witnessing the Design's statement and workflow as the board reads.
+/// Contribute one charge or question to an open Design's room as the
+/// connected lane, witnessing the Design's statement and workflow as the board
+/// reads and resolving each `--cite` key to the exact source it names.
 fn client_room_contribute(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_task_from_board(repository, contract, matches, |_board, room, heads| {
-        let written = required(matches, "KIND");
-        let kind = written
-            .parse::<wire::rooms::RoomContributionKind>()
-            .map_err(|error| {
-                refusal(
-                    "room::contribution-kind-invalid",
-                    Some(written.clone()),
-                    &error.to_string(),
-                )
-            })?;
+    mutate_task_from_board(repository, contract, matches, |board, room, heads| {
+        let kind = match (matches.get_one::<String>("charge"), matches.get_flag("ask")) {
+            (Some(written), _) => written
+                .parse::<RoomCharge>()
+                .map(RoomContributionKind::Charge)
+                .map_err(|error| {
+                    refusal(
+                        "room::contribution-charge-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
+                })?,
+            (None, true) => RoomContributionKind::Question,
+            (None, false) => {
+                return Err(refusal(
+                    "room::contribution-kind-missing",
+                    None,
+                    "weigh one question item with --charge=C --question N, or pose an open \
+                     question with --ask",
+                ));
+            }
+        };
+        let question = matches
+            .get_one::<String>("question")
+            .map(|written| {
+                written
+                    .parse::<u16>()
+                    .ok()
+                    .and_then(RoomQuestion::new)
+                    .ok_or_else(|| {
+                        refusal(
+                            "room::contribution-question-invalid",
+                            Some(written.clone()),
+                            "name a question item by its one-based position in the Design's \
+                             acceptance",
+                        )
+                    })
+            })
+            .transpose()?;
+        let anchor = &heads.statement.body.born;
         let sources = matches
-            .get_many::<String>("source")
+            .get_many::<String>("cite")
             .into_iter()
             .flatten()
-            .map(|written| {
-                serde_json::from_str::<wire::rooms::RoomSource>(written).map_err(|error| {
-                    refusal(
-                        "room::contribution-source-invalid",
-                        Some(written.clone()),
-                        &format!(
-                            "spell each source as room-source JSON, such as \
-                             {{\"kind\":\"journal\",\"fact\":\"SEQ\"}}: {error}"
-                        ),
-                    )
-                })
-            })
+            .map(|key| cite(board, anchor, key))
             .collect::<Result<Vec<_>, _>>()?;
         let mut expected = vec![statement_witness(heads), workflow_witness(heads)];
         expected.extend(sources.iter().map(|source| wire::Witness::Source {
@@ -179,12 +198,65 @@ fn client_room_contribute(
             serde_json::to_value(wire::intent::RoomContribute {
                 room,
                 kind,
+                question,
                 text: required(matches, "TEXT"),
                 sources,
             })
             .expect("typed room contribution encodes"),
         ))
     })
+}
+
+/// The exact source one `--cite` key names, resolved by its form the way
+/// `spice://` resolves it: a task handle or stamp cites that task's statement
+/// head fact, a hex digest an artifact, a publication stamp a contribution in
+/// this room, and a base-52 journal code that fact. The resident still
+/// refuses any source that does not exist before the contribution.
+pub(in crate::board_command) fn cite(
+    board: &BoardAnswer,
+    room: &wire::TaskStamp,
+    key: &str,
+) -> Result<RoomSource, Outcome<CommandAnswer>> {
+    let statement = |task: &BoardTask| RoomSource::Journal {
+        fact: wire::SequenceCode::new(task.statement.position.get()),
+    };
+    if let Ok(handle) = key.parse::<TaskHandle>() {
+        return task_heads(board, &handle).map(statement).map_err(|_| {
+            refusal(
+                "room::contribution-cite-unknown",
+                Some(key.to_owned()),
+                "cite a task by a handle the board shows",
+            )
+        });
+    }
+    if let Ok(digest) = key.parse::<wire::Digest>() {
+        return Ok(RoomSource::Artifact { digest });
+    }
+    if let Ok(stamp) = key.parse::<wire::TaskStamp>() {
+        if let Some(task) = board
+            .tasks
+            .iter()
+            .find(|task| task.statement.body.born == stamp)
+        {
+            return Ok(statement(task));
+        }
+        if let Ok(publication) = key.parse::<RoomAuthorityStamp>() {
+            return Ok(RoomSource::Contribution {
+                room: room.clone(),
+                publication,
+            });
+        }
+    }
+    key.parse::<wire::SequenceCode>()
+        .map(|fact| RoomSource::Journal { fact })
+        .map_err(|_| {
+            refusal(
+                "room::contribution-cite-invalid",
+                Some(key.to_owned()),
+                "cite a task handle or stamp, a contribution's publication stamp, a journal \
+                 code, or an artifact digest",
+            )
+        })
 }
 
 /// Leave one room as the connected lane and say what still keeps it there.

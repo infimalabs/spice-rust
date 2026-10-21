@@ -583,7 +583,7 @@ impl CommandKind {
             | Self::TaskTimeline
             | Self::BoardGraph
             | Self::DocLedger
-            | Self::RoomContributionSources
+            | Self::RoomContributionRead
             | Self::WorkingGroupRead => Law::READ,
             Self::GlobalSettingsRead
             | Self::VendorCatalog
@@ -827,7 +827,7 @@ impl CommandKind {
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
-            Self::SteerInbox | Self::QuoteRead | Self::RoomContributionSources => Law::READ,
+            Self::SteerInbox | Self::QuoteRead | Self::RoomContributionRead => Law::READ,
             Self::SteerHistory => Law::OPERATOR_READ,
             Self::SteerResend => Law::RESEND,
             Self::SteerRecover => Law::RECOVER,

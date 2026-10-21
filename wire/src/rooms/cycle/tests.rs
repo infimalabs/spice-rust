@@ -53,6 +53,7 @@ fn contributed(room: i64, by: u8, kind: RoomContributionKind) -> AnyFact {
         publication: authority(1_000 + i64::from(by)),
         lane: lane(by),
         contribution: kind,
+        question: None,
         statement: None,
         text: "Substantive contribution.".to_owned(),
         sources: Vec::new(),
@@ -244,9 +245,9 @@ impl Journal {
 
 fn steeping(journal: &mut Journal, lanes: u8) {
     let kinds = [
-        RoomContributionKind::ReasonFor,
-        RoomContributionKind::ReasonAgainst,
-        RoomContributionKind::Evidence,
+        RoomContributionKind::charge(1),
+        RoomContributionKind::charge(-1),
+        RoomContributionKind::charge(0),
     ];
     for by in 1..=lanes {
         journal.lane(&contributed(DESIGN, by, kinds[usize::from(by - 1) % 3]));
@@ -262,7 +263,7 @@ fn first_pass_needs_steeped_maturity_or_a_nudge() {
     assert_eq!(journal.cycle(false), DesignCycle::ReadyForProposal);
 
     let mut nudged = Journal::new();
-    nudged.lane(&contributed(DESIGN, 1, RoomContributionKind::Evidence));
+    nudged.lane(&contributed(DESIGN, 1, RoomContributionKind::charge(0)));
     assert_eq!(nudged.cycle(false), DesignCycle::GatheringInput);
     nudged.operator(&any(DesignNudged { design: design() }));
     assert_eq!(nudged.cycle(false), DesignCycle::ReadyForProposal);
@@ -284,7 +285,7 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
         (
             "contribution",
             false,
-            contributed(DESIGN, 2, RoomContributionKind::Evidence),
+            contributed(DESIGN, 2, RoomContributionKind::charge(0)),
         ),
         ("nudge", true, any(DesignNudged { design: design() })),
         ("task-routed MSG", true, posted(task_route())),
@@ -328,7 +329,7 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
         (
             "another room",
             false,
-            contributed(OTHER, 2, RoomContributionKind::Evidence),
+            contributed(OTHER, 2, RoomContributionKind::charge(0)),
         ),
         ("unrelated release", false, freed(OTHER)),
         ("unrelated completion", false, completed(OTHER)),
@@ -352,7 +353,7 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
     steeping(&mut journal, 3);
     journal.lane(&proposed(10, vec![task(OUTPUT)]));
     journal.lane(&freed(DESIGN));
-    journal.lane(&contributed(DESIGN, 2, RoomContributionKind::Evidence));
+    journal.lane(&contributed(DESIGN, 2, RoomContributionKind::charge(0)));
     assert_eq!(journal.cycle(false), DesignCycle::AwaitingDecision);
     assert_eq!(
         journal.cycles.facts(&design()).end,
@@ -436,7 +437,7 @@ fn decisions_wait_on_released_work_unless_feedback_or_later_input_arrives() {
         vec![task(OUTPUT)],
     );
     contributed_while_running.operator(&authorized(1, 10, &[OUTPUT]));
-    contributed_while_running.lane(&contributed(DESIGN, 2, RoomContributionKind::ReasonAgainst));
+    contributed_while_running.lane(&contributed(DESIGN, 2, RoomContributionKind::charge(-1)));
     assert_eq!(
         contributed_while_running.cycle(true),
         DesignCycle::ReadyForProposal

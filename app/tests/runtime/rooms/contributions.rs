@@ -1,13 +1,14 @@
 //! Typed Design contributions: grouped by kind and interleaved with ordinary
 //! conversation in journal order, crediting their lanes, with each cited
-//! source resolved once per shown Design by the resident that owns it.
+//! source and weighed question item resolved once per shown Design by the
+//! resident that owns it.
 
 use super::*;
-use app::{ContributionSources, RoomEventKind};
-use wire::intent::RoomContributionSourcesAnswer;
+use app::{ContributionRead, RoomEventKind};
+use wire::intent::RoomContributionReadAnswer;
 use wire::rooms::{
-    DesignNoticed, RoomContributed, RoomContributionKind, RoomSource, RoomSourceUnavailable,
-    RoomSourceView,
+    DesignNoticed, RoomContributed, RoomContributionKind, RoomQuestion, RoomSource,
+    RoomSourceUnavailable, RoomSourceView,
 };
 
 fn journal(fact: u64) -> RoomSource {
@@ -22,6 +23,8 @@ fn artifact() -> RoomSource {
     }
 }
 
+/// A contribution as admission writes it: a charge weighs the Design's first
+/// question item, and a question names none.
 fn contributed(
     position: u64,
     publication: &RoomAuthorityStamp,
@@ -37,6 +40,8 @@ fn contributed(
             publication: publication.clone(),
             lane: uuid(lane),
             contribution,
+            question: matches!(contribution, RoomContributionKind::Charge(_))
+                .then(|| RoomQuestion::new(1).expect("one-based item")),
             statement: None,
             text: format!("{} at {position}", contribution.as_str()),
             sources,
@@ -58,6 +63,7 @@ fn attributed(
             publication: publication.clone(),
             lane: uuid(lane),
             contribution,
+            question: None,
             statement: wire::Seq::new(statement),
             text: format!("{} at {position}", contribution.as_str()),
             sources: Vec::new(),
@@ -93,7 +99,7 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
             1,
             &first,
             LANE,
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(0),
             vec![journal(1)],
         ),
         room_message(2),
@@ -108,21 +114,21 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
             4,
             &third,
             LANE,
-            RoomContributionKind::ReasonAgainst,
+            RoomContributionKind::charge(-1),
             vec![artifact()],
         ),
         contributed(
             5,
             &fourth,
             SECOND_LANE,
-            RoomContributionKind::ReasonFor,
+            RoomContributionKind::charge(1),
             Vec::new(),
         ),
         contributed(
             6,
             &fifth,
             SECOND_LANE,
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(0),
             Vec::new(),
         ),
     ];
@@ -147,14 +153,14 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
         groups,
         vec![
             (
-                RoomContributionKind::ReasonFor,
+                RoomContributionKind::charge(1),
                 vec![(5, uuid(SECOND_LANE))]
             ),
-            (RoomContributionKind::ReasonAgainst, vec![(4, uuid(LANE))]),
             (
-                RoomContributionKind::Evidence,
+                RoomContributionKind::charge(0),
                 vec![(1, uuid(LANE)), (6, uuid(SECOND_LANE))]
             ),
+            (RoomContributionKind::charge(-1), vec![(4, uuid(LANE))]),
             (RoomContributionKind::Question, vec![(3, uuid(SECOND_LANE))]),
         ],
         "every kind groups in canonical order, each oldest first by journal position"
@@ -173,14 +179,7 @@ fn contributions_group_by_kind_and_interleave_with_conversation_in_journal_order
         .collect::<Vec<_>>();
     assert_eq!(
         chronology,
-        vec![
-            "evidence",
-            "message",
-            "question",
-            "reason-against",
-            "reason-for",
-            "evidence"
-        ],
+        vec!["0", "message", "question", "-1", "+1", "0"],
         "contributions and conversation interleave as the journal admitted them"
     );
 
@@ -213,16 +212,17 @@ fn sources_reply(
     session: &Session,
     publication: &RoomAuthorityStamp,
     sources: Vec<RoomSourceView>,
-) -> app::Admitted<Response<RoomContributionSourcesAnswer>> {
+) -> app::Admitted<Response<RoomContributionReadAnswer>> {
     let bytes = support::response(
         WireVersion::CURRENT,
         uuid(REQUEST),
         uuid(EPOCH),
         Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(seq(9)),
-            body: RoomContributionSourcesAnswer {
+            body: RoomContributionReadAnswer {
                 publication: publication.clone(),
                 sources,
+                question: None,
             },
         }),
     );
@@ -234,12 +234,12 @@ fn sources_reply(
 fn sources_refusal(
     session: &Session,
     reason: &str,
-) -> app::Admitted<Response<RoomContributionSourcesAnswer>> {
+) -> app::Admitted<Response<RoomContributionReadAnswer>> {
     let bytes = support::response(
         WireVersion::CURRENT,
         uuid(REQUEST),
         uuid(EPOCH),
-        Outcome::<RoomContributionSourcesAnswer>::Refusal(wire::Refusal::bare(
+        Outcome::<RoomContributionReadAnswer>::Refusal(wire::Refusal::bare(
             wire::RefusalDiagnostic::new(reason.to_owned(), None, None, None),
         )),
     );
@@ -248,11 +248,12 @@ fn sources_refusal(
         .expect("sources refusal is admitted")
 }
 
-/// Only a shown Design's cited contributions owe a source read, each taken
-/// once within the pump's limit; an unsent read is owed again, a settled read
-/// shows each source's typed state, and a reconnect re-reads them all.
+/// Only a shown Design's contributions that cite a source or weigh a
+/// question item owe a read, each taken once within the pump's limit; an
+/// unsent read is owed again, a settled read shows each source's typed state,
+/// and a reconnect re-reads them all.
 #[test]
-fn shown_designs_resolve_each_cited_contributions_sources_once() {
+fn shown_designs_resolve_each_cited_or_placed_contribution_once() {
     let session = session(OPERATOR, EPOCH);
     let [first, second, third, ..] = stamps();
     let snapshot = [
@@ -260,44 +261,44 @@ fn shown_designs_resolve_each_cited_contributions_sources_once() {
             1,
             &first,
             LANE,
-            RoomContributionKind::Evidence,
-            vec![journal(1)],
+            RoomContributionKind::charge(-1),
+            Vec::new(),
         ),
         contributed(2, &second, LANE, RoomContributionKind::Question, Vec::new()),
         contributed(
             3,
             &third,
             SECOND_LANE,
-            RoomContributionKind::ReasonFor,
+            RoomContributionKind::charge(1),
             vec![journal(2), artifact()],
         ),
     ];
     let mut runtime = contribution_runtime(&session, &snapshot);
     assert!(
-        runtime.take_contribution_source_reads(8).is_empty(),
+        runtime.take_contribution_reads(8).is_empty(),
         "no surface shows the Design, so nothing is read"
     );
 
     runtime.show_task_details([room()]);
     assert_eq!(
-        runtime.take_contribution_source_reads(1),
+        runtime.take_contribution_reads(1),
         vec![(room(), first.clone())],
-        "the oldest cited contribution reads first, within the limit"
+        "the oldest contribution weighing an item reads first, within the limit"
     );
     assert_eq!(
-        runtime.take_contribution_source_reads(8),
+        runtime.take_contribution_reads(8),
         vec![(room(), third.clone())],
-        "an uncited contribution owes no read"
+        "a question citing nothing owes no read"
     );
-    assert!(runtime.take_contribution_source_reads(8).is_empty());
+    assert!(runtime.take_contribution_reads(8).is_empty());
     assert_eq!(
-        runtime.contribution_sources(&third),
-        Some(&ContributionSources::Loading)
+        runtime.contribution_read(&third),
+        Some(&ContributionRead::Loading)
     );
 
-    runtime.restore_contribution_source_read(&third);
+    runtime.restore_contribution_read(&third);
     assert_eq!(
-        runtime.take_contribution_source_reads(8),
+        runtime.take_contribution_reads(8),
         vec![(room(), third.clone())],
         "an unsent read is owed again"
     );
@@ -309,19 +310,25 @@ fn shown_designs_resolve_each_cited_contributions_sources_once() {
             unavailable: RoomSourceUnavailable::Missing {},
         },
     ];
-    runtime.apply_contribution_sources(&third, &sources_reply(&session, &third, views.clone()));
+    runtime.apply_contribution_read(&third, &sources_reply(&session, &third, views.clone()));
     assert_eq!(
-        runtime.contribution_sources(&third),
-        Some(&ContributionSources::Read(views.clone()))
+        runtime.contribution_read(&third),
+        Some(&ContributionRead::Read {
+            sources: views.clone(),
+            question: None,
+        })
     );
-    runtime.apply_contribution_sources(&third, &sources_reply(&session, &third, Vec::new()));
+    runtime.apply_contribution_read(&third, &sources_reply(&session, &third, Vec::new()));
     assert_eq!(
-        runtime.contribution_sources(&third),
-        Some(&ContributionSources::Read(views)),
+        runtime.contribution_read(&third),
+        Some(&ContributionRead::Read {
+            sources: views,
+            question: None,
+        }),
         "a settled read is not overwritten by a late answer"
     );
 
-    runtime.apply_contribution_sources(
+    runtime.apply_contribution_read(
         &first,
         &sources_reply(
             &session,
@@ -331,8 +338,8 @@ fn shown_designs_resolve_each_cited_contributions_sources_once() {
     );
     assert!(
         matches!(
-            runtime.contribution_sources(&first),
-            Some(ContributionSources::Failed(_))
+            runtime.contribution_read(&first),
+            Some(ContributionRead::Failed(_))
         ),
         "an answer naming another contribution never becomes this one's sources"
     );
@@ -342,17 +349,17 @@ fn shown_designs_resolve_each_cited_contributions_sources_once() {
     runtime.apply_stream(&room_page(&session, &snapshot, None, snapshot.len() as u64));
     runtime.show_task_details([room()]);
     assert_eq!(
-        runtime.take_contribution_source_reads(8),
+        runtime.take_contribution_reads(8),
         vec![(room(), first.clone()), (room(), third.clone())],
         "a reconnect re-reads every source, since availability may have changed"
     );
-    runtime.apply_contribution_sources(
+    runtime.apply_contribution_read(
         &first,
         &sources_refusal(&session, "room::contribution-missing"),
     );
     assert_eq!(
-        runtime.contribution_sources(&first),
-        Some(&ContributionSources::Failed(
+        runtime.contribution_read(&first),
+        Some(&ContributionRead::Failed(
             "room::contribution-missing".to_owned()
         ))
     );
@@ -400,15 +407,15 @@ fn maturity_projection_is_incremental_bounded_and_standing_neutral() {
         noticed_at(1, 10, &room(), LANE),
         noticed_at(2, 10, &room(), SECOND_LANE),
         noticed_at(3, 10, &room(), THIRD),
-        attributed(4, 10, &first, LANE, RoomContributionKind::ReasonFor),
+        attributed(4, 10, &first, LANE, RoomContributionKind::charge(1)),
         attributed(
             5,
             10,
             &second,
             SECOND_LANE,
-            RoomContributionKind::ReasonAgainst,
+            RoomContributionKind::charge(-1),
         ),
-        attributed(6, 10, &third, THIRD, RoomContributionKind::Evidence),
+        attributed(6, 10, &third, THIRD, RoomContributionKind::charge(0)),
     ];
     let runtime = contribution_runtime(&session, &snapshot);
     let projection = runtime.room_projection();

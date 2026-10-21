@@ -41,7 +41,7 @@ impl AnswerShape {
             | Self::RoomCoordination
             | Self::RoomLeave
             | Self::RoomContribute
-            | Self::RoomContributionSources
+            | Self::RoomContributionRead
             | Self::RoomControl
             | Self::RoomConversationText => self.decode_room(source),
             Self::Board

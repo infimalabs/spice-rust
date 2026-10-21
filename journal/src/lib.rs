@@ -53,8 +53,10 @@
 /// question-result protocol and required question-result evidence while preserving
 /// their receipts and facts as inert authority. Schema 88 materializes task Git
 /// boundaries and review corrections as typed release-note authority. Schema 89
-/// records on every task review the workflow status its verdict left.
-pub const SCHEMA_VERSION: u32 = 89;
+/// records on every task review the workflow status its verdict left. Schema 90
+/// retires contribution labels into charges: reason-for is +1, reason-against
+/// is -1, evidence is 0, on each fact and its command receipt.
+pub const SCHEMA_VERSION: u32 = 90;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

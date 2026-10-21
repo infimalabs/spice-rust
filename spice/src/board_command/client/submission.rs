@@ -867,6 +867,25 @@ pub(in crate::board_command) fn mutation_read(
             dependencies |= graph;
         }
     }
+    // A contribution's cited task handle or bare stamp joins the read so its
+    // statement head resolves; a stamp no task carries names a publication.
+    for written in matches
+        .try_get_many::<String>("cite")
+        .ok()
+        .flatten()
+        .into_iter()
+        .flatten()
+    {
+        if let Ok(named) = written.parse::<TaskHandle>() {
+            tasks.push(
+                named
+                    .born()
+                    .expect("a parsed handle carries a canonical task stamp"),
+            );
+        } else if let Ok(stamp) = written.parse::<wire::TaskStamp>() {
+            tasks.push(stamp);
+        }
+    }
     let claims = tasks.is_empty();
     // A disposition's covering task joins the read so its statement can be
     // witnessed; a cover that is not a handle names a commit instead.

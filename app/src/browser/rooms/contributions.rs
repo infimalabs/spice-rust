@@ -1,9 +1,9 @@
 //! Typed Design contributions read in place: grouped by kind, and in the
 //! room history in journal order beside ordinary conversation. Each entry
-//! names its lane, time, text, and every cited source as an exact link or
-//! the typed reason the resident cannot resolve it. Contributions are
-//! evidence for the operator's Design judgment, never authority; reading
-//! them writes nothing.
+//! names its lane, time, charge, the question item it weighs, text, and every
+//! cited source as an exact link or the typed reason the resident cannot
+//! resolve it. Contributions are evidence for the operator's Design judgment,
+//! never authority; reading them writes nothing.
 
 use wire::TaskStamp;
 use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomSource, RoomSourceView};
@@ -12,14 +12,20 @@ use yew::prelude::*;
 use super::card::{Badge, Face, Speaker};
 use crate::AppRuntime;
 use crate::browser::view::chrome::CopyButton;
-use crate::runtime::{Contribution, ContributionSources, RoomEvent, RoomEventKind};
+use crate::runtime::{Contribution, ContributionRead, RoomEvent, RoomEventKind};
 
-/// Words naming one contribution kind.
+/// Words naming one contribution kind: a charge's signed weight and sense,
+/// or a question.
 pub(super) const fn kind_label(kind: RoomContributionKind) -> &'static str {
     match kind {
-        RoomContributionKind::ReasonFor => "Reason for",
-        RoomContributionKind::ReasonAgainst => "Reason against",
-        RoomContributionKind::Evidence => "Evidence",
+        RoomContributionKind::Charge(charge) => match charge.get() {
+            2 => "+2 strongly for",
+            1 => "+1 for",
+            0 => "0 evidence",
+            -1 => "-1 against",
+            -2 => "-2 strongly against",
+            _ => panic!("a charge lies in -2..=2"),
+        },
         RoomContributionKind::Question => "Question",
     }
 }
@@ -71,6 +77,7 @@ pub(super) fn face(
     let RoomEventKind::Contributed {
         lane,
         contribution,
+        question,
         text,
         sources,
     } = &event.kind
@@ -84,6 +91,7 @@ pub(super) fn face(
             position: event.position,
             lane: *lane,
             contribution: *contribution,
+            question: *question,
             text,
             sources,
         },
@@ -107,7 +115,12 @@ fn entry_face(runtime: &AppRuntime, entry: &Contribution<'_>) -> Face {
         receivers: String::new(),
         badge: Some(badge(entry.contribution)),
         words: entry.text.to_owned(),
-        tail: render_sources(runtime, entry.publication, entry.sources),
+        tail: html! {
+            <>
+                {render_question(runtime, entry)}
+                {render_sources(runtime, entry.publication, entry.sources)}
+            </>
+        },
     }
 }
 
@@ -116,6 +129,29 @@ fn render_entry(runtime: &AppRuntime, entry: &Contribution<'_>) -> Html {
         <article class="room-card" key={entry.publication.to_string()} tabindex="0">
             {super::card::render(runtime, entry.publication.micros() / 1_000, entry_face(runtime, entry), None)}
         </article>
+    }
+}
+
+/// The question item a contribution weighs: its text once the resident
+/// reads it, its number alone while the read is pending, failed, or the
+/// statement it witnessed has been revised; nothing for a question or a
+/// retained Design-level post.
+fn render_question(runtime: &AppRuntime, entry: &Contribution<'_>) -> Html {
+    let Some(item) = entry.question else {
+        return Html::default();
+    };
+    let line = match runtime.contribution_read(entry.publication) {
+        Some(ContributionRead::Read {
+            question: Some(text),
+            ..
+        }) => format!("Item {item}: {text}"),
+        Some(ContributionRead::Read { question: None, .. }) => {
+            format!("Item {item} of an earlier statement")
+        }
+        _ => format!("Item {item}"),
+    };
+    html! {
+        <p class="room-contribution-question" data-question-item={item.to_string()}>{line}</p>
     }
 }
 
@@ -138,8 +174,8 @@ fn render_sources(
     if cited.is_empty() {
         return html! { <p class="room-contribution-sources-none">{"No sources cited."}</p> };
     }
-    let (busy, failure, rows) = match runtime.contribution_sources(publication) {
-        Some(ContributionSources::Read(views)) => (
+    let (busy, failure, rows) = match runtime.contribution_read(publication) {
+        Some(ContributionRead::Read { sources: views, .. }) => (
             false,
             None,
             views
@@ -153,7 +189,7 @@ fn render_sources(
                 })
                 .collect::<Vec<_>>(),
         ),
-        Some(ContributionSources::Failed(reason)) => (
+        Some(ContributionRead::Failed(reason)) => (
             false,
             Some(reason.as_str()),
             cited
@@ -161,7 +197,7 @@ fn render_sources(
                 .map(|source| (source, SourceState::Unresolved))
                 .collect(),
         ),
-        Some(ContributionSources::Loading) | None => (
+        Some(ContributionRead::Loading) | None => (
             true,
             None,
             cited

@@ -66,8 +66,8 @@ mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 mod rooms;
 pub use rooms::{
-    RoomConcernedDirection, RoomContribute, RoomContributeAnswer, RoomContributionSources,
-    RoomContributionSourcesAnswer, RoomControl, RoomControlAnswer, RoomConversationContent,
+    RoomConcernedDirection, RoomContribute, RoomContributeAnswer, RoomContributionRead,
+    RoomContributionReadAnswer, RoomControl, RoomControlAnswer, RoomConversationContent,
     RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinateAction,
     RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView,
     RoomItemMove, RoomLeave, RoomLeaveAnswer, RoomListeningDuty, RoomPutAside, RoomResumeBudget,

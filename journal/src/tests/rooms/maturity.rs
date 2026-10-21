@@ -87,6 +87,7 @@ fn contributed(
         publication: publication.clone(),
         lane,
         contribution: kind,
+        question: None,
         statement: statement_head,
         text: "Substantive contribution.".to_owned(),
         sources: Vec::new(),
@@ -113,6 +114,7 @@ fn contributed(
         body: wire::intent::RoomContribute {
             room: handle.clone(),
             kind,
+            question: None,
             text: body.text.clone(),
             sources: Vec::new(),
         },
@@ -178,7 +180,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
             &mut journal,
             &design,
             lane(1),
-            RoomContributionKind::ReasonFor,
+            RoomContributionKind::charge(1),
             Some(statement),
             1_000,
         ),
@@ -186,7 +188,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
             &mut journal,
             &design,
             lane(2),
-            RoomContributionKind::ReasonAgainst,
+            RoomContributionKind::charge(-1),
             Some(statement),
             1_001,
         ),
@@ -194,7 +196,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
             &mut journal,
             &design,
             lane(3),
-            RoomContributionKind::Evidence,
+            RoomContributionKind::charge(0),
             Some(statement),
             1_002,
         ),
@@ -232,4 +234,110 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     assert_eq!(actual.recent_heads[0].requested_decliners(), 1);
     assert_eq!(actual.recent_heads[0].requested_unanswered(), 0);
     assert_eq!(actual.state(), wire::rooms::DesignMaturityState::Steeped);
+}
+
+/// Schema 89 labelled contributions. The crossing rewrites each label to its
+/// charge on the fact, its request, and its reply together, so replay still
+/// proves every receipt, retained posts name no question item, and maturity
+/// re-folds to exactly the measure the labels gave.
+#[test]
+fn retained_contribution_labels_cross_to_charges_with_their_receipts() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("contribution-charges.sqlite3");
+    let mut journal = authority_file_fixture(&path);
+    let design = design(&mut journal, 1);
+    let statement = current_statement(&journal, &design);
+    let labels = [
+        ("reason-for", RoomContributionKind::charge(1)),
+        ("reason-against", RoomContributionKind::charge(-1)),
+        ("evidence", RoomContributionKind::charge(0)),
+        ("question", RoomContributionKind::Question),
+    ];
+    for (offset, (_, kind)) in (1_u8..).zip(labels) {
+        contributed(
+            &mut journal,
+            &design,
+            lane(offset),
+            kind,
+            Some(statement),
+            2_000 + i64::from(offset),
+        );
+    }
+    let before = journal
+        .read(|read| read.design_maturity(&design))
+        .expect("labelled maturity reads");
+    for (label, kind) in labels {
+        let RoomContributionKind::Charge(charge) = kind else {
+            continue;
+        };
+        let charge = charge.get();
+        journal
+            .connection
+            .execute_batch(&format!(
+                "UPDATE command_receipts SET
+                     request = CAST(json_set(CAST(request AS TEXT), '$.body.kind', '{label}') AS BLOB),
+                     response = CAST(json_set(CAST(response AS TEXT), '$.outcome.body.kind', '{label}') AS BLOB)
+                 WHERE command_kind = 'room::contribute'
+                   AND json_extract(CAST(request AS TEXT), '$.body.kind') = {charge};
+                 UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), '$.fact.contribution', '{label}') AS BLOB)
+                 WHERE kind = 'room::contributed'
+                   AND json_extract(CAST(envelope AS TEXT), '$.fact.contribution') = {charge};"
+            ))
+            .expect("restore the retained label");
+    }
+    let retained: (u32, u32, u32) = journal
+        .connection
+        .query_row(
+            "SELECT
+                 (SELECT count(*) FROM fact_envelopes WHERE kind = 'room::contributed'
+                    AND json_type(CAST(envelope AS TEXT), '$.fact.contribution') = 'text'),
+                 (SELECT count(*) FROM command_receipts WHERE command_kind = 'room::contribute'
+                    AND json_type(CAST(request AS TEXT), '$.body.kind') = 'text'),
+                 (SELECT count(*) FROM command_receipts WHERE command_kind = 'room::contribute'
+                    AND json_type(CAST(response AS TEXT), '$.outcome.body.kind') = 'text')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("retained labels count");
+    assert_eq!(retained, (4, 4, 4), "every fixture post carries a label");
+    crate::tests::schema::restore_predecessor(&journal, 89);
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("labelled contributions cross");
+    journal
+        .verify()
+        .expect("every crossed receipt still proves its fact");
+    let crossed = journal
+        .connection
+        .prepare(
+            "SELECT envelope FROM fact_envelopes WHERE kind = 'room::contributed' ORDER BY seq",
+        )
+        .expect("contributions select")
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .expect("contributions query")
+        .map(|bytes| {
+            wire::decode::<wire::Envelope<wire::AnyFact>>(&bytes.expect("row reads"))
+                .expect("crossed fact decodes")
+                .fact
+                .read::<RoomContributed>()
+                .expect("contribution fact")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        crossed
+            .iter()
+            .map(|contribution| (contribution.contribution, contribution.question))
+            .collect::<Vec<_>>(),
+        labels.map(|(_, kind)| (kind, None)),
+        "each label takes its charge and no question item"
+    );
+    assert_eq!(
+        journal
+            .read(|read| read.design_maturity(&design))
+            .expect("crossed maturity reads"),
+        before
+    );
+    drop(journal);
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
 }

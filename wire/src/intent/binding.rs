@@ -28,7 +28,7 @@ use super::{
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
     ReleasePublish, ReportAnswer, ReportRead, RoomContribute, RoomContributeAnswer,
-    RoomContributionSources, RoomContributionSourcesAnswer, RoomControl, RoomControlAnswer,
+    RoomContributionRead, RoomContributionReadAnswer, RoomControl, RoomControlAnswer,
     RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
     RoomCoordinationView, RoomLeave, RoomLeaveAnswer, RoomPutAside, StateAnswer, SteerDispose,
     SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskConclude,
@@ -73,8 +73,8 @@ pub enum BodyShape {
     RoomLeave,
     /// [`RoomContribute`]
     RoomContribute,
-    /// [`RoomContributionSources`]
-    RoomContributionSources,
+    /// [`RoomContributionRead`]
+    RoomContributionRead,
     /// [`RoomControl`]
     RoomControl,
     /// [`WorkingGroupRead`]
@@ -246,8 +246,8 @@ pub enum AnswerShape {
     RoomLeave,
     /// [`RoomContributeAnswer`]
     RoomContribute,
-    /// [`RoomContributionSourcesAnswer`]
-    RoomContributionSources,
+    /// [`RoomContributionReadAnswer`]
+    RoomContributionRead,
     /// [`RoomControlAnswer`]
     RoomControl,
     /// [`RoomConversationTextAnswer`]
@@ -332,8 +332,8 @@ pub enum CommandAnswer {
     RoomLeave(RoomLeaveAnswer),
     /// [`AnswerShape::RoomContribute`]
     RoomContribute(RoomContributeAnswer),
-    /// [`AnswerShape::RoomContributionSources`]
-    RoomContributionSources(RoomContributionSourcesAnswer),
+    /// [`AnswerShape::RoomContributionRead`]
+    RoomContributionRead(RoomContributionReadAnswer),
     /// [`AnswerShape::RoomControl`]
     RoomControl(RoomControlAnswer),
     /// [`AnswerShape::RoomConversationText`]
@@ -406,7 +406,7 @@ impl CommandAnswer {
             | Self::RoomCoordination(_)
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
-            | Self::RoomContributionSources(_)
+            | Self::RoomContributionRead(_)
             | Self::RoomControl(_)
             | Self::RoomConversationText(_)
             | Self::Task(_)
@@ -448,7 +448,7 @@ impl CommandAnswer {
             Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
             Self::RoomLeave(_) => AnswerShape::RoomLeave,
             Self::RoomContribute(_) => AnswerShape::RoomContribute,
-            Self::RoomContributionSources(_) => AnswerShape::RoomContributionSources,
+            Self::RoomContributionRead(_) => AnswerShape::RoomContributionRead,
             Self::RoomControl(_) => AnswerShape::RoomControl,
             Self::RoomConversationText(_) => AnswerShape::RoomConversationText,
             Self::Task(_) => AnswerShape::Task,
@@ -528,7 +528,7 @@ impl CommandKind {
             | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
-            | Self::RoomContributionSources
+            | Self::RoomContributionRead
             | Self::RoomControl => self.room_binding(),
             Self::DesignPropose
             | Self::CandidateCritiqueRecord
@@ -782,8 +782,8 @@ pub enum Intent {
     RoomLeave(RoomLeave),
     /// [`BodyShape::RoomContribute`]
     RoomContribute(RoomContribute),
-    /// [`BodyShape::RoomContributionSources`]
-    RoomContributionSources(RoomContributionSources),
+    /// [`BodyShape::RoomContributionRead`]
+    RoomContributionRead(RoomContributionRead),
     /// [`BodyShape::RoomControl`]
     RoomControl(RoomControl),
     /// [`BodyShape::WorkingGroupRead`]
@@ -954,7 +954,7 @@ impl Intent {
             | Self::RoomPutAside(_)
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
-            | Self::RoomContributionSources(_)
+            | Self::RoomContributionRead(_)
             | Self::RoomControl(_) => self.room_shape(),
             Self::DesignPropose(_)
             | Self::CandidateCritiqueRecord(_)
@@ -1165,7 +1165,7 @@ impl BodyShape {
                 | Self::RoomPutAside
                 | Self::RoomLeave
                 | Self::RoomContribute
-                | Self::RoomContributionSources
+                | Self::RoomContributionRead
                 | Self::RoomControl
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupMove
@@ -1222,7 +1222,7 @@ impl BodyShape {
                 | Self::RoomPutAside
                 | Self::RoomLeave
                 | Self::RoomContribute
-                | Self::RoomContributionSources
+                | Self::RoomContributionRead
                 | Self::RoomControl
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupMove
@@ -1269,7 +1269,7 @@ impl BodyShape {
             | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
-            | Self::RoomContributionSources
+            | Self::RoomContributionRead
             | Self::RoomControl => return self.decode_room_body(bytes),
             Self::WorkingGroupRead
             | Self::WorkingGroupMove

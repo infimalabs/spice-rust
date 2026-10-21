@@ -166,8 +166,8 @@ pub(crate) enum PendingKind {
     ConversationText {
         publication: wire::rooms::RoomAuthorityStamp,
     },
-    /// One Design contribution's resolved sources.
-    ContributionSources {
+    /// One Design contribution's resolved sources and question item.
+    ContributionRead {
         publication: wire::rooms::RoomAuthorityStamp,
     },
     TaskRelations {
@@ -212,7 +212,7 @@ mod speech;
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     AppRuntime, AppSurface, BlockerActionState, BoardView, CandidateWithdrawalRecord, Contribution,
-    ContributionGroup, ContributionSources, Conversation, ConversationProjection, ConversationText,
+    ContributionGroup, ContributionRead, Conversation, ConversationProjection, ConversationText,
     CoordinationStanding, Delivery, ItemConcern, LaneActivity, LaneMember, LaneRow, LaneStatus,
     LaneView, OperatorItem, ParticipantReason, PreparationProjection, Relevance, ResumeAutomation,
     RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant,

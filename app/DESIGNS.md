@@ -209,8 +209,11 @@ place and never mounts a room, moves a console, or wakes a lane.
 ## Design contributions
 
 A lane contributes to an open Design's problem space with one typed record:
-a reason for, a reason against, evidence, or a question, with its text and
-the transcript, journal, or artifact sources it cites. A contribution is
+a charge from -2 to +2 against one of the Design's question items, or a
+question, with its text and the transcript, journal, or artifact sources it
+cites. A ±1 charge is an opinion; 0 and ±2 cite at least one source. Retained
+posts from before charges name no item and read as Design-level. A
+contribution is
 lane-authored evidence for the operator's judgment, never authority: it
 moves no task, claim, working group, candidate, decision, or authorization,
 and it wakes nobody. Lanes contribute with `spice room contribute` from their
@@ -218,15 +221,19 @@ own sessions; the operator reads contributions and decides through the
 ordinary Design controls.
 
 The Design read view groups contributions by kind, each with its lane,
-time, text, and every cited source, while room history keeps them in journal
-order among the ordinary conversation. The resident resolves each cited
-source for the shown Design, and the card says whether it is available or
-why not (missing, hidden, changed, unreadable, or retained in an unsupported
-shape), the same states any actor's `spice room history` prints. Availability
-comes from the `room::contribution-sources` read, which any authenticated
-session may issue and the app issues once per cited contribution of a shown
-Design, at most eight in flight, and again after a reconnect; it resolves
-through the same resident path as `spice room history`. This read-only surface
+time, charge, the question item it weighs, text, and every cited source,
+while room history keeps them in journal order among the ordinary
+conversation. The resident resolves each cited source for the shown Design,
+and the card says whether it is available or why not (missing, hidden,
+changed, unreadable, or retained in an unsupported shape), the same states
+any actor's `spice room history` prints. It also gives the item's text while
+the statement the contribution witnessed is still current, and otherwise only
+the item's number, because the journal keeps no superseded statement text.
+Both come from the `room::contribution-read` read, which any authenticated
+session may issue and the app issues once per contribution of a shown Design
+that cites a source or names an item, at most eight in flight, and again
+after a reconnect; it resolves through the same resident path as
+`spice room history`. This read-only surface
 never creates or answers the session-profile Design requests delivered through
 a lane's own session.
 
@@ -235,8 +242,9 @@ measure the room projection folds incrementally from streamed requests and
 contributions, never by folding rendered room history. It shows contribution
 kinds and distinct lanes, requested reach, recent statement-head request
 yield, folded older-head and unattributed historical totals, and every missing
-substantive dimension. Fresh has no contributions; steeped requires
-reason-for, reason-against, evidence, and three contributing lanes. Questions
+substantive dimension. Fresh has no contributions; steeped requires a
+positive charge, a negative charge, a 0 charge, and three contributing lanes.
+Questions
 and broad requested reach cannot satisfy it. Steeped maturity makes the
 Design's first pass ready for a lane, which the standing's pass cycle shows;
 it is not a danger or workflow state, and maturity never blocks or authorizes

@@ -8,6 +8,8 @@ mod principal;
 mod requirements;
 use requirements::{client_require, environment_requirements};
 mod room;
+#[cfg(test)]
+pub(super) use room::cite;
 use room::dispatch_room_client;
 mod design_request;
 use design_request::design_request_reply;
