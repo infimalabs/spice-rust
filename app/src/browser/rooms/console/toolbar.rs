@@ -1,13 +1,11 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
 //! open-task total and one tab per agent currently working in the group's
-//! Designs, a weave with one violin column per Design, and a ticker of the newest
-//! words said across them, as a team's ticker shows its newest words. Like a
+//! Designs, one standing pip per Design, and a ticker of the newest words
+//! said across them, as a team's ticker shows its newest words. Like a
 //! team toolbar it shows no name; this browser's placement of the console
 //! lives in the panel's arrangement menu, where a team's arrangement stands.
 //! Everything renders from the board, the room projection, and lane topology
 //! on each read.
-
-use std::rc::Rc;
 
 use wire::rooms::RoomAuthorityStamp;
 use yew::prelude::*;
@@ -41,7 +39,7 @@ pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &
                     aria-label={format!("{} designs", channels.len())}
                     data-team-size={channels.len().to_string()}
                 >
-                    {render_weave(render, channels, &standings)}
+                    {for channels.iter().zip(&standings).map(|(channel, standing)| render_pip(channel, *standing))}
                 </span>
             </div>
         </header>
@@ -156,42 +154,21 @@ fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Htm
     }
 }
 
-/// The group's Design columns woven as a team's lanes are: each column gathers
-/// the distinct lanes currently working its Design, so a burst from any of
-/// them widens its violin and a packet between two Designs' workers rungs them.
-fn render_weave(
-    render: &GroupRender<'_, '_>,
-    channels: &[Channel],
-    standings: &[DesignStanding],
-) -> Html {
-    let weave_channels = channels
-        .iter()
-        .zip(standings)
-        .map(
-            |(channel, standing)| crate::browser::watchband::WeaveChannel {
-                key: channel.stamp.to_string().into(),
-                label: format!("{}: {}", channel.label, standing.label()).into(),
-                accent: channel.accent,
-                state: standing.key(),
-                seated: true,
-                lanes: render.runtime.board().map_or_else(
-                    || Rc::from([]),
-                    |board| {
-                        crate::roster::design_claimants(board, &channel.stamp)
-                            .into_iter()
-                            .collect()
-                    },
-                ),
-                activities: crate::browser::watchband::design_activities(
-                    render.runtime,
-                    &channel.stamp,
-                ),
-                off: Rc::from([]),
-            },
-        )
-        .collect::<Rc<[_]>>();
-    let interactions = crate::browser::watchband::lane_interactions(render.runtime);
-    html! { <crate::browser::watchband::TeamWeave channels={weave_channels} {interactions} /> }
+/// One Design's pip: its accent, shaped by its standing.
+fn render_pip(channel: &Channel, standing: DesignStanding) -> Html {
+    let label = format!("{}: {}", channel.label, standing.label());
+    html! {
+        <span
+            key={channel.stamp.to_string()}
+            class={classes!("app-presence-pip", "app-presence-pip--status", "group-design-pip", standing.key())}
+            role="img"
+            data-design={channel.stamp.to_string()}
+            data-accent={channel.accent.to_string()}
+            data-design-standing={standing.key()}
+            aria-label={label.clone()}
+            title={label}
+        ></span>
+    }
 }
 
 /// The newest words said across the group's Designs, aged and coloured by the

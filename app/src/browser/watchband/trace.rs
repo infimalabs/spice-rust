@@ -1,10 +1,8 @@
 //! The activity trace across the foot of a lane's composer: a glowing curve per
 //! kind of work over a fading fill, a dot where each curve meets now, and
-//! lifecycle markers. It also gathers the retained activity and off intervals
-//! a team's or working group's weave violins draw from. Everything is SVG
-//! geometry in the pane's measured CSS pixels, which the app's
-//! `style-src 'self'` policy admits where inline styles are refused; colours
-//! and glow stay in the stylesheet.
+//! lifecycle markers. Everything is SVG geometry in the pane's measured CSS
+//! pixels, which the app's `style-src 'self'` policy admits where inline styles
+//! are refused; colours and glow stay in the stylesheet.
 
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -20,7 +18,7 @@ use crate::watchband::{
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct ActivityTraceProps {
-    /// Names the trace's gradients, unique on the page: the lane or Design.
+    /// Names the trace's gradients, unique on the page: the lane.
     pub(crate) id: AttrValue,
     /// The traced activities, in any order.
     pub(crate) activities: Rc<[TraceActivity]>,
@@ -29,18 +27,16 @@ pub(crate) struct ActivityTraceProps {
     pub(crate) off: Rc<[TraceOff]>,
 }
 
-/// Retained activity for every selected lane. Agent activity carries reasoning,
-/// tool, and prose rates; operator direction is retained on message cards
-/// rather than in that activity stream, so it joins here as a marker.
-fn selected_lane_activities(
-    runtime: &crate::AppRuntime,
-    selected: impl Fn(wire::CanonicalUuid) -> bool,
-) -> Rc<[TraceActivity]> {
+/// One lane's retained activity, which its trace keeps to the window. Agent
+/// activity carries reasoning, tool, and prose rates; operator direction is
+/// retained on message cards rather than in that activity stream, so it joins
+/// here as a marker.
+fn lane_activities(runtime: &crate::AppRuntime, lane: wire::CanonicalUuid) -> Rc<[TraceActivity]> {
     let directions = runtime
         .messages()
         .iter()
         .filter(|message| {
-            selected(message.lane) && message.activity == wire::AgentActivityKind::Direction
+            message.lane == lane && message.activity == wire::AgentActivityKind::Direction
         })
         .map(|message| TraceActivity {
             kind: message.activity,
@@ -50,7 +46,7 @@ fn selected_lane_activities(
     runtime
         .activities()
         .iter()
-        .filter(|activity| selected(activity.lane()))
+        .filter(|activity| activity.lane() == lane)
         .map(|activity| TraceActivity {
             kind: activity.kind(),
             millis: activity.display_millis(),
@@ -60,17 +56,9 @@ fn selected_lane_activities(
         .collect()
 }
 
-/// One lane's retained activity, which its trace keeps to the window.
-pub(super) fn lane_activities(
-    runtime: &crate::AppRuntime,
-    lane: wire::CanonicalUuid,
-) -> Rc<[TraceActivity]> {
-    selected_lane_activities(runtime, |candidate| candidate == lane)
-}
-
 /// The intervals one lane was off, from its retained occupancy transitions and
 /// whether it is `seated_now`.
-pub(super) fn lane_off(
+fn lane_off(
     runtime: &crate::AppRuntime,
     lane: wire::CanonicalUuid,
     seated_now: bool,
@@ -89,8 +77,8 @@ pub(super) fn lane_off(
     .into()
 }
 
-/// One lane's trace across the foot of its primary composer: the same
-/// activities and off intervals its pip draws, drawn at the rail's own size.
+/// One lane's trace across the foot of its primary composer, drawn at the
+/// rail's own size.
 pub(super) fn render_composer_rail(
     runtime: &crate::AppRuntime,
     member: &crate::runtime::LaneMember,
@@ -103,20 +91,6 @@ pub(super) fn render_composer_rail(
             <ActivityTrace id={format!("composer-{}", member.lane)} {activities} {off} />
         </span>
     }
-}
-
-/// Retained activity from the distinct lanes currently working on one Design.
-/// Pooling their events before the shared trace calculation makes every curve
-/// the sum of those workers' rates on the same scale as an individual lane.
-pub(crate) fn design_activities(
-    runtime: &crate::AppRuntime,
-    design: &wire::TaskStamp,
-) -> Rc<[TraceActivity]> {
-    let Some(board) = runtime.board() else {
-        return Rc::from([]);
-    };
-    let lanes = crate::roster::design_claimants(board, design);
-    selected_lane_activities(runtime, |lane| lanes.contains(&lane))
 }
 
 /// Space the now-dot needs inside the pane's right edge, in CSS pixels.
