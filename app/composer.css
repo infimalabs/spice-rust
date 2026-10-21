@@ -507,11 +507,6 @@
 .team-compose:not([data-composer-fully-collapsed="true"]) .team-activity-grid {
   border-top-color: transparent;
 }
-/* The plane keeps native wheel and trackpad scrolling, but its scrollbar
-   stays out of the composer's face until that composer has left the plane. */
-.team-compose:not([data-composer-fully-collapsed="true"]) .lane-mosaic-plane {
-  scrollbar-color: transparent transparent;
-}
 @media (prefers-reduced-motion: reduce) {
   .team-compose .team-activity-grid { transition: none; }
 }

@@ -1047,7 +1047,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   position: relative; display: block; flex: 1 1 auto; min-height: 0; min-width: 0;
   height: calc(var(--mosaic-plane-rows) * var(--mosaic-module) - var(--mosaic-gap));
   max-height: none;
-  overflow-y: auto; overflow-anchor: none;
+  overflow-y: auto; overflow-anchor: none; scrollbar-width: none;
 }
 .lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
 .lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
