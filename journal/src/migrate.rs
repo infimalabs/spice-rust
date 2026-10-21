@@ -44,7 +44,8 @@ pub(crate) use fact_bounds::{
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 
-/// Schemas admitted through the one current writable-open crossing.
+/// Oldest schema admitted through the one current writable-open crossing;
+/// every schema from it up to [`SCHEMA_VERSION`] crosses.
 ///
 /// Task fields already have their current semantics. The crossing first proves,
 /// before any mutation, that no retained task fact or head omits the creation
@@ -102,11 +103,13 @@ const PREPARED: &str = "prepared";
 /// retained item-bearing contribution takes its item's text identity, and
 /// every retained room coordination record, direction head, and coordination
 /// receipt loses its retired automated-resume rule.
-const PREDECESSOR_SCHEMAS: [u32; 60] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92,
-];
+const OLDEST_PREDECESSOR_SCHEMA: u32 = 33;
+
+/// Whether `version` is a predecessor this release crosses forward.
+fn is_predecessor(version: u32) -> bool {
+    (OLDEST_PREDECESSOR_SCHEMA..SCHEMA_VERSION).contains(&version)
+}
+
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -240,7 +243,7 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
 
     if table_exists(connection, "journal_schema")? {
         let version = admit_readable_state(connection, stored_state(connection)?)?;
-        if !PREDECESSOR_SCHEMAS.contains(&version) {
+        if !is_predecessor(version) {
             admit_version(version)?;
             return Ok(None);
         }
@@ -266,6 +269,15 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
 
     transaction
         .execute_batch(BASELINE_SQL)
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .execute(
+            "INSERT INTO journal_schema(singleton, version, state) VALUES (1, ?1, ?2)",
+            params![SCHEMA_VERSION, FINALIZED],
+        )
+        .map_err(OpenError::Sqlite)?;
+    transaction
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(OpenError::Sqlite)?;
     create_room_schemas(&transaction, 0)?;
     create_principal_heads(&transaction, 0)?;
@@ -372,7 +384,7 @@ fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenE
 }
 
 fn admit_version(version: u32) -> Result<u32, OpenError> {
-    if PREDECESSOR_SCHEMAS.contains(&version) {
+    if is_predecessor(version) {
         return Err(MigrationError::PendingCrossing { found: version }.into());
     }
     if version != SCHEMA_VERSION {
@@ -410,7 +422,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(OpenError::Sqlite)?;
     let version = admit_readable_state(&transaction, stored_state(&transaction)?)?;
-    if !PREDECESSOR_SCHEMAS.contains(&version) {
+    if !is_predecessor(version) {
         admit_version(version)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
@@ -1463,8 +1475,6 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 93, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 93;
 "#;
