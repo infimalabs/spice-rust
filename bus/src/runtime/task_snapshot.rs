@@ -233,8 +233,6 @@ struct Indexes {
             Arc<HashSet<(journal::crossing::TaskStamp, Option<RoomQuestionItem>)>>,
         >,
     >,
-    room_publications:
-        Arc<HashMap<journal::crossing::Actor, Arc<HashSet<journal::crossing::TaskStamp>>>>,
     room_publication_positions:
         HashMap<(journal::crossing::Actor, journal::crossing::TaskStamp), journal::crossing::Seq>,
     /// Each lane's newest contribution against one Design's question item.
@@ -344,10 +342,6 @@ impl Indexes {
         let Some(room) = row.fact.room_record() else {
             return;
         };
-        let rooms = Arc::make_mut(&mut self.room_publications)
-            .entry(row.actor.clone())
-            .or_default();
-        Arc::make_mut(rooms).insert(room.clone());
         self.room_publication_positions
             .insert((row.actor.clone(), room.clone()), row.seq);
         if let Some(contributed) = row.fact.read::<journal::crossing::rooms::RoomContributed>() {
@@ -852,9 +846,8 @@ impl TaskFacts {
         room: &journal::crossing::TaskStamp,
     ) -> bool {
         self.indexes
-            .room_publications
-            .get(actor)
-            .is_some_and(|rooms| rooms.contains(room))
+            .room_publication_positions
+            .contains_key(&(actor.clone(), room.clone()))
     }
 
     /// Whether `lane` answered an ask about `room`'s `item` after `after`: a
