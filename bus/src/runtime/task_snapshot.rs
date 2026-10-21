@@ -204,7 +204,9 @@ impl TerminalIndex {
 }
 
 /// Answers derived from the whole history, advanced once per commit so no
-/// later read walks the history for them.
+/// later read walks the history for them. Each index that grows with history
+/// is shared through `Arc` and copied only by the commit that changes it
+/// (`Arc::make_mut`); maps bounded by lanes or surfaces stay plain.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Indexes {
     trust_surfaces: HashMap<String, journal::crossing::Digest>,
@@ -212,15 +214,17 @@ struct Indexes {
     claims:
         HashMap<journal::crossing::Actor, (journal::crossing::Seq, journal::crossing::ClaimCell)>,
     lane_completions: HashMap<journal::crossing::CanonicalUuid, LaneCompletion>,
-    design_notices: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::rooms::DesignSession,
-        ),
-        (
-            journal::crossing::Seq,
-            journal::crossing::rooms::DesignNoticed,
-        ),
+    design_notices: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::rooms::DesignSession,
+            ),
+            (
+                journal::crossing::Seq,
+                journal::crossing::rooms::DesignNoticed,
+            ),
+        >,
     >,
     /// Each continuing session's asked Design items; `None` is a whole-Design
     /// ask.
@@ -233,67 +237,84 @@ struct Indexes {
             Arc<HashSet<(journal::crossing::TaskStamp, Option<RoomQuestionItem>)>>,
         >,
     >,
-    room_publication_positions:
+    room_publication_positions: Arc<
         HashMap<(journal::crossing::Actor, journal::crossing::TaskStamp), journal::crossing::Seq>,
+    >,
     /// Each lane's newest contribution against one Design's question item.
-    item_contributions: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::TaskStamp,
-            RoomQuestionItem,
-        ),
-        journal::crossing::Seq,
+    item_contributions: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::TaskStamp,
+                RoomQuestionItem,
+            ),
+            journal::crossing::Seq,
+        >,
     >,
     /// Each lane's newest leave of one Design room.
-    room_leaves: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::TaskStamp,
-        ),
-        journal::crossing::Seq,
+    room_leaves: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::TaskStamp,
+            ),
+            journal::crossing::Seq,
+        >,
     >,
-    context_anchors: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::CanonicalUuid,
-        ),
-        journal::crossing::Seq,
+    context_anchors: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::CanonicalUuid,
+            ),
+            journal::crossing::Seq,
+        >,
     >,
-    explicit_releases: HashMap<journal::crossing::TaskStamp, journal::crossing::Seq>,
+    explicit_releases: Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::Seq>>,
     /// Births by occupant, shared until a commit records another lane start.
     births: Arc<HashMap<journal::crossing::CanonicalUuid, BirthRecord>>,
     lane_occupants: HashMap<journal::crossing::CanonicalUuid, journal::crossing::CanonicalUuid>,
-    lane_sessions: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::CanonicalUuid,
-        ),
-        journal::crossing::rooms::DesignSession,
-    >,
-    occupant_session_declarations: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::CanonicalUuid,
-        ),
-        journal::crossing::Seq,
-    >,
-    session_declarations: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
+    lane_sessions: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::CanonicalUuid,
+            ),
             journal::crossing::rooms::DesignSession,
-        ),
-        journal::crossing::Seq,
+        >,
     >,
-    session_compactions: HashMap<
-        (
-            journal::crossing::CanonicalUuid,
-            journal::crossing::rooms::DesignSession,
-        ),
-        journal::crossing::Seq,
+    occupant_session_declarations: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::CanonicalUuid,
+            ),
+            journal::crossing::Seq,
+        >,
     >,
-    task_origins: HashMap<journal::crossing::TaskStamp, TaskOrigin>,
-    duplicate_task_origins: HashSet<journal::crossing::TaskStamp>,
-    invalid_creator_teams: HashSet<journal::crossing::TaskStamp>,
+    session_declarations: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::rooms::DesignSession,
+            ),
+            journal::crossing::Seq,
+        >,
+    >,
+    session_compactions: Arc<
+        HashMap<
+            (
+                journal::crossing::CanonicalUuid,
+                journal::crossing::rooms::DesignSession,
+            ),
+            journal::crossing::Seq,
+        >,
+    >,
+    /// Origins of the allocation frontier's tasks, pruned to the live
+    /// frontier on each build; shared until a commit adds or retires one.
+    task_origins: Arc<HashMap<journal::crossing::TaskStamp, TaskOrigin>>,
+    duplicate_task_origins: Arc<HashSet<journal::crossing::TaskStamp>>,
+    invalid_creator_teams: Arc<HashSet<journal::crossing::TaskStamp>>,
     /// Effective stance of each grouped Design; an ungrouped Design is passive.
     design_stances:
         Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::rooms::WorkingGroupStance>>,
@@ -342,15 +363,15 @@ impl Indexes {
         let Some(room) = row.fact.room_record() else {
             return;
         };
-        self.room_publication_positions
+        Arc::make_mut(&mut self.room_publication_positions)
             .insert((row.actor.clone(), room.clone()), row.seq);
         if let Some(contributed) = row.fact.read::<journal::crossing::rooms::RoomContributed>() {
             if let Some(item) = contributed.item {
-                self.item_contributions
+                Arc::make_mut(&mut self.item_contributions)
                     .insert((contributed.lane, contributed.room, item), row.seq);
             }
         } else if let Some(left) = row.fact.read::<journal::crossing::rooms::RoomLeft>() {
-            self.room_leaves.insert((left.lane, left.room), row.seq);
+            Arc::make_mut(&mut self.room_leaves).insert((left.lane, left.room), row.seq);
         }
     }
 
@@ -380,12 +401,12 @@ impl Indexes {
             FactKind::LaneCompacted => {
                 self.observe_compaction(row);
                 if let Some(opened) = context_opening(&row.fact) {
-                    self.context_anchors.insert(opened, row.seq);
+                    Arc::make_mut(&mut self.context_anchors).insert(opened, row.seq);
                 }
             }
             _ => {
                 if let Some(opened) = context_opening(&row.fact) {
-                    self.context_anchors.insert(opened, row.seq);
+                    Arc::make_mut(&mut self.context_anchors).insert(opened, row.seq);
                 }
             }
         }
@@ -400,21 +421,21 @@ impl Indexes {
                 vendor: declared.vendor,
                 identity: declared.identity,
             };
-            self.lane_sessions
+            Arc::make_mut(&mut self.lane_sessions)
                 .insert((declared.lane, declared.occupant), session.clone());
-            self.occupant_session_declarations
+            Arc::make_mut(&mut self.occupant_session_declarations)
                 .insert((declared.lane, declared.occupant), row.seq);
-            self.session_declarations
-                .entry((declared.lane, session))
-                .or_insert(row.seq);
+            let first = (declared.lane, session);
+            if !self.session_declarations.contains_key(&first) {
+                Arc::make_mut(&mut self.session_declarations).insert(first, row.seq);
+            }
             return;
         }
         let Some(started) = row.fact.read::<journal::crossing::body::LaneStarted>() else {
             return;
         };
         self.lane_occupants.insert(started.lane, started.occupant);
-        self.context_anchors
-            .insert((started.lane, started.occupant), row.seq);
+        Arc::make_mut(&mut self.context_anchors).insert((started.lane, started.occupant), row.seq);
         let births = Arc::make_mut(&mut self.births);
         let record = BirthRecord::recorded(
             births.get(&started.occupant).copied(),
@@ -438,8 +459,7 @@ impl Indexes {
         else {
             return;
         };
-        self.session_compactions
-            .insert((compacted.lane, session), row.seq);
+        Arc::make_mut(&mut self.session_compactions).insert((compacted.lane, session), row.seq);
     }
 
     fn observe_task_added(
@@ -466,14 +486,13 @@ impl Indexes {
         if !matches!(row.actor, journal::crossing::Actor::Lane(_))
             && added.creation.creator_team().is_some()
         {
-            self.invalid_creator_teams.insert(added.task.clone());
+            Arc::make_mut(&mut self.invalid_creator_teams).insert(added.task.clone());
         }
-        if self
-            .task_origins
+        if Arc::make_mut(&mut self.task_origins)
             .insert(added.task.clone(), origin)
             .is_some()
         {
-            self.duplicate_task_origins.insert(added.task);
+            Arc::make_mut(&mut self.duplicate_task_origins).insert(added.task);
         }
     }
 
@@ -519,7 +538,7 @@ impl Indexes {
                 noticed.design.clone(),
                 noticed.ask.as_ref().map(|ask| ask.item.clone()),
             ));
-            self.design_notices.insert(session_key, (row.seq, noticed));
+            Arc::make_mut(&mut self.design_notices).insert(session_key, (row.seq, noticed));
         }
     }
 
@@ -543,7 +562,7 @@ impl Indexes {
         } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
             self.claims.insert(won.actor, (row.seq, won.cell));
         } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {
-            self.explicit_releases.insert(freed.task, row.seq);
+            Arc::make_mut(&mut self.explicit_releases).insert(freed.task, row.seq);
         }
     }
 
@@ -591,11 +610,21 @@ impl Indexes {
         }
     }
 
+    /// Forget a retired task's origin records, copying only the indexes that
+    /// still name it.
     fn retire_task(&mut self, task: &journal::crossing::TaskStamp) {
-        self.task_origins.remove(task);
-        self.duplicate_task_origins.remove(task);
-        self.invalid_creator_teams.remove(task);
-        self.explicit_releases.remove(task);
+        if self.task_origins.contains_key(task) {
+            Arc::make_mut(&mut self.task_origins).remove(task);
+        }
+        if self.duplicate_task_origins.contains(task) {
+            Arc::make_mut(&mut self.duplicate_task_origins).remove(task);
+        }
+        if self.invalid_creator_teams.contains(task) {
+            Arc::make_mut(&mut self.invalid_creator_teams).remove(task);
+        }
+        if self.explicit_releases.contains_key(task) {
+            Arc::make_mut(&mut self.explicit_releases).remove(task);
+        }
     }
 }
 
@@ -1068,22 +1097,38 @@ impl TaskFacts {
         self.indexes.collapse_reasons.get(task).map(String::as_str)
     }
 
+    /// Keep only the allocation frontier's tasks in the origin indexes. An
+    /// index naming no retired task stays shared with the prior snapshot.
     fn retain_allocation_origins(&mut self, frontier: &[journal::TaskHeads]) {
         let live = frontier
             .iter()
             .map(|heads| heads.statement().body().born.clone())
             .collect::<HashSet<_>>();
         let indexes = Arc::make_mut(&mut self.indexes);
-        indexes.task_origins.retain(|task, _| live.contains(task));
-        indexes
+        if indexes.task_origins.keys().any(|task| !live.contains(task)) {
+            Arc::make_mut(&mut indexes.task_origins).retain(|task, _| live.contains(task));
+        }
+        if indexes
             .duplicate_task_origins
-            .retain(|task| live.contains(task));
-        indexes
+            .iter()
+            .any(|task| !live.contains(task))
+        {
+            Arc::make_mut(&mut indexes.duplicate_task_origins).retain(|task| live.contains(task));
+        }
+        if indexes
             .invalid_creator_teams
-            .retain(|task| live.contains(task));
-        indexes
+            .iter()
+            .any(|task| !live.contains(task))
+        {
+            Arc::make_mut(&mut indexes.invalid_creator_teams).retain(|task| live.contains(task));
+        }
+        if indexes
             .explicit_releases
-            .retain(|task, _| live.contains(task));
+            .keys()
+            .any(|task| !live.contains(task))
+        {
+            Arc::make_mut(&mut indexes.explicit_releases).retain(|task, _| live.contains(task));
+        }
     }
 }
 
@@ -1096,5 +1141,67 @@ impl Drop for TaskFacts {
             };
             tail = prior;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stamp(micros: i64) -> journal::crossing::TaskStamp {
+        journal::crossing::TaskStamp::for_micros(micros).expect("fixture stamp")
+    }
+
+    /// Advancing over rows that touch no history-sized index, and retiring a
+    /// task no index names, keep every index shared with the prior snapshot;
+    /// retiring a named task copies only the indexes that named it.
+    #[test]
+    fn advancing_and_retiring_copy_only_the_indexes_a_row_changes() {
+        let named = stamp(1_000);
+        let mut prior = Indexes::default();
+        Arc::make_mut(&mut prior.task_origins)
+            .insert(named.clone(), TaskOrigin::Identity("fixture".to_owned()));
+        Arc::make_mut(&mut prior.explicit_releases).insert(
+            named.clone(),
+            journal::crossing::Seq::new(7).expect("fixture seq"),
+        );
+        Arc::make_mut(&mut prior.room_publication_positions).insert(
+            (journal::crossing::Actor::Operator, named.clone()),
+            journal::crossing::Seq::new(3).expect("fixture seq"),
+        );
+
+        let mut next = prior.advanced(&[]);
+        next.retire_task(&stamp(2_000));
+        assert!(Arc::ptr_eq(&prior.task_origins, &next.task_origins));
+        assert!(Arc::ptr_eq(
+            &prior.explicit_releases,
+            &next.explicit_releases
+        ));
+        assert!(Arc::ptr_eq(
+            &prior.duplicate_task_origins,
+            &next.duplicate_task_origins
+        ));
+        assert!(Arc::ptr_eq(
+            &prior.room_publication_positions,
+            &next.room_publication_positions
+        ));
+
+        next.retire_task(&named);
+        assert!(!Arc::ptr_eq(&prior.task_origins, &next.task_origins));
+        assert!(!Arc::ptr_eq(
+            &prior.explicit_releases,
+            &next.explicit_releases
+        ));
+        assert!(Arc::ptr_eq(
+            &prior.duplicate_task_origins,
+            &next.duplicate_task_origins
+        ));
+        assert!(Arc::ptr_eq(
+            &prior.room_publication_positions,
+            &next.room_publication_positions
+        ));
+        assert!(prior.task_origins.contains_key(&named));
+        assert!(!next.task_origins.contains_key(&named));
+        assert!(!next.explicit_releases.contains_key(&named));
     }
 }
