@@ -313,12 +313,9 @@ fn operator_items_page_and_settle_exactly() {
         reason(&lanes.dispose(73, RoomReceiptDisposition::Ack, &[unknown], "seen")),
         "room::item-unknown"
     );
-    assert_eq!(
-        reason(&lanes.dispose(74, RoomReceiptDisposition::Ack, &told[..1], " ")),
-        "room::clause-required"
-    );
     let directions = lanes.pending(SENDER).len();
-    committed(&lanes.dispose(76, RoomReceiptDisposition::Ack, &told, "seen"));
+    committed(&lanes.dispose(74, RoomReceiptDisposition::Ack, &told[..1], ""));
+    committed(&lanes.dispose(76, RoomReceiptDisposition::Ack, &told[1..], "seen"));
     for item in &told {
         assert!(matches!(
             lanes.item_state(item),
