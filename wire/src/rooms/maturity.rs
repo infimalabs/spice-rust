@@ -30,14 +30,18 @@ pub const DESIGN_MATURITY_ITEM_LIMIT: usize = 32;
 pub enum DesignItemState {
     /// No charge has weighed the item.
     Quiet,
-    /// Only positive charges have weighed the item.
+    /// Only positive charges have weighed the item, short of the agreement
+    /// floor.
     UnopposedFor,
-    /// Only negative charges have weighed the item.
+    /// Only negative charges have weighed the item, short of the agreement
+    /// floor.
     UnopposedAgainst,
     /// Both signs have weighed the item and its latest run does not concur.
     Contested,
-    /// Both signs have weighed the item and its latest one-signed run carries
-    /// a concession or three lanes, unburied by a strength-2 opposing charge.
+    /// The item's latest one-signed run is agreed: three lanes, or two lanes
+    /// with a strength-2 charge when only that sign ever weighed the item, or
+    /// two lanes with a concession after both signs did. A run that displaced
+    /// a strength-2 opposing charge also carries a strength-2 charge.
     Concurred,
 }
 
@@ -60,10 +64,12 @@ impl DesignItemState {
 pub enum DesignItemInput {
     /// No charge has weighed the item.
     AnyCharge,
-    /// Only negative charges have weighed the item.
-    PositiveCharge,
-    /// Only positive charges have weighed the item.
-    NegativeCharge,
+    /// Only positive charges have weighed the item, short of three lanes or
+    /// two with a +2 charge: more positive lanes.
+    PositiveLanes,
+    /// Only negative charges have weighed the item, short of three lanes or
+    /// two with a -2 charge: more negative lanes.
+    NegativeLanes,
     /// The positive run lacks a concession and three lanes: a positive
     /// charge from a lane whose last charge was negative, or more positive
     /// lanes.
@@ -84,8 +90,8 @@ impl DesignItemInput {
     pub const fn label(self) -> &'static str {
         match self {
             Self::AnyCharge => "any charge",
-            Self::PositiveCharge => "a positive charge",
-            Self::NegativeCharge => "a negative charge",
+            Self::PositiveLanes => "more positive lanes",
+            Self::NegativeLanes => "more negative lanes",
             Self::PositiveAgreement => {
                 "a positive charge from a lane that last charged negative, or more positive lanes"
             }
@@ -205,6 +211,13 @@ impl DesignItemSeries {
         lanes >= 3 || (lanes >= 2 && self.suffix_conceded)
     }
 
+    /// A run no opposing charge preceded holds three lanes, or two with a
+    /// strength-2 charge.
+    fn unanimous(&self) -> bool {
+        let lanes = self.suffix_lanes.len();
+        lanes >= 3 || (lanes >= 2 && self.suffix_strong)
+    }
+
     /// The suffix displaced a strength-2 charge without one of its own.
     fn buried(&self) -> bool {
         self.displaced_strong && !self.suffix_strong
@@ -215,6 +228,7 @@ impl DesignItemSeries {
     pub fn state(&self) -> DesignItemState {
         match (self.positive, self.negative) {
             (false, false) => DesignItemState::Quiet,
+            (true, false) | (false, true) if self.unanimous() => DesignItemState::Concurred,
             (true, false) => DesignItemState::UnopposedFor,
             (false, true) => DesignItemState::UnopposedAgainst,
             (true, true) if self.agreed() && !self.buried() => DesignItemState::Concurred,
@@ -230,8 +244,8 @@ impl DesignItemSeries {
         let positive = self.suffix_positive;
         Some(match self.state() {
             DesignItemState::Quiet => DesignItemInput::AnyCharge,
-            DesignItemState::UnopposedFor => DesignItemInput::NegativeCharge,
-            DesignItemState::UnopposedAgainst => DesignItemInput::PositiveCharge,
+            DesignItemState::UnopposedFor => DesignItemInput::PositiveLanes,
+            DesignItemState::UnopposedAgainst => DesignItemInput::NegativeLanes,
             DesignItemState::Contested if !self.agreed() && positive => {
                 DesignItemInput::PositiveAgreement
             }
@@ -969,7 +983,7 @@ mod tests {
         assert_eq!(item_state(&maturity, item), DesignItemState::UnopposedFor);
         assert_eq!(
             item_needs(&maturity, item),
-            Some(DesignItemInput::NegativeCharge)
+            Some(DesignItemInput::PositiveLanes)
         );
         maturity.observe_contribution(&charge(1, item, -1));
         assert_eq!(
@@ -1032,6 +1046,82 @@ mod tests {
         );
         unconceded.observe_contribution(&charge(4, item, 1));
         assert_eq!(item_state(&unconceded, item), DesignItemState::Concurred);
+    }
+
+    /// A run no opposing charge preceded concurs at three lanes, or two with
+    /// a strength-2 charge; short of that it asks for more lanes of its sign.
+    #[test]
+    fn a_one_signed_item_concurs_at_the_agreement_floor() {
+        let item = ITEMS[0];
+        let observed = |charges: &[(u8, i8)]| {
+            let mut maturity = DesignMaturity::default();
+            for &(lane, value) in charges {
+                maturity.observe_contribution(&charge(lane, item, value));
+            }
+            maturity
+        };
+
+        let lone_strong = observed(&[(1, 2)]);
+        assert_eq!(
+            item_state(&lone_strong, item),
+            DesignItemState::UnopposedFor
+        );
+        assert_eq!(
+            item_needs(&lone_strong, item),
+            Some(DesignItemInput::PositiveLanes)
+        );
+        let two_weak = observed(&[(1, 1), (2, 1), (1, 1)]);
+        assert_eq!(
+            item_state(&two_weak, item),
+            DesignItemState::UnopposedFor,
+            "a repeated lane adds no agreement"
+        );
+        assert_eq!(
+            item_needs(&two_weak, item),
+            Some(DesignItemInput::PositiveLanes)
+        );
+        let two_strong = observed(&[(1, 1), (2, 2)]);
+        assert_eq!(item_state(&two_strong, item), DesignItemState::Concurred);
+        assert_eq!(item_needs(&two_strong, item), None);
+        let three = observed(&[(1, 1), (2, 1), (3, 1)]);
+        assert_eq!(item_state(&three, item), DesignItemState::Concurred);
+        assert_eq!(item_needs(&three, item), None);
+
+        let against = observed(&[(1, -1), (2, -1)]);
+        assert_eq!(
+            item_state(&against, item),
+            DesignItemState::UnopposedAgainst
+        );
+        assert_eq!(
+            item_needs(&against, item),
+            Some(DesignItemInput::NegativeLanes)
+        );
+        assert_eq!(
+            item_state(&observed(&[(1, -1), (2, -1), (3, -1)]), item),
+            DesignItemState::Concurred
+        );
+
+        let current = acceptance(&ITEMS);
+        assert_eq!(
+            three.state(&current),
+            DesignMaturityState::Steeped { quiet: 1 },
+            "one unanimous item steeps a Design whose other items are quiet"
+        );
+        let mut contested = three;
+        for (lane, value) in [(4, 1), (5, -1)] {
+            contested.observe_contribution(&charge(lane, ITEMS[1], value));
+        }
+        assert_eq!(
+            contested.state(&current),
+            DesignMaturityState::Steeping {
+                next: need(
+                    2,
+                    DesignItemState::Contested,
+                    DesignItemInput::NegativeAgreement
+                ),
+                quiet: 0,
+            }
+        );
     }
 
     #[test]
