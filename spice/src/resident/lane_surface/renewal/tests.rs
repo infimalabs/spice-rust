@@ -13,10 +13,6 @@ impl DetachedProcess for RunningProcess {
         77
     }
 
-    fn runtime_remaining(&self) -> Duration {
-        Duration::from_secs(60)
-    }
-
     fn termination_grace(&self) -> Duration {
         Duration::ZERO
     }

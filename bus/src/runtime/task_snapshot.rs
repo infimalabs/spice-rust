@@ -99,16 +99,6 @@ pub enum TaskOrigin {
     ResidencyIdentity(journal::crossing::CanonicalUuid),
 }
 
-/// Newest completed claim retained for one lane's natural-break request.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LaneCompletion {
-    pub at: journal::crossing::Seq,
-    pub occupant: journal::crossing::CanonicalUuid,
-    pub task: journal::crossing::TaskStamp,
-    pub operation: journal::crossing::CanonicalUuid,
-    pub validation: String,
-}
-
 /// Persistent logarithmic completion-terminal lookup.
 ///
 /// Each level is either empty or holds \(2^n\) insertions. Adding one terminal
@@ -213,7 +203,6 @@ struct Indexes {
     terminals: TerminalIndex,
     claims:
         HashMap<journal::crossing::Actor, (journal::crossing::Seq, journal::crossing::ClaimCell)>,
-    lane_completions: HashMap<journal::crossing::CanonicalUuid, LaneCompletion>,
     design_notices: Arc<
         HashMap<
             (
@@ -573,33 +562,11 @@ impl Indexes {
     ) {
         let journal::crossing::body::TaskDone {
             task,
-            mut validation,
             terminal,
             disposition,
             ..
         } = done;
         self.observe_disposition(&task, disposition);
-        if let (journal::crossing::Actor::Lane(lane), Some(terminal)) = (&row.actor, &terminal)
-            && let Some(occupant) = self.lane_occupants.get(lane).copied()
-        {
-            let mut end = validation
-                .len()
-                .min(journal::crossing::rooms::COMPLETION_VALIDATION_BYTES);
-            while !validation.is_char_boundary(end) {
-                end -= 1;
-            }
-            validation.truncate(end);
-            self.lane_completions.insert(
-                *lane,
-                LaneCompletion {
-                    at: row.seq,
-                    task: task.clone(),
-                    operation: terminal.operation,
-                    validation,
-                    occupant,
-                },
-            );
-        }
         if let Some(terminal) = terminal {
             self.terminals = self.terminals.pushed(&task, terminal.operation, row.seq);
             // A phase advance also records a terminal answer, but its task stays
@@ -824,15 +791,6 @@ impl TaskFacts {
         actor: &journal::crossing::Actor,
     ) -> Option<(journal::crossing::Seq, journal::crossing::ClaimCell)> {
         self.indexes.claims.get(actor).cloned()
-    }
-
-    /// Newest completed claim observed for one lane.
-    #[must_use]
-    pub fn latest_lane_completion(
-        &self,
-        lane: journal::crossing::CanonicalUuid,
-    ) -> Option<&LaneCompletion> {
-        self.indexes.lane_completions.get(&lane)
     }
 
     /// Newest durable Design invitation recorded for this continuing session.

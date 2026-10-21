@@ -335,33 +335,6 @@ impl ProofEnvironment {
     pub const fn hosted_windows(identity: HostedWindowsIdentity) -> Self {
         Self::HostedWindows { identity }
     }
-
-    /// OCI identity, when this is the container variant.
-    #[must_use]
-    pub const fn oci_image(&self) -> Option<&ProofImage> {
-        match self {
-            Self::Oci { image } => Some(image),
-            Self::Native { .. } | Self::HostedWindows { .. } => None,
-        }
-    }
-
-    /// Native runner digest, when this is the native variant.
-    #[must_use]
-    pub const fn native_runner(&self) -> Option<&Digest> {
-        match self {
-            Self::Native { runner } => Some(runner),
-            Self::Oci { .. } | Self::HostedWindows { .. } => None,
-        }
-    }
-
-    /// Hosted Windows identity, when this is the ephemeral provider variant.
-    #[must_use]
-    pub const fn hosted_windows_identity(&self) -> Option<&HostedWindowsIdentity> {
-        match self {
-            Self::HostedWindows { identity } => Some(identity),
-            Self::Oci { .. } | Self::Native { .. } => None,
-        }
-    }
 }
 
 /// A release tuple with a distinct artifact identity.

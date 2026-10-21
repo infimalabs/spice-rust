@@ -146,10 +146,6 @@ impl lane::occupant::DetachedProcess for DetachedFixture {
         411
     }
 
-    fn runtime_remaining(&self) -> Duration {
-        Duration::from_secs(4 * 60 * 60)
-    }
-
     fn termination_grace(&self) -> Duration {
         Duration::from_secs(20)
     }
