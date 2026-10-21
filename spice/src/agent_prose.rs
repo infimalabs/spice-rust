@@ -2,16 +2,19 @@
 
 /// Assistant prose one transcript event presents as a quoteable message card.
 ///
-/// Ordinary assistant prose presents itself. Streamed prose presents when it
-/// carries an acknowledgement or a placed MSG packet, since that
-/// visible block is the packet's source. A tool-call intent presents only when
-/// it carries an acknowledgement: OMP retains intent as the assistant
-/// message's only verbatim words when no text block survived settlement, but
-/// an intent never publishes a packet.
+/// Ordinary assistant prose presents itself unless its text is blank: a blank
+/// block carries no words and no media, which decompose from that text.
+/// Streamed prose presents when it carries an acknowledgement or a placed MSG
+/// packet, since that visible block is the packet's source. A tool-call intent
+/// presents only when it carries an acknowledgement: OMP retains intent as the
+/// assistant message's only verbatim words when no visible text block survived
+/// settlement, but an intent never publishes a packet.
 #[must_use]
 pub fn quoteable(decoded: &listen::Event) -> Option<std::borrow::Cow<'_, listen::Prose>> {
     match decoded {
-        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+        listen::Event::Prose(prose)
+            if prose.role == listen::ProseRole::Assistant && !prose.text.trim().is_empty() =>
+        {
             Some(std::borrow::Cow::Borrowed(prose))
         }
         listen::Event::StreamedProse(prose)

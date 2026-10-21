@@ -143,6 +143,24 @@ fn acknowledgement_tool_intent_publishes_a_durable_quote_target() {
     );
 }
 
+/// A text block without visible words is no card, and it leaves a sibling tool
+/// call's intent as the message's only verbatim words.
+#[test]
+fn blank_text_presents_no_card_and_keeps_a_sibling_intent() {
+    let publisher = publish_records(&[
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Deciding to stay silent"},{"type":"text","text":""}],"stopReason":"stop"}}"#,
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":" \n"},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: Settled tool caption.","arguments":{}}],"stopReason":"toolUse"}}"#,
+    ]);
+    let messages = publisher.0.lock().expect("message lock");
+    let prose = messages
+        .iter()
+        .filter(|message| message.activity == wire::AgentActivityKind::Prose)
+        .map(|message| message.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(prose, ["ACK 1kQwPZtK: Settled tool caption."]);
+}
+
 /// A visible packet presents its own body as the author's outgoing quote even
 /// when the provider settles that block as paraphrased reasoning; the tool
 /// intent repeating its header stays a caption and presents no send.
