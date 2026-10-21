@@ -209,6 +209,26 @@ fn observe_topology(serve: &Path) -> Result<u64, Outcome<CommandAnswer>> {
     read_lanes(serve).map(|reply| reply.body.topology_revision)
 }
 
+/// The command's required lane ID, or the protocol fault naming why it is absent.
+fn lane_id<B>(matches: &ArgMatches) -> Result<CanonicalUuid, Outcome<B>> {
+    let Some(id) = matches.get_one::<String>("ID") else {
+        return Err(protocol_fault(
+            "lane::id-missing",
+            "generated parser omitted required lane ID",
+        ));
+    };
+    id.parse::<CanonicalUuid>()
+        .map_err(|error| protocol_fault("lane::id-invalid", &error.to_string()))
+}
+
+/// The lane a retune names and the topology revision it is checked against.
+fn retune_target(
+    serve: &Path,
+    matches: &ArgMatches,
+) -> Result<(CanonicalUuid, u64), Outcome<CommandAnswer>> {
+    Ok((lane_id(matches)?, observe_topology(serve)?))
+}
+
 /// Read the resident's current lane table under the lane-read contract.
 fn read_lanes<B>(serve: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
     let contract = crate::cli::contract(&["lane"])
@@ -275,15 +295,9 @@ fn state(
     contract: &Contract,
     action: LaneAction,
 ) -> Outcome<CommandAnswer> {
-    let Some(id) = matches.get_one::<String>("ID") else {
-        return protocol_fault(
-            "lane::id-missing",
-            "generated parser omitted required lane ID",
-        );
-    };
-    let lane = match id.parse::<CanonicalUuid>() {
+    let lane = match lane_id(matches) {
         Ok(lane) => lane,
-        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
+        Err(outcome) => return outcome,
     };
     let body = LaneState {
         lane,
@@ -299,18 +313,8 @@ fn state(
 /// vendor's configured model: the request states the seat outright rather than
 /// describing a change to it, so absence is an instruction and not an omission.
 fn model(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let Some(id) = matches.get_one::<String>("ID") else {
-        return protocol_fault(
-            "lane::id-missing",
-            "generated parser omitted required lane ID",
-        );
-    };
-    let lane = match id.parse::<CanonicalUuid>() {
-        Ok(lane) => lane,
-        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
-    };
-    let topology_revision = match observe_topology(serve) {
-        Ok(revision) => revision,
+    let (lane, topology_revision) = match retune_target(serve, matches) {
+        Ok(target) => target,
         Err(outcome) => return outcome,
     };
     let body = LaneRetune {
@@ -325,18 +329,8 @@ fn model(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Com
 }
 /// State the reasoning effort one seated lane's next launch runs.
 fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let Some(id) = matches.get_one::<String>("ID") else {
-        return protocol_fault(
-            "lane::id-missing",
-            "generated parser omitted required lane ID",
-        );
-    };
-    let lane = match id.parse::<CanonicalUuid>() {
-        Ok(lane) => lane,
-        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
-    };
-    let topology_revision = match observe_topology(serve) {
-        Ok(revision) => revision,
+    let (lane, topology_revision) = match retune_target(serve, matches) {
+        Ok(target) => target,
         Err(outcome) => return outcome,
     };
     let effort = matches
@@ -367,18 +361,8 @@ fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
 /// Turn one seated lane's own fast-mode flag on or off. The lane still runs
 /// fast while its team's flag or the global setting is on.
 fn fast(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let Some(id) = matches.get_one::<String>("ID") else {
-        return protocol_fault(
-            "lane::id-missing",
-            "generated parser omitted required lane ID",
-        );
-    };
-    let lane = match id.parse::<CanonicalUuid>() {
-        Ok(lane) => lane,
-        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
-    };
-    let topology_revision = match observe_topology(serve) {
-        Ok(revision) => revision,
+    let (lane, topology_revision) = match retune_target(serve, matches) {
+        Ok(target) => target,
         Err(outcome) => return outcome,
     };
     let body = LaneFastRetune {
@@ -402,15 +386,9 @@ fn import(
     matches: &ArgMatches,
     contract: &Contract,
 ) -> Outcome<CommandAnswer> {
-    let Some(id) = matches.get_one::<String>("ID") else {
-        return protocol_fault(
-            "lane::id-missing",
-            "generated parser omitted required lane ID",
-        );
-    };
-    let lane = match id.parse::<CanonicalUuid>() {
+    let lane = match lane_id(matches) {
         Ok(lane) => lane,
-        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
+        Err(outcome) => return outcome,
     };
     let requested = PathBuf::from(
         matches
