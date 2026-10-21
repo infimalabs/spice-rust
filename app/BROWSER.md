@@ -233,6 +233,12 @@ vacant, unavailable, acked, declined, expired, or cancelled). These receipts
 are not styled as review evidence or output authorization, which stay on their
 exact proposal version and in immutable preparation authority.
 
+Room prose renders as Markdown through the renderer task detail uses, exactly
+as written: card words, an inbox item's body and quoted direction, a Design
+pass justification, a withdrawal reason, and a decision's return reason and
+comments. A card's signoff leads its first paragraph; receipts and controls
+stay outside the rendered body.
+
 Each recorded Design pass proposal also joins its room's conversation and its
 group's plane at its journal position as one card: the proposing lane, the
 recommendation and justification, its decision standing as tab-style badges

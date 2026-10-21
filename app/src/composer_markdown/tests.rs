@@ -135,6 +135,15 @@ fn operator_typed_block_quotes_remain_ordinary_composed_markdown() {
 }
 
 #[test]
+fn room_card_words_render_as_markdown_exactly_as_written_after_their_signoff() {
+    let html = render_room_card("Plan\n\n- [ ] ship it\n- [x] review it\n\nno period").html;
+
+    assert!(html.contains(SIGNOFF_SLOT), "{html}");
+    assert_eq!(html.matches("type=\"checkbox\"").count(), 2, "{html}");
+    assert!(html.contains("no period</p>"), "{html}");
+}
+
+#[test]
 fn block_quotes_normalize_every_line_ending_before_prefixing() {
     assert_eq!(block_quote("first\r\nsecond"), "> first\n> second");
     assert_eq!(block_quote("first\rsecond"), "> first\n> second");

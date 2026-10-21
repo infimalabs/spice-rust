@@ -226,9 +226,11 @@ pub(super) fn render_inbox(
                             <code>{publication.to_string()}</code>
                         </header>
                         if let Some(direction) = direction {
-                            <blockquote class="room-flow-concern">{direction}</blockquote>
+                            <blockquote class="room-flow-concern">
+                                {super::card::render_words(runtime, &direction, None, None)}
+                            </blockquote>
                         }
-                        <p class="room-flow-text">{words}</p>
+                        {super::card::render_words(runtime, &words, None, None)}
                         <ul class="room-flow-statuses" aria-label="Receipt">
                             {item_status(act, entry.key, &entry.item.value, "You")}
                         </ul>
