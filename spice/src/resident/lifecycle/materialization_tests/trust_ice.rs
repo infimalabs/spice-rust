@@ -73,7 +73,7 @@ fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
             .expect("pend commits"),
     );
     assert!(
-        !park(&bus, PRODUCER),
+        !park(&bus, PRODUCER, &digest),
         "a lane without a claim parks nothing"
     );
     // A finite lease that ends before the wake decision below: only the ice
@@ -83,14 +83,14 @@ fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
             .expect("claim commits"),
     );
     assert!(
-        !park(&bus, "/other/worktree"),
+        !park(&bus, "/other/worktree", &digest),
         "another worktree's digest parks nothing"
     );
 
-    assert!(park(&bus, PRODUCER));
+    assert!(park(&bus, PRODUCER, &digest));
     assert_eq!(required(&bus), Some(digest.clone()));
     assert!(
-        !park(&bus, PRODUCER),
+        !park(&bus, PRODUCER, &digest),
         "a repeated turn end records nothing more"
     );
     let parked = bus.task_snapshot().expect("parked snapshot reads");
@@ -127,7 +127,10 @@ fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
             lane: lane(),
         }
     );
-    assert!(!park(&bus, PRODUCER), "a granted digest parks nothing");
+    assert!(
+        !park(&bus, PRODUCER, &digest),
+        "a granted digest parks nothing"
+    );
     bus.verify().expect("the parked authority verifies");
     bus.shutdown().expect("parking fixture stops");
 }
@@ -144,12 +147,12 @@ fn a_newer_pended_digest_supersedes_its_worktrees_older_one_but_never_another_wo
         bus.commit(held_claim_write(&bus, instant(3), |_, _| {}))
             .expect("claim commits"),
     );
-    assert!(park(&bus, PRODUCER));
+    assert!(park(&bus, PRODUCER, &older));
     committed(
         bus.commit(pend_write(&newer, PRODUCER, instant(4)))
             .expect("newer pend commits"),
     );
-    assert!(park(&bus, PRODUCER));
+    assert!(park(&bus, PRODUCER, &newer));
     assert_eq!(required(&bus), Some(newer.clone()));
     bus.shutdown().expect("supersession fixture stops");
 
@@ -166,16 +169,53 @@ fn a_newer_pended_digest_supersedes_its_worktrees_older_one_but_never_another_wo
         bus.commit(pend_write(&newer, PRODUCER, instant(4)))
             .expect("own pend commits"),
     );
-    assert!(!park(&bus, PRODUCER));
+    assert!(!park(&bus, PRODUCER, &newer));
     assert_eq!(required(&bus), Some(older));
     bus.shutdown().expect("foreign fixture stops");
+}
+
+#[test]
+fn an_abandoned_pend_never_parks_a_worktree_whose_surface_moved_on() {
+    let (abandoned, granted, unpended) = (digest(), other_digest(), third_digest());
+    let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    committed(
+        bus.commit(pend_write(&abandoned, PRODUCER, instant(2)))
+            .expect("abandoned pend commits"),
+    );
+    committed(bus.commit(grant_write(&granted)).expect("grant commits"));
+    committed(
+        bus.commit(claim_write_until(&bus, instant(4), instant(40), |_, _| {}))
+            .expect("claim commits"),
+    );
+    let lease = |bus: &Bus| {
+        bus.task_snapshot().expect("lease snapshot reads").tasks()[0]
+            .lease()
+            .expect("held lease")
+            .body()
+            .clone()
+    };
+    let before = lease(&bus);
+
+    assert!(
+        !park(&bus, PRODUCER, &granted),
+        "a surface back on a granted digest parks nothing"
+    );
+    assert!(
+        !park(&bus, PRODUCER, &unpended),
+        "a surface nobody pended parks nothing"
+    );
+    assert_eq!(required(&bus), None);
+    assert_eq!(lease(&bus), before);
+    bus.verify().expect("the untouched authority verifies");
+    bus.shutdown().expect("abandoned fixture stops");
 }
 
 /// Worktree `grant_write` names as the digest's producer.
 const PRODUCER: &str = "/producer/worktree";
 
-fn park(bus: &Bus, worktree: &str) -> bool {
-    crate::resident::lane_surface::park_on_pended_grant(bus, lane(), worktree, instant(10))
+fn park(bus: &Bus, worktree: &str, surface: &wire::Digest) -> bool {
+    let surface = || Ok(surface.clone());
+    crate::resident::lane_surface::park_on_pended_grant(bus, lane(), worktree, surface, instant(10))
         .expect("turn-end parking decides")
 }
 
@@ -222,6 +262,12 @@ fn pend_write(digest: &wire::Digest, worktree: &str, at: Instant) -> JournalWrit
 
 fn other_digest() -> wire::Digest {
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        .parse()
+        .expect("fixture digest")
+}
+
+fn third_digest() -> wire::Digest {
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         .parse()
         .expect("fixture digest")
 }
