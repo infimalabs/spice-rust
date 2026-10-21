@@ -35,7 +35,7 @@ pub(crate) use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes}
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FRONTIER_RESULTS: usize = 4 * 1024;
 pub(crate) const OPEN_TURN_LIMIT: usize = 64;
-pub(crate) const OPEN_TOOL_LIMIT: usize = 1_024;
+const OPEN_TOOL_LIMIT: usize = 1_024;
 
 #[derive(Debug)]
 pub(crate) struct TypedRecord {
@@ -376,6 +376,48 @@ fn read_residue(path: &Path, line: u64, error: &io::Error) -> Residue {
 pub(crate) struct FoldState {
     pub(crate) current: Option<usize>,
     pub(crate) pending: BTreeMap<String, PendingTool>,
+}
+
+impl FoldState {
+    /// How many leading buffered turns no open turn or tool still points into.
+    pub(crate) fn closed_prefix(&self, buffered: usize) -> usize {
+        self.current
+            .into_iter()
+            .chain(self.pending.values().map(|pending| pending.turn))
+            .min()
+            .unwrap_or(buffered)
+    }
+
+    /// Rebase open indices after the first `drained` buffered turns left,
+    /// refusing once more turns or tools stay open than their limits allow.
+    pub(crate) fn release(
+        &mut self,
+        drained: usize,
+        open_turns: usize,
+        at: &str,
+    ) -> Result<(), Refusal> {
+        if drained > 0 {
+            self.current = self.current.map(|index| index - drained);
+            for pending in self.pending.values_mut() {
+                pending.turn -= drained;
+            }
+        }
+        if open_turns > OPEN_TURN_LIMIT {
+            return Err(refusal(
+                "session::aggregate-open-turn-limit",
+                Some(format!("limit={OPEN_TURN_LIMIT} at={at:?}")),
+                "repair unresolved tool spans or narrow the immutable transcript inputs",
+            ));
+        }
+        if self.pending.len() > OPEN_TOOL_LIMIT {
+            return Err(refusal(
+                "session::aggregate-open-tool-limit",
+                Some(format!("limit={OPEN_TOOL_LIMIT} at={at:?}")),
+                "repair unresolved tool spans or narrow the immutable transcript inputs",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct FoldStorage<'a> {

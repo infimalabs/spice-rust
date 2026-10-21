@@ -15,8 +15,8 @@ use super::super::source::ResolvedSource;
 use super::stream::{ForwardCursor, ForwardProgress, compressed};
 use super::{
     CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery,
-    OPEN_TOOL_LIMIT, OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork,
-    SessionWorkBudget, admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
+    OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget,
+    admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
     source_view_text_bytes, stream_records,
 };
 use crate::read_page::{Page, Paged};
@@ -176,31 +176,15 @@ impl WindowScan {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for stream in &mut streams {
-            stream.advance(&mut residues, &mut work)?;
-        }
         let mut turns = WindowTurnFrontier::new(options);
         let mut any_turn_identity = false;
-        while let Some(index) = streams
-            .iter()
-            .enumerate()
-            .filter(|(_, stream)| !stream.ready.is_empty())
-            .min_by_key(|(_, stream)| {
-                let turn = stream.ready.front().expect("filtered nonempty frontier");
-                (&turn.start_ts, &turn.source)
-            })
-            .map(|(index, _)| index)
-        {
-            let turn = streams[index]
-                .ready
-                .pop_front()
-                .expect("selected window frontier is nonempty");
+        merge_ready_turns(&mut streams, &mut residues, &mut work, |turn| {
             any_turn_identity |= turn.turn_id.is_some();
             if filters.turn_matches(&turn) {
                 turns.push(WindowTurn::project(turn, options))?;
             }
-            streams[index].advance(&mut residues, &mut work)?;
-        }
+            Ok(())
+        })?;
         filters.validate_turn_identity_available(any_turn_identity)?;
         let mut sources = Vec::with_capacity(streams.len());
         let mut compaction_sources = Vec::with_capacity(streams.len());
@@ -602,26 +586,7 @@ impl Aggregate {
             .iter()
             .map(|source| PhaseSource::new(source, work))
             .collect::<Result<Vec<_>, _>>()?;
-        for stream in &mut streams {
-            stream.advance(residues, work)?;
-        }
-        while let Some(index) = streams
-            .iter()
-            .enumerate()
-            .filter(|(_, stream)| !stream.ready.is_empty())
-            .min_by_key(|(_, stream)| {
-                let turn = stream.ready.front().expect("filtered nonempty frontier");
-                (&turn.start_ts, &turn.source)
-            })
-            .map(|(index, _)| index)
-        {
-            let turn = streams[index]
-                .ready
-                .pop_front()
-                .expect("selected phase frontier is nonempty");
-            self.add_turn(turn)?;
-            streams[index].advance(residues, work)?;
-        }
+        merge_ready_turns(&mut streams, residues, work, |turn| self.add_turn(turn))?;
         for stream in streams {
             let source = stream.source_view();
             work.admit_retained_text(source_view_text_bytes(&source), &source.path)?;
@@ -1036,34 +1001,41 @@ fn drain_fold_turns(
     let retain = if finish {
         scratch.turns.len()
     } else {
-        fold.current
-            .into_iter()
-            .chain(fold.pending.values().map(|pending| pending.turn))
-            .min()
-            .unwrap_or(scratch.turns.len())
+        fold.closed_prefix(scratch.turns.len())
     };
     for turn in scratch.turns.drain(..retain) {
         accept(turn)?;
     }
-    if retain > 0 {
-        fold.current = fold.current.map(|index| index - retain);
-        for pending in fold.pending.values_mut() {
-            pending.turn -= retain;
-        }
+    fold.release(retain, scratch.turns.len(), at)
+}
+
+/// Hands every buffered turn across `streams` to `accept` in start-time then
+/// source order, refilling each stream's ready frontier as it empties.
+fn merge_ready_turns(
+    streams: &mut [PhaseSource],
+    residues: &mut ResidueLedger,
+    work: &mut SessionWork,
+    mut accept: impl FnMut(TurnRecord) -> Result<(), Refusal>,
+) -> Result<(), Refusal> {
+    for stream in streams.iter_mut() {
+        stream.advance(residues, work)?;
     }
-    if scratch.turns.len() > OPEN_TURN_LIMIT {
-        return Err(refusal(
-            "session::aggregate-open-turn-limit",
-            Some(format!("limit={OPEN_TURN_LIMIT} at={at:?}")),
-            "repair unresolved tool spans or narrow the immutable transcript inputs",
-        ));
-    }
-    if fold.pending.len() > OPEN_TOOL_LIMIT {
-        return Err(refusal(
-            "session::aggregate-open-tool-limit",
-            Some(format!("limit={OPEN_TOOL_LIMIT} at={at:?}")),
-            "repair unresolved tool spans or narrow the immutable transcript inputs",
-        ));
+    while let Some(index) = streams
+        .iter()
+        .enumerate()
+        .filter(|(_, stream)| !stream.ready.is_empty())
+        .min_by_key(|(_, stream)| {
+            let turn = stream.ready.front().expect("filtered nonempty frontier");
+            (&turn.start_ts, &turn.source)
+        })
+        .map(|(index, _)| index)
+    {
+        let turn = streams[index]
+            .ready
+            .pop_front()
+            .expect("selected frontier is nonempty");
+        accept(turn)?;
+        streams[index].advance(residues, work)?;
     }
     Ok(())
 }
