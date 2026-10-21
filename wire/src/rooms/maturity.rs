@@ -52,17 +52,48 @@ impl DesignItemState {
             Self::Concurred => "concurred",
         }
     }
+}
 
-    /// The input that would move the item toward concurrence; none once it
-    /// concurs.
+/// The input that would move one question item toward concurrence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignItemInput {
+    /// No charge has weighed the item.
+    AnyCharge,
+    /// Only negative charges have weighed the item.
+    PositiveCharge,
+    /// Only positive charges have weighed the item.
+    NegativeCharge,
+    /// The positive run lacks a concession and three lanes: a positive
+    /// charge from a lane whose last charge was negative, or more positive
+    /// lanes.
+    PositiveAgreement,
+    /// The negative run lacks a concession and three lanes.
+    NegativeAgreement,
+    /// The agreed positive run has not answered the displaced strength-2
+    /// negative charge with a +2 of its own.
+    PositiveStrength,
+    /// The agreed negative run has not answered the displaced strength-2
+    /// positive charge with a -2 of its own.
+    NegativeStrength,
+}
+
+impl DesignItemInput {
+    /// Operator-facing words for this input.
     #[must_use]
-    pub const fn needs(self) -> Option<&'static str> {
+    pub const fn label(self) -> &'static str {
         match self {
-            Self::Quiet => Some("any charge"),
-            Self::UnopposedFor => Some("a negative charge"),
-            Self::UnopposedAgainst => Some("a positive charge"),
-            Self::Contested => Some("a strength-2 re-charge"),
-            Self::Concurred => None,
+            Self::AnyCharge => "any charge",
+            Self::PositiveCharge => "a positive charge",
+            Self::NegativeCharge => "a negative charge",
+            Self::PositiveAgreement => {
+                "a positive charge from a lane that last charged negative, or more positive lanes"
+            }
+            Self::NegativeAgreement => {
+                "a negative charge from a lane that last charged positive, or more negative lanes"
+            }
+            Self::PositiveStrength => "a +2 charge",
+            Self::NegativeStrength => "a -2 charge",
         }
     }
 }
@@ -168,6 +199,17 @@ impl DesignItemSeries {
         }
     }
 
+    /// The suffix holds a concession and two lanes, or three lanes.
+    fn agreed(&self) -> bool {
+        let lanes = self.suffix_lanes.len();
+        lanes >= 3 || (lanes >= 2 && self.suffix_conceded)
+    }
+
+    /// The suffix displaced a strength-2 charge without one of its own.
+    fn buried(&self) -> bool {
+        self.displaced_strong && !self.suffix_strong
+    }
+
     /// Where the item stands.
     #[must_use]
     pub fn state(&self) -> DesignItemState {
@@ -175,16 +217,29 @@ impl DesignItemSeries {
             (false, false) => DesignItemState::Quiet,
             (true, false) => DesignItemState::UnopposedFor,
             (false, true) => DesignItemState::UnopposedAgainst,
-            (true, true) => {
-                let lanes = self.suffix_lanes.len();
-                let agreed = lanes >= 3 || (lanes >= 2 && self.suffix_conceded);
-                if agreed && (!self.displaced_strong || self.suffix_strong) {
-                    DesignItemState::Concurred
-                } else {
-                    DesignItemState::Contested
-                }
-            }
+            (true, true) if self.agreed() && !self.buried() => DesignItemState::Concurred,
+            (true, true) => DesignItemState::Contested,
         }
+    }
+
+    /// The input that would move the item toward concurrence; none once it
+    /// concurs. A contested run first needs agreement, then any strength-2
+    /// answer it owes.
+    #[must_use]
+    pub fn needs(&self) -> Option<DesignItemInput> {
+        let positive = self.suffix_positive;
+        Some(match self.state() {
+            DesignItemState::Quiet => DesignItemInput::AnyCharge,
+            DesignItemState::UnopposedFor => DesignItemInput::NegativeCharge,
+            DesignItemState::UnopposedAgainst => DesignItemInput::PositiveCharge,
+            DesignItemState::Contested if !self.agreed() && positive => {
+                DesignItemInput::PositiveAgreement
+            }
+            DesignItemState::Contested if !self.agreed() => DesignItemInput::NegativeAgreement,
+            DesignItemState::Contested if positive => DesignItemInput::PositiveStrength,
+            DesignItemState::Contested => DesignItemInput::NegativeStrength,
+            DesignItemState::Concurred => return None,
+        })
     }
 
     /// Distinct lanes that charged the item, as retained.
@@ -412,6 +467,8 @@ pub struct DesignItemNeed {
     pub question: RoomQuestion,
     /// Where it stands.
     pub item: DesignItemState,
+    /// The input that would move it toward concurrence.
+    pub needs: DesignItemInput,
 }
 
 /// Advisory state judged per current question item.
@@ -454,7 +511,7 @@ impl DesignMaturityState {
                 "steeping; item {} is {} and needs {}; {} quiet",
                 need.question,
                 need.item.label(),
-                need.item.needs().unwrap_or("nothing"),
+                need.needs.label(),
                 quiet_items(*quiet),
             ),
             Self::Steeping { next: None, .. } => {
@@ -579,9 +636,14 @@ impl DesignMaturity {
             })
             .and_then(|offset| {
                 let question = u16::try_from(offset + 1).ok().and_then(RoomQuestion::new)?;
+                let needs = self
+                    .items
+                    .series(&RoomQuestionItem::of(&acceptance[offset]))
+                    .map_or(Some(DesignItemInput::AnyCharge), DesignItemSeries::needs)?;
                 Some(DesignItemNeed {
                     question,
                     item: states[offset],
+                    needs,
                 })
             });
         DesignMaturityState::Steeping { next, quiet }
@@ -739,14 +801,26 @@ mod tests {
         maturity.items.states(&[item.to_owned()])[0]
     }
 
+    fn item_needs(maturity: &DesignMaturity, item: &str) -> Option<DesignItemInput> {
+        maturity
+            .items
+            .series(&RoomQuestionItem::of(item))
+            .and_then(DesignItemSeries::needs)
+    }
+
     fn acceptance(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| (*item).to_owned()).collect()
     }
 
-    fn need(question: u16, item: DesignItemState) -> Option<DesignItemNeed> {
+    fn need(
+        question: u16,
+        item: DesignItemState,
+        needs: DesignItemInput,
+    ) -> Option<DesignItemNeed> {
         Some(DesignItemNeed {
             question: RoomQuestion::new(question).expect("item"),
             item,
+            needs,
         })
     }
 
@@ -837,8 +911,8 @@ mod tests {
         maturity.observe_contribution(&charge(1, item, 1));
         assert_eq!(item_state(&maturity, item), DesignItemState::UnopposedFor);
         assert_eq!(
-            DesignItemState::UnopposedFor.needs(),
-            Some("a negative charge")
+            item_needs(&maturity, item),
+            Some(DesignItemInput::NegativeCharge)
         );
         maturity.observe_contribution(&charge(1, item, -1));
         assert_eq!(
@@ -855,6 +929,25 @@ mod tests {
         maturity.observe_contribution(&charge(3, item, 1));
         assert_eq!(item_state(&maturity, item), DesignItemState::Contested);
 
+        let mut opposed = DesignMaturity::default();
+        for (lane, value) in [(1, 1), (2, -1)] {
+            opposed.observe_contribution(&charge(lane, item, value));
+        }
+        assert_eq!(
+            item_needs(&opposed, item),
+            Some(DesignItemInput::NegativeAgreement),
+            "an unagreed run needs a concession or more lanes, not strength"
+        );
+        let mut conceded = opposed.clone();
+        conceded.observe_contribution(&charge(1, item, -1));
+        assert_eq!(item_needs(&conceded, item), None, "the concession concurs");
+        opposed.observe_contribution(&charge(1, item, 2));
+        assert_eq!(
+            item_state(&opposed, item),
+            DesignItemState::Contested,
+            "a strength-2 re-charge does not supply agreement"
+        );
+
         let mut buried = DesignMaturity::default();
         for (lane, value) in [(1, -2), (2, 1), (3, 1), (4, 1)] {
             buried.observe_contribution(&charge(lane, item, value));
@@ -863,6 +956,10 @@ mod tests {
             item_state(&buried, item),
             DesignItemState::Contested,
             "three unconceded lanes cannot bury a strength-2 charge without one"
+        );
+        assert_eq!(
+            item_needs(&buried, item),
+            Some(DesignItemInput::PositiveStrength)
         );
         buried.observe_contribution(&charge(5, item, 2));
         assert_eq!(item_state(&buried, item), DesignItemState::Concurred);
@@ -889,7 +986,7 @@ mod tests {
         assert_eq!(
             maturity.state(&current),
             DesignMaturityState::Steeping {
-                next: need(1, DesignItemState::Quiet),
+                next: need(1, DesignItemState::Quiet, DesignItemInput::AnyCharge),
                 quiet: 2,
             },
             "a retained Design-level charge enters no item"
@@ -914,7 +1011,11 @@ mod tests {
         assert_eq!(
             maturity.state(&current),
             DesignMaturityState::Steeping {
-                next: need(2, DesignItemState::Contested),
+                next: need(
+                    2,
+                    DesignItemState::Contested,
+                    DesignItemInput::NegativeAgreement
+                ),
                 quiet: 0,
             }
         );
@@ -923,7 +1024,11 @@ mod tests {
         assert_eq!(
             maturity.state(&reordered),
             DesignMaturityState::Steeping {
-                next: need(1, DesignItemState::Contested),
+                next: need(
+                    1,
+                    DesignItemState::Contested,
+                    DesignItemInput::NegativeAgreement
+                ),
                 quiet: 0,
             },
             "a reorder or respacing keeps each series"
