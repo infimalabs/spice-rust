@@ -708,21 +708,16 @@ pub(in crate::browser) struct TurboButtonProps {
     pub(in crate::browser) onclick: Callback<MouseEvent>,
 }
 
-/// The platform flame glyph marking fast mode: a lane's provider emblem and
-/// an engaged TURBO button wear it.
-pub(in crate::browser) const FAST_FLAME: &str = "🔥";
-
 /// Shared stable TURBO lettering; pressed state reflects team or global fast
-/// mode, and an engaged button wears the fast flame over its foot corner.
+/// mode. Inside one fixed lettering box it reads NO|TURBO off and TURBO|ON
+/// on, the accent word mirroring across TURBO; the words are presentation and
+/// the pressed state and label stay the accessible truth.
 #[function_component(TurboButton)]
 pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
     let label = props
         .label
         .clone()
         .unwrap_or_else(|| AttrValue::from("Turbo"));
-    let flame = props.engaged.then(|| {
-        html! { <span class="app-turbo-button__fire" aria-hidden="true">{FAST_FLAME}</span> }
-    });
     html! {
         <button
             type="button"
@@ -734,8 +729,11 @@ pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
             disabled={props.disabled}
             onclick={props.onclick.clone()}
         >
-            {fit_word("Turbo")}
-            {flame}
+            <span class="turbo-lockup" aria-hidden="true">
+                <span class="turbo-lockup__no">{fit_word("No")}</span>
+                <span class="turbo-lockup__turbo">{fit_word("Turbo")}</span>
+                <span class="turbo-lockup__on">{fit_word("On")}</span>
+            </span>
         </button>
     }
 }
