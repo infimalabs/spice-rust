@@ -410,6 +410,10 @@ fn complete_review(bus: &Bus, task: &TaskStamp, lane: CanonicalUuid, verdict: wi
                 task: task.clone(),
                 reviewer: actor,
                 verdict,
+                status: match verdict {
+                    wire::body::Verdict::Clean => wire::body::TaskCompletionStatus::Completed,
+                    wire::body::Verdict::Finding => wire::body::TaskCompletionStatus::Pending,
+                },
                 finding: (verdict == wire::body::Verdict::Finding)
                     .then(|| "missing current coverage\n\nexercise the live refusal".to_owned()),
                 note: None,

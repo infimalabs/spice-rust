@@ -144,6 +144,10 @@ fn reviewed(
             task,
             reviewer,
             verdict,
+            status: match verdict {
+                body::Verdict::Clean => body::TaskCompletionStatus::Completed,
+                body::Verdict::Finding => body::TaskCompletionStatus::Pending,
+            },
             finding: (verdict == body::Verdict::Finding).then(|| "finding".to_owned()),
             note: None,
             followups: Vec::new(),

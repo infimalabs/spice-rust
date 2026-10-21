@@ -177,9 +177,12 @@ owns each rule summarized here.
   HANDLE`, and every later pass needs counted input recorded after the last
   proposal or abandonment. Contributions, operator room posts, nudges, returned
   or rejecting decisions, and the final settlement of released work count;
-  asks, notices, leaves, and group movement do not. Until then the Design
-  gathers input, awaits the operator's decision, or waits on its released
-  work, deferred work included.
+  asks, notices, leaves, and group movement do not. Released work settles by
+  the fact that completes it: a completing `task done`, operator closure or
+  deletion, a conclusion, or the clean final review of a flow that ends in
+  review, which the review fact records as its completed status. Until then
+  the Design gathers input, awaits the operator's decision, or waits on its
+  released work, deferred work included.
 
   Every surface names the same cycle state, who acts next, and the exact
   command: `task show` and `task status`, `board` rows, dry and empty drain,

@@ -433,6 +433,11 @@ pub struct TaskReviewed {
     pub reviewer: Actor,
     /// How the review closed.
     pub verdict: Verdict,
+    /// Workflow status the verdict left: `completed` exactly when this review
+    /// positively settled the workflow, so a fact-only fold can treat a clean
+    /// final review as settlement without knowing the task's flow; `pending`
+    /// for a finding or a clean review that advanced to a later phase.
+    pub status: TaskCompletionStatus,
     /// Recorded finding; absent on a clean verdict.
     #[serde(
         default,

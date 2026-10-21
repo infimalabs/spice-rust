@@ -369,6 +369,11 @@ fn clean_review_intake_releases_its_claim_into_a_passive_design() {
     ));
 
     let view = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        latest_review_status(&bus, &design),
+        wire::body::TaskCompletionStatus::Pending,
+        "a clean intake review advances the Design and settles nothing"
+    );
     let design = at(&view, &design);
     assert_eq!(design.workflow.body.phase.as_str(), "design");
     assert!(matches!(
