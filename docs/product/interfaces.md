@@ -347,8 +347,10 @@ commit are different jobs.
 
 `spice demo` replays a canned transcript through the real renderer in an
 isolated seeded root, with no model call and no mutation of the caller's
-repository. Nothing opens on the operator's display without an explicit
-`--open`.
+repository: the turns are posts in the seeded task's room, read in that task's
+sheet. The seeded lanes are simulated and never run, so their team plane
+shows no agent prose. Nothing opens on the operator's display without an
+explicit `--open`.
 The seed's primary task is held by Ava through the same claim authority as live
 work, so its team task strip, lane ownership accents, roster, task overview, and
 board reads all describe one shared team-owned row.
