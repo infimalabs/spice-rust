@@ -25,14 +25,13 @@
 //! 3. The per-worktree Git shadow follows the same separation rule: this runtime
 //!    publishes only `spice-rs-agent.gitconfig` and never Python's
 //!    `agent.gitconfig`.
-//! 4. A cross-system bridge is refused by default. The sole translator that
-//!    exists, `spice config migrate-tasks`, runs only when an operator names an
-//!    export path on the command line, reads that one file, and writes nothing.
-//!    `spice rtk gain` is a separate read-only inspector rather than a
-//!    translator: an operator must name one agent UUID and only its current
-//!    Git-common [`StatePaths::rtk_history`] database may be passed to RTK
-//!    through the documented `RTK_DB_PATH` input. Worktree-local and
-//!    predecessor state are not inspected.
+//! 4. A cross-system bridge is refused by default. No translator reads
+//!    predecessor task data; the Python archive under the Git-common
+//!    `.spice-py` root is not consulted. `spice rtk gain` is a read-only
+//!    inspector rather than a translator: an operator must name one agent UUID
+//!    and only its current Git-common [`StatePaths::rtk_history`] database may
+//!    be passed to RTK through the documented `RTK_DB_PATH` input.
+//!    Worktree-local and predecessor state are not inspected.
 //!
 //! `tests/coexistence.rs` enforces the filesystem ownership boundary by identity:
 //! it seeds Python's complete `.spice` root, runs the real Rust binary against

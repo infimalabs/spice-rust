@@ -1427,14 +1427,4 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Plan,
         "spice::config"
     ),
-    row!(
-        ["config", "migrate-tasks"],
-        "config migrate-tasks EXPORT",
-        Local,
-        None,
-        [],
-        [Daemonless, Offline],
-        Reply,
-        "spice::task_config_migration"
-    ),
 ];

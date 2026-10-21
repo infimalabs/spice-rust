@@ -17,10 +17,6 @@ const SUMMARIES: &[(&str, &str)] = &[
         "Compose one deterministic board handout for an output",
     ),
     ("config", "Read or change repository configuration"),
-    (
-        "config migrate-tasks",
-        "Migrate tasks from one predecessor task export",
-    ),
     ("consent", "Review and decide pending consent requests"),
     ("consent allow", "Allow one pending consent request"),
     ("consent deny", "Deny one pending consent request"),
