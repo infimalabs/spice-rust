@@ -250,9 +250,13 @@ pub(super) fn render_contract(
                     }</p>
                 } else {
                     <h4>{if design { "Questions" } else { "Acceptance" }}</h4>
-                    <ul>{for statement.acceptance.iter().map(|criterion| html! {
-                        <li>{render_task_text(criterion, "work-detail-criterion", resolves)}</li>
-                    })}</ul>
+                    <ul data-task-contract={statement.born.to_string()}>
+                        {for statement.acceptance.iter().enumerate().map(|(index, criterion)| html! {
+                            <li data-contract-question={(index + 1).to_string()} tabindex="-1">
+                                {render_task_text(criterion, "work-detail-criterion", resolves)}
+                            </li>
+                        })}
+                    </ul>
                 }
             }
         </>

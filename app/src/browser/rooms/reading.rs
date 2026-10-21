@@ -83,7 +83,6 @@ pub(in crate::browser) fn render_task_room(
                         )}
                         {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                         {super::approval::render_approval(runtime, controls, sender, room)}
-                        {super::contributions::render_groups(runtime, room)}
                     }
                     <section class="room-history" aria-label="Room conversation">
                         <header>

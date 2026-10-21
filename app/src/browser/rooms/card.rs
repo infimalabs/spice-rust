@@ -85,7 +85,7 @@ pub(super) fn render_face(
         .room_projection()
         .unheard_post(room, publication, has_current_listener);
     let face = conversation::face(runtime, controls, publication, event, unheard)
-        .or_else(|| contributions::face(runtime, publication, event))
+        .or_else(|| contributions::face(runtime, room, publication, event))
         .unwrap_or_else(|| super::summary_face(runtime, event));
     render(runtime, publication.micros() / 1_000, face, anchor)
 }

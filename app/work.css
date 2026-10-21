@@ -905,7 +905,6 @@
 .room-approval-withdrawn > header,
 .room-conclusion > header,
 .room-maturity > header,
-.room-contributions > header,
 .room-history > header {
   display: flex;
   justify-content: space-between;
@@ -916,7 +915,6 @@
 .room-reading,
 .room-approval,
 .room-approval-withdrawn,
-.room-contributions,
 .room-history { display: grid; gap: 8px; }
 
 .room-maturity {
@@ -953,23 +951,9 @@
   max-width: none;
 }
 
-/* Contributions are evidence, never authority, so they keep the neutral rail
-   and say what they offer in words rather than colour. */
-.room-contribution-group { display: grid; gap: 6px; }
-.room-contribution-group h4 {
-  display: flex;
-  gap: 6px;
-  margin: 0;
-  font-size: var(--app-type-detail);
-}
-.room-contribution-count { color: var(--muted); font-weight: normal; }
-.room-contribution-group ol {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+/* A contribution's question tail is one short link; the item's words live in
+   the Contract list it focuses, and in the link's title. */
+.room-card-face p.room-contribution-question { margin: 6px 0 0; font-size: var(--app-type-meta); }
 /* A proposal card names its decision standing as tab-style labels carrying
    the shared count badge, then links into the version's decision surface. */
 .room-proposal-standing {

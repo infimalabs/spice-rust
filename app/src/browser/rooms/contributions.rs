@@ -1,15 +1,16 @@
-//! Typed Design contributions read in place: grouped by kind, and in the
-//! room history in journal order beside ordinary conversation. Each entry
-//! names its lane, time, vote, the question item it weighs, text, and every
-//! cited source as an exact link or the typed reason the resident cannot
-//! resolve it. Contributions are evidence for the operator's Design judgment,
-//! never authority; reading them writes nothing.
+//! Typed Design contributions read in place in the room history, in journal
+//! order beside ordinary conversation. Each entry names its lane, time, vote,
+//! the question item it weighs as a link into the Contract list, text, and
+//! every cited source as an exact link or the typed reason the resident
+//! cannot resolve it. Contributions are evidence for the operator's Design
+//! judgment, never authority; reading them writes nothing.
 
 use wire::TaskStamp;
 use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomSource, RoomSourceView};
 use yew::prelude::*;
 
 use super::card::{Badge, Face, Speaker};
+use super::standing::focus_in_place;
 use crate::AppRuntime;
 use crate::browser::view::chrome::CopyButton;
 use crate::runtime::{Contribution, ContributionRead, RoomEvent, RoomEventKind};
@@ -29,47 +30,10 @@ pub(super) const fn kind_label(kind: RoomContributionKind) -> &'static str {
     }
 }
 
-/// `design`'s contributions grouped by kind, each group oldest first.
-pub(super) fn render_groups(runtime: &AppRuntime, design: &TaskStamp) -> Html {
-    let groups = runtime.room_projection().contribution_groups(design);
-    let total = groups
-        .iter()
-        .map(|group| group.entries.len())
-        .sum::<usize>();
-    html! {
-        <section class="room-contributions" aria-label="Contributions" data-room-contributions="">
-            <header>
-                <strong>{"Contributions"}</strong>
-                <span>{total}</span>
-            </header>
-            if groups.is_empty() {
-                <p class="room-empty">{"No contributions."}</p>
-            }
-            {for groups.into_iter().map(|group| {
-                let label = kind_label(group.kind);
-                html! {
-                    <section
-                        class="room-contribution-group"
-                        key={group.kind.as_str()}
-                        data-contribution-group={group.kind.as_str()}
-                        aria-label={format!("{label} contributions")}
-                    >
-                        <h4>{label}<span class="room-contribution-count">{group.entries.len()}</span></h4>
-                        <ol>
-                            {for group.entries.iter().map(|entry| html! {
-                                <li key={entry.publication.to_string()}>{render_entry(runtime, entry)}</li>
-                            })}
-                        </ol>
-                    </section>
-                }
-            })}
-        </section>
-    }
-}
-
 /// One contribution event's card face, or `None` for any other event.
 pub(super) fn face(
     runtime: &AppRuntime,
+    room: &TaskStamp,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
 ) -> Option<Face> {
@@ -85,6 +49,7 @@ pub(super) fn face(
     };
     Some(entry_face(
         runtime,
+        room,
         &Contribution {
             publication,
             position: event.position,
@@ -105,7 +70,7 @@ pub(super) const fn badge(kind: RoomContributionKind) -> Badge {
     }
 }
 
-fn entry_face(runtime: &AppRuntime, entry: &Contribution<'_>) -> Face {
+fn entry_face(runtime: &AppRuntime, room: &TaskStamp, entry: &Contribution<'_>) -> Face {
     Face {
         speaker: Some(Speaker {
             name: super::conversation::lane_label(runtime, entry.lane),
@@ -116,41 +81,41 @@ fn entry_face(runtime: &AppRuntime, entry: &Contribution<'_>) -> Face {
         words: entry.text.to_owned(),
         tail: html! {
             <>
-                {render_question(runtime, entry)}
+                {render_question(runtime, room, entry)}
                 {render_sources(runtime, entry.publication, entry.sources)}
             </>
         },
     }
 }
 
-fn render_entry(runtime: &AppRuntime, entry: &Contribution<'_>) -> Html {
-    html! {
-        <article class="room-card" key={entry.publication.to_string()} tabindex="0">
-            {super::card::render(runtime, entry.publication.micros() / 1_000, entry_face(runtime, entry), None)}
-        </article>
-    }
-}
-
-/// The question item a contribution weighs: its text once the resident
-/// reads it, its number alone while the read is pending, failed, or the
-/// statement it witnessed has been revised; nothing for a question or a
-/// retained Design-level post.
-fn render_question(runtime: &AppRuntime, entry: &Contribution<'_>) -> Html {
+/// The question item a contribution weighs, as a `Q N` link that focuses
+/// item N in the Design's Contract list; the item's text is the link's
+/// title once the resident reads it, and the title says so while the read
+/// is pending, failed, or the statement it witnessed has been revised.
+/// Nothing for a question or a retained Design-level post.
+fn render_question(runtime: &AppRuntime, room: &TaskStamp, entry: &Contribution<'_>) -> Html {
     let Some(item) = entry.question else {
         return Html::default();
     };
-    let line = match runtime.contribution_read(entry.publication) {
+    let title = match runtime.contribution_read(entry.publication) {
         Some(ContributionRead::Read {
             question: Some(text),
             ..
-        }) => format!("Item {item}: {text}"),
+        }) => text.clone(),
         Some(ContributionRead::Read { question: None, .. }) => {
-            format!("Item {item} of an earlier statement")
+            format!("Question {item} of an earlier statement")
         }
-        _ => format!("Item {item}"),
+        _ => format!("Question {item}"),
     };
+    let selector = format!("[data-task-contract=\"{room}\"] [data-contract-question=\"{item}\"]");
     html! {
-        <p class="room-contribution-question" data-question-item={item.to_string()}>{line}</p>
+        <p class="room-contribution-question" data-question-item={item.to_string()}>
+            <a
+                href={crate::view::design_href(room)}
+                title={title}
+                onclick={focus_in_place(selector)}
+            >{format!("Q {item}")}</a>
+        </p>
     }
 }
 
