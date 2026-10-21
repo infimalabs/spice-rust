@@ -458,7 +458,8 @@ Each team or working-group lights panel is one weave: an etched well, a
 darkened pane with a soft lip under its top edge and a light catch along its
 bottom, holding one fixed, equal-width column per channel with a small gutter
 between, in roster order from the right edge, so each column stands over the
-composer the plane below paints in that same right-anchored order. A channel is a set of lanes. A team column is its one
+composer the plane below paints in that same right-anchored order. A channel is
+a set of lanes. A team column is its one
 lane. A working-group column is the distinct lanes currently claiming its
 Design, work gated by it, or selected work that retains it as preparation
 controller; one lane counts once even if several of those paths name it, and
