@@ -285,7 +285,6 @@ pub(super) fn render_catalog(
     runtime: Option<&AppRuntime>,
     controls: &Controls,
     sender: &SenderHandle,
-    read: &Callback<TaskStamp>,
 ) -> Html {
     let Some(runtime) = runtime else {
         return section(
@@ -306,7 +305,7 @@ pub(super) fn render_catalog(
                 if let Some(notice) = (*controls.notice).clone() {
                     <p class="room-notice" role="status">{notice}</p>
                 }
-                {render_roster(runtime, controls, sender, read)}
+                {render_roster(runtime, controls, sender)}
             </>
         },
     };
@@ -391,13 +390,8 @@ fn section(title: &'static str, body: Html) -> Html {
 
 /// The working-group roster: each group a card named for its lead design with
 /// the console it opens, then New working group and the ungrouped Designs.
-/// Every design tile also opens its read view through `read`.
-fn render_roster(
-    runtime: &AppRuntime,
-    controls: &Controls,
-    sender: &SenderHandle,
-    read: &Callback<TaskStamp>,
-) -> Html {
+/// Every design tile links its read view.
+fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandle) -> Html {
     let partition = runtime.room_projection().partition();
     let tasks = runtime
         .board()
@@ -424,7 +418,10 @@ fn render_roster(
             activate: Callback::from(move |()| controls.open(group.clone(), None)),
         }
     };
-    let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, design, read);
+    let member = |design: &TaskStamp, _grouped: bool| {
+        let accent = crate::watchband::design_accent(&partition.groups, design);
+        render_design(runtime, design, accent)
+    };
     let revision = partition.revision;
     let submit = {
         let (sender, controls) = (sender.clone(), controls.clone());
@@ -445,9 +442,10 @@ fn render_roster(
     })
 }
 
-/// One design's tile content: its handle, standing and title while the board
-/// carries its task, else its anchor label, and the action reading its room.
-fn render_design(runtime: &AppRuntime, design: &TaskStamp, read: &Callback<TaskStamp>) -> Html {
+/// One design as a roster tile, the agent tile's twin: a link to its read view
+/// wearing its dealt accent, its handle and standing over its task's title
+/// while the board carries the task, else its anchor label alone.
+fn render_design(runtime: &AppRuntime, design: &TaskStamp, accent: usize) -> Html {
     let task = runtime.board().and_then(|board| board.row(design));
     let label = task.map_or_else(
         || anchor_label(runtime, design),
@@ -456,21 +454,24 @@ fn render_design(runtime: &AppRuntime, design: &TaskStamp, read: &Callback<TaskS
     let standing = runtime
         .room_projection()
         .design_standing(design, runtime.board());
-    let onclick = {
-        let (read, design) = (read.clone(), design.clone());
-        Callback::from(move |_: MouseEvent| read.emit(design.clone()))
-    };
     html! {
-        <div class="room-design" data-design-standing={standing.key()}>
+        <a
+            class="app-roster-tile room-design"
+            href={crate::view::design_href(design)}
+            aria-label={format!("Read Design {label}")}
+            data-accent={accent.to_string()}
+            data-design-standing={standing.key()}
+        >
             <header>
-                <strong data-roster-handle="">{label.clone()}</strong>
+                <strong data-roster-handle="">{label}</strong>
                 <span>{standing.label()}</span>
-                <button type="button" aria-label={format!("Read {label}")} {onclick}>{"Read"}</button>
             </header>
-            if let Some(task) = task {
-                <span class="room-design-title">{task.presentation_title.clone()}</span>
-            }
-        </div>
+            <p>
+                if let Some(task) = task {
+                    <span>{task.presentation_title.clone()}</span>
+                }
+            </p>
+        </a>
     }
 }
 

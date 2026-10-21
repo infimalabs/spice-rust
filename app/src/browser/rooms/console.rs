@@ -78,14 +78,6 @@ struct Channel {
     accent: usize,
     label: String,
 }
-fn group_console(groups: &[wire::rooms::WorkingGroup], group: &RoomAuthorityStamp) -> usize {
-    groups
-        .iter()
-        .filter(|candidate| {
-            (candidate.group.micros(), candidate.group.as_str()) < (group.micros(), group.as_str())
-        })
-        .count()
-}
 
 /// The palette index `group`'s console wears as its base, dealt by formation
 /// age, while the partition holds that group.
@@ -96,7 +88,7 @@ pub(in crate::browser) fn group_base(
     groups
         .iter()
         .any(|candidate| candidate.group == *group)
-        .then(|| watchband::group_accent(group_console(groups, group), 0))
+        .then(|| watchband::group_accent(watchband::group_console(groups, group), 0))
 }
 
 /// Every opened group console, in this browser's order, as fleet surfaces.
@@ -122,8 +114,8 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
         .groups
         .iter()
         .find(|group| group.group == view.group);
-    let console =
-        authoritative.map(|group| group_console(&projection.partition().groups, &group.group));
+    let console = authoritative
+        .map(|group| watchband::group_console(&projection.partition().groups, &group.group));
     let base = console.map(|console| watchband::group_accent(console, 0));
     let channels = authoritative.map_or_else(Vec::new, |group| {
         group
@@ -1029,32 +1021,4 @@ fn composer_holds(key: &str, posted: &crate::composer_drafts::ComposerDraft) -> 
                     && value(&quote_textarea_id(key, &quote.identity)).as_deref()
                         == Some(quote.body.as_str())
             })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn group_console_rank_follows_identity_age_instead_of_partition_order() {
-        let older =
-            RoomAuthorityStamp::for_micros(1_700_000_000_000_000).expect("older fixture group");
-        let younger =
-            RoomAuthorityStamp::for_micros(1_700_000_000_001_000).expect("younger fixture group");
-        let groups = [
-            wire::rooms::WorkingGroup {
-                group: younger.clone(),
-                anchors: Vec::new(),
-                stance: wire::rooms::WorkingGroupStance::Explore,
-            },
-            wire::rooms::WorkingGroup {
-                group: older.clone(),
-                anchors: Vec::new(),
-                stance: wire::rooms::WorkingGroupStance::Explore,
-            },
-        ];
-
-        assert_eq!(group_console(&groups, &older), 0);
-        assert_eq!(group_console(&groups, &younger), 1);
-    }
 }

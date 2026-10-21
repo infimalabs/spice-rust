@@ -33,9 +33,9 @@ dependency cards label a passive Design **Passive**, waiting on the operator.
 ## Reading a Design
 
 Any Design, open, completed, or closed, opens for reading in its task
-overview: the **Read** action on each design tile in the Spice menu's Working
-groups catalog, a Design-intent task's detail, and a Design permalink all open
-the same view. Below the task's state, its **Design room** section is the
+overview: its design tile in the Spice menu's Working groups catalog, a
+Design-intent task's detail, and a Design permalink all open the same view.
+Below the task's state, its **Design room** section is the
 task room every task detail shows, with its composer and its conversation
 newest first, extended with the room's [standing](#design-standing), its
 positive [conclusion control](#concluding-a-design), and every immutable

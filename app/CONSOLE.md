@@ -57,7 +57,13 @@ In the Spice menu, Jobs follows the operator identity before the Working groups
 catalog and its New working group and ungrouped Designs targets. The catalog is
 an ordinary sheet section: its prominent primary title, secondary label,
 inset, and spacing use the same heading row as Jobs, Resident topology, and
-Provider quota at every sidebar width.
+Provider quota at every sidebar width. A design tile is a teamed agent tile's
+twin in box, lines, and activation: its handle in its accent with its standing
+at the end of line one, its task title muted beneath, and a click anywhere on
+it opening that Design's read view as an agent tile opens its composer. A
+grouped design wears the accent its group console's channel deals its place,
+counting down from the palette's end as team members count up from its start;
+an ungrouped design wears the Design base.
 
 The browser reads an opened group as a team console with tasks and agents
 swapped: one composer per design, posting to that design's room, and the
@@ -316,8 +322,9 @@ status row above the team menu; this browser's own move-left, move-right,
 and close controls live in the panel's group arrangement menu.
 
 In the Spice sidebar, a working-group card is its Open control: click or focus
-the card and press Enter or Space to mount that group's console. Design Read
-controls and roster arrangement gestures retain their own actions.
+the card and press Enter or Space to mount that group's console. Design tiles
+link their read views, and roster arrangement gestures retain their own
+actions.
 
 ## Team composer controls
 

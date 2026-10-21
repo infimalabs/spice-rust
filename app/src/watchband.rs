@@ -24,6 +24,7 @@ use crate::runtime::LaneRow;
 mod attention;
 #[cfg(any(target_arch = "wasm32", test))]
 mod direction;
+mod group;
 #[cfg(any(target_arch = "wasm32", test))]
 mod pointer_drag;
 mod presence;
@@ -42,6 +43,7 @@ pub use attention::{
 };
 #[cfg(target_arch = "wasm32")]
 pub(crate) use direction::direction_cards;
+pub use group::{design_accent, group_console};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use pointer_drag::PointerDragSession;
 pub use presence::{MemberPresence, MemberPresenceState, member_presence};

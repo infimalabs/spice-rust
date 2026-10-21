@@ -679,43 +679,9 @@
   font-size: var(--app-type-meta);
 }
 
-.room-design {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: var(--app-edge-soft);
-  border-radius: var(--app-radius-inset);
-  background: var(--control-surface-soft);
-}
-
-.room-design > header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.room-design > header strong,
-.room-design-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.room-design > header strong { font-size: var(--app-type-summary); line-height: 1.2; }
-
-.room-design > header span {
-  margin-inline-start: auto;
-  color: var(--muted);
-  font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.room-design-title {
-  color: var(--muted);
-  font-size: var(--app-type-meta);
-}
+/* A design tile is an .app-roster-tile; its standing ends line one where an
+   agent tile puts its model. */
+.room-design > header span { flex: 0 1 auto; margin-inline-start: auto; opacity: .8; }
 
 .room-inline-actions {
   display: flex;
@@ -723,8 +689,6 @@
   gap: 4px;
 }
 
-.room-group-section .app-roster-group > header button,
-.room-design > header button,
 .room-inline-actions button,
 .room-coordination button,
 .room-composer button {
@@ -733,8 +697,6 @@
   cursor: pointer;
 }
 
-.room-group-section .app-roster-group > header button:disabled,
-.room-design > header button:disabled,
 .room-inline-actions button:disabled,
 .room-coordination button:disabled,
 .room-composer button:disabled {

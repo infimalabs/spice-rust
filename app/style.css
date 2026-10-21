@@ -975,7 +975,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   outline: var(--app-focus-ring-width) dashed color-mix(in srgb, var(--accent) 64%, var(--line));
   outline-offset: -2px;
 }
-.app-spice-topology-agent {
+/* A roster member tile: an agent in a team or a design in a working group,
+   one box and two fixed lines either way. */
+.app-roster-tile {
   position: relative;
   display: grid;
   align-content: center;
@@ -995,21 +997,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   line-height: 1.35;
   font-variant-numeric: tabular-nums;
 }
-a.app-spice-topology-agent { text-decoration: none; cursor: pointer; }
-a.app-spice-topology-agent:hover { border-color: var(--accent-slot, var(--accent)); }
-a.app-spice-topology-agent:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 2px; }
+a.app-roster-tile { text-decoration: none; cursor: pointer; }
+a.app-roster-tile:hover { border-color: var(--accent-slot, var(--accent)); }
+a.app-roster-tile:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 2px; }
 .app-spice-topology .section-count { font-variant-numeric: tabular-nums; }
-.app-spice-topology-agent > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.app-roster-tile > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .app-spice-topology-agent > header .app-presence-pip--member { flex: none; width: 6px; height: 6px; border-width: var(--app-focus-ring-strong-width); }
-.app-spice-topology-agent > header strong { flex: none; color: color-mix(in srgb, var(--accent-slot, var(--accent)) 70%, var(--ink)); font-size: var(--app-type-summary); line-height: 1.2; }
-.app-spice-topology-agent > header span,
-.app-spice-topology-agent > p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-spice-topology-agent > header span { font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.app-roster-tile > header strong { flex: none; color: color-mix(in srgb, var(--accent-slot, var(--accent)) 70%, var(--ink)); font-size: var(--app-type-summary); line-height: 1.2; }
+.app-roster-tile > header span,
+.app-roster-tile > p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-roster-tile > header span { font: var(--app-type-meta)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
 /* The worktree yields width before the model does. */
 .app-spice-topology-agent-worktree { flex: 0 100 auto; }
 .app-spice-topology-agent-model { flex: 0 1 auto; margin-inline-start: auto; opacity: .8; }
-.app-spice-topology-agent > p { margin: 0; }
-.app-spice-topology-agent > p > span + span::before { content: "·"; margin-inline: .45em; color: var(--muted); }
+.app-roster-tile > p { margin: 0; }
+.app-roster-tile > p > span + span::before { content: "·"; margin-inline: .45em; color: var(--muted); }
 .app-spice-topology-agent-task { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .app-spice-topology-agent .app-provider-emblem { position: absolute; top: 50%; right: 10px; width: 18px; height: 18px; transform: translateY(-50%); }
 .app-spice-quota .section-heading { align-items: baseline; }
