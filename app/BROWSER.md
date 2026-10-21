@@ -274,19 +274,17 @@ concerned, or show as unnamed when they named none; current packets cannot
 create either.
 Then the card shows its publication's full body. Its `MSG from LANE` line
 links to the message card the lane sent it from, through that card's own
-route, whenever that message is loaded; otherwise it stays plain text. A lane's
-body stays in its
-transcript, so the app reads it once, with the concerned direction's text,
-through the operator-only `room::conversation-text` read, which projects the
-same text `spice://room/inbox` prints; the transcript echo stands in while
-that read runs. Every current item offers **Reply**, ACK, and NAK: Reply sends
-waking operator direction to its author lane and settles the item, while ACK
-and NAK settle silently. **Recover** returns a lapsed receipt to pending. The
-catalog keeps operator items in immutable admission order, and every receipt
-row keeps one geometry in every state. Acting moves keyboard focus to the acting
-card,
-and its outcome or refusal is reported in the composer toast for a console card
-and beside the inbox for an inbox item.
+route, whenever that message is loaded; otherwise it stays plain text. A
+lane's body stays in its transcript, so the app reads it once, with the
+concerned direction's text, through the operator-only `room::conversation-text`
+read, which projects the same text `spice://room/inbox` prints; the transcript
+echo stands in while that read runs. Every current item offers **Reply**, ACK,
+and NAK: Reply sends waking operator direction to its author lane and settles
+the item, while ACK and NAK settle silently. **Recover** returns a lapsed
+receipt to pending. The catalog keeps operator items in immutable admission
+order, and every receipt row keeps one geometry in every state. Acting moves
+keyboard focus to the acting card, and its outcome or refusal is reported in
+the composer toast for a console card and beside the inbox for an inbox item.
 While that open count is nonzero, the closed Spice button wears one small
 neutral dot centered just outside its upper-end rim, clear of the pepper, and
 its label names how many messages wait; the dot clears with the last open item
