@@ -10,7 +10,7 @@ mod detail;
 mod relations;
 mod timeline;
 
-pub use design::{DesignRequest, DesignStanding, is_open_design};
+pub use design::{DesignRequest, DesignRequestAsk, DesignStanding, is_open_design};
 pub use detail::{
     TaskAcknowledgment, TaskDetail, TaskDetailAnswer, TaskDetailClosure, TaskDetailDisposition,
     TaskDetailStep, TaskStep,

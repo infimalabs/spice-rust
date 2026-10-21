@@ -400,6 +400,7 @@ fn noticed_at(
             excerpt: "fixture rooms".to_owned(),
             terms: vec!["rooms".to_owned()],
             stance: None,
+            ask: None,
         },
     )
 }

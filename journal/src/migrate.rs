@@ -99,10 +99,10 @@ const PREPARED: &str = "prepared";
 /// evidence retire into inert historical authority, every retained
 /// contribution label with its receipt crosses to its charge, and every
 /// retained item-bearing contribution takes its item's text identity.
-const PREDECESSOR_SCHEMAS: [u32; 58] = [
+const PREDECESSOR_SCHEMAS: [u32; 59] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+    81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -1459,8 +1459,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 91, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 92, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 91;
+PRAGMA user_version = 92;
 "#;

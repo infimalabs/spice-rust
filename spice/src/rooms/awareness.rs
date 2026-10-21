@@ -541,6 +541,17 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         }
         _ => "",
     };
+    let head = format!(
+        "Design request {design} \"{}\" at statement revision {} matched your work on: {}.{cast} \
+         The profile was evaluated at {opportunity}.\nSupporting work: {support}\nPitch: {}\n",
+        request.title,
+        request.statement,
+        request.terms.join(", "),
+        request.pitch,
+    );
+    if let Some(ask) = &request.ask {
+        return format!("{head}{}", item_request(request, ask));
+    }
     let mut questions = String::new();
     for (item, question) in request.questions.iter().enumerate() {
         questions.push_str(&format!("\n{}. {question}", item + 1));
@@ -549,9 +560,7 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         questions.push_str("\n- none recorded");
     }
     format!(
-        "Design request {design} \"{}\" at statement revision {} matched your work on: {}.{cast} \
-         The profile was evaluated at {opportunity}.\nSupporting work: {support}\nPitch: {}\n\
-         Open questions:{questions}\n\
+        "{head}Open questions:{questions}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). A \
          concrete observation, risk, or counterexample helps, and declining is equally fine: \
          answer exactly once with `spice room contribute {design} --charge=C --question N \
@@ -559,14 +568,60 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
          and 0 or ±2 cites a task, journal code, contribution stamp, or artifact digest; pose a \
          new question with `spice room contribute {design} --ask TEXT`; or decline with `spice \
          room leave {design} --clause TEXT`. Until one answer publishes, `spice task next` \
-         returns this \
-         request instead of allocating. It grants no claim and starts no work; you hear this \
-         room's later posts until you leave it.",
-        request.title,
-        request.statement,
-        request.terms.join(", "),
-        request.pitch,
+         returns this request instead of allocating. It grants no claim and starts no work; you \
+         hear this room's later posts until you leave it.",
     )
+}
+
+/// The body of a request that asks about one question item: the item, its
+/// standing, the two answers, and the request's own supporting work offered
+/// as a citation.
+fn item_request(
+    request: &wire::intent::DesignRequest,
+    ask: &wire::intent::DesignRequestAsk,
+) -> String {
+    use wire::rooms::DesignNoticeEvidence as Evidence;
+
+    let design = &request.design;
+    let question = ask.question;
+    let standing = match (ask.charges, ask.lanes) {
+        (0, _) => "No charged post weighs it yet.".to_owned(),
+        (charges, lanes) => format!(
+            "It holds {charges} charged post{} from {lanes} lane{}.",
+            plural(charges),
+            plural(lanes as u64),
+        ),
+    };
+    let recharge = if ask.state == wire::rooms::DesignItemState::Contested {
+        " Both signs weigh it and you charged it before: a strength-2 re-charge, citing what \
+         your position rests on, would show where it now stands."
+    } else {
+        ""
+    };
+    let cite = match &request.evidence {
+        Evidence::Task { task, .. } | Evidence::TaskClaim { task, .. } => {
+            format!("The work that matched you cites as `--cite {task}`.")
+        }
+        Evidence::Conversation { .. } => "The conversation that matched you is not citable; \
+                                          cite a task, journal code, contribution stamp, or \
+                                          artifact digest instead."
+            .to_owned(),
+    };
+    format!(
+        "Question {question}: \"{}\"\n{standing}{recharge}\n\
+         Read its room with `spice room history {design}` (`spice://task/{design}/room`). \
+         Answer exactly once: weigh question {question} with `spice room contribute {design} \
+         --charge=C --question {question} [--cite KEY...] TEXT`, where C runs from -2 to +2, ±1 \
+         is an opinion, and 0 or ±2 cites what it rests on; or decline with `spice room leave \
+         {design} --clause TEXT`. Until one answer publishes, `spice task next` returns this \
+         request instead of allocating. It grants no claim and starts no work; you hear this \
+         room's later posts until you leave it. {cite}",
+        ask.text,
+    )
+}
+
+fn plural(count: u64) -> &'static str {
+    if count == 1 { "" } else { "s" }
 }
 
 /// The longest in-order prefix of whole open questions that fits one request.

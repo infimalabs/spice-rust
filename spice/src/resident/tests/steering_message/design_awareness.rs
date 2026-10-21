@@ -11,6 +11,8 @@ const MATCHING: &str = "Retained publications page through bounded cursors.";
 const TASK_TITLE: &str = "Page room catch-up";
 const TASK_DESCRIPTION: &str = "Bound the cursor of retained publications per lane.";
 
+#[path = "design_awareness/items.rs"]
+mod items;
 #[path = "design_awareness/replacement.rs"]
 mod replacement;
 
@@ -238,10 +240,29 @@ impl Lanes {
     }
 
     fn contribute(&self, id: u8, config: &SurfaceConfig, lane: u8, design: &wire::TaskHandle) {
+        self.contribute_kind(
+            id,
+            config,
+            lane,
+            design,
+            wire::rooms::RoomContributionKind::Question,
+            None,
+        );
+    }
+
+    fn contribute_kind(
+        &self,
+        id: u8,
+        config: &SurfaceConfig,
+        lane: u8,
+        design: &wire::TaskHandle,
+        kind: wire::rooms::RoomContributionKind,
+        question: Option<wire::rooms::RoomQuestion>,
+    ) {
         let request = wire::intent::RoomContribute {
             room: design.clone(),
-            kind: wire::rooms::RoomContributionKind::Question,
-            question: None,
+            kind,
+            question,
             text: "Does the catch-up page already bound its cursor?".to_owned(),
             sources: Vec::new(),
         };
@@ -714,7 +735,7 @@ fn contribution_discharges_the_request_for_the_continuing_session() {
     lanes.contribute(50, &config, FIRST, &design);
     assert!(lanes.request(&config, FIRST).is_none());
     let later = lanes.claimed("dVrD245Kp", FIRST);
-    lanes.complete(&later, MATCHING);
+    lanes.complete(&later, &format!("{MATCHING} Paged again."));
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_none(),
@@ -751,19 +772,21 @@ fn compaction_preserves_participation_and_settled_request_history() {
         context.session_compaction(test_uuid(FIRST), &first_notice.session),
         Some(compacted)
     );
-    assert!(context.design_was_noticed_in_session(
+    assert!(context.design_was_asked_in_session(
         test_uuid(FIRST),
         &first_notice.session,
         &stamp(&design),
+        None,
     ));
-    assert!(context.published_in_room_for_session(
+    assert!(context.design_ask_answered_in_session(
         test_uuid(FIRST),
         &first_notice.session,
         &stamp(&design),
+        None,
     ));
 
     let after = lanes.claimed("dVrD245Kp", FIRST);
-    lanes.complete(&after, MATCHING);
+    lanes.complete(&after, &format!("{MATCHING} Paged again."));
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert_eq!(
         lanes.noticed().len(),
@@ -774,7 +797,7 @@ fn compaction_preserves_participation_and_settled_request_history() {
 
     lanes.leave(52, &config, FIRST, &design);
     let later = lanes.claimed("dVrD245Kq", FIRST);
-    lanes.complete(&later, MATCHING);
+    lanes.complete(&later, &format!("{MATCHING} Paged once more."));
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert_eq!(
         lanes.noticed().len(),

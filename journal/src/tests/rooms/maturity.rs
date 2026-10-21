@@ -61,6 +61,7 @@ fn noticed(
             "measure".to_owned(),
         ],
         stance: None,
+        ask: None,
     };
     let mut write = JournalWrite::new(
         Actor::Spice,

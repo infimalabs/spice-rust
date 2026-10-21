@@ -121,11 +121,13 @@ none:
   Passive / Explore / Converge stops. It reads the stance from the shared
   working-group partition and sends one guarded `group::stance` command at the
   revision it displays. Passive makes every open Design in the group passive;
-  Explore and Converge make them active and currently differ only in name. A
-  pending choice is shown until the resident answers; refusal returns the
-  slider to partition authority and shows its reason. The slider is disabled
-  when the resident does not offer the command. Stance and group TURBO are
-  independent.
+  Explore and Converge make them active and differ only in Design requests:
+  Explore casts wider and asks lanes for input on quiet or unopposed questions,
+  while Converge casts narrower and asks lanes already charging a contested
+  question to re-charge it. A pending choice is shown until the resident
+  answers; refusal returns the slider to partition authority and shows its
+  reason. The slider is disabled when the resident does not offer the
+  command. Stance and group TURBO are independent.
 - **Keyboard broadcast and waking** have none: a post reaches only its own
   room and wakes no lane.
 

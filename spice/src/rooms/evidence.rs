@@ -482,6 +482,41 @@ impl<K> EvidenceProfile<K> {
             terms: best.vector.explanation(vector),
         }))
     }
+
+    /// The strongest finite cosine between `vector` and any view of any
+    /// retained card; `None` when no view scores.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a vector weighted under a generation other than
+    /// `frequency`'s.
+    pub fn best_score(
+        &mut self,
+        frequency: &FrequencyProfile,
+        vector: &Prepared,
+    ) -> Result<Option<f64>, GenerationMismatch> {
+        let generation = frequency.generation();
+        if vector.generation() != generation {
+            return Err(GenerationMismatch {
+                left: vector.generation(),
+                right: generation,
+            });
+        }
+        let mut best: Option<f64> = None;
+        for card in &mut self.cards {
+            card.prepare(frequency);
+            let Some((_, views)) = &card.prepared else {
+                continue;
+            };
+            for view in views.iter().flatten() {
+                let score = vector.cosine(view)?;
+                if score.is_finite() && best.is_none_or(|known| score > known) {
+                    best = Some(score);
+                }
+            }
+        }
+        Ok(best)
+    }
 }
 
 impl<K> Card<K> {

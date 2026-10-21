@@ -179,6 +179,16 @@ fn notice(
             body.design
         ));
     }
+    terms_and_ask(body)?;
+    authority.change(super::Change::MaturityNotice {
+        seq: seq.get(),
+        notice: body.clone(),
+    })
+}
+
+/// Refuse a notice whose matched terms are not one bounded ascending set of
+/// distinct lowercase words, or that asks about a concurred item.
+fn terms_and_ask(body: &DesignNoticed) -> Result<(), Refusal> {
     let terms_valid = !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS;
     if !terms_valid {
         return unsound(format!(
@@ -197,8 +207,15 @@ fn notice(
             body.design
         ));
     }
-    authority.change(super::Change::MaturityNotice {
-        seq: seq.get(),
-        notice: body.clone(),
-    })
+    if body
+        .ask
+        .as_ref()
+        .is_some_and(|ask| ask.state == wire::rooms::DesignItemState::Concurred)
+    {
+        return unsound(format!(
+            "design awareness for {} asks about a concurred question item",
+            body.design
+        ));
+    }
+    Ok(())
 }
