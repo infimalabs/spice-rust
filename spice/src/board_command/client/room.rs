@@ -72,18 +72,6 @@ pub(super) fn client_room_coordinate(
         } else {
             wire::intent::RoomCoordinateAction::Start
         };
-        let auto_resume = matches
-            .get_one::<String>("auto-resume")
-            .map(|written| {
-                written.parse::<u8>().map_err(|_| {
-                    refusal(
-                        "room::auto-resume-out-of-range",
-                        Some(written.clone()),
-                        "authorize from 1 through 8 automated resumes",
-                    )
-                })
-            })
-            .transpose()?;
         let request = wire::intent::RoomCoordinate {
             room,
             target,
@@ -100,7 +88,6 @@ pub(super) fn client_room_coordinate(
                 .get_one::<String>("stop")
                 .cloned()
                 .unwrap_or_default(),
-            auto_resume,
         };
         Ok((
             CommandKind::RoomCoordinate,

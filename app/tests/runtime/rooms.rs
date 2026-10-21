@@ -199,8 +199,6 @@ fn coordination(position: u64) -> serde_json::Value {
         publication: authority(COORDINATION_EVENT),
         key: COORDINATION_KEY.to_owned(),
         target: wire::OccupantAddress::new(seq(1)),
-        rule: None,
-        automated: None,
     };
     envelope(position, "room::directed", &body)
 }
@@ -1055,101 +1053,6 @@ fn only_a_leave_divides_a_working_group_plane() {
     assert!(
         events.contains_key(&returned) && events.contains_key(&authority(ROOM_EVENT)),
         "the ordinary publications on either side of the leave remain in the timeline"
-    );
-}
-
-/// A coordination record at `position` under `key`, carrying a rule of
-/// `limit` resumes and, for an automated resume, its `step`.
-fn ruled(
-    position: u64,
-    publication: &str,
-    key: &str,
-    limit: u8,
-    step: Option<u8>,
-) -> serde_json::Value {
-    let body = RoomCoordinationStarted {
-        room: room(),
-        publication: authority(publication),
-        key: key.to_owned(),
-        target: wire::OccupantAddress::new(seq(1)),
-        rule: Some(wire::rooms::RoomResumeRule {
-            limit,
-            criterion: "Which candidate survives review".to_owned(),
-            contribution: "Assess the open candidate".to_owned(),
-            stop: "Stop once the candidate is assessed".to_owned(),
-        }),
-        automated: step.map(|step| wire::rooms::RoomAutomatedResume {
-            rule: authority(COORDINATION_EVENT),
-            step,
-            evidence: authority(ROOM_EVENT),
-        }),
-    };
-    envelope(position, "room::directed", &body)
-}
-
-#[test]
-fn automation_standing_follows_the_latest_record_its_request_and_put_aside() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = AppRuntime::new(&accepted);
-    for frame in opening(&session) {
-        runtime.apply_stream(&frame);
-    }
-    let automation = |runtime: &AppRuntime| {
-        runtime
-            .room_projection()
-            .coordination_standing(&room())
-            .map(|standing| standing.automation)
-    };
-    assert_eq!(
-        automation(&runtime),
-        Some(app::ResumeAutomation::Off),
-        "a record without a rule leaves automation off"
-    );
-    let live = |runtime: &mut AppRuntime, fact| {
-        runtime.apply_stream(&admitted_stream(&session, &live_fact(fact)));
-    };
-    live(&mut runtime, direction(9, "dRuleKey1", SECOND_LANE));
-    live(&mut runtime, ruled(10, "dVsYdDj7m", "dRuleKey1", 2, None));
-    assert_eq!(
-        automation(&runtime),
-        Some(app::ResumeAutomation::Armed { limit: 2, spent: 0 })
-    );
-    live(&mut runtime, direction(11, "dRuleKey2", SECOND_LANE));
-    live(
-        &mut runtime,
-        ruled(12, "dVsYdDj7n", "dRuleKey2", 2, Some(1)),
-    );
-    let canceled = wire::body::SteerCanceled {
-        key: "dRuleKey2".to_owned(),
-        lane: uuid(SECOND_LANE),
-    };
-    live(&mut runtime, envelope(13, "steer::canceled", &canceled));
-    assert_eq!(
-        automation(&runtime),
-        Some(app::ResumeAutomation::Ended {
-            limit: 2,
-            spent: 1,
-            disposition: wire::Disposition::Canceled,
-        }),
-        "a request retired without acknowledgment ends the rule"
-    );
-    live(&mut runtime, direction(14, "dRuleKey3", SECOND_LANE));
-    live(
-        &mut runtime,
-        ruled(15, "dVsYdDj7p", "dRuleKey3", 2, Some(2)),
-    );
-    assert_eq!(
-        automation(&runtime),
-        Some(app::ResumeAutomation::Spent { limit: 2 })
-    );
-    live(&mut runtime, direction(16, "dRuleKey4", SECOND_LANE));
-    live(&mut runtime, ruled(17, "dVsYdDj7q", "dRuleKey4", 3, None));
-    live(&mut runtime, put_aside(18));
-    assert_eq!(
-        automation(&runtime),
-        Some(app::ResumeAutomation::PutAside { limit: 3, spent: 0 }),
-        "a put-aside after a ruled record ends it with budget left"
     );
 }
 

@@ -1,9 +1,8 @@
 //! A room's standing inside its design menu: why each lane is involved and
-//! whether it is available, what the latest coordination asks and whether
-//! automation may continue it, and the resident's shadow relevance
-//! observations. Every row names the admitted source it traces to. Nothing
-//! here is a roster of authority, and rendering it mounts no view and wakes
-//! no lane.
+//! whether it is available, what the latest coordination asks and how its
+//! request stands, and the resident's shadow relevance observations. Every
+//! row names the admitted source it traces to. Nothing here is a roster of
+//! authority, and rendering it mounts no view and wakes no lane.
 
 use wasm_bindgen::JsCast as _;
 use wire::intent::{BoardTask, DesignStanding};
@@ -16,8 +15,7 @@ use yew::prelude::*;
 
 use crate::AppRuntime;
 use crate::runtime::{
-    CoordinationStanding, ParticipantReason, Relevance, ResumeAutomation, RoomAnchorAuthority,
-    RoomParticipant,
+    CoordinationStanding, ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant,
 };
 use crate::watchband;
 
@@ -93,12 +91,6 @@ fn next_action(
             "Wait for {} to acknowledge request {}.",
             standing.record.value.target, standing.record.value.key
         ),
-        (Some(standing), _) if matches!(standing.automation, ResumeAutomation::Armed { .. }) => {
-            format!(
-                "Wait for new input from another party; the rule then resumes {}.",
-                standing.record.value.target
-            )
-        }
         (_, Some(cycle)) => format!("Next ({}): {}", cycle.actor.label(), cycle.action),
         _ if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group to \
             Explore or Converge before coordinating a lane onto it; if ungrouped, group it first."
@@ -184,64 +176,11 @@ fn render_coordination(standing: &CoordinationStanding<'_>) -> Html {
     };
     html! {
         <dl class="room-standing-scope" data-coordination={record.key.clone()}>
-            <dt>{if record.automated.is_some() { "Automated resume" } else { "Request" }}</dt>
+            <dt>{"Request"}</dt>
             <dd title={format!("Coordination record {}", record.publication)}>
                 {format!("{} → {} · {request}{aside}", record.key, record.target)}
             </dd>
-            if let Some(automated) = &record.automated {
-                <dt>{"Input"}</dt>
-                <dd>{format!("Step {} answered publication {}", automated.step, automated.evidence)}</dd>
-            }
-            if let Some(rule) = &record.rule {
-                <dt>{"Subject"}</dt><dd>{rule.criterion.clone()}</dd>
-                <dt>{"Scope"}</dt><dd>{rule.contribution.clone()}</dd>
-                <dt>{"Stop"}</dt><dd>{rule.stop.clone()}</dd>
-            }
-            <dt>{"Automation"}</dt>
-            <dd data-automation={automation_kind(standing.automation)}>{automation_text(standing)}</dd>
         </dl>
-    }
-}
-
-const fn automation_kind(automation: ResumeAutomation) -> &'static str {
-    match automation {
-        ResumeAutomation::Off => "off",
-        ResumeAutomation::Armed { .. } => "armed",
-        ResumeAutomation::Spent { .. } => "spent",
-        ResumeAutomation::PutAside { .. } => "put-aside",
-        ResumeAutomation::Ended { .. } => "ended",
-    }
-}
-
-fn automation_text(standing: &CoordinationStanding<'_>) -> String {
-    let record = &standing.record.value;
-    let rule = record
-        .automated
-        .as_ref()
-        .map_or(&record.publication, |automated| &automated.rule);
-    match standing.automation {
-        ResumeAutomation::Off => {
-            "Off: the latest request carries no rule, so only a manual Start or Resume continues the room."
-                .to_owned()
-        }
-        ResumeAutomation::Armed { limit, spent } => format!(
-            "{spent} of {limit} resumes used under rule {rule}; the next waits for {} to acknowledge and another party to publish new input.",
-            record.target
-        ),
-        ResumeAutomation::Spent { limit } => {
-            format!("Stopped: all {limit} resumes under rule {rule} were used.")
-        }
-        ResumeAutomation::PutAside { limit, spent } => {
-            format!("Stopped: the room was put aside after {spent} of {limit} resumes.")
-        }
-        ResumeAutomation::Ended {
-            limit,
-            spent,
-            disposition,
-        } => format!(
-            "Stopped: the request was {} after {spent} of {limit} resumes.",
-            disposition_label(disposition)
-        ),
     }
 }
 

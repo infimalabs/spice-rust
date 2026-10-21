@@ -477,44 +477,6 @@ impl JournalRead<'_> {
         require_room(head, room, |body| &body.room)
     }
 
-    /// Every room's latest `room::directed` record that carries a resume
-    /// rule, in journal order.
-    pub fn ruled_room_directions(
-        &self,
-    ) -> Result<Vec<JournalHead<RoomCoordinationStarted>>, GuardError> {
-        read_metrics::observe_query();
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT head_seq, body FROM room_directions \
-                 WHERE json_extract(CAST(body AS TEXT), '$.rule') IS NOT NULL \
-                 ORDER BY head_seq",
-            )
-            .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(GuardError::Store)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(GuardError::Store)?;
-        rows.into_iter()
-            .map(|(position, bytes)| {
-                read_metrics::observe_row();
-                read_metrics::observe_decode(bytes.len());
-                let head = super::decode_head::<RoomCoordinationStarted>(position, &bytes)?;
-                if self.cursor.is_none_or(|cursor| head.position > cursor) {
-                    return Err(GuardError::Invalid(format!(
-                        "room_directions head position {} is beyond cursor {:?}",
-                        head.position,
-                        self.cursor.map(wire::Seq::get)
-                    )));
-                }
-                Ok(head)
-            })
-            .collect()
-    }
-
     /// A room's latest `room::shelved` record, absent before its first one.
     pub fn room_shelving(
         &self,

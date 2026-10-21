@@ -294,12 +294,6 @@ pub(crate) trait Authority {
     fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal>;
     /// Record the lane one operator direction addresses.
     fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid);
-    /// One room's latest coordination record of a kind: position and body.
-    fn coordination(
-        &self,
-        record: CoordinationRecord,
-        room: &str,
-    ) -> Result<Option<(u64, Vec<u8>)>, Refusal>;
     /// The canonical body of one admitted conversation publication.
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// One operator item head by its key.

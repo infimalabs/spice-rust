@@ -333,14 +333,16 @@ refusals and repairs, are
 ## Deliberate non-capabilities
 
 - No room event wakes a lane. Only operator-directed steering wakes its named
-  lane; a peer packet, room post, invitation, relevance observation, or
-  automated resume never does.
+  lane; a peer packet, room post, invitation, or relevance observation never
+  does.
 - No fallback respondent: a vacant respondent's delivery waits unheard for that
   lane's next start.
 - Reads, invitations, ACK-only traffic, compaction, and renewal make no
   participant and grant no claim, read permission, team membership, or wake.
-- No automation beyond the `--auto-resume` rule: nothing else starts work,
-  claims, decides, or authorizes.
+- No automated coordination: only the operator's `room start` or `room resume
+  ADDRESS` asks one lane to hold and propose, and Design outreach asks each
+  continuing session about one question item at most once; nothing else
+  starts work, claims, decides, or authorizes.
 - Agreement, silence, message count, elapsed time, and ACK never count as
   progress or approval.
 - No timed deferral coordinates a room, and gating adds no task status.

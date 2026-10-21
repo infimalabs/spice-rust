@@ -1297,12 +1297,6 @@ fn accept_commit_turn(
         message_state,
         diagnostic,
     )?;
-    room_automation::reconcile(
-        bus,
-        command_surface.paths,
-        command_surface.config,
-        diagnostic,
-    );
     Ok(())
 }
 

@@ -217,7 +217,6 @@ mod policy_surface;
 mod principal_surface;
 mod quota;
 mod read_materializations;
-mod room_automation;
 mod room_catch_up;
 mod settings_surface;
 mod shutdown;

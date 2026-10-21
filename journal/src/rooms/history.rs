@@ -8,8 +8,8 @@ use wire::{
 };
 
 use super::{
-    Authority, Change, CoordinationRecord, Direction, Projection, Refusal, claims, conversation,
-    dependencies, fold, relevance,
+    Authority, Change, Direction, Projection, Refusal, claims, conversation, dependencies, fold,
+    relevance,
 };
 
 /// Every task, transcript generation, proposal author, and room-coordination
@@ -219,18 +219,6 @@ impl Authority for History {
 
     fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid) {
         self.operator_directions.insert(key.to_owned(), lane);
-    }
-
-    fn coordination(
-        &self,
-        record: CoordinationRecord,
-        room: &str,
-    ) -> Result<Option<(u64, Vec<u8>)>, Refusal> {
-        let heads = match record {
-            CoordinationRecord::Directed => &self.projection.directed,
-            CoordinationRecord::Shelved => &self.projection.shelved,
-        };
-        Ok(heads.get(room).cloned())
     }
 
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal> {
