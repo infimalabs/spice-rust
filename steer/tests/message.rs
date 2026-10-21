@@ -3,12 +3,12 @@
 //! Publication packets share the acknowledgment header grammar's
 //! authored-context rules but publish rather than retire: each placed packet
 //! names its routes, each an audience, a task context, or an audience in a
-//! context, and owns exactly the body hunk up to the next placed packet.
+//! context, and owns exactly the body hunk in its paragraph.
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
-    Audience, Message, MessageRefusal, Outcome, Standing, answer, placed_headers, scan,
-    scan_acknowledgements, scan_messages,
+    Audience, Message, MessageRefusal, Outcome, Standing, answer, has_acknowledgement, has_message,
+    placed_headers, scan, scan_acknowledgements, scan_messages,
 };
 use wire::{Disposition, OccupantAddress, OccupantAddressError, TaskHandle};
 
@@ -212,16 +212,17 @@ fn a_direction_key_routes_to_the_operator_about_that_direction() {
     assert!(scan_messages("We tracked it in #dVwg6Zqlf: done.").is_empty());
 }
 
-/// A body runs from its colon to the next placed packet, keeping its own bytes
-/// and none of the prose before the first header or the framing of the next.
+/// A body keeps wrapped lines in its paragraph, but ends before a later packet
+/// or a whitespace-only blank line and never captures the following report.
 #[test]
-fn consecutive_packets_own_exact_multiline_bodies() {
+fn packets_own_only_their_paragraph() {
     let prose = concat!(
         "Context the peers never see.\n\n",
-        "MSG 6HmS, 7Bc 9x: First line.\n\n",
-        "Second paragraph keeps its\n  indentation.\n",
-        "- ACK 1kJK6N3R: applied\n",
-        "- **MSG 6HmS:** Only for you.\n",
+        "MSG 6HmS, 7Bc 9x: First line.\n",
+        "Wrapped line.\n",
+        "ACK 1kJK6N3R: applied MSG 6HmS: Only for you.\n",
+        " \t\r\n",
+        "Operator report.",
     );
     let messages = scan_messages(prose);
 
@@ -229,13 +230,11 @@ fn consecutive_packets_own_exact_multiline_bodies() {
     assert_eq!(&prose[messages[0].header.clone()], "MSG 6HmS, 7Bc 9x:");
     assert_eq!(
         sent(prose, &messages[0]),
-        (
-            vec!["6HmS", "7Bc", "9x"],
-            "First line.\n\nSecond paragraph keeps its\n  indentation."
-        )
+        (vec!["6HmS", "7Bc", "9x"], "First line.\nWrapped line.")
     );
-    assert_eq!(&prose[messages[1].header.clone()], "**MSG 6HmS:**");
+    assert_eq!(&prose[messages[1].header.clone()], "MSG 6HmS:");
     assert_eq!(sent(prose, &messages[1]), (vec!["6HmS"], "Only for you."));
+    assert_eq!(answer(prose, "1kJK6N3R", &Live), Some("applied"));
 
     let retired: Vec<_> = scan(prose, &Live)
         .into_iter()
@@ -278,6 +277,22 @@ fn unauthored_markers_neither_publish_nor_bound_a_body() {
             .iter()
             .all(|recognition| !matches!(recognition.outcome, Outcome::Retired { .. }))
     );
+}
+
+/// Markdown list examples describe packets; they never send or retire one.
+#[test]
+fn list_item_headers_open_no_packet() {
+    for prose in [
+        "- MSG 6HmS: unordered example.",
+        "+ ACK 1kJK6N3R: unordered example.",
+        "* NAK 1kJK6N3R: unordered example.",
+        "1. MSG 6HmS: ordered example.",
+        "  12) **ACK 1kJK6N3R:** ordered example.",
+    ] {
+        assert!(!has_message(prose), "published {prose:?}");
+        assert!(!has_acknowledgement(prose), "retired {prose:?}");
+        assert!(placed_headers(prose).is_empty(), "placed {prose:?}");
+    }
 }
 
 /// A protocol name inside an ordinary clause does not become a header merely
@@ -324,21 +339,10 @@ fn defective_packets_refuse_whole_without_guessing() {
     );
     for numbered in [
         "1. MSG bob 6HmS: numbered.",
-        "  12) MSG bob 6HmS: numbered.",
+        "  12) MSG 6HmS: numbered packet",
     ] {
-        let span = numbered.find("bob").expect("fixture selector");
-        assert_eq!(
-            refusal(numbered),
-            MessageRefusal::Recipient {
-                span: span..span + 3,
-                error: OccupantAddressError::Alphabet("bob".to_owned()),
-            },
-            "{numbered:?}"
-        );
+        assert!(scan_messages(numbered).is_empty(), "published {numbered:?}");
     }
-    let prose = "2. MSG 6HmS: numbered packet";
-    let [message] = scan_messages(prose).try_into().expect("one packet");
-    assert_eq!(sent(prose, &message), (vec!["6HmS"], "numbered packet"));
     assert_eq!(
         refusal("MSG 6HmS please review this"),
         MessageRefusal::Unterminated
@@ -346,7 +350,7 @@ fn defective_packets_refuse_whole_without_guessing() {
     assert_eq!(refusal("MSG 6HmS, : comma."), MessageRefusal::Unterminated);
     assert_eq!(refusal("MSG 6HmS:  \n\t\n"), MessageRefusal::EmptyBody);
 
-    let prose = "MSG 6HmS:\n- ACK 1kJK6N3R: done\nMSG 7Bc: hi\nMSG 9x 9x: dup";
+    let prose = "MSG 6HmS:\nACK 1kJK6N3R: done\nMSG 7Bc: hi\nMSG 9x 9x: dup";
     let messages = scan_messages(prose);
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].publication, Err(MessageRefusal::EmptyBody));
@@ -388,10 +392,10 @@ fn a_key_shaped_address_is_a_recipient_not_a_retirement() {
     assert_eq!(scan(prose, &Live), []);
 }
 
-/// A retirement's reply ends before a placed MSG on its line, which keeps its
-/// own body; an unplaced MSG marker on that line stays reply prose.
+/// A retirement's reply owns wrapped lines in its paragraph and ends before a
+/// placed packet or a blank line. An unplaced MSG marker remains reply prose.
 #[test]
-fn a_reply_clause_never_carries_a_placed_message() {
+fn a_reply_clause_owns_only_its_paragraph() {
     let prose = "ACK 1kJK6N3R: done here MSG 6HmS: private note";
     assert_eq!(answer(prose, "1kJK6N3R", &Live), Some("done here"));
     let messages = scan_messages(prose);
@@ -404,19 +408,30 @@ fn a_reply_clause_never_carries_a_placed_message() {
     );
     let refused = "ACK 1kJK6N3R: done; MSG 6HmS please";
     assert_eq!(answer(refused, "1kJK6N3R", &Live), Some("done;"));
-    for prose in [
-        "ACK 1kJK6N3R: done here",
-        "ACK 1kJK6N3R: done here\nMSG 6HmS: next line",
-        "ACK 1kJK6N3R: done here `MSG 6HmS: inline`",
-        "ACK 1kJK6N3R: done here; the example MSG 6HmS: narrated",
-        "ACK 1kJK6N3R: done here, MSG count: 3",
-    ] {
-        let line = prose.lines().next().expect("one line");
+    for marker in ["ACK", "NAK"] {
+        let prose = format!("{marker} 1kJK6N3R: first line\nwrapped line\n \t\r\nOperator report.");
         assert_eq!(
-            answer(prose, "1kJK6N3R", &Live),
-            Some(&line["ACK 1kJK6N3R: ".len()..]),
+            answer(&prose, "1kJK6N3R", &Live),
+            Some("first line\nwrapped line"),
             "reply for {prose:?}"
         );
+    }
+    for (prose, expected) in [
+        ("ACK 1kJK6N3R: done here\nMSG 6HmS: next line", "done here"),
+        (
+            "ACK 1kJK6N3R: done here `MSG 6HmS: inline`",
+            "done here `MSG 6HmS: inline`",
+        ),
+        (
+            "ACK 1kJK6N3R: done here; the example MSG 6HmS: narrated",
+            "done here; the example MSG 6HmS: narrated",
+        ),
+        (
+            "ACK 1kJK6N3R: done here, MSG count: 3",
+            "done here, MSG count: 3",
+        ),
+    ] {
+        assert_eq!(answer(prose, "1kJK6N3R", &Live), Some(expected));
     }
 }
 

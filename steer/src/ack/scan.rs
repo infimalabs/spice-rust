@@ -202,14 +202,13 @@ pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Re
         .map(|(_, recognition)| recognition)
 }
 
-/// The response prose the placed header that retires `token` gives it: the
-/// rest of that header's line after its key list and separator, trimmed, and
-/// ending before any placed MSG header on that line, which is its
-/// own packet.
+/// The response prose the placed header that retires `token` gives it: from
+/// the end of the header through the rest of its paragraph, ending earlier at
+/// any later placed packet. Surrounding whitespace is trimmed.
 ///
 /// Between placed headers retiring the same token the later one speaks, as
 /// [`decisive`] rules. `None` when no placed header retires the token or the
-/// header says nothing after its keys.
+/// header says nothing before its boundary.
 #[must_use]
 pub fn answer<'prose>(
     prose: &'prose str,
@@ -224,16 +223,11 @@ pub fn answer<'prose>(
                 matches!(&recognition.outcome, Outcome::Retired { key, .. } if key.as_str() == token)
             })
         })?;
-    let rest = &prose[header.end..];
-    let line = header.end..header.end + rest.find('\n').unwrap_or(rest.len());
-    let end = scan_messages(prose)
-        .into_iter()
-        .map(|message| message.header.start)
-        .find(|start| line.contains(start))
-        .map_or(line.end, |start| {
-            message::boundary_before(prose, line.start, start)
-        });
-    let clause = prose[line.start..end].trim();
+    let paragraph = paragraph_end(prose, header.end);
+    let end = next_placed_packet_start(prose, header.end, paragraph).map_or(paragraph, |start| {
+        message::boundary_before(prose, header.end, start)
+    });
+    let clause = prose[header.end..end].trim();
     (!clause.is_empty()).then_some(clause)
 }
 
@@ -281,7 +275,8 @@ pub fn has_message(prose: &str) -> bool {
     )
 }
 
-/// Reads every placed MSG packet, each bounded by the next placed packet.
+/// Reads every placed MSG packet, each bounded by the end of its paragraph or
+/// an earlier placed packet.
 ///
 /// Quoted, code, rendered-source, negated, hypothetical, and narrated markers
 /// publish nothing and bound nothing. The scan needs no standing: a
@@ -309,15 +304,62 @@ pub fn scan_messages(prose: &str) -> Vec<Message> {
         .into_iter()
         .filter_map(|(start, header)| {
             let header = header?;
+            let paragraph = paragraph_end(prose, header.end);
             let boundary = starts
                 .iter()
-                .find(|next| **next >= header.end)
-                .map_or(prose.len(), |next| {
+                .find(|next| **next >= header.end && **next < paragraph)
+                .map_or(paragraph, |next| {
                     message::boundary_before(prose, header.end, *next)
                 });
             Some(message::judge(prose, start, header, boundary))
         })
         .collect()
+}
+
+/// First placed packet in `[floor, ceiling)`, if one exists.
+fn next_placed_packet_start(prose: &str, floor: usize, ceiling: usize) -> Option<usize> {
+    let mut next = None;
+    let _ = visit_packets(prose, |_, packet| {
+        let start = match packet {
+            Packet::Retirement(clause) if clause.position == Position::Placed => clause.start,
+            Packet::Message {
+                position: Position::Placed,
+                start,
+                ..
+            } => start,
+            Packet::Retirement(_) | Packet::Message { .. } => {
+                return ControlFlow::Continue(());
+            }
+        };
+        if start >= floor && start < ceiling {
+            next = Some(start);
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    });
+    next
+}
+
+/// End of the paragraph containing `start`: the first newline followed only
+/// by ASCII whitespace and another newline, or the end of the prose.
+fn paragraph_end(prose: &str, start: usize) -> usize {
+    let bytes = prose.as_bytes();
+    let mut cursor = start;
+    while let Some(relative) = prose[cursor..].find('\n') {
+        let newline = cursor + relative;
+        let mut probe = newline + 1;
+        while bytes
+            .get(probe)
+            .is_some_and(|byte| byte.is_ascii_whitespace() && *byte != b'\n')
+        {
+            probe += 1;
+        }
+        if bytes.get(probe) == Some(&b'\n') {
+            return newline;
+        }
+        cursor = newline + 1;
+    }
+    prose.len()
 }
 
 /// Whether prose contains an authored acknowledgement attempt.
@@ -498,6 +540,7 @@ impl SourceLines {
             let suppressed = fence.is_some()
                 || fence_line.is_some()
                 || markdown_quote(line)
+                || markdown_list(line)
                 || indentation_width(
                     line.get(..line.len() - line.trim_start().len())
                         .unwrap_or_default(),
@@ -542,6 +585,27 @@ impl SourceLines {
 fn markdown_quote(line: &str) -> bool {
     let indentation = line.bytes().take_while(|byte| *byte == b' ').count();
     indentation <= 3 && line.as_bytes().get(indentation) == Some(&b'>')
+}
+
+/// An ordered or unordered Markdown list item after at most three spaces.
+fn markdown_list(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let indentation = bytes.iter().take_while(|byte| **byte == b' ').count();
+    if indentation > 3 {
+        return false;
+    }
+    let item = &bytes[indentation..];
+    if matches!(item.first(), Some(b'-' | b'+' | b'*')) {
+        return item.get(1).is_some_and(|byte| matches!(byte, b' ' | b'\t'));
+    }
+    let digits = item.iter().take_while(|byte| byte.is_ascii_digit()).count();
+    (1..=9).contains(&digits)
+        && item
+            .get(digits)
+            .is_some_and(|byte| matches!(byte, b'.' | b')'))
+        && item
+            .get(digits + 1)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
 }
 
 fn rendered_source_context(line: &str) -> bool {
@@ -734,11 +798,17 @@ fn key_token_end(prose: &str, start: usize, current_shape: bool) -> Option<usize
 }
 
 fn skip_header_space(prose: &str, mut cursor: usize) -> usize {
-    while prose
-        .as_bytes()
-        .get(cursor)
-        .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-    {
+    let mut crossed_line = false;
+    while let Some(byte) = prose.as_bytes().get(cursor) {
+        if !matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+            break;
+        }
+        if *byte == b'\n' {
+            if crossed_line {
+                break;
+            }
+            crossed_line = true;
+        }
         cursor += 1;
     }
     cursor

@@ -24,10 +24,9 @@ const LONG_FENCE: &str = include_str!("prose/long-fence.md");
 
 /// A header naming two live keys retires both, at the column each was written.
 ///
-/// The turn also carries the other shapes a leading clause takes: indented
-/// under a list, and separated from its keys by a tab. Neither changes what a
-/// header means, so refusing either would drop a real acknowledgment over
-/// whitespace.
+/// The turn also carries indented prose and a tab separating a marker from its
+/// key. Neither changes what a header means, so refusing either would drop a
+/// real acknowledgment over whitespace.
 #[test]
 fn a_leading_clause_retires_every_key_it_names() {
     let board = board();
@@ -68,6 +67,8 @@ fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
         "The parser recognizes ACK 1kJK6N3R: as protocol.",
         "This sentence contains ACK 1kJK6N3R: as an example.",
         "src/ack.rs:12: ACK 1kJK6N3R: rendered source context.",
+        "- ACK 1kJK6N3R: list example.",
+        "1. NAK 1kJK7Sqy: list example.",
     ] {
         assert!(!has_acknowledgement(prose), "accepted {prose:?}");
     }
