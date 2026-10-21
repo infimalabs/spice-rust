@@ -356,7 +356,7 @@ impl Failure {
             }
         }
         let remediation = if matches!(error, EnvironmentError::MissingRunnerPath) {
-            "bind proof.runner to the runner this worktree sealed: spice config set proof.runner PATH writes this worktree's Git-directory .spice-rs/worktree.toml"
+            "bind proof.runner to the runner this worktree sealed: spice config proof.runner PATH plans a write to this worktree's Git-directory .spice-rs/worktree.toml, and rerunning it with the plan's --apply=DIGEST applies it"
         } else {
             "set proof.container in Git-common .spice-rs/config.toml"
         };
