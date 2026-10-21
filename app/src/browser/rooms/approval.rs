@@ -483,12 +483,14 @@ fn render_candidate(
                 <code title="Retaining journal fact">{fact.to_string()}</code>
             </header>
             {withdrawal.map_or_else(Html::default, |withdrawal| render_withdrawal(context.runtime, withdrawal))}
-            <p class="room-approval-proposal">
-                <strong>{recommendation_label(candidate.recommendation)}</strong>
-                {" · "}{candidate.justification.clone()}
-                {" · statement "}<code>{candidate.statement.to_string()}</code>
-                {claim}
-            </p>
+            <div class="room-approval-proposal">
+                <p>
+                    <strong>{recommendation_label(candidate.recommendation)}</strong>
+                    {" · statement "}<code>{candidate.statement.to_string()}</code>
+                    {claim}
+                </p>
+                {super::card::render_words(context.runtime, &candidate.justification, None, None)}
+            </div>
             {render_inputs(context, candidate)}
             {render_references(candidate)}
             {render_critiques(&critiques)}
@@ -498,7 +500,7 @@ fn render_candidate(
                     render_output(context, output, draft, interactive, locked, &edit)
                 })}
             </ul>
-            {render_decision_history(&decisions, &authorizations)}
+            {render_decision_history(context.runtime, &decisions, &authorizations)}
             if interactive {
                 {render_controls(context, positioned, draft, locked, &edit)}
                 if locked && !pending {
@@ -778,6 +780,7 @@ fn output_standing<'a>(task: &'a BoardTask, design: &TaskStamp) -> &'a str {
 }
 
 fn render_decision_history(
+    runtime: &AppRuntime,
     decisions: &[&RoomPositioned<PreparationDecision>],
     authorizations: &[&RoomPositioned<ExecutionAuthorization>],
 ) -> Html {
@@ -795,6 +798,7 @@ fn render_decision_history(
                     outcome_label(&decision.value.outcome),
                     source_label(&decision.value.source),
                 ),
+                decision_notes(runtime, &decision.value.outcome),
             )
         })
         .chain(authorizations.iter().map(|authorization| {
@@ -812,6 +816,7 @@ fn render_decision_history(
                         .collect::<Vec<_>>()
                         .join(", "),
                 ),
+                Html::default(),
             )
         }))
         .collect::<Vec<_>>();
@@ -820,8 +825,8 @@ fn render_decision_history(
         <div class="room-approval-history">
             <strong>{"Decision history"}</strong>
             <ol>
-                {for rows.into_iter().map(|(position, text)| html! {
-                    <li key={position.to_string()} data-fact={SequenceCode::new(position.get()).to_string()} tabindex="-1"><code>{position.to_string()}</code>{" · "}{text}</li>
+                {for rows.into_iter().map(|(position, text, notes)| html! {
+                    <li key={position.to_string()} data-fact={SequenceCode::new(position.get()).to_string()} tabindex="-1"><code>{position.to_string()}</code>{" · "}{text}{notes}</li>
                 })}
             </ol>
         </div>
@@ -1108,16 +1113,18 @@ fn render_withdrawal(
     };
     let fact = SequenceCode::new(withdrawal.position.get());
     html! {
-        <p class="room-approval-withdrawal" data-approval-withdrawal="">
-            {format!("Withdrawn by {author} ")}
-            <Age
-                authored={record.at.get().as_millisecond()}
-                class="relative-age"
-                title={fact.to_string()}
-            />
-            {": "}{record.withdrawal.reason.clone()}
-            {" "}<code title="Withdrawing journal fact">{fact.to_string()}</code>
-        </p>
+        <div class="room-approval-withdrawal" data-approval-withdrawal="">
+            <p>
+                {format!("Withdrawn by {author} ")}
+                <Age
+                    authored={record.at.get().as_millisecond()}
+                    class="relative-age"
+                    title={fact.to_string()}
+                />
+                {" "}<code title="Withdrawing journal fact">{fact.to_string()}</code>
+            </p>
+            {super::card::render_words(runtime, &record.withdrawal.reason, None, None)}
+        </div>
     }
 }
 
@@ -1154,29 +1161,56 @@ fn standing<'a>(preparation: &'a PreparationProjection, candidate: &CandidateRef
 fn outcome_label(outcome: &DecisionOutcome) -> String {
     match outcome {
         DecisionOutcome::Accepted { .. } => "accepted proposal".to_owned(),
-        DecisionOutcome::Returned { reason, .. } => format!("returned: {reason}"),
-        DecisionOutcome::Resolved {
-            outputs, comment, ..
-        } => {
-            let outputs = outputs
+        DecisionOutcome::Returned { .. } => "returned".to_owned(),
+        DecisionOutcome::Resolved { outputs, .. } => format!(
+            "resolved {}",
+            outputs
                 .iter()
                 .map(|output| {
                     let verdict = match output.verdict {
                         OutputVerdict::Accepted => "accepted",
                         OutputVerdict::Rejected => "rejected",
                     };
-                    match &output.comment {
-                        Some(comment) => format!("{} {verdict}: {comment}", output.output),
-                        None => format!("{} {verdict}", output.output),
-                    }
+                    format!("{} {verdict}", output.output)
                 })
                 .collect::<Vec<_>>()
-                .join("; ");
-            match comment {
-                Some(comment) => format!("resolved {outputs}; overall: {comment}"),
-                None => format!("resolved {outputs}"),
-            }
-        }
+                .join("; ")
+        ),
+    }
+}
+
+/// What a decision's author wrote: the return reason, each output's comment
+/// under that output's code, then the overall comment.
+fn decision_notes(runtime: &AppRuntime, outcome: &DecisionOutcome) -> Html {
+    let notes = match outcome {
+        DecisionOutcome::Accepted { .. } => Vec::new(),
+        DecisionOutcome::Returned { reason, .. } => vec![(None, reason)],
+        DecisionOutcome::Resolved {
+            outputs, comment, ..
+        } => outputs
+            .iter()
+            .filter_map(|output| {
+                output
+                    .comment
+                    .as_ref()
+                    .map(|comment| (Some(output.output.to_string()), comment))
+            })
+            .chain(
+                comment
+                    .iter()
+                    .map(|comment| (Some("Overall".to_owned()), comment)),
+            )
+            .collect(),
+    };
+    html! {
+        {for notes.into_iter().map(|(label, words)| html! {
+            <div class="room-approval-note">
+                if let Some(label) = label {
+                    <strong>{label}</strong>
+                }
+                {super::card::render_words(runtime, words, None, None)}
+            </div>
+        })}
     }
 }
 

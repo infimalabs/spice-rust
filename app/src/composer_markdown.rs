@@ -395,9 +395,9 @@ pub(crate) fn render_received_with_media_quotes(
     )
 }
 
-/// The source a test prose card stands for when its own age is not at issue.
-#[cfg(test)]
-const PROSE_CARD_FIXTURE: QuoteSource = QuoteSource {
+/// The source a card stands for when it sent no MSG, so its own source is
+/// never named.
+const SENDLESS_CARD: QuoteSource = QuoteSource {
     card_id: None,
     display_millis: 0,
     agent: None,
@@ -424,7 +424,7 @@ pub(crate) fn render_prose_card(
         directives,
         sends,
         quotes,
-        QuoteRenderContext::new(quote_agents, quote_sources, &PROSE_CARD_FIXTURE, None),
+        QuoteRenderContext::new(quote_agents, quote_sources, &SENDLESS_CARD, None),
         &[],
     )
 }
@@ -451,6 +451,27 @@ pub(crate) fn render_prose_card_with_media_quotes(
         Finish::ProseCard {
             card: quote_context.card,
             speaker: quote_context.speaker,
+            punctuate: true,
+        },
+    )
+}
+
+/// Render one room card's authored words as written, with the card's own
+/// signoff slot leading them as a prose card's does.
+pub(crate) fn render_room_card(markdown: &str) -> RenderedMarkdown {
+    render(
+        markdown,
+        &[],
+        &[],
+        &[],
+        &[],
+        &QuoteAgents::default(),
+        &QuoteSources::new(),
+        &[],
+        Finish::ProseCard {
+            card: &SENDLESS_CARD,
+            speaker: None,
+            punctuate: false,
         },
     )
 }
@@ -490,6 +511,9 @@ enum Finish<'r> {
     ProseCard {
         card: &'r QuoteSource,
         speaker: Option<wire::CanonicalUuid>,
+        /// Whether unpunctuated terminal prose gains a period, as an
+        /// assistant's final prose does; authored room words stay as written.
+        punctuate: bool,
     },
     /// A quote card split into hunks attributed to its authenticated source.
     QuoteCard {
@@ -572,8 +596,10 @@ fn render(
         decorate_markdown_images(events, image_only && !has_diagrams, &mut media_quotes);
     let attribution = match finish {
         Finish::Received | Finish::TaskText { .. } => None,
-        Finish::ProseCard { .. } => {
-            terminal::period(&mut events);
+        Finish::ProseCard { punctuate, .. } => {
+            if punctuate {
+                terminal::period(&mut events);
+            }
             Some(image_flow::Attribution {
                 controls_target: String::new(),
                 signoff: SIGNOFF_SLOT.to_owned(),

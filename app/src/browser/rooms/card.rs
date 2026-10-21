@@ -5,6 +5,8 @@
 //! follow. A surface places the face in its own card and never nests a second
 //! card around it or shows a publication key.
 
+use std::rc::Rc;
+
 use wire::CanonicalUuid;
 use wire::rooms::RoomAuthorityStamp;
 use yew::prelude::*;
@@ -111,29 +113,51 @@ pub(super) fn render(
             )
         },
     );
+    let signoff = html! {
+        <>
+            <Age authored={authored_millis} class="relative-age" {href} {label} />
+            {for speaker.map(|speaker| render_speaker(runtime, speaker))}
+            if !receivers.is_empty() {
+                <span class="message-quote-direction" aria-label="to">{"→"}</span>
+                <span class="message-quote-recipients">{receivers}</span>
+            }
+            if let Some(badge) = badge {
+                <span class="message-classification-group" role="group" aria-label="Message classifications">
+                    {render_badge(badge)}
+                </span>
+            }
+        </>
+    };
     html! {
         <div class="message-flow room-card-face">
-            <div class="message-body markdown-body">
-                {island}
-                <p class="room-card-words">
-                    <span class="message-signoff">
-                        <Age authored={authored_millis} class="relative-age" {href} {label} />
-                        {for speaker.map(|speaker| render_speaker(runtime, speaker))}
-                        if !receivers.is_empty() {
-                            <span class="message-quote-direction" aria-label="to">{"→"}</span>
-                            <span class="message-quote-recipients">{receivers}</span>
-                        }
-                        if let Some(badge) = badge {
-                            <span class="message-classification-group" role="group" aria-label="Message classifications">
-                                {render_badge(badge)}
-                            </span>
-                        }
-                    </span>
-                    {" "}{words}
-                </p>
-            </div>
+            {render_words(runtime, &words, Some(signoff), Some(island))}
             {tail}
         </div>
+    }
+}
+
+/// Authored room words as Markdown through the renderer every message card
+/// uses; a card's signoff leads them and its corner island floats beside them.
+pub(super) fn render_words(
+    runtime: &AppRuntime,
+    words: &str,
+    signoff: Option<Html>,
+    corner: Option<Html>,
+) -> Html {
+    let rendered = crate::composer_markdown::render_room_card(words);
+    let quote_tasks = runtime
+        .board()
+        .map(|board| Rc::clone(&board.quote_tasks))
+        .unwrap_or_default();
+    html! {
+        <crate::browser::mermaid::MarkdownBody
+            html={AttrValue::from(rendered.html)}
+            sources={Rc::new(rendered.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
+            final_answer=true
+            {quote_tasks}
+            {signoff}
+            {corner}
+        />
     }
 }
 
