@@ -503,6 +503,57 @@ pub(super) fn rewrite_facts(
     }
 }
 
+/// Rewrite each retained `command` receipt through `edit` on its request and
+/// response bytes; `None` for either keeps the stored bytes.
+pub(super) fn rewrite_receipts(
+    transaction: &Transaction<'_>,
+    command: wire::CommandKind,
+    release: &'static str,
+    edit: impl Fn(&[u8], &[u8]) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), String>,
+) -> Result<(), OpenError> {
+    let receipts = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT command_id, request, response FROM command_receipts \
+                 WHERE command_kind = ?1 ORDER BY command_id",
+            )
+            .map_err(OpenError::Sqlite)?;
+        let rows = statement
+            .query_map(params![command.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(OpenError::Sqlite)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(OpenError::Sqlite)?
+    };
+    for (command_id, request, response) in receipts {
+        let refuse =
+            |detail: String| retained("command_receipts", command_id.clone(), release, detail);
+        let (request, response) = edit(&request, &response).map_err(&refuse)?;
+        if request.is_none() && response.is_none() {
+            continue;
+        }
+        let changed = transaction
+            .execute(
+                "UPDATE command_receipts \
+                 SET request = coalesce(?1, request), response = coalesce(?2, response) \
+                 WHERE command_id = ?3 AND command_kind = ?4",
+                params![request, response, command_id, command.as_str()],
+            )
+            .map_err(OpenError::Sqlite)?;
+        if changed != 1 {
+            return Err(refuse(
+                "the row changed under the exclusive crossing".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn retained(
     table: &'static str,
     row: String,
