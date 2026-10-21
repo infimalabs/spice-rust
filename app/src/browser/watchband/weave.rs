@@ -88,9 +88,10 @@ const PAD: f64 = 1.5;
 /// Gutter between two columns.
 const GUTTER: f64 = 1.4;
 
-/// The status cap's row at the top of each column.
-const CAP_TOP: f64 = 0.5;
-const CAP_HEIGHT: f64 = 1.1;
+/// The status cap's row at the top of each column: flush with the pane top,
+/// ending above the silence trail's start.
+const CAP_TOP: f64 = 0.0;
+const CAP_HEIGHT: f64 = 2.0;
 
 /// Share of its column the cap spans, and the narrowest cap drawn.
 const CAP_SHARE: f64 = 0.7;
