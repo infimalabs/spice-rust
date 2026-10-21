@@ -871,7 +871,6 @@ pub(super) fn task_review(
     )
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn task_review_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,
