@@ -575,7 +575,7 @@ path.image-annotation-hit { fill: none; }
    fixed inline size, so the draft takes every remaining pixel at every
    viewport width. */
 .team-composer {
-  --team-composer-block-size: 160px;
+  --team-composer-block-size: 192px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0;
@@ -586,9 +586,9 @@ path.image-annotation-hit { fill: none; }
    keep that edge visible on initial layout. Agent contents remain LTR. */
 .team-surface .team-agents {
   display: grid;
-  grid-template-columns: repeat(var(--team-weight, 4), minmax(10rem, 1fr));
+  grid-template-columns: repeat(var(--team-weight, 4), minmax(var(--team-composer-block-size), 1fr));
   grid-auto-flow: column;
-  grid-auto-columns: minmax(10rem, 1fr);
+  grid-auto-columns: minmax(var(--team-composer-block-size), 1fr);
   gap: 0;
   min-width: 0;
   overflow-x: auto;
@@ -844,7 +844,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-control-contact: inset 0 3px 5px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -1px 1px color-mix(in srgb, var(--app-highlight-source) 60%, transparent);
   --team-send-rim-width: 3px; --team-send-command-ring-width: 1px;
 }
-/* The sharp 80 × 160 panel holds two round utility buttons, two pill flyers,
+/* The sharp 80 × 192 panel holds two round utility buttons, two pill flyers,
    and SEND below a three-pixel top inset. Each slider row is exactly its
    groove, and the remaining height divides into three equal gaps. */
 .team-composer .team-composer-controls {

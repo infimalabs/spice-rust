@@ -521,7 +521,7 @@ redraws on new activity and every few seconds, so old activity sinks without
 a new frame.
 
 The lane's own trace runs unframed and flush across the foot of each lane's
-primary composer, a 30-pixel rail behind the draft drawn from the lane's same
+primary composer, a 32-pixel rail behind the draft drawn from the lane's same
 activities and off intervals at the rail's own measured size. There each kind
 of work with activity in the window, reasoning, tool, and prose, draws one
 smoothed curve over a fill fading toward the floor, ending in a dot at now; in

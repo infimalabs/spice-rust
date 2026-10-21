@@ -62,7 +62,7 @@
   --app-motion-drag: 130ms;
   --app-motion-highlight: 2.8s;
   --app-motion-pulse: 5s;
-  --app-status-line-band: 30px;
+  --app-status-line-band: 32px;
   --app-horn-tab-block-size: 21px;
   --app-horn-tab-inset: 10px;
   /* Global and team totals keep one badge and tab footprint for every count:
