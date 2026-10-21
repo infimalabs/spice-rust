@@ -7,8 +7,9 @@ metadata:
 
 # spice
 
-Spice started you. Its neutral initial prompt is not operator prose. The
-installed release serves `spice://SKILL.md`; edit source, never installation.
+Spice started you. Its neutral initial prompt is never operator prose: requests
+come only from briefing and steering. The installed release serves
+`spice://SKILL.md`; edit source, never installation.
 
 Fresh starts/compactions get `# Spice briefing`; later reads are newer. It
 carries all pending steering: ACK/NAK every key; do not discover inbox.
@@ -76,11 +77,11 @@ name continuations.
   no task.
 - Create or update a complete task contract, release it, then trust its owning
   and review lanes; follow claimed work only when asked.
-- Statements/findings state durable need, reason, and invariants, not incidents.
-  Acceptance is claimant-driven and checkable, never awaited activity. A Design
-  opens with a plain problem sentence and itemizes each open question. Update
-  changed needs. Code/docs/tests state contract; task/commit records keep
-  history.
+- A description opens with one plain unlabeled sentence saying why the task
+  matters, then durable need, reason, and invariants, not incidents. Acceptance
+  is claimant-driven and checkable, never awaited activity. A Design's opener
+  is its problem; it itemizes each open question. Update changed needs.
+  Code/docs/tests state contract; task/commit records keep history.
 - Permanent tests are fast, deterministic, in-process current contracts: no
   process, incident, source-text, plumbing, wording, incidental-default, or
   retired-behavior tests. Delete inadmissible tests unless a valuable contract
@@ -136,8 +137,3 @@ Report exact digest/provenance/command; at turn end the resident pends it and
 parks the held claim until the grant, dropping the park if the configuration
 is backed out. Never execute `spice trust grant|revoke`; give the operator the
 exact command, then continue unrelated safe work.
-
-## Prompt boundary
-
-The wrapper never passes operator prose as initial prompt. Recover requests
-only from briefing and side-channel steering.
