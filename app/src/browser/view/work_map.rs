@@ -120,6 +120,25 @@ pub(super) struct WorkMapRender<'a, 'work> {
     pub retry: Callback<MouseEvent>,
 }
 
+/// Opens `task` the way a sheet control does: focused when it is already in
+/// `selection`, otherwise joined to the selection through `open`.
+pub(super) fn activate_task(
+    selection: &TaskOverviewSelection,
+    focus: &Callback<TaskStamp>,
+    open: &Callback<TaskOverviewSelection>,
+) -> Callback<TaskStamp> {
+    let selection = selection.clone();
+    let focus = focus.clone();
+    let open = open.clone();
+    Callback::from(move |task: TaskStamp| {
+        if selection.tasks().contains(&task) {
+            focus.emit(task);
+        } else {
+            open.emit(selection.with_related_task(task));
+        }
+    })
+}
+
 pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
     let local = render.work.overview_graph(render.selection);
     let key = render.state.request_key(render.selection);
@@ -145,18 +164,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
         .runtime
         .is_some_and(|runtime| runtime.offers(wire::CommandKind::TaskRelations));
     let enrichment_roots = key.as_ref().map_or(0, |key| key.roots().len());
-    let activate_task = {
-        let selection = render.selection.clone();
-        let focus = render.focus_task.clone();
-        let open = render.open_overview.clone();
-        Callback::from(move |task: TaskStamp| {
-            if selection.tasks().contains(&task) {
-                focus.emit(task);
-            } else {
-                open.emit(selection.with_related_task(task));
-            }
-        })
-    };
+    let activate_task = activate_task(render.selection, &render.focus_task, &render.open_overview);
 
     html! {
         <section

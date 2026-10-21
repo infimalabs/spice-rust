@@ -138,7 +138,12 @@ outcome, or the refusal, stays on the same line, in full on hover. Either
 button is disabled when the runtime does not offer its command.
 
 **Running jobs** closes the sheet, after every task's details, in a fixed
-footprint that scrolls beyond it.
+footprint that scrolls beyond it. It is global: every job a lane still runs is
+listed, whatever the selection. Each row's **Task** names the task the job runs
+under, by handle when the board carries it and by stamp otherwise, and opens
+that task's sheet: a selected task is focused in place, any other joins the
+selection. A job started under no task shows a dash. Jobs under the selected
+tasks come first; within each group rows keep job order.
 
 ## Task blocker review
 

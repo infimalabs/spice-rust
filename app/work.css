@@ -500,8 +500,9 @@
 }
 .team-job-table th { padding: 6px 10px; font-size: var(--app-type-2xs); font-weight: 650; }
 .team-job-table th:nth-child(1) { width: 9rem; }
-.team-job-table th:nth-child(2),
-.team-job-table th:nth-child(4) { width: 5.5rem; }
+.team-job-table th:nth-child(2) { width: 7.5rem; }
+.team-job-table th:nth-child(3),
+.team-job-table th:nth-child(5) { width: 5.5rem; }
 .team-job-table td { padding: 7px 10px; vertical-align: middle; background: color-mix(in srgb, var(--panel) 76%, var(--page)); }
 .team-job-row { block-size: var(--team-job-row); }
 .team-job-row td:first-child { border-left: var(--quote-rail) solid var(--accent-slot, var(--accent)); }
@@ -517,12 +518,26 @@
   white-space: nowrap;
 }
 .team-job-row[data-job-standing="unheard"] .team-job-standing { color: var(--muted); }
+.team-job-task { white-space: nowrap; }
+.team-job-task-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.team-job-task-link:hover,
+.team-job-task-link:focus-visible { color: var(--text); }
 
 @container (max-width: 40rem) {
   /* Card rows: no visible header, and each row is one card. */
   .team-jobs .team-job-scroll {
     --team-job-head: 0px;
-    --team-job-row: 5.875rem;
+    --team-job-row: 7.5rem;
     --team-job-gap: 8px;
     border-block: 0;
   }
@@ -554,6 +569,7 @@
     min-block-size: var(--team-job-row);
     grid-template:
       "member standing" auto
+      "task task" auto
       "command command" auto
       "started started" auto
       / minmax(0, 1fr) max-content;
@@ -570,9 +586,10 @@
     background: transparent;
   }
   .team-jobs .team-job-row td:nth-child(1) { grid-area: member; border-left: 0; }
-  .team-jobs .team-job-row td:nth-child(2) { grid-area: started; }
-  .team-jobs .team-job-row td:nth-child(3) { grid-area: command; }
-  .team-jobs .team-job-row td:nth-child(4) { grid-area: standing; text-align: right; }
+  .team-jobs .team-job-row td:nth-child(2) { grid-area: task; }
+  .team-jobs .team-job-row td:nth-child(3) { grid-area: started; }
+  .team-jobs .team-job-row td:nth-child(4) { grid-area: command; }
+  .team-jobs .team-job-row td:nth-child(5) { grid-area: standing; text-align: right; }
   .team-jobs .team-job-age::before,
   .team-jobs .team-job-standing::before {
     margin-right: 4px;

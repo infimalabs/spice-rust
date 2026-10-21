@@ -1,34 +1,51 @@
 //! Running resident jobs represented inside the unified task overview.
+//!
+//! The panel is global: it lists every job the resident's lanes still run,
+//! names the task each runs under, and leads with the jobs under the sheet's
+//! selected tasks so the reader finds their own first.
 
 use super::super::clock::Age;
 use super::*;
 use crate::runtime::{LaneMember, LaneRow};
+use crate::work::{WorkProjection, WorkTask};
+use wire::TaskStamp;
 
 /// Rows shown before the existing Work table becomes scrollable.
 const KEPT_JOBS_VISIBLE: usize = 5;
 
-pub(super) fn render(lanes: &[LaneRow], tasks: &[wire::TaskStamp]) -> Html {
-    let mut jobs = lanes
+pub(super) struct WorkJobsRender<'a, 'work> {
+    pub lanes: &'a [LaneRow],
+    pub selected: &'a [TaskStamp],
+    pub work: &'a WorkProjection<'work>,
+    /// Opens a job's task: focused when selected, otherwise joined to the sheet.
+    pub activate_task: &'a Callback<TaskStamp>,
+}
+
+pub(super) fn render(render: &WorkJobsRender<'_, '_>) -> Html {
+    let selected = render.selected;
+    let mut jobs = render
+        .lanes
         .iter()
         .flat_map(|team| {
             team.members
                 .iter()
                 .enumerate()
                 .flat_map(move |(position, member)| {
-                    member
-                        .jobs
-                        .iter()
-                        .filter(move |job| crate::watchband::job_matches_tasks(job, tasks))
-                        .map(move |job| ResidentJob {
-                            member,
-                            accent: team.accent(position),
-                            job,
-                        })
+                    member.jobs.iter().map(move |job| ResidentJob {
+                        member,
+                        accent: team.accent(position),
+                        job,
+                        selected: crate::watchband::job_matches_tasks(job, selected),
+                    })
                 })
         })
         .collect::<Vec<_>>();
     jobs.sort_by(|left, right| {
-        (&left.job.id, left.member.lane).cmp(&(&right.job.id, right.member.lane))
+        (!left.selected, &left.job.id, left.member.lane).cmp(&(
+            !right.selected,
+            &right.job.id,
+            right.member.lane,
+        ))
     });
 
     const HEADING: &str = "work-overview-running-jobs";
@@ -54,12 +71,13 @@ pub(super) fn render(lanes: &[LaneRow], tasks: &[wire::TaskStamp]) -> Html {
                         <thead>
                             <tr>
                                 <th scope="col">{"Agent"}</th>
+                                <th scope="col">{"Task"}</th>
                                 <th scope="col">{"Started"}</th>
                                 <th scope="col">{"Command"}</th>
                                 <th scope="col">{"Standing"}</th>
                             </tr>
                         </thead>
-                        <tbody>{for jobs.iter().map(render_job)}</tbody>
+                        <tbody>{for jobs.iter().map(|job| render_job(render, job))}</tbody>
                     </table>
                 }
             </div>
@@ -72,9 +90,11 @@ struct ResidentJob<'a> {
     member: &'a LaneMember,
     accent: usize,
     job: &'a wire::intent::LaneJob,
+    /// Whether the job runs under one of the sheet's selected tasks.
+    selected: bool,
 }
 
-fn render_job(row: &ResidentJob<'_>) -> Html {
+fn render_job(render: &WorkJobsRender<'_, '_>, row: &ResidentJob<'_>) -> Html {
     let job = row.job;
     let lane = row.member.lane;
     let standing = job.standing.as_str();
@@ -88,6 +108,7 @@ fn render_job(row: &ResidentJob<'_>) -> Html {
             data-agent-lane={lane.to_string()}
             data-accent={row.accent.to_string()}
             data-job={job.id.clone()}
+            data-job-selected={row.selected.to_string()}
             data-job-standing={standing}
         >
             <td>
@@ -96,12 +117,40 @@ fn render_job(row: &ResidentJob<'_>) -> Html {
                     <strong class="team-task-member-name">{label.to_owned()}</strong>
                 </span>
             </td>
+            <td class="team-job-task">{render_task(render, job.task.as_ref())}</td>
             <td>{started_age(started)}</td>
             <td class="team-job-command" title={job.command.clone()}>
                 <code>{job.command.clone()}</code>
             </td>
             <td class="team-job-standing">{standing}</td>
         </tr>
+    }
+}
+
+/// The task a job runs under as a control opening its sheet, or a dash.
+fn render_task(render: &WorkJobsRender<'_, '_>, task: Option<&TaskStamp>) -> Html {
+    let Some(task) = task else {
+        return html! { <span class="muted" aria-label="No task">{"—"}</span> };
+    };
+    let handle = render
+        .work
+        .tasks()
+        .iter()
+        .map(WorkTask::row)
+        .find(|row| row.statement.body.born == *task)
+        .map_or_else(
+            || task.to_string(),
+            |row| row.statement.body.handle.to_string(),
+        );
+    let activate = {
+        let open = render.activate_task.clone();
+        let task = task.clone();
+        Callback::from(move |_: MouseEvent| open.emit(task.clone()))
+    };
+    html! {
+        <button type="button" class="team-job-task-link" data-task-stamp={task.to_string()} onclick={activate}>
+            {handle}
+        </button>
     }
 }
 
