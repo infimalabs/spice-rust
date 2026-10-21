@@ -178,7 +178,7 @@ rule, a hairline half the width of the app's ordinary edge, so its top rule
 turns down its end edge into that faint rule, while the later band's rounded
 top rule tapers away against it. A corner at the browser
 edge stays square. The weave holds one equal-width column per member in
-canonical member order, time flowing down from now at the top over a
+canonical member order from the right edge, over the composers painted in that same order, time flowing down from now at the top over a
 ten-minute log-recent axis, and its caps and trails distinguish active, queued,
 waiting, bound, and unbound states; the
 [weave](BROWSER.md#team-and-group-weaves) describes its kind violins, silence
