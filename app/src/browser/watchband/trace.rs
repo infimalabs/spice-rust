@@ -1,10 +1,10 @@
-//! The activity trace inside a team or working-group pip, and across the foot
-//! of a lane's composer: a glowing curve per kind of work over a fading fill, a
-//! dot where each curve meets now, and lifecycle markers. A team's pip and
-//! composer rail trace its lane; a group's pip pools the distinct lanes working
-//! on its Design. Everything is SVG geometry in the pane's measured CSS pixels,
-//! which the app's `style-src 'self'` policy admits where inline styles are
-//! refused; colours and glow stay in the stylesheet.
+//! The activity trace across the foot of a lane's composer: a glowing curve per
+//! kind of work over a fading fill, a dot where each curve meets now, and
+//! lifecycle markers. It also gathers the retained activity and off intervals
+//! a team's or working group's weave threads draw from. Everything is SVG
+//! geometry in the pane's measured CSS pixels, which the app's
+//! `style-src 'self'` policy admits where inline styles are refused; colours
+//! and glow stay in the stylesheet.
 
 use std::fmt::Write as _;
 use std::rc::Rc;

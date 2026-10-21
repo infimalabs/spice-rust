@@ -34,6 +34,9 @@ mod task_links;
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
 #[cfg_attr(test, allow(dead_code))]
 mod trace;
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+#[cfg_attr(test, allow(dead_code))]
+mod weave;
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub use attention::{
@@ -57,6 +60,8 @@ pub use trace::{
     Occupancy, TRACE_STEP_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind, TraceOff, TraceSpan,
     drawn_spans, off_intervals, trace,
 };
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+pub use weave::{Channel, Edge, Interaction, Thread, Weave, direction_edge, last_heard, weave};
 
 /// Accent slots the band cycles through.
 ///

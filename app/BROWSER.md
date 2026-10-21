@@ -452,61 +452,80 @@ A card's linked relative age is its permalink. Arriving through it outlines
 the card briefly, then fades the outline (cleared at once without motion), and
 focuses the card without a visible focus ring.
 
-## Team and group activity traces
+## Team and group weaves
 
-Each team or working-group pip is an etched well: a darkened pane with a soft
-lip under its top edge and a light catch along its bottom, its status on a
-quote-rail-wide physical-left rail rounded by its own width. The pip keeps its
-accessible status label and the trace inside is decorative. The trace spans the
-ten minutes ending now, whether the lane is running, off, or signed out, so
-activity moves left as time passes and leaves once it is ten minutes old; a pip
-whose activity is all older draws nothing until new activity arrives. Each kind
+Each team or working-group lights panel is one weave: an etched well, a
+darkened pane with a soft lip under its top edge and a light catch along its
+bottom, holding one full-width row per channel. One to six rows always fill the
+whole panel, with no per-channel pips and no unused cells. A channel is a set of
+lanes. A team row is its one lane. A working-group row is the distinct lanes
+currently claiming its Design, work gated by it, or selected work that retains
+it as preparation controller; one lane counts once even if several of those
+paths name it, and unrelated workers count not at all. One thread model,
+`watchband::weave`, serves both panels. Each panel supplies only its rows' lane
+sets, labels, accents, and states, so a lane's channel and a Design room's
+channel are the same kind of thing drawn the same way.
+
+The weave spans the ten minutes ending now, so activity moves left as time
+passes and leaves once it is ten minutes old. Each row's thread is filled in
+the row's accent, and its thickness follows the channel's summed reasoning,
+tool, and prose rate. Rates sit on one fixed scale shared by every row and
+panel, each activity weighted by its text, through a kernel that slides with
+time so redraws move the thread smoothly. A burst thickens the thread and quiet
+thins it toward a hairline. The thread ends at a last-heard dot. From there, or
+from the window's start when nothing was heard, silence runs as a dotted trail
+to a rail at the panel's right edge. Rail and trail wear the row's status, or
+for a Design its standing; the accent fills only threads and last-heard dots.
+Each row keeps a visually hidden label naming the channel, its state, and how
+long ago it was last heard, or that it was not heard. The drawing itself is
+decorative. The team panel keeps its arrangement by drag, Enter, or Space, and
+the group panel stays a labelled group.
+
+Collaboration draws as knots. Where an MSG packet passes between lanes in two
+different rows inside the window, both threads bow toward each other at its
+instant, eased over thirty seconds either side. One packet is one knot per row
+pair whether the sender's card, the recipient's quote, or both retained it. A
+packet within one row, to the operator, or to a room knots nothing. Peer review
+feedback reaches a lane as Spice's own direction, which names no reviewer
+lane, so it knots nothing. Operator direction drops onto a thread from the
+panel's top for upper-half rows and the middle row of an odd-sized panel, and
+rises from the bottom for lower-half rows, so marks never cross a neighbour.
+
+Where a team lane was off, from an occupant's end or a vacant seat to the next
+occupant's start, its thread leaves a gap, and a lane off now ends its thread
+where it went off. An interruption shorter than the spacing between two of the
+pane's samples is too brief to see and leaves the thread whole. A reload keeps
+the gaps it had: the stream's first page carries recent occupancy from before
+the load. Before a lane's first retained transition it counts as on, except
+when that transition is an occupant's start: the seat was vacant until then,
+and the thread begins there. A lane with no retained transition has held its
+seat as it is now throughout. Gaps never cut a trail: silence is silence
+whether or not the seat was held. A team lane whose seat is empty now drains
+its row to gray, as the Spice pepper does while Spice is disconnected, whatever
+its status says, and wears its accent again once an occupant holds the seat.
+The weave draws only state the browser already holds, issues no requests, and
+redraws on new activity and every few seconds, so old activity leaves without
+a new frame.
+
+The lane's own trace runs unframed and flush across the foot of each lane's
+primary composer, a 30-pixel rail behind the draft drawn from the lane's same
+activities and off intervals at the rail's own measured size. There each kind
 of work with activity in the window, reasoning, tool, and prose, draws one
 smoothed curve over a fill fading toward the floor, ending in a dot at now; in
-the dark theme the curves glow. A curve's height is that kind's rate on one
-fixed scale shared by every pip, each activity weighted by its text, through a
-kernel that slides with time so redraws move the curve smoothly. Turn, operator
-direction, provider failure, compaction, fresh session, and sign-out draw as
-markers over the curves. Where the lane was off, from an occupant's end or a
-vacant seat to the next occupant's start, every curve leaves a gap with no line
-or fill, and a lane off now ends its curves where it went off; an interruption
-shorter than the spacing between two of the pane's curve samples is too brief
-to see and leaves the curves whole. A reload keeps the gaps it had: the stream's
-first page carries recent occupancy from before the load. Before a lane's first
-retained transition it counts as on, except when that transition is an
-occupant's start: the seat was vacant until then, and the curves begin there.
-A lane with no retained transition has held its seat as it is now throughout,
-so a lane vacant now draws nothing. Quiet is not off: a running lane with no
-activity still draws its low line. The trace draws only state the browser
-already holds, issues no requests, and redraws on new activity and every few
-seconds while anything is drawn, so old activity leaves without a new frame.
-A team lane whose seat is empty now drains its whole pip to gray, as the Spice
-pepper does while Spice is disconnected, whatever its status says, and wears
-its accent again once an occupant holds the seat.
-
-The same trace runs unframed and flush across the foot of each lane's primary
-composer, a 30-pixel rail behind the draft drawn from the lane's same activities
-and off intervals at the rail's own measured size, so a burst rises to the same
-height in the pip and on the rail. It takes no pointer input, drains to gray
-with the pip, and fades out once the draft holds text. Quote shards carry no
-rail. The lane's provider emblem is its menu button's glyph, and that button's
-hover title names the provider standing the emblem names.
+the dark theme the curves glow. Turn, operator direction, provider failure,
+compaction, fresh session, and sign-out draw as markers over the curves. Quiet
+is not off: a running lane with no activity still draws its low line. The rail
+takes no pointer input, drains to gray with the lane's weave row, and fades out
+once the draft holds text. Quote shards carry no rail. The lane's provider
+emblem is its menu button's glyph, and that button's hover title names the
+provider standing the emblem names.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so the
-trace is SVG geometry in the pane's measured CSS pixels and every colour and
-glow comes from the stylesheet. A Playwright check of the trace must keep that
-policy enforced: a context with `bypassCSP` would hide a trace that draws
-nothing in production.
+weave and the rail are SVG geometry in the pane's measured CSS pixels and every
+colour and glow comes from the stylesheet. A Playwright check of either must
+keep that policy enforced: a context with `bypassCSP` would hide a drawing that
+draws nothing in production.
 
 Yew's `html!` lowercases literal element names, and SVG recognises
-camel-case elements such as `clipPath` only by their exact case, so the trace
-writes those as dynamic tags (`<@{"clipPath"}>`).
-
-A working group's pips are the same traced wells, one per Design, with the
-Design's standing on the rail. Each Design trace pools retained activity from
-the distinct lanes currently claiming the Design itself, work gated by it, or
-selected work that retains it as preparation controller. The shared trace
-calculation therefore shows the sum of those workers' reasoning, tool, and
-prose rates on the same fixed scale as an individual lane; one lane contributes
-once even if multiple associated paths name it, and unrelated workers
-contribute nothing.
+camel-case elements such as `clipPath` only by their exact case, so the weave
+and the rail write those as dynamic tags (`<@{"clipPath"}>`).
