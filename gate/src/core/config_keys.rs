@@ -141,17 +141,20 @@ fn scan<'a>(
         Disposition::Admitted => return Ok(()),
         Disposition::Forbidden(layers) => {
             let key = ConfigPath(path).to_string();
-            let admitted = layers
+            let names = layers
                 .iter()
                 .map(|layer| layer.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+                .collect::<Vec<_>>();
+            let admitted = match names.split_last() {
+                Some((last, rest)) if !rest.is_empty() => {
+                    format!("{} and {last} layers", rest.join(", "))
+                }
+                _ => format!("{} layer", names.concat()),
+            };
             findings.push(CoreFinding::new(
                 "forbidden-layer",
                 None::<String>,
-                format!(
-                    "tracked layer key {key} is packaged for the {admitted} layer, not tracked"
-                ),
+                format!("tracked layer key {key} is packaged for the {admitted}, not tracked"),
             )?);
             return Ok(());
         }
