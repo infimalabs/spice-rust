@@ -449,7 +449,7 @@ pub(super) fn render_closure_record(
                 <strong title={closure.author.to_string()}>
                     {format!("Closed by {} at {}", name(&closure.author), closure.phase)}
                 </strong>
-                {task_time(&closure.at, TaskTimePresentation::DetailedElapsed)}
+                {task_time(&closure.at, TaskTimePresentation::Elapsed)}
             </header>
             {render_task_text(&closure.validation, "work-note-body", resolves)}
             if let Some(displaced) = displaced {
@@ -481,7 +481,7 @@ pub(super) fn render_disposition_record(
                 <strong title={record.author.to_string()}>
                     {format!("No work constructed ({kind}) by {}", name(&record.author))}
                 </strong>
-                {task_time(&record.at, TaskTimePresentation::DetailedElapsed)}
+                {task_time(&record.at, TaskTimePresentation::Elapsed)}
             </header>
             if let Some(cover) = cover {
                 {render_task_text(&format!("Answered by {cover}."), "work-closure-claim", &resolves)}

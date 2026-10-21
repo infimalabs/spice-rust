@@ -106,11 +106,17 @@ app's lower out-of-flow toast area. Task lifecycle and ordinary action results
 own separate stacked slots there, so either may replace or dismiss its own
 message without covering or clearing the other at desktop or narrow widths.
 
-Every selected task owns a full detail section below the graph. Ownership and
-claim, state and contract, project and team, timestamps and lifecycle, origin
-and dependencies answer who, what, where, when, and why from live operational
-state. Evidence, blockers, relationships, provenance, the task's room, and its
-closure appear together rather than behind tabs or pagination. Activating a
+Every selected task owns a full detail section below the graph. It opens with
+a header strip: the handle, the title, an intent or standing pill, the phase
+and flow, the claimant linked to its lane, the review assignment, and the
+task's relative age. Its contract, room, and relationships follow, and one
+closing **Provenance** section gathers every remaining scalar fact (state,
+lease, origin, claim context, and repository boundary) in a single fact grid
+with no sub-headings. There an instant reads as a relative age with its full
+local time on hover, a lane, occupant, team, or resident generation reads by
+name rather than identity, and an absent value reads as a dash. Evidence,
+blockers, relationships, provenance, the task's room, and its closure appear
+together rather than behind tabs or pagination. Activating a
 selected graph node scrolls and focuses its detail section; activating a
 related external task follows that lead in the same overview. Each detail's
 **Room** section seats its composer directly above the room's conversation,
@@ -133,7 +139,7 @@ through `task::wake`; the calendar button opens the browser's date-time picker,
 and the chosen local time defers the task until then through `task::defer`.
 Each witnesses the workflow and deferral heads the fact was drawn from, so a
 change made against a stale view refuses. A landed change re-reads the board,
-so the fact shows the new time, or None once cleared, without a reload. The
+so the fact shows the new time, or a dash once cleared, without a reload. The
 outcome, or the refusal, stays on the same line, in full on hover. Either
 button is disabled when the runtime does not offer its command.
 

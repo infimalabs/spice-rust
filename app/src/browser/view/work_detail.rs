@@ -1,6 +1,6 @@
 //! Graph-first contextual overview for one complete selected task set.
 
-use super::super::clock::{TaskTimePresentation, task_time};
+use super::super::clock::{TaskTimePresentation, task_time, task_time_millis};
 use super::*;
 use crate::composer_markdown::inline::LineControls;
 use crate::runtime::LaneView;
@@ -72,12 +72,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
                                 onclick={task_detail::task_text_chip_click(&focus_task)}
                                 onkeydown={task_detail::task_text_chip_keydown(&focus_task)}
                             >
-                                <div class="work-overview-task-heading">
-                                    <p class="app-sheet-kicker">{"Selected task"}</p>
-                                    <h3 id={format!("work-overview-task-title-{task}")}>
-                                        {detail_title(detail, task, render.selection)}
-                                    </h3>
-                                </div>
+                                {render_header(&render, task, detail)}
                                 {render_detail_body(&render, task, detail, &focus_task)}
                             </article>
                         }
@@ -180,23 +175,123 @@ pub(super) fn focus_task_callback() -> Callback<TaskStamp> {
     })
 }
 
-fn detail_title(
+/// The task's summary strip, read before any section beneath it: what the task
+/// is, where it stands, who holds and reviews it, and how old it is. Before
+/// detail arrives it reads the board row the overview already projects.
+fn render_header(
+    render: &WorkDetailRender<'_, '_>,
+    stamp: &TaskStamp,
     detail: Option<&TaskDetailState>,
-    selected: &TaskStamp,
-    selection: &TaskOverviewSelection,
 ) -> Html {
-    let Some(answer) = detail.and_then(TaskDetailState::answer) else {
-        return html! { {format!("Task {selected}")} };
+    let title_id = format!("work-overview-task-title-{stamp}");
+    let row = detail
+        .and_then(TaskDetailState::answer)
+        .map(|answer| &answer.task)
+        .or_else(|| {
+            render
+                .work
+                .tasks()
+                .iter()
+                .map(WorkTask::row)
+                .find(|row| row.statement.body.born == *stamp)
+        });
+    let Some(row) = row else {
+        return html! {
+            <header class="work-task-header">
+                <h3 id={title_id}>{format!("Task {stamp}")}</h3>
+            </header>
+        };
     };
+    let statement = &row.statement.body;
+    let workflow = &row.workflow.body;
+    let messages = render.creator_messages.iter().map(AsRef::as_ref);
+    let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     let resolves = |task: &wire::TaskHandle| {
         task.born()
-            .is_ok_and(|stamp| selection_has(selection, &stamp))
+            .is_ok_and(|stamp| selection_has(render.selection, &stamp))
     };
-    task_detail::render_task_title(
-        &answer.task.presentation_title,
-        &LineControls::Live {
-            resolves: &resolves,
-        },
+    let phase = &workflow.phase;
+    let flow = workflow
+        .flow
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" → ");
+    // The flow reads once, its current phase marked; a phase outside the flow
+    // leads it so neither is lost.
+    let steps = workflow.flow.iter().enumerate().map(|(index, step)| {
+        let arrow = if index == 0 { "" } else { " → " };
+        if step == phase {
+            html! { <>{arrow}<strong>{step.to_string()}</strong></> }
+        } else {
+            html! { <>{arrow}{step.to_string()}</> }
+        }
+    });
+    html! {
+        <header class="work-task-header">
+            <div class="work-task-header-title">
+                <code class="work-task-handle">{statement.handle.to_string()}</code>
+                <h3 id={title_id}>
+                    {task_detail::render_task_title(
+                        &row.presentation_title,
+                        &LineControls::Live { resolves: &resolves },
+                    )}
+                </h3>
+                {standing_pill(row)}
+            </div>
+            <p class="work-task-header-facts">
+                <span data-task-header="phase" title={format!("Phase {phase} of flow {flow}")}>
+                    if !workflow.flow.contains(phase) {
+                        <strong>{phase.to_string()}</strong>{" · "}
+                    }
+                    {for steps}
+                </span>
+                <span data-task-header="claim">{claimant(row, render)}</span>
+                <span data-task-header="review">{review_assignment(workflow, render)}</span>
+                {task_time_millis(statement.born.micros().div_euclid(1_000), TaskTimePresentation::Elapsed)}
+                if let Some(href) = creator_context {
+                    {task_detail::creator_context_link("work-context-link", href, statement, None)}
+                }
+            </p>
+        </header>
+    }
+}
+
+/// The task's kind and where it stands: a Design's lifecycle standing, else its
+/// workflow status, after any declared intent.
+fn standing_pill(row: &wire::intent::BoardTask) -> Html {
+    let status = row.workflow.body.status.as_str();
+    let (standing, title) = row.design_standing().map_or_else(
+        || (status, status.to_owned()),
+        |standing| (standing.key(), standing.to_string()),
+    );
+    let text = row.statement.body.intent.map_or_else(
+        || standing.to_owned(),
+        |intent| format!("{intent} · {standing}"),
+    );
+    html! {
+        <span class="work-task-pill" data-task-standing={standing} {title}>{text}</span>
+    }
+}
+
+/// Who holds the task, linked to its lane, or how the last holder let it go.
+fn claimant(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_, '_>) -> Html {
+    let Some(claim) = &row.claim else {
+        return html! { "Unclaimed" };
+    };
+    let verb = match claim.body.disposition {
+        wire::ClaimDisposition::Active => "Claimed by ",
+        wire::ClaimDisposition::Freed => "Freed by ",
+        wire::ClaimDisposition::Lapsed => "Lapsed from ",
+    };
+    html! { <>{verb}{actor_link(&claim.body.actor, render)}</> }
+}
+
+/// The task's reviewer when one is assigned, else where review stands.
+fn review_assignment(workflow: &wire::WorkflowHead, render: &WorkDetailRender<'_, '_>) -> Html {
+    workflow.status.reviewer().map_or_else(
+        || html! { {format!("Review {}", workflow.review_str())} },
+        |actor| html! { <>{"Review by "}{actor_link(actor, render)}</> },
     )
 }
 
@@ -246,27 +341,9 @@ fn render_available(
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == statement.born);
-    let messages = render.creator_messages.iter().map(AsRef::as_ref);
-    let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     let completion = workflow.status.completion();
     html! {
         <div class="app-sheet-body">
-            <div class="app-sheet-identity">
-                <code>{statement.handle.to_string()}</code>
-                <chrome::CopyButton
-                    class="app-compact-control"
-                    text={AttrValue::from(statement.handle.to_string())}
-                    subject="task handle"
-                >{"Copy identity"}</chrome::CopyButton>
-                if let Some(href) = creator_context {
-                    {task_detail::creator_context_link(
-                        "work-context-link",
-                        href,
-                        statement,
-                        None,
-                    )}
-                }
-            </div>
             <section class="app-sheet-section">
                 <h3>{"Contract"}</h3>
                 {task_detail::render_contract(statement, |task| selection_has(render.selection, task), true)}
@@ -278,22 +355,6 @@ fn render_available(
                 projected.map_or(row, |task| task.row()),
             )}
             {task_detail::render_media(&answer.media)}
-            <section class="app-sheet-section">
-                <h3>{"State"}</h3>
-                <dl class="app-fact-grid">
-                    {project_fact(render, &statement.project)}
-                    {fact("Status", workflow.status.as_str().to_owned())}
-                    {fact("Current phase", workflow.phase.to_string())}
-                    {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
-                    {fact("Review", workflow.review_str().to_owned())}
-                    {assignment_fact(workflow.status.reviewer(), render)}
-                    {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
-                    {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
-                    {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref(), "None"))}
-                    {instant_fact("Completion", completion.as_ref(), "Open")}
-                </dl>
-                {render_possession(row, render)}
-            </section>
             {render_room(render, answer)}
             <section class="app-sheet-section">
                 <h3>{"Relationships"}</h3>
@@ -302,17 +363,23 @@ fn render_available(
             <section class="app-sheet-section">
                 <h3>{"Provenance"}</h3>
                 <dl class="app-fact-grid">
+                    {project_fact(render, &statement.project)}
+                    {fact("Status", workflow.status.as_str().to_owned())}
+                    {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
+                    {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
+                    {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref()))}
+                    {instant_fact("Completion", completion.as_ref())}
+                    {possession_facts(row)}
                     {origin_fact(&statement.provenance, answer.origin_request.as_ref())}
                     {fact("Origin thread", row.origin_thread.clone())}
                     {creator_team_fact(row.creator_team, render)}
                     {fact("Queue fact", statement.queue_origin.to_string())}
                     {fact("Statement revision", statement.revision.to_string())}
                     {fact("Workflow fact", row.workflow.position.to_string())}
+                    {claim_context_facts(row, render)}
+                    {git_context_facts(row)}
                 </dl>
-                {render_claim_context(row)}
-                {render_git_context(row)}
             </section>
-
         </div>
     }
 }
@@ -370,7 +437,14 @@ fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDet
     }
 }
 
+/// What a fact reads when its value is absent.
+const ABSENT: &str = "—";
+
 fn fact(label: &'static str, value: String) -> Html {
+    html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+}
+
+fn html_fact(label: &'static str, value: Html) -> Html {
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 
@@ -441,101 +515,72 @@ fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
 
 fn creator_team_fact(team: Option<wire::CanonicalUuid>, render: &WorkDetailRender<'_, '_>) -> Html {
     let Some(team) = team else {
-        return fact("Creator team", "None".to_owned());
+        return fact("Creator team", ABSENT.to_owned());
     };
+    let lanes = render.lanes.map_or(&[][..], |view| &view.lanes);
     let destination = render
         .lanes
         .and_then(|lanes| lanes.chat_target_for_team(team));
-    linked_identity_fact(
+    html_fact(
         "Creator team",
-        team.to_string(),
-        team.to_string(),
-        String::new(),
-        destination,
+        identity_link(
+            crate::watchband::team_label_in(lanes, team),
+            team.to_string(),
+            destination,
+        ),
     )
 }
 
-fn linked_identity_fact(
-    label: &'static str,
+/// A name the reader knows, its durable spelling on hover, linked to the Chat
+/// composer that reaches it when one exists.
+fn identity_link(
     display: String,
     identity: String,
-    suffix: String,
     destination: Option<(wire::CanonicalUuid, wire::CanonicalUuid)>,
 ) -> Html {
     let Some((_team, member)) = destination else {
-        return html! {
-            <div><dt>{label}</dt><dd title={identity}>{display}{suffix}</dd></div>
-        };
+        return html! { <span title={identity}>{display}</span> };
     };
     let href = crate::view::card_href(&super::super::watchband::primary_textarea_id(
         &member.to_string(),
     ));
     html! {
-        <div>
-            <dt>{label}</dt>
-            <dd title={identity}>
-                <a
-                    class="app-fact-link"
-                    data-task-chat-link={member.to_string()}
-                    {href}
-                    aria-label={format!("Open {display} in Chat")}
-                >{display}</a>
-                {suffix}
-            </dd>
-        </div>
+        <a
+            class="app-fact-link"
+            data-task-chat-link={member.to_string()}
+            title={identity}
+            {href}
+            aria-label={format!("Open {display} in Chat")}
+        >{display}</a>
     }
 }
 
-fn instant_fact(label: &'static str, instant: Option<&wire::Instant>, empty: &'static str) -> Html {
-    let value = instant.map_or_else(
-        || html! { empty },
-        |instant| task_time(instant, TaskTimePresentation::DetailedElapsed),
-    );
-    html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+fn instant_fact(label: &'static str, instant: Option<&wire::Instant>) -> Html {
+    html_fact(
+        label,
+        instant.map_or_else(
+            || html! { ABSENT },
+            |instant| task_time(instant, TaskTimePresentation::Elapsed),
+        ),
+    )
 }
 
-fn deadline_fact(
-    label: &'static str,
-    instant: Option<&wire::Instant>,
-    empty: &'static str,
-) -> Html {
-    html! { <div><dt>{label}</dt><dd>{deadline_value(instant, empty)}</dd></div> }
-}
-
-fn deadline_value(instant: Option<&wire::Instant>, empty: &'static str) -> Html {
+fn deadline_value(instant: Option<&wire::Instant>) -> Html {
     instant.map_or_else(
-        || html! { empty },
-        |instant| task_time(instant, TaskTimePresentation::DetailedRemaining),
+        || html! { ABSENT },
+        |instant| task_time(instant, TaskTimePresentation::Remaining),
     )
 }
 
-fn assignment_fact(assignment: Option<&wire::Actor>, render: &WorkDetailRender<'_, '_>) -> Html {
-    assignment.map_or_else(
-        || fact("Assignment", "Unassigned".to_owned()),
-        |actor| actor_fact("Assignment", actor, String::new(), render),
-    )
-}
-
-/// A fact naming one actor for the reader, its durable spelling on hover.
-fn actor_fact(
-    label: &'static str,
-    actor: &wire::Actor,
-    suffix: String,
-    render: &WorkDetailRender<'_, '_>,
-) -> Html {
+/// One actor by the name the reader knows, linked to its lane's Chat composer.
+fn actor_link(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> Html {
     let destination = match actor {
         wire::Actor::Lane(lane) => render
             .lanes
             .and_then(|lanes| lanes.chat_target_for_lane(*lane)),
         wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
     };
-    linked_identity_fact(
-        label,
-        actor_name(actor, render),
-        actor.to_string(),
-        suffix,
-        destination,
-    )
+    identity_link(actor_name(actor, render), actor.to_string(), destination)
 }
 
 fn actor_name(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> String {
@@ -550,26 +595,15 @@ fn actor_name(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> String 
     )
 }
 
-fn render_possession(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_, '_>) -> Html {
-    let claim = row.claim.as_ref();
+/// The claim's journal fact and lease; the header names the claimant.
+fn possession_facts(row: &wire::intent::BoardTask) -> Html {
     let lease = row.lease.as_ref();
     html! {
-        <div class="app-sheet-subsection">
-            <h4>{"Claim and lease"}</h4>
-            <dl class="app-fact-grid">
-                {claim.map_or_else(|| fact("Claim", "Unclaimed".to_owned()), |claim| {
-                    actor_fact(
-                        "Claim",
-                        &claim.body.actor,
-                        format!(" · {:?}", claim.body.disposition),
-                        render,
-                    )
-                })}
-                {fact("Claim fact", claim.map_or_else(|| "None".to_owned(), |claim| claim.position.to_string()))}
-                {instant_fact("Lease start", lease.map(|lease| &lease.body.start), "None")}
-                {deadline_fact("Lease expiry", lease.map(|lease| &lease.body.expiry), "None")}
-            </dl>
-        </div>
+        <>
+            {fact("Claim fact", row.claim.as_ref().map_or_else(|| ABSENT.to_owned(), |claim| claim.position.to_string()))}
+            {instant_fact("Lease start", lease.map(|lease| &lease.body.start))}
+            {html_fact("Lease expiry", deadline_value(lease.map(|lease| &lease.body.expiry)))}
+        </>
     }
 }
 
@@ -656,7 +690,9 @@ fn render_task_link(
     }
 }
 
-fn render_claim_context(row: &wire::intent::BoardTask) -> Html {
+/// Where the claim was won: its fact, its lane by name, that lane's occupant
+/// and resident generation relative to the current ones, and its transcript.
+fn claim_context_facts(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_, '_>) -> Html {
     let Some(context) = &row.claim_context else {
         return Html::default();
     };
@@ -668,35 +704,44 @@ fn render_claim_context(row: &wire::intent::BoardTask) -> Html {
             format!("Transcript unavailable: {reason}")
         }
     };
+    let lane = wire::Actor::Lane(context.lane);
+    let seated = render
+        .lanes
+        .and_then(|lanes| lanes.member(context.lane))
+        .map(|member| member.occupant == Some(context.occupant));
+    let occupant = match seated {
+        Some(true) => format!("{}, seated now", actor_name(&lane, render)),
+        Some(false) => format!("{}, an earlier occupant", actor_name(&lane, render)),
+        None => format!("{} occupant", actor_name(&lane, render)),
+    };
+    let epoch = match render.lanes.map(|lanes| lanes.epoch == context.epoch) {
+        Some(true) => "Current resident".to_owned(),
+        Some(false) => "An earlier resident".to_owned(),
+        None => format!("Resident {}", crate::watchband::short(context.epoch)),
+    };
     html! {
-        <div class="app-sheet-subsection">
-            <h4>{"Claim provenance"}</h4>
-            <dl class="app-fact-grid">
-                {fact("Claimed fact", context.claimed.to_string())}
-                {fact("Lane", context.lane.to_string())}
-                {fact("Occupant", context.occupant.to_string())}
-                {fact("Resident epoch", context.epoch.to_string())}
-                {fact("Recovery", recovery)}
-            </dl>
-        </div>
+        <>
+            {fact("Claimed fact", context.claimed.to_string())}
+            {html_fact("Claim lane", actor_link(&lane, render))}
+            {html_fact("Occupant", html! { <span title={context.occupant.to_string()}>{occupant}</span> })}
+            {html_fact("Resident epoch", html! { <span title={context.epoch.to_string()}>{epoch}</span> })}
+            {fact("Recovery", recovery)}
+        </>
     }
 }
 
-fn render_git_context(row: &wire::intent::BoardTask) -> Html {
+fn git_context_facts(row: &wire::intent::BoardTask) -> Html {
     let Some(context) = &row.git_context else {
         return Html::default();
     };
     html! {
-        <div class="app-sheet-subsection">
-            <h4>{"Repository boundary"}</h4>
-            <dl class="app-fact-grid">
-                {fact("Lifecycle", context.kind.as_str().to_owned())}
-                {fact("Fact", context.fact.to_string())}
-                {fact("Head", context.boundary.head.clone())}
-                {fact("Integrated", context.boundary.integrated.clone())}
-                {fact("Upstream", context.boundary.upstream.clone().unwrap_or_else(|| "None".to_owned()))}
-                {fact("Local commits", context.boundary.local_commits.to_string())}
-            </dl>
-        </div>
+        <>
+            {fact("Repository lifecycle", context.kind.as_str().to_owned())}
+            {fact("Repository fact", context.fact.to_string())}
+            {fact("Head", context.boundary.head.clone())}
+            {fact("Integrated", context.boundary.integrated.clone())}
+            {fact("Upstream", context.boundary.upstream.clone().unwrap_or_else(|| ABSENT.to_owned()))}
+            {fact("Local commits", context.boundary.local_commits.to_string())}
+        </>
     }
 }
