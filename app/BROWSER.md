@@ -171,8 +171,8 @@ cards, and linked bytes that are not present stay labeled source
 placeholders. Each room card is a single top-level card shaped like a team
 message card, with no card nested inside it and no publication key shown. Its
 words lead with the relative age, the speaker in their lane's team accent, an
-arrow to any receivers, and, where applicable, the contribution kind (reason
-for, reason against, evidence, or question) or Unheard on an operator post that
+arrow to any receivers, and, where applicable, the contribution's vote
+(strongly for, for, evidence, against, or strongly against) or question, or Unheard on an operator post that
 no current or later lane authority proves was heard. The Unheard pill's tooltip
 and accessible label explain that no lane listens yet and that starting or
 directing one will have the post read. Receipts and cited sources follow the
@@ -184,7 +184,7 @@ rules in the design's accent around the leave's linked age, the leaving lane,
 the design it left, and its clause, which alone yields width; the label's title
 keeps the whole sentence. As on a team toolbar, the status band shows the
 newest thing said in any of the group's designs, a contribution named by its
-lane and kind, and no group name; a coordination never displaces it.
+lane and vote, and no group name; a coordination never displaces it.
 
 As on a team's rail, the group's total holds the right edge of its tab rail and
 opens the group's work overview. Leftward from it, the rail lists each lane

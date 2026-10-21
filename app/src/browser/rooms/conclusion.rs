@@ -56,9 +56,6 @@ pub(super) fn render_conclusion(
     html! {
         <section class="room-conclusion" aria-label="Conclusion" data-room-conclusion={design.to_string()}>
             <header><strong>{"Conclusion"}</strong></header>
-            <p class="room-notice">
-                {"Done ends the Design after its proposal decisions, keeping selected outputs released. Collapse is decided on the exact proposal version whose premise failed."}
-            </p>
             <div class="room-inline-actions">
                 <button type="button" onclick={done}>{"Preview done"}</button>
             </div>

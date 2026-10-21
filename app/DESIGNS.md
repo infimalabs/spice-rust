@@ -180,7 +180,8 @@ bound, asks again.
 Each design's menu and read view open with the room's standing, derived from
 the room snapshot, its live facts, the board, and lane topology on every render:
 
-- **Next action**: the one next useful action that authority supports.
+- **Next action**: the one next useful action that authority supports, as one
+  sentence naming who acts next and on what, never a command line.
 - **Latest coordination**: its request and that request's disposition, and
   whether a put-aside followed it.
 - **Lanes**: each involved lane with whether it is seated, vacant, or unknown,
@@ -200,9 +201,10 @@ the room snapshot, its live facts, the board, and lane topology on every render:
   source coverage, and operator verdict.
 
 Agreement, silence, message count, elapsed time, ACK, and ANS never read as
-progress or approval. The section only renders inside an explicitly opened menu
-or read view: a status or relevance update changes its text in place and
-never mounts a room, moves a console, or wakes a lane.
+progress or approval; the section states only what moves the Design. It only
+renders inside an explicitly opened menu or read view: a status or relevance
+update changes its text in place and never mounts a room, moves a console, or
+wakes a lane.
 
 ## Design contributions
 
@@ -210,7 +212,9 @@ A lane contributes to an open Design's problem space with one typed record:
 a charge from -2 to +2 against one of the Design's question items, or a
 question, with its text and the transcript, journal, or artifact sources it
 cites. A ±1 charge is an opinion; 0 and ±2 cite at least one source. Retained
-posts from before charges name no item and read as Design-level. A
+posts from before charges name no item and read as Design-level. The app reads
+each charge to the operator as a vote: strongly for, for, evidence, against,
+or strongly against. A
 contribution is
 lane-authored evidence for the operator's judgment, never authority: it
 moves no task, claim, working group, candidate, decision, or authorization,
@@ -219,7 +223,7 @@ own sessions; the operator reads contributions and decides through the
 ordinary Design controls.
 
 The Design read view groups contributions by kind, each with its lane,
-time, charge, the question item it weighs, text, and every cited source,
+time, vote, the question item it weighs, text, and every cited source,
 while room history keeps them in journal order among the ordinary
 conversation. The resident resolves each cited source for the shown Design,
 and the card says whether it is available or why not (missing, hidden,
@@ -237,18 +241,18 @@ a lane's own session.
 
 The read view's **Design maturity** panel derives from the bounded per-Design
 measure the room projection folds incrementally from streamed requests and
-contributions, never by folding rendered room history. It shows contribution
-and lane totals, requested reach, each current question item's state (quiet,
-unopposed, contested, or concurred) with its charges and lanes, recent
-statement-head request yield, and folded older-head and unattributed
-historical totals. Fresh has no contributions; steeped means some current
-item concurs and none is contested, and the summary otherwise names the item
-that needs input next. Steeped maturity makes the Design's first pass ready
-for a lane, which the standing's pass cycle shows; it is not a danger or
-workflow state, and maturity never blocks or authorizes a Design decision.
+contributions, never by folding rendered room history. It shows each current
+question item's state (quiet, unopposed, contested, or concurred) with its
+votes and lanes, recent statement-head request yield, and folded older-head
+and unattributed historical totals. Fresh has no contributions; steeped means
+some current item concurs and none is contested, and the summary otherwise
+names the item and the vote it needs next. Steeped maturity makes the Design's
+first pass ready for a lane, which the standing's pass cycle shows; it is not a
+danger or workflow state, and maturity never blocks or authorizes a Design
+decision.
 
-An open Design's view says what a contribution is and offers the reader no
-contribution control. A lane learns of an open Design matching its claimed
+An open Design's view offers the reader no contribution control. A lane learns
+of an open Design matching its claimed
 work from the resident's private notice and `spice room awareness`. Each names
 the claimed task and its matched terms, each distinct term once and at most
 six, along with the statement revision, the optional `task modify --title`,

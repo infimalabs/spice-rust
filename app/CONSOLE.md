@@ -301,7 +301,7 @@ tabs do. It maps each team element to a design-side analog:
 | One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
 | A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
 | Presence pips: one per member, by state | Design pips: one per design in its accent, distinguishing open passive, claimed, each of the four pass cycle states (gathering input, ready for proposal, awaiting decision, waiting on selected work), concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row or cycle is unavailable invents no standing |
-| Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest words said across the group's designs, with the same age, prefix, accessible label, and live region; a contribution names its lane and kind, while departures and coordination events do not displace it |
+| Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest words said across the group's designs, with the same age, prefix, accessible label, and live region; a contribution names its lane and vote, while departures and coordination events do not displace it |
 
 A design pip reads its [standing](#design-standing): concluded done,
 concluded collapsed, or deleted once terminal, even while a saved group still
