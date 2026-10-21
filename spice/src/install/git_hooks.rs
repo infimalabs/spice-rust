@@ -96,12 +96,17 @@ const PRE_COMMIT_ENVIRONMENT: &str = concat!(
     "unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n",
     "case $git_exec_path in\n",
     "  /Library/Developer/CommandLineTools/*)\n",
-    "    [ \"${CPATH-}\" != /usr/local/include ] || unset CPATH\n",
-    "    [ \"${LIBRARY_PATH-}\" != /usr/local/lib ] || unset LIBRARY_PATH\n",
-    "    case ${SDKROOT-} in /Library/Developer/CommandLineTools/*) unset SDKROOT ;; esac\n",
-    "    case ${MANPATH-} in *Library/Developer/CommandLineTools*) unset MANPATH ;; esac\n",
-    "    ;;\n",
+    "    developer_root=/Library/Developer/CommandLineTools ;;\n",
+    "  /Applications/Xcode.app/Contents/Developer/*)\n",
+    "    developer_root=/Applications/Xcode.app/Contents/Developer ;;\n",
+    "  *) developer_root= ;;\n",
     "esac\n",
+    "if [ -n \"$developer_root\" ]; then\n",
+    "  [ \"${CPATH-}\" != /usr/local/include ] || unset CPATH\n",
+    "  [ \"${LIBRARY_PATH-}\" != /usr/local/lib ] || unset LIBRARY_PATH\n",
+    "  case ${SDKROOT-} in \"$developer_root\"/*) unset SDKROOT ;; esac\n",
+    "  case ${MANPATH-} in *\"$developer_root\"*) unset MANPATH ;; esac\n",
+    "fi\n",
 );
 
 fn quote(spelling: &str) -> String {
