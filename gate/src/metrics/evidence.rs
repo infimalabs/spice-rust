@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -63,14 +63,6 @@ impl MetricKey {
             ));
         }
         Ok(Self::Function(FunctionKey { path, function }))
-    }
-
-    fn path_value(&self) -> Option<&str> {
-        match self {
-            Self::Arm => None,
-            Self::Path(path) => Some(path),
-            Self::Function(key) => Some(&key.path),
-        }
     }
 }
 
@@ -1073,15 +1065,4 @@ fn canonical_path(path: String) -> Result<String, EvidenceError> {
 
 fn valid_text(value: &str) -> bool {
     !value.trim().is_empty() && !value.contains(['\r', '\n'])
-}
-
-#[allow(dead_code)]
-fn by_path(evidence: &[MetricEvidence]) -> BTreeMap<&str, Vec<MetricId>> {
-    let mut paths = BTreeMap::new();
-    for row in evidence {
-        if let Some(path) = row.key.path_value() {
-            paths.entry(path).or_insert_with(Vec::new).push(row.metric);
-        }
-    }
-    paths
 }
