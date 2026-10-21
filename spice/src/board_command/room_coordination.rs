@@ -118,7 +118,6 @@ pub(crate) fn room_coordinate(
     room_coordinate_with(bus, command, request, config, projects, allocation, || {})
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn room_coordinate_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,

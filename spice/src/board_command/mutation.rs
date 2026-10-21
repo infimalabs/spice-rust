@@ -96,7 +96,6 @@ pub(super) fn task_add(
     task_add_with(bus, command, add, repository, projects, allocation, || {})
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn task_add_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -844,7 +843,6 @@ pub(super) fn task_depends(
     task_depends_with(bus, command, depends, projects, allocation, || {})
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn task_depends_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,
