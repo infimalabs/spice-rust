@@ -28,7 +28,12 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     )?;
     let command = wire::CommandKind::RoomContribute;
     residual::rewrite_receipts(transaction, command, LABEL_RELEASE, |request, response| {
-        Ok((cross_request(request)?, cross_response(command, response)?))
+        Ok((
+            residual::edit_request::<wire::intent::RoomContribute>(request, |body| {
+                relabel(body, "kind")
+            })?,
+            residual::edit_reply(command, response, |answer| relabel(answer, "kind"))?,
+        ))
     })
 }
 
@@ -46,48 +51,4 @@ fn relabel(object: &mut Map<String, Value>, member: &str) -> Result<bool, String
     };
     object.insert(member.to_owned(), Value::from(charge));
     Ok(true)
-}
-
-/// The request with its label crossed, through the current strict DTO, or
-/// `None` when it already carries a charge or question.
-fn cross_request(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
-    let mut request: Value = wire::decode(bytes)
-        .map_err(|error| format!("the stored request does not decode: {error}"))?;
-    let body = request
-        .get_mut("body")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| "the stored request has no body object".to_owned())?;
-    if !relabel(body, "kind")? {
-        return Ok(None);
-    }
-    let request: wire::Command<wire::intent::RoomContribute> = serde_json::from_value(request)
-        .map_err(|error| format!("the crossed request is not current: {error}"))?;
-    request
-        .canonical_json()
-        .map(String::into_bytes)
-        .map(Some)
-        .map_err(|error| format!("the crossed request cannot encode: {error}"))
-}
-
-/// The response with its reply's label crossed, or `None` when it is a
-/// refusal or already carries a charge or question.
-fn cross_response(command: wire::CommandKind, bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
-    let mut response: wire::Response<Value> = wire::decode(bytes)
-        .map_err(|error| format!("the stored response does not decode: {error}"))?;
-    let wire::Outcome::Reply(reply) = &mut response.outcome else {
-        return Ok(None);
-    };
-    let answer = reply
-        .body
-        .as_object_mut()
-        .ok_or_else(|| "the stored answer is not a JSON object".to_owned())?;
-    if !relabel(answer, "kind")? {
-        return Ok(None);
-    }
-    wire::encode(&reply.body)
-        .and_then(|body| command.binding().answer.decode(&body))
-        .map_err(|error| format!("the crossed answer is not current: {error}"))?;
-    wire::encode(&response)
-        .map(Some)
-        .map_err(|error| format!("the crossed response cannot encode: {error}"))
 }
