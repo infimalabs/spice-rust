@@ -131,11 +131,10 @@ name continuations.
 ## Operator decision boundary
 
 Executable-configuration trust refusal is the sole operator automation stop.
-Report exact digest/provenance/command. While claimed, read requirements and
-visibly run `task require HANDLE --trust-grant DIGEST`, repeating any
-`--journal-schema`; this ices but retains the claim. Unclaimed: report, mutate
-nothing. Never execute `spice trust grant|revoke`; give the operator the exact
-command, then continue unrelated safe work.
+Report exact digest/provenance/command; at turn end the resident pends it and
+parks the held claim until the grant, dropping the park if the configuration
+is backed out. Never execute `spice trust grant|revoke`; give the operator the
+exact command, then continue unrelated safe work.
 
 ## Prompt boundary
 

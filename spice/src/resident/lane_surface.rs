@@ -24,9 +24,9 @@ use wire::{
 };
 
 mod automatic;
-mod pended_grant;
+mod trust_park;
 #[cfg(test)]
-pub(in crate::resident) use pended_grant::park_on_pended_grant;
+pub(in crate::resident) use trust_park::reconcile_trust_park;
 mod ending;
 mod jobs;
 mod launch;
@@ -1107,24 +1107,32 @@ pub(super) fn occupant_exited(
     // occupant left in its final prose is journaled here rather than waiting
     // for a successor to cite it.
     super::steering::dispose_at_exit(bus, paths, epoch, exit.lane, &vendor, diagnostic);
-    // A turn that ended on a trust refusal leaves its held work parked on the
-    // grant its own worktree pended for its current surface, so nothing wakes
-    // the lane until the operator rules. A failure here, including an
-    // unreadable surface, leaves the claim as it was.
-    let surface = || {
+    // Held work stays parked exactly while its worktree needs an ungranted
+    // executable configuration: the resident pends and requires that digest,
+    // and drops a digest the worktree pended once it no longer needs it. A
+    // failure here, including an unreadable configuration, leaves the claim as
+    // it was.
+    let need = || {
         let repository = Repository::discover(&worktree)
             .map_err(|error| store_fault("lane::worktree-unresolved", &error.to_string()))?;
-        crate::trust_command::Surface::load(&repository)
-            .map(|surface| surface.digest().clone())
-            .map_err(|error| store_fault("trust::surface-unreadable", &error.to_string()))
+        let loaded = spice::config::capture_repository(&repository, &[])
+            .map_err(|error| store_fault("trust::surface-unreadable", &error.to_string()))?;
+        let gated = !loaded.resolved().root().policy().pre_commit().is_empty();
+        Ok(gated.then(|| {
+            crate::trust_command::Surface::from_loaded(&loaded)
+                .digest()
+                .clone()
+        }))
     };
-    let parked = wire::Instant::new(jiff::Timestamp::now())
+    let reconciled = wire::Instant::new(jiff::Timestamp::now())
         .map_err(|error| store_fault("lane::exit-clock-invalid", &error.to_string()))
-        .and_then(|at| pended_grant::park_on_pended_grant(bus, exit.lane, &worktree, surface, at));
-    if let Err(error) = parked {
+        .and_then(|at| {
+            trust_park::reconcile_trust_park(bus, epoch, exit.lane, &worktree, need, at)
+        });
+    if let Err(error) = reconciled {
         let _ = writeln!(
             diagnostic,
-            "held claim was not parked on its pended trust grant: {error:?}"
+            "held claim trust parking was not reconciled: {error:?}"
         );
     }
     Ok(())

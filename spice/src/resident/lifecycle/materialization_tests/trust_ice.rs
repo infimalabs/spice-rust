@@ -65,17 +65,14 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
 }
 
 #[test]
-fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
+fn a_turn_end_parks_held_work_on_its_ungranted_configuration_until_the_grant_lands() {
     let digest = digest();
     let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
-    committed(
-        bus.commit(pend_write(&digest, PRODUCER, instant(2)))
-            .expect("pend commits"),
-    );
     assert!(
-        !park(&bus, PRODUCER, &digest),
+        !reconcile(&bus, PRODUCER, Some(&digest)),
         "a lane without a claim parks nothing"
     );
+    assert_eq!(trust(&bus, &digest), None, "nor pends for it");
     // A finite lease that ends before the wake decision below: only the ice
     // keeps the claim held, so the grant can wake it.
     committed(
@@ -83,16 +80,23 @@ fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
             .expect("claim commits"),
     );
     assert!(
-        !park(&bus, "/other/worktree", &digest),
-        "another worktree's digest parks nothing"
+        !reconcile(&bus, PRODUCER, None),
+        "a configuration without pre-commit commands parks nothing"
     );
 
-    assert!(park(&bus, PRODUCER, &digest));
+    assert!(reconcile(&bus, PRODUCER, Some(&digest)));
+    assert_eq!(
+        trust(&bus, &digest),
+        Some((wire::TrustState::Pended, Some(PRODUCER.to_owned()))),
+        "an unseen digest is pended for the operator"
+    );
     assert_eq!(required(&bus), Some(digest.clone()));
+    let pends = pended_count(&bus);
     assert!(
-        !park(&bus, PRODUCER, &digest),
+        !reconcile(&bus, PRODUCER, Some(&digest)),
         "a repeated turn end records nothing more"
     );
+    assert_eq!(pended_count(&bus), pends);
     let parked = bus.task_snapshot().expect("parked snapshot reads");
     let lease = parked.tasks()[0].lease().expect("held lease").body();
     assert!(spice::claim_lease::is_indefinite(lease));
@@ -100,61 +104,73 @@ fn a_turn_end_parks_held_work_on_its_own_pended_grant_until_the_grant_lands() {
     projection
         .advance(&parked, &projects)
         .expect("parked projection advances");
-    assert_eq!(
-        resolve(
-            &[target(&parked, &projection)],
-            &Backoff::default(),
-            instant(50),
-            lane::WakeOrder::default()
-        ),
-        Resolution::Idle
-    );
+    assert_eq!(wake(&parked, &projection), Resolution::Idle);
 
     committed(bus.commit(grant_write(&digest)).expect("grant commits"));
     let granted = bus.task_snapshot().expect("granted snapshot reads");
     projection
         .advance(&granted, &projects)
         .expect("grant projection advances");
-    assert_eq!(
-        resolve(
-            &[target(&granted, &projection)],
-            &Backoff::default(),
-            instant(50),
-            lane::WakeOrder::default()
-        ),
-        Resolution::Attempt {
-            trigger: Trigger::HeldClaim,
-            lane: lane(),
-        }
-    );
+    assert_eq!(wake(&granted, &projection), held_wake());
     assert!(
-        !park(&bus, PRODUCER, &digest),
-        "a granted digest parks nothing"
+        !reconcile(&bus, PRODUCER, Some(&digest)),
+        "a granted configuration changes nothing"
     );
     bus.verify().expect("the parked authority verifies");
     bus.shutdown().expect("parking fixture stops");
 }
 
 #[test]
-fn a_newer_pended_digest_supersedes_its_worktrees_older_one_but_never_another_worktrees_grant() {
+fn a_turn_end_drops_a_park_its_worktree_no_longer_needs() {
+    let (abandoned, granted) = (digest(), other_digest());
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    committed(
+        bus.commit(claim_write_until(&bus, instant(3), instant(40), |_, _| {}))
+            .expect("claim commits"),
+    );
+    assert!(reconcile(&bus, PRODUCER, Some(&abandoned)));
+    committed(bus.commit(grant_write(&granted)).expect("grant commits"));
+
+    let before = super::reaped_seat::fact_kinds(&bus).len();
+    assert!(
+        reconcile(&bus, PRODUCER, Some(&granted)),
+        "a configuration backed out to a granted digest drops the park"
+    );
+    assert_eq!(required(&bus), None);
+    assert_eq!(
+        super::reaped_seat::fact_kinds(&bus)[before..],
+        [wire::FactKind::TaskEdited],
+        "the drop writes no operator item or steering"
+    );
+    let dropped = bus.task_snapshot().expect("dropped snapshot reads");
+    projection
+        .advance(&dropped, &projects)
+        .expect("dropped projection advances");
+    assert_eq!(wake(&dropped, &projection), held_wake());
+
+    assert!(reconcile(&bus, PRODUCER, Some(&abandoned)));
+    assert_eq!(required(&bus), Some(abandoned.clone()));
+    assert!(
+        reconcile(&bus, PRODUCER, None),
+        "a configuration that no longer needs trust drops the park"
+    );
+    assert_eq!(required(&bus), None);
+    bus.verify().expect("the dropped authority verifies");
+    bus.shutdown().expect("drop fixture stops");
+}
+
+#[test]
+fn a_turn_end_replaces_its_worktrees_older_park_but_never_another_worktrees() {
     let (older, newer) = (digest(), other_digest());
     let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
-    committed(
-        bus.commit(pend_write(&older, PRODUCER, instant(2)))
-            .expect("older pend commits"),
-    );
     committed(
         bus.commit(held_claim_write(&bus, instant(3), |_, _| {}))
             .expect("claim commits"),
     );
-    assert!(park(&bus, PRODUCER, &older));
-    committed(
-        bus.commit(pend_write(&newer, PRODUCER, instant(4)))
-            .expect("newer pend commits"),
-    );
-    assert!(park(&bus, PRODUCER, &newer));
+    assert!(reconcile(&bus, PRODUCER, Some(&older)));
+    assert!(reconcile(&bus, PRODUCER, Some(&newer)));
     assert_eq!(required(&bus), Some(newer.clone()));
-    bus.shutdown().expect("supersession fixture stops");
+    bus.shutdown().expect("replacement fixture stops");
 
     let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
@@ -165,58 +181,61 @@ fn a_newer_pended_digest_supersedes_its_worktrees_older_one_but_never_another_wo
         bus.commit(iced_claim_write(&bus, &older, instant(3)))
             .expect("foreign-parked claim commits"),
     );
-    committed(
-        bus.commit(pend_write(&newer, PRODUCER, instant(4)))
-            .expect("own pend commits"),
-    );
-    assert!(!park(&bus, PRODUCER, &newer));
+    assert!(!reconcile(&bus, PRODUCER, Some(&newer)));
+    assert!(!reconcile(&bus, PRODUCER, None));
     assert_eq!(required(&bus), Some(older));
+    assert_eq!(
+        trust(&bus, &newer),
+        None,
+        "nothing is pended while another worktree's park stands"
+    );
+    bus.verify().expect("the foreign park verifies");
     bus.shutdown().expect("foreign fixture stops");
-}
-
-#[test]
-fn an_abandoned_pend_never_parks_a_worktree_whose_surface_moved_on() {
-    let (abandoned, granted, unpended) = (digest(), other_digest(), third_digest());
-    let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
-    committed(
-        bus.commit(pend_write(&abandoned, PRODUCER, instant(2)))
-            .expect("abandoned pend commits"),
-    );
-    committed(bus.commit(grant_write(&granted)).expect("grant commits"));
-    committed(
-        bus.commit(claim_write_until(&bus, instant(4), instant(40), |_, _| {}))
-            .expect("claim commits"),
-    );
-    let lease = |bus: &Bus| {
-        bus.task_snapshot().expect("lease snapshot reads").tasks()[0]
-            .lease()
-            .expect("held lease")
-            .body()
-            .clone()
-    };
-    let before = lease(&bus);
-
-    assert!(
-        !park(&bus, PRODUCER, &granted),
-        "a surface back on a granted digest parks nothing"
-    );
-    assert!(
-        !park(&bus, PRODUCER, &unpended),
-        "a surface nobody pended parks nothing"
-    );
-    assert_eq!(required(&bus), None);
-    assert_eq!(lease(&bus), before);
-    bus.verify().expect("the untouched authority verifies");
-    bus.shutdown().expect("abandoned fixture stops");
 }
 
 /// Worktree `grant_write` names as the digest's producer.
 const PRODUCER: &str = "/producer/worktree";
 
-fn park(bus: &Bus, worktree: &str, surface: &wire::Digest) -> bool {
-    let surface = || Ok(surface.clone());
-    crate::resident::lane_surface::park_on_pended_grant(bus, lane(), worktree, surface, instant(10))
-        .expect("turn-end parking decides")
+fn reconcile(bus: &Bus, worktree: &str, need: Option<&wire::Digest>) -> bool {
+    let need = || Ok(need.cloned());
+    crate::resident::lane_surface::reconcile_trust_park(
+        bus,
+        epoch(),
+        lane(),
+        worktree,
+        need,
+        instant(10),
+    )
+    .expect("turn-end reconciliation decides")
+}
+
+fn trust(bus: &Bus, digest: &wire::Digest) -> Option<(wire::TrustState, Option<String>)> {
+    bus.trust_head(digest)
+        .expect("trust head reads")
+        .map(|head| (head.body().state, head.body().worktree.clone()))
+}
+
+fn pended_count(bus: &Bus) -> usize {
+    super::reaped_seat::fact_kinds(bus)
+        .into_iter()
+        .filter(|kind| *kind == wire::FactKind::TrustPended)
+        .count()
+}
+
+fn wake(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Resolution {
+    resolve(
+        &[target(snapshot, projection)],
+        &Backoff::default(),
+        instant(50),
+        lane::WakeOrder::default(),
+    )
+}
+
+fn held_wake() -> Resolution {
+    Resolution::Attempt {
+        trigger: Trigger::HeldClaim,
+        lane: lane(),
+    }
 }
 
 fn required(bus: &Bus) -> Option<wire::Digest> {
@@ -262,12 +281,6 @@ fn pend_write(digest: &wire::Digest, worktree: &str, at: Instant) -> JournalWrit
 
 fn other_digest() -> wire::Digest {
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        .parse()
-        .expect("fixture digest")
-}
-
-fn third_digest() -> wire::Digest {
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         .parse()
         .expect("fixture digest")
 }
