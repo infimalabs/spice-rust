@@ -798,8 +798,8 @@ configuration_registry! {
     fixed "proof.runner" {
         kind: String,
         builtin: Some(Builtin::Absent),
-        layers: LOCAL,
-        class: MachineLocal,
+        layers: LOCAL_WORKTREE,
+        class: WorktreeLocal,
         flag: None,
     }
 }
