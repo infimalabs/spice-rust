@@ -906,16 +906,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-turbo[data-lit="true"]:not(:disabled),
 .app-spice-sidebar-anchor .app-spice-turbo[data-lit="true"]:not(:disabled) { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); color: var(--ink); }
 .team-composer .team-turbo[data-lit="false"], .app-spice-sidebar-anchor .app-spice-turbo[data-lit="false"] { color: var(--muted); }
-/* TURBO's lockup splits its fixed lettering box by letter share, as FULL SEND does: NO|TURBO off, TURBO|ON on; the accent word mirrors across TURBO, edge-on at the centre where NO becomes ON. */
-.app-turbo-button .turbo-lockup { --turbo-lockup-half: calc(var(--app-motion-settle) / 2); --turbo-lockup-no-delay: var(--turbo-lockup-half); --turbo-lockup-on-delay: 0s; position: relative; display: block; inline-size: 22px; block-size: 8px; }
-.app-turbo-button[data-lit="true"] .turbo-lockup { --turbo-lockup-no-delay: 0s; --turbo-lockup-on-delay: var(--turbo-lockup-half); }
-.app-turbo-button .turbo-lockup > * { position: absolute; inset: 0; transform-origin: left center; transition: transform var(--turbo-lockup-half) var(--app-ease-standard), color var(--app-motion-settle) var(--app-ease-standard); }
-.app-turbo-button .turbo-lockup__turbo { transform: translateX(calc(22px * 2 / 7)) scaleX(calc(5 / 7)); transition-duration: var(--app-motion-settle); }
-.app-turbo-button .turbo-lockup__no { color: var(--focus); transform: translateX(0) scaleX(calc(2 / 7)); transition-delay: var(--turbo-lockup-no-delay); }
-.app-turbo-button .turbo-lockup__on { color: var(--warning); transform: translateX(11px) scaleX(0); transition-delay: var(--turbo-lockup-on-delay); }
-.app-turbo-button[data-lit="true"] .turbo-lockup__turbo { transform: translateX(0) scaleX(calc(5 / 7)); }
-.app-turbo-button[data-lit="true"] .turbo-lockup__no { transform: translateX(11px) scaleX(0); }
-.app-turbo-button[data-lit="true"] .turbo-lockup__on { transform: translateX(calc(22px * 5 / 7)) scaleX(calc(2 / 7)); }
+/* TURBO's lockup splits its fixed lettering box by letter share exactly as SEND becomes FULL SEND: TURBO alone off, FULL|TURBO on, FULL in the focus accent. */
+.app-turbo-button .turbo-lockup { --turbo-lockup-full-opacity: 0; --turbo-lockup-full-scale: 0; --turbo-lockup-word-offset: 0px; --turbo-lockup-word-scale: 1; position: relative; display: block; inline-size: 22px; block-size: 8px; }
+.app-turbo-button .turbo-lockup > * { position: absolute; inset: 0; transform-origin: left center; transition: transform var(--app-motion-fast) var(--app-ease-standard), opacity var(--app-motion-fast) var(--app-ease-standard); }
+.app-turbo-button .turbo-lockup__full { color: var(--focus); opacity: var(--turbo-lockup-full-opacity); transform: scaleX(var(--turbo-lockup-full-scale)); }
+.app-turbo-button .turbo-lockup__turbo { transform: translateX(var(--turbo-lockup-word-offset)) scaleX(var(--turbo-lockup-word-scale)); }
+.app-turbo-button[data-lit="true"] .turbo-lockup { --turbo-lockup-full-opacity: 1; --turbo-lockup-full-scale: calc(4 / 9); --turbo-lockup-word-offset: calc(22px * 4 / 9); --turbo-lockup-word-scale: calc(5 / 9); }
 .team-composer .team-menu[aria-expanded="true"]:not(:disabled), .agent-menu[open] > .agent-menu-button { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); }
 .team-composer .fit-word, .app-spice-turbo .fit-word { filter: drop-shadow(0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent)); }
 .team-composer .team-send::before {
