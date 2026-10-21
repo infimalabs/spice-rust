@@ -838,18 +838,6 @@ impl TaskFacts {
             .is_some_and(|asked| asked.contains(&(design.clone(), item.cloned())))
     }
 
-    /// Whether this actor has ever published in this room.
-    #[must_use]
-    pub fn published_in_room(
-        &self,
-        actor: &journal::crossing::Actor,
-        room: &journal::crossing::TaskStamp,
-    ) -> bool {
-        self.indexes
-            .room_publication_positions
-            .contains_key(&(actor.clone(), room.clone()))
-    }
-
     /// Whether `lane` answered an ask about `room`'s `item` after `after`: a
     /// contribution against that item, or a leave of the room. A whole-Design
     /// ask, with no item, is answered by any record the lane makes there.
