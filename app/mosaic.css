@@ -906,6 +906,14 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-turbo[data-lit="true"]:not(:disabled),
 .app-spice-sidebar-anchor .app-spice-turbo[data-lit="true"]:not(:disabled) { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); color: var(--ink); }
 .team-composer .team-turbo[data-lit="false"], .app-spice-sidebar-anchor .app-spice-turbo[data-lit="false"] { color: var(--muted); }
+/* An engaged TURBO's fast flame is tucked behind the foot corner of its lettering, peeking past the
+   final letter as a provider emblem's fast badge rides its glyph. The button's backdrop filter is a
+   stacking context, so the negative layer paints over the glass and under the in-flow word. */
+.app-turbo-button__fire {
+  position: absolute; bottom: 11px; inset-inline-end: 2px; z-index: -1; line-height: 1; pointer-events: none;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: var(--app-type-small-copy);
+  filter: drop-shadow(0 .5px .5px color-mix(in srgb, var(--app-shadow-source) 45%, transparent));
+}
 .team-composer .team-menu[aria-expanded="true"]:not(:disabled), .agent-menu[open] > .agent-menu-button { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); }
 .team-composer .fit-word, .app-spice-turbo .fit-word { filter: drop-shadow(0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent)); }
 .app-turbo-button .fit-word { transition: color var(--app-motion-settle) var(--app-ease-standard); }
