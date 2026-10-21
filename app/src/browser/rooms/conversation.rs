@@ -199,6 +199,12 @@ pub(super) fn render_inbox(
                 let summary = conversation.map_or_else(String::new, |conversation| {
                     format!("MSG from {}", party(runtime, conversation.publication.author()))
                 });
+                let sender_card = conversation.and_then(|conversation| {
+                    match conversation.publication.source() {
+                        RoomSource::Transcript(hunk) => transcript_card_href(runtime, hunk),
+                        _ => None,
+                    }
+                });
                 let words = conversation.map_or_else(
                     || "The publication this item stands for is not loaded.".to_owned(),
                     |conversation| inbox_words(runtime, conversation),
@@ -221,7 +227,13 @@ pub(super) fn render_inbox(
                         tabindex="0"
                     >
                         <header>
-                            <strong class="room-flow-route">{summary}</strong>
+                            <strong class="room-flow-route">
+                                if let Some(href) = sender_card {
+                                    <a href={href}>{summary}</a>
+                                } else {
+                                    {summary}
+                                }
+                            </strong>
                             <span>{concern}</span>
                             <code>{publication.to_string()}</code>
                         </header>
@@ -624,14 +636,30 @@ pub(super) fn lane_label(runtime: &AppRuntime, lane: CanonicalUuid) -> String {
         )
 }
 
-/// The exact contributed bytes when the author's transcript echo is loaded.
-fn echo(runtime: &AppRuntime, hunk: &TranscriptHunk) -> Option<String> {
-    let start = usize::try_from(hunk.text.start).ok()?;
-    let end = usize::try_from(hunk.text.end).ok()?;
+/// The loaded agent message one transcript hunk was contributed from.
+fn transcript_message<'a>(
+    runtime: &'a AppRuntime,
+    hunk: &TranscriptHunk,
+) -> Option<&'a wire::AgentMessage> {
     runtime
         .messages()
         .iter()
         .find(|message| message.lane == hunk.head.lane && message.locus == hunk.locus)
+        .map(Rc::as_ref)
+}
+
+/// The card route of the loaded message one transcript hunk came from.
+pub(super) fn transcript_card_href(runtime: &AppRuntime, hunk: &TranscriptHunk) -> Option<String> {
+    transcript_message(runtime, hunk).map(|message| {
+        crate::view::card_href(&crate::browser::watchband::agent_message_source_id(message))
+    })
+}
+
+/// The exact contributed bytes when the author's transcript echo is loaded.
+fn echo(runtime: &AppRuntime, hunk: &TranscriptHunk) -> Option<String> {
+    let start = usize::try_from(hunk.text.start).ok()?;
+    let end = usize::try_from(hunk.text.end).ok()?;
+    transcript_message(runtime, hunk)
         .and_then(|message| message.text.get(start..end))
         .map(str::to_owned)
 }

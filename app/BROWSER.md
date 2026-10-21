@@ -272,7 +272,10 @@ direction the operator sent it; the card names that direction by key and the
 text the operator sent. Retained pre-cutover items name the task they
 concerned, or show as unnamed when they named none; current packets cannot
 create either.
-Then the card shows its publication's full body. A lane's body stays in its
+Then the card shows its publication's full body. Its `MSG from LANE` line
+links to the message card the lane sent it from, through that card's own
+route, whenever that message is loaded; otherwise it stays plain text. A lane's
+body stays in its
 transcript, so the app reads it once, with the concerned direction's text,
 through the operator-only `room::conversation-text` read, which projects the
 same text `spice://room/inbox` prints; the transcript echo stands in while
