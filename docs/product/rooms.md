@@ -133,16 +133,26 @@ owns each rule summarized here.
   opportunity, evidence, statement, session, compaction, and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
-  counts by kind, distinct contributing lanes, requested reach, and
-  same-statement requested/contributing lane intersections. Fresh means no
-  contribution; steeped requires a positive charge, a negative charge, a 0
-  charge, and three distinct contributing lanes; every other contributed
-  Design is steeping and names every missing dimension. Questions and
-  requested reach are evidence but do not satisfy maturity. `spice room
-  awareness HANDLE` and
-  the browser room read that projection, and steeped maturity makes a
-  Design's first pass ready. Beyond that the state is advisory: it never
-  changes standing, possession, grouping, selection, or authorization.
+  and contributing-lane totals, requested reach, same-statement
+  requested/contributing lane intersections, and one charge series per
+  question item. A charged contribution records its item's text identity
+  (trimmed, whitespace collapsed, case-folded) at admission, so a reorder
+  keeps a series and a reword starts a new one. Over nonzero charges in
+  journal order, an item is quiet with no charge, unopposed while one sign
+  has been seen, concurred when both signs have been seen and the current
+  one-signed run holds two distinct lanes one of which earlier charged the
+  opposite sign, or three distinct lanes, and else contested. A run cannot
+  bury the opposite side's last strength-2 charge without a strength-2 charge
+  of its own. Zero charges and questions never enter a series. Steeping is
+  judged against the current statement's items: fresh means no
+  contribution; steeped means some current item concurs and none is
+  contested; anything else is steeping and names the lowest contested item,
+  else the lowest quiet or unopposed item, with the input it needs. Both
+  steeped and steeping report how many current items are still quiet. `spice
+  room awareness HANDLE` and the browser room show each item's state, and
+  steeped maturity makes a Design's first pass ready. Beyond that the state
+  is advisory: it never changes standing, possession, grouping, selection,
+  or authorization.
 
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow.
   `task design` defaults to a Design with one open `design` phase when it

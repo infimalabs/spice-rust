@@ -736,6 +736,13 @@ fn contribute(
             body.room
         ));
     }
+    if body.question.is_some() != body.item.is_some() {
+        return unsound(format!(
+            "contribution in {} must record its question item's text identity exactly when it \
+             names an item",
+            body.room
+        ));
+    }
     for source in &body.sources {
         require_source(authority, seq, source)?;
     }

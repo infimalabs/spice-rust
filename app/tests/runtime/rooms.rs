@@ -972,6 +972,7 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
                 lane: uuid(THIRD_LANE),
                 contribution: wire::rooms::RoomContributionKind::charge(1),
                 question: None,
+                item: None,
                 statement: None,
                 text: "the fold already covers this".to_owned(),
                 sources: Vec::new(),

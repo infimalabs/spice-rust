@@ -4,7 +4,7 @@ use super::*;
 
 use crate::room_command::{RoomSources, SourceOwners};
 use wire::intent::{RoomContribute, RoomContributeAnswer};
-use wire::rooms::{RoomContributed, RoomContributionError, RoomSource};
+use wire::rooms::{RoomContributed, RoomContributionError, RoomQuestionItem, RoomSource};
 
 use super::room::mint_publication;
 
@@ -117,6 +117,7 @@ pub(crate) fn room_contribute(
             lane,
             contribution: contribute.kind,
             question: contribute.question,
+            item: question_item(anchor, contribute),
             statement: Some(statement),
             text: text.to_owned(),
             sources: contribute.sources.clone(),
@@ -218,6 +219,15 @@ fn not_open_design(anchor: &Entry) -> Option<Outcome<CommandAnswer>> {
             "contribute only after the Design reaches its open design phase",
         )
     })
+}
+
+/// The text identity of the question item `contribute` names in the anchor's
+/// current statement, which the command witnesses.
+fn question_item(anchor: &Entry, contribute: &RoomContribute) -> Option<RoomQuestionItem> {
+    let question = contribute.question?;
+    question
+        .item(&anchor.statement().acceptance)
+        .map(RoomQuestionItem::of)
 }
 
 /// The refusal when `contribute` names a question item outside the anchor's

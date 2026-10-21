@@ -9,6 +9,7 @@ use crate::SCHEMA_VERSION;
 mod authorization_heads;
 mod awareness;
 mod contribution_charges;
+mod contribution_items;
 mod creation_contexts;
 mod decisions;
 mod design_invitations;
@@ -95,12 +96,13 @@ const PREPARED: &str = "prepared";
 /// takes the workflow status its verdict left, and every retained task Git
 /// boundary and review correction enters the release-note projection. Before
 /// any of that, the question-result protocol and required question-result
-/// evidence retire into inert historical authority, and every retained
-/// contribution label with its receipt crosses to its charge.
-const PREDECESSOR_SCHEMAS: [u32; 57] = [
+/// evidence retire into inert historical authority, every retained
+/// contribution label with its receipt crosses to its charge, and every
+/// retained item-bearing contribution takes its item's text identity.
+const PREDECESSOR_SCHEMAS: [u32; 58] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85, 86, 87, 88, 89,
+    81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -394,7 +396,8 @@ fn cross_current_rows(
 fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
     preparation_edges::strip_authorization(transaction)?;
     task_evidence::cross(transaction)?;
-    contribution_charges::cross(transaction)
+    contribution_charges::cross(transaction)?;
+    contribution_items::cross(transaction)
 }
 
 /// Move a finalized predecessor authority to the current schema exactly once.
@@ -1456,8 +1459,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 90, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 91, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 90;
+PRAGMA user_version = 91;
 "#;

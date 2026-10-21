@@ -240,15 +240,14 @@ a lane's own session.
 The read view's **Design maturity** panel derives from the bounded per-Design
 measure the room projection folds incrementally from streamed requests and
 contributions, never by folding rendered room history. It shows contribution
-kinds and distinct lanes, requested reach, recent statement-head request
-yield, folded older-head and unattributed historical totals, and every missing
-substantive dimension. Fresh has no contributions; steeped requires a
-positive charge, a negative charge, a 0 charge, and three contributing lanes.
-Questions
-and broad requested reach cannot satisfy it. Steeped maturity makes the
-Design's first pass ready for a lane, which the standing's pass cycle shows;
-it is not a danger or workflow state, and maturity never blocks or authorizes
-a Design decision.
+and lane totals, requested reach, each current question item's state (quiet,
+unopposed, contested, or concurred) with its charges and lanes, recent
+statement-head request yield, and folded older-head and unattributed
+historical totals. Fresh has no contributions; steeped means some current
+item concurs and none is contested, and the summary otherwise names the item
+that needs input next. Steeped maturity makes the Design's first pass ready
+for a lane, which the standing's pass cycle shows; it is not a danger or
+workflow state, and maturity never blocks or authorizes a Design decision.
 
 An open Design's view says what a contribution is and offers the reader no
 contribution control. A lane learns of an open Design matching its claimed

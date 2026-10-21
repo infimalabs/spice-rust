@@ -250,10 +250,10 @@ impl Planning {
                     &config.projects,
                 )
                 .map(|entry| {
-                    let born = &heads.statement().body().born;
+                    let statement = heads.statement().body();
                     entry
-                        .with_grouped(snapshot.facts().grouped(born))
-                        .with_design(snapshot.facts().design(born))
+                        .with_grouped(snapshot.facts().grouped(&statement.born))
+                        .with_design(snapshot.facts().design(statement))
                 })
                 .map_err(|error| store_fault("room::catch-up-task-invalid", &error.to_string()))
             })

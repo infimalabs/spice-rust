@@ -1013,15 +1013,19 @@ impl TaskFacts {
         self.design_stance(task).is_active()
     }
 
-    /// One open Design's standing and pass-cycle evidence.
+    /// One open Design's standing and pass-cycle evidence, judging maturity
+    /// against `statement`, its current statement head.
     #[must_use]
     pub fn design(
         &self,
-        task: &journal::crossing::TaskStamp,
+        statement: &journal::crossing::TaskHead,
     ) -> journal::crossing::rooms::DesignFacts {
         journal::crossing::rooms::DesignFacts {
-            active: self.design_is_active(task),
-            cycle: self.indexes.design_cycles.facts(task),
+            active: self.design_is_active(&statement.born),
+            cycle: self
+                .indexes
+                .design_cycles
+                .facts(&statement.born, &statement.acceptance),
         }
     }
 

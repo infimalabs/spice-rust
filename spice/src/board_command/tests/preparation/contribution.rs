@@ -201,6 +201,21 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
         before,
         "contributing changes no statement, workflow, claim, candidate, decision, or authorization"
     );
+    let maturity = journal::JournalReader::open(root.as_ref().join("authority.sqlite3"))
+        .expect("fixture journal opens to read")
+        .read(|read| read.design_maturity(&born))
+        .expect("maturity reads");
+    let series = maturity
+        .items
+        .series(&wire::rooms::RoomQuestionItem::of(
+            "the exact selected   OUTPUT is justified",
+        ))
+        .expect("admission keys each charge by its item's current text");
+    assert_eq!(
+        (series.charges, series.state()),
+        (3, wire::rooms::DesignItemState::Contested),
+        "a zero charge enters no series, and one lane flipping its sign cannot concur alone"
+    );
 
     let page = history(root.as_ref(), root.as_ref(), &[design.as_str()]);
     let rows = page["page"]["rows"].as_array().expect("history rows");
@@ -673,6 +688,7 @@ fn the_journal_admits_only_a_lane_own_bounded_contribution_to_an_open_design() {
                     lane: author,
                     contribution: RoomContributionKind::charge(0),
                     question: None,
+                    item: None,
                     statement: None,
                     text: text.to_owned(),
                     sources,

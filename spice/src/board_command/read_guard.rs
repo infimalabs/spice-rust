@@ -220,7 +220,7 @@ impl TaskProjection<'_> {
             .copied()
             .flatten();
         let grouped = self.facts.grouped(&statement.body.born);
-        let design = self.facts.design(&statement.body.born);
+        let design = self.facts.design(&statement.body);
         let statement_born = statement.body.born.clone();
         let preparation_decision = self.facts.preparation_decision(&statement_born).cloned();
         let entry = Entry::new(

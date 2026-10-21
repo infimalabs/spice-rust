@@ -96,6 +96,9 @@ pub enum Domain {
     RoomSource,
     /// The canonical identity of one retained session-profile evidence card.
     RoomProfileEvidence,
+    /// The normalized text of one Design question item, which keys that
+    /// item's charge series across statement reorders.
+    RoomQuestionItem,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -224,6 +227,7 @@ impl Domain {
             | Self::JournalRestorePlan
             | Self::RoomSource
             | Self::RoomProfileEvidence
+            | Self::RoomQuestionItem
             | Self::TasteProse
             | Self::TasteBag
             | Self::MediaContent
@@ -293,6 +297,7 @@ impl Domain {
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
             Self::RoomSource => "spice.room.source.v1",
             Self::RoomProfileEvidence => "spice.room.profile-evidence.v1",
+            Self::RoomQuestionItem => "spice.room.question-item.v1",
             Self::TasteProse => "spice.taste.prose.v1",
             Self::TasteBag => "spice.taste.bag.v1",
             Self::MediaContent => "spice.media.content.v1",

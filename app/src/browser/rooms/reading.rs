@@ -6,7 +6,7 @@
 
 use wire::TaskStamp;
 use wire::intent::BoardTask;
-use wire::rooms::{DesignMaturity, DesignMaturityHead, DesignMaturityState};
+use wire::rooms::{DesignItemStanding, DesignMaturity, DesignMaturityHead, DesignMaturityState};
 use yew::prelude::*;
 
 use super::{Controls, RoomProjectionStatus, card};
@@ -74,7 +74,11 @@ pub(in crate::browser) fn render_task_room(
                 <>
                     if design {
                         {super::standing::render_standing(runtime, room, Some(row))}
-                        {render_maturity(projection.maturity(room), room)}
+                        {render_maturity(
+                            projection.maturity(room),
+                            room,
+                            &row.statement.body.acceptance,
+                        )}
                         {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                         {super::approval::render_approval(runtime, controls, sender, room)}
                         {super::contributions::render_groups(runtime, room)}
@@ -115,27 +119,22 @@ pub(in crate::browser) fn render_task_room(
     }
 }
 
-fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Html {
+/// `design`'s maturity judged against `acceptance`, its current statement's
+/// question items.
+fn render_maturity(
+    maturity: Option<&DesignMaturity>,
+    design: &TaskStamp,
+    acceptance: &[String],
+) -> Html {
     let empty = DesignMaturity::default();
     let maturity = maturity.unwrap_or(&empty);
-    let (state, summary) = match maturity.state() {
-        DesignMaturityState::Fresh => ("fresh", "No contribution has been recorded.".to_owned()),
-        DesignMaturityState::Steeped => (
-            "steeped",
-            "Substantive evidence spans three or more contributors.".to_owned(),
-        ),
-        DesignMaturityState::Steeping { unmet } => (
-            "steeping",
-            format!(
-                "Still needs {}.",
-                unmet
-                    .into_iter()
-                    .map(|requirement| requirement.label())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ),
+    let judged = maturity.state(acceptance);
+    let state = match judged {
+        DesignMaturityState::Fresh => "fresh",
+        DesignMaturityState::Steeping { .. } => "steeping",
+        DesignMaturityState::Steeped { .. } => "steeped",
     };
+    let items = maturity.items.standings(acceptance);
     html! {
         <section
             class="room-maturity"
@@ -147,27 +146,15 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
                 <strong>{"Maturity"}</strong>
                 <span class="room-maturity-state">{state}</span>
             </header>
-            <p>{summary}</p>
+            <p>{judged.summary()}</p>
             <dl>
                 <div>
                     <dt>{"Contributors"}</dt>
                     <dd>{bounded_count(maturity.contributing_lanes.len(), maturity.contributing_lanes_truncated)}</dd>
                 </div>
                 <div>
-                    <dt>{"For"}</dt>
-                    <dd>{maturity.contributions.reason_for}</dd>
-                </div>
-                <div>
-                    <dt>{"Against"}</dt>
-                    <dd>{maturity.contributions.reason_against}</dd>
-                </div>
-                <div>
-                    <dt>{"Evidence"}</dt>
-                    <dd>{maturity.contributions.evidence}</dd>
-                </div>
-                <div>
-                    <dt>{"Questions"}</dt>
-                    <dd>{maturity.contributions.question}</dd>
+                    <dt>{"Contributions"}</dt>
+                    <dd>{maturity.contributions}</dd>
                 </div>
                 <div>
                     <dt>{"Requested reach"}</dt>
@@ -183,6 +170,11 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
                     </dd>
                 </div>
             </dl>
+            if !items.is_empty() {
+                <div class="room-maturity-heads" aria-label="Maturity by question item">
+                    {for items.iter().zip(acceptance).map(|(item, text)| render_item(item, text))}
+                </div>
+            }
             if !maturity.recent_heads.is_empty() {
                 <div class="room-maturity-heads" aria-label="Maturity by statement">
                     {for maturity.recent_heads.iter().rev().map(render_head)}
@@ -224,6 +216,23 @@ fn render_head(head: &DesignMaturityHead) -> Html {
                     head.requested_decliners(),
                     head.requested_unanswered(),
                     if head.yield_truncated() { " (bounded)" } else { "" },
+                )}
+            </span>
+        </p>
+    }
+}
+
+/// One current question item's standing in its charge series.
+fn render_item(item: &DesignItemStanding, text: &str) -> Html {
+    html! {
+        <p data-question-item={item.question.to_string()} data-item-state={item.state.label()}>
+            <span>{format!("{}. {text}", item.question)}</span>
+            <span>
+                {format!(
+                    "{} · {} charges · {} lanes",
+                    item.state.label(),
+                    item.charges,
+                    item.lanes,
                 )}
             </span>
         </p>

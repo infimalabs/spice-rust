@@ -17,9 +17,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::maturity::maturity_unmet;
 use super::{
-    CandidateRef, CandidateWithdrawn, DecisionOutcome, DesignContributionCounts, DesignProposed,
+    CandidateRef, CandidateWithdrawn, DecisionOutcome, DesignItems, DesignProposed,
     ExecutionAuthorized, OutputControlled, OutputVerdict, PreparationDecided, RoomContributed,
     RoomDestination, RoomPosted, RoomPublicationContent, RoomPublished,
 };
@@ -27,7 +26,7 @@ use crate::body::{
     ClaimFreed, ClaimLapsed, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
     TaskDeleted, TaskDone, TaskReviewed,
 };
-use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
+use crate::{Actor, AnyFact, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
 
 /// Ask an open Design to take its next pass.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,7 +316,7 @@ impl DesignPassEnd {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignCycleFacts {
-    /// The Design's maturity is `Steeped`.
+    /// The Design's maturity is `Steeped` at its current statement.
     #[serde(default)]
     pub steeped: bool,
     /// The operator nudged the Design at least once.
@@ -387,9 +386,9 @@ pub struct DesignFacts {
 /// One Design's fold state.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct DesignCycleFold {
-    /// Up to three distinct contributing lanes; maturity needs no more.
-    lanes: Vec<CanonicalUuid>,
-    counts: DesignContributionCounts,
+    /// Each charged question item's series; steeping is judged against the
+    /// current statement when the facts are read.
+    items: DesignItems,
     /// Proposals still awaiting the operator's decision, oldest first, each
     /// with the position that recorded it.
     open: Vec<(CandidateRef, Seq)>,
@@ -409,14 +408,7 @@ impl DesignCycleFold {
 
     fn contributed(&mut self, seq: Seq, contribution: &RoomContributed) {
         self.input(seq);
-        if self.facts.steeped {
-            return;
-        }
-        self.counts.observe(contribution.contribution);
-        if self.lanes.len() < 3 && !self.lanes.contains(&contribution.lane) {
-            self.lanes.push(contribution.lane);
-        }
-        self.facts.steeped = maturity_unmet(self.lanes.len(), self.counts).is_empty();
+        self.items.observe(contribution);
     }
 
     fn proposed(&mut self, seq: Seq, candidate: &CandidateRef) {
@@ -499,12 +491,16 @@ impl DesignCycles {
         )
     }
 
-    /// Current evidence for `design`; empty when nothing has touched it.
+    /// Current evidence for `design` whose current statement items are
+    /// `acceptance`; empty when nothing has touched it.
     #[must_use]
-    pub fn facts(&self, design: &TaskStamp) -> DesignCycleFacts {
+    pub fn facts(&self, design: &TaskStamp, acceptance: &[String]) -> DesignCycleFacts {
         self.designs
             .get(design)
-            .map(|fold| fold.facts)
+            .map(|fold| DesignCycleFacts {
+                steeped: fold.items.steeped(acceptance),
+                ..fold.facts
+            })
             .unwrap_or_default()
     }
 
