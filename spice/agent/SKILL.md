@@ -97,11 +97,12 @@ name continuations.
   creation binds unless another `--origin`; `--preparation` binds explicitly.
   A Plan creates an acceptance-bearing executable task, else `task done
   --disposition KIND [--cover REF]`; positive review releases outputs to
-  dependencies without selection/authorization. Design follow-up creates
-  acceptance-bearing outputs of any intent and retains candidate JSON naming
-  them; no-follow-up is explicit. Keep Designs open: checkpoint/free; only the
-  operator concludes. Outputs await exact `preparation decide`; dependencies,
-  origin, closure, deletion, findings, and group movement never bypass it. No
+  dependencies without selection/authorization. A Design pass ends with
+  `preparation propose` JSON: recommendation, acceptance-bearing outputs of
+  any intent, governed_inputs, justification, references; Design and heads
+  are derived. Keep Designs open: checkpoint/free; only the operator
+  concludes. Outputs await exact `preparation decide`; dependencies, origin,
+  closure, deletion, findings, and group movement never bypass it. No
   reciprocal controller/output edge. Stop means checkpoint/free.
 - Work incrementally; commit only under the matching claim. Never pull/push or
   alter harness attribution. Release unfinished work via `task free` or

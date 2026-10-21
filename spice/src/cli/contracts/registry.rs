@@ -666,7 +666,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["preparation", "propose"],
-        "preparation propose PROPOSAL_JSON",
+        "preparation propose PROPOSAL_JSON [--design HANDLE]",
         OperatorOrLane,
         Command,
         [DesignProposed],

@@ -75,26 +75,33 @@ task handles instead, and `preparation nudge` one open Design's handle.
   (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`): nine characters, or eight for a
   retained millisecond identity, which is never reminted. A candidate is
   `{"controller": STAMP, "candidate": STAMP}`: the controlling Design's stamp
-  and a new nine-character native stamp naming the candidate under that
-  controller. Critique, coverage, and decision identities are native base-52
-  sequences (`"1"`, `"2"`, …), new within their candidate or, for a decision,
-  within its controller. A source is
-  `{"kind": "journal", "fact": POSITION}` (a position `preparation show`
-  prints), `{"kind": "contribution", "room": STAMP, "publication": STAMP}`
-  (the `source` a `room contribute` answer prints, pasted unchanged),
-  `{"kind": "artifact", "digest": HEX}`, or a transcript hunk.
-- **`propose PROPOSAL_JSON`.** `candidate`, `statement`, and `claim` name the
-  exact Design, statement head, and active claim completed by this pass.
-  `recommendation` is `work`, `conclude`, or `collapse`; work names one or more
-  unique `outputs` plus any `governed_inputs`, while conclude and collapse name
-  neither. Every work output must carry acceptance and still depend on the
-  Design; any intent qualifies. `justification` is nonblank and `references`
-  contains at least one `{"relation": NAME, "source": SOURCE}`. Inputs and
-  outputs are unique and disjoint. Every reference must lie in the controlling
-  Design's scope: a contribution in its room, or a journal fact of its room,
-  the Design, a governed input, an output, or a task prepared under it. The
-  command records the immutable proposal and releases that exact claim
-  atomically.
+  and the nine-character native stamp naming the candidate under that
+  controller, as `preparation show` and a proposal's reply print it. Critique,
+  coverage, and decision identities are native base-52 sequences (`"1"`,
+  `"2"`, …), new within their candidate or, for a decision, within its
+  controller. A source is `{"kind": "journal", "fact": POSITION}` (a position
+  `preparation show` prints), `{"kind": "contribution", "room": STAMP,
+  "publication": STAMP}` (the `source` a `room contribute` answer prints,
+  pasted unchanged), `{"kind": "artifact", "digest": HEX}`, or a transcript
+  hunk.
+- **`propose PROPOSAL_JSON [--design HANDLE]`.** The body holds only what the
+  pass decides: `recommendation` is `work`, `conclude`, or `collapse`; work
+  names one or more unique `outputs` plus any `governed_inputs`, while conclude
+  and collapse name neither. Every work output must carry acceptance and still
+  depend on the Design; any intent qualifies. `justification` is nonblank and
+  `references` contains at least one `{"relation": NAME, "source": SOURCE}`.
+  Inputs and outputs are unique and disjoint. Every reference must lie in the
+  controlling Design's scope: a contribution in its room, or a journal fact of
+  its room, the Design, a governed input, an output, or a task prepared under
+  it. The client derives the rest: the Design is the open Design the caller
+  holds an active claim on (`--design HANDLE` names it when the caller holds
+  several; holding none refuses `preparation::design-unheld`), the candidate
+  stamp is minted fresh, and the Design's statement and claim heads are read
+  and witnessed, so a statement edit or claim move between that read and the
+  write refuses `preparation::proposal-statement-moved` or
+  `proposal-claim-moved`, and an unacknowledged Design generation refuses
+  `proposal-claim-stale`. The command records the immutable proposal and
+  releases that exact claim atomically.
 - **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
   SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
   `material-finding`).

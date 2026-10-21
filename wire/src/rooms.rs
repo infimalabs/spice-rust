@@ -498,22 +498,13 @@ pub enum DesignPassRecommendation {
     Collapse,
 }
 
-/// Exact proposal that completes one Design pass.
-///
-/// Current proposals always name the active claim they release. Proposals
-/// crossed from the predecessor protocol may omit it when their immutable
-/// receipt does not prove an active claim; that absence is historical fact,
-/// not a fabricated claim horizon.
+/// What a lane decides when ending one Design pass: the recommendation and
+/// everything supporting it. The proposal's identity, statement head, and
+/// claim head are derived by the client from the Design the lane holds, never
+/// restated. This is the `preparation propose` body.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "DesignPassProposalWire", into = "DesignPassProposalWire")]
-pub struct DesignPassProposal {
-    /// Stable proposal identity under its controller.
-    pub candidate: CandidateRef,
-    /// Exact Design statement revision this pass answered.
-    pub statement: Seq,
-    /// Exact active claim head this pass releases, absent only for history
-    /// crossed from the predecessor protocol.
-    pub claim: Option<Seq>,
+#[serde(try_from = "DesignPassBodyWire", into = "DesignPassBodyWire")]
+pub struct DesignPassBody {
     /// Work or outputless recommendation this pass asks the operator to decide.
     pub recommendation: DesignPassRecommendation,
     /// Governed input tasks whose current composition a work proposal assumes.
@@ -528,11 +519,7 @@ pub struct DesignPassProposal {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DesignPassProposalWire {
-    candidate: CandidateRef,
-    statement: Seq,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    claim: Option<Seq>,
+struct DesignPassBodyWire {
     recommendation: DesignPassRecommendation,
     governed_inputs: Vec<TaskStamp>,
     outputs: Vec<TaskStamp>,
@@ -540,10 +527,10 @@ struct DesignPassProposalWire {
     references: Vec<CandidateReference>,
 }
 
-impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
+impl TryFrom<DesignPassBodyWire> for DesignPassBody {
     type Error = &'static str;
 
-    fn try_from(value: DesignPassProposalWire) -> Result<Self, Self::Error> {
+    fn try_from(value: DesignPassBodyWire) -> Result<Self, Self::Error> {
         if value.justification.is_empty() || value.justification.trim() != value.justification {
             return Err("a Design pass proposal requires a nonempty trimmed justification");
         }
@@ -574,14 +561,113 @@ impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
             return Err("a Design pass proposal must link its supporting authority");
         }
         Ok(Self {
-            candidate: value.candidate,
-            statement: value.statement,
-            claim: value.claim,
             recommendation: value.recommendation,
             governed_inputs: value.governed_inputs,
             outputs: value.outputs,
             justification: value.justification,
             references: value.references,
+        })
+    }
+}
+
+impl From<DesignPassBody> for DesignPassBodyWire {
+    fn from(value: DesignPassBody) -> Self {
+        Self {
+            recommendation: value.recommendation,
+            governed_inputs: value.governed_inputs,
+            outputs: value.outputs,
+            justification: value.justification,
+            references: value.references,
+        }
+    }
+}
+
+/// Exact proposal that completes one Design pass.
+///
+/// Current proposals always name the active claim they release. Proposals
+/// crossed from the predecessor protocol may omit it when their immutable
+/// receipt does not prove an active claim; that absence is historical fact,
+/// not a fabricated claim horizon.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "DesignPassProposalWire", into = "DesignPassProposalWire")]
+pub struct DesignPassProposal {
+    /// Stable proposal identity under its controller.
+    pub candidate: CandidateRef,
+    /// Exact Design statement revision this pass answered.
+    pub statement: Seq,
+    /// Exact active claim head this pass releases, absent only for history
+    /// crossed from the predecessor protocol.
+    pub claim: Option<Seq>,
+    /// Work or outputless recommendation this pass asks the operator to decide.
+    pub recommendation: DesignPassRecommendation,
+    /// Governed input tasks whose current composition a work proposal assumes.
+    pub governed_inputs: Vec<TaskStamp>,
+    /// Acceptance-bearing outputs of any intent named by a work proposal.
+    pub outputs: Vec<TaskStamp>,
+    /// Nonempty, trimmed explanation for the recommendation.
+    pub justification: String,
+    /// Exact source links supporting the recommendation.
+    pub references: Vec<CandidateReference>,
+}
+
+impl DesignPassProposal {
+    /// The proposal `pass` makes as `candidate`, witnessing the Design
+    /// statement head `statement` and the active claim head `claim` it
+    /// releases.
+    #[must_use]
+    pub fn witnessing(
+        candidate: CandidateRef,
+        statement: Seq,
+        claim: Seq,
+        pass: DesignPassBody,
+    ) -> Self {
+        Self {
+            candidate,
+            statement,
+            claim: Some(claim),
+            recommendation: pass.recommendation,
+            governed_inputs: pass.governed_inputs,
+            outputs: pass.outputs,
+            justification: pass.justification,
+            references: pass.references,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesignPassProposalWire {
+    candidate: CandidateRef,
+    statement: Seq,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim: Option<Seq>,
+    recommendation: DesignPassRecommendation,
+    governed_inputs: Vec<TaskStamp>,
+    outputs: Vec<TaskStamp>,
+    justification: String,
+    references: Vec<CandidateReference>,
+}
+
+impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
+    type Error = &'static str;
+
+    fn try_from(value: DesignPassProposalWire) -> Result<Self, Self::Error> {
+        let pass = DesignPassBody::try_from(DesignPassBodyWire {
+            recommendation: value.recommendation,
+            governed_inputs: value.governed_inputs,
+            outputs: value.outputs,
+            justification: value.justification,
+            references: value.references,
+        })?;
+        Ok(Self {
+            candidate: value.candidate,
+            statement: value.statement,
+            claim: value.claim,
+            recommendation: pass.recommendation,
+            governed_inputs: pass.governed_inputs,
+            outputs: pass.outputs,
+            justification: pass.justification,
+            references: pass.references,
         })
     }
 }

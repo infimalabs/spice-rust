@@ -2,6 +2,8 @@ use super::*;
 
 mod group;
 mod preparation;
+#[cfg(test)]
+pub(in crate::board_command) use preparation::{derive_proposal, held_design};
 mod principal;
 mod requirements;
 use requirements::{client_require, environment_requirements};

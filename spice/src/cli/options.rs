@@ -48,6 +48,11 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ("lane add", "vendor", "Launch through this agent vendor"),
     ("lane add", "model", "Launch with this model"),
     ("lane add", "effort", "Launch with this reasoning effort"),
+    (
+        "preparation propose",
+        "design",
+        "Name the held Design when this capability holds several",
+    ),
 ];
 
 /// Attach every registered option row for `path`, refusing a row that names no
