@@ -554,7 +554,46 @@ fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
 }
 
 #[test]
-fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
+fn proof_runner_binds_per_worktree_while_the_container_stays_git_common() {
+    let shared = absolute("shared-runner");
+    let sealed = absolute("sealed-runner");
+    let container = absolute("container");
+    let worktree = format!("[proof]\nrunner = \"{sealed}\"\n");
+    let local = format!("[proof]\ncontainer = \"{container}\"\nrunner = \"{shared}\"\n");
+    let resolved = resolve(worktree_documents(None, Some(&worktree), Some(&local)))
+        .expect("a worktree runner overrides the Git-common runner");
+    assert_eq!(
+        resolved.root().proof().runner().map(AsRef::as_ref),
+        Some(Path::new(&sealed))
+    );
+    assert_eq!(
+        path_source(&resolved, "proof.runner"),
+        ConfigSource::Worktree
+    );
+    assert_eq!(
+        path_source(&resolved, "proof.container"),
+        ConfigSource::Local
+    );
+
+    let worktree_container = format!("[proof]\ncontainer = \"{container}\"\n");
+    let error = resolve(worktree_documents(None, Some(&worktree_container), None))
+        .expect_err("a worktree never selects the Git-common container");
+    assert_policy_issue(&error, ConfigSource::Worktree, "proof.container");
+
+    let runner = descriptor(&[PathSegment::Key("proof"), PathSegment::Key("runner")])
+        .expect("proof runner descriptor");
+    assert_eq!(
+        runner.layers(),
+        [ConfigSource::Local, ConfigSource::Worktree]
+    );
+    let container = descriptor(&[PathSegment::Key("proof"), PathSegment::Key("container")])
+        .expect("proof container descriptor");
+    assert_eq!(container.layers(), [ConfigSource::Local]);
+    assert!(runner.flag().is_none() && container.flag().is_none());
+}
+
+#[test]
+fn proof_executable_paths_refuse_tracked_relative_and_empty_routes() {
     let container = absolute("container");
     let runner = absolute("runner");
     let tracked = format!("[proof]\ncontainer = \"{container}\"\nrunner = \"{runner}\"\n");
@@ -605,14 +644,8 @@ fn proof_executable_paths_refuse_every_non_local_or_non_absolute_route() {
             .issues()
             .iter()
             .filter(|issue| issue.kind() == IssueKind::Policy)
-            .all(|issue| issue.message().contains("Git-common .spice-rs/config.toml"))
+            .all(|issue| issue.message().contains(".spice-rs/"))
     );
-    for leaf in ["container", "runner"] {
-        let entry = descriptor(&[PathSegment::Key("proof"), PathSegment::Key(leaf)])
-            .expect("proof executable descriptor");
-        assert_eq!(entry.layers(), [ConfigSource::Local]);
-        assert!(entry.flag().is_none());
-    }
 }
 
 const TRACKED_ALL_DESCRIPTOR_DOCUMENT: &str = r#"

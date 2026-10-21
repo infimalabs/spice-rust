@@ -111,7 +111,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("say.words_per_minute", LOCAL),
     ConfigKeyDeclaration::new("proof.image", TRACKED),
     ConfigKeyDeclaration::new("proof.container", LOCAL),
-    ConfigKeyDeclaration::new("proof.runner", LOCAL),
+    ConfigKeyDeclaration::new("proof.runner", LOCAL_WORKTREE),
 ];
 
 pub(super) fn config_keys(contract: &ParsedContract) -> Result<CoreObservation, CoreInputError> {
