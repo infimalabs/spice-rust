@@ -528,10 +528,10 @@ fn admit_automatic_wake(
 
 #[derive(Clone)]
 pub(super) struct HeldClaimAuthority {
-    task: wire::TaskStamp,
-    statement: journal::JournalHead<wire::TaskHead>,
+    pub(super) task: wire::TaskStamp,
+    pub(super) statement: journal::JournalHead<wire::TaskHead>,
     claim: journal::JournalHead<wire::ClaimHead>,
-    lease: journal::JournalHead<wire::LeaseHead>,
+    pub(super) lease: journal::JournalHead<wire::LeaseHead>,
     source: wire::body::SourceBoundary,
     automatic: bool,
     thaw: bool,

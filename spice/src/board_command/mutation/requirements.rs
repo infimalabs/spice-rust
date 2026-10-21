@@ -92,7 +92,7 @@ fn lease_transition(
                 "reclaim the active task before attaching its trust requirement",
             )
         })?;
-        Some(iced(lease))
+        Some(spice::claim_lease::iced(lease))
     } else {
         None
     };
@@ -108,13 +108,4 @@ fn lease_transition(
         ));
     }
     Ok(transition)
-}
-
-fn iced(lease: &LeaseHead) -> LeaseHead {
-    let horizon = spice::claim_lease::indefinite_horizon();
-    LeaseHead {
-        expiry: horizon,
-        maximum: horizon,
-        ..lease.clone()
-    }
 }

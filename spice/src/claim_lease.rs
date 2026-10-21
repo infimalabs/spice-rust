@@ -30,6 +30,18 @@ pub fn is_indefinite(lease: &wire::LeaseHead) -> bool {
     lease.expiry == horizon && lease.maximum == horizon
 }
 
+/// The same lease iced on the canonical indefinite horizon, keeping its start,
+/// renewal, and epoch.
+#[must_use]
+pub fn iced(lease: &wire::LeaseHead) -> wire::LeaseHead {
+    let horizon = indefinite_horizon();
+    wire::LeaseHead {
+        expiry: horizon,
+        maximum: horizon,
+        ..lease.clone()
+    }
+}
+
 /// Whether one durable claim fact identifies a resident-minted automatic claim.
 #[must_use]
 pub fn is_automatic_claim_fact(
