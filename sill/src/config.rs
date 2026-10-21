@@ -472,12 +472,6 @@ impl ShardCount {
     pub const fn get(self) -> u32 {
         self.0
     }
-
-    /// Runtime-ready shard count.
-    #[must_use]
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
 }
 
 /// Why an effective lock value was refused.

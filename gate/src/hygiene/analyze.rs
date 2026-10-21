@@ -12,37 +12,7 @@ use wire::{Digest, Domain};
 use super::measure::evidence_rank;
 use super::*;
 
-const DEFAULT_DEADLINE_MS: u64 = 30_000;
-
-/// Tracked exception for one otherwise-private test coupling.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct PrivateCouplingException {
-    test_name: String,
-    target: String,
-}
-
-impl PrivateCouplingException {
-    /// Admit one exact test/target coupling from tracked policy.
-    ///
-    /// # Errors
-    ///
-    /// Refuses empty or multiline identities.
-    pub fn new(
-        test_name: impl Into<String>,
-        target: impl Into<String>,
-    ) -> Result<Self, HygieneAnalysisError> {
-        let value = Self {
-            test_name: test_name.into(),
-            target: target.into(),
-        };
-        if invalid_identity(&value.test_name) || invalid_identity(&value.target) {
-            return Err(HygieneAnalysisError::Configuration(
-                "private coupling exception identities must be nonempty and single-line".to_owned(),
-            ));
-        }
-        Ok(value)
-    }
-}
+const DEADLINE_MS: u64 = 30_000;
 
 /// One tracked decision to exclude a complete hygiene arm.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,10 +59,6 @@ pub struct HygieneConfiguration {
     production_roots: Vec<String>,
     test_roots: Vec<String>,
     assertion_helpers: Vec<String>,
-    private_exceptions: Vec<PrivateCouplingException>,
-    reachability_limit: u32,
-    assertion_free_limit: u32,
-    deadline_ms: u64,
     exclusions: Vec<HygieneExclusion>,
     suppressions: Vec<SuppressedPath>,
 }
@@ -136,10 +102,6 @@ impl HygieneConfiguration {
             production_roots,
             test_roots,
             assertion_helpers: Vec::new(),
-            private_exceptions: Vec::new(),
-            reachability_limit: 0,
-            assertion_free_limit: 0,
-            deadline_ms: DEFAULT_DEADLINE_MS,
             exclusions: Vec::new(),
             suppressions: Vec::new(),
         })
@@ -155,46 +117,6 @@ impl HygieneConfiguration {
         helpers: impl IntoIterator<Item = impl Into<String>>,
     ) -> Result<Self, HygieneAnalysisError> {
         self.assertion_helpers = collect_identities(helpers, "assertion helper")?;
-        Ok(self)
-    }
-
-    /// Replace tracked private-coupling exceptions.
-    #[must_use]
-    pub fn with_private_exceptions(
-        mut self,
-        exceptions: impl IntoIterator<Item = PrivateCouplingException>,
-    ) -> Self {
-        self.private_exceptions = exceptions.into_iter().collect();
-        self.private_exceptions.sort();
-        self.private_exceptions.dedup();
-        self
-    }
-
-    /// Set the two predecessor debt limits retained by these arms.
-    #[must_use]
-    pub const fn with_debt_limits(
-        mut self,
-        reachability_test_only: u32,
-        assertion_free_tests: u32,
-    ) -> Self {
-        self.reachability_limit = reachability_test_only;
-        self.assertion_free_limit = assertion_free_tests;
-        self
-    }
-
-    /// Set the complete-run deadline.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a zero deadline because it cannot distinguish scheduling from
-    /// execution.
-    pub fn with_deadline_ms(mut self, deadline_ms: u64) -> Result<Self, HygieneAnalysisError> {
-        if deadline_ms == 0 {
-            return Err(HygieneAnalysisError::Configuration(
-                "hygiene deadline must be greater than zero milliseconds".to_owned(),
-            ));
-        }
-        self.deadline_ms = deadline_ms;
         Ok(self)
     }
 
@@ -310,7 +232,7 @@ pub(crate) fn analyze_hygiene(
     let started = Instant::now();
     let report = AnalyzerRun::execute_at(documents, project_markers, configuration, started)
         .map_err(HygieneAnalysisError::Measurement)?;
-    if elapsed_ms(started) > configuration.deadline_ms {
+    if elapsed_ms(started) > DEADLINE_MS {
         timeout_report(configuration, elapsed_ms(started))
             .map_err(HygieneAnalysisError::Measurement)
     } else {
@@ -341,7 +263,7 @@ pub(crate) fn analyze_hygiene_arm(
         reached_paths,
     )
     .map_err(HygieneAnalysisError::Measurement)?;
-    if elapsed_ms(started) > configuration.deadline_ms {
+    if elapsed_ms(started) > DEADLINE_MS {
         timeout_measurement(configuration, gate_id, elapsed_ms(started))
             .map_err(HygieneAnalysisError::Measurement)
     } else {
@@ -362,7 +284,7 @@ fn timeout_report(
             outcome: HygieneOutcome::Timeout,
             reason: "native hygiene deadline expired".to_owned(),
             evidence: vec![AnalysisEvidence::Deadline {
-                limit_ms: configuration.deadline_ms,
+                limit_ms: DEADLINE_MS,
                 elapsed_ms,
                 state: EvidenceState::TimedOut,
             }],
@@ -381,7 +303,7 @@ fn timeout_measurement(
         outcome: HygieneOutcome::Timeout,
         reason: "native hygiene deadline expired".to_owned(),
         evidence: vec![AnalysisEvidence::Deadline {
-            limit_ms: configuration.deadline_ms,
+            limit_ms: DEADLINE_MS,
             elapsed_ms,
             state: EvidenceState::TimedOut,
         }],
@@ -483,7 +405,6 @@ struct AnalyzerRun<'a> {
     selected_files: u32,
     corpus: Corpus,
     terminal: Terminal,
-    focused: bool,
 }
 
 impl<'a> AnalyzerRun<'a> {
@@ -562,7 +483,6 @@ impl<'a> AnalyzerRun<'a> {
             selected_files,
             corpus,
             terminal,
-            focused: reached_paths.is_some(),
         }
     }
 
@@ -626,7 +546,7 @@ impl<'a> AnalyzerRun<'a> {
                 HygieneOutcome::Timeout,
                 "native hygiene deadline expired",
                 AnalysisEvidence::Deadline {
-                    limit_ms: self.configuration.deadline_ms,
+                    limit_ms: DEADLINE_MS,
                     elapsed_ms: *elapsed_ms,
                     state: EvidenceState::TimedOut,
                 },
@@ -669,7 +589,7 @@ impl<'a> AnalyzerRun<'a> {
         declaration: HygieneDeclaration,
         analyzer: AnalyzerEvidence,
     ) -> HygieneObservation {
-        if self.elapsed_ms() > self.configuration.deadline_ms {
+        if self.elapsed_ms() > DEADLINE_MS {
             return self.timeout_observation(declaration.id);
         }
         if !self.corpus.applicable(declaration.id) {
@@ -681,34 +601,24 @@ impl<'a> AnalyzerRun<'a> {
                 findings: Vec::new(),
             };
         }
-        let mut graph_work = GraphWork::new(self.started, self.configuration.deadline_ms);
-        if !graph_work.preflight(&self.corpus, self.configuration) {
+        let mut graph_work = GraphWork::new(self.started, DEADLINE_MS);
+        if !graph_work.preflight(&self.corpus) {
             return self.graph_failure_observation(declaration.id, &graph_work);
         }
-        let Some(findings) = self.corpus.findings(
-            declaration.id,
-            self.configuration,
-            self.focused,
-            &mut graph_work,
-        ) else {
+        let Some(findings) = self.corpus.findings(declaration.id, &mut graph_work) else {
             return self.graph_failure_observation(declaration.id, &graph_work);
         };
-        if self.elapsed_ms() > self.configuration.deadline_ms {
+        if self.elapsed_ms() > DEADLINE_MS {
             return self.timeout_observation(declaration.id);
         }
-        let limit = self.configuration.limit(declaration.id);
-        let outcome = if u32::try_from(findings.len()).unwrap_or(u32::MAX) > limit {
-            HygieneOutcome::Findings
-        } else {
+        let outcome = if findings.is_empty() {
             HygieneOutcome::Passed
+        } else {
+            HygieneOutcome::Findings
         };
-        let Some(evidence) = self.completed_evidence(
-            declaration,
-            analyzer,
-            findings.len(),
-            limit,
-            &mut graph_work,
-        ) else {
+        let Some(evidence) =
+            self.completed_evidence(declaration, analyzer, findings.len(), &mut graph_work)
+        else {
             return self.graph_failure_observation(declaration.id, &graph_work);
         };
         HygieneObservation {
@@ -744,7 +654,6 @@ impl<'a> AnalyzerRun<'a> {
         declaration: HygieneDeclaration,
         analyzer: AnalyzerEvidence,
         finding_count: usize,
-        limit: u32,
         work: &mut GraphWork,
     ) -> Option<Vec<AnalysisEvidence>> {
         let mut evidence = vec![
@@ -752,12 +661,12 @@ impl<'a> AnalyzerRun<'a> {
             AnalysisEvidence::Analyzer(analyzer),
             AnalysisEvidence::PolicyDecision {
                 field: decision_field(declaration.id).to_owned(),
-                limit,
+                limit: 0,
                 observed: u32::try_from(finding_count).unwrap_or(u32::MAX),
             },
             AnalysisEvidence::Deadline {
-                limit_ms: self.configuration.deadline_ms,
-                elapsed_ms: self.elapsed_ms().min(self.configuration.deadline_ms),
+                limit_ms: DEADLINE_MS,
+                elapsed_ms: self.elapsed_ms().min(DEADLINE_MS),
                 state: EvidenceState::Completed,
             },
             AnalysisEvidence::Parse {
@@ -777,12 +686,9 @@ impl<'a> AnalyzerRun<'a> {
             });
         }
         for traversal in declaration.traversals {
-            let item = self.corpus.traversal_evidence(
-                *traversal,
-                self.configuration,
-                self.focused,
-                work,
-            )?;
+            let item = self
+                .corpus
+                .traversal_evidence(*traversal, self.configuration, work)?;
             if !evidence
                 .iter()
                 .any(|existing| evidence_rank(existing) == evidence_rank(&item))
@@ -815,7 +721,7 @@ impl<'a> AnalyzerRun<'a> {
             HygieneOutcome::Timeout,
             "native hygiene deadline expired",
             AnalysisEvidence::Deadline {
-                limit_ms: self.configuration.deadline_ms,
+                limit_ms: DEADLINE_MS,
                 elapsed_ms: self.elapsed_ms(),
                 state: EvidenceState::TimedOut,
             },
@@ -844,16 +750,6 @@ impl<'a> AnalyzerRun<'a> {
 
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-impl HygieneConfiguration {
-    const fn limit(&self, gate: GateId) -> u32 {
-        match gate {
-            GateId::Reachability => self.reachability_limit,
-            GateId::AssertionFreeTests => self.assertion_free_limit,
-            _ => 0,
-        }
-    }
 }
 
 fn decision_field(gate: GateId) -> &'static str {

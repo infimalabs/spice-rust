@@ -353,15 +353,6 @@ impl Error {
             cleanup: None,
         }
     }
-
-    /// Returns a cleanup failure that accompanied the primary failure.
-    #[must_use]
-    pub fn cleanup_error(&self) -> Option<&io::Error> {
-        match self {
-            Self::Refused(_) => None,
-            Self::Io { cleanup, .. } => cleanup.as_ref(),
-        }
-    }
 }
 
 impl fmt::Display for Error {

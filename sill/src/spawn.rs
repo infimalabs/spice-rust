@@ -136,12 +136,6 @@ impl ProcessUsage {
         self.system_cpu
     }
 
-    /// Total user and system CPU charged to the process tree.
-    #[must_use]
-    pub fn cpu_time(self) -> Duration {
-        self.user_cpu.saturating_add(self.system_cpu)
-    }
-
     #[cfg(unix)]
     fn from_rusage(usage: libc::rusage) -> Self {
         Self::new(

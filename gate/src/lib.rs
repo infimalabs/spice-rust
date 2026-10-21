@@ -129,7 +129,7 @@ pub use hygiene::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use hygiene::{
     HYGIENE_SOURCE_FILE_BYTE_LIMIT, HygieneAnalysisError, HygieneConfiguration, HygieneExclusion,
-    HygieneSource, PrivateCouplingException, acquire_hygiene,
+    HygieneSource, acquire_hygiene,
 };
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
