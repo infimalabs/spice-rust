@@ -23,9 +23,13 @@ pub(crate) mod inline;
 mod math;
 mod media_quotes;
 mod quotes;
+pub(crate) mod received;
 mod tables;
 pub(crate) mod task_text;
 mod terminal;
+#[cfg(test)]
+pub(crate) use received::{render_attributed_received, render_received_with_classifications};
+pub(crate) use received::{render_received_with_media_quotes, render_received_with_quotes};
 
 /// The one parser option set for authored Markdown on every surface.
 const OPTIONS: Options = Options::ENABLE_TABLES
@@ -333,68 +337,6 @@ fn inline_destination_range(image: &str) -> Option<Range<usize>> {
     None
 }
 
-/// Render received text using exact resident-authenticated semantic ranges.
-#[cfg(test)]
-pub(crate) fn render_received_with_classifications(
-    markdown: &str,
-    classifications: &[MessageClassification],
-) -> RenderedMarkdown {
-    render_received_with_quotes(
-        markdown,
-        classifications,
-        &[],
-        &[],
-        &QuoteAgents::new(),
-        &BTreeMap::new(),
-    )
-}
-
-/// Render received text, its resident-resolved structural quote links, and a
-/// byline leading each directive context the resident quoted into it.
-pub(crate) fn render_received_with_quotes(
-    markdown: &str,
-    classifications: &[MessageClassification],
-    directives: &[MessageDirective],
-    quotes: &[wire::QuotePresentation],
-    quote_agents: &QuoteAgents,
-    quote_sources: &QuoteSources,
-) -> RenderedMarkdown {
-    render(
-        markdown,
-        classifications,
-        directives,
-        &[],
-        quotes,
-        quote_agents,
-        quote_sources,
-        &[],
-        Finish::Received,
-    )
-}
-
-/// Render received text with exact quote targets for its retained images.
-pub(crate) fn render_received_with_media_quotes(
-    markdown: &str,
-    classifications: &[MessageClassification],
-    directives: &[MessageDirective],
-    quotes: &[wire::QuotePresentation],
-    quote_agents: &QuoteAgents,
-    quote_sources: &QuoteSources,
-    media_quotes: &[wire::MediaQuote],
-) -> RenderedMarkdown {
-    render(
-        markdown,
-        classifications,
-        directives,
-        &[],
-        quotes,
-        quote_agents,
-        quote_sources,
-        media_quotes,
-        Finish::Received,
-    )
-}
-
 /// The source a card stands for when it sent no MSG, so its own source is
 /// never named.
 const SENDLESS_CARD: QuoteSource = QuoteSource {
@@ -537,6 +479,29 @@ impl Finish<'_> {
             Self::Received | Self::TaskText { .. } => None,
         }
     }
+
+    fn attribution(self, events: &mut [MarkdownEvent<'_>]) -> Option<image_flow::Attribution> {
+        match self {
+            Self::Received | Self::TaskText { .. } => None,
+            Self::ProseCard { punctuate, .. } => {
+                if punctuate {
+                    terminal::period(events);
+                }
+                Some(card_attribution())
+            }
+            Self::QuoteCard { attribution, .. } => Some(attribution),
+        }
+    }
+}
+
+fn card_attribution() -> image_flow::Attribution {
+    image_flow::Attribution {
+        controls_target: String::new(),
+        signoff: SIGNOFF_SLOT.to_owned(),
+        disposition: String::new(),
+        badge: String::new(),
+        task_tail: String::new(),
+    }
 }
 
 /// Headings in task text nest under the detail's own section headings.
@@ -594,22 +559,7 @@ fn render(
     // Diagram controls and nested block structure must not collapse into an image row.
     let mut events =
         decorate_markdown_images(events, image_only && !has_diagrams, &mut media_quotes);
-    let attribution = match finish {
-        Finish::Received | Finish::TaskText { .. } => None,
-        Finish::ProseCard { punctuate, .. } => {
-            if punctuate {
-                terminal::period(&mut events);
-            }
-            Some(image_flow::Attribution {
-                controls_target: String::new(),
-                signoff: SIGNOFF_SLOT.to_owned(),
-                disposition: String::new(),
-                badge: String::new(),
-                task_tail: String::new(),
-            })
-        }
-        Finish::QuoteCard { attribution, .. } => Some(attribution),
-    };
+    let attribution = finish.attribution(&mut events);
     let quote_attributions = outer_quotes
         .iter()
         .map(|quote| quote.attribution.clone())

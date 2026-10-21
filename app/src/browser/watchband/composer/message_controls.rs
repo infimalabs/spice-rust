@@ -155,7 +155,7 @@ pub(super) struct MessageChrome {
 pub(super) fn render_message_chrome(
     props: &AgentMessageCardProps,
     shown_text: &str,
-    is_prose: bool,
+    signed_body: bool,
     lone_tool_image: bool,
     correspondent: &view::chrome::Correspondent,
     producer_label: &str,
@@ -163,9 +163,9 @@ pub(super) fn render_message_chrome(
 ) -> MessageChrome {
     let message = &props.message;
     let signoff =
-        is_prose.then(|| render_agent_message_signoff(message, producer_label, attribution));
+        signed_body.then(|| render_agent_message_signoff(message, producer_label, attribution));
     let mut controls = Vec::new();
-    if is_prose {
+    if signed_body {
         controls.push(MarkdownControl {
             target: AttrValue::from(""),
             content: render_message_controls(
@@ -202,19 +202,21 @@ pub(super) fn render_message_chrome(
         &mut controls,
     );
     // A direction card is its quote, whose own lead carries the age, the
-    // operator → receiver signoff, and the controls.
-    let corner =
-        (!is_prose && !lone_tool_image && message.activity != wire::AgentActivityKind::Direction)
-            .then(|| {
-                render_message_controls(
-                    message,
-                    shown_text,
-                    correspondent,
-                    false,
-                    producer_label,
-                    attribution,
-                )
-            });
+    // operator → receiver signoff, and the controls. Every other unsigned body
+    // keeps its metadata in the corner island.
+    let corner = (!signed_body
+        && !lone_tool_image
+        && message.activity != wire::AgentActivityKind::Direction)
+        .then(|| {
+            render_message_controls(
+                message,
+                shown_text,
+                correspondent,
+                false,
+                producer_label,
+                attribution,
+            )
+        });
     MessageChrome {
         signoff,
         controls: Rc::new(controls),

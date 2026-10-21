@@ -57,7 +57,9 @@ fn has_terminal_punctuation(character: char) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::{SIGNOFF_SLOT, render_prose_card, render_received};
+    use super::super::{
+        SIGNOFF_SLOT, render_attributed_received, render_prose_card, render_received,
+    };
 
     #[test]
     fn a_prose_card_presents_its_terminal_prose_with_sentence_punctuation() {
@@ -121,5 +123,15 @@ mod tests {
             render_received("Nested quote bodies stay verbatim:").html,
             "<p>Nested quote bodies stay verbatim:</p>\n"
         );
+    }
+
+    #[test]
+    fn attributed_received_text_leads_with_signoff_without_rewriting_the_error() {
+        let error = "Codex error event: Codex is at capacity, please try again later (code=turn_rate_limit_exceeded)";
+        let html = render_attributed_received(error).html;
+        let signoff = html.find(SIGNOFF_SLOT).expect("signoff slot is present");
+        let words = html.find(error).expect("error text is present");
+        assert!(signoff < words, "{html}");
+        assert!(html.contains(&format!("<p>{error}</p>")), "{html}");
     }
 }

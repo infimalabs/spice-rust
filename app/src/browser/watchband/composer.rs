@@ -10,10 +10,12 @@ mod media;
 mod message_badges;
 mod message_boundary;
 mod message_controls;
+mod message_render;
 mod recall;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
 use message_boundary::render as render_agent_boundary;
+use message_render::render_agent_markdown;
 use recall::recall_arrow;
 
 pub(super) fn keyboard_submit(
@@ -873,7 +875,12 @@ fn agent_message_presentation<'a>(
     let media_description = (is_tool && !message.text.trim().is_empty())
         .then(|| watchband::tool_media_description(&message.text));
     let is_prose = message.activity == wire::AgentActivityKind::Prose;
-    let (shown_text, rendered_markdown) = render_agent_markdown(props, is_tool, is_prose);
+    let signed_body = matches!(
+        message.activity,
+        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Failure
+    );
+    let (shown_text, rendered_markdown) =
+        render_agent_markdown(props, is_tool, is_prose, signed_body);
     let card_label = agent_message_card_label(
         message,
         media_description.as_deref(),
@@ -903,7 +910,7 @@ fn agent_message_presentation<'a>(
     } = message_controls::render_message_chrome(
         props,
         control_text,
-        is_prose,
+        signed_body,
         lone_tool_image,
         correspondent,
         &footer_label,
@@ -933,64 +940,6 @@ fn agent_message_presentation<'a>(
         classifications,
         single_image_cover,
     }
-}
-
-/// Expand a card's media and render its Markdown: the shown text, then its
-/// rendering. Prose cards split into attributed hunks around every quote and
-/// sent MSG, speaking for the card's lane; tool, reasoning, and boundary cards
-/// render verbatim, and a tool card shows no words.
-fn render_agent_markdown(
-    props: &AgentMessageCardProps,
-    is_tool: bool,
-    is_prose: bool,
-) -> (
-    std::borrow::Cow<'_, str>,
-    crate::composer_markdown::RenderedMarkdown,
-) {
-    let message = &props.message;
-    let (quote_agents, quote_sources) = (&*props.quote_agents, &*props.quote_sources);
-    let shown_text = if is_tool { "" } else { message.text.as_str() };
-    let shown = crate::composer_markdown::expand_media_payloads(
-        shown_text,
-        &message.media,
-        &message.markdown_images,
-        &message.classifications,
-        &message.directive_contexts,
-        &message.sends,
-    )
-    .expect("message media passed admission before browser rendering");
-    let rendered = if is_prose {
-        let card = crate::composer_markdown::QuoteSource {
-            card_id: Some(agent_message_source_id(message)),
-            display_millis: crate::runtime::agent_message_display_millis(message),
-            agent: None,
-        };
-        crate::composer_markdown::render_prose_card_with_media_quotes(
-            &shown.markdown,
-            &shown.classifications,
-            &shown.directives,
-            &shown.sends,
-            &message.quotes,
-            crate::composer_markdown::QuoteRenderContext::new(
-                quote_agents,
-                quote_sources,
-                &card,
-                Some(props.member.lane),
-            ),
-            &message.media_quotes,
-        )
-    } else {
-        crate::composer_markdown::render_received_with_media_quotes(
-            &shown.markdown,
-            &shown.classifications,
-            &shown.directives,
-            &message.quotes,
-            quote_agents,
-            quote_sources,
-            &message.media_quotes,
-        )
-    };
-    (shown.markdown, rendered)
 }
 
 fn agent_message_correspondent(
@@ -1082,9 +1031,9 @@ fn render_message_age(message: &wire::AgentMessage, attribution: &str) -> Html {
     }
 }
 
-/// The card's controls: a corner island emitted before the prose so the prose
-/// flows around it. A prose card's producer metadata lives in its signoff, so
-/// its island keeps only actions; other cards keep that metadata here.
+/// The card's controls: a corner island emitted before the body so its words
+/// flow around it. A signed body's producer metadata lives in its leading
+/// signoff, so its island keeps only actions; other cards keep metadata here.
 fn render_message_controls(
     message: &wire::AgentMessage,
     shown_text: &str,
