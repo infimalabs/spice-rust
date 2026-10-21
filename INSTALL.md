@@ -119,6 +119,35 @@ On Windows, set `$SourceSpice = 'C:\absolute\path\to\spice.exe'`, then run
 verification block above to select the target repository's
 `.spice-install\bin\spice.exe`.
 
+## Share a macOS executable
+
+Directly shared macOS executables must be signed with a Developer ID and
+notarized. The operator needs Apple Developer Program membership, a
+`Developer ID Application` certificate and its private key in the login
+keychain, and a `notarytool` keychain profile created once:
+
+```sh
+xcrun notarytool store-credentials PROFILE
+security find-identity -v -p codesigning
+```
+
+Build or copy the Darwin executable outside the sealed release, then sign,
+submit, wait for Apple's verdict, and verify it with one repository-owned
+command:
+
+```sh
+spice dev xtask -- share-darwin /absolute/path/to/spice \
+  --identity "Developer ID Application: NAME (TEAMID)" \
+  --notary-profile PROFILE
+```
+
+The command changes the executable in place. It refuses before signing when the
+identity or profile is unavailable, retrieves Apple's log when notarization is
+rejected, and finishes only after strict `codesign` verification and
+`spctl --assess --type execute` accept the file. A bare Mach-O cannot carry a
+stapled ticket, so its first Gatekeeper assessment needs network access. This
+operator sharing path does not mutate or replace any sealed release artifact.
+
 ## Hook authority
 
 One repository has one effective hook authority. Preview inspects every linked

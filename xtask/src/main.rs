@@ -21,6 +21,7 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
+    "share-darwin EXECUTABLE --identity IDENTITY --notary-profile PROFILE|",
     "stage-target TARGET|windows-appliance|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
     "windows-guest <provision [--replace]|start|stop|status|reset|",
     "sync [--artifact PATH]... [--source PATH]...|",
@@ -85,6 +86,10 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("proof-image") => {
             drop(output);
             return run_proof_image(arguments.collect());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("share-darwin") => {
+            run_share_darwin(arguments.collect(), &mut output)
         }
         Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
             run_stage_target(arguments.next(), &mut output, &mut io::stderr().lock())
@@ -237,6 +242,31 @@ fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> Com
     xtask::build_cache(&request, output)
         .map(|_| ())
         .map_err(Into::into)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_share_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    let [executable, identity_flag, identity, profile_flag, profile] = arguments.as_slice() else {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    };
+    if identity_flag != OsStr::new("--identity") || profile_flag != OsStr::new("--notary-profile") {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    }
+    let Some(identity) = identity.to_str() else {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    };
+    let Some(profile) = profile.to_str() else {
+        eprintln!("{}", help());
+        return Err(usage_error().into());
+    };
+    xtask::share_darwin(
+        &xtask::ShareDarwinRequest::new(executable, identity, profile),
+        output,
+    )
+    .map_err(Into::into)
 }
 
 fn run_stage_target(
