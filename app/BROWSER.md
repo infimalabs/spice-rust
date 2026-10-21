@@ -257,7 +257,11 @@ recommendation and justification, its decision standing as tab-style badges
 (Undecided, Withdrawn, Returned, Accepted, or a resolved proposal's Accepted
 and Rejected output counts), and links that focus that version, its statement,
 and each output on the Design's read view. The card carries no decision
-controls; those stay on the version.
+controls; those stay on the version. There, a work proposal's every output
+carries an Accept or Reject verdict the operator must give: no line starts
+decided, **Accept all** and **Reject all** above the output list mark every
+line at once, and Preview refuses, naming the undecided outputs, until each
+has a verdict. Return with feedback needs no per-output verdict.
 
 The operator's inbox sits in the Spice sidebar's Principals section, inside
 their own principal row beneath its avatar, name, and email, above Jobs, and
@@ -303,11 +307,15 @@ The repository-owned OOPS Design uses the ordinary Design room and proposal
 surface. One typed repository generation authority, not the Design's title or
 project spelling, selects the current open Design. Its generated candidate
 shows each pending report Plan as one line item with its complete statement
-and an Accept or Reject verdict. Every line starts visibly **Reject**, so an
-untouched submission explicitly rejects it; Return is not offered because
+and an Accept or Reject verdict. No line starts decided: the operator marks
+each line, or every line with **Accept all** or **Reject all**, and
+submission refuses while any line is undecided, so no untouched line is ever
+rejected or accepted by default. Resolving the lines is the candidate's only
+decision, so the card asks no Accept-or-Return choice and offers no Return:
 every submitted line receives a disposition. Accepted lines receive ordinary
 execution authorization. Rejected and previously decided lines remain
-history, while reports arriving during a decision appear in the next candidate.
+history, while reports arriving during a decision appear in the next
+candidate.
 
 ## Composer images
 

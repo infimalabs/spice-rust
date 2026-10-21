@@ -2,11 +2,15 @@
 //! work output, accept an outputless conclusion, or return any proposal with
 //! material feedback; preview the effect; then submit once.
 //!
+//! No output verdict is assumed: every proposed output stays undecided until
+//! the operator marks it, singly or all at once, and a work proposal with an
+//! undecided output refuses to preview rather than deciding for them.
+//!
 //! The draft never changes rendered authority. A successful command answer
 //! only reports that the write landed; proposal standing moves when the
 //! committed decision and refreshed board dependency edges arrive.
 
-use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
@@ -52,7 +56,7 @@ pub enum DraftNotice {
 pub struct DecisionDraft {
     candidate: CandidateRef,
     choice: DecisionChoice,
-    accepted: BTreeSet<TaskStamp>,
+    verdicts: BTreeMap<TaskStamp, OutputVerdict>,
     output_comments: BTreeMap<TaskStamp, String>,
     reason: String,
     phase: DraftPhase,
@@ -115,7 +119,7 @@ impl DecisionDraft {
         Self {
             candidate,
             choice: DecisionChoice::Accept,
-            accepted: BTreeSet::new(),
+            verdicts: BTreeMap::new(),
             output_comments: BTreeMap::new(),
             reason: String::new(),
             phase: DraftPhase::Editing,
@@ -133,13 +137,10 @@ impl DecisionDraft {
         self.choice
     }
 
+    /// The verdict the operator gave `output`, if any.
     #[must_use]
-    pub fn verdict(&self, output: &TaskStamp) -> OutputVerdict {
-        if self.accepted.contains(output) {
-            OutputVerdict::Accepted
-        } else {
-            OutputVerdict::Rejected
-        }
+    pub fn verdict(&self, output: &TaskStamp) -> Option<OutputVerdict> {
+        self.verdicts.get(output).copied()
     }
 
     #[must_use]
@@ -172,12 +173,20 @@ impl DecisionDraft {
     }
 
     pub fn set_output_verdict(&mut self, output: TaskStamp, verdict: OutputVerdict) {
-        self.edit(|draft| match verdict {
-            OutputVerdict::Accepted => {
-                draft.accepted.insert(output);
-            }
-            OutputVerdict::Rejected => {
-                draft.accepted.remove(&output);
+        self.edit(|draft| {
+            draft.verdicts.insert(output, verdict);
+        });
+    }
+
+    /// Give every listed output the same verdict in one edit.
+    pub fn set_every_output_verdict(
+        &mut self,
+        outputs: impl IntoIterator<Item = TaskStamp>,
+        verdict: OutputVerdict,
+    ) {
+        self.edit(|draft| {
+            for output in outputs {
+                draft.verdicts.insert(output, verdict);
             }
         });
     }
@@ -315,8 +324,8 @@ impl DecisionDraft {
             DecisionChoice::Accept => match candidate.recommendation {
                 DesignPassRecommendation::Work => {
                     if self
-                        .accepted
-                        .iter()
+                        .verdicts
+                        .keys()
                         .any(|output| !candidate.outputs.contains(output))
                     {
                         return Err(
@@ -324,12 +333,24 @@ impl DecisionDraft {
                                 .to_owned(),
                         );
                     }
+                    let undecided = candidate
+                        .outputs
+                        .iter()
+                        .filter(|output| !self.verdicts.contains_key(*output))
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>();
+                    if !undecided.is_empty() {
+                        return Err(format!(
+                            "preparation::decision-undecided-output: accept or reject every proposed output before previewing; undecided: {}",
+                            undecided.join(", ")
+                        ));
+                    }
                     let outputs = candidate
                         .outputs
                         .iter()
                         .map(|output| OutputDecision {
                             output: output.clone(),
-                            verdict: self.verdict(output),
+                            verdict: self.verdicts[output],
                             comment: trimmed(self.output_comment(output)),
                         })
                         .collect();
