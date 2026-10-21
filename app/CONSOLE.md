@@ -177,16 +177,17 @@ same radius as the lane-top tabs. Only the earlier console draws the dividing
 rule, a hairline half the width of the app's ordinary edge, so its top rule
 turns down its end edge into that faint rule, while the later band's rounded
 top rule tapers away against it. A corner at the browser
-edge stays square. The weave holds one full-width row per member in canonical
-member order, filling the panel for one to six members, and its rails and
-trails distinguish active, queued, waiting, bound, and unbound states; the
-[weave](BROWSER.md#team-and-group-weaves) describes its threads, silence
-trails, and collaboration knots. The ticker keeps relative age, status, prefix, accent,
+edge stays square. The weave holds one equal-width column per member in
+canonical member order, time flowing down from now at the top over a
+ten-minute log-recent axis, and its caps and trails distinguish active, queued,
+waiting, bound, and unbound states; the
+[weave](BROWSER.md#team-and-group-weaves) describes its kind violins, silence
+trails, packet rungs, and direction notches. The ticker keeps relative age, status, prefix, accent,
 accessible label, and live-region semantics. A running command's line opens
 naming its tool, such as `job:`; its latest nonblank output row follows that
 prefix and leads the intent and operation context, so a narrow ticker cuts
 context before the result; the complete bounded line remains available on
-hover. An empty fleet draws no weave rows and invents no status.
+hover. An empty fleet draws no weave columns and invents no status.
 
 ## Task strips
 
@@ -294,10 +295,10 @@ tabs do. It maps each team element to a design-side analog:
 | Team total: counts and opens exactly the tasks its members are actively working | Group total: counts and opens exactly all actively claimed work associated with the group's designs, even when one lane holds several tasks |
 | One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
 | A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
-| Presence weave: one row per member, its rail and trail by state, its thread tracing the lane's recent activity | Design weave: one row per design in its accent, its thread pooling the activity of the lanes working that design through the same thread model, knotted to other rows where those lanes exchange packets, and its rail and trail distinguishing open passive, claimed, each of the four pass cycle states (gathering input, ready for proposal, awaiting decision, waiting on selected work), concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row or cycle is unavailable invents no standing |
+| Presence weave: one column per member, its cap and trail by state, its violin tracing the lane's recent activity by kind | Design weave: one column per design in its accent, its violin pooling the activity of the lanes working that design through the same model, rungs to other columns where those lanes exchange packets, and its cap and trail distinguishing open passive, claimed, each of the four pass cycle states (gathering input, ready for proposal, awaiting decision, waiting on selected work), concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row or cycle is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest words said across the group's designs, with the same age, prefix, accessible label, and live region; a contribution names its lane and kind, while departures and coordination events do not displace it |
 
-A design row reads its [standing](#design-standing): concluded done,
+A design column reads its [standing](#design-standing): concluded done,
 concluded collapsed, or deleted once terminal, even while a saved group still
 holds it; open passive outside every group. An open active Design then reads
 claimed while a lane actively claims it for a pass, and otherwise the pass

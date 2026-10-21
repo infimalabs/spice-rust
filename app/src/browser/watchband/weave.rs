@@ -1,11 +1,14 @@
-//! A team's or working group's lights panel drawn as one weave: a thread per
-//! row in the row's accent, as thick as its channel's work rate, ending where
-//! it was last heard, with a dotted silence trail in its status colour running
-//! from there to now. Threads bow together where lanes in two rows interacted,
-//! and operator direction drops onto its row's thread from the nearer edge.
-//! Everything is SVG geometry in the pane's measured CSS pixels, which the
-//! app's `style-src 'self'` policy admits where inline styles are refused;
-//! colours and glow stay in the stylesheet.
+//! A team's or working group's lights panel drawn as log-time kind violins:
+//! one fixed-width column per channel, time flowing down from now at the
+//! top. Each channel's work is a symmetric violin split side by side into
+//! reasoning, tool, and prose tones of its accent, closing with a rounded
+//! taper where it truly stopped. A status cap sits in the column's top row,
+//! a dotted silence trail in the same status colour runs from it down to the
+//! last-heard dot, MSG packets are accent rungs with an arrowhead at the
+//! recipient, and operator directions are ink notches on the receiving
+//! column's left edge. Everything is SVG geometry in the pane's measured CSS
+//! pixels, which the app's `style-src 'self'` policy admits where inline
+//! styles are refused; colours and glow stay in the stylesheet.
 
 use std::fmt::Write as _;
 use std::rc::Rc;
@@ -16,21 +19,21 @@ use yew::prelude::*;
 
 use super::super::clock::now_millis;
 use crate::watchband::{
-    Channel, Edge, Interaction, TRACE_STEP_MILLIS, Thread, TraceActivity, TraceOff, TraceSpan,
-    direction_edge, elapsed_label, last_heard, weave,
+    Channel, Column, Interaction, Packet, Run, TRACE_STEP_MILLIS, TraceActivity, TraceOff, depth,
+    elapsed_label, last_heard, weave,
 };
 
-/// One row of a weave: a team lane, or a Design and the lanes working it.
+/// One column of a weave: a team lane, or a Design and the lanes working it.
 #[derive(Clone, PartialEq)]
-pub(crate) struct WeaveRow {
+pub(crate) struct WeaveChannel {
     /// Lane or Design identity, unique on the page.
     pub(crate) key: AttrValue,
-    /// Who the row is and its status or standing.
+    /// Who the channel is and its status or standing.
     pub(crate) label: AttrValue,
     pub(crate) accent: usize,
-    /// Status or standing key, which colours the row's trail and rail.
+    /// Status or standing key, which colours the column's cap and trail.
     pub(crate) state: &'static str,
-    /// Whether the row wears its accent; an empty team seat drains to gray.
+    /// Whether the column wears its accent; an empty team seat drains to gray.
     pub(crate) seated: bool,
     pub(crate) lanes: Rc<[CanonicalUuid]>,
     pub(crate) activities: Rc<[TraceActivity]>,
@@ -39,14 +42,14 @@ pub(crate) struct WeaveRow {
 
 #[derive(Properties, PartialEq)]
 pub(crate) struct WeaveProps {
-    /// Rows from top to bottom.
-    pub(crate) rows: Rc<[WeaveRow]>,
+    /// Channels from left to right.
+    pub(crate) channels: Rc<[WeaveChannel]>,
     pub(crate) interactions: Rc<[Interaction]>,
 }
 
 /// Every lane-to-lane packet the browser retains: each packet a sender's card
 /// presents, and each packet a recipient's card quotes. One packet seen from
-/// both sides is one knot; the weave merges them.
+/// both sides draws once; the weave merges them.
 pub(crate) fn lane_interactions(runtime: &crate::AppRuntime) -> Rc<[Interaction]> {
     let mut interactions = Vec::new();
     for message in runtime.messages() {
@@ -78,33 +81,71 @@ pub(crate) fn lane_interactions(runtime: &crate::AppRuntime) -> Rc<[Interaction]
     interactions.into()
 }
 
-/// Space the status rail needs inside the pane's right edge, in CSS pixels.
-const RAIL: f64 = 1.5;
+/// Space kept inside the pane's left and right edges, in CSS pixels.
+const PAD: f64 = 1.5;
 
-/// Thread thickness while heard but idle, in CSS pixels.
+/// Gutter between two columns.
+const GUTTER: f64 = 1.4;
+
+/// The status cap's row at the top of each column.
+const CAP_TOP: f64 = 0.5;
+const CAP_HEIGHT: f64 = 1.1;
+
+/// Share of its column the cap spans, and the narrowest cap drawn.
+const CAP_SHARE: f64 = 0.7;
+const CAP_MIN: f64 = 2.0;
+
+/// Where now sits: the top of the time axis, under the cap row.
+const AXIS_TOP: f64 = 2.6;
+
+/// Room the axis keeps above the pane's bottom edge for the floor.
+const FLOOR_INSET: f64 = 0.8;
+
+/// How far above the axis top the silence trail starts, so it meets the cap.
+const TRAIL_LEAD: f64 = 0.3;
+
+/// A trail shorter than this is hidden under its own dot.
+const TRAIL_MIN: f64 = 1.0;
+
+/// Share of its column a violin fills at the full rate.
+const FILL: f64 = 0.92;
+
+/// Violin width while heard but idle.
 const HAIRLINE: f64 = 0.6;
 
-/// Share of its row a thread fills at the full rate.
-const FILL: f64 = 0.85;
+/// Distance over which a violin rounds off where its channel truly stopped.
+const TAPER: f64 = 0.9;
 
-/// Room a clip keeps beyond the pane's outer edges, so a thread's glow there
-/// is not shaved; only a gap's or silence's own edges cut it.
-const CLIP_BLEED: f64 = 3.0;
+const HEARD_RADIUS: f64 = 0.95;
 
-/// A row last heard less than this long ago was heard just now.
+/// A rung's arrowhead: how far back from the recipient's centre it opens and
+/// its half-height.
+const RUNG_HEAD: f64 = 1.2;
+const RUNG_HALF: f64 = 0.8;
+
+/// A direction notch: how far it reaches into the column from its left edge,
+/// how far it backs out past that edge, and its half-height.
+const NOTCH_REACH: f64 = 1.25;
+const NOTCH_BACK: f64 = 0.2;
+const NOTCH_HALF: f64 = 0.95;
+
+/// The dotted rule marking one minute ago.
+const MINUTE_MILLIS: f64 = 60_000.0;
+
+/// A channel last heard less than this long ago was heard just now.
 const JUST_NOW_MILLIS: i64 = 1_000;
 
-/// Samples per thread: about one per two pixels, so a knot thirty seconds
-/// either side still bends smoothly in a narrow panel.
-fn samples(width: f64) -> usize {
-    // Truncation is the intent: whole two-pixel columns.
+/// Samples per violin: about three per pixel of axis, so the sharp top of a
+/// fresh burst still curves rather than kinks.
+fn samples(height: f64) -> usize {
+    // Truncation is the intent: whole samples.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let columns = (width / 2.0).floor() as usize;
-    columns.clamp(9, 121)
+    let count = ((height - AXIS_TOP - FLOOR_INSET) * 3.0).floor().max(0.0) as usize;
+    count.clamp(25, 161)
 }
 
-/// Redraws on new activity and once per trace step, so the window keeps
-/// sliding, silence trails lengthen, and labels age without a new frame; the
+/// Redraws on new activity and once per trace step, so time keeps flowing
+/// down, silence trails lengthen, and labels age without a new frame; the
 /// pane's size is measured after each draw.
 #[function_component(TeamWeave)]
 pub(crate) fn team_weave(props: &WeaveProps) -> Html {
@@ -133,44 +174,55 @@ pub(crate) fn team_weave(props: &WeaveProps) -> Html {
     let (width, height) = *size;
     let now = now_millis();
     let channels = props
-        .rows
+        .channels
         .iter()
-        .map(|row| Channel {
-            lanes: &row.lanes,
-            activities: &row.activities,
-            off: &row.off,
+        .map(|channel| Channel {
+            lanes: &channel.lanes,
+            activities: &channel.activities,
+            off: &channel.off,
         })
         .collect::<Vec<_>>();
-    let woven = weave(&channels, &props.interactions, now, samples(width));
+    let woven = weave(&channels, &props.interactions, now, samples(height));
     let pane_size = Pane {
         width,
         height,
-        rows: props.rows.len(),
+        columns: props.channels.len(),
     };
-    let drawn = width > RAIL && height > RAIL;
+    let drawn = !props.channels.is_empty()
+        && pane_size.column_width() >= CAP_MIN
+        && pane_size.floor() - AXIS_TOP >= TAPER;
+    let minute = pane_size.y(depth(MINUTE_MILLIS));
     html! {
         <span ref={pane} class="team-weave">
             if drawn {
                 <svg viewBox={format!("0 0 {width:.2} {height:.2}")} aria-hidden="true">
-                    {for props.rows.iter().zip(&woven.threads).enumerate().map(|(index, (row, thread))| {
-                        render_row(pane_size, index, row, thread)
+                    <line class="weave-minute" x1="0" x2={format!("{width:.2}")} y1={format!("{minute:.2}")} y2={format!("{minute:.2}")} />
+                    {for props.channels.iter().zip(&woven.columns).enumerate().map(|(index, (channel, column))| {
+                        render_column(pane_size, index, channel, column)
                     })}
+                    {for woven.packets.iter().map(|packet| render_packet(pane_size, &props.channels, packet))}
                 </svg>
             }
-            {for props.rows.iter().map(|row| html! {
-                <span class="visually-hidden" data-weave-label={row.key.clone()}>{label(row, now)}</span>
+            {for props.channels.iter().map(|channel| html! {
+                <span class="visually-hidden" data-weave-label={channel.key.clone()}>{label(channel, now)}</span>
             })}
         </span>
     }
 }
 
-/// A row's accessible name with how long ago it was last heard. Under a
+/// A channel's accessible name with how long ago it was last heard. Under a
 /// second, or stamped by a clock running ahead, it was heard just now.
-fn label(row: &WeaveRow, now: i64) -> String {
-    match last_heard(&row.activities) {
-        None => format!("{}, not heard", row.label),
-        Some(heard) if now - heard < JUST_NOW_MILLIS => format!("{}, heard just now", row.label),
-        Some(heard) => format!("{}, heard {} ago", row.label, elapsed_label(now - heard)),
+fn label(channel: &WeaveChannel, now: i64) -> String {
+    match last_heard(&channel.activities) {
+        None => format!("{}, not heard", channel.label),
+        Some(heard) if now - heard < JUST_NOW_MILLIS => {
+            format!("{}, heard just now", channel.label)
+        }
+        Some(heard) => format!(
+            "{}, heard {} ago",
+            channel.label,
+            elapsed_label(now - heard)
+        ),
     }
 }
 
@@ -178,160 +230,211 @@ fn label(row: &WeaveRow, now: i64) -> String {
 struct Pane {
     width: f64,
     height: f64,
-    rows: usize,
+    columns: usize,
 }
 
 impl Pane {
-    /// Pixels across for a fraction of the window, short of the rail.
-    fn x(self, at: f64) -> f64 {
-        at * (self.width - RAIL)
+    /// Where the ten-minute floor sits.
+    fn floor(self) -> f64 {
+        self.height - FLOOR_INSET
+    }
+
+    /// Pixels down for a depth of the axis.
+    fn y(self, depth: f64) -> f64 {
+        AXIS_TOP + (self.floor() - AXIS_TOP) * depth
+    }
+
+    fn gutter(self) -> f64 {
+        if self.columns > 1 { GUTTER } else { 0.0 }
     }
 
     #[allow(clippy::cast_precision_loss)]
-    fn row_height(self) -> f64 {
-        self.height / self.rows as f64
+    fn column_width(self) -> f64 {
+        let columns = self.columns.max(1) as f64;
+        (self.width - 2.0 * PAD - self.gutter() * (columns - 1.0)) / columns
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn left(self, index: usize) -> f64 {
+        PAD + index as f64 * (self.column_width() + self.gutter())
+    }
+
+    fn center(self, index: usize) -> f64 {
+        self.left(index) + self.column_width() / 2.0
     }
 }
 
-/// A thread's centre and thickness in pixels at a fraction of the window,
-/// interpolated between its samples.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn at(pane: Pane, thread: &Thread, fraction: f64) -> (f64, f64) {
-    let last = thread.centers.len() - 1;
-    let position = fraction.clamp(0.0, 1.0) * last as f64;
-    let index = (position.floor() as usize).min(last.saturating_sub(1));
-    let blend = position - index as f64;
-    let mix =
-        |values: &[f64]| values[index] + (values[(index + 1).min(last)] - values[index]) * blend;
-    (
-        mix(&thread.centers) * pane.height,
-        thickness(pane, mix(&thread.levels)),
-    )
+/// Appends a Catmull-Rom spline through `count` points as cubic segments.
+fn curve(d: &mut String, count: usize, at: impl Fn(usize) -> (f64, f64)) {
+    for index in 0..count.saturating_sub(1) {
+        let before = at(index.saturating_sub(1));
+        let from = at(index);
+        let to = at(index + 1);
+        let after = at((index + 2).min(count - 1));
+        let _ = write!(
+            d,
+            " C{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+            from.0 + (to.0 - before.0) / 6.0,
+            from.1 + (to.1 - before.1) / 6.0,
+            to.0 - (after.0 - from.0) / 6.0,
+            to.1 - (after.1 - from.1) / 6.0,
+            to.0,
+            to.1,
+        );
+    }
 }
 
-fn thickness(pane: Pane, level: f64) -> f64 {
-    HAIRLINE + level * pane.row_height() * FILL
+/// A closed band between two edges, each `count` points from the top down:
+/// down the left edge and back up the right.
+fn band(
+    count: usize,
+    left: impl Fn(usize) -> (f64, f64),
+    right: impl Fn(usize) -> (f64, f64),
+) -> String {
+    let mut d = String::new();
+    let (x, y) = left(0);
+    let _ = write!(d, "M{x:.2},{y:.2}");
+    curve(&mut d, count, &left);
+    let (x, y) = right(count - 1);
+    let _ = write!(d, " L{x:.2},{y:.2}");
+    curve(&mut d, count, |index| right(count - 1 - index));
+    d.push('Z');
+    d
 }
 
-/// Clip rectangles for the thread: its drawn spans, ended where it was last
-/// heard. A row not heard in the window draws no thread.
-fn thread_rects(pane: Pane, spans: &[TraceSpan], heard: f64) -> Vec<(f64, f64)> {
-    spans
+/// One violin: its three kind bands side by side, reasoning, tool, then
+/// prose from left to right, each as wide as that kind's share of the level.
+/// The violin rounds off over the taper distance at an end where the channel
+/// truly stopped and is cut square only by the floor.
+fn render_run(pane: Pane, index: usize, run: &Run) -> Html {
+    let width = pane.column_width();
+    let center = pane.center(index);
+    let top = pane.y(run.samples[0].depth);
+    let bottom = pane.y(run.samples[run.samples.len() - 1].depth);
+    let edges = run
+        .samples
         .iter()
-        .filter_map(|&TraceSpan { from, to }| {
-            let left = if from <= 0.0 {
-                -CLIP_BLEED
-            } else {
-                pane.x(from)
-            };
-            let right = if to >= 1.0 && heard >= 1.0 {
-                pane.width + CLIP_BLEED
-            } else {
-                pane.x(to.min(heard))
-            };
-            (right > left).then_some((left, right))
-        })
-        .collect()
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn render_row(pane: Pane, index: usize, row: &WeaveRow, thread: &Thread) -> Html {
-    let last = thread.centers.len() - 1;
-    let points = (0..=last)
         .map(|sample| {
-            let x = pane.x(sample as f64 / last as f64);
-            let center = thread.centers[sample] * pane.height;
-            (x, center, thickness(pane, thread.levels[sample]))
+            let y = pane.y(sample.depth);
+            let below = if run.reaches_floor {
+                f64::INFINITY
+            } else {
+                bottom - y
+            };
+            let taper = ((y - top).min(below) / TAPER).min(1.0).sqrt();
+            let half = (sample.level * FILL * width / 2.0).max(HAIRLINE / 2.0) * taper;
+            let full = 2.0 * half;
+            (
+                y,
+                [
+                    center - half,
+                    center - half + full * sample.reasoning,
+                    center - half + full * (sample.reasoning + sample.tool),
+                    center + half,
+                ],
+            )
         })
         .collect::<Vec<_>>();
-    let thread_shape = thread.heard.map(|heard| {
-        let mut d = String::new();
-        for (sample, (x, center, thick)) in points.iter().enumerate() {
-            let verb = if sample == 0 { 'M' } else { 'L' };
-            let _ = write!(d, "{verb}{x:.2},{:.2} ", center - thick / 2.0);
-        }
-        for (x, center, thick) in points.iter().rev() {
-            let _ = write!(d, "L{x:.2},{:.2} ", center + thick / 2.0);
-        }
-        d.push('Z');
-        let clip = format!("weave-{}-heard", row.key);
-        let (heard_x, heard_center) = (pane.x(heard), at(pane, thread, heard).0);
+    let count = edges.len();
+    let edges = edges.as_slice();
+    let edge = |side: usize| move |index: usize| (edges[index].1[side], edges[index].0);
+    html! {
+        <g class="weave-violin">
+            <path class="weave-kind-reasoning" d={band(count, edge(0), edge(1))} />
+            <path class="weave-kind-tool" d={band(count, edge(1), edge(2))} />
+            <path class="weave-kind-prose" d={band(count, edge(2), edge(3))} />
+        </g>
+    }
+}
+
+fn render_column(pane: Pane, index: usize, channel: &WeaveChannel, column: &Column) -> Html {
+    let width = pane.column_width();
+    let left = pane.left(index);
+    let center = pane.center(index);
+    let trail_top = AXIS_TOP - TRAIL_LEAD;
+    let trail_end = column.heard.map_or(pane.floor(), |heard| pane.y(heard));
+    let trail = (trail_end - trail_top >= TRAIL_MIN).then(|| {
         html! {
-            <>
-                <defs>
-                    <@{"clipPath"} id={clip.clone()}>
-                        {for thread_rects(pane, &thread.spans, heard).into_iter().map(|(left, right)| html! {
-                            <rect
-                                x={format!("{left:.2}")}
-                                y={format!("{:.2}", -CLIP_BLEED)}
-                                width={format!("{:.2}", right - left)}
-                                height={format!("{:.2}", pane.height + 2.0 * CLIP_BLEED)}
-                            />
-                        })}
-                    </@>
-                </defs>
-                <path class="weave-thread" d={d} clip-path={format!("url(#{clip})")} />
-                <circle class="weave-heard" cx={format!("{heard_x:.2}")} cy={format!("{heard_center:.2}")} r="1" />
-            </>
+            <line
+                class="weave-trail"
+                x1={format!("{center:.2}")}
+                y1={format!("{trail_top:.2}")}
+                x2={format!("{center:.2}")}
+                y2={format!("{trail_end:.2}")}
+            />
         }
     });
-    // Silence runs from the last-heard instant, or the window's start, to now.
-    let from = thread.heard.unwrap_or(0.0);
-    let trail = (from < 1.0).then(|| {
-        let (start_center, _) = at(pane, thread, from);
-        let mut d = format!("M{:.2},{start_center:.2}", pane.x(from));
-        for (sample, (x, center, _)) in points.iter().enumerate() {
-            if sample as f64 / last as f64 > from {
-                let _ = write!(d, " L{x:.2},{center:.2}");
-            }
-        }
-        let _ = write!(d, " L{:.2},{:.2}", pane.width, points[last].1);
-        html! { <path class="weave-trail" d={d} /> }
-    });
-    let (_, now_center, now_thick) = points[last];
-    let rail_height = if thread.heard.is_some() {
-        now_thick.max(2.0)
-    } else {
-        2.0
-    };
-    let edge = direction_edge(index, pane.rows);
-    let directions = thread.directions.iter().map(|&x| {
-        let (center, thick) = at(pane, thread, x);
-        let (from, to) = match edge {
-            Edge::Top => (0.0, center - thick / 2.0),
-            Edge::Bottom => (pane.height, center + thick / 2.0),
-        };
-        let x = pane.x(x);
+    let heard = column.heard.map(|heard| {
         html! {
-            <g class="weave-direction" data-weave-edge={edge.key()}>
-                <line x1={format!("{x:.2}")} y1={format!("{from:.2}")} x2={format!("{x:.2}")} y2={format!("{to:.2}")} />
-                <circle cx={format!("{x:.2}")} cy={format!("{to:.2}")} r=".9" />
-            </g>
+            <circle
+                class="weave-heard"
+                cx={format!("{center:.2}")}
+                cy={format!("{:.2}", pane.y(heard))}
+                r={format!("{HEARD_RADIUS:.2}")}
+            />
         }
+    });
+    let cap = (width * CAP_SHARE).max(CAP_MIN).min(width);
+    let notches = column.directions.iter().map(|&direction| {
+        let y = pane.y(direction);
+        let d = format!(
+            "M{:.2},{:.2} L{:.2},{y:.2} L{:.2},{:.2}Z",
+            left - NOTCH_BACK,
+            y - NOTCH_HALF,
+            left + NOTCH_REACH,
+            left - NOTCH_BACK,
+            y + NOTCH_HALF,
+        );
+        html! { <path class="weave-direction" d={d} /> }
     });
     html! {
         <g
-            key={row.key.to_string()}
-            class={classes!("weave-row", row.state)}
-            data-weave-row={row.key.clone()}
-            data-accent={row.accent.to_string()}
-            data-lane-seated={row.seated.to_string()}
+            key={channel.key.to_string()}
+            class={classes!("weave-column", channel.state)}
+            data-weave-column={channel.key.clone()}
+            data-accent={channel.accent.to_string()}
+            data-lane-seated={channel.seated.to_string()}
         >
-            <title>{row.label.clone()}</title>
+            <title>{channel.label.clone()}</title>
+            {for column.runs.iter().map(|run| render_run(pane, index, run))}
             {trail}
-            {thread_shape}
+            {heard}
             <rect
-                class="weave-rail"
-                x={format!("{:.2}", pane.width - 1.0)}
-                y={format!("{:.2}", now_center - rail_height / 2.0)}
-                width="1"
-                height={format!("{rail_height:.2}")}
+                class="weave-cap"
+                x={format!("{:.2}", center - cap / 2.0)}
+                y={format!("{CAP_TOP:.2}")}
+                width={format!("{cap:.2}")}
+                height={format!("{CAP_HEIGHT:.2}")}
+                rx={format!("{:.2}", CAP_HEIGHT / 2.0)}
             />
-            {for directions}
+            {for notches}
+        </g>
+    }
+}
+
+/// A packet: a rung in the sender's accent from its column's centre to the
+/// recipient's, with an open arrowhead at the recipient.
+fn render_packet(pane: Pane, channels: &[WeaveChannel], packet: &Packet) -> Html {
+    let sender = &channels[packet.from];
+    let y = pane.y(packet.depth);
+    let from = pane.center(packet.from);
+    let to = pane.center(packet.to);
+    let back = if to > from { RUNG_HEAD } else { -RUNG_HEAD };
+    let head = format!(
+        "M{:.2},{:.2} L{to:.2},{y:.2} L{:.2},{:.2}",
+        to - back,
+        y - RUNG_HALF,
+        to - back,
+        y + RUNG_HALF,
+    );
+    html! {
+        <g
+            class="weave-packet"
+            data-accent={sender.accent.to_string()}
+            data-lane-seated={sender.seated.to_string()}
+        >
+            <line x1={format!("{from:.2}")} y1={format!("{y:.2}")} x2={format!("{to:.2}")} y2={format!("{y:.2}")} />
+            <path d={head} />
         </g>
     }
 }

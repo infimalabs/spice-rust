@@ -1,35 +1,54 @@
-//! A team or working group drawn as one weave: one thread per channel, each in
-//! its own row of the panel, over the trace's shared ten-minute window.
+//! A team or working group drawn as log-time kind violins: one column per
+//! channel, time flowing down from now at the top over the trace's shared
+//! ten-minute window.
 //!
-//! A channel is a set of lanes. A team row is its one lane and a working-group
-//! row is the distinct lanes working its Design, so both panels draw through
-//! this one model. A thread's thickness is its channel's summed reasoning,
-//! tool, and prose rate from [`trace`], on that calculation's fixed scale. The
-//! thread ends where its channel was last heard; the browser runs a silence
-//! trail from there to now. Where lanes in two different rows interacted, the
-//! two threads bow toward each other and meet at that instant, so collaboration
-//! reads as a knot. Positions are fractions of the window across and of the
-//! panel's height down; the browser owns every pixel.
+//! A channel is a set of lanes. A team column is its one lane and a
+//! working-group column is the distinct lanes working its Design, so both
+//! panels draw through this one model. The axis is log-recent: depth down the
+//! panel grows with the logarithm of age, so the last minute takes about the
+//! top third and ten minutes reaches the floor. Each channel's activity is a
+//! violin whose width is its reasoning, tool, and prose rate on the trace's
+//! fixed scale, smoothed through a kernel that widens with age, so recent
+//! seconds stay sharp and older minutes become texture. A violin runs from
+//! where the channel was last heard down to the floor and breaks where the
+//! channel was off. Packets between channels and operator directions are
+//! placed at their depth. Depths are fractions of the axis and levels are
+//! fractions of the scale; the browser owns every pixel.
 
 use wire::{AgentActivityKind, CanonicalUuid};
 
-use super::trace::{
-    TRACE_WINDOW_MILLIS, TraceActivity, TraceMarkerKind, TraceOff, TraceSpan, drawn_spans, grid,
-    trace,
-};
+use super::trace::{TRACE_WINDOW_MILLIS, TraceActivity, TraceOff, activity_weight};
 
-/// Half-width of a knot as a fraction of the window: thirty seconds either
-/// side, fixed in wall time so a knot keeps its width at every panel size. Two
-/// interactions between the same rows closer than this are one knot, so a
-/// packet seen by both its sender and its recipient knots once.
-pub const KNOT_HALF_WINDOW: f64 = 0.05;
+/// Age the log-recent axis is scaled by: depth is `ln(1 + age / tau)`
+/// normalised so the whole window reaches the floor. Forty seconds puts one
+/// minute about a third of the way down.
+pub const AXIS_TAU_MILLIS: f64 = 40_000.0;
 
-/// One row's input: the lanes it gathers and their retained record.
+/// Smoothing half-width at now, in milliseconds.
+const KERNEL_FLOOR_MILLIS: f64 = 12_000.0;
+
+/// Growth of the smoothing half-width per millisecond of age, so a sample ten
+/// minutes old is smoothed over about two minutes either side.
+const KERNEL_SLOPE: f64 = 0.2;
+
+/// Weighted activities per minute at which a violin fills its column, shared
+/// by every column and panel. The kernel near now is seconds wide, so it
+/// reports bursts the composer rail's two-minute average flattens; this scale
+/// lets a steadily busy lane fill its column without saturating on every
+/// burst.
+const FULL_RATE_PER_MINUTE: f64 = 12.0;
+
+/// Two packets from one channel to another closer than this are one packet,
+/// so a packet seen by both its sender's card and its recipient's quote draws
+/// once.
+pub const PACKET_MERGE_MILLIS: i64 = 10_000;
+
+/// One column's input: the lanes it gathers and their retained record.
 #[derive(Clone, Copy, Debug)]
 pub struct Channel<'a> {
     pub lanes: &'a [CanonicalUuid],
     pub activities: &'a [TraceActivity],
-    /// Intervals the row was off; a working-group row has none.
+    /// Intervals the channel was off; a working-group column has none.
     pub off: &'a [TraceOff],
 }
 
@@ -41,71 +60,82 @@ pub struct Interaction {
     pub millis: i64,
 }
 
-/// One row's thread at one instant.
+/// A violin's width and kind split at one depth.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sample {
+    /// Fraction of the axis, now at 0 and the window's floor at 1.
+    pub depth: f64,
+    /// Summed work rate in `0..=1`.
+    pub level: f64,
+    /// Reasoning's share of the level in `0..=1`.
+    pub reasoning: f64,
+    /// Tool work's share of the level in `0..=1`; prose is the remainder.
+    pub tool: f64,
+}
+
+/// One unbroken stretch of a channel's violin, shallowest sample first.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Thread {
-    /// Summed work rate in `0..=1` at each sample, the window's start first.
-    pub levels: Vec<f64>,
-    /// Vertical centre at each sample as a fraction of the panel's height.
-    pub centers: Vec<f64>,
-    /// Fraction of the window at which the row was last heard, if within it.
+pub struct Run {
+    pub samples: Vec<Sample>,
+    /// Whether the window's floor cuts the run, rather than the channel
+    /// having stopped there.
+    pub reaches_floor: bool,
+}
+
+/// One channel's column.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Column {
+    /// Live stretches from the top down; empty when the channel was not heard
+    /// in the window.
+    pub runs: Vec<Run>,
+    /// Depth at which the channel was last heard, if within the window.
     pub heard: Option<f64>,
-    /// Spans through which the thread draws, as [`drawn_spans`] computes them.
-    pub spans: Vec<TraceSpan>,
-    /// Operator directions, as fractions of the window, in time order.
+    /// Depths of operator directions reaching the channel, newest first.
     pub directions: Vec<f64>,
 }
 
-/// Two rows' threads meeting at one instant; `rows.0 < rows.1`.
+/// One MSG packet from a lane in one column to a lane in another.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Knot {
-    pub rows: (usize, usize),
-    pub x: f64,
-}
-
-/// The panel edge an operator direction drops from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Edge {
-    Top,
-    Bottom,
-}
-
-impl Edge {
-    #[must_use]
-    pub const fn key(self) -> &'static str {
-        match self {
-            Self::Top => "top",
-            Self::Bottom => "bottom",
-        }
-    }
+pub struct Packet {
+    pub from: usize,
+    pub to: usize,
+    pub depth: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Weave {
-    pub threads: Vec<Thread>,
-    pub knots: Vec<Knot>,
+    pub columns: Vec<Column>,
+    /// Newest first.
+    pub packets: Vec<Packet>,
 }
 
-/// The edge nearer a row, so a direction takes the shorter path: rows in the
-/// upper half drop from the top, rows in the lower half rise from the bottom,
-/// and the middle row of an odd-sized panel drops from the top.
-#[must_use]
-pub const fn direction_edge(row: usize, rows: usize) -> Edge {
-    if 2 * row < rows {
-        Edge::Top
-    } else {
-        Edge::Bottom
-    }
-}
-
-/// A row's resting centre: the rows divide the panel's height equally.
 #[allow(clippy::cast_precision_loss)]
-fn home(row: usize, rows: usize) -> f64 {
-    (row as f64 + 0.5) / rows as f64
+const WINDOW: f64 = TRACE_WINDOW_MILLIS as f64;
+
+/// Rates are per minute.
+const MINUTE_MILLIS: f64 = 60_000.0;
+
+fn axis_span() -> f64 {
+    (1.0 + WINDOW / AXIS_TAU_MILLIS).ln()
 }
 
-/// The newest retained instant at which a row was heard: anything its lanes
-/// did, which excludes operator direction reaching them.
+/// Depth down the axis of an instant `age_millis` ago: now at 0, the window's
+/// floor at 1. An instant stamped ahead of now sits at the top, and one older
+/// than the window sits on the floor.
+#[must_use]
+pub fn depth(age_millis: f64) -> f64 {
+    (1.0 + age_millis.clamp(0.0, WINDOW) / AXIS_TAU_MILLIS).ln() / axis_span()
+}
+
+/// The age, in milliseconds, at a depth down the axis; the inverse of
+/// [`depth`] within the window.
+#[must_use]
+pub fn age(depth: f64) -> f64 {
+    AXIS_TAU_MILLIS * (depth.clamp(0.0, 1.0) * axis_span()).exp_m1()
+}
+
+/// The newest retained instant at which a channel was heard: anything its
+/// lanes did, which excludes operator direction reaching them.
 #[must_use]
 pub fn last_heard(activities: &[TraceActivity]) -> Option<i64> {
     activities
@@ -115,64 +145,135 @@ pub fn last_heard(activities: &[TraceActivity]) -> Option<i64> {
         .max()
 }
 
-/// Knots among `channels` from `interactions` in the window ending at `now`,
-/// in time order. An interaction from a lane in one row to a lane in another
-/// knots that pair; one inside a single row, or touching a lane no row holds,
-/// knots nothing. One stamped after `now`, by a clock running ahead of this
-/// one, knots at now, as [`trace`] places such activity.
+/// Packets among `channels` from `interactions` in the window ending at
+/// `now`, newest first. An interaction from a lane in one column to a lane in
+/// another is a packet between them; one inside a single column, or touching
+/// a lane no column holds, draws nothing. One stamped after `now`, by a clock
+/// running ahead of this one, sits at the top.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
-pub fn knots(channels: &[Channel<'_>], interactions: &[Interaction], now: i64) -> Vec<Knot> {
+pub fn packets(channels: &[Channel<'_>], interactions: &[Interaction], now: i64) -> Vec<Packet> {
     let since = now - TRACE_WINDOW_MILLIS;
     let mut placed = interactions
         .iter()
         .filter(|interaction| interaction.millis > since)
         .flat_map(|interaction| {
-            let x = ((interaction.millis - since) as f64 / TRACE_WINDOW_MILLIS as f64).min(1.0);
-            let rows_of = |lane| {
+            let millis = interaction.millis.min(now);
+            let columns_of = |lane| {
                 channels
                     .iter()
                     .enumerate()
                     .filter(move |(_, channel)| channel.lanes.contains(&lane))
-                    .map(|(row, _)| row)
+                    .map(|(column, _)| column)
             };
-            rows_of(interaction.from)
-                .flat_map(move |from| rows_of(interaction.to).map(move |to| (from, to)))
+            columns_of(interaction.from)
+                .flat_map(move |from| columns_of(interaction.to).map(move |to| (from, to)))
                 .filter(|(from, to)| from != to)
-                .map(move |(from, to)| Knot {
-                    rows: (from.min(to), from.max(to)),
-                    x,
-                })
+                .map(move |(from, to)| (millis, from, to))
         })
         .collect::<Vec<_>>();
-    placed.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.rows.cmp(&b.rows)));
-    let mut kept: Vec<Knot> = Vec::with_capacity(placed.len());
-    for knot in placed {
+    placed.sort_unstable_by(|a, b| b.cmp(a));
+    let mut kept: Vec<(i64, usize, usize)> = Vec::with_capacity(placed.len());
+    for packet in placed {
         let merged = kept
             .iter()
             .rev()
-            .take_while(|earlier| knot.x - earlier.x < KNOT_HALF_WINDOW)
-            .any(|earlier| earlier.rows == knot.rows);
+            .take_while(|earlier| earlier.0 - packet.0 < PACKET_MERGE_MILLIS)
+            .any(|earlier| (earlier.1, earlier.2) == (packet.1, packet.2));
         if !merged {
-            kept.push(knot);
+            kept.push(packet);
         }
     }
-    kept
+    kept.into_iter()
+        .map(|(millis, from, to)| Packet {
+            from,
+            to,
+            depth: depth((now - millis) as f64),
+        })
+        .collect()
 }
 
-/// How strongly a knot at `x` pulls at `at`: one at the knot, easing to zero
-/// a half-width away.
-fn pull(at: f64, x: f64) -> f64 {
-    let distance = (at - x).abs() / KNOT_HALF_WINDOW;
-    if distance >= 1.0 {
+/// Smoothing half-width at an age: sharp at now, widening with age so that
+/// older minutes become texture.
+fn bandwidth(age_millis: f64) -> f64 {
+    KERNEL_FLOOR_MILLIS + KERNEL_SLOPE * age_millis
+}
+
+/// Raised-cosine kernel of half-width `half` at `offset` from its centre.
+fn kernel(offset: f64, half: f64) -> f64 {
+    if offset.abs() >= half {
         0.0
     } else {
-        0.5 * (1.0 + (std::f64::consts::PI * distance).cos())
+        f64::midpoint(1.0, (std::f64::consts::PI * offset / half).cos())
     }
 }
 
-/// Weave `channels`, one row each in order, through the window ending at
-/// `now`, sampling every thread at no fewer than `samples` instants.
+/// Area of the kernel of half-width `half` centred at age `at` that lies
+/// within the window, in milliseconds.
+fn inside(at: f64, half: f64) -> f64 {
+    let area = |t: f64| {
+        f64::midpoint(
+            t,
+            half / std::f64::consts::PI * (std::f64::consts::PI * t / half).sin(),
+        )
+    };
+    area((WINDOW - at).min(half)) - area((-at).max(-half))
+}
+
+/// Whether `millis` falls in an interval the channel was off.
+fn off_at(off: &[TraceOff], millis: i64) -> bool {
+    off.iter().any(|interval| {
+        interval.from.is_none_or(|from| from <= millis)
+            && interval.until.is_none_or(|until| millis < until)
+    })
+}
+
+/// A channel's violin at the sample `age_millis` ago: its summed level and
+/// kind shares, each kind's rate being its weighted activities through the
+/// kernel for that age, normalised to the part of the kernel inside the
+/// window so the level at now reports the current rate rather than half of it.
+fn sample(activities: &[TraceActivity], now: i64, depth: f64, age_millis: f64) -> Sample {
+    let half = bandwidth(age_millis);
+    let (mut reasoning, mut tool, mut prose) = (0.0_f64, 0.0_f64, 0.0_f64);
+    for activity in activities {
+        let rate = match activity.kind {
+            AgentActivityKind::Reasoning => &mut reasoning,
+            AgentActivityKind::Tool => &mut tool,
+            AgentActivityKind::Prose => &mut prose,
+            _ => continue,
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let at = (now - activity.millis).max(0) as f64;
+        if at >= WINDOW {
+            continue;
+        }
+        *rate += activity_weight(activity.bytes) * kernel(at - age_millis, half);
+    }
+    let scale = MINUTE_MILLIS / inside(age_millis, half) / FULL_RATE_PER_MINUTE;
+    let (reasoning, tool, prose) = (reasoning * scale, tool * scale, prose * scale);
+    let total = reasoning + tool + prose;
+    if total <= 0.0 {
+        return Sample {
+            depth,
+            level: 0.0,
+            reasoning: 0.0,
+            tool: 1.0,
+        };
+    }
+    Sample {
+        depth,
+        level: total.min(1.0),
+        reasoning: reasoning / total,
+        tool: tool / total,
+    }
+}
+
+/// Weave `channels`, one column each in order, through the window ending at
+/// `now`, sampling every violin at `samples` depths spaced evenly down the
+/// axis so the curve is equally smooth everywhere. A sample is live when the
+/// channel had been heard by then and was not off; runs of live samples are
+/// violins, so silence above the last-heard instant and off spans leave real
+/// gaps, and a run of one sample is too brief to draw.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn weave(
@@ -181,66 +282,62 @@ pub fn weave(
     now: i64,
     samples: usize,
 ) -> Weave {
-    let rows = channels.len();
     let since = now - TRACE_WINDOW_MILLIS;
-    let knots = knots(channels, interactions, now);
-    let threads = channels
+    let samples = samples.max(2);
+    let columns = channels
         .iter()
-        .enumerate()
-        .map(|(row, channel)| {
-            let traced = trace(channel.activities, now, samples);
-            let count = grid(samples);
-            let mut levels = vec![0.0_f64; count];
-            for curve in &traced.curves {
-                for (level, add) in levels.iter_mut().zip(&curve.levels) {
-                    *level = (*level + add).min(1.0);
+        .map(|channel| {
+            let heard_millis = last_heard(channel.activities).filter(|millis| *millis > since);
+            let heard_age = heard_millis.map(|millis| (now - millis).max(0));
+            let mut runs = Vec::new();
+            let mut run: Vec<Sample> = Vec::new();
+            for index in 0..samples {
+                let depth = index as f64 / (samples - 1) as f64;
+                let age_millis = age(depth);
+                // Truncation is the intent: ages are whole milliseconds.
+                #[allow(clippy::cast_possible_truncation)]
+                let instant = now - age_millis as i64;
+                let live = heard_age.is_some_and(|heard| now - instant >= heard)
+                    && !off_at(channel.off, instant);
+                if live {
+                    run.push(sample(channel.activities, now, depth, age_millis));
+                } else if !run.is_empty() {
+                    runs.push(Run {
+                        samples: std::mem::take(&mut run),
+                        reaches_floor: false,
+                    });
                 }
             }
-            let rest = home(row, rows);
-            let centers = (0..count)
-                .map(|index| {
-                    let at = index as f64 / (count - 1) as f64;
-                    let (offset, weight) = knots
-                        .iter()
-                        .filter_map(|knot| {
-                            let other = match knot.rows {
-                                (upper, lower) if upper == row => lower,
-                                (upper, lower) if lower == row => upper,
-                                _ => return None,
-                            };
-                            let strength = pull(at, knot.x);
-                            let meet = f64::midpoint(rest, home(other, rows));
-                            Some((strength * (meet - rest), strength))
-                        })
-                        .fold((0.0, 0.0), |(offset, weight), (o, w)| {
-                            (offset + o, weight + w)
-                        });
-                    rest + if weight > 1.0 {
-                        offset / weight
-                    } else {
-                        offset
-                    }
-                })
-                .collect();
-            let heard = last_heard(channel.activities)
-                .filter(|millis| *millis > since)
-                .map(|millis| ((millis - since) as f64 / TRACE_WINDOW_MILLIS as f64).min(1.0));
-            let directions = traced
-                .markers
-                .iter()
-                .filter(|marker| marker.kind == TraceMarkerKind::Direction)
-                .map(|marker| marker.x)
-                .collect();
-            Thread {
-                levels,
-                centers,
-                heard,
-                spans: drawn_spans(channel.off, now, count),
+            if !run.is_empty() {
+                runs.push(Run {
+                    samples: run,
+                    reaches_floor: true,
+                });
+            }
+            runs.retain(|run| run.samples.len() > 1);
+            let directions = {
+                let mut directions = channel
+                    .activities
+                    .iter()
+                    .filter(|activity| {
+                        activity.kind == AgentActivityKind::Direction && activity.millis > since
+                    })
+                    .map(|activity| depth((now - activity.millis) as f64))
+                    .collect::<Vec<_>>();
+                directions.sort_by(f64::total_cmp);
+                directions
+            };
+            Column {
+                runs,
+                heard: heard_age.map(|age| depth(age as f64)),
                 directions,
             }
         })
         .collect();
-    Weave { threads, knots }
+    Weave {
+        columns,
+        packets: packets(channels, interactions, now),
+    }
 }
 
 #[cfg(test)]
@@ -248,7 +345,9 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_800_000_000_000;
-    const MINUTE: i64 = 60_000;
+    const SECOND: i64 = 1_000;
+    const MINUTE: i64 = 60 * SECOND;
+    const SAMPLES: usize = 97;
 
     fn lane(n: u8) -> CanonicalUuid {
         format!("00000000-0000-4000-8000-{n:012}")
@@ -256,12 +355,16 @@ mod tests {
             .expect("fixture lane")
     }
 
-    fn prose(minutes_ago: i64) -> TraceActivity {
+    fn activity(kind: AgentActivityKind, seconds_ago: i64) -> TraceActivity {
         TraceActivity {
-            kind: AgentActivityKind::Prose,
-            millis: NOW - minutes_ago * MINUTE,
+            kind,
+            millis: NOW - seconds_ago * SECOND,
             bytes: 800,
         }
+    }
+
+    fn prose(seconds_ago: i64) -> TraceActivity {
+        activity(AgentActivityKind::Prose, seconds_ago)
     }
 
     fn channel<'a>(lanes: &'a [CanonicalUuid], activities: &'a [TraceActivity]) -> Channel<'a> {
@@ -276,122 +379,196 @@ mod tests {
         Interaction { from, to, millis }
     }
 
-    #[test]
-    fn a_thread_ends_where_its_row_was_last_heard_and_direction_is_not_hearing() {
-        let lanes = [lane(1)];
-        let direction = TraceActivity {
-            kind: AgentActivityKind::Direction,
-            millis: NOW - MINUTE,
-            bytes: 0,
-        };
-        let heard = [prose(5), prose(3), direction];
-        let woven = weave(&[channel(&lanes, &heard)], &[], NOW, 9);
-        let thread = &woven.threads[0];
-        assert!((thread.heard.expect("heard in window") - 0.7).abs() < 1e-9);
-        assert_eq!(thread.directions.len(), 1);
-        assert!((thread.directions[0] - 0.9).abs() < 1e-9);
-
-        let stale = [prose(11)];
-        let silent = weave(&[channel(&lanes, &stale)], &[], NOW, 9);
-        assert_eq!(silent.threads[0].heard, None);
-        assert_eq!(last_heard(&stale), Some(NOW - 11 * MINUTE));
+    fn seconds(depth: f64) -> f64 {
+        age(depth) / 1_000.0
     }
 
     #[test]
-    fn rows_divide_the_panel_and_a_knot_meets_two_threads_at_its_instant() {
-        let (a, b, c) = (lane(1), lane(2), lane(3));
-        let (ra, rb, rc) = ([a], [b], [c]);
-        let channels = [channel(&ra, &[]), channel(&rb, &[]), channel(&rc, &[])];
-        let quiet = weave(&channels, &[], NOW, 9);
-        for (row, thread) in quiet.threads.iter().enumerate() {
-            let rest = [1.0 / 6.0, 0.5, 5.0 / 6.0][row];
-            assert!(
-                thread
-                    .centers
-                    .iter()
-                    .all(|center| (center - rest).abs() < 1e-9)
-            );
-        }
-
-        // Five minutes ago is the midpoint sample of every grid.
-        let woven = weave(&channels, &[told(a, c, NOW - 5 * MINUTE)], NOW, 9);
+    fn the_axis_is_log_recent_from_now_at_the_top_to_ten_minutes_at_the_floor() {
+        assert_eq!(depth(0.0), 0.0);
+        assert_eq!(depth(-5_000.0), 0.0, "a clock running ahead sits at now");
+        assert_eq!(depth(600_000.0), 1.0);
         assert_eq!(
-            woven.knots,
-            [Knot {
-                rows: (0, 2),
-                x: 0.5
-            }]
+            depth(700_000.0),
+            1.0,
+            "older than the window sits on the floor"
         );
-        let mid = woven.threads[0].centers.len() / 2;
-        assert!((woven.threads[0].centers[mid] - 0.5).abs() < 1e-9);
-        assert!((woven.threads[2].centers[mid] - 0.5).abs() < 1e-9);
-        assert!((woven.threads[1].centers[mid] - 0.5).abs() < 1e-9);
-        // Far from the knot, every thread rests in its own row.
-        for (row, thread) in woven.threads.iter().enumerate() {
-            let rest = home(row, 3);
-            assert!((thread.centers[0] - rest).abs() < 1e-9);
-            assert!((thread.centers[thread.centers.len() - 1] - rest).abs() < 1e-9);
+        let minute = depth(60_000.0);
+        assert!((0.30..=0.36).contains(&minute), "one minute at {minute}");
+        let mut previous = -1.0;
+        for step in 0..=600 {
+            let now = depth(f64::from(step) * 1_000.0);
+            assert!(now > previous || (step == 0 && now == 0.0));
+            previous = now;
+        }
+        for age_millis in [0.0, 1_000.0, 40_000.0, 299_000.0, 600_000.0] {
+            assert!((age(depth(age_millis)) - age_millis).abs() < 1e-6);
         }
     }
 
     #[test]
-    fn one_interaction_knots_each_row_pair_once_whichever_side_retained_it() {
+    fn a_violin_runs_from_last_heard_to_the_floor_and_breaks_where_the_channel_was_off() {
+        let lanes = [lane(1)];
+        let heard = [prose(500), prose(300), prose(60)];
+        let (off_from, off_until): (i32, i32) = (360, 240);
+        let off = [TraceOff {
+            from: Some(NOW - i64::from(off_from) * SECOND),
+            until: Some(NOW - i64::from(off_until) * SECOND),
+        }];
+        let woven = weave(
+            &[Channel {
+                lanes: &lanes,
+                activities: &heard,
+                off: &off,
+            }],
+            &[],
+            NOW,
+            SAMPLES,
+        );
+        let column = &woven.columns[0];
+        assert!((seconds(column.heard.expect("heard")) - 60.0).abs() < 1e-6);
+        assert_eq!(column.runs.len(), 2, "{:?}", column.runs);
+        let (upper, lower) = (&column.runs[0], &column.runs[1]);
+        let first = seconds(upper.samples[0].depth);
+        assert!(
+            (60.0..66.0).contains(&first),
+            "starts just below last heard at {first}"
+        );
+        let last_above = seconds(upper.samples.last().expect("samples").depth);
+        assert!(last_above < f64::from(off_until));
+        assert!(!upper.reaches_floor);
+        assert!(seconds(lower.samples[0].depth) >= f64::from(off_until));
+        assert!(lower.reaches_floor);
+        assert_eq!(lower.samples.last().expect("samples").depth, 1.0);
+        let in_gap = column
+            .runs
+            .iter()
+            .flat_map(|run| &run.samples)
+            .any(|sample| {
+                (f64::from(off_until)..f64::from(off_from)).contains(&seconds(sample.depth))
+            });
+        assert!(!in_gap);
+
+        // A seat vacant since before the record, taken while the window was
+        // young, stops the violin there rather than letting it reach the floor.
+        let (heard_ago, taken_ago): (i32, i32) = (20, 400);
+        let vacant_before = [TraceOff {
+            from: None,
+            until: Some(NOW - i64::from(taken_ago) * SECOND),
+        }];
+        let ended = weave(
+            &[Channel {
+                lanes: &lanes,
+                activities: &[prose(i64::from(heard_ago)), prose(200)],
+                off: &vacant_before,
+            }],
+            &[],
+            NOW,
+            SAMPLES,
+        );
+        let runs = &ended.columns[0].runs;
+        assert_eq!(runs.len(), 1);
+        assert!(seconds(runs[0].samples[0].depth) >= f64::from(heard_ago));
+        let last = seconds(runs[0].samples.last().expect("samples").depth);
+        assert!(last < f64::from(taken_ago));
+        assert!(!runs[0].reaches_floor);
+
+        // Nothing heard in the window: no violin, no last-heard depth.
+        let stale = weave(&[channel(&lanes, &[prose(700)])], &[], NOW, SAMPLES);
+        assert_eq!(stale.columns[0].runs, []);
+        assert_eq!(stale.columns[0].heard, None);
+    }
+
+    #[test]
+    fn last_heard_ignores_direction_and_clamps_a_clock_running_ahead_to_now() {
+        let lanes = [lane(1)];
+        let direction = activity(AgentActivityKind::Direction, 10);
+        let heard = [prose(180), direction, activity(AgentActivityKind::Tool, 90)];
+        let woven = weave(&[channel(&lanes, &heard)], &[], NOW, SAMPLES);
+        let column = &woven.columns[0];
+        assert!((seconds(column.heard.expect("heard")) - 90.0).abs() < 1e-6);
+        assert_eq!(column.directions.len(), 1);
+        assert!((seconds(column.directions[0]) - 10.0).abs() < 1e-6);
+        assert_eq!(last_heard(&heard), Some(NOW - 90 * SECOND));
+
+        let ahead = [prose(-3)];
+        let woven = weave(&[channel(&lanes, &ahead)], &[], NOW, SAMPLES);
+        assert_eq!(woven.columns[0].heard, Some(0.0));
+        assert_eq!(woven.columns[0].runs[0].samples[0].depth, 0.0);
+    }
+
+    #[test]
+    fn a_violin_is_widest_at_its_activity_and_splits_by_kind() {
+        let lanes = [lane(1)];
+        let tool = [activity(AgentActivityKind::Tool, 120)];
+        let woven = weave(&[channel(&lanes, &tool)], &[], NOW, SAMPLES);
+        let samples = &woven.columns[0].runs[0].samples;
+        let widest = samples
+            .iter()
+            .max_by(|a, b| a.level.total_cmp(&b.level))
+            .expect("samples");
+        assert!(widest.level > 0.0);
+        let (event_ago, tolerance) = (120.0, 10.0);
+        assert!(
+            (seconds(widest.depth) - event_ago).abs() < tolerance,
+            "{widest:?}"
+        );
+        assert_eq!((widest.reasoning, widest.tool), (0.0, 1.0));
+        let far = samples.last().expect("samples");
+        assert_eq!(far.level, 0.0, "ten minutes away is quiet");
+        for sample in samples {
+            assert!((0.0..=1.0).contains(&sample.level));
+        }
+
+        let busy = (0..120)
+            .map(|step| activity(AgentActivityKind::Reasoning, 5 * step))
+            .collect::<Vec<_>>();
+        let woven = weave(&[channel(&lanes, &busy)], &[], NOW, SAMPLES);
+        let top = woven.columns[0].runs[0].samples[0];
+        assert_eq!(top.level, 1.0, "a burst saturates the scale");
+        assert_eq!((top.reasoning, top.tool), (1.0, 0.0));
+    }
+
+    #[test]
+    fn one_packet_rungs_each_column_pair_once_whichever_side_retained_it() {
         let (a, b, c, outside) = (lane(1), lane(2), lane(3), lane(9));
         let (ra, rb) = ([a], [b]);
         let teams = [channel(&ra, &[]), channel(&rb, &[])];
         let sent = NOW - 4 * MINUTE;
         // The sender's card and the recipient's directive both carry the packet.
         let seen_twice = [told(a, b, sent), told(a, b, sent + 4_000)];
-        assert_eq!(knots(&teams, &seen_twice, NOW).len(), 1);
-        // A reply a minute later is a second knot.
+        assert_eq!(packets(&teams, &seen_twice, NOW).len(), 1);
+        // A reply a minute later is a second rung, pointing the other way.
         let replied = [told(a, b, sent), told(b, a, sent + MINUTE)];
-        assert_eq!(knots(&teams, &replied, NOW).len(), 2);
-        // Within one row, to a lane outside the panel, or outside the window: none.
+        let rungs = packets(&teams, &replied, NOW);
+        assert_eq!(rungs.len(), 2);
+        assert_eq!((rungs[0].from, rungs[0].to), (1, 0), "newest first");
+        assert!(rungs[0].depth < rungs[1].depth);
+        assert!((seconds(rungs[1].depth) - 240.0).abs() < 1e-6);
+        // Within one column, to a lane outside the panel, or outside the window: none.
         let unrelated = [
             told(a, a, sent),
             told(a, outside, sent),
             told(a, b, NOW - 11 * MINUTE),
         ];
-        assert!(knots(&teams, &unrelated, NOW).is_empty());
-        // A packet stamped by a clock running ahead knots at now.
+        assert!(packets(&teams, &unrelated, NOW).is_empty());
+        // A packet stamped by a clock running ahead sits at now.
         assert_eq!(
-            knots(&teams, &[told(a, b, NOW + 2_000)], NOW),
-            [Knot {
-                rows: (0, 1),
-                x: 1.0
+            packets(&teams, &[told(a, b, NOW + 2_000)], NOW),
+            [Packet {
+                from: 0,
+                to: 1,
+                depth: 0.0
             }]
         );
 
-        // Design rows share lanes: a knot joins rows holding either end, never
-        // a row to itself.
+        // Design columns share lanes: a packet joins columns holding either
+        // end, never a column to itself.
         let (design_one, design_two) = ([a, b], [b, c]);
         let designs = [channel(&design_one, &[]), channel(&design_two, &[])];
-        assert_eq!(
-            knots(&designs, &[told(a, c, sent)], NOW),
-            [Knot {
-                rows: (0, 1),
-                x: 0.6
-            }]
-        );
-        assert_eq!(knots(&designs, &[told(a, b, sent)], NOW).len(), 1);
-    }
-
-    #[test]
-    fn a_direction_takes_the_shorter_path_with_the_middle_row_from_the_top() {
-        use Edge::{Bottom, Top};
-        let expected: [&[Edge]; 6] = [
-            &[Top],
-            &[Top, Bottom],
-            &[Top, Top, Bottom],
-            &[Top, Top, Bottom, Bottom],
-            &[Top, Top, Top, Bottom, Bottom],
-            &[Top, Top, Top, Bottom, Bottom, Bottom],
-        ];
-        for (size, edges) in (1..=6).zip(expected) {
-            let actual = (0..size)
-                .map(|row| direction_edge(row, size))
-                .collect::<Vec<_>>();
-            assert_eq!(actual, edges, "{size} rows");
-        }
+        let across = packets(&designs, &[told(a, c, sent)], NOW);
+        assert_eq!(across.len(), 1);
+        assert_eq!((across[0].from, across[0].to), (0, 1));
+        assert_eq!(packets(&designs, &[told(a, b, sent)], NOW).len(), 1);
     }
 }

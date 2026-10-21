@@ -1,6 +1,6 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
 //! open-task total and one tab per agent currently working in the group's
-//! Designs, a weave with one thread per Design, and a ticker of the newest
+//! Designs, a weave with one violin column per Design, and a ticker of the newest
 //! words said across them, as a team's ticker shows its newest words. Like a
 //! team toolbar it shows no name; this browser's placement of the console
 //! lives in the panel's arrangement menu, where a team's arrangement stands.
@@ -156,40 +156,42 @@ fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Htm
     }
 }
 
-/// The group's Design rows woven as a team's lanes are: each row gathers the
-/// distinct lanes currently working its Design, so a burst from any of them
-/// thickens its thread and a packet between two Designs' workers knots them.
+/// The group's Design columns woven as a team's lanes are: each column gathers
+/// the distinct lanes currently working its Design, so a burst from any of
+/// them widens its violin and a packet between two Designs' workers rungs them.
 fn render_weave(
     render: &GroupRender<'_, '_>,
     channels: &[Channel],
     standings: &[DesignStanding],
 ) -> Html {
-    let rows = channels
+    let weave_channels = channels
         .iter()
         .zip(standings)
-        .map(|(channel, standing)| crate::browser::watchband::WeaveRow {
-            key: channel.stamp.to_string().into(),
-            label: format!("{}: {}", channel.label, standing.label()).into(),
-            accent: channel.accent,
-            state: standing.key(),
-            seated: true,
-            lanes: render.runtime.board().map_or_else(
-                || Rc::from([]),
-                |board| {
-                    crate::roster::design_claimants(board, &channel.stamp)
-                        .into_iter()
-                        .collect()
-                },
-            ),
-            activities: crate::browser::watchband::design_activities(
-                render.runtime,
-                &channel.stamp,
-            ),
-            off: Rc::from([]),
-        })
+        .map(
+            |(channel, standing)| crate::browser::watchband::WeaveChannel {
+                key: channel.stamp.to_string().into(),
+                label: format!("{}: {}", channel.label, standing.label()).into(),
+                accent: channel.accent,
+                state: standing.key(),
+                seated: true,
+                lanes: render.runtime.board().map_or_else(
+                    || Rc::from([]),
+                    |board| {
+                        crate::roster::design_claimants(board, &channel.stamp)
+                            .into_iter()
+                            .collect()
+                    },
+                ),
+                activities: crate::browser::watchband::design_activities(
+                    render.runtime,
+                    &channel.stamp,
+                ),
+                off: Rc::from([]),
+            },
+        )
         .collect::<Rc<[_]>>();
     let interactions = crate::browser::watchband::lane_interactions(render.runtime);
-    html! { <crate::browser::watchband::TeamWeave {rows} {interactions} /> }
+    html! { <crate::browser::watchband::TeamWeave channels={weave_channels} {interactions} /> }
 }
 
 /// The newest words said across the group's Designs, aged and coloured by the
