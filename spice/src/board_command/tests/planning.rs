@@ -518,9 +518,22 @@ fn a_lane_never_completes_a_design_it_holds() {
     );
     group_design(&bus, epoch, &design);
     let result = done(&bus, epoch, &seats[0], &design);
+    let Outcome::Refusal(refusal) = &result else {
+        panic!("lane done must leave a Design open: {result:?}");
+    };
+    assert_eq!(refusal.reason(), "task::design-open");
+    let hint = refusal
+        .diagnostic()
+        .and_then(|diagnostic| diagnostic.detail())
+        .expect("design-open names both exits");
     assert!(
-        matches!(&result, Outcome::Refusal(refusal) if refusal.reason() == "task::design-open"),
-        "lane done must leave a Design open: {result:?}"
+        hint.contains("spice preparation propose PROPOSAL_JSON"),
+        "{hint}"
+    );
+    assert!(hint.contains("recommendation"), "{hint}");
+    assert!(
+        hint.contains(&format!("spice task free {design}")),
+        "{hint}"
     );
     let view = board(&bus, epoch, Actor::Operator);
     let held = at(&view, &design);

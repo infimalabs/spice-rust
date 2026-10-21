@@ -5,8 +5,9 @@ use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority, DesignPassProposal,
-    DesignPropose, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef, RoomSource,
+    CandidateRef, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority, DesignPassBody,
+    DesignPassProposal, DesignPropose, OutputAdopt, PreparationDecide, PreparationDecision,
+    ProposalRef, RoomAuthorityStamp, RoomSource,
 };
 
 use super::*;
@@ -50,9 +51,9 @@ impl<T: DeserializeOwned> JsonOperand<T> {
     }
 }
 
-const PROPOSAL_JSON: JsonOperand<DesignPassProposal> = JsonOperand::new(
+const PROPOSAL_JSON: JsonOperand<DesignPassBody> = JsonOperand::new(
     "PROPOSAL_JSON",
-    r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"statement":1,"claim":2,"recommendation":"work","governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}],"justification":"The cited contract supports this pass."}"#,
+    r#"{"recommendation":"work","governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}],"justification":"The cited contract supports this pass."}"#,
 );
 const CRITIQUE_JSON: JsonOperand<CandidateCritique> = JsonOperand::new(
     "CRITIQUE_JSON",
@@ -101,35 +102,152 @@ pub(super) fn client_design_propose(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let candidate = match PROPOSAL_JSON.argument(matches) {
-        Ok(candidate) => candidate,
+    let pass = match PROPOSAL_JSON.argument(matches) {
+        Ok(pass) => pass,
         Err(outcome) => return outcome,
     };
-    let design = candidate.candidate.controller.clone();
-    let tasks = std::iter::once(design.clone())
-        .chain(candidate.governed_inputs.iter().cloned())
-        .chain(candidate.outputs.iter().cloned())
+    let named = match matches.get_one::<String>("design") {
+        Some(written) => match written.parse::<TaskHandle>() {
+            Ok(handle) => Some(handle),
+            Err(error) => return invalid_handle("--design", &error.to_string()),
+        },
+        None => None,
+    };
+    let tasks = named
+        .iter()
+        .map(|handle| {
+            handle
+                .born()
+                .expect("a parsed handle carries a canonical task stamp")
+        })
+        .chain(pass.governed_inputs.iter().cloned())
+        .chain(pass.outputs.iter().cloned())
         .collect::<Vec<_>>();
-    let outcome = submit_with_tasks(repository, contract, tasks, false, |board| {
-        let proposal = ProposalRef::Candidate {
-            candidate: candidate.candidate.clone(),
-        };
+    let mut design = None;
+    let outcome = submit_with_tasks(repository, contract, tasks, true, |board| {
+        let heads = held_design(board, named.as_ref())?;
+        let proposal = derive_proposal(heads, pass, mint_candidate()?)?;
+        design = Some(proposal.candidate.controller.clone());
         // The proposal releases the holder's claim at its task Git boundary,
         // which resolves the holder's worktree from this witness.
         let (lane, occupant) = actor_seat(board)?;
-        let mut expected = task_witnesses(board, &candidate.candidate.controller)?;
+        let mut expected = vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ];
+        for stamp in proposal.governed_inputs.iter().chain(&proposal.outputs) {
+            let heads = task(board, stamp)?;
+            expected.push(statement_witness(heads));
+            expected.push(workflow_witness(heads));
+        }
         expected.push(Witness::Proposal {
-            proposal,
+            proposal: ProposalRef::Candidate {
+                candidate: proposal.candidate.clone(),
+            },
             head: None,
         });
         expected.push(residency_witness(board, lane, occupant));
         Ok((
             CommandKind::DesignPropose,
             expected,
-            DesignPropose { candidate },
+            DesignPropose {
+                candidate: proposal,
+            },
         ))
     });
-    with_cycle(repository, &design, outcome)
+    match design {
+        Some(design) => with_cycle(repository, &design, outcome),
+        None => outcome,
+    }
+}
+
+/// The open Design whose pass the caller is ending: the one it names, or the
+/// sole open Design it holds an active claim on.
+pub(in crate::board_command) fn held_design<'a>(
+    board: &'a BoardAnswer,
+    named: Option<&TaskHandle>,
+) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
+    let held_by_caller = |heads: &BoardTask| {
+        heads.claim.as_ref().is_some_and(|claim| {
+            claim.body.actor == board.principal
+                && claim.body.disposition == wire::ClaimDisposition::Active
+        })
+    };
+    if let Some(named) = named {
+        let born = named
+            .born()
+            .expect("a parsed handle carries a canonical task stamp");
+        let heads = task(board, &born)?;
+        if !held_by_caller(heads) {
+            return Err(refusal(
+                "preparation::design-unheld",
+                Some(named.to_string()),
+                "propose only a pass of a Design this capability holds an active claim on",
+            ));
+        }
+        return Ok(heads);
+    }
+    let mut held = board.tasks.iter().filter(|heads| {
+        !heads.visibility.is_hidden()
+            && held_by_caller(heads)
+            && wire::intent::is_open_design(heads.statement.body.intent, &heads.workflow.body)
+    });
+    let Some(heads) = held.next() else {
+        return Err(refusal(
+            "preparation::design-unheld",
+            Some(board.principal.to_string()),
+            "claim the open Design with `spice task next` before proposing its pass",
+        ));
+    };
+    if let Some(other) = held.next() {
+        return Err(refusal(
+            "preparation::design-ambiguous",
+            Some(format!(
+                "{} {}",
+                heads.statement.body.handle, other.statement.body.handle
+            )),
+            "name the Design this pass ends with `--design HANDLE`",
+        ));
+    }
+    Ok(heads)
+}
+
+/// The proposal `pass` makes under `design`, witnessing the statement and
+/// active claim heads the client read so a move between this read and the
+/// resident's admission still refuses there.
+pub(in crate::board_command) fn derive_proposal(
+    design: &BoardTask,
+    pass: DesignPassBody,
+    candidate: RoomAuthorityStamp,
+) -> Result<DesignPassProposal, Outcome<CommandAnswer>> {
+    let claim = design.claim.as_ref().ok_or_else(|| {
+        refusal(
+            "preparation::design-unheld",
+            Some(design.statement.body.handle.to_string()),
+            "claim the open Design with `spice task next` before proposing its pass",
+        )
+    })?;
+    Ok(DesignPassProposal::witnessing(
+        CandidateRef {
+            controller: design.statement.body.born.clone(),
+            candidate,
+        },
+        design.statement.position,
+        claim.position,
+        pass,
+    ))
+}
+
+/// A fresh candidate identity: the current microsecond, which the resident's
+/// absence witness proves unused under the Design.
+fn mint_candidate() -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
+    RoomAuthorityStamp::for_micros(jiff::Timestamp::now().as_microsecond()).map_err(|error| {
+        environment_fault(
+            "preparation::candidate-clock-invalid",
+            &format!("the current clock mints no candidate identity: {error}"),
+        )
+    })
 }
 
 pub(super) fn client_candidate_critique(

@@ -542,12 +542,26 @@ A Design is itself a question: phrase TITLE as the question under Design.
 Each --acceptance value is one open question for evidence and proposals to
 answer, not an implementation completion criterion.";
 
+/// The body `preparation propose` takes and what the client derives around it.
+const PREPARATION_PROPOSE_HELP: &str = "\
+PROPOSAL_JSON is one canonical object holding only what this pass decides:
+recommendation (work, conclude, or collapse), outputs (one or more
+acceptance-bearing tasks gated by the Design; work only), governed_inputs
+(tasks a work proposal assumes; may be empty), justification (nonempty,
+trimmed), and references (one or more {relation, source} links). Unknown
+fields refuse. The Design is the open Design this capability holds an active
+claim on, or --design HANDLE when it holds several; its identity, statement
+head, and claim head are read and witnessed here, so a statement or claim that
+moves before the write still refuses. The proposal releases that claim; the
+Design stays open for the operator's decision.";
+
 /// Usage notes for a leaf whose bounds its syntax line cannot carry.
 fn leaf_help(path: &[&str]) -> Option<&'static str> {
     match path {
         ["watch"] => Some(WATCH_HELP),
         ["task", "next"] => Some(TASK_NEXT_HELP),
         ["task", "design"] => Some(TASK_DESIGN_HELP),
+        ["preparation", "propose"] => Some(PREPARATION_PROPOSE_HELP),
         ["task", "artifact", "list"] => Some(ARTIFACT_LIST_HELP),
         ["task", "artifact", "show"] => Some(ARTIFACT_SHOW_HELP),
         _ => None,

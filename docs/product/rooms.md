@@ -149,9 +149,13 @@ owns each rule summarized here.
 
   Each claimed Design pass ends with exactly one `preparation propose
   PROPOSAL_JSON` or with the existing proposal-less free/lapse abandonment.
-  The proposal witnesses the exact Design statement and active claim, records
-  the completed pass horizon, and releases that claim in the same guarded
-  transaction. A work recommendation names one or more acceptance-bearing
+  The body holds only what the pass decides: recommendation, outputs,
+  governed inputs, justification, and references. The client derives the
+  Design from the caller's sole active Design claim (`--design HANDLE` when it
+  holds several), mints the candidate stamp, and witnesses the Design
+  statement and active claim heads it read; the resident records the
+  completed pass horizon against those heads and releases that claim in the
+  same guarded transaction. A work recommendation names one or more acceptance-bearing
   outputs of any intent still gated by the Design, such as ordinary tasks or
   Plans it constructed directly, with source-backed
   justification. A conclude or collapse recommendation names no output or
