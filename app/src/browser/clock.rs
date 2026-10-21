@@ -61,25 +61,25 @@ pub(super) struct CountdownProps {
     pub(super) title: AttrValue,
 }
 
-/// Density-aware task timestamp presentation.
+/// Which way a task timestamp counts: since a past instant or toward a deadline.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TaskTimePresentation {
-    DetailedElapsed,
-    DetailedRemaining,
+    Elapsed,
+    Remaining,
 }
 
 impl TaskTimePresentation {
     const fn clock(self) -> RelativeClock {
         match self {
-            Self::DetailedElapsed => RelativeClock::Elapsed,
-            Self::DetailedRemaining => RelativeClock::Remaining,
+            Self::Elapsed => RelativeClock::Elapsed,
+            Self::Remaining => RelativeClock::Remaining,
         }
     }
 
     const fn key(self) -> &'static str {
         match self {
-            Self::DetailedElapsed => "detailed-elapsed",
-            Self::DetailedRemaining => "detailed-remaining",
+            Self::Elapsed => "elapsed",
+            Self::Remaining => "remaining",
         }
     }
 }
@@ -94,10 +94,9 @@ struct TaskTimestampProps {
 #[derive(Clone)]
 enum ClockLabels {
     Relative,
+    /// The local date a task timestamp reads once it ages out of relative range.
     Task {
         compact: AttrValue,
-        full: AttrValue,
-        detailed: bool,
     },
 }
 
@@ -105,16 +104,9 @@ impl ClockLabels {
     fn render(&self, clock: RelativeClock, relative: i64) -> String {
         match self {
             Self::Relative => relative_label_from_millis(clock, relative),
-            Self::Task {
-                compact,
-                full,
-                detailed,
-            } => match task_relative_label(clock, relative) {
-                Some(relative) if *detailed => format!("{relative} · {full}"),
-                Some(relative) => relative,
-                None if *detailed => full.to_string(),
-                None => compact.to_string(),
-            },
+            Self::Task { compact } => {
+                task_relative_label(clock, relative).unwrap_or_else(|| compact.to_string())
+            }
         }
     }
 
@@ -230,17 +222,13 @@ pub(super) fn countdown(props: &CountdownProps) -> Html {
     }
 }
 
-/// One task timestamp with compact/card and detailed/fact presentations sharing
-/// the same 24-hour policy and browser-local absolute formatters.
+/// One task timestamp: its relative age or countdown, the local date once
+/// that leaves relative range, and the full local time on hover.
 #[function_component(TaskTimestamp)]
 fn task_timestamp(props: &TaskTimestampProps) -> Html {
     let compact = local_timestamp(props.instant, &props.canonical, LocalStyle::Compact);
     let full = local_timestamp(props.instant, &props.canonical, LocalStyle::Full);
-    let labels = ClockLabels::Task {
-        compact,
-        full: full.clone(),
-        detailed: true,
-    };
+    let labels = ClockLabels::Task { compact };
     let clock = props.presentation.clock();
     let slot = use_node_ref();
     {
@@ -285,6 +273,15 @@ pub(super) fn task_time(instant: &wire::Instant, presentation: TaskTimePresentat
             canonical={instant.to_string()}
             {presentation}
         />
+    }
+}
+
+/// A task timestamp for an epoch millisecond no wire instant carries, such as
+/// the birth a task stamp encodes.
+pub(super) fn task_time_millis(millis: i64, presentation: TaskTimePresentation) -> Html {
+    let canonical = String::from(Date::new(&JsValue::from_f64(millis as f64)).to_iso_string());
+    html! {
+        <TaskTimestamp instant={millis} canonical={canonical} {presentation} />
     }
 }
 

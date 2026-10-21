@@ -719,21 +719,6 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   min-width: 0;
   padding: 18px 22px 28px;
 }
-.app-sheet-identity {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding-bottom: 18px;
-}
-.app-sheet-identity code {
-  min-width: 0;
-  margin-right: auto;
-  color: var(--accent);
-  font-size: var(--app-type-body);
-  overflow-wrap: anywhere;
-}
-.app-sheet-identity button { white-space: nowrap; }
 .app-sheet-section {
   padding: 18px 0;
   border-top: var(--app-edge-soft);
@@ -751,11 +736,6 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-sheet-section ul { margin: 8px 0 0; padding-left: 20px; }
 .app-sheet-section ul > li + li { margin-top: 4px; }
 .app-sheet-media { --mosaic-image-size: 8.75rem; min-width: 0; }
-.app-sheet-subsection {
-  margin-top: 15px;
-  padding-top: 1px;
-  border-top: var(--app-edge-soft);
-}
 .app-fact-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

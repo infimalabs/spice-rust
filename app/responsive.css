@@ -86,8 +86,6 @@
   .work-map-heading { align-items: flex-start; flex-direction: column; }
   .work-map-heading > span { text-align: left; }
   .work-map-viewport { height: 18rem; }
-  .app-sheet-identity { align-items: flex-start; flex-direction: column; }
-  .app-sheet-identity button { width: 100%; }
   .work-blocker-rail {
     grid-template-columns: 1.75rem minmax(0, 1fr);
     block-size: 7rem;
