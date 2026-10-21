@@ -831,7 +831,7 @@ fn compaction_preserves_one_unanswered_request() {
     lanes.compact(FIRST);
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     let after = lanes.claimed("dVrD245Kp", FIRST);
-    lanes.complete(&after, MATCHING);
+    lanes.complete(&after, &format!("{MATCHING} Paged after compaction."));
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
 
     assert_eq!(lanes.noticed().len(), 1);
@@ -1138,7 +1138,7 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
     lanes.leave(72, &config, FIRST, &design);
     assert!(lanes.post_listeners(73, &config, &design).is_empty());
     let later = lanes.claimed("dVrD245Kp", FIRST);
-    lanes.complete(&later, MATCHING);
+    lanes.complete(&later, &format!("{MATCHING} Paged after leaving."));
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_none());
     assert!(lanes.post_listeners(74, &config, &design).is_empty());
