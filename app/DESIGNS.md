@@ -244,12 +244,15 @@ after a reconnect; it resolves through the same resident path as
 never creates or answers the session-profile Design requests delivered through
 a lane's own session.
 
-The read view's **Design maturity** panel derives from the bounded per-Design
-measure the room projection folds incrementally from streamed requests and
-contributions, never by folding rendered room history. It shows each current
-question item's state (quiet, unopposed, contested, or concurred) with its
-votes and lanes, recent statement-head request yield, and folded older-head
-and unattributed historical totals. Fresh has no contributions; steeped means
+The read view's **Design maturity** panel sits beside the Design's Standing,
+in one row directly under the room heading, and stacks beneath it below 720px.
+It derives from the bounded per-Design measure the room projection folds
+incrementally from streamed requests and contributions, never by folding
+rendered room history. It shows the state word and summary, recent
+statement-head request yield, and folded older-head and unattributed
+historical totals; each current question item's state (quiet, unopposed,
+contested, or concurred) with its votes and lanes reads beside that question
+in the sheet's Contract list. Fresh has no contributions; steeped means
 some current item concurs and none is contested, and the summary otherwise
 names the item and the vote it needs next. Steeped maturity makes the Design's
 first pass ready for a lane, which the standing's pass cycle shows; it is not a

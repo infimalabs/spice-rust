@@ -917,15 +917,18 @@
 .room-approval-withdrawn,
 .room-history { display: grid; gap: 8px; }
 
-.room-maturity {
-  display: grid;
-  gap: 6px;
+/* A Design's Standing and Maturity share one row and one frame, so the
+   lifecycle and how near the Design is to steeping read together. */
+.room-design-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.room-design-pair > section {
+  grid-column: auto;
   padding: 8px;
   border: var(--app-edge-soft);
   border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
   font-size: var(--app-type-detail);
 }
+.room-maturity { display: grid; align-content: start; gap: 6px; }
 .room-maturity > :is(p, dl, small) { margin: 0; }
 .room-maturity-state {
   color: var(--ink);
@@ -942,6 +945,11 @@
   gap: 4px 10px;
   margin: 0;
 }
+/* A Design question reads its standing beside the question's words. */
+[data-task-contract] > li[data-item-state] {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px;
+}
+.work-detail-item-standing { color: var(--muted); font-size: var(--app-type-meta); }
 /* A withdrawal's line reads as one sentence: who, how long ago, which fact;
    its authored reason follows as Markdown. */
 .room-approval-withdrawal .relative-age {
