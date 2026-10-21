@@ -35,12 +35,6 @@ impl Config {
     pub const fn rows(self) -> usize {
         self.pack.rows.get() as usize
     }
-
-    /// Portable configured row count.
-    #[must_use]
-    pub const fn row_count(self) -> u32 {
-        self.pack.rows.get()
-    }
 }
 
 impl Default for Config {

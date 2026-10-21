@@ -495,24 +495,6 @@ impl GateDeclaration {
         self.display.as_deref()
     }
 
-    /// Provenance of the ID field.
-    #[must_use]
-    pub const fn id_provenance(&self) -> &Provenance {
-        &self.provenance.id
-    }
-
-    /// Provenance of the enablement field.
-    #[must_use]
-    pub const fn enabled_provenance(&self) -> &Provenance {
-        &self.provenance.enabled
-    }
-
-    /// Provenance of the optional display field.
-    #[must_use]
-    pub const fn display_provenance(&self) -> Option<&Provenance> {
-        self.provenance.display.as_ref()
-    }
-
     fn compiled(id: GateId) -> Self {
         Self {
             id,

@@ -27,9 +27,7 @@ pub use acquire::{HYGIENE_SOURCE_FILE_BYTE_LIMIT, HygieneSource, acquire_hygiene
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use acquire::{HygieneDocument, acquire_hygiene_arm, acquire_hygiene_arm_reached};
 #[cfg(not(target_arch = "wasm32"))]
-pub use analyze::{
-    HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, PrivateCouplingException,
-};
+pub use analyze::{HygieneAnalysisError, HygieneConfiguration, HygieneExclusion};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use analyze::{analyze_hygiene, analyze_hygiene_arm};
 #[cfg(not(target_arch = "wasm32"))]
@@ -644,10 +642,6 @@ pub enum AnalysisEvidence {
         private_imports: u32,
         /// Resolved private assertion targets.
         private_assertions: u32,
-        /// Exact admitted coupling entries.
-        admitted_exceptions: u32,
-        /// Configured entries with no matching coupling.
-        stale_exceptions: u32,
     },
     /// Configured or compiled finding threshold and measured count.
     PolicyDecision {
@@ -761,13 +755,6 @@ pub enum HygieneFindingDetail {
         /// Exact private target.
         target: String,
     },
-    /// A tracked private-coupling exception has no matching coupling.
-    StalePrivateException {
-        /// Configured test identity.
-        test_name: String,
-        /// Configured target.
-        target: String,
-    },
 }
 
 impl HygieneFindingDetail {
@@ -777,9 +764,7 @@ impl HygieneFindingDetail {
             Self::SymbolReachability { .. } => GateId::SymbolReachability,
             Self::PythonUnused { .. } => GateId::PythonUnused,
             Self::AssertionFree { .. } => GateId::AssertionFreeTests,
-            Self::PrivateCoupling { .. } | Self::StalePrivateException { .. } => {
-                GateId::PrivateInternals
-            }
+            Self::PrivateCoupling { .. } => GateId::PrivateInternals,
         }
     }
 
@@ -796,9 +781,7 @@ impl HygieneFindingDetail {
                 test_references.sort();
                 test_references.dedup();
             }
-            Self::AssertionFree { .. }
-            | Self::PrivateCoupling { .. }
-            | Self::StalePrivateException { .. } => {}
+            Self::AssertionFree { .. } | Self::PrivateCoupling { .. } => {}
         }
     }
 
@@ -853,12 +836,6 @@ impl HygieneOutcome {
     #[must_use]
     pub const fn is_skip(self) -> bool {
         matches!(self, Self::NotApplicable | Self::Excluded)
-    }
-
-    /// A clean measurement or an explicit contract-owned skip satisfies.
-    #[must_use]
-    pub const fn satisfies_gate(self) -> bool {
-        matches!(self, Self::Passed | Self::NotApplicable | Self::Excluded)
     }
 }
 

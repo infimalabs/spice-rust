@@ -238,9 +238,6 @@ fn detail_has_empty_identity(detail: &HygieneFindingDetail) -> bool {
         } => [test_name, coupling_kind, target]
             .into_iter()
             .any(|item| item.is_empty()),
-        HygieneFindingDetail::StalePrivateException { test_name, target } => {
-            test_name.is_empty() || target.is_empty()
-        }
     }
 }
 
@@ -267,7 +264,6 @@ fn finding_semantics_are_invalid(finding: &HygieneFinding) -> bool {
         }
         HygieneFindingDetail::AssertionFree { .. }
         | HygieneFindingDetail::PrivateCoupling { .. } => finding.line.is_none(),
-        HygieneFindingDetail::StalePrivateException { .. } => finding.line.is_some(),
     }
 }
 

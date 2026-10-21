@@ -232,12 +232,6 @@ impl InstallPlan {
         self.hook_activation.as_ref()
     }
 
-    /// Provenance of the executable and dSYM a symbol-bearing plan retains.
-    #[must_use]
-    pub const fn symbol_provenance(&self) -> Option<&SymbolProvenance> {
-        self.symbols.as_ref()
-    }
-
     /// Number of durable publication stages in this plan.
     #[must_use]
     pub fn operation_count(&self) -> usize {

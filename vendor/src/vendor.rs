@@ -6,7 +6,6 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::path::Path;
 
 use listen::{Decoded, Dialect, Locus, LocusLengthError};
 
@@ -168,12 +167,6 @@ impl Vendor {
                 })
             })
             .transpose()
-    }
-
-    /// Whether this vendor owns a preserved transcript directory.
-    #[must_use]
-    pub fn owns_preserved_transcript(&self, path: &Path) -> bool {
-        path.file_name().is_some_and(|name| name == self.name)
     }
 
     /// Neutral first turn requiring the authoritative skill resource and

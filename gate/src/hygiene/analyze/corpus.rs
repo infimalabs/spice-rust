@@ -51,11 +51,7 @@ impl GraphWork {
         }
     }
 
-    pub(super) fn preflight(
-        &mut self,
-        corpus: &Corpus,
-        configuration: &HygieneConfiguration,
-    ) -> bool {
+    pub(super) fn preflight(&mut self, corpus: &Corpus) -> bool {
         let symbols = corpus.modules.values().fold(0_usize, |total, module| {
             total
                 .saturating_add(module.imports.len())
@@ -84,8 +80,7 @@ impl GraphWork {
                 total
                     .saturating_add(module.tests.len())
                     .saturating_add(module.private_couplings.len())
-            }))
-            .saturating_add(configuration.private_exceptions.len());
+            }));
         if possible_findings > GRAPH_FINDING_LIMIT {
             self.failure = Some(GraphFailure::Findings);
             return false;
@@ -205,11 +200,11 @@ impl Corpus {
             .collect::<Vec<_>>();
         let selected_files = u32::try_from(documents.len()).unwrap_or(u32::MAX);
         let mut corpus = Self::default();
-        let mut ast_work = AstWork::new(started, configuration.deadline_ms);
+        let mut ast_work = AstWork::new(started, DEADLINE_MS);
         for (index, document) in documents.iter().enumerate() {
             let path = &document.path;
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-            if elapsed_ms > configuration.deadline_ms {
+            if elapsed_ms > DEADLINE_MS {
                 return (selected_files, corpus, Terminal::TimedOut { elapsed_ms });
             }
             let source = match std::str::from_utf8(&document.bytes) {
@@ -280,18 +275,18 @@ impl Corpus {
             }
             corpus.modules.insert(name, module);
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-            if elapsed_ms > configuration.deadline_ms {
+            if elapsed_ms > DEADLINE_MS {
                 return (selected_files, corpus, Terminal::TimedOut { elapsed_ms });
             }
         }
-        let mut graph_work = GraphWork::new(started, configuration.deadline_ms);
-        if !graph_work.preflight(&corpus, configuration)
+        let mut graph_work = GraphWork::new(started, DEADLINE_MS);
+        if !graph_work.preflight(&corpus)
             || !corpus.construct_graphs(configuration, &mut graph_work)
         {
             return graph_terminal(selected_files, corpus, &graph_work);
         }
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let terminal = if elapsed_ms > configuration.deadline_ms {
+        let terminal = if elapsed_ms > DEADLINE_MS {
             Terminal::TimedOut { elapsed_ms }
         } else {
             Terminal::Parsed
@@ -365,7 +360,6 @@ impl Corpus {
         &self,
         traversal: HygieneTraversal,
         configuration: &HygieneConfiguration,
-        focused: bool,
         work: &mut GraphWork,
     ) -> Option<AnalysisEvidence> {
         let evidence = match traversal {
@@ -422,21 +416,6 @@ impl Corpus {
             }
             HygieneTraversal::PrivateBoundaries => {
                 let couplings = self.private_couplings(work)?;
-                let mut admitted = 0_usize;
-                for coupling in &couplings {
-                    if configuration.exception_matches(coupling, work)? {
-                        admitted += 1;
-                    }
-                }
-                let mut stale = 0_usize;
-                for exception in &configuration.private_exceptions {
-                    if focused && !self.private_exception_relevant(exception, work)? {
-                        continue;
-                    }
-                    if !exception.matches_any(&couplings, work)? {
-                        stale += 1;
-                    }
-                }
                 AnalysisEvidence::PrivateBoundaryResolution {
                     packages: self.production_packages().into_iter().collect(),
                     private_imports: u32::try_from(
@@ -453,8 +432,6 @@ impl Corpus {
                             .count(),
                     )
                     .unwrap_or(u32::MAX),
-                    admitted_exceptions: u32::try_from(admitted).unwrap_or(u32::MAX),
-                    stale_exceptions: u32::try_from(stale).unwrap_or(u32::MAX),
                 }
             }
         };
@@ -464,8 +441,6 @@ impl Corpus {
     pub(super) fn findings(
         &self,
         gate: GateId,
-        configuration: &HygieneConfiguration,
-        focused: bool,
         work: &mut GraphWork,
     ) -> Option<Vec<HygieneFinding>> {
         let estimate = match gate {
@@ -476,8 +451,7 @@ impl Corpus {
                 .modules
                 .values()
                 .map(|module| module.private_couplings.len())
-                .sum::<usize>()
-                .saturating_add(configuration.private_exceptions.len()),
+                .sum::<usize>(),
             _ => 0,
         };
         if !work.steps(estimate) {
@@ -488,7 +462,7 @@ impl Corpus {
             GateId::SymbolReachability => self.symbol_reachability_findings(work),
             GateId::PythonUnused => self.python_unused_findings(work),
             GateId::AssertionFreeTests => self.assertion_free_findings(work),
-            GateId::PrivateInternals => self.private_findings(configuration, focused, work),
+            GateId::PrivateInternals => self.private_findings(work),
             _ => Some(Vec::new()),
         }
     }
@@ -678,18 +652,10 @@ impl Corpus {
         Some(findings)
     }
 
-    fn private_findings(
-        &self,
-        configuration: &HygieneConfiguration,
-        focused: bool,
-        work: &mut GraphWork,
-    ) -> Option<Vec<HygieneFinding>> {
+    fn private_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
         let couplings = self.private_couplings(work)?;
         let mut findings = Vec::new();
         for coupling in &couplings {
-            if configuration.exception_matches(coupling, work)? {
-                continue;
-            }
             if !work.admit_finding(saturating_sum([
                 coupling.path.len(),
                 coupling.test_name.len(),
@@ -708,59 +674,7 @@ impl Corpus {
                 },
             });
         }
-        for exception in &configuration.private_exceptions {
-            if focused && !self.private_exception_relevant(exception, work)? {
-                continue;
-            }
-            if exception.matches_any(&couplings, work)? {
-                continue;
-            }
-            if !work.admit_finding(saturating_sum([
-                "spice-rust.toml".len(),
-                exception.test_name.len(),
-                exception.target.len(),
-            ])) {
-                return None;
-            }
-            findings.push(HygieneFinding {
-                path: "spice-rust.toml".to_owned(),
-                line: None,
-                detail: HygieneFindingDetail::StalePrivateException {
-                    test_name: exception.test_name.clone(),
-                    target: exception.target.clone(),
-                },
-            });
-        }
         work.check().then_some(findings)
-    }
-
-    fn private_exception_relevant(
-        &self,
-        exception: &PrivateCouplingException,
-        work: &mut GraphWork,
-    ) -> Option<bool> {
-        for (_, test) in self.tests() {
-            if !work.step() {
-                return None;
-            }
-            if test.name == exception.test_name {
-                return Some(true);
-            }
-        }
-        for module in self.modules.keys() {
-            if !work.step() {
-                return None;
-            }
-            if exception.target == *module
-                || exception
-                    .target
-                    .strip_prefix(module)
-                    .is_some_and(|tail| tail.starts_with('.'))
-            {
-                return Some(true);
-            }
-        }
-        Some(false)
     }
 
     /// Rank the modules the suite reaches by how much of the suite reaches them.
@@ -896,38 +810,6 @@ fn graph_terminal(
         None => unreachable!("graph terminal requires one exhausted work bound"),
     };
     (selected_files, corpus, terminal)
-}
-
-impl HygieneConfiguration {
-    fn exception_matches(&self, coupling: &PrivateCoupling, work: &mut GraphWork) -> Option<bool> {
-        for exception in &self.private_exceptions {
-            if !work.step() {
-                return None;
-            }
-            if exception.matches(coupling) {
-                return Some(true);
-            }
-        }
-        Some(false)
-    }
-}
-
-impl PrivateCouplingException {
-    fn matches(&self, coupling: &PrivateCoupling) -> bool {
-        self.test_name == coupling.test_name && self.target == coupling.target
-    }
-
-    fn matches_any(&self, couplings: &[PrivateCoupling], work: &mut GraphWork) -> Option<bool> {
-        for coupling in couplings {
-            if !work.step() {
-                return None;
-            }
-            if self.matches(coupling) {
-                return Some(true);
-            }
-        }
-        Some(false)
-    }
 }
 
 fn reachable_bounded(
