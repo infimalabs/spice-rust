@@ -144,13 +144,27 @@ impl NoteSubmission {
 }
 
 /// One task's observation composer: the draft it retains, the local refusal
-/// of that draft, and the submission it waits on. Every surface showing the
-/// task shows this composer, and no other task's.
+/// of that draft, the submission it waits on, and whether the operator opened
+/// it. Every surface showing the task shows this composer, and no other
+/// task's.
 #[derive(Clone, Default, PartialEq, Eq)]
 struct NoteComposer {
     draft: String,
     notice: Notice,
     submission: NoteSubmission,
+    open: bool,
+}
+
+impl NoteComposer {
+    /// Whether the composer shows its draft and submitters: once opened, and
+    /// whenever it holds a draft, a refusal, or a submission, so collapsing
+    /// never hides operator work.
+    fn expanded(&self) -> bool {
+        self.open
+            || !self.draft.is_empty()
+            || self.notice != Notice::none()
+            || self.submission != NoteSubmission::default()
+    }
 }
 
 /// Observation composers by task. The connection keeps this handle from its
@@ -185,6 +199,16 @@ impl NoteComposers {
             };
             let draft = textarea.value();
             notes.update(&task, move |composer| composer.draft = draft);
+        })
+    }
+
+    /// Open `task`'s composer and focus its draft, `id`, once it renders.
+    fn opener(&self, task: &TaskStamp, id: String) -> Callback<MouseEvent> {
+        let notes = self.clone();
+        let task = task.clone();
+        Callback::from(move |_: MouseEvent| {
+            notes.update(&task, |composer| composer.open = true);
+            watchband::focus_after_render(id.clone());
         })
     }
 

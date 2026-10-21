@@ -55,9 +55,9 @@ pub(super) fn render_conclusion(
     };
     html! {
         <section class="room-conclusion" aria-label="Conclusion" data-room-conclusion={design.to_string()}>
-            <header><strong>{"Conclusion"}</strong></header>
+            <header><h4>{"Conclusion"}</h4></header>
             <div class="room-inline-actions">
-                <button type="button" onclick={done}>{"Preview done"}</button>
+                <button type="button" class="app-compact-control" onclick={done}>{"Preview done"}</button>
             </div>
             if let Some((conclusion, witnesses)) = state.and_then(|state| state.preview.as_ref()) {
                 {render_preview(controls, sender, row, conclusion, witnesses)}
@@ -152,8 +152,8 @@ fn render_preview(
                 <p class="room-notice">{"A lane holds this Design; the resident refuses conclusion until it frees."}</p>
             }
             <div class="room-inline-actions">
-                <button type="button" onclick={submit}>{"Submit conclusion"}</button>
-                <button type="button" onclick={cancel}>{"Cancel"}</button>
+                <button type="button" class="app-compact-control" onclick={submit}>{"Submit conclusion"}</button>
+                <button type="button" class="app-compact-control" onclick={cancel}>{"Cancel"}</button>
             </div>
         </div>
     }

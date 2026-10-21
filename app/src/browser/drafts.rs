@@ -256,8 +256,8 @@ fn DraftEditor(props: &EditorProps) -> Html {
             <form class="draft-form" onsubmit={submit}>
                 {content_fields(Some((fields.fields(), &edit)))}
                 <div class="draft-actions">
-                    <button type="submit" disabled={!props.edits}>{"Save Draft"}</button>
-                    <button type="submit" value={FILE_SUBMITTER} disabled={!props.files}>{"File"}</button>
+                    <button type="submit" class="app-compact-control" disabled={!props.edits}>{"Save Draft"}</button>
+                    <button type="submit" class="app-compact-control" value={FILE_SUBMITTER} disabled={!props.files}>{"File"}</button>
                 </div>
             </form>
         </section>

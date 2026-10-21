@@ -51,7 +51,7 @@ pub(super) fn render_standing(
     );
     html! {
         <section class="room-standing" data-room-standing="">
-            <header><strong>{"Standing"}</strong></header>
+            <header><h4>{"Standing"}</h4></header>
             if let Some(standing) = &lifecycle {
                 <p class="room-standing-lifecycle" data-design-lifecycle={standing.key()}>
                     {standing.to_string()}

@@ -96,13 +96,13 @@ pub(in crate::browser) fn render_task_room(
                         {super::approval::render_approval(runtime, controls, sender, open_task, room)}
                     }
                     <section class="room-history" aria-label="Room conversation">
-                        <header>
-                            <strong>{"Conversation"}</strong>
-                            <span>{cards.len()}</span>
-                        </header>
                         if cards.is_empty() {
                             <p class="room-empty">{"No room publications."}</p>
                         } else {
+                            <header>
+                                <h4>{"Conversation"}</h4>
+                                <span>{cards.len()}</span>
+                            </header>
                             {for cards.into_iter().map(|(_, card)| card)}
                         }
                     </section>
@@ -120,7 +120,7 @@ pub(in crate::browser) fn render_task_room(
             <div class="app-section-heading">
                 if design {
                     <h3>{"Design room"}</h3>
-                    <a href={crate::view::design_href(room)}>{"Permalink"}</a>
+                    <a class="app-compact-control" href={crate::view::design_href(room)}>{"Permalink"}</a>
                 } else {
                     <h3>{"Room"}</h3>
                 }
@@ -155,7 +155,7 @@ fn render_maturity(
             data-maturity-state={state}
         >
             <header>
-                <strong>{"Maturity"}</strong>
+                <h4>{"Maturity"}</h4>
                 <span class="room-maturity-state">{state}</span>
             </header>
             <p>{summary(&judged)}</p>

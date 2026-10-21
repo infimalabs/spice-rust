@@ -148,10 +148,11 @@
   gap: 2px;
   min-width: 0;
   margin: 0;
-  padding: 9px 10px;
-  text-align: left;
+  text-decoration: none;
 }
 .work-relationship-link > span { color: var(--muted); font-size: var(--app-type-fact); text-transform: uppercase; }
+.work-relationship-link strong { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentcolor 45%, transparent); text-underline-offset: 2px; }
+.work-relationship-link:hover strong { text-decoration-color: currentcolor; }
 .work-relationship-link strong,
 .work-relationship-link small { max-width: 100%; overflow-wrap: anywhere; }
 .work-relationship-link small { color: var(--muted); }
@@ -170,7 +171,7 @@
   margin-bottom: 8px;
   border-left: var(--app-focus-ring-strong-width) solid var(--work-completed);
 }
-.work-closure-card header strong { color: var(--ink); }
+.work-closure-card > header > h4 { margin: 0; color: var(--ink); font-size: inherit; text-transform: none; }
 .work-closure-claim { margin: 7px 0 0; color: var(--muted); font-size: var(--app-type-control); }
 /* The observation composer mirrors the Chat composer: the draft on the left and
    one column of equal one-word pills on the right, wide enough for the busy
@@ -185,7 +186,8 @@
 .work-note-composer > label { grid-column: 1 / -1; }
 .work-note-composer textarea { min-height: 88px; }
 .work-note-actions { align-self: start; }
-.work-note-actions .team-send { min-width: calc(8ch + 2rem + 2px); color: var(--page); }
+.work-note-actions .app-compact-control { min-width: calc(8ch + 2rem + 2px); color: var(--page); }
+.work-note-observe { margin-bottom: 14px; }
 .work-note-capability { margin: 0 0 8px; color: var(--muted); font-size: var(--app-type-control); }
 .work-map-primary-controls {
   display: flex;
@@ -728,7 +730,6 @@
 .room-composer button {
   min-height: 30px;
   padding: 5px 8px;
-  border-radius: var(--app-radius-control);
   cursor: pointer;
 }
 
@@ -752,6 +753,7 @@
 .task-deferral button {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   min-height: 0;
   margin-block: -3px;
   padding: 1px 7px;
@@ -826,6 +828,7 @@
   color: var(--muted);
   font-size: var(--app-type-detail);
 }
+.room-history > .room-empty { padding: 0; }
 
 .room-console-rooms {
   display: flex;
@@ -900,17 +903,21 @@
 .room-approval-withdrawn > header,
 .room-conclusion > header,
 .room-maturity > header,
+.room-standing > header,
 .room-history > header {
   display: flex;
   justify-content: space-between;
   color: var(--muted);
   font-size: var(--app-type-meta);
 }
+:is(.room-standing, .room-maturity, .room-conclusion, .room-approval, .room-approval-withdrawn, .room-approval-card, .room-history) > header > h4 { margin: 0; color: inherit; font-size: inherit; }
+.room-approval-card > header > h4 { text-transform: none; }
 
 .room-reading,
 .room-approval,
 .room-approval-withdrawn,
 .room-history { display: grid; gap: 8px; }
+.room-reading > .app-section-heading { justify-content: start; }
 
 /* A Design's Standing and Maturity share one row and one frame, so the
    lifecycle and how near the Design is to steeping read together. */
