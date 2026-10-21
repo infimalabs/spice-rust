@@ -104,7 +104,7 @@ fn render_fast_badge() -> Html {
             y="15"
             aria-hidden="true"
         >
-            {"🔥"}
+            {crate::browser::view::chrome::FAST_FLAME}
         </text>
     }
 }
