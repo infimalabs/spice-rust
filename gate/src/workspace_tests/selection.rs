@@ -16,14 +16,6 @@ struct DeclaredTestTarget {
 }
 
 impl DeclaredTestTarget {
-    const fn new(package: &'static str, kind: &'static str, name: &'static str) -> Self {
-        Self {
-            package,
-            kind,
-            name,
-        }
-    }
-
     fn display(self) -> String {
         format!("{}::{}:{}", self.package, self.kind, self.name)
     }
@@ -36,40 +28,19 @@ struct DurableSourceSelection {
     supplemental: &'static [DeclaredTestTarget],
 }
 
-const WIRE_ENVIRONMENT_PROOFS: &[DeclaredTestTarget] = &[
-    DeclaredTestTarget::new("wire", "test", "environment"),
-    DeclaredTestTarget::new("wire", "test", "identity_law"),
-    DeclaredTestTarget::new("wire", "test", "roundtrip"),
-];
-const WIRE_WITNESS_PROOFS: &[DeclaredTestTarget] = &[
-    DeclaredTestTarget::new("wire", "test", "identity_law"),
-    DeclaredTestTarget::new("wire", "test", "roundtrip"),
-];
-const STEERING_KEY_PROOFS: &[DeclaredTestTarget] =
-    &[DeclaredTestTarget::new("steer", "test", "scan")];
-
 /// Durable source declarations add semantic proof targets to ordinary Cargo
 /// reach. Their owner and every named target are checked against the selected
 /// tree before any selection is published, so this table cannot go stale in
 /// silence. Downstream contracts remain derived from public module provenance;
-/// declarations may name only local proof targets.
-const DURABLE_SOURCE_SELECTIONS: &[DurableSourceSelection] = &[
-    DurableSourceSelection {
-        source: "steer/src/ack/keys.rs",
-        owner: DeclaredTestTarget::new("steer", "lib", "steer"),
-        supplemental: STEERING_KEY_PROOFS,
-    },
-    DurableSourceSelection {
-        source: "wire/src/environment.rs",
-        owner: DeclaredTestTarget::new("wire", "lib", "wire"),
-        supplemental: WIRE_ENVIRONMENT_PROOFS,
-    },
-    DurableSourceSelection {
-        source: "wire/src/witness.rs",
-        owner: DeclaredTestTarget::new("wire", "lib", "wire"),
-        supplemental: WIRE_WITNESS_PROOFS,
-    },
-];
+/// declarations may name only local proof targets, and a declaration must
+/// name at least one.
+///
+/// Empty while wire's and steer's integration tests fold into one `suite`
+/// executable each: the installed gate validates this table against the
+/// staged tree, so the rows naming their current executables return as
+/// `wire::test:suite` and `steer::test:suite` only once a release built from
+/// this table is installed.
+const DURABLE_SOURCE_SELECTIONS: &[DurableSourceSelection] = &[];
 
 #[derive(Debug)]
 pub(super) struct SelectionPlan {
