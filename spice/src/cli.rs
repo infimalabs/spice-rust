@@ -314,7 +314,8 @@ pub fn landing(path: &[&str]) -> Landing {
 fn observation_landed(path: &[&str]) -> bool {
     matches!(
         path,
-        ["demo"]
+        ["app"]
+            | ["demo"]
             | ["watch"]
             | ["retro"]
             | ["session"]

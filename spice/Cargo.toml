@@ -29,6 +29,7 @@ canvas = { path = "../canvas", optional = true }
 serve = { path = "../serve" }
 clap = { version = "4.6.5", features = ["string"] }
 consent = { path = "../consent" }
+desktop = { path = "../desktop" }
 dialect = { path = "../dialect" }
 dist = { path = "../dist" }
 door = { path = "../door" }

@@ -128,11 +128,11 @@ pub use quote::{
     ResolvedMediaQuote, ResolvedQuote, steering_key,
 };
 pub use reply::{
-    AppOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
-    JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome, ProofEvidence,
-    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, Reply, ReplyPosition, Response,
-    RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
-    ThreadReport, Version,
+    AppClosed, AppOpen, AppResident, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup,
+    JournalReindex, JournalReport, JournalRestore, JournalVerification, LanePurge, LanePurgeReport,
+    Outcome, ProofEvidence, Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, Reply,
+    ReplyPosition, Response, RestoreVerification, RtkGainReport, SealedManifest, SeqRange,
+    SeqRangeError, SpiceCommand, ThreadReport, Version,
 };
 pub use state_root::STATE_DIRECTORY;
 #[cfg(not(target_arch = "wasm32"))]

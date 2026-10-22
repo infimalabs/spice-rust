@@ -322,10 +322,10 @@ pub(crate) struct AppBinding {
     access: AppAccess,
 }
 
-pub(super) struct AppAccess {
+pub(crate) struct AppAccess {
     policy: serve::axum::Access,
     kind: ResidentAccess,
-    pub(super) token: Option<String>,
+    pub(crate) token: Option<String>,
 }
 
 enum AppSelection {
@@ -425,7 +425,7 @@ pub(crate) fn up(
 /// Both are parsed strictly: what the operator named is what gets bound, so a
 /// host that is not an address of this machine has to fail here by name rather
 /// than resolve to something they did not ask for.
-pub(super) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
+pub(crate) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketAddr> {
     let host = match leaf.get_one::<String>("host") {
         Some(host) => host.parse::<IpAddr>().map_err(|_| {
             listen_refusal(
@@ -445,7 +445,7 @@ pub(super) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketA
     Ok(SocketAddr::new(host, port))
 }
 
-pub(super) fn requested_access(
+pub(crate) fn requested_access(
     leaf: &clap::ArgMatches,
     listen: SocketAddr,
 ) -> CommandResult<AppAccess> {

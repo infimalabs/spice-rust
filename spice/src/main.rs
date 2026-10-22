@@ -17,6 +17,8 @@ use spice::placeholder::PlaceholderReason;
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
 #[cfg(not(target_arch = "wasm32"))]
+mod app_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod board_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod cargo_command;
@@ -341,6 +343,7 @@ impl NativeInvocation<'_> {
         match contract.path {
             ["doctor"] => deliver_display(&doctor_outcome(configuration), form),
             ["demo"] => deliver(&demo_command::run(leaf), form),
+            ["app"] => deliver_display(&app_command::run(leaf), form),
             ["gate"] => deliver_with_reply_text(
                 &gate_command::run(leaf, configuration, live),
                 form,

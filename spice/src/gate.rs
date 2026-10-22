@@ -6,7 +6,7 @@
 //! observations; acquisition and decisions remain owned by the gate crate.
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::Path;
 use std::process::Command;
@@ -19,6 +19,7 @@ use ::gate::{
 use gix::bstr::ByteSlice as _;
 use wire::Digest;
 
+use crate::cargo_isolation;
 use crate::repository::{Repository, StateError};
 
 const GIT: &str = "/usr/bin/git";
@@ -244,6 +245,20 @@ impl PreparedArm<'_> {
             &mut self.cargo_jobs,
             cargo_jobs,
         )
+    }
+
+    /// Point this arm's Cargo at `home` instead of the command rim's own.
+    ///
+    /// A seated lane's home stays pinned to its seat generation; an arm that
+    /// resolves the staged `Cargo.lock` needs the home admitted for that lock.
+    pub fn bind_cargo_home(&mut self, home: &Path) {
+        self.compiler_environment
+            .retain(|(name, _)| name != OsStr::new(cargo_isolation::CARGO_HOME_VARIABLE));
+        self.compiler_environment.push((
+            OsString::from(cargo_isolation::CARGO_HOME_VARIABLE),
+            home.as_os_str().to_owned(),
+        ));
+        self.compiler_environment.sort();
     }
 
     /// Derive one reached focused arm from this preparation's immutable source.

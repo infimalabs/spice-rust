@@ -68,6 +68,21 @@ The token reaches the detached resident through a one-shot private descriptor.
 It never appears in the resident's argv or environment, discovery, log URLs, or
 replies; `--open` places it in the URL fragment, outside the HTTP origin.
 
+`spice app` shows the console in a native window instead of a browser tab:
+
+```sh
+spice app
+```
+
+It joins the resident already serving the repository, or starts one exactly as
+`spice up` would (the same `--host`, `--port`, `--allow-insecure-bind`, and
+`--auth-token` apply) and drains it when the window closes; a resident it
+joined keeps running until `spice down`. The window admits its endpoint
+through the same discovery check as `--open` and carries the token only in the
+URL fragment the window loads. Links the console opens in a new window go to
+the system browser. The window is macOS-only (WebKit); elsewhere `spice app`
+refuses and `spice up --open` remains the route.
+
 Supervised shells may route commands through an optional configured
 [RTK](https://github.com/rtk-ai/rtk) executable. An unusable rewrite reports
 `RTK rewrite degraded to native` and runs the original command unchanged; each

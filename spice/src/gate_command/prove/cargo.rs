@@ -17,7 +17,7 @@ pub(super) struct Execution {
 
 #[derive(Clone)]
 pub(super) struct SourceExecution {
-    home: std::sync::Arc<spice::cargo_isolation::PreparedHome>,
+    pub(super) home: std::sync::Arc<spice::cargo_isolation::PreparedHome>,
     lockfile: Vec<u8>,
     root: PathBuf,
     host: spice::cargo_isolation::Host,
