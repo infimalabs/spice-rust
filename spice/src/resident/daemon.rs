@@ -40,7 +40,7 @@ const HANDOFF_FD: i32 = 9;
 /// Names the launch channel the launcher granted its detached child.
 #[cfg(windows)]
 const HANDOFF_VARIABLE: &str = wire::SpiceVariable::DaemonHandoff.as_str();
-const HANDOFF_MAGIC: &[u8] = b"SPICE-RS-DAEMON\0";
+const HANDOFF_MAGIC: &[u8] = b"SPICE-DAEMON\0";
 const MAX_HANDOFF_BYTES: usize = 16 * 1024;
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 const ARRIVAL_HORIZON: Duration = Duration::from_secs(60);

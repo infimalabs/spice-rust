@@ -555,7 +555,6 @@ fn the_resident_environment_derives_its_bootstrap_home_and_drops_inherited_isola
         (NATIVE_CARGO_VARIABLE, "/elsewhere/cargo"),
         (NATIVE_RUSTC_VARIABLE, "/elsewhere/rustc"),
         (NATIVE_RUSTDOC_VARIABLE, "/elsewhere/rustdoc"),
-        ("SPICE_RS_BOOTSTRAP_CARGO_HOME", "/retired/name"), // env-policy: not-an-env SPICE_RS_BOOTSTRAP_CARGO_HOME
     ];
     let resident = ResidentLaunchEnvironment::derive(
         launcher
