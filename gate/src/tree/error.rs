@@ -12,6 +12,13 @@ pub enum TreeError {
         /// What the Git implementation reported.
         evidence: String,
     },
+    /// The repository stores references in a format the gate cannot read.
+    ReferenceStorage {
+        /// Requested repository path.
+        path: PathBuf,
+        /// The `extensions.refStorage` value Git configured.
+        format: String,
+    },
     /// The repository has no index to capture.
     IndexAbsent {
         /// Expected index path.
@@ -152,6 +159,13 @@ impl fmt::Display for TreeError {
             Self::Repository { path, evidence } => write!(
                 formatter,
                 "{} is not a readable Git repository: {evidence}",
+                path.display()
+            ),
+            Self::ReferenceStorage { path, format } => write!(
+                formatter,
+                "{} stores Git references as {format}, which the gate reads only as files; \
+                 migrate the repository with `git refs migrate --ref-format=files`, or create \
+                 it with `git init --ref-format=files`",
                 path.display()
             ),
             Self::IndexAbsent { path } => {

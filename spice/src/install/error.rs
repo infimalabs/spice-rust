@@ -44,6 +44,11 @@ pub enum InstallError {
         worktree: PathBuf,
         observed: Vec<String>,
     },
+    /// The repository keeps references in a backend the gate cannot read.
+    ReferenceStorage {
+        common: PathBuf,
+        format: String,
+    },
     GitConfigurationDrift {
         worktree: PathBuf,
         scope: HookConfigurationScope,
@@ -111,6 +116,7 @@ impl fmt::Display for InstallError {
             | Self::HookPathUnrepresentable { .. }
             | Self::SymbolsRefused { .. } => fmt_input_error(self, formatter),
             Self::ForeignHookPath { .. }
+            | Self::ReferenceStorage { .. }
             | Self::GitConfigurationDrift { .. }
             | Self::GitLaunch { .. }
             | Self::GitExit { .. }
@@ -195,6 +201,11 @@ fn fmt_git_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> fm
             formatter,
             "refusing to replace foreign core.hooksPath {observed:?} in {}; one repository must converge on one hook owner",
             worktree.display(),
+        ),
+        InstallError::ReferenceStorage { common, format } => write!(
+            formatter,
+            "{} stores Git references as {format}, which Spice reads only as files",
+            common.display(),
         ),
         InstallError::GitConfigurationDrift {
             worktree,

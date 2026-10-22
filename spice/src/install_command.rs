@@ -239,6 +239,7 @@ pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::HookPathUnrepresentable { .. }
         | InstallError::SymbolsRefused { .. }
         | InstallError::ForeignHookPath { .. }
+        | InstallError::ReferenceStorage { .. }
         | InstallError::GitConfigurationDrift { .. }
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
@@ -305,6 +306,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::SymbolsRefused { .. } => "install::symbols-refused",
         InstallError::OccupantUnrestorable { .. } => "install::occupant-unrestorable",
         InstallError::ForeignHookPath { .. } => "install::foreign-hooks",
+        InstallError::ReferenceStorage { .. } => "install::ref-storage-unsupported",
         InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
         InstallError::LegacyRecord { .. } => "install::release-owned-state",
         InstallError::CanvasRefused { .. } => "install::canvas-refused",
@@ -351,6 +353,10 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         ),
         InstallError::HookPathUnrepresentable { path, .. } => format!(
             "move or recreate the repository at a UTF-8 path with no line separators, then rerun this executable's install preview; the refused Git-common path was {path:?}",
+        ),
+        InstallError::ReferenceStorage { common, format } => format!(
+            "Spice gates commits by reading references through gix, which has no {format} backend; migrate the repository with `{GIT} refs migrate --ref-format=files` in {}, or create it with `{GIT} init --ref-format=files`, then rerun this executable's `install` preview",
+            common.display(),
         ),
         InstallError::OccupantUnrestorable { path, .. } => format!(
             "inspect the existing target with `{}`; move it out of the install tree, or restrict it to owner-only access, then preview again",
