@@ -338,7 +338,6 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::UpChange, r#"{ "state": "quiescing" }"#),
 ];
 
-#[path = "binding/answers.rs"]
 mod answers;
 use answers::ANSWERS;
 

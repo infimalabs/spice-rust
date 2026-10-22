@@ -16,6 +16,14 @@ struct DeclaredTestTarget {
 }
 
 impl DeclaredTestTarget {
+    const fn new(package: &'static str, kind: &'static str, name: &'static str) -> Self {
+        Self {
+            package,
+            kind,
+            name,
+        }
+    }
+
     fn display(self) -> String {
         format!("{}::{}:{}", self.package, self.kind, self.name)
     }
@@ -28,19 +36,32 @@ struct DurableSourceSelection {
     supplemental: &'static [DeclaredTestTarget],
 }
 
+const WIRE_PROOFS: &[DeclaredTestTarget] = &[DeclaredTestTarget::new("wire", "test", "suite")];
+const STEER_PROOFS: &[DeclaredTestTarget] = &[DeclaredTestTarget::new("steer", "test", "suite")];
+
 /// Durable source declarations add semantic proof targets to ordinary Cargo
 /// reach. Their owner and every named target are checked against the selected
 /// tree before any selection is published, so this table cannot go stale in
 /// silence. Downstream contracts remain derived from public module provenance;
 /// declarations may name only local proof targets, and a declaration must
 /// name at least one.
-///
-/// Empty while wire's and steer's integration tests fold into one `suite`
-/// executable each: the installed gate validates this table against the
-/// staged tree, so the rows naming their current executables return as
-/// `wire::test:suite` and `steer::test:suite` only once a release built from
-/// this table is installed.
-const DURABLE_SOURCE_SELECTIONS: &[DurableSourceSelection] = &[];
+const DURABLE_SOURCE_SELECTIONS: &[DurableSourceSelection] = &[
+    DurableSourceSelection {
+        source: "steer/src/ack/keys.rs",
+        owner: DeclaredTestTarget::new("steer", "lib", "steer"),
+        supplemental: STEER_PROOFS,
+    },
+    DurableSourceSelection {
+        source: "wire/src/environment.rs",
+        owner: DeclaredTestTarget::new("wire", "lib", "wire"),
+        supplemental: WIRE_PROOFS,
+    },
+    DurableSourceSelection {
+        source: "wire/src/witness.rs",
+        owner: DeclaredTestTarget::new("wire", "lib", "wire"),
+        supplemental: WIRE_PROOFS,
+    },
+];
 
 #[derive(Debug)]
 pub(super) struct SelectionPlan {
@@ -1416,5 +1437,29 @@ mod tests {
             fixture.path(),
         )
         .expect_err("a data declaration over compiled source is refused");
+    }
+
+    /// A durable declaration names its proof targets by Cargo identity, so a
+    /// target the tree no longer declares refuses rather than selecting nothing.
+    #[test]
+    fn a_supplemental_proof_target_must_be_declared_by_the_tree() {
+        const DECLARED: &[DeclaredTestTarget] =
+            &[DeclaredTestTarget::new("wire", "test", "absence")];
+        let fixture = crate::test_repository::Fixture::repository("supplemental-target");
+        let (inventory, _) = package_and_dependent_fixture(&fixture, &[]);
+        let declaration = |supplemental| DurableSourceSelection {
+            source: "wire/src/environment.rs",
+            owner: DeclaredTestTarget::new("wire", "lib", "wire"),
+            supplemental,
+        };
+
+        validate_supplemental_targets(&inventory, &declaration(DECLARED))
+            .expect("a declared test target is admitted");
+        let error = validate_supplemental_targets(&inventory, &declaration(WIRE_PROOFS))
+            .expect_err("an undeclared test target refuses");
+        assert!(
+            error.to_string().contains("wire::test:suite"),
+            "the refusal names the missing target: {error}"
+        );
     }
 }
