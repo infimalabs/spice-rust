@@ -905,15 +905,12 @@ fn team_lifetimes_close_over_creator_team_scope() {
     }
 }
 
-/// One definition of teamed governs rendering, placement, and allocation.
+/// One definition of teamed governs rendering and placement.
 ///
-/// A lane seated alone under its own identity is a defined agent, not a team:
-/// it keeps its durable policy but allocates as steer until placement moves it
-/// onto a team, where the configured lifetime resumes.
+/// A lane seated alone under its own identity is a defined agent, not a team;
+/// allocation never asks, since a lane follows its team's policy either way.
 #[test]
 fn a_lane_seated_alone_under_its_own_identity_is_not_on_a_team() {
-    use wire::intent::TeamLife;
-
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce913116301");
     let peer = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
     let team = uuid("018f82d4-6f59-7d06-92e3-bce913116303");
@@ -934,28 +931,6 @@ fn a_lane_seated_alone_under_its_own_identity_is_not_on_a_team() {
         "two agents under either identity are a team"
     );
     assert!(wire::head::teamed(lane, [peer, lane]));
-
-    for policy in [TeamLife::Steer, TeamLife::Drive, TeamLife::Drain] {
-        let configured = TeamSubscription {
-            team: lane,
-            formed_at: None,
-            policy,
-            fast_mode: false,
-        };
-        assert_eq!(configured.effective([lane]).policy, TeamLife::Steer);
-        assert_eq!(configured.effective([lane, peer]).policy, policy);
-        assert_eq!(
-            TeamSubscription {
-                team,
-                formed_at: None,
-                policy,
-                fast_mode: false,
-            }
-            .effective([lane])
-            .policy,
-            policy
-        );
-    }
 
     let mut residency = ResidencyHead {
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116310"),

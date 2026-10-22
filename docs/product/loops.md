@@ -306,6 +306,13 @@ flowchart TD
   left on the board. READY excludes active claims, so occupied lanes do not
   inflate the count. A single ordinary task is never stranded: after the
   starvation age, one is enough. That is an age, not a retry interval.
+- A lane wakes and allocates under its current team's policy alone. `lane add
+  --life` seeds only the policy of the team it forms when no `--team` is given;
+  a lane joining an existing team takes that team's policy, so its effective
+  life can differ from the `--life` named. A lane seated alone on its own team
+  therefore follows that life: a lone Drain lane is started by this loop and
+  draws work through `task next`. No wake, allocation, or nudge path reads the
+  lane row's own life.
 - Lifecycle first selects the row allocation would give the lane, then times
   the wake from that row's own READY transition, not the newest row on the
   board. A Drain team with no occupied member settles its first wake even for a

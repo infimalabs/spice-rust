@@ -485,15 +485,6 @@ fn admit_automatic_wake(
             "reconcile after observing the current occupant",
         ));
     }
-    if row.life == "drain" {
-        return Err(automatic_refusal(
-            "lifecycle::wake-life-ended",
-            "lane.life",
-            "steer or drive",
-            &row.life,
-            "seat new capacity instead of re-seating a terminal lane",
-        ));
-    }
     super::super::steering::lane_capability(&row)?;
     let claim = held_claim_authority(bus, request.decision, request.lane)?;
     if let Some(reserved) = request.reserved

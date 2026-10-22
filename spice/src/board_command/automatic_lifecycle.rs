@@ -169,21 +169,14 @@ fn available_lane(
             "reconcile again after the current occupant is observed",
         ));
     }
-    if row.life == "drain" {
-        return Err(refusal(
-            "lifecycle::available-work-life-ended",
-            Some(row.life.clone()),
-            "allocate through a lane whose lifecycle still admits re-seating",
-        ));
-    }
     Ok(row)
 }
 
-/// The effective task-allocation lifetime of one vacant lane's team.
+/// The task-allocation lifetime of one vacant lane's team.
 ///
-/// An agent seated alone under its own identity is not on a team and so
-/// allocates as steer, which capacity-following wake refuses exactly as it
-/// refuses a steered team.
+/// The team policy alone decides: a lane seated alone follows the life its own
+/// team was seeded with, and capacity-following wake refuses only a steered
+/// team.
 fn available_subscription(
     snapshot: &ValidatedSnapshot,
     row: &wire::LaneResidency,
@@ -205,7 +198,7 @@ fn available_subscription(
             "the vacant lane lineage has more than one durable task-allocation lifetime",
         ));
     }
-    let subscription = subscription.effective(residency.team_members(row.team));
+    let subscription = subscription.clone();
     if subscription.policy == wire::intent::TeamLife::Steer {
         return Err(refusal(
             "lifecycle::available-work-scope",

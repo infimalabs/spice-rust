@@ -3,8 +3,10 @@ use super::*;
 
 mod proof_window;
 
+/// The row's own life is the seed its initial team took, not a terminal
+/// marker: automatic wake starts a vacant drain row exactly as a drive row.
 #[test]
-fn automatic_wake_refuses_an_already_seated_drain_lane() {
+fn automatic_wake_starts_a_vacant_lane_whatever_its_row_life() {
     let fixture = LaunchFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
@@ -16,12 +18,13 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
         epoch: fixture.epoch,
     };
     let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
+    let mut seats = Seats::new();
 
     let outcome = wake_automatic(
         &bus,
         &fixture.paths,
         fixture.epoch,
-        &mut Seats::new(),
+        &mut seats,
         &runtime,
         fixture.lane,
         fixture.occupant,
@@ -31,14 +34,15 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
         None,
     );
 
-    match outcome {
-        Err(Outcome::Refusal(refusal)) => {
-            assert_eq!(refusal.reason(), "lifecycle::wake-life-ended");
-        }
-        Err(Outcome::Fault(fault)) => panic!("automatic wake faulted: {fault:?}"),
-        Err(Outcome::Reply(_)) | Ok(_) => panic!("automatic wake started a Drain lane"),
-    }
-    bus.verify().expect("automatic refusal verifies");
+    assert!(
+        matches!(
+            outcome.expect("a vacant drain row starts"),
+            AutomaticWake::Started
+        ),
+        "automatic wake starts a vacant drain row"
+    );
+    seats.release_all();
+    bus.verify().expect("automatic start verifies");
     bus.shutdown().expect("fixture bus stops");
 }
 

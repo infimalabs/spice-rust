@@ -6,9 +6,9 @@ pub(super) static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
 
 /// One occupied fixture seat, placed on a team of its own.
 ///
-/// The team carries an identity distinct from the lane: an agent seated alone
-/// under its own identity is not on a team and draws no work, so every fixture
-/// seat that expects allocation is placed the way an operator would place it.
+/// The team carries an identity distinct from the lane, the way an operator's
+/// placement leaves it; allocation reads only the team's policy, so the
+/// distinct identity matters to fleet rendering, not to what the seat draws.
 #[derive(Clone, Debug)]
 pub(super) struct Seat {
     pub(super) lane: CanonicalUuid,

@@ -69,7 +69,7 @@ fn recipient(
             Some(occupant) => {
                 free.seated.insert(row.lane, occupant);
             }
-            None if row.disposition != "occupied" && row.life != "drain" => {
+            None if row.disposition != "occupied" => {
                 free.vacant.insert(row.lane);
             }
             None => {}

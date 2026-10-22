@@ -1107,9 +1107,9 @@ pub(super) struct AllocationObservation {
 
 /// The task-allocation lifetime the allocator honours for one actor's seat.
 ///
-/// This is the team's effective policy: an agent seated alone under its own
-/// identity is not on a team, so it allocates as steer however its durable
-/// subscription reads until placement moves it onto one.
+/// This is the seat's current team policy and nothing else: a lane seated
+/// alone follows the life its own team was seeded with, and a lane placed on
+/// another team follows that team's policy.
 pub(super) fn allocation_subscription(
     residency: &wire::ResidencyHead,
     actor: &Actor,
@@ -1156,7 +1156,7 @@ pub(super) fn allocation_subscription(
             "the allocating lane lineage has more than one durable task-allocation lifetime",
         ));
     }
-    Ok(subscription.effective(residency.team_members(seat.team)))
+    Ok(subscription.clone())
 }
 
 pub(super) enum PreparedTaskGit {
