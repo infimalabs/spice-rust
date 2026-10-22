@@ -526,8 +526,8 @@ fn admit_disposition(
 
 /// Whether a completion carries its claim into the phase it enters rather than
 /// freeing it: nothing published or parked, and another declared phase after
-/// the one entered. A review phase is never carried, because the lane that
-/// completed the work cannot be seated as its reviewer.
+/// the one entered. A review phase is never carried, because review goes to a
+/// peer before its author.
 pub(super) fn carries_claim(
     kind: &board::TransitionKind,
     flow: &[wire::Phase],
