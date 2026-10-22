@@ -1,6 +1,6 @@
 //! Bounds this crate is compiled against, read from the declaration itself.
 //!
-//! `spice-rust.toml` states the project depth law once. This module reads that
+//! `spice.toml` states the project depth law once. This module reads that
 //! statement at compile time instead of restating it, so the classifier and the
 //! declaration cannot drift: there is only one of them. Changing the declared
 //! number alone changes what the classifier accepts, with no Rust edit.
@@ -12,7 +12,7 @@
 //! back to a number nobody wrote.
 
 /// The declaration every bound below is read out of.
-const DECLARATION: &str = include_str!("../../spice-rust.toml");
+const DECLARATION: &str = include_str!("../../spice.toml");
 
 /// The exact spelling that separates a declared key from its value.
 const ASSIGNMENT: &[u8] = b" = ";
@@ -38,7 +38,7 @@ pub const PROJECT_MAX_DEPTH: usize =
 /// looking like it declared something.
 const _: () = assert!(
     PROJECT_MIN_DEPTH >= 2 && PROJECT_MIN_DEPTH <= PROJECT_MAX_DEPTH,
-    "spice-rust.toml must declare project_min_depth between 2 and project_max_depth",
+    "spice.toml must declare project_min_depth between 2 and project_max_depth",
 );
 
 /// Read one `key = <integer>` declaration from its named table.
@@ -68,7 +68,7 @@ const fn declared_depth(declaration: &str, table: &str, key: &str) -> usize {
         }
         at += 1;
     }
-    panic!("spice-rust.toml must declare this bound as `<key> = <integer>` inside its named table");
+    panic!("spice.toml must declare this bound as `<key> = <integer>` inside its named table");
 }
 
 /// Whether this line is exactly the requested table header.
@@ -122,7 +122,7 @@ const fn decimal_at(declaration: &[u8], at: usize) -> usize {
     }
     assert!(
         digits > 0,
-        "a declared depth bound in spice-rust.toml must be a decimal integer",
+        "a declared depth bound in spice.toml must be a decimal integer",
     );
     value
 }

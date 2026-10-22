@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use sill::{Argv, Completion, Deadlines, Environment, SpecError, WaitError};
-use wire::{Digest, Domain};
+use wire::{Digest, Domain, TRACKED_POLICY_FILE};
 
 use crate::camp::{Camp, CampError, SharedBound};
 use crate::jurisdiction::{Ignore, IgnoreError};
@@ -31,8 +31,6 @@ use crate::policy::{PACKAGED_GENERIC_POLICY, PackagePolicy};
 use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy};
 use crate::ratchet::Ratchet;
 
-/// Fixed tracked policy path within a selected repository tree.
-pub const POLICY_PATH: &str = "spice-rust.toml";
 /// Fixed tracked lower-is-better state path within a selected repository tree.
 pub const BASELINE_PATH: &str = "baseline.toml";
 /// The one baseline schema this build executes.
@@ -213,7 +211,7 @@ impl Contract {
     /// Returns the first unreadable path, malformed field, invalid compiled
     /// declaration, or unavailable tool. No partial contract is returned.
     pub fn load(root: &Path) -> Result<Self, ContractError> {
-        let policy_path = root.join(POLICY_PATH);
+        let policy_path = root.join(TRACKED_POLICY_FILE);
         let baseline_path = root.join(BASELINE_PATH);
         let policy_text = read_tracked(&policy_path)?;
         let baseline_text = read_tracked(&baseline_path)?;
@@ -221,7 +219,7 @@ impl Contract {
             PolicyInputs {
                 path: &policy_path,
                 tracked_text: &policy_text,
-                rule_source: POLICY_PATH,
+                rule_source: TRACKED_POLICY_FILE,
                 rule_text: &policy_text,
             },
             BaselineInputs {
@@ -254,13 +252,13 @@ impl Contract {
     /// exhaustive legacy probe.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn load_generic(root: &Path) -> Result<Self, ContractError> {
-        let policy_path = root.join(POLICY_PATH);
+        let policy_path = root.join(TRACKED_POLICY_FILE);
         let baseline_path = root.join(BASELINE_PATH);
         let policy_text = read_optional_tracked(&policy_path)?;
         let baseline_text = read_optional_tracked(&baseline_path)?;
         let (tracked_policy_text, rule_policy_source, rule_policy_text) =
             match policy_text.as_deref() {
-                Some(text) => (text, POLICY_PATH, text),
+                Some(text) => (text, TRACKED_POLICY_FILE, text),
                 None => ("", PACKAGED_GENERIC_POLICY_SOURCE, PACKAGED_GENERIC_POLICY),
             };
         let parsed = ParsedContract::from_inputs(
@@ -298,7 +296,7 @@ impl ParsedContract {
             PolicyInputs {
                 path: policy_path,
                 tracked_text: policy_text,
-                rule_source: POLICY_PATH,
+                rule_source: TRACKED_POLICY_FILE,
                 rule_text: policy_text,
             },
             BaselineInputs {

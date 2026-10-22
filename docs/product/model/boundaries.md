@@ -71,7 +71,7 @@ Precedence increases through compiled `builtin`, repository `tracked`,
 Git-common machine-local `local`, and per-worktree `worktree` intent. Local and
 worktree intent live in Git-directory state, never in the checkout:
 `<git-common>/.spice-rs/config.toml` and each worktree's own
-`<git-dir>/.spice-rs/worktree.toml`. Tracked `spice-rust.toml` carries
+`<git-dir>/.spice-rs/worktree.toml`. Tracked `spice.toml` carries
 repository policy only; machine-local settings live only in local config, and
 per-worktree preferences (model, effort, voices, proof runner) in local or
 worktree config. Command flags apply at the command boundary, not as

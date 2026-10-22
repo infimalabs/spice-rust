@@ -22,7 +22,7 @@ pub const NARROWEST_FILE_CLASSES: &str = concat!(
 /// has no Rust Spice policy document at all.
 ///
 /// This is not a fallback for an incomplete document: once a repository
-/// authors `spice-rust.toml`, all three selections remain required and the
+/// authors its tracked policy document, all three selections remain required and the
 /// exact tracked field refuses if one is absent. The generic profile selects
 /// ordinary text/source shapes broadly, while the parser-backed classes name
 /// only suffixes this build can measure exactly. That keeps packaged built-ins

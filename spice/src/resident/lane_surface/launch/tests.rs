@@ -11,7 +11,7 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
     let fixture = LaunchFixture::new();
     fs::write(
-        fixture.root.join("spice-rust.toml"),
+        fixture.root.join("spice.toml"),
         "[lane]\nlease = \"1s\"\nruntime = \"5s\"\n",
     )
     .expect("independent lease and runtime policy writes");
@@ -109,7 +109,7 @@ fn occupant_inherits_only_admitted_ambient_including_the_ssh_agent_socket() {
 #[test]
 fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_other_vendors() {
     let fixture = LaunchFixture::new();
-    for path in ["Cargo.lock", "Cargo.toml", "spice-rust.toml"] {
+    for path in ["Cargo.lock", "Cargo.toml", "spice.toml"] {
         fs::remove_file(fixture.root.join(path)).expect("remove Rust fixture input");
     }
     let worktree = fixture.root.to_str().expect("fixture worktree is UTF-8");

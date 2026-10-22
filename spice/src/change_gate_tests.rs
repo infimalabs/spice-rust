@@ -47,9 +47,12 @@ fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
         NEXT.fetch_add(1, Ordering::Relaxed),
     ));
     fs::create_dir(&root).expect("create malformed-policy fixture");
-    fs::write(root.join("spice-rust.toml"), "[policy\ninvalid = true\n")
-        .expect("write malformed staged policy");
-    let paths = vec!["spice-rust.toml".to_owned()];
+    fs::write(
+        root.join(wire::TRACKED_POLICY_FILE),
+        "[policy\ninvalid = true\n",
+    )
+    .expect("write malformed staged policy");
+    let paths = vec![wire::TRACKED_POLICY_FILE.to_owned()];
     let environment = ambient_environment().expect("capture test environment");
 
     let error = packaged_selection_policy(&root, &paths, &environment)
@@ -98,12 +101,15 @@ fn zero_config_selection_keeps_unclassified_sources_local_and_known_sources_spec
     assert!(markdown.gate_ids().contains(&GateId::Taste));
     assert!(markdown.gate_ids().contains(&GateId::MarkdownLinks));
 
-    fs::write(root.join("spice-rust.toml"), gate::NARROWEST_FILE_CLASSES)
-        .expect("write configured policy");
+    fs::write(
+        root.join(wire::TRACKED_POLICY_FILE),
+        gate::NARROWEST_FILE_CLASSES,
+    )
+    .expect("write configured policy");
     let configured_paths = paths
         .iter()
         .cloned()
-        .chain(["spice-rust.toml".to_owned()])
+        .chain([wire::TRACKED_POLICY_FILE.to_owned()])
         .collect::<Vec<_>>();
     let configured = packaged_selection_policy(&root, &configured_paths, &environment)
         .expect("compile configured packaged policy");

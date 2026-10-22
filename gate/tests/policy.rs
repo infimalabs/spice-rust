@@ -245,7 +245,7 @@ fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
 #[test]
 fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
     let policy = migrate_predecessor_policy(
-        "tracked/spice-rust.toml",
+        "tracked/spice.toml",
         &loadable(
             r#"
         [policy.limits]

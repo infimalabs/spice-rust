@@ -83,7 +83,7 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
     let scratch = Scratch::new();
     let root = repository(&scratch, "current");
     write(
-        root.join("spice-rust.toml"),
+        root.join("spice.toml"),
         concat!(
             "[tasks]\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
@@ -114,26 +114,6 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
 }
 
 #[test]
-fn repository_loader_ignores_the_python_owned_document() {
-    let scratch = Scratch::new();
-    let root = repository(&scratch, "separate tracked owners");
-    write(
-        root.join("spice.toml"),
-        b"[lane]\nvendor = 'python-collision'\n",
-    );
-    write(root.join("spice-rust.toml"), b"[lane]\nvendor = 'omp'\n");
-
-    let resolved = load(&root, &[]).expect("Rust reads its own tracked document");
-
-    assert_eq!(resolved.root().lane().vendor().as_str(), "omp");
-    assert_eq!(
-        fs::read_to_string(root.join("spice.toml")).unwrap(),
-        "[lane]\nvendor = 'python-collision'\n",
-        "Rust configuration capture must not rewrite or consult Python policy",
-    );
-}
-
-#[test]
 fn captured_pre_commit_declarations_expose_exact_ordered_capability_material() {
     let scratch = Scratch::new();
     let root = repository(&scratch, "pre-commit declarations");
@@ -145,11 +125,7 @@ fn captured_pre_commit_declarations_expose_exact_ordered_capability_material() {
         "  { label = 'second', run = ['tool', 'two'], scopes = { paths = ['src/**'] } },\n",
         "]\n",
     );
-    write(root.join("spice-rust.toml"), tracked);
-    write(
-        root.join("spice.toml"),
-        b"[policy]\npre_commit = [{ label = 'ignored', run = ['foreign'] }]\n",
-    );
+    write(root.join("spice.toml"), tracked);
     let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
     let before = snapshot(scratch.path());
     let mounts = spice::cli::MountRegistry::load(&root).expect("invocation mounts capture");
@@ -198,7 +174,7 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
     let root = repository(&scratch, "main worktree");
     let start = root.join("src");
     fs::create_dir(&start).expect("create start");
-    write(root.join("spice-rust.toml"), b"[lane]\nvendor = \"omp\"\n");
+    write(root.join("spice.toml"), b"[lane]\nvendor = \"omp\"\n");
     let container = absolute("container");
     let runner = absolute("runner");
     write(
@@ -219,12 +195,12 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
     for ignored in [
         root.join("config.toml"),
         root.join(".spice/config.toml"),
-        root.join(".git/spice-rust.toml"),
-        root.join(".git/.spice/config/spice-rust.toml"),
+        root.join(".git/spice.toml"),
+        root.join(".git/.spice/config/spice.toml"),
         root.join(".git/.spice-rs/local.toml"),
         root.join(".spice-rs/local.toml"),
         root.join(".spice-rs/config.toml"),
-        scratch.join("spice-rust.toml"),
+        scratch.join("spice.toml"),
     ] {
         write(ignored, b"[tasks]\nforbidden = true\n");
     }
@@ -293,11 +269,8 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
     let common = origin.join(".git");
     let first = linked_worktree(&scratch, &common, "first");
     let second = linked_worktree(&scratch, &common, "second");
-    write(first.join("spice-rust.toml"), b"[lane]\nvendor = \"omp\"\n");
-    write(
-        second.join("spice-rust.toml"),
-        b"[lane]\nvendor = \"gemini\"\n",
-    );
+    write(first.join("spice.toml"), b"[lane]\nvendor = \"omp\"\n");
+    write(second.join("spice.toml"), b"[lane]\nvendor = \"gemini\"\n");
     write(
         common.join(".spice-rs/config.toml"),
         b"[listen]\nwindow = \"5m\"\n",
@@ -310,7 +283,7 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
         worktree_path(&common.join("worktrees/second")),
         b"[vendor.omp]\nmodel = 'second-model'\n",
     );
-    write(origin.join("spice-rust.toml"), b"[tasks]\nwrong = true\n");
+    write(origin.join("spice.toml"), b"[tasks]\nwrong = true\n");
     write(
         first.join(".spice/config.toml"),
         b"[policy]\nwrong = true\n",
@@ -338,7 +311,7 @@ fn resolver_diagnostics_from_both_exact_documents_are_retained() {
     let scratch = Scratch::new();
     let root = repository(&scratch, "decode issues");
     write(
-        root.join("spice-rust.toml"),
+        root.join("spice.toml"),
         b"[lane]\nlease = \"soon\"\n[proof]\nimage = \"latest\"\n[rtk]\nexecutable = \"rtk\"\n",
     );
     write(
@@ -374,7 +347,7 @@ fn symlink_and_directory_documents_are_both_typed_without_following() {
     let root = repository(&scratch, "shapes");
     let target = root.join("other.toml");
     write(&target, b"[listen]\nwindow = \"2m\"\n");
-    symlink(&target, root.join("spice-rust.toml")).expect("create tracked symlink");
+    symlink(&target, root.join("spice.toml")).expect("create tracked symlink");
     fs::create_dir_all(local_path(&root)).expect("create local directory");
 
     let error = load(&root, &[]).expect_err("both document shapes refuse");
@@ -389,7 +362,7 @@ fn symlink_and_directory_documents_are_both_typed_without_following() {
         (
             ConfigSource::Tracked,
             AcquisitionKind::Symlink,
-            canonical.join("spice-rust.toml").as_path(),
+            canonical.join("spice.toml").as_path(),
         )
     );
     assert_eq!(error.acquisition()[1].source(), ConfigSource::Local);
@@ -416,7 +389,7 @@ fn linked_root_and_intermediate_parent_refuse_without_following() {
     let admitted_root = admitted.worktree_root().to_path_buf();
     let replacement = repository(&scratch, "replacement root");
     write(
-        replacement.join("spice-rust.toml"),
+        replacement.join("spice.toml"),
         b"[listen]\nwindow = \"9m\"\n",
     );
     let displaced = scratch.join("displaced root");
@@ -430,7 +403,7 @@ fn linked_root_and_intermediate_parent_refuse_without_following() {
             && issue.path() == admitted_root
     }));
     assert_eq!(
-        fs::read(replacement.join("spice-rust.toml")).expect("linked target remains readable"),
+        fs::read(replacement.join("spice.toml")).expect("linked target remains readable"),
         b"[listen]\nwindow = \"9m\"\n"
     );
 
@@ -460,13 +433,13 @@ fn linked_root_and_intermediate_parent_refuse_without_following() {
 fn equal_policy_bytes_from_another_file_are_another_capture_generation() {
     let scratch = Scratch::new();
     let root = repository(&scratch, "same bytes new generation");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join("spice.toml");
     let bytes = b"[lane]\nvendor = \"omp\"\n";
     write(&tracked, bytes);
     let repository = spice::repository::Repository::discover(&root).expect("admit repository");
     let first = capture_repository(&repository, &[]).expect("capture first generation");
 
-    fs::rename(&tracked, root.join("old-spice-rust.toml")).expect("displace first generation");
+    fs::rename(&tracked, root.join("old-spice.toml")).expect("displace first generation");
     fs::write(&tracked, bytes).expect("publish equal replacement bytes");
     let second = capture_repository(&repository, &[]).expect("capture second generation");
 
@@ -488,7 +461,7 @@ fn non_regular_and_non_utf8_documents_are_accumulated() {
     let bound = PathBuf::from(format!("/tmp/spice-non-regular-{}", std::process::id()));
     let _ = fs::remove_file(&bound);
     let _socket = UnixListener::bind(&bound).expect("bind fixture socket");
-    fs::rename(&bound, root.join("spice-rust.toml")).expect("place the non-regular document");
+    fs::rename(&bound, root.join("spice.toml")).expect("place the non-regular document");
     write(local_path(&root), [0xff, 0xfe]);
 
     let error = load(&root, &[]).expect_err("both acquisition issues refuse");
@@ -505,7 +478,7 @@ fn symlink_acquisition_and_other_layer_decode_issue_are_both_returned() {
 
     let scratch = Scratch::new();
     let root = repository(&scratch, "linked tracked document");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join("spice.toml");
     symlink(root.join("absent-tracked-document.toml"), &tracked)
         .expect("create dangling tracked document link");
     write(local_path(&root), b"[tasks]\nowner = \"local\"\n");
@@ -523,7 +496,7 @@ fn symlink_acquisition_and_other_layer_decode_issue_are_both_returned() {
     let canonical_root = fs::canonicalize(&root).expect("canonical fixture root");
     assert_eq!(
         error.acquisition()[0].path(),
-        canonical_root.join("spice-rust.toml")
+        canonical_root.join("spice.toml")
     );
     let resolution = error.resolution().expect("other layer was still decoded");
     assert!(resolution.issues().iter().any(|issue| {

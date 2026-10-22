@@ -272,7 +272,7 @@ fn every_tracked_structural_policy_key_is_one_this_schema_admits() {
 fn every_tracked_structural_policy_key_reaches_its_accessor() {
     let document = structural_policy_document();
     let resolved = spice::config::resolve(Inputs::new(
-        Some(Document::new("spice-rust.toml", &document)),
+        Some(Document::new("spice.toml", &document)),
         None,
         &[],
     ))

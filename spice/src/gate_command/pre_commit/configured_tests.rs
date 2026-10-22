@@ -126,7 +126,7 @@ fn configured_spice_route_refuses_missing_installed_authority() {
     let scratch = Scratch::new("missing-spice-route");
     let repository = initialize_repository(&scratch.root);
     fs::write(
-        scratch.root.join("spice-rust.toml"),
+        scratch.root.join("spice.toml"),
         concat!(
             "[wrappers]\nspice = 'appliance'\n",
             "[policy]\npre_commit = [{ label = 'source', run = ['spice', 'dev', 'cargo', '--', 'check'] }]\n",
@@ -152,7 +152,7 @@ fn unrelated_wrapper_declaration_does_not_change_non_spice_commands() {
     let scratch = Scratch::new("unused-spice-route");
     let repository = initialize_repository(&scratch.root);
     fs::write(
-        scratch.root.join("spice-rust.toml"),
+        scratch.root.join("spice.toml"),
         concat!(
             "[wrappers]\nspice = 'appliance'\n",
             "[policy]\npre_commit = [{ label = 'other', run = ['/bin/true'] }]\n",
@@ -171,7 +171,7 @@ fn configured_spice_route_refuses_redirected_authority_after_capture() {
     let scratch = Scratch::new("redirected-spice-route");
     let repository = initialize_repository(&scratch.root);
     fs::write(
-        scratch.root.join("spice-rust.toml"),
+        scratch.root.join("spice.toml"),
         concat!(
             "[wrappers]\nspice = 'appliance'\n",
             "[policy]\npre_commit = [{ label = 'source', run = ['spice', 'dev', 'cargo', '--', 'check'] }]\n",
@@ -287,7 +287,7 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
     let scratch = Scratch::new("trust-refusal");
     let repository = initialize_repository(&scratch.root);
     fs::write(
-        scratch.root.join("spice-rust.toml"),
+        scratch.root.join("spice.toml"),
         concat!(
             "[policy]\n",
             "pre_commit = [{ label = 'exact', run = ['/bin/echo', 'one', 'two'] }]\n",
@@ -319,7 +319,7 @@ fn trust_refusal_names_exact_digest_provenance_path_and_command_words() {
         detail.contains(&scratch.root.display().to_string()),
         "{detail}"
     );
-    assert!(detail.contains("spice-rust.toml"), "{detail}");
+    assert!(detail.contains("spice.toml"), "{detail}");
     for word in ["exact", "/bin/echo", "one", "two"] {
         assert!(detail.contains(word), "{detail}");
     }
@@ -330,7 +330,7 @@ fn durable_trust_is_read_only_and_required_before_execution() {
     let scratch = Scratch::new("durable-trust");
     let repository = initialize_repository(&scratch.root);
     fs::write(
-        scratch.root.join("spice-rust.toml"),
+        scratch.root.join("spice.toml"),
         "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n",
     )
     .expect("write trusted policy fixture");
@@ -401,7 +401,7 @@ fn durable_trust_is_read_only_and_required_before_execution() {
 fn a_bound_grant_does_not_admit_changed_command_words() {
     let scratch = Scratch::new("changed-digest-trust");
     let repository = initialize_repository(&scratch.root);
-    let policy_path = scratch.root.join("spice-rust.toml");
+    let policy_path = scratch.root.join("spice.toml");
     fs::write(
         &policy_path,
         "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n",
@@ -438,7 +438,7 @@ fn missing_trust_authority_refuses_with_the_exact_executable_capability() {
     let scratch = Scratch::new("missing-trust-authority");
     let repository = initialize_repository(&scratch.root);
     fs::write(
-        scratch.root.join("spice-rust.toml"),
+        scratch.root.join("spice.toml"),
         "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n",
     )
     .expect("write executable policy fixture");
@@ -452,7 +452,7 @@ fn missing_trust_authority_refuses_with_the_exact_executable_capability() {
     for evidence in [
         "standing=absent",
         "provenance=tracked",
-        "spice-rust.toml",
+        "spice.toml",
         "/bin/true",
         "trust_authority=",
     ] {
@@ -471,7 +471,7 @@ fn missing_trust_authority_refuses_with_the_exact_executable_capability() {
 fn tracked_policy_movement_after_capture_refuses_even_when_bytes_are_restored() {
     let scratch = Scratch::new("policy-movement");
     let repository = initialize_repository(&scratch.root);
-    let configuration = scratch.root.join("spice-rust.toml");
+    let configuration = scratch.root.join("spice.toml");
     let original = "[policy]\npre_commit = [{ label = 'exact', run = ['/bin/true'] }]\n";
     fs::write(&configuration, original).expect("write executable policy fixture");
     let policy = DispatchPolicy::load(&repository).expect("load executable policy");
@@ -487,7 +487,7 @@ fn tracked_policy_movement_after_capture_refuses_even_when_bytes_are_restored() 
         .expect_err("capture generation must retain transient policy movement");
 
     assert_eq!(refusal.reason(), "gate::pre-commit-policy-moved");
-    assert!(refusal.detail().contains("spice-rust.toml"));
+    assert!(refusal.detail().contains("spice.toml"));
     assert!(
         refusal
             .detail()

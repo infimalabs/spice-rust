@@ -19,7 +19,7 @@ fn absolute(name: &str) -> String {
 
 fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
     Inputs::new(
-        tracked.map(|text| Document::new("spice-rust.toml", text)),
+        tracked.map(|text| Document::new("spice.toml", text)),
         local.map(|text| Document::new(".spice-rs/local.toml", text)),
         &[],
     )
@@ -31,7 +31,7 @@ fn worktree_documents<'a>(
     local: Option<&'a str>,
 ) -> Inputs<'a> {
     Inputs::with_worktree(
-        tracked.map(|text| Document::new("spice-rust.toml", text)),
+        tracked.map(|text| Document::new("spice.toml", text)),
         worktree.map(|text| Document::new(".git/worktrees/lane/.spice-rs/worktree.toml", text)),
         local.map(|text| Document::new(".git/.spice-rs/config.toml", text)),
         &[],
@@ -324,7 +324,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
 
     let tracked_flag = resolve(Inputs::new(
         Some(Document::new(
-            "spice-rust.toml",
+            "spice.toml",
             "[lane]\nvendor = \"fixture\"\n",
         )),
         None,
@@ -827,7 +827,7 @@ fn all_four_layers_use_one_leaf_order() {
     let flags = [life, vendor];
     let resolved = resolve(Inputs::new(
         Some(Document::new(
-            "spice-rust.toml",
+            "spice.toml",
             "[lane]\nlife = \"Steer\"\nvendor = \"omp\"\n",
         )),
         Some(Document::new(

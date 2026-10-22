@@ -82,7 +82,7 @@ pub use command::{
     AdmittedCommand, Authority, Command, CommandKind, CommandKindError, CommandRejection, Law,
     LawError,
 };
-pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance};
+pub use config::{ConfigSource, DurationWord, DurationWordError, Provenance, TRACKED_POLICY_FILE};
 pub use doctor::{
     DoctorCommand, DoctorConfigProvenance, DoctorEnvironment, DoctorExtension,
     DoctorExtensionNamespace, DoctorLocations, DoctorObservation, DoctorReport, DoctorSubsystem,

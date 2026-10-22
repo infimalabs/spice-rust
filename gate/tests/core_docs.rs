@@ -290,10 +290,10 @@ fn document_repository(label: &str, declaration: Option<&str>) -> Tree {
     repository.write("CHARTER.txt", "doctrine no repository declared");
     if let Some(docs) = declaration {
         repository.write(
-            "spice-rust.toml",
+            "spice.toml",
             &format!(
                 "{}\n[policy.repo_truth]\n{docs}\n",
-                workspace_document("spice-rust.toml")
+                workspace_document("spice.toml")
             ),
         );
     }
@@ -405,7 +405,7 @@ fn every_measured_document_carries_the_bound_decision_it_was_judged_against() {
     assert_eq!(bounded.metric(), "repository-document.characters");
     assert_eq!(
         bounded.rule(),
-        "legacy-rule:spice-rust.toml:policy.markdown_depth_budget.generated%5b.md%5d%5b0%5d",
+        "legacy-rule:spice.toml:policy.markdown_depth_budget.generated%5b.md%5d%5b0%5d",
         "the root document was decided by a rule other than the depth-0 one that selected it"
     );
     assert_eq!(bounded.actor_inputs().candidate_path(), "DOCTRINE.md");
@@ -440,7 +440,7 @@ fn every_measured_document_carries_the_bound_decision_it_was_judged_against() {
     );
     assert_eq!(
         unlimited.rule(),
-        "legacy-rule:spice-rust.toml:policy.markdown_depth_budget.generated%5b.md%5d%5b3%5d",
+        "legacy-rule:spice.toml:policy.markdown_depth_budget.generated%5b.md%5d%5b3%5d",
         "the nested document was decided by a rule other than the depth-3 one that selected it"
     );
     assert!(!unlimited.over_limit() && !unlimited.elastic_breach());

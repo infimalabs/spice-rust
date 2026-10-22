@@ -704,7 +704,7 @@ mod tests {
             r#"{"target":{"os":"linux","architecture":"x86_64"}"#,
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
-            r#","tracked_configuration":"/repo/spice-rust.toml""#,
+            r#","tracked_configuration":"/repo/spice.toml""#,
             r#","worktree_configuration":"/repo/.git/.spice-rs/worktree.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
@@ -774,7 +774,7 @@ mod tests {
                 working: "/repo".to_owned(),
                 repository: "/repo".to_owned(),
                 repository_common: "/repo/.git".to_owned(),
-                tracked_configuration: "/repo/spice-rust.toml".to_owned(),
+                tracked_configuration: "/repo/spice.toml".to_owned(),
                 worktree_configuration: "/repo/.git/worktree.toml".to_owned(),
                 local_configuration: "/repo/.git/config.toml".to_owned(),
             },

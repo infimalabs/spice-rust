@@ -376,7 +376,7 @@ fn advance_seeded_root(environment: &Environment) {
         .commit_as(identity, identity, SEED_BRANCH, "lane work\n", tree, [seed])
         .unwrap();
     fs::write(
-        environment.root.join(CONFIG_NAME),
+        environment.root.join(wire::TRACKED_POLICY_FILE),
         b"[tasks]\nproject_max_depth = 4\n",
     )
     .unwrap();

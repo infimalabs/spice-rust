@@ -19,9 +19,7 @@ pub(super) fn packaged_policy(
     tracked_sources: &[String],
     environment: &Environment,
 ) -> Result<PackagedPolicy, ChangeGateError> {
-    const TRACKED_POLICY: &str = "spice-rust.toml";
-
-    let path = root.join(TRACKED_POLICY);
+    let path = root.join(wire::TRACKED_POLICY_FILE);
     let tracked = match fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -34,7 +32,7 @@ pub(super) fn packaged_policy(
     };
     let document = tracked
         .as_deref()
-        .map(|text| crate::config::Document::new(TRACKED_POLICY, text));
+        .map(|text| crate::config::Document::new(wire::TRACKED_POLICY_FILE, text));
     let resolved = crate::config::resolve(crate::config::Inputs::new(document, None, &[]))
         .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
     let policy = resolved.root().policy();
@@ -44,7 +42,10 @@ pub(super) fn packaged_policy(
         })?;
     let selection = gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
         tracked_sources,
-        policy_authorities: &[TRACKED_POLICY.to_owned(), "baseline.toml".to_owned()],
+        policy_authorities: &[
+            wire::TRACKED_POLICY_FILE.to_owned(),
+            gate::BASELINE_PATH.to_owned(),
+        ],
         configured: tracked.is_some(),
         repository_documents: policy.repo_truth().docs(),
         file_shape_suffixes: policy.file_shape().source_suffixes(),

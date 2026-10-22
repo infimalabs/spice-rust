@@ -115,7 +115,7 @@ pub(crate) fn policy_document(body: &str) -> String {
 #[allow(dead_code)]
 pub(crate) fn contract_repository(label: &str) -> Tree {
     let repository = git_repository(label);
-    repository.write("spice-rust.toml", &workspace_document("spice-rust.toml"));
+    repository.write("spice.toml", &workspace_document("spice.toml"));
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "fn main() {}\n");
     git_commit(&repository, "fixture contract");
@@ -125,7 +125,7 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
 /// Parse a fixture's already selected contract bytes without executing its tools.
 #[allow(dead_code)]
 pub(crate) fn selected_contract(root: &Path) -> ParsedContract {
-    let policy_path = root.join(gate::POLICY_PATH);
+    let policy_path = root.join(wire::TRACKED_POLICY_FILE);
     let baseline_path = root.join(gate::BASELINE_PATH);
     let policy = fs::read_to_string(&policy_path).expect("read selected policy");
     let baseline = fs::read_to_string(&baseline_path).expect("read selected baseline");

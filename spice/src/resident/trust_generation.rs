@@ -28,7 +28,7 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
         "[taste.fallbacks]\nwords = [\"fallback\"]\nmessage = \"Keep one path.\"\n",
     );
     let (root, paths) = resident_fixture("startup-single-capture");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     fs::write(&tracked, FIRST).expect("write first startup policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
 
@@ -103,7 +103,7 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
 #[test]
 fn policy_movement_after_pend_refuses_seating_and_retry_pends_the_new_digest() {
     let (root, paths) = resident_fixture("trust-pend-generation");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     fs::write(&tracked, "# tracked policy v1\n").expect("write first policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface = crate::trust_command::Surface::load(&repository).expect("first surface loads");
@@ -155,7 +155,7 @@ fn policy_movement_after_pend_refuses_seating_and_retry_pends_the_new_digest() {
 #[test]
 fn equal_byte_replacement_with_an_existing_head_refuses_zero_write_seating() {
     let (root, paths) = resident_fixture("trust-existing-generation");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     let bytes = "# stable tracked policy\n";
     fs::write(&tracked, bytes).expect("write tracked policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -187,7 +187,7 @@ fn equal_byte_replacement_with_an_existing_head_refuses_zero_write_seating() {
 #[test]
 fn running_resident_pends_current_surface_then_existing_grant_succeeds() {
     let (root, paths) = resident_fixture("trust-live-pend");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     fs::write(&tracked, "# initial policy\n").expect("write initial policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let initial = crate::trust_command::Surface::load(&repository).expect("initial surface loads");
@@ -357,7 +357,7 @@ fn assert_pend_generation_refusals(
         || {
             fs::rename(root, &replaced).expect("displace producing worktree during commit");
             fs::create_dir_all(root.join(".git")).expect("create replacement worktree identity");
-            fs::write(root.join("spice-rust.toml"), current_bytes)
+            fs::write(root.join(wire::TRACKED_POLICY_FILE), current_bytes)
                 .expect("write equal-byte replacement policy");
         },
     );
@@ -509,7 +509,7 @@ fn grant_current_and_refuse_moved_standing(scenario: &TrustScenario<'_>) {
 #[test]
 fn pend_refuses_unresolved_nonroot_and_foreign_worktrees_without_writes() {
     let (root, paths) = resident_fixture("trust-worktree-admission");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     fs::write(&tracked, "# resident policy\n").expect("write resident policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface = crate::trust_command::Surface::load(&repository).expect("trust surface loads");
@@ -523,7 +523,11 @@ fn pend_refuses_unresolved_nonroot_and_foreign_worktrees_without_writes() {
     fs::create_dir(&nested).expect("nested worktree path exists");
     let missing = root.join("removed");
     let (foreign, _) = resident_fixture("trust-foreign-worktree");
-    fs::write(foreign.join("spice-rust.toml"), "# foreign policy\n").expect("write foreign policy");
+    fs::write(
+        foreign.join(wire::TRACKED_POLICY_FILE),
+        "# foreign policy\n",
+    )
+    .expect("write foreign policy");
     let foreign = fs::canonicalize(foreign).expect("canonicalize foreign worktree");
     let cases = [
         (
@@ -580,7 +584,7 @@ fn pend_refuses_unresolved_nonroot_and_foreign_worktrees_without_writes() {
 #[test]
 fn legacy_unbound_head_refuses_ruling_without_writes() {
     let (root, paths) = resident_fixture("trust-legacy-unbound");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     fs::write(&tracked, "# current policy\n").expect("write current policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let current = crate::trust_command::Surface::load(&repository).expect("current surface loads");
@@ -649,7 +653,7 @@ fn legacy_unbound_head_refuses_ruling_without_writes() {
 #[test]
 fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
     let (root, paths) = resident_fixture("trust-ruling-generation");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     let bytes = "# stable ruling policy\n";
     fs::write(&tracked, bytes).expect("write tracked policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -755,7 +759,7 @@ fn grant_and_revoke_generation_movement_preserve_facts_heads_and_receipts() {
 #[test]
 fn trust_commit_races_retain_competing_authority_and_actionable_diagnostics() {
     let (root, paths) = resident_fixture("trust-structured-races");
-    let tracked = root.join("spice-rust.toml");
+    let tracked = root.join(wire::TRACKED_POLICY_FILE);
     fs::write(&tracked, "# initial race policy\n").expect("write initial race policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let initial = crate::trust_command::Surface::load(&repository).expect("initial surface loads");

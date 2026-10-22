@@ -26,7 +26,7 @@ and browser code cannot reach server internals.
 | Surface | Owner and rule |
 | --- | --- |
 | `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | Tracked compiler and dependency contract; repair and commit, never regenerate blindly. |
-| `spice-rust.toml`, `baseline.toml`, `gate/src/battery/manifest.toml` | Tracked configuration, ratchet, and gate inventory; change with the owning compiled registry. |
+| `spice.toml`, `baseline.toml`, `gate/src/battery/manifest.toml` | Tracked configuration, ratchet, and gate inventory; change with the owning compiled registry. |
 | `dist/stage-app/` | Ignored atomic app generations owned by `spice dev xtask -- app`; rebuild, never edit a generation. |
 | `dist/stage/` | Ignored content-addressed release staging owned by `spice dev xtask -- stage-target TARGET`. |
 | `target/` | Rebuildable compiler and test caches; see cleanup below. |
