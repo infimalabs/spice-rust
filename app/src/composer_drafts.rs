@@ -250,10 +250,6 @@ impl DraftStore {
         }
     }
 
-    pub(crate) fn is_unsafe(&self) -> bool {
-        self.0.values().any(|draft| !draft.is_empty())
-    }
-
     /// Build one request from one target without observing sibling drafts.
     pub(crate) fn prepare(&self, target: &str) -> Option<PreparedSubmission> {
         let snapshot = self.get(target)?.clone();
@@ -1075,11 +1071,11 @@ mod tests {
     }
 
     #[test]
-    fn unsafe_state_and_batch_restore_share_the_complete_draft_shape() {
+    fn handoff_and_batch_restore_share_the_complete_draft_shape() {
         let mut store = DraftStore::default();
-        assert!(!store.is_unsafe());
+        assert!(store.hand_off(Vec::new()).is_empty());
         store.set_body("agent-a".to_owned(), "typed after send".to_owned());
-        assert!(store.is_unsafe());
+        assert_eq!(store.hand_off(Vec::new()).len(), 1);
 
         store.restore_all(
             "agent-a".to_owned(),
@@ -1120,8 +1116,9 @@ mod tests {
             1_000,
             "Quoted source".to_owned(),
         );
-        assert!(
-            store.is_unsafe(),
+        assert_eq!(
+            store.hand_off(Vec::new()).len(),
+            1,
             "an untouched quote is still authored intent"
         );
     }

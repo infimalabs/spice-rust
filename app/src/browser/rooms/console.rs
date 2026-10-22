@@ -246,6 +246,12 @@ fn design_key(group: &RoomAuthorityStamp, design: &TaskStamp) -> String {
     format!("design-{group}-{design}")
 }
 
+/// The design a [`design_key`] names; task stamps carry no hyphen.
+pub(in crate::browser) fn design_of_key(key: &str) -> Option<TaskStamp> {
+    let (_, design) = key.strip_prefix("design-")?.rsplit_once('-')?;
+    design.parse().ok()
+}
+
 /// The shared composer toast, where every console surface reports its
 /// outcomes and refusals.
 fn toast(render: &GroupRender<'_, '_>) -> Callback<String> {

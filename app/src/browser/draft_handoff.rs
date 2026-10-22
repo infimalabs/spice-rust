@@ -32,22 +32,28 @@ pub(super) fn store(drafts: &DraftStore, notes: &BTreeMap<TaskStamp, String>) ->
     let Some(storage) = session_storage() else {
         return false;
     };
+    let handoff = collect(drafts, notes);
+    if handoff == DraftHandoff::default() {
+        return storage.remove_item(STORAGE).is_ok();
+    }
+    serde_json::to_string(&handoff)
+        .is_ok_and(|document| storage.set_item(STORAGE, &document).is_ok())
+}
+
+/// Every unsent draft, with each mounted element's current text winning over
+/// the text it was drawn from.
+pub(super) fn collect(drafts: &DraftStore, notes: &BTreeMap<TaskStamp, String>) -> DraftHandoff {
     let (composers, live_notes) = live_text();
     let mut notes = notes.clone();
     notes.extend(live_notes);
-    let handoff = DraftHandoff {
+    DraftHandoff {
         composers: drafts.hand_off(composers),
         notes: notes
             .into_iter()
             .filter(|(_, text)| !text.is_empty())
             .map(|(task, text)| HandedNote { task, text })
             .collect(),
-    };
-    if handoff == DraftHandoff::default() {
-        return storage.remove_item(STORAGE).is_ok();
     }
-    serde_json::to_string(&handoff)
-        .is_ok_and(|document| storage.set_item(STORAGE, &document).is_ok())
 }
 
 /// Reload this document once its drafts are stored for its successor.

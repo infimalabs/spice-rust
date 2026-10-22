@@ -312,12 +312,16 @@ struct ViewerProps {
     drafts: UseReducerHandle<ComposerDrafts>,
 }
 
-const DISCARD_ANNOTATIONS: &str = "Discard annotation changes?";
-
-fn allow_annotation_discard(dirty: bool) -> bool {
+fn allow_annotation_discard(dirty: bool, image: &str) -> bool {
     !dirty
         || web_sys::window()
-            .and_then(|window| window.confirm_with_message(DISCARD_ANNOTATIONS).ok())
+            .and_then(|window| {
+                window
+                    .confirm_with_message(&format!(
+                        "Discard the annotation marks not yet applied to {image}?"
+                    ))
+                    .ok()
+            })
             .unwrap_or(false)
 }
 
@@ -472,8 +476,6 @@ fn viewer(props: &ViewerProps) -> Html {
     let image_status = use_state_eq(|| AttrValue::from("Loading image"));
     let editing = use_state_eq(|| false);
     let dirty = use_state_eq(|| false);
-    let latest_dirty = use_mut_ref(|| false);
-    *latest_dirty.borrow_mut() = *dirty;
     let image = props
         .selection
         .draft
@@ -501,15 +503,7 @@ fn viewer(props: &ViewerProps) -> Html {
         dirty.set(false);
         editing.set(true);
     });
-    let cancel = use_callback(
-        (editing.clone(), dirty.clone(), latest_dirty.clone()),
-        |(), (editing, dirty, latest_dirty)| {
-            if allow_annotation_discard(*latest_dirty.borrow()) {
-                dirty.set(false);
-                editing.set(false);
-            }
-        },
-    );
+    let (cancel, close) = use_annotation_discard(props, &host, &editing, &dirty);
     let apply = use_annotation_apply(
         props.selection.draft.clone(),
         props.drafts.clone(),
@@ -522,13 +516,6 @@ fn viewer(props: &ViewerProps) -> Html {
     });
     let failed = use_callback(image_status.clone(), |_: Event, status| {
         status.set("Image unavailable".into())
-    });
-    let close = use_callback((host.clone(), latest_dirty), |(), (host, latest_dirty)| {
-        if allow_annotation_discard(*latest_dirty.borrow())
-            && let Some(dialog) = host.cast::<web_sys::HtmlDialogElement>()
-        {
-            dialog.close();
-        }
     });
     let (navigation, keydown) = use_viewer_keys(props, host.clone(), editing.clone());
     use_effect_with(
@@ -584,6 +571,51 @@ fn viewer(props: &ViewerProps) -> Html {
             }
         </dialog>
     }
+}
+
+/// The edit guard's discard path: the unsent inventory learns of unapplied
+/// marks, and leaving the editor or the viewer confirms against the image
+/// they belong to. Returns the editor's cancel and the viewer's close.
+#[hook]
+fn use_annotation_discard(
+    props: &ViewerProps,
+    host: &NodeRef,
+    editing: &UseStateHandle<bool>,
+    dirty: &UseStateHandle<bool>,
+) -> (Callback<()>, Callback<()>) {
+    let latest_dirty = use_mut_ref(|| false);
+    *latest_dirty.borrow_mut() = **dirty;
+    let image = if props.selection.name.is_empty() {
+        AttrValue::from("this image")
+    } else {
+        props.selection.name.clone()
+    };
+    super::unsent::use_annotation_guard(**dirty, image.clone());
+    let cancel = use_callback(
+        (
+            editing.clone(),
+            dirty.clone(),
+            latest_dirty.clone(),
+            image.clone(),
+        ),
+        |(), (editing, dirty, latest_dirty, image)| {
+            if allow_annotation_discard(*latest_dirty.borrow(), image) {
+                dirty.set(false);
+                editing.set(false);
+            }
+        },
+    );
+    let close = use_callback(
+        (host.clone(), latest_dirty, image),
+        |(), (host, latest_dirty, image)| {
+            if allow_annotation_discard(*latest_dirty.borrow(), image)
+                && let Some(dialog) = host.cast::<web_sys::HtmlDialogElement>()
+            {
+                dialog.close();
+            }
+        },
+    );
+    (cancel, close)
 }
 
 /// One modal showing and the listeners that request or finish dismissal.

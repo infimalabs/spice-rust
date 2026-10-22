@@ -87,6 +87,8 @@ mod speech_rate;
 pub mod state;
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
 mod toast_state;
+#[cfg(any(target_arch = "wasm32", test))]
+mod unsent_work;
 pub mod view;
 pub mod voice_spread;
 pub mod watchband;

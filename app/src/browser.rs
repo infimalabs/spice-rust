@@ -62,6 +62,7 @@ mod task_feedback;
 mod task_relations;
 mod toast;
 mod touch_lift;
+mod unsent;
 mod view;
 mod watchband;
 
@@ -239,9 +240,9 @@ struct SurfaceHandles {
 /// and submissions through these shared cells rather than a captured snapshot.
 #[derive(Clone)]
 struct UnloadGuard {
-    /// A submission sent without a result the resident has reported. No
-    /// handoff can carry it, since the next document cannot learn its fate.
-    unreported: Rc<Cell<bool>>,
+    /// Submissions the resident has not yet accepted. No handoff can carry
+    /// them, since the next document cannot learn their fate.
+    awaiting: Rc<Cell<usize>>,
     drafts: Rc<RefCell<UseReducerHandle<ComposerDrafts>>>,
     notes: NoteComposers,
 }
@@ -250,18 +251,29 @@ impl UnloadGuard {
     /// Store every unsent draft for this tab's next document, returning
     /// whether leaving now discards no operator work.
     fn hand_off(&self) -> bool {
-        !self.unreported.get() && self.store()
+        self.awaiting.get() == 0 && self.store()
     }
 
     fn store(&self) -> bool {
-        let notes = self
-            .notes
+        draft_handoff::store(self.drafts.borrow().store(), &self.note_drafts())
+    }
+
+    /// Everything leaving now would discard.
+    fn inventory(&self) -> Vec<crate::unsent_work::UnsentWork> {
+        crate::unsent_work::inventory(
+            &draft_handoff::collect(self.drafts.borrow().store(), &self.note_drafts()),
+            self.awaiting.get(),
+            unsent::annotating().as_deref(),
+        )
+    }
+
+    fn note_drafts(&self) -> BTreeMap<TaskStamp, String> {
+        self.notes
             .state
             .borrow()
             .iter()
             .map(|(task, composer)| (task.clone(), composer.draft.clone()))
-            .collect();
-        draft_handoff::store(self.drafts.borrow().store(), &notes)
+            .collect()
     }
 }
 
@@ -433,7 +445,8 @@ struct AppState {
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
     agents: view::AgentControls,
-    unsafe_intent: bool,
+    /// The unsent work a held leave protected, listed until dismissed.
+    unsent: UseStateHandle<Option<Vec<crate::unsent_work::UnsentWork>>>,
     open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
 }
 
@@ -521,7 +534,7 @@ impl AppState {
                 composer_slots: &self.composer_slots,
                 team_drag: &self.team_drag,
                 team_fleet: &self.team_fleet,
-                unsafe_intent: self.unsafe_intent,
+                unsent: &self.unsent,
                 sender: &self.sender,
                 room_controls: &self.room_controls,
                 draft_controls: &self.draft_controls,
@@ -635,7 +648,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let narration_cursors = use_mut_ref(load_narration_cursors);
     let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_owner);
     let agents = use_agent_controls(agent_speech);
-    let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
+    let unsent = use_state(|| None::<Vec<crate::unsent_work::UnsentWork>>);
     let open_message_task = use_open_message_task(&navigate, &sidebar.return_focus_to);
     (
         AppState {
@@ -664,7 +677,7 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             work_map,
             speech_status,
             agents,
-            unsafe_intent,
+            unsent,
             open_message_task,
         },
         speech_runtime,
@@ -936,17 +949,6 @@ fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
     });
 }
 
-#[hook]
-fn use_unsafe_intent(
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    submissions: &UseStateHandle<SubmissionStatus>,
-) -> bool {
-    let unsafe_intent =
-        ComposerDrafts::is_unsafe(drafts) || SubmissionStatus::is_unsafe(submissions);
-    use_unsafe_intent_guard(unsafe_intent);
-    unsafe_intent
-}
-
 /// Retry a generation handoff once the submission that made it unsafe settles.
 ///
 /// Bootstrap attempts the same handoff before opening a session. When an
@@ -959,7 +961,7 @@ fn use_deferred_app_reload(state: &AppState, unload: &UnloadGuard) {
         .as_ref()
         .filter(|update| update.generation != update.loaded_generation)
         .map(|update| update.generation.clone());
-    let unsafe_submission = state.submissions.status.is_unsafe();
+    let unsafe_submission = state.submissions.status.awaiting() != 0;
     let unload = unload.clone();
     use_effect_with(
         (served, unsafe_submission),
@@ -977,13 +979,13 @@ fn use_unload_guard(state: &AppState) -> UnloadGuard {
         let drafts = state.composer_drafts.clone();
         let notes = state.task_detail.notes.clone();
         move |()| UnloadGuard {
-            unreported: Rc::default(),
+            awaiting: Rc::default(),
             drafts: Rc::new(RefCell::new(drafts)),
             notes,
         }
     }))
     .clone();
-    guard.unreported.set(state.submissions.status.is_unsafe());
+    guard.awaiting.set(state.submissions.status.awaiting());
     *guard.drafts.borrow_mut() = state.composer_drafts.clone();
     let leaving = guard.clone();
     // Any reload of this tab, the operator's included, keeps unsent drafts.
@@ -1007,58 +1009,8 @@ fn use_unload_guard(state: &AppState) -> UnloadGuard {
             }
         }
     });
+    unsent::use_leave_guard(&guard, &state.unsent);
     guard
-}
-
-/// Whether an uncontrolled composer textarea still holds text.
-fn native_draft_present() -> bool {
-    web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| {
-            document
-                .query_selector_all(".team-composer textarea, .work-note-composer textarea")
-                .ok()
-        })
-        .is_some_and(|textareas| {
-            (0..textareas.length()).any(|index| {
-                textareas
-                    .get(index)
-                    .and_then(|node| node.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
-                    .is_some_and(|textarea| !textarea.value().is_empty())
-            })
-        })
-}
-
-#[hook]
-fn use_unsafe_intent_guard(unsafe_intent: bool) {
-    use_effect_with(unsafe_intent, move |unsafe_intent| {
-        let unsafe_intent = *unsafe_intent;
-        let registration = web_sys::window().and_then(|window| {
-            let callback =
-                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                    if !draft_handoff::leaving() && (unsafe_intent || native_draft_present()) {
-                        event.prevent_default();
-                        let _ = js_sys::Reflect::set(
-                            event.as_ref(),
-                            &JsValue::from_str("returnValue"),
-                            &JsValue::from_str(""),
-                        );
-                    }
-                });
-            window
-                .add_event_listener_with_callback("beforeunload", callback.as_ref().unchecked_ref())
-                .ok()?;
-            Some((window, callback))
-        });
-        move || {
-            if let Some((window, callback)) = registration {
-                let _ = window.remove_event_listener_with_callback(
-                    "beforeunload",
-                    callback.as_ref().unchecked_ref(),
-                );
-            }
-        }
-    });
 }
 
 fn clamp_fixed_mosaic_root(window: &web_sys::Window) {

@@ -326,8 +326,9 @@ pub(crate) struct SubmissionStatus {
 }
 
 impl SubmissionStatus {
-    pub(crate) fn is_unsafe(&self) -> bool {
-        self.keyless != 0
+    /// Submissions the resident has not yet accepted, queued or in flight.
+    pub(crate) fn awaiting(&self) -> usize {
+        self.keyless
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -1102,7 +1103,11 @@ mod tests {
         queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
         queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
         accept(&mut queue, ID_A, "1kKey", Disposition::Live);
-        assert!(queue.status().is_unsafe());
+        assert_eq!(
+            queue.status().awaiting(),
+            1,
+            "only the queued send awaits acceptance"
+        );
         assert_eq!(queue.accepted()[&uuid(ID_A)], "1kKey");
         queue
             .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
