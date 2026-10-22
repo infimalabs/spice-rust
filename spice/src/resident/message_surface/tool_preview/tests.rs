@@ -112,7 +112,7 @@ fn a_read_of_a_steering_attachment_does_not_repeat_the_operator_image() {
     let occupant = lane(3);
     let attachment = |owner: CanonicalUuid| {
         format!(
-            r#"{{"path":"/repo/.spice-rs/steering-media/{owner}/{occupant}/{directive}/0-{digest}.png"}}"#
+            r#"{{"path":"/repo/.spice/steering-media/{owner}/{occupant}/{directive}/0-{digest}.png"}}"#
         )
     };
     let shown = |arguments: &str| {

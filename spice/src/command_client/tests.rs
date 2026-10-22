@@ -448,8 +448,8 @@ fn repository_route_distinguishes_local_foreign_and_operator_callers() {
     let source = fixture.root.join("source.git");
     let addressed = fixture.root.join("addressed.git");
     let wrapper = source.join(".spice-install/bin/spice");
-    let local_discovery = source.join(".spice-rs/serve");
-    let foreign_discovery = addressed.join(".spice-rs/serve");
+    let local_discovery = source.join(".spice/serve");
+    let foreign_discovery = addressed.join(".spice/serve");
     fs::create_dir_all(
         wrapper
             .parent()

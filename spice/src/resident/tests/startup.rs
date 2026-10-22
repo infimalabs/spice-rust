@@ -227,10 +227,10 @@ fn runtime_paths_follow_the_repository_common_directory() {
     let paths = RuntimePaths::discover(&nested).expect("paths resolve");
     let common = fs::canonicalize(root.join(".git")).expect("canonical common directory");
 
-    assert_eq!(paths.runtime, common.join(".spice-rs"));
+    assert_eq!(paths.runtime, common.join(".spice"));
     assert_eq!(
         paths.journal,
-        common.join(".spice-rs/data/spicejournal.sqlite3")
+        common.join(".spice/data/spicejournal.sqlite3")
     );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
@@ -385,7 +385,7 @@ fn linked_worktrees_share_the_git_common_directory() {
     let paths = RuntimePaths::discover(&worktree).expect("paths resolve");
     let common = fs::canonicalize(&common).expect("canonical common directory");
 
-    assert_eq!(paths.runtime, common.join(".spice-rs"));
+    assert_eq!(paths.runtime, common.join(".spice"));
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 

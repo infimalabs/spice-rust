@@ -28,7 +28,7 @@ fn fake_repository(root: &Path) {
 }
 
 fn authority_path(root: &Path) -> PathBuf {
-    root.join(".git/.spice-rs/data/spicejournal.sqlite3")
+    root.join(".git/.spice/data/spicejournal.sqlite3")
 }
 
 /// An omp home holding one session file per thread, filed where omp files
@@ -901,7 +901,7 @@ fn recall_authority_probe_is_read_only_when_repository_state_is_absent() {
         "missing live identity is reported before actor-bound journal probes"
     );
     assert!(
-        !scratch.path().join(".git/.spice-rs").exists(),
+        !scratch.path().join(".git/.spice").exists(),
         "read-only observation does not initialize repository state"
     );
 

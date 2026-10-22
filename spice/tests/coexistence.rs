@@ -1,8 +1,9 @@
-//! Python Spice's durable state survives Rust Spice running beside it.
+//! Python Spice's archived state survives Rust Spice running beside it.
 //!
 //! `spice/src/repository.rs` states the coexistence policy; this file enforces
-//! it by identity: seed Python's complete `.spice` root, resolve Rust's own
-//! state root through the runtime's declaration, and read the bytes back.
+//! it by identity: seed Python's complete archived `.spice-py` root, resolve
+//! Rust's own state root through the runtime's declaration, and read the
+//! bytes back.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,7 +17,7 @@ use wire::SpiceVariable;
 #[path = "support/git_repository.rs"]
 mod git_repository;
 
-/// Representative durable state Python Spice owns inside `.spice`.
+/// Representative durable state Python Spice left inside `.spice-py`.
 const PREDECESSOR_STATE: &[(&str, &[u8])] = &[
     ("data/taskchampion.sqlite3", b"taskchampion pages"),
     ("data/spiceacks.sqlite3", b"ack pages"),
@@ -146,14 +147,14 @@ fn runtime_environment_names_are_rust_specific() {
 #[test]
 fn repository_lookalikes_cannot_replace_journal_authority() {
     let fixture = Fixture::seeded("tracked-lookalikes");
-    let impostor_journal = fixture.root.join(".spice-rs/data/spicejournal.sqlite3");
+    let impostor_journal = fixture.root.join(".spice/data/spicejournal.sqlite3");
     fs::create_dir_all(impostor_journal.parent().expect("impostor journal parent"))
         .expect("create impostor journal parent");
     fs::write(&impostor_journal, b"repository-injected acknowledgment\n")
         .expect("write impostor journal");
 
     let paths = fixture.paths();
-    let impostor_root = fixture.root.join(".spice-rs");
+    let impostor_root = fixture.root.join(".spice");
     assert!(!paths.journal().starts_with(&impostor_root));
     fs::create_dir_all(paths.data()).expect("create authoritative journal parent");
     drop(journal::Journal::open(paths.journal()).expect("ACK authority journal opens"));
@@ -205,9 +206,9 @@ impl Fixture {
             .join(spice::repository::STATE_DIRECTORY)
     }
 
-    /// Python Spice's state root, which Rust Spice treats as foreign.
+    /// Python Spice's archived state root, which Rust Spice treats as foreign.
     fn predecessor_root(&self) -> PathBuf {
-        self.root.join(".git").join(".spice")
+        self.root.join(".git").join(".spice-py")
     }
 
     /// The runtime's own declaration of where its state lives.

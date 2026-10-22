@@ -1091,7 +1091,7 @@ mod tests {
         let parked = root.join("parked");
         let outside = root.join("outside");
         let tracked_path = root.join("spice-rust.toml");
-        let worktree_path = root.join(".git/.spice-rs/worktree.toml");
+        let worktree_path = root.join(".git/.spice/worktree.toml");
         let local_path = parent.join("config.toml");
         fs::create_dir(&outside).unwrap();
         let tracked = b"[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n".to_vec();

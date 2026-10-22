@@ -188,7 +188,7 @@ fn a_publish_preview_names_every_authorizing_field_and_bounds_only_the_notes() {
         .collect::<String>();
     let plan = plan(document);
     let export = Export {
-        path: "/common/.spice-rs/release-plans/plan.json".to_owned(),
+        path: "/common/.spice/release-plans/plan.json".to_owned(),
         bytes: 1,
         digest: Digest::compute(Domain::CliExport, b"plan"),
     };

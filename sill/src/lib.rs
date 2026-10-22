@@ -20,7 +20,6 @@ mod group;
 mod interface;
 #[cfg(windows)]
 mod known_folder;
-#[cfg(windows)]
 mod liveness;
 mod lock;
 mod observe;
@@ -40,7 +39,6 @@ pub use group::{GroupSignal, signal_group};
 pub use interface::local_addresses;
 #[cfg(windows)]
 pub use known_folder::program_files;
-#[cfg(windows)]
 pub use liveness::process_running;
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
 pub use observe::{

@@ -59,6 +59,7 @@ pub(super) fn apply_prepared_record(
         receipt: record_generation,
         fresh,
     } = prepared;
+    cross_state_root(repository)?;
     reclaim_temporary_records(repository)?;
     match record.status {
         InstallStatus::Complete => return Ok(record.receipt()),
@@ -104,7 +105,7 @@ fn require_receipt(
     expected: Option<&ReceiptGeneration>,
 ) -> Result<(), InstallError> {
     let (observed, _) = observe_bound(
-        repository.common_dir(),
+        &repository.state_root(),
         &plan.record.destination,
         &plan.record.parent,
     )?;

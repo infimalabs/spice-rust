@@ -49,7 +49,7 @@ spice up
 `up` returns once the resident is authenticated and prints its endpoint.
 `--open` opens the browser, `--foreground` keeps the process attached, and
 `spice down` drains the resident and releases its lock. Detached diagnostics
-append to `<git-common>/.spice-rs/resident.log`. The resident listens on a
+append to `<git-common>/.spice/resident.log`. The resident listens on a
 loopback port the kernel picks unless `--host IP` or `--port PORT` names one; a
 named port keeps the URL stable across restarts.
 
@@ -71,7 +71,7 @@ replies; `--open` places it in the URL fragment, outside the HTTP origin.
 Supervised shells may route commands through an optional configured
 [RTK](https://github.com/rtk-ai/rtk) executable. An unusable rewrite reports
 `RTK rewrite degraded to native` and runs the original command unchanged; each
-lane's RTK history is isolated under `<git-common>/.spice-rs/rtk/`, and
+lane's RTK history is isolated under `<git-common>/.spice/rtk/`, and
 `spice doctor` checks the configured executable.
 
 ## Develop

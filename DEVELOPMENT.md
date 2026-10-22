@@ -30,8 +30,8 @@ and browser code cannot reach server internals.
 | `dist/stage-app/` | Ignored atomic app generations owned by `spice dev xtask -- app`; rebuild, never edit a generation. |
 | `dist/stage/` | Ignored content-addressed release staging owned by `spice dev xtask -- stage-target TARGET`. |
 | `target/` | Rebuildable compiler and test caches; see cleanup below. |
-| `<git-common>/.spice-rs/` | Durable appliance authority; removed only by an authorized lifecycle operation. |
-| `<git-dir>/.spice-rs/` | Disposable per-worktree projections the resident rebuilds. A `.spice-rs` inside worktree content is ordinary content, never runtime authority. |
+| `<git-common>/.spice/` | Durable appliance authority; removed only by an authorized lifecycle operation. |
+| `<git-dir>/.spice/` | Disposable per-worktree projections the resident rebuilds. A `.spice` inside worktree content is ordinary content, never runtime authority. |
 | `<git-common>/.spice-install/` | Installed appliance, hooks, and bootstrap skill; republish through `spice install`, never edit. |
 
 ## Feedback

@@ -355,10 +355,13 @@ impl Failure {
                 return Self::runtime(error.to_string(), native_disposition(error));
             }
         }
+        let root = wire::STATE_DIRECTORY;
         let remediation = if matches!(error, EnvironmentError::MissingRunnerPath) {
-            "bind proof.runner to the runner this worktree sealed: spice config proof.runner PATH plans a write to this worktree's Git-directory .spice-rs/worktree.toml, and rerunning it with the plan's --apply=DIGEST applies it"
+            format!(
+                "bind proof.runner to the runner this worktree sealed: spice config proof.runner PATH plans a write to this worktree's Git-directory {root}/worktree.toml, and rerunning it with the plan's --apply=DIGEST applies it"
+            )
         } else {
-            "set proof.container in Git-common .spice-rs/config.toml"
+            format!("set proof.container in Git-common {root}/config.toml")
         };
         Self::refusal(
             "proof::runner-refused",

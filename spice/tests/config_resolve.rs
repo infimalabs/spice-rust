@@ -20,7 +20,7 @@ fn absolute(name: &str) -> String {
 fn documents<'a>(tracked: Option<&'a str>, local: Option<&'a str>) -> Inputs<'a> {
     Inputs::new(
         tracked.map(|text| Document::new("spice-rust.toml", text)),
-        local.map(|text| Document::new(".spice-rs/local.toml", text)),
+        local.map(|text| Document::new(".spice/local.toml", text)),
         &[],
     )
 }
@@ -32,8 +32,8 @@ fn worktree_documents<'a>(
 ) -> Inputs<'a> {
     Inputs::with_worktree(
         tracked.map(|text| Document::new("spice-rust.toml", text)),
-        worktree.map(|text| Document::new(".git/worktrees/lane/.spice-rs/worktree.toml", text)),
-        local.map(|text| Document::new(".git/.spice-rs/config.toml", text)),
+        worktree.map(|text| Document::new(".git/worktrees/lane/.spice/worktree.toml", text)),
+        local.map(|text| Document::new(".git/.spice/config.toml", text)),
         &[],
     )
 }
@@ -340,7 +340,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     let local_and_flag = resolve(Inputs::new(
         None,
         Some(Document::new(
-            ".spice-rs/local.toml",
+            ".spice/local.toml",
             "[listen]\nwindow = \"4m\"\n",
         )),
         &[vendor_flag],
@@ -644,7 +644,7 @@ fn proof_executable_paths_refuse_tracked_relative_and_empty_routes() {
             .issues()
             .iter()
             .filter(|issue| issue.kind() == IssueKind::Policy)
-            .all(|issue| issue.message().contains(".spice-rs/"))
+            .all(|issue| issue.message().contains(".spice/"))
     );
 }
 
@@ -831,7 +831,7 @@ fn all_four_layers_use_one_leaf_order() {
             "[lane]\nlife = \"Steer\"\nvendor = \"omp\"\n",
         )),
         Some(Document::new(
-            ".spice-rs/local.toml",
+            ".spice/local.toml",
             "[listen]\nwindow = \"3m\"\n[lock]\nbusy = 71\n",
         )),
         &flags,

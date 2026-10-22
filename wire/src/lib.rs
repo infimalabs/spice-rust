@@ -72,6 +72,7 @@ pub mod rooms;
 mod sequence_code;
 pub use sequence_code::{SequenceCode, SequenceCodeError};
 mod speech;
+pub mod state_root;
 /// Steering-specific bodies that sit outside the core body module's shape boundary.
 pub mod steering;
 pub mod stream;
@@ -132,6 +133,9 @@ pub use reply::{
     RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
     ThreadReport, Version,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use state_root::state_root;
+pub use state_root::{PREDECESSOR_STATE_SUFFIX, STATE_DIRECTORY, predecessor_state_directory};
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
     DirectiveBadge, MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,

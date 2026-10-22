@@ -1,3 +1,4 @@
+use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -8,8 +9,8 @@ use super::crossing::{self, Sidecar};
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
-    InstallStatus, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, ReceiptGeneration,
-    ReceiptSupport, Repository, RepositoryIdentity,
+    InstallStatus, RECORD_MODE, RECORD_PATH, RECORD_VERSION, ReceiptGeneration, ReceiptSupport,
+    Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -181,6 +182,79 @@ impl InstallRecord {
         }
         self.plan_digest = self.plan.digest()?;
         Ok(())
+    }
+
+    /// Cross a receipt written while the state root carried its predecessor
+    /// name, and re-identify its plan under the current digest tag.
+    ///
+    /// Such a receipt named the root from the Git-common directory. The
+    /// current receipt binds relative to the root, so its paths lose the
+    /// root prefix, and the one retirement it carried below the root (the
+    /// fold store no current writer owns) leaves with its progress slot: the
+    /// crossing deletes that residue itself. The plan digest it carried was
+    /// minted under the renamed tag, so it is verified under that tag once and
+    /// then replaced. The receipt on disk is only replaced by a refresh plan,
+    /// which the returned original digest marks as required.
+    fn cross_state_root(
+        &mut self,
+        repository: &Repository,
+    ) -> Result<Option<Digest>, InstallError> {
+        let predecessor = wire::predecessor_state_directory();
+        let current = self.plan.digest()?;
+        let touched = below_root(&self.plan.record.destination, &predecessor)
+            || self
+                .plan
+                .retirements
+                .iter()
+                .any(|retirement| below_root(&retirement.path, &predecessor));
+        if !touched && self.plan_digest == current {
+            return Ok(None);
+        }
+        if self.plan_digest != current {
+            let retained = Digest::compute(
+                wire::Domain::InstallPlanRetained,
+                &self.plan.canonical_bytes()?,
+            );
+            if self.plan_digest != retained {
+                return Err(InstallError::InvalidRecord(
+                    "install record plan digest matches neither the current nor the retained plan tag".to_owned(),
+                ));
+            }
+        }
+        if !matches!(
+            self.status,
+            InstallStatus::Complete | InstallStatus::Uninstalled
+        ) {
+            return Err(InstallError::InvalidRecord(
+                "an interrupted install cannot cross the state root".to_owned(),
+            ));
+        }
+        if self
+            .destinations
+            .iter()
+            .any(|(_, path)| below_root(path, &predecessor))
+        {
+            return Err(InstallError::InvalidRecord(
+                "install record publishes below the state root".to_owned(),
+            ));
+        }
+        let original_digest = self.plan_digest.clone();
+        if touched {
+            rebase_record_binding(&mut self.plan.record, &predecessor, repository)?;
+            let mut index = 0;
+            while index < self.plan.retirements.len() {
+                if below_root(&self.plan.retirements[index].path, &predecessor) {
+                    self.plan.retirements.remove(index);
+                    self.retired_parents.remove(index);
+                    self.restored_retirements.remove(index);
+                    self.completed = self.completed.saturating_sub(1);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+        self.plan_digest = self.plan.digest()?;
+        Ok(Some(original_digest))
     }
 
     /// Rebind one internally coherent receipt after macOS renumbers its mount.
@@ -443,7 +517,7 @@ impl InstallRecord {
             self.plan.validate_repository_binding(repository)
         } else {
             super::binding::validate_record_binding(
-                repository.common_dir(),
+                &repository.state_root(),
                 &self.plan.record,
                 super::RECORD_PATH,
             )
@@ -531,12 +605,13 @@ enum Decoded {
 
 fn decode_record(repository: &Repository) -> Result<Option<Decoded>, InstallError> {
     record_path(repository)?;
-    let binding = bind_destination(repository.common_dir(), RECORD_PATH)?;
-    let (observed, _) = observe_bound(
-        repository.common_dir(),
-        &binding.destination,
-        &binding.parent,
-    )?;
+    let root = repository.state_root();
+    if std::fs::symlink_metadata(&root).is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+    {
+        return Ok(None);
+    }
+    let binding = bind_destination(&root, RECORD_PATH)?;
+    let (observed, _) = observe_bound(&root, &binding.destination, &binding.parent)?;
     let Some(observed) = observed else {
         return Ok(None);
     };
@@ -572,14 +647,76 @@ fn finish_loaded_record(
     repository: &Repository,
     loaded: &mut LoadedRecord,
 ) -> Result<Option<Digest>, InstallError> {
+    let crossed = loaded.record.cross_state_root(repository)?;
     loaded.record.validate_loaded()?;
     let record = &mut loaded.record;
     if record.repository.common_git != repository.common_dir() {
         record.rebase_repository(repository)?;
     }
-    let original_digest = record.repair_mount_device(repository)?;
+    let repaired = record.repair_mount_device(repository)?;
     record.validate_loaded_for_repository(repository)?;
-    Ok(original_digest)
+    Ok(crossed.or(repaired))
+}
+
+/// Whether `path` is `root` or lies below it.
+fn below_root(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// `path` with `root` removed from its head; `root` itself becomes empty.
+fn strip_root(path: &str, root: &str) -> Option<String> {
+    if path == root {
+        return Some(String::new());
+    }
+    path.strip_prefix(root)?
+        .strip_prefix('/')
+        .map(str::to_owned)
+}
+
+/// Re-express a receipt binding taken from the Git-common directory relative
+/// to the state root it named.
+///
+/// A root that already existed when the receipt bound is its own ancestor,
+/// so the ancestor collapses to the root and keeps its generation. A receipt
+/// that introduced the root bound against the Git-common directory instead;
+/// the root is now a real directory, so that binding is reobserved below it.
+fn rebase_record_binding(
+    binding: &mut super::binding::BoundDestination,
+    predecessor: &str,
+    repository: &Repository,
+) -> Result<(), InstallError> {
+    let Some(destination) = strip_root(&binding.destination, predecessor) else {
+        return Err(InstallError::InvalidRecord(
+            "install record destination is not below the state root".to_owned(),
+        ));
+    };
+    binding.destination = destination;
+    if let Some(ancestor) = strip_root(&binding.parent.ancestor, predecessor) {
+        binding.parent.ancestor = ancestor;
+    } else if binding.parent.ancestor.is_empty()
+        && let Some(missing) = strip_root(&binding.parent.missing, predecessor)
+    {
+        let root = repository.state_root();
+        let metadata = std::fs::symlink_metadata(&root)
+            .map_err(|source| InstallError::io("inspect state root", &root, source))?;
+        binding.parent.generation = Generation::observe_at(&root, &metadata)
+            .map_err(|source| InstallError::io("inspect state root", &root, source))?;
+        binding.parent.missing = missing;
+    } else {
+        return Err(InstallError::InvalidRecord(
+            "install record parent is not below the state root".to_owned(),
+        ));
+    }
+    binding.introduced_parents = binding
+        .introduced_parents
+        .iter()
+        .filter_map(|parent| strip_root(parent, predecessor))
+        .filter(|parent| !parent.is_empty())
+        .collect();
+    Ok(())
 }
 
 pub(super) fn write_initial_record(
@@ -588,7 +725,7 @@ pub(super) fn write_initial_record(
 ) -> Result<ReceiptGeneration, InstallError> {
     record.validate_for_write(repository)?;
     let (observed, _) = observe_bound(
-        repository.common_dir(),
+        &repository.state_root(),
         &record.plan.record.destination,
         &record.plan.record.parent,
     )?;
@@ -614,7 +751,7 @@ fn write_record_bytes(
 ) -> Result<ReceiptGeneration, InstallError> {
     let bytes = wire::encode(record).map_err(InstallError::Encode)?;
     publish_bound(
-        repository.common_dir(),
+        &repository.state_root(),
         &record.plan.record.destination,
         &record.plan.record.parent,
         record.plan.record.introduced_parents.len(),
@@ -628,5 +765,5 @@ pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallErr
         .admit_state()
         .map_err(InstallError::State)?
         .runtime()
-        .join(RECORD_NAME))
+        .join(RECORD_PATH))
 }

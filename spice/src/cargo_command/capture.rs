@@ -22,7 +22,7 @@ use wire::{Digest, Domain};
 
 use crate::gate_command::output::{Elapsed, Progress, TAIL_BYTES, TAIL_LINES, clip, prune};
 
-const CAPTURE_DIRECTORY: [&str; 2] = [".spice-rs", "cargo-output"];
+const CAPTURE_DIRECTORY: &str = "cargo-output";
 const APP_DEMO_READY: &str = "[app-demo] endpoint=";
 
 /// Where progress and the completion report are written.
@@ -133,9 +133,7 @@ pub(super) fn cargo_stdout(arguments: &[OsString]) -> Stdout {
 
 /// The directory complete developer Cargo captures are retained in.
 pub(super) fn capture_directory(common_git: &Path) -> PathBuf {
-    CAPTURE_DIRECTORY
-        .iter()
-        .fold(common_git.to_path_buf(), |path, part| path.join(part))
+    wire::state_root(common_git).join(CAPTURE_DIRECTORY)
 }
 
 /// `program` and its arguments as a completion line names them.

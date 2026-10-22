@@ -1,15 +1,15 @@
 //! Resolve the repository state namespaces owned only by this runtime.
 //!
-//! Python Spice owns `.spice`; this runtime owns `.spice-rs`. Durable authority
-//! is beneath the Git common directory. Equal lane, task, thread, or steering
+//! This runtime owns [`STATE_DIRECTORY`] beneath the Git common directory and
+//! beneath each linked worktree's own Git directory. The archived Python
+//! predecessor keeps `.spice-py`; equal lane, task, thread, or steering
 //! identifiers cannot make either implementation discover, consume,
 //! acknowledge, or overwrite the other's state. The install appliance remains
 //! in the already-disjoint `.spice-install` sibling.
 //!
-//! The same rule covers the per-worktree Git shadow. Python owns
-//! `<git-dir>/agent.gitconfig`; [`crate::git_shadow`] owns
-//! `<git-dir>/spice-rs-agent.gitconfig`. Neither implementation relies on
-//! byte-compatible whole-file writes by the other.
+//! The per-worktree Git shadow is likewise this runtime's own:
+//! [`crate::git_shadow`] writes `<git-dir>/agent.gitconfig` and nothing in the
+//! archive is read back.
 //!
 //! The ownership split imposes these rules:
 //!
@@ -18,13 +18,12 @@
 //!    An in-place rewrite is still an in-place rewrite when it is called a
 //!    migration.
 //! 2. Every runtime-state path this port creates or writes is below one of its
-//!    exclusive `.spice-rs` roots. [`StatePaths::owned_directories`] and
+//!    exclusive state roots. [`StatePaths::owned_directories`] and
 //!    [`StatePaths::owned_files`] inventory the fixed paths, while
 //!    [`StatePaths::exclusive_directories`] makes every dynamically named child
-//!    Rust-owned without extending ownership into a Python `.spice` root.
+//!    Rust-owned without extending ownership into the `.spice-py` archive.
 //! 3. The per-worktree Git shadow follows the same separation rule: this runtime
-//!    publishes only `spice-rs-agent.gitconfig` and never Python's
-//!    `agent.gitconfig`.
+//!    publishes only `agent.gitconfig` and reads nothing from the archive.
 //! 4. A cross-system bridge is refused by default. No translator reads
 //!    predecessor task data; the Python archive under the Git-common
 //!    `.spice-py` root is not consulted. `spice rtk gain` is a read-only
@@ -34,10 +33,18 @@
 //!    Worktree-local and predecessor state are not inspected.
 //!
 //! `tests/coexistence.rs` enforces the filesystem ownership boundary by identity:
-//! it seeds Python's complete `.spice` root, runs the real Rust binary against
-//! `.spice-rs`, and compares the predecessor bytes back. `tests/git_shadow.rs`
-//! independently pins the Rust filename and denies publication at Python's
-//! shadow path.
+//! it seeds the complete `.spice-py` archive, runs the real Rust binary against
+//! its own root, and compares the archive bytes back.
+//!
+//! # One root name, one move
+//!
+//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] while Python Spice held
+//! `.spice`. A live root by that older name is still this runtime's state:
+//! [`wire::state_root`]
+//! keeps it current until the install crossing moves it, as a real directory,
+//! exactly once. Every admission refuses a symlinked component, so no link can
+//! bridge the two names, and no command opens a second root beside the live
+//! one.
 //!
 //! # Why ownership is split but durable authority is common
 //!
@@ -46,37 +53,34 @@
 //! namespace, repository authority belongs to the resident spanning linked
 //! worktrees.
 //!
-//! * The **journal and all other durable runtime state** live below
-//!   `<git-common-dir>/.spice-rs`. Python's databases live below its `.spice`
+//! * The **journal and all other durable runtime state** live below the
+//!   Git-common state root. Python's archive lives below its `.spice-py`
 //!   sibling, so equal database, lane, task, or steering names still cannot
 //!   resolve to the same path.
 //! * **Config** is separate by name and anchor. This runtime reads tracked
-//!   `spice-rust.toml`, common-root `.spice-rs/config.toml`, and each
-//!   worktree's Git-directory `.spice-rs/worktree.toml`; Python owns tracked
-//!   `spice.toml` and its own `.spice` configuration.
+//!   `spice-rust.toml`, common-root `config.toml`, and each worktree's
+//!   Git-directory `worktree.toml`, both below the state root; Python owned
+//!   tracked `spice.toml` and its own configuration.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
 //!   NAK dispositions are facts in the common-root journal. Hook media is
-//!   projected beneath the Git-common `.spice-rs` root and partitioned by lane,
+//!   projected beneath the Git-common state root and partitioned by lane,
 //!   so an advertised path is stable and directly readable. A tracked
-//!   `<worktree>/.spice-rs` lookalike is ordinary repository content that
+//!   `<worktree>/.spice` lookalike is ordinary repository content that
 //!   neither authority surface opens.
 //! * **Artifacts and dynamically named locks** remain Rust-only because their
-//!   parents are below the common exclusive `.spice-rs` root.
+//!   parents are below the common exclusive state root.
 //!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
 //! * **Installed hooks, skills, and binaries** stay in the already-disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at
-//!   the [`StatePaths::install_record`] path below `.spice-rs`.
+//!   the [`StatePaths::install_record`] path below the state root.
 //! * The **per-worktree Git shadow** is disposable and reconstructible.
-//!   [`crate::git_shadow`] writes `<git-dir>/spice-rs-agent.gitconfig`; Python
-//!   writes `<git-dir>/agent.gitconfig`. `tests/git_shadow.rs` uses a linked
-//!   worktree to pin the per-worktree anchor, the Rust shadow bytes, and the
-//!   absence of publication at Python's filename.
+//!   [`crate::git_shadow`] writes `<git-dir>/agent.gitconfig`.
 //!
 //! State outside the current fixed namespaces is ignored. In particular,
 //! obsolete layouts cannot affect current state admission or command startup.
 //! `tests/coexistence.rs` proves native commands leave the complete predecessor
-//! root byte-identical.
+//! archive byte-identical.
 
 use std::error::Error;
 use std::fmt;
@@ -84,8 +88,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Sole repository-common directory owned by the current Spice runtime.
-pub const STATE_DIRECTORY: &str = ".spice-rs";
+/// Sole name of the state root below a Git directory, owned by this runtime.
+pub use wire::STATE_DIRECTORY;
+
+/// What every state-shape refusal expected to find.
+#[must_use]
+pub fn state_shape_expectation() -> String {
+    format!("real fixed components beneath the canonical Git-common {STATE_DIRECTORY} directory")
+}
 
 /// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -535,16 +545,30 @@ impl Repository {
         &self.common
     }
 
+    /// The live Git-common state root: [`STATE_DIRECTORY`], or the
+    /// predecessor name while an install has yet to move it.
+    #[must_use]
+    pub fn state_root(&self) -> PathBuf {
+        wire::state_root(&self.common)
+    }
+
+    /// The live state root beneath this worktree's own Git directory.
+    #[must_use]
+    pub fn worktree_state_root(&self) -> PathBuf {
+        wire::state_root(&self.git)
+    }
+
+    fn state_paths(&self) -> StatePaths {
+        StatePaths::new(self.state_root(), self.worktree_state_root())
+    }
+
     /// Admit every fixed component of the current state namespace.
     ///
     /// An absent namespace is valid and remains absent. Existing directory
     /// parents and regular-file leaves are inspected without following links.
     /// Entries outside the current fixed namespace are not inspected.
     pub fn admit_state(&self) -> Result<StatePaths, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
+        let paths = self.state_paths();
         for path in paths.admitted_directories() {
             admit(path, StateShape::Directory)?;
         }
@@ -563,10 +587,7 @@ impl Repository {
     ///
     /// Returns the exact malformed or unavailable client-path component.
     pub fn admit_resident_client(&self) -> Result<PathBuf, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
+        let paths = self.state_paths();
         for path in [paths.runtime(), paths.lane_serve()] {
             admit(path, StateShape::Directory)?;
         }
@@ -582,10 +603,7 @@ impl Repository {
     ///
     /// Returns the exact malformed or unavailable delivery-state component.
     pub fn admit_steering_delivery(&self) -> Result<SteeringDeliveryPaths, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
+        let paths = self.state_paths();
         for path in [
             paths.runtime(),
             paths.worktree_runtime(),

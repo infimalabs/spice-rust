@@ -38,7 +38,7 @@ advances a lane home or seeds dependencies; unadmitted generations refuse.
 
 Both surfaces forward the argument vector, environment, and exit status
 exactly. Cargo's diagnostics are captured whole in
-`<git-common>/.spice-rs/cargo-output/DIGEST.log`, with a periodic heartbeat
+`<git-common>/.spice/cargo-output/DIGEST.log`, with a periodic heartbeat
 naming Cargo's current step. Success prints one summary line with the capture
 path; failure adds a bounded tail and an inspection command. Output that is the
 command's product (`dev xtask` tasks, `cargo run`, `metadata`, `--list`, JSON

@@ -27,6 +27,7 @@ mod path;
 mod progress;
 mod record;
 mod reversal;
+mod state_root;
 mod symbol_sample;
 mod symbol_verification;
 mod symbols;
@@ -59,6 +60,7 @@ pub use maintenance::{
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
+pub use state_root::{StateRootCrossing, StateRootMove};
 pub use symbol_sample::{
     DwarfLookup, DwarfdumpLookup, LookupError, MAX_SAMPLE_ADDRESSES, MAX_SAMPLE_BYTES, SampleError,
     SampleSymbolization, SampleTarget, SampledFrame, SourceLocation, SymbolizedFrame,
@@ -108,9 +110,13 @@ fn receipt_support(version: u16) -> Option<ReceiptSupport> {
         .iter()
         .find_map(|(candidate, support)| (*candidate == version).then_some(*support))
 }
-const RECORD_NAME: &str = "install.json";
-const RECORD_PATH: &str = ".spice-rs/install.json";
-const REVERSAL_PATH: &str = ".spice-rs/install-reversals";
+/// The receipt, relative to the state root it lives in. Binding it there,
+/// rather than naming the root from the Git-common directory, is what keeps a
+/// preview taken before the root crossing and the apply taken after it
+/// deriving one plan: the root's inode is the same on both sides of its rename.
+const RECORD_PATH: &str = "install.json";
+/// Reversal payloads, relative to the state root.
+const REVERSAL_PATH: &str = "install-reversals";
 const RECORD_MODE: u32 = 0o600;
 #[cfg(unix)]
 const DIRECTORY_MODE: u32 = 0o700;
@@ -125,7 +131,7 @@ const EXECUTABLE_MODE: u32 = 0o755;
 #[cfg(windows)]
 const EXECUTABLE_MODE: u32 = 0o700;
 
-// The receipt materializes `.spice-rs` before applying operations. Appliance
+// The state root exists before any plan is derived. Appliance
 // assets use a sibling namespace so that publication cannot invalidate the
 // side-effect-free preview's descriptor-bound parent observations.
 const EXCLUDE_PATH: &str = "info/exclude";
@@ -144,7 +150,6 @@ const BINARY_PATH: &str = ".spice-install/bin/spice";
 const BINARY_PATH: &str = ".spice-install/bin/spice.exe";
 const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
-const RETIRED_FOLD_STORE_PATH: &str = ".spice-rs/data/spicefolds.sqlite3";
 
 const SKILL: &str = ::std::include_str!("../agent/SKILL.md");
 /// Maximum bytes admitted for the authoritative installed skill.
@@ -281,7 +286,7 @@ impl InstallPlan {
 
     fn validate_repository_binding(&self, repository: &Repository) -> Result<(), InstallError> {
         self.repository.validate(repository)?;
-        binding::validate_record_binding(repository.common_dir(), &self.record, RECORD_PATH)?;
+        binding::validate_record_binding(&repository.state_root(), &self.record, RECORD_PATH)?;
         for operation in &self.operations {
             validate_operation_binding(
                 repository,
@@ -305,9 +310,9 @@ impl InstallPlan {
 
     fn validate_pristine(&self, repository: &Repository) -> Result<(), InstallError> {
         self.validate_for_repository(repository)?;
-        if bind_destination(repository.common_dir(), RECORD_PATH)? != self.record {
+        if bind_destination(&repository.state_root(), RECORD_PATH)? != self.record {
             return Err(InstallError::ParentChanged(
-                repository.common_dir().join(RECORD_PATH),
+                repository.state_root().join(RECORD_PATH),
             ));
         }
         for operation in &self.operations {
@@ -410,6 +415,14 @@ pub fn capture_generation(repository: &Repository) -> Result<Option<Digest>, Ins
     Ok(read_record_for_refresh(repository)?.map(|refresh| refresh.receipt_digest().clone()))
 }
 
+/// The state-root move an install of this build would perform first, if a
+/// root still carries the predecessor name. Reading changes nothing.
+pub fn state_root_crossing(
+    repository: &Repository,
+) -> Result<Option<StateRootCrossing>, InstallError> {
+    state_root::pending(repository)
+}
+
 /// Inspect one repository and derive the exact Spice installation plan.
 pub fn plan(
     repository: &Repository,
@@ -447,6 +460,48 @@ pub fn apply_prepared(
     prepared: PreparedInstall,
 ) -> Result<InstallReceipt, InstallError> {
     apply_prepared_record(repository, spice_binary, prepared)
+}
+
+/// Move every live predecessor state root to its current name, once, before
+/// any plan is applied; refuse while a resident or lane holds the common root.
+///
+/// The plan was derived against the predecessor root and is applied against
+/// the current one. The two agree because the record binds relative to the
+/// root, whose inode the rename preserves.
+fn cross_state_root(repository: &Repository) -> Result<(), InstallError> {
+    match state_root::pending(repository)? {
+        Some(crossing) => state_root::cross(&crossing),
+        None => Ok(()),
+    }
+}
+
+/// Create the current state root when no root exists at all, so the receipt
+/// binds below a real directory; a live predecessor root is left for the
+/// crossing to move.
+fn ensure_state_root(repository: &Repository) -> Result<(), InstallError> {
+    let root = repository.state_root();
+    match fs::symlink_metadata(&root) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => state_root_builder()
+            .create(&root)
+            .map_err(|source| InstallError::io("create state root", root, source)),
+        Err(source) => Err(InstallError::io("inspect state root", root, source)),
+    }
+}
+
+/// The owner-only directory builder for a fresh state root.
+fn state_root_builder() -> fs::DirBuilder {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(DIRECTORY_MODE);
+    }
+    #[cfg(not(unix))]
+    {
+        builder.recursive(false);
+    }
+    builder
 }
 
 /// Reverse the complete current install without touching drifted targets.
@@ -516,6 +571,7 @@ fn build_plan_over(
     binary_superseded: Option<&GeneratedImage>,
     sidecars: &[crossing::Sidecar],
 ) -> Result<InstallPlan, InstallError> {
+    ensure_state_root(repository)?;
     let binary = spice_binary
         .map(|path| read_binary(path).map(|bytes| (path, bytes)))
         .transpose()?;
@@ -537,25 +593,21 @@ fn build_plan_over(
         symbols.as_ref(),
     )?;
 
-    let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
+    let record = bind_destination(&repository.state_root(), RECORD_PATH)?;
     // A plan that stops publishing symbols discards the bundle its
     // predecessor retained, so the executable and dSYM leave together.
     let discard_symbols =
         symbols.is_none() && installed.is_some_and(|plan| symbols::operations(plan).count() > 0);
-    let planned_retirements = [
-        RETIRED_XTASK_PATH,
-        RETIRED_XTASK_GUARD_PATH,
-        RETIRED_FOLD_STORE_PATH,
-    ]
-    .into_iter()
-    .chain(
-        discard_symbols
-            .then_some(symbols::DISCARD_PATHS)
-            .into_iter()
-            .flatten(),
-    )
-    .map(|path| retirement(repository, installed, path))
-    .collect::<Result<Vec<_>, _>>()?;
+    let planned_retirements = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH]
+        .into_iter()
+        .chain(
+            discard_symbols
+                .then_some(symbols::DISCARD_PATHS)
+                .into_iter()
+                .flatten(),
+        )
+        .map(|path| retirement(repository, installed, path))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut retirements = planned_retirements;
     retirements.extend(crossing::retirements(repository, sidecars)?);
     let hook_activation = spice_binary
@@ -592,7 +644,7 @@ fn retirement_binding(
 
 /// Paths a current plan discards outright, without a reversal image.
 fn is_discard_path(path: &str) -> bool {
-    path == RETIRED_FOLD_STORE_PATH || symbols::DISCARD_PATHS.contains(&path)
+    symbols::DISCARD_PATHS.contains(&path)
 }
 
 fn retirement(

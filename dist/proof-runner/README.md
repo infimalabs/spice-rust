@@ -19,8 +19,8 @@ identity.
 Bind that path as `proof.runner` in the worktree that sealed it:
 `spice config proof.runner PATH` plans the write and
 `spice config proof.runner PATH --apply=DIGEST` applies it to that worktree's
-Git-directory `.spice-rs/worktree.toml`, which wins over a Git-common default
-in `.spice-rs/config.toml`, so worktrees sealing runners from different commits
+Git-directory `.spice/worktree.toml`, which wins over a Git-common default
+in `.spice/config.toml`, so worktrees sealing runners from different commits
 never repoint each other. Nothing else selects a runner:
 `spice dev xtask -- stage-target aarch64-apple-darwin` refuses until the
 configured runner attests, and proof replay admits it by digesting the exact

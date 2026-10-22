@@ -502,14 +502,15 @@ fn sanitize(
         if !entry.layers().contains(&source) {
             let layers = entry.layers();
             let leaf = entry.template().as_str();
+            let root = wire::STATE_DIRECTORY;
             let message = if layers.contains(&ConfigSource::Worktree) {
                 format!(
-                    "{leaf} is a per-worktree preference, never tracked; set it in Git-common .spice-rs/config.toml or in this worktree's Git-directory .spice-rs/worktree.toml"
+                    "{leaf} is a per-worktree preference, never tracked; set it in Git-common {root}/config.toml or in this worktree's Git-directory {root}/worktree.toml"
                 )
             } else if layers.contains(&ConfigSource::Tracked) {
                 format!("{leaf} is tracked policy; set it in tracked spice-rust.toml")
             } else {
-                format!("{leaf} is machine-local; set it in Git-common .spice-rs/config.toml")
+                format!("{leaf} is machine-local; set it in Git-common {root}/config.toml")
             };
             issues.push(Issue::at(
                 IssueKind::Policy,

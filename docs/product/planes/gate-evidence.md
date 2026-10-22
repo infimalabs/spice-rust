@@ -39,7 +39,7 @@ input, is live-only; it never emits an under-keyed reusable receipt.
 Pre-commit and bare `spice gate prove` never execute a missing proof. A miss
 names each action with its `spice gate prove ACTION` command and one
 `spice gate prove --missing` aggregate. Each executed action's complete output
-is retained as `.spice-rs/gate-output/DIGEST.log` under the Git common
+is retained as `.spice/gate-output/DIGEST.log` under the Git common
 directory, and a failed action's refusal carries a bounded tail and that path.
 A shell pipeline can mask the prover's exit status; preserve the status rather
 than inferring success from a filter or the last progress line.

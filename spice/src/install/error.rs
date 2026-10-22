@@ -80,6 +80,16 @@ pub enum InstallError {
         path: PathBuf,
         reason: String,
     },
+    /// A live predecessor state root that a resident or lane still holds.
+    StateRootHeld {
+        root: PathBuf,
+        holders: Vec<String>,
+    },
+    /// Both the current and the predecessor state-root names are occupied.
+    StateRootAmbiguous {
+        current: PathBuf,
+        predecessor: PathBuf,
+    },
     RecordMissing,
     ApplyInProgress,
     UnapplyInProgress,
@@ -127,6 +137,8 @@ impl fmt::Display for InstallError {
             | Self::LegacyRecord { .. }
             | Self::RetainedRecord { .. }
             | Self::CanvasRefused { .. }
+            | Self::StateRootHeld { .. }
+            | Self::StateRootAmbiguous { .. }
             | Self::RecordMissing
             | Self::ApplyInProgress
             | Self::UnapplyInProgress
@@ -267,6 +279,22 @@ fn fmt_progress_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) 
             formatter,
             "Spice executable {} carries no admissible linked canvas archive: {reason}",
             path.display(),
+        ),
+        InstallError::StateRootHeld { root, holders } => write!(
+            formatter,
+            "state root {} cannot move to {} while it is held by {}",
+            root.display(),
+            wire::STATE_DIRECTORY,
+            holders.join(", "),
+        ),
+        InstallError::StateRootAmbiguous {
+            current,
+            predecessor,
+        } => write!(
+            formatter,
+            "both {} and the predecessor root {} exist; keep exactly one before installing",
+            current.display(),
+            predecessor.display(),
         ),
         InstallError::RecordMissing => formatter.write_str("no Spice install record exists"),
         InstallError::ApplyInProgress => formatter.write_str("Spice installation is incomplete"),
