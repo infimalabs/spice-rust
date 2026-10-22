@@ -28,7 +28,7 @@ use crate::kill::{
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy, spawn};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::policy::{PACKAGED_GENERIC_POLICY, PackagePolicy};
-use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, migrate_predecessor_policy};
+use crate::policy::{Policy as RulePolicy, RepoTruthPolicy, parse_tracked_policy};
 use crate::ratchet::Ratchet;
 
 /// Fixed tracked policy path within a selected repository tree.
@@ -323,8 +323,8 @@ impl ParsedContract {
             tracked_ignore(policy.path, &tracked).map_err(ContractError::Policy)?;
         #[cfg(not(target_arch = "wasm32"))]
         let shape = ShapePolicy::from_tracked(&tracked.policy);
-        let rule_policy = migrate_predecessor_policy(policy.rule_source, policy.rule_text)
-            .map_err(|source| {
+        let rule_policy =
+            parse_tracked_policy(policy.rule_source, policy.rule_text).map_err(|source| {
                 ContractError::Policy(PolicyError::Rules {
                     path: policy.path.to_path_buf(),
                     source,
@@ -611,7 +611,7 @@ impl ShapePolicy {
 
     /// Tracked test-root patterns, empty when the repository declares none.
     ///
-    /// Emptiness is not a default: the provider still has the predecessor's
+    /// Emptiness is not a default: the provider still has its own
     /// remaining derivation to run before it settles on `tests`, and a policy
     /// that answered here would hide the pytest layer that sits between them.
     pub(crate) fn test_paths(&self) -> &[String] {

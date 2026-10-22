@@ -113,8 +113,6 @@ pub struct PackagedEnvironmentProfile {
     pub allow_marker: &'static str,
     /// Quoted environment-name watchlist patterns.
     pub name_patterns: &'static [&'static str],
-    /// Scanner implementation path excluded from self-reporting.
-    pub self_path_suffix: &'static str,
     /// Whether every recognized access site requires a waiver.
     pub access_gate: bool,
     /// Language family to suffix mappings.
@@ -123,20 +121,18 @@ pub struct PackagedEnvironmentProfile {
     pub access_patterns: &'static [(&'static str, &'static [&'static str])],
     /// Stable finding names for access families.
     pub finding_names: &'static [(&'static str, &'static str)],
-    /// Packaged exact declarations; release 0.31.0 ships none.
+    /// Packaged exact declarations; the packaged profile declares none.
     pub declared_names: &'static [&'static str],
-    /// Packaged baseline; release 0.31.0 ships none.
+    /// Packaged baseline; the packaged profile ships none.
     pub baseline: Option<&'static str>,
 }
 
-/// Exact release 0.31.0 environment scanner profile compiled into this boundary.
+/// The packaged environment scanner profile compiled into this boundary.
 pub const PACKAGED_ENV_PROFILE: PackagedEnvironmentProfile = PackagedEnvironmentProfile {
     includes: PACKAGED_ENV_INCLUDES,
     excludes: PACKAGED_SCANNER_EXCLUDES,
     allow_marker: "env-policy: allow",
     name_patterns: PACKAGED_ENV_NAME_PATTERNS,
-    // Immutable Python predecessor path retained by the release-0.31.0 profile.
-    self_path_suffix: "studies/envpolicy.py",
     access_gate: true,
     family_suffixes: PACKAGED_ENV_FAMILY_SUFFIXES,
     access_patterns: PACKAGED_ENV_ACCESS_PATTERNS,
@@ -209,7 +205,7 @@ const PYRIGHT_TOOLS: &[ToolRequirement] = &[ToolRequirement {
     role: "Python type analyzer",
 }];
 
-/// Every toolchain declaration in its fixed interval of the predecessor battery.
+/// Every toolchain declaration in its fixed interval of the battery.
 pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
     ToolchainDeclaration {
         id: GateId::Formatters,

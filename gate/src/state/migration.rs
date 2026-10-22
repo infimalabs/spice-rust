@@ -142,7 +142,7 @@ pub(super) fn decode_current(path: &Path, bytes: &[u8]) -> Result<StateLedger, S
             StateErrorKind::Decode,
             path,
             format!("malformed current ledger JSON: {error}"),
-            "restore a valid current ledger from evidence; do not fall back to predecessor state",
+            "restore a valid current ledger from evidence",
         )
     })?;
     if version.version != STATE_LEDGER_VERSION {

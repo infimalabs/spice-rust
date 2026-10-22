@@ -655,13 +655,8 @@ fn ledger(mismatch: EnvironmentLedgerKind, name: &str, references: Vec<SourceLoc
 }
 
 /// Whether one selected-tree path is a packaged environment-language source.
-///
-/// The scanner's own implementation is never one of them, so a tree that
-/// vendors the predecessor does not report the law as a violation of itself.
 fn env_language(path: &str) -> bool {
-    !environment::is_scanner_itself(path)
-        && extension(path)
-            .is_some_and(|found| environment::ENV_EXTENSIONS.contains(&found.as_str()))
+    extension(path).is_some_and(|found| environment::ENV_EXTENSIONS.contains(&found.as_str()))
 }
 
 mod javascript;

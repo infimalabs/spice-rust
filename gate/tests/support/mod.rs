@@ -104,7 +104,7 @@ pub(crate) fn workspace_document(name: &str) -> String {
 
 /// One tracked policy document a fixture repository can be gated against.
 ///
-/// Every document carries the file-class selections migration requires, so a
+/// Every document carries the file-class selections parsing requires, so a
 /// fixture states only what it is actually about and still loads at all.
 #[allow(dead_code)]
 pub(crate) fn policy_document(body: &str) -> String {

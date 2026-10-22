@@ -1,14 +1,14 @@
 //! Named, compiled policy rules and deterministic selection evidence.
 //!
 //! Runtime policy accepts only [`PolicyDocument`], whose rules carry stable
-//! identities and source order. The predecessor's anonymous list syntax is
-//! confined to [`migrate_predecessor_policy`]; migration emits this one current
-//! representation and compiles every path and stem matcher before returning.
+//! identities and source order. [`parse_tracked_policy`] reads the tracked
+//! document into this one representation and compiles every path and stem
+//! matcher before returning.
 
 mod config;
 mod matcher;
-mod migration;
 mod runtime;
+mod tracked;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,8 +24,8 @@ pub use config::{
 /// The repository-path and stem dialects, shared with the native-only arms.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use matcher::{PathPattern, compile_stem_expression};
-pub use migration::{MigrationError, migrate_predecessor_policy};
 pub use runtime::{Applicability, CompileError, Policy, ResolveError};
+pub use tracked::{ParseError, parse_tracked_policy};
 
 /// The explicitly supported stem-pattern dialect.
 pub const REGEX_DIALECT_NAME: &str = "rust-regex-1";
@@ -84,7 +84,7 @@ impl FileClasses {
         &self.magic
     }
 
-    pub(crate) fn predecessor(
+    pub(crate) fn tracked(
         file_shape: Vec<String>,
         complexity: Vec<String>,
         magic: Vec<String>,
@@ -97,7 +97,7 @@ impl FileClasses {
     }
 }
 
-/// The six predecessor numeric policy metrics.
+/// The six numeric policy metrics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BoundName {
@@ -116,7 +116,7 @@ pub enum BoundName {
 }
 
 impl BoundName {
-    /// Every numeric metric in predecessor declaration order.
+    /// Every numeric metric in declaration order.
     pub const ALL: [Self; 6] = [
         Self::FileLoc,
         Self::FileBytes,
@@ -170,8 +170,8 @@ pub struct BoundLimits {
 }
 
 impl BoundLimits {
-    /// The predecessor's packaged base values.
-    pub const PREDECESSOR: Self = Self {
+    /// The packaged base values.
+    pub const PACKAGED: Self = Self {
         file_loc: 1_000,
         file_bytes: 80_000,
         routine_ccn: 20,
@@ -192,20 +192,9 @@ impl BoundLimits {
             BoundName::RepoTruthDocChars => self.repo_truth_doc_chars,
         }
     }
-
-    pub(crate) fn set(&mut self, bound: BoundName, value: u64) {
-        match bound {
-            BoundName::FileLoc => self.file_loc = value,
-            BoundName::FileBytes => self.file_bytes = value,
-            BoundName::RoutineCcn => self.routine_ccn = value,
-            BoundName::RoutineLength => self.routine_length = value,
-            BoundName::CommitMessageWrap => self.commit_message_wrap = value,
-            BoundName::RepoTruthDocChars => self.repo_truth_doc_chars = value,
-        }
-    }
 }
 
-/// Global ratchet ratio plus the four predecessor per-bound overrides.
+/// Global ratchet ratio plus the four per-bound overrides.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalRatchet {
@@ -222,8 +211,8 @@ pub struct GlobalRatchet {
 }
 
 impl GlobalRatchet {
-    /// The predecessor's packaged global ratchet ratio.
-    pub const PREDECESSOR: Self = Self {
+    /// The packaged global ratchet ratio.
+    pub const PACKAGED: Self = Self {
         ratio: 1.5,
         variation_percent: 5,
         file_loc: None,
@@ -243,24 +232,6 @@ impl GlobalRatchet {
     #[must_use]
     pub const fn variation_percent(&self) -> u64 {
         self.variation_percent
-    }
-
-    pub(crate) fn set_ratio(&mut self, ratio: f64) {
-        self.ratio = ratio;
-    }
-
-    pub(crate) fn set_variation_percent(&mut self, variation_percent: u64) {
-        self.variation_percent = variation_percent;
-    }
-
-    pub(crate) fn set(&mut self, bound: BoundName, value: u64) {
-        match bound {
-            BoundName::FileLoc => self.file_loc = Some(value),
-            BoundName::FileBytes => self.file_bytes = Some(value),
-            BoundName::RoutineCcn => self.routine_ccn = Some(value),
-            BoundName::RoutineLength => self.routine_length = Some(value),
-            BoundName::CommitMessageWrap | BoundName::RepoTruthDocChars => {}
-        }
     }
 
     fn explicit(&self, bound: BoundName) -> Option<u64> {
@@ -357,9 +328,7 @@ impl std::error::Error for RuleIdError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RuleSourceKind {
-    /// One row in the predecessor's anonymous `policy.rules` list.
-    PredecessorList,
-    /// One rule generated from predecessor markdown-depth policy.
+    /// One rule generated from the packaged markdown-depth budget.
     GeneratedMarkdownDepth,
     /// A rule authored directly in the current named schema.
     Current,
@@ -393,7 +362,7 @@ impl RuleSource {
         self.kind
     }
 
-    pub(crate) fn predecessor(location: &str, field: String, kind: RuleSourceKind) -> Self {
+    pub(crate) fn tracked(location: &str, field: String, kind: RuleSourceKind) -> Self {
         Self {
             location: location.to_owned(),
             field,
@@ -498,7 +467,7 @@ impl ScopeSelector {
         &self.phases
     }
 
-    pub(crate) fn predecessor(paths: Vec<String>, extensions: Vec<String>) -> Self {
+    pub(crate) fn tracked(paths: Vec<String>, extensions: Vec<String>) -> Self {
         Self {
             paths,
             extensions,
@@ -509,7 +478,7 @@ impl ScopeSelector {
     }
 }
 
-/// Per-metric settings applied in predecessor arithmetic order.
+/// Per-metric settings applied in fixed arithmetic order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RuleSettings {
@@ -563,7 +532,7 @@ impl RuleSettings {
         self.ratchet
     }
 
-    pub(crate) fn predecessor(
+    pub(crate) fn tracked(
         multiplier: f64,
         minimum: Option<u64>,
         maximum: Option<u64>,
@@ -592,10 +561,6 @@ impl MagicRule {
     #[must_use]
     pub const fn examine_threshold(&self) -> u64 {
         self.examine_threshold
-    }
-
-    pub(crate) const fn predecessor(examine_threshold: u64) -> Self {
-        Self { examine_threshold }
     }
 }
 
@@ -743,19 +708,19 @@ impl PolicyDocument {
         &self.rules
     }
 
-    pub(crate) fn predecessor(
-        limits: BoundLimits,
-        ratchet: GlobalRatchet,
-        magic_examine_threshold: u64,
+    /// The tracked document's repository inventory and file classes over the
+    /// packaged limits, ratchet, and magic threshold.
+    pub(crate) fn tracked(
         repo_truth_docs: Vec<String>,
         file_classes: FileClasses,
         rules: Vec<RuleDeclaration>,
     ) -> Self {
+        const PACKAGED_MAGIC_EXAMINE_THRESHOLD: u64 = 10;
         Self {
             regex_dialect: RegexDialect::RustRegex1,
-            limits,
-            ratchet,
-            magic_examine_threshold,
+            limits: BoundLimits::PACKAGED,
+            ratchet: GlobalRatchet::PACKAGED,
+            magic_examine_threshold: PACKAGED_MAGIC_EXAMINE_THRESHOLD,
             repo_truth_docs,
             file_classes,
             rules,
@@ -823,7 +788,7 @@ impl PolicyContext {
     }
 }
 
-/// Lexicographic path-pattern precedence from the predecessor.
+/// Lexicographic path-pattern precedence.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]

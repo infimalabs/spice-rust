@@ -98,11 +98,11 @@ pub use core::{
 pub use core::{
     CORE_GATE_IDS, CORE_REPORT_VERSION, ConfigInventoryEvidence, ConfigKeyEvidence,
     CoreArmDeclaration, CoreArmInput, CoreArmReport, CoreEvidence, CoreFinding, CoreInputError,
-    CoreInputs, CoreObservation, CoreProvenance, CoreReport, CoreReportDecodeError, CoreStanding,
+    CoreInputs, CoreObservation, CoreReport, CoreReportDecodeError, CoreStanding,
     CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
-    MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence,
-    PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
-    RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core, lacks_commit_authority,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence, RepoDocLimit,
+    RepoDocsEvidence, RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
+    lacks_commit_authority,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use evidence_store::{
@@ -118,13 +118,8 @@ pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
     HYGIENE_REPORT_VERSION, HygieneAnalyzer, HygieneConfigurationSource, HygieneDeclaration,
     HygieneError, HygieneFinding, HygieneFindingDetail, HygieneJurisdiction, HygieneMeasurement,
-    HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal,
-    MigrationRefusal as HygieneMigrationRefusal, ModuleReach,
-    PredecessorComparison as HygienePredecessorComparison,
-    PredecessorComparisonError as HygienePredecessorComparisonError,
-    PredecessorObservation as HygienePredecessorObservation,
-    PredecessorResult as HygienePredecessorResult, PythonUnusedStatus, SuppressedPath,
-    compare_predecessor as compare_hygiene_predecessor,
+    HygieneOutcome, HygieneProvenance, HygieneReport, HygieneTraversal, ModuleReach,
+    PythonUnusedStatus, SuppressedPath,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use hygiene::{
@@ -160,11 +155,7 @@ pub use kill::{
     ProcessEvidence, RateError, StreamEvidence, SurvivorRate,
 };
 pub use long_lines::LongLineFinding;
-pub use manifest::{
-    GATE_MANIFEST_VERSION, GateDeclaration, GateId, GateManifest, GateManifestError,
-    MigrationError, MigrationErrorKind, OriginLayer, PREDECESSOR_GATE_RELEASE, PredecessorDocument,
-    PredecessorInputs, Provenance, migrate_predecessor,
-};
+pub use manifest::{GateId, OriginLayer};
 pub use measure::{
     Bounds, JurisdictionMode, MeasureError, Measurement, Metric, MetricError, Parser, Policy,
     measurement_digest, render_measurements,
@@ -175,13 +166,13 @@ pub use message::{
 };
 pub use policy::{
     Applicability, BoundLimits, BoundName, CompileError as PolicyCompileError, FileClasses,
-    FileShapePolicy, GlobalRatchet, LanguagesPolicy, MagicRule,
-    MigrationError as PolicyMigrationError, NARROWEST_FILE_CLASSES, OneLetterBehavior,
-    PackagePolicy, Policy as RulePolicy, PolicyContext, PolicyDocument, RegexDialect,
-    RepoTruthPolicy, ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic,
-    RuleDeclaration, RuleId, RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector,
-    SelectionProvenance, SelectorSpecificity, migrate_predecessor_policy,
-    tracked_path_selector_matches, validate_tracked_path_selector,
+    FileShapePolicy, GlobalRatchet, LanguagesPolicy, MagicRule, NARROWEST_FILE_CLASSES,
+    OneLetterBehavior, PackagePolicy, ParseError as PolicyParseError, Policy as RulePolicy,
+    PolicyContext, PolicyDocument, RegexDialect, RepoTruthPolicy,
+    ResolveError as PolicyResolveError, ResolvedBound, ResolvedMagic, RuleDeclaration, RuleId,
+    RuleSettings, RuleSource, RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance,
+    SelectorSpecificity, parse_tracked_policy, tracked_path_selector_matches,
+    validate_tracked_path_selector,
 };
 pub use ratchet::{Finding, Movement, Ratchet, RatchetError};
 pub use report::{
@@ -211,14 +202,12 @@ pub use test_evidence::{
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ArmTiming, ConfigurationSource,
     CsharpUnusedStatus, ENV_NAME_LITERAL_MARKER, EnvironmentLedgerKind, FindingDetail,
-    JavascriptUnusedStatus, LOCAL_PATH_MARKER, MeasurementEngine,
-    MigrationRefusal as ToolchainMigrationRefusal, PACKAGED_ENV_INCLUDES, PACKAGED_ENV_PROFILE,
-    PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_SCANNER_EXCLUDES, PACKAGED_TASTE_WORDS,
-    PACKAGED_TEST_PATHS, PackagedEnvironmentProfile, PredecessorComparison,
-    PredecessorComparisonError, PredecessorConfiguration, PredecessorFinding,
-    PredecessorObservation, PredecessorResult, ProbeFailure, SourceLocus, TOOLCHAIN_ARMS,
-    TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement, ToolchainDeclaration, ToolchainError,
-    ToolchainReport, TreeInput, TreeJurisdiction, compare_predecessor, measure_toolchain,
+    JavascriptUnusedStatus, LOCAL_PATH_MARKER, MeasurementEngine, PACKAGED_ENV_INCLUDES,
+    PACKAGED_ENV_PROFILE, PACKAGED_JAVASCRIPT_EXEMPTIONS, PACKAGED_SCANNER_EXCLUDES,
+    PACKAGED_TASTE_WORDS, PACKAGED_TEST_PATHS, PackagedEnvironmentProfile, ProbeFailure,
+    SourceLocus, TOOLCHAIN_ARMS, TOOLCHAIN_REPORT_VERSION, ToolEvidence, ToolRequirement,
+    ToolchainDeclaration, ToolchainError, ToolchainReport, TreeInput, TreeJurisdiction,
+    measure_toolchain,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use toolchain::{

@@ -4,8 +4,7 @@
 //! memory, and publishes them only through [`PendingState::accept`]. The
 //! current ledger lives below Git's common directory, so linked worktrees see
 //! one authority. When that ledger is absent, a run starts from empty current
-//! state. Predecessor-owned ledgers are outside this module's read and write
-//! surface and remain untouched indefinitely.
+//! state.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};

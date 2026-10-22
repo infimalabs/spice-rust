@@ -8,7 +8,7 @@ use super::declaration::{
     KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
     STRUCTURAL_ARMS, STRUCTURAL_METRICS, metric_parser_declaration,
 };
-use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
+use crate::manifest::GateId;
 
 /// The sole report schema for compiled structural metrics.
 pub const STRUCTURAL_METRIC_REPORT_VERSION: u64 = 2;
@@ -460,7 +460,6 @@ pub enum EvidenceState {
     },
     Unsupported {
         source_field: String,
-        owning_release: String,
         reason: String,
         recovery: String,
     },
@@ -489,15 +488,14 @@ impl EvidenceState {
         }
     }
 
-    /// Exact predecessor-owned refusal for an unrepresentable input.
-    pub fn predecessor_unsupported(
+    /// Exact refusal for a selected input this release cannot represent.
+    pub fn unsupported(
         source_field: impl Into<String>,
         reason: impl Into<String>,
         recovery: impl Into<String>,
     ) -> Self {
         Self::Unsupported {
             source_field: source_field.into(),
-            owning_release: PREDECESSOR_GATE_RELEASE.to_owned(),
             reason: reason.into(),
             recovery: recovery.into(),
         }
@@ -760,11 +758,10 @@ fn validate_state(
         | EvidenceState::Timeout { reason, .. } => require_reason(declaration.id(), reason),
         EvidenceState::Unsupported {
             source_field,
-            owning_release,
             reason,
             recovery,
         } => {
-            for value in [source_field, owning_release, reason, recovery] {
+            for value in [source_field, reason, recovery] {
                 require_reason(declaration.id(), value)?;
             }
             Ok(())

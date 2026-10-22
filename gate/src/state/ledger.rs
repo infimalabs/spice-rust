@@ -1,6 +1,6 @@
 use super::*;
 
-/// Which predecessor sticky ledger owns an entry.
+/// Which sticky ledger owns an entry.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LatchKind {
@@ -35,7 +35,7 @@ pub struct FunctionKey {
     function: String,
 }
 
-/// A sticky key in one of the two predecessor shapes.
+/// A sticky key in one of the two ledger shapes.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum StateKey {

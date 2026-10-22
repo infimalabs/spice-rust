@@ -284,7 +284,7 @@ impl MetricDeclaration {
     }
 }
 
-/// One of the four structural arms in fixed predecessor-relative order.
+/// One of the four structural arms in fixed battery order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArmDeclaration {
     id: GateId,

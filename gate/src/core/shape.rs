@@ -105,9 +105,9 @@ pub(super) fn repo_shape(
 
 /// The whole packaging metadata of the captured tree, empty when it has none.
 ///
-/// A file that is present and undecodable refuses. The predecessor read it as
-/// nothing, but nothing is what an absent file says, and answering both with a
-/// skip would let a broken `pyproject.toml` retire this arm quietly.
+/// A file that is present and undecodable refuses. Nothing is what an absent
+/// file says, and answering both with a skip would let a broken
+/// `pyproject.toml` retire this arm quietly.
 ///
 /// # Errors
 ///
@@ -152,8 +152,8 @@ fn active_roots(declared: &[String], tree: &TreeIndex<'_>) -> Vec<String> {
 
 /// The module-name shape every scanned name is held to.
 ///
-/// Compiled as a whole-name match, which is what the predecessor's `fullmatch`
-/// means and what an unanchored tracked pattern would otherwise lose.
+/// Compiled as a whole-name match, which an unanchored tracked pattern would
+/// otherwise lose.
 fn boundary_pattern(policy: &ShapePolicy) -> Result<Regex, CoreInputError> {
     let field = "policy.package.boundary_underscore_pattern";
     let pattern = policy
@@ -166,7 +166,7 @@ fn boundary_pattern(policy: &ShapePolicy) -> Result<Regex, CoreInputError> {
         .map_err(|reason| CoreInputError::new(format!("{field}: {reason}")))
 }
 
-/// Test-root patterns in the predecessor's derivation precedence.
+/// Test-root patterns in fixed derivation precedence.
 ///
 /// Tracked policy wins; pytest's own configuration answers next, because a
 /// repository that already told pytest where its tests live has told this arm

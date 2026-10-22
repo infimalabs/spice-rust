@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// The narrowest file-class declaration a policy document can be loaded with.
 ///
-/// Migration requires all three selections, so no document loads without them
+/// Parsing requires all three selections, so no document loads without them
 /// and anything that needs a valid document for some other purpose has to
 /// carry them. That text lives here once instead of being restated at each
 /// such place, because a restatement drifts from the parser silently: it keeps

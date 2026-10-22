@@ -1,4 +1,4 @@
-//! Exact supported subset of predecessor path and stem matching.
+//! Exact supported path and stem matching dialect.
 
 use regex::Regex;
 

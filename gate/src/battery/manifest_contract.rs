@@ -3,16 +3,16 @@ use serde::{Deserialize, Serialize};
 use super::{ArmFamily, BatteryError};
 use crate::core::core_declarations;
 use crate::hygiene::HYGIENE_ARMS;
-use crate::manifest::{GateId, PREDECESSOR_GATE_RELEASE};
+use crate::manifest::GateId;
 use crate::metrics::STRUCTURAL_ARMS;
 use crate::toolchain::TOOLCHAIN_ARMS;
 
 /// The only battery-report and canonical-manifest schema.
-pub const GATE_BATTERY_VERSION: u64 = 1;
+pub const GATE_BATTERY_VERSION: u64 = 2;
 /// The exact canonical disposition manifest compiled into this crate.
 pub const CANONICAL_BATTERY_MANIFEST: &str = ::std::include_str!("manifest.toml");
 
-/// Exactly one disposition for one predecessor arm.
+/// Exactly one disposition for one battery arm.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", tag = "disposition")]
 pub enum ArmDisposition {
@@ -26,22 +26,11 @@ pub enum ArmDisposition {
 /// One ordered canonical manifest row.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BatteryManifestArm {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) predecessor: Option<String>,
     #[serde(flatten)]
     pub(super) disposition: ArmDisposition,
 }
 
 impl BatteryManifestArm {
-    /// Exact predecessor standard-arm spelling, absent for a native arm.
-    ///
-    /// A row omits the name when release 0.31.0 declared no step for the
-    /// compiled identity, so no reader can attribute one to it.
-    #[must_use]
-    pub fn predecessor(&self) -> Option<&str> {
-        self.predecessor.as_deref()
-    }
-
     /// Compiled declaration bound to this row.
     #[must_use]
     pub const fn disposition(&self) -> &ArmDisposition {
@@ -54,7 +43,6 @@ impl BatteryManifestArm {
 #[serde(deny_unknown_fields)]
 pub struct BatteryManifest {
     version: u64,
-    predecessor_release: String,
     pub(super) arms: Vec<BatteryManifestArm>,
 }
 
@@ -78,13 +66,7 @@ impl BatteryManifest {
         self.version
     }
 
-    /// Release whose standard battery supplied the row names and order.
-    #[must_use]
-    pub fn predecessor_release(&self) -> &str {
-        &self.predecessor_release
-    }
-
-    /// Every compiled row in predecessor battery order.
+    /// Every compiled row in canonical battery order.
     #[must_use]
     pub fn arms(&self) -> &[BatteryManifestArm] {
         &self.arms
@@ -95,11 +77,6 @@ impl BatteryManifest {
             return Err(BatteryError::new(format!(
                 "unsupported battery manifest version {}; expected {GATE_BATTERY_VERSION}",
                 self.version
-            )));
-        }
-        if self.predecessor_release != PREDECESSOR_GATE_RELEASE {
-            return Err(BatteryError::new(format!(
-                "battery predecessor release must be {PREDECESSOR_GATE_RELEASE:?}"
             )));
         }
         if self.arms.len() != GateId::BATTERY.len() {
@@ -121,15 +98,6 @@ fn validate_arm(
     arm: &BatteryManifestArm,
     expected: GateId,
 ) -> Result<(), BatteryError> {
-    let expected_predecessor = expected
-        .predecessor_declared()
-        .then(|| expected.predecessor_name());
-    if arm.predecessor.as_deref() != expected_predecessor {
-        return Err(BatteryError::new(format!(
-            "battery arm {position} must be predecessor {expected_predecessor:?}, received {:?}",
-            arm.predecessor
-        )));
-    }
     let ArmDisposition::Compiled {
         gate_id,
         family,

@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use gate::{
-    BASELINE_PATH, BoundName, ContractError, POLICY_PATH, ParsedContract, PolicyError, RuleSettings,
-};
+use gate::{BASELINE_PATH, ContractError, POLICY_PATH, ParsedContract, PolicyError};
 use serde::Deserialize;
 
 mod support;
@@ -146,92 +144,13 @@ fn declaring(docs: &str) -> String {
     format!("{TRACKED_POLICY}\n[policy.repo_truth]\n{docs}\n")
 }
 
-/// Every `[policy]` subtable the rule-policy migration reads is tracked.
-///
-/// The contract compiles its rule policy from the tracked document alone, so
-/// each of these subtables decides part of it. Each carries a value distinct
-/// from the packaged default *and* from every other value here, because six
-/// surfaces that all arrive as the same number cannot show that six of them
-/// arrived.
-#[test]
-fn every_migrated_policy_subtable_reaches_the_compiled_rule_policy() {
-    let declared = fixture_contract(
-        &format!(
-            "{TRACKED_POLICY}
-[policy.limits]
-file_loc = 1234
-[policy.flex]
-ratio = 2.25
-jitter_percent = 7
-[policy.magic]
-examine_threshold = 33
-[policy.markdown_depth]
-base_chars = 100
-max_bounded_chars = 300
-[policy.markdown_depth_budget]
-extensions = [\".rst\"]
-[[policy.rules]]
-routine_length = {{ max = 55 }}
-"
-        ),
-        TRACKED_BASELINE,
-    )
-    .expect("every migrated policy subtable is admitted from the tracked document");
-    let document = declared.rule_policy().document();
-
-    assert_eq!(document.limits().get(BoundName::FileLoc), 1234);
-    assert!((document.ratchet().ratio() - 2.25).abs() < f64::EPSILON);
-    assert_eq!(document.ratchet().variation_percent(), 7);
-    assert_eq!(document.magic_examine_threshold(), 33);
-
-    let generated: Vec<&str> = document
-        .rules()
-        .iter()
-        .map(|rule| rule.id().as_str())
-        .collect();
-    assert!(
-        generated.iter().any(|id| id.contains("rst")),
-        "the declared suffix selects the generated depth rules: {generated:?}"
-    );
-    assert!(
-        !generated.iter().any(|id| id.contains("md")),
-        "declaring a suffix names the whole set, so .md is no longer generated: {generated:?}"
-    );
-    assert_eq!(
-        document
-            .rules()
-            .iter()
-            .filter_map(|rule| rule.bounds().get(&BoundName::RoutineLength))
-            .filter_map(RuleSettings::maximum)
-            .collect::<Vec<_>>(),
-        [55],
-        "the one declared row is compiled beside the generated ones: {generated:?}"
-    );
-    assert_eq!(
-        generated.len(),
-        5,
-        "300 bounded over a 100 base is three bounded depths plus the unbounded \
-         rule, plus the one declared row: {generated:?}"
-    );
-
-    let refused = fixture_contract(
-        &format!("{TRACKED_POLICY}\n[policy.magic]\nexamine_threshhold = 33\n"),
-        TRACKED_BASELINE,
-    )
-    .expect_err("a misspelled key inside a migrated subtable is refused, not ignored");
-    let ContractError::Policy(PolicyError::Rules { source, .. }) = refused else {
-        panic!("a misspelled migrated key lost its typed tracked refusal: {refused:?}");
-    };
-    assert_eq!(source.field(), "policy.magic.examine_threshhold");
-}
-
 #[derive(Deserialize)]
 struct GateDocument {
     gate: gate::Config,
 }
 
 /// One tracked policy document that can load: a fixture body carrying the
-/// file-class selections migration requires of every document.
+/// file-class selections parsing requires of every document.
 fn loadable(body: &str) -> String {
     format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
 }

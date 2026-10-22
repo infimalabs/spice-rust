@@ -5,18 +5,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gate::battery::{ArmEvidence, ArmExecution, BatteryState};
 use gate::metrics::{
     EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricFinding, MetricId, MetricKey,
-    MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
-    ParserEvidence, ParserId, PredecessorMetricObservation, PredecessorMetricResult,
-    RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, ResolvedMetricRule, RuleBinding,
+    MetricMeasurement, MetricReport, MetricStateBinding, MetricUnit, ParseError, ParserEvidence,
+    ParserId, RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, ResolvedMetricRule, RuleBinding,
     RustDocMarkdownCitationScan, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
-    compare_predecessor_metric, measure_complexity, measure_file_shape,
-    measure_repository_document, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
-    scan_markdown_link_case, scan_rust_doc_markdown_citations,
+    measure_complexity, measure_file_shape, measure_repository_document, resolve_magic_metric,
+    resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
+    scan_rust_doc_markdown_citations,
 };
 use gate::state::{ActorInputs, CurrentState, LatchKind, RenameMap};
-use gate::{
-    GateId, PREDECESSOR_GATE_RELEASE, PolicyContext, RulePolicy, migrate_predecessor_policy,
-};
+use gate::{GateId, PolicyContext, RulePolicy};
 
 const EXISTING_MAGIC_VALUE: u64 = 75;
 const FIXTURE_BASE_LIMIT: u64 = 1_000;
@@ -32,17 +29,16 @@ const STATE_TEST_CLOCK: f64 = 10_000.0;
 
 static NEXT_STATE_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
-/// One predecessor document that can load: a fixture body carrying the
-/// file-class selections migration requires of every document.
-///
-/// The bodies below say nothing about file classes because none of them is
-/// about file classes, but a document omitting them does not load at all.
-fn loadable(body: &str) -> String {
-    format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
-}
-
 const SCOPED_POLICY: &str = r#"
-[policy.limits]
+regex_dialect = "rust-regex-1"
+magic_examine_threshold = 10
+
+[file_classes]
+file_shape = [".rs"]
+complexity = [".rs"]
+magic = [".rs"]
+
+[limits]
 file_loc = 10
 file_bytes = 100
 routine_ccn = 5
@@ -50,27 +46,66 @@ routine_length = 8
 commit_message_wrap = 72
 repo_truth_doc_chars = 1000
 
-[policy.flex]
+[ratchet]
 ratio = 2.0
-jitter_percent = 7
+variation_percent = 7
 
-[policy.magic]
-examine_threshold = 10
-
-[policy.markdown_depth_budget]
-extensions = [".mdoc"]
-stem_pattern = "[A-Z_]+"
-
-[[policy.rules]]
+[[rules]]
+id = "src"
+source_order = 0
+priority = 1
 scopes = { paths = ["src/**"] }
+[rules.source]
+location = "current.toml"
+field = "rules.src"
+kind = "current"
+[rules.bounds.file_loc]
 multiplier = 2.0
-flex = 2.0
+ratchet = 2.0
+[rules.bounds.file_bytes]
+multiplier = 2.0
+ratchet = 2.0
+[rules.bounds.routine_ccn]
+multiplier = 2.0
+ratchet = 2.0
+[rules.bounds.routine_length]
+multiplier = 2.0
+ratchet = 2.0
 
-[[policy.rules]]
+[[rules]]
+id = "src-strict"
+source_order = 1
+priority = 1
 scopes = { paths = ["src/strict/**"] }
-[policy.rules.magic]
-examine_threshold = 100
+magic = { examine_threshold = 100 }
+[rules.source]
+location = "current.toml"
+field = "rules.src-strict"
+kind = "current"
+
+[[rules]]
+id = "upper-docs"
+source_order = 2
+priority = 1
+scopes = { extensions = [".mdoc"] }
+stem_pattern = "[A-Z_]+"
+[rules.source]
+location = "current.toml"
+field = "rules.upper-docs"
+kind = "current"
+[rules.bounds.repo_truth_doc_chars]
+unlimited = true
 "#;
+
+fn scoped_policy(variation_percent: u64) -> RulePolicy {
+    let text = SCOPED_POLICY.replacen(
+        "variation_percent = 7",
+        &format!("variation_percent = {variation_percent}"),
+        1,
+    );
+    let document = toml::from_str(&text).expect("scoped policy decodes");
+    RulePolicy::compile(document).expect("scoped policy compiles")
+}
 
 #[test]
 fn declarations_freeze_ids_units_parsers_scopes_and_order() {
@@ -136,8 +171,7 @@ fn declarations_freeze_ids_units_parsers_scopes_and_order() {
 /// parser is what makes the check specific to this metric's declaration.
 #[test]
 fn measured_parser_evidence_binds_the_parser_its_arm_declares() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
-        .expect("predecessor policy migrates once");
+    let policy = scoped_policy(7);
     let complexity_rule = resolve_metric_rule(
         &policy,
         MetricId::RoutineCcn,
@@ -198,7 +232,7 @@ fn measured_parser_evidence_binds_the_parser_its_arm_declares() {
 }
 
 #[test]
-fn native_file_and_document_parsers_preserve_predecessor_counts() {
+fn native_file_and_document_parsers_count_lines_bytes_and_characters() {
     let source = "alpha\r\nbeta\u{2028}gamma\n".as_bytes();
     let shape = measure_file_shape("src/app.rs", source).expect("UTF-8 source measures");
     assert_eq!(shape.path(), "src/app.rs");
@@ -218,7 +252,7 @@ fn native_file_and_document_parsers_preserve_predecessor_counts() {
         );
     }
     let invalid = measure_file_shape("src/invalid.rs", b"a\xffb\nc")
-        .expect_err("the predecessor excludes invalid UTF-8 source blobs");
+        .expect_err("invalid UTF-8 source blobs are refused");
     assert!(matches!(
         invalid,
         ParseError::Unsupported {
@@ -228,8 +262,8 @@ fn native_file_and_document_parsers_preserve_predecessor_counts() {
     ));
     assert!(matches!(
         invalid.into_evidence_state(),
-        EvidenceState::Unsupported { owning_release, .. }
-            if owning_release == PREDECESSOR_GATE_RELEASE
+        EvidenceState::Unsupported { source_field, .. }
+            if source_field == "policy.file_shape.source_suffixes"
     ));
     assert_eq!(
         measure_file_shape("src/empty.rs", b"")
@@ -459,22 +493,22 @@ fn magic_delta_matches_supported_comparisons_and_refuses_ast_substitution() {
         None,
         10,
     )
-    .expect("Python line separators retain predecessor line numbers");
+    .expect("Unicode line separators advance magic-number line numbers");
     assert_eq!(separated[0].line(), 2);
     let unclosed_comment =
         scan_magic_regressions("src/app.rs", &format!("/* x > {NEW_MAGIC_VALUE}"), None, 10)
-            .expect("predecessor regex leaves an unclosed block-comment marker intact");
+            .expect("an unclosed block-comment marker is not a comment");
     assert_eq!(unclosed_comment[0].literal(), "100");
     let pair = format!("{EXISTING_MAGIC_VALUE} < {NEW_MAGIC_VALUE}");
     let pair = scan_magic_regressions("src/app.rs", &pair, None, 10)
-        .expect("one comparison follows predecessor non-overlapping matching");
+        .expect("one comparison is matched once");
     assert_eq!(
         pair.iter().map(MagicFinding::literal).collect::<Vec<_>>(),
         [EXISTING_MAGIC_VALUE.to_string()]
     );
     let chain = format!("{PYTHON_MAGIC_VALUE} < {EXISTING_MAGIC_VALUE} < {NEW_MAGIC_VALUE}");
     let chain = scan_magic_regressions("src/app.rs", &chain, None, 10)
-        .expect("comparison chains follow predecessor non-overlapping matching");
+        .expect("comparison chains match without overlap");
     assert_eq!(
         chain.iter().map(MagicFinding::literal).collect::<Vec<_>>(),
         [
@@ -529,7 +563,7 @@ fn markdown_links_use_projected_inventory_and_exact_ascii_case() {
     assert_eq!(findings[0].expected_path(), "Docs/Guide.md");
     let separated =
         scan_markdown_link_case("README.md", "plain\u{2028}[Guide](docs/guide.md)", &tracked)
-            .expect("Python line separators retain predecessor link line numbers");
+            .expect("Unicode line separators advance link line numbers");
     assert_eq!(separated[0].line(), 2);
 
     assert!(matches!(
@@ -724,9 +758,8 @@ fn rust_doc_citation_arm_state(scan: &RustDocMarkdownCitationScan) -> BatterySta
 }
 
 #[test]
-fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
-        .expect("predecessor policy migrates once");
+fn policy_binding_preserves_scoped_rules_magic_and_stem_patterns() {
+    let policy = scoped_policy(7);
     let file = resolve_metric_rule(
         &policy,
         MetricId::FileLines,
@@ -745,45 +778,24 @@ fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
     .expect("scoped magic rule resolves");
     assert_eq!(magic.threshold(), 100);
 
-    let root = resolve_metric_rule(
-        &policy,
-        MetricId::RepositoryDocumentCharacters,
-        &PolicyContext::new().with_path("DOCS_MAIN.mdoc"),
-    )
-    .expect("root generated Markdown rule resolves");
-    assert!(
-        root.binding()
-            .match_basis()
-            .contains("dialect=rust-regex-1")
-    );
-    let nested = resolve_metric_rule(
+    let upper = resolve_metric_rule(
         &policy,
         MetricId::RepositoryDocumentCharacters,
         &PolicyContext::new().with_path("docs/DOCS_MAIN.mdoc"),
     )
-    .expect("nested generated Markdown rule resolves");
-    let deep = resolve_metric_rule(
-        &policy,
-        MetricId::RepositoryDocumentCharacters,
-        &PolicyContext::new().with_path("docs/reference/DOCS_MAIN.mdoc"),
-    )
-    .expect("deep generated Markdown rule resolves");
-    let unlimited = resolve_metric_rule(
-        &policy,
-        MetricId::RepositoryDocumentCharacters,
-        &PolicyContext::new().with_path("docs/reference/generated/DOCS_MAIN.mdoc"),
-    )
-    .expect("very deep generated Markdown rule resolves");
-    assert_eq!(
-        (root.base_limit(), nested.base_limit(), deep.base_limit()),
-        (10_000, 20_000, 30_000)
+    .expect("stem-pattern rule resolves");
+    assert!(upper.unlimited());
+    assert!(
+        upper
+            .binding()
+            .match_basis()
+            .contains("dialect=rust-regex-1")
     );
-    assert!(unlimited.unlimited());
 
     let wrong_stem = resolve_metric_rule(
         &policy,
         MetricId::RepositoryDocumentCharacters,
-        &PolicyContext::new().with_path("guide.mdoc"),
+        &PolicyContext::new().with_path("docs/guide.mdoc"),
     )
     .expect("nonmatching stem uses global policy");
     assert_eq!(wrong_stem.base_limit(), 1000);
@@ -792,15 +804,13 @@ fn policy_binding_preserves_regex_rules_magic_and_markdown_depth() {
 
 #[test]
 fn missing_rule_context_refuses_instead_of_selecting_a_global_default() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
-        .expect("predecessor policy migrates once");
+    let policy = scoped_policy(7);
     assert!(resolve_metric_rule(&policy, MetricId::FileLines, &PolicyContext::new()).is_err());
 }
 
 #[test]
 fn bounded_metrics_cross_current_state_with_every_latch_transition_and_actor_variation() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
-        .expect("predecessor policy migrates once");
+    let policy = scoped_policy(7);
     let fixture = MetricStateFixture::new();
 
     let latched = reconcile_file_state(&fixture, &policy, STATE_LATCH_VALUE, STATE_TEST_CLOCK);
@@ -838,8 +848,7 @@ fn bounded_metrics_cross_current_state_with_every_latch_transition_and_actor_var
 
 #[test]
 fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
-    let policy = migrate_predecessor_policy("fixtures/metrics.toml", &loadable(SCOPED_POLICY))
-        .expect("predecessor policy migrates once");
+    let policy = scoped_policy(7);
     let function_rule = resolve_metric_rule(
         &policy,
         MetricId::RoutineCcn,
@@ -903,16 +912,8 @@ fn state_binding_preserves_function_keys_and_unlimited_document_rules() {
 #[test]
 fn state_binding_refuses_a_decision_from_another_variation_policy() {
     const ABOVE_U32: u64 = 4_294_967_296;
-    let large_policy = migrate_predecessor_policy(
-        "fixtures/large-variation.toml",
-        &loadable("[policy.flex]\nratio = 2.0\njitter_percent = 4294967296\n"),
-    )
-    .expect("large predecessor variation migrates");
-    let small_policy = migrate_predecessor_policy(
-        "fixtures/small-variation.toml",
-        &loadable("[policy.flex]\nratio = 2.0\njitter_percent = 7\n"),
-    )
-    .expect("small predecessor variation migrates");
+    let large_policy = scoped_policy(ABOVE_U32);
+    let small_policy = scoped_policy(7);
     let context = PolicyContext::new().with_path("src/lib.rs");
     let large_rule = resolve_metric_rule(&large_policy, MetricId::FileLines, &context)
         .expect("large variation rule resolves");
@@ -955,12 +956,12 @@ fn state_binding_refuses_a_decision_from_another_variation_policy() {
 }
 
 #[test]
-fn evidence_vocabulary_is_total_and_release_owned() {
+fn evidence_vocabulary_is_total() {
     let states = [
         EvidenceState::Unavailable {
             reason: "selected complexity source could not be read".to_owned(),
         },
-        EvidenceState::predecessor_unsupported(
+        EvidenceState::unsupported(
             "policy.languages.magic",
             "Python AST classification is not compiled",
             "remove .py or compile an exact parser",
@@ -990,65 +991,6 @@ fn evidence_vocabulary_is_total_and_release_owned() {
         let row = measured_evidence(metric);
         assert!(matches!(row.state(), EvidenceState::Measured { .. }));
     }
-
-    let converted = ParseError::Unsupported {
-        source_field: "policy.languages.magic".to_owned(),
-        reason: "parser class is absent".to_owned(),
-        recovery: "compile the parser".to_owned(),
-    }
-    .into_evidence_state();
-    assert!(matches!(
-        converted,
-        EvidenceState::Unsupported { owning_release, .. } if owning_release == "0.31.0"
-    ));
-}
-
-#[test]
-fn parity_proves_supported_values_and_exact_release_owned_refusals() {
-    let key = MetricKey::path("src/app.rs").unwrap();
-    let current = MetricEvidence::new(
-        MetricId::FileLines,
-        key.clone(),
-        EvidenceState::measured(bounded_measurement(MetricId::FileLines, 12, "file_loc")),
-    )
-    .unwrap();
-    let predecessor = PredecessorMetricObservation::new(
-        MetricId::FileLines,
-        key,
-        PredecessorMetricResult::Measured(12),
-    );
-    assert!(matches!(
-        compare_predecessor_metric(&predecessor, &current).unwrap(),
-        MetricParity::Equivalent {
-            value: Some(12),
-            ..
-        }
-    ));
-
-    let key = MetricKey::path("src/app.py").unwrap();
-    let refused = MetricEvidence::new(
-        MetricId::MagicNumberRegressions,
-        key.clone(),
-        EvidenceState::predecessor_unsupported(
-            "policy.languages.magic",
-            "Python AST classification is not compiled",
-            "remove .py or compile an exact parser",
-        ),
-    )
-    .unwrap();
-    let predecessor = PredecessorMetricObservation::new(
-        MetricId::MagicNumberRegressions,
-        key,
-        PredecessorMetricResult::Measured(1),
-    );
-    assert!(matches!(
-        compare_predecessor_metric(&predecessor, &refused).unwrap(),
-        MetricParity::Refused {
-            source_field,
-            owning_release,
-            ..
-        } if source_field == "policy.languages.magic" && owning_release == "0.31.0"
-    ));
 }
 
 #[test]

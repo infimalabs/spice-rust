@@ -39,7 +39,7 @@ const WORKSPACE_PARENT_PREFIX: &str = "spice-gate-workspaces-";
 /// unit metadata. Only the timestamps carry the cost.
 ///
 /// The family is named apart from [`WORKSPACE_PREFIX`] rather than nested
-/// inside it because a predecessor gate sharing this temporary directory
+/// inside it because an older gate build sharing this temporary directory
 /// sweeps every *unheld* workspace of its own family, and a retained
 /// workspace is unheld between runs by design. A separate prefix is invisible
 /// to that sweep, so a mixed-version machine costs a recompile at most where a

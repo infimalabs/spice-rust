@@ -1,33 +1,4 @@
 use crate::GateId;
-use crate::manifest::PREDECESSOR_GATE_RELEASE;
-
-/// Predecessor source and observation retained for parity review.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PredecessorObservation {
-    release: &'static str,
-    source: &'static str,
-    observation: &'static str,
-}
-
-impl PredecessorObservation {
-    /// Release that owned the replaced behavior.
-    #[must_use]
-    pub const fn release(self) -> &'static str {
-        self.release
-    }
-
-    /// Exact predecessor implementation locus.
-    #[must_use]
-    pub const fn source(self) -> &'static str {
-        self.source
-    }
-
-    /// Predecessor configuration or runtime observation being preserved.
-    #[must_use]
-    pub const fn observation(self) -> &'static str {
-        self.observation
-    }
-}
 
 /// Closed acquisition contract for one compiled core arm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,7 +46,6 @@ pub struct CoreArmDeclaration {
     id: GateId,
     tool: CoreToolContract,
     schema: &'static str,
-    predecessor: PredecessorObservation,
 }
 
 impl CoreArmDeclaration {
@@ -95,12 +65,6 @@ impl CoreArmDeclaration {
     #[must_use]
     pub const fn schema(self) -> &'static str {
         self.schema
-    }
-
-    /// Exact predecessor behavior represented by this arm.
-    #[must_use]
-    pub const fn predecessor(self) -> PredecessorObservation {
-        self.predecessor
     }
 }
 
@@ -149,14 +113,6 @@ const fn command(
     }
 }
 
-const fn predecessor(source: &'static str, observation: &'static str) -> PredecessorObservation {
-    PredecessorObservation {
-        release: PREDECESSOR_GATE_RELEASE,
-        source,
-        observation,
-    }
-}
-
 const DECLARATIONS: [CoreArmDeclaration; 8] = [
     CoreArmDeclaration {
         id: GateId::MergeIntegrity,
@@ -165,10 +121,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             timeout: CoreTimeoutContract::Required,
         },
         schema: "merge-tree-comparison-v1",
-        predecessor: predecessor(
-            "spice/hooks/precommit.py::_merge_integrity_diagnostic",
-            "MERGE_HEAD, staged tree, HEAD tree, merge-tree result and conflicted paths",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::PlanningPhase,
@@ -176,10 +128,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             provider: "board active-claim workflow head",
         },
         schema: "active-claim-phase-v1",
-        predecessor: predecessor(
-            "spice/hooks/precommit.py::_run_plan_phase_mutation_guard",
-            "Taskwarrior availability and active claimed task phase",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::RepoShape,
@@ -187,10 +135,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             provider: "gate immutable selected tree and admitted shape policy",
         },
         schema: "repo-shape-findings-v1",
-        predecessor: predecessor(
-            "spice/hooks/precommit.py::_run_shape_guards",
-            "package roots, generated paths, namespace, path-shape and name-cluster findings",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::Staging,
@@ -199,10 +143,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             timeout: CoreTimeoutContract::Required,
         },
         schema: "partial-staging-paths-v1",
-        predecessor: predecessor(
-            "spice/hooks/precommit.py::_run_staging_guard",
-            "intersection of staged and unstaged repository paths",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::RepoDocs,
@@ -210,12 +150,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             provider: "gate immutable selected tree and resolved bound state",
         },
         schema: "repo-doc-character-bounds-v1",
-        predecessor: predecessor(
-            // Immutable Python predecessor provenance; live Rust declarations
-            // use the current gate vocabulary everywhere else.
-            "spice/studies/repodocs.py::repo_truth_doc_findings",
-            "selected doctrine documents, decoded character counts, active caps and peer claims",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::ConfigKeyValidity,
@@ -223,10 +157,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             provider: "spice admitted layered configuration",
         },
         schema: "config-admission-findings-v1",
-        predecessor: predecessor(
-            "spice/studies/configgovernance.py::run_config_key_validity_gate",
-            "packaged configuration and every active layered configuration key",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::ConfigFalseDisable,
@@ -234,10 +164,6 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             provider: "spice compiled false-disable registry inventory",
         },
         schema: "config-declaration-consumer-inventory-v1",
-        predecessor: predecessor(
-            "spice/studies/configgovernance.py::run_false_disable_gate",
-            "declared false-disable registry paths, resolver behavior and compiled consumers",
-        ),
     },
     CoreArmDeclaration {
         id: GateId::ConfigTrackedTrust,
@@ -245,14 +171,10 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
             provider: "spice compiled tracked-config trust inventory",
         },
         schema: "config-declaration-consumer-inventory-v1",
-        predecessor: predecessor(
-            "spice/studies/configgovernance.py::run_tracked_file_trust_gate",
-            "declared executable repository config paths and compiled approval guards",
-        ),
     },
 ];
 
-/// The eight declarations in fixed predecessor-relative order.
+/// The eight declarations in fixed battery order.
 #[must_use]
 pub const fn core_declarations() -> &'static [CoreArmDeclaration; 8] {
     &DECLARATIONS

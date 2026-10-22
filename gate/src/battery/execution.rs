@@ -63,7 +63,6 @@ impl ArmExecution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledArm {
     position: usize,
-    predecessor: Option<String>,
     gate_id: GateId,
     family: ArmFamily,
     declaration: String,
@@ -74,12 +73,6 @@ impl CompiledArm {
     #[must_use]
     pub const fn position(&self) -> usize {
         self.position
-    }
-
-    /// Exact predecessor standard-arm name, absent for a native arm.
-    #[must_use]
-    pub fn predecessor(&self) -> Option<&str> {
-        self.predecessor.as_deref()
     }
 
     /// Stable compiled identity.
@@ -116,8 +109,6 @@ pub trait BatteryExecutor {
 #[serde(deny_unknown_fields)]
 pub struct BatteryArmResult {
     position: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    predecessor: Option<String>,
     gate_id: GateId,
     declaration: String,
     family: ArmFamily,
@@ -133,12 +124,6 @@ impl BatteryArmResult {
     #[must_use]
     pub const fn position(&self) -> usize {
         self.position
-    }
-
-    /// Exact predecessor standard-arm name, absent for a native arm.
-    #[must_use]
-    pub fn predecessor(&self) -> Option<&str> {
-        self.predecessor.as_deref()
     }
 
     /// Compiled gate identity.
@@ -545,7 +530,6 @@ fn execute_arm(
     let (gate_id, family) = (*gate_id, *family);
     let compiled = CompiledArm {
         position,
-        predecessor: arm.predecessor.clone(),
         gate_id,
         family,
         declaration: declaration.clone(),
@@ -561,7 +545,6 @@ fn execute_arm(
     };
     BatteryArmResult {
         position,
-        predecessor: arm.predecessor.clone(),
         gate_id,
         declaration: declaration.clone(),
         family,
@@ -618,7 +601,7 @@ fn validate_result(
     arm: &BatteryManifestArm,
     source: &Digest,
 ) -> Result<(), BatteryError> {
-    if result.position != position || result.predecessor != arm.predecessor {
+    if result.position != position {
         return Err(BatteryError::new(format!(
             "battery result {position} is missing or reordered"
         )));
@@ -662,10 +645,6 @@ pub(super) fn gate_set_digest(manifest: &BatteryManifest) -> Digest {
     bytes.extend_from_slice(b"\0compiled-declaration-identities\0");
     for (position, arm) in manifest.arms.iter().enumerate() {
         bytes.extend_from_slice(position.to_string().as_bytes());
-        bytes.push(0);
-        // An absent predecessor writes an empty field between its delimiters,
-        // which no declared arm name can produce.
-        bytes.extend_from_slice(arm.predecessor.as_deref().unwrap_or_default().as_bytes());
         bytes.push(0);
         let ArmDisposition::Compiled { declaration, .. } = &arm.disposition;
         bytes.extend_from_slice(declaration.as_bytes());

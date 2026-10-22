@@ -224,7 +224,7 @@ impl BoundRule {
         })
     }
 
-    /// Evaluate one value in the predecessor's explicit calculation order.
+    /// Evaluate one value in fixed calculation order.
     ///
     /// The effective flex limit is selected first, then the active limit, then
     /// enabled/over-limit, over-base, flex-breach, and finally latch transition.
@@ -317,7 +317,7 @@ pub fn varied_elastic_limit(
         - i128::from(variation_percent);
     let headroom = i128::from(elastic_limit - base_limit);
     // Any offset below -100 consumes more than the complete headroom even
-    // after binary64 rounding. At exactly -100, predecessor rounding can leave
+    // after binary64 rounding. At exactly -100, binary64 rounding can leave
     // a small positive remainder, so it must take the exact division path.
     if offset < COMPLETE_HEADROOM_REDUCTION_PERCENT {
         return Ok(base_limit);
@@ -325,13 +325,13 @@ pub fn varied_elastic_limit(
     let scaled = headroom
         .checked_mul(offset)
         .ok_or(BoundError::VariationOverflow)?;
-    let variation = predecessor_truncated_percentage(scaled)?;
+    let variation = binary64_truncated_percentage(scaled)?;
     let varied = i128::from(elastic_limit) + variation;
     let varied = varied.max(i128::from(base_limit));
     u64::try_from(varied).map_err(|_| BoundError::VariationOverflow)
 }
 
-fn predecessor_truncated_percentage(scaled: i128) -> Result<i128, BoundError> {
+fn binary64_truncated_percentage(scaled: i128) -> Result<i128, BoundError> {
     if scaled == 0 {
         return Ok(0);
     }

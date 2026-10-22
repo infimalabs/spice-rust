@@ -1,13 +1,13 @@
 //! The compiled environment law both environment arms hold one line to.
 //!
-//! [`super::PACKAGED_ENV_PROFILE`] ships its patterns in the dialect the
-//! predecessor wrote them in, and two constructs of that dialect have no
-//! equivalent in the engine this build compiles with. Both are answered here
-//! rather than dropped. The escape guard `(?<!\\)` is lifted out of the
-//! spelling and re-applied to every match it would have rejected. A quoted
-//! literal the predecessor holds together with a back-reference is compiled
-//! once per quote character, which accepts exactly the literals one
-//! back-referenced spelling accepts.
+//! [`super::PACKAGED_ENV_PROFILE`] ships its patterns in a Python `re`
+//! dialect, and two constructs of that dialect have no equivalent in the
+//! engine this build compiles with. Both are answered here rather than
+//! dropped. The escape guard `(?<!\\)` is lifted out of the spelling and
+//! re-applied to every match it would have rejected. A quoted literal the
+//! profile holds together with a back-reference is compiled once per quote
+//! character, which accepts exactly the literals one back-referenced spelling
+//! accepts.
 //!
 //! A packaged spelling this module cannot compile is a defect in the profile
 //! rather than an observation about a tree, so it panics at first use and a
@@ -46,7 +46,7 @@ const QUOTED_HOLE: &str = "{quoted}";
 /// The family whose destructuring idiom binds several names at once.
 const JAVASCRIPT: &str = "javascript";
 
-/// Access-site name templates per family, in predecessor order.
+/// Access-site name templates per family, in profile order.
 ///
 /// These read the literal name out of an access rather than deciding whether
 /// the access is one, which is what [`access_patterns`] does. A family absent
@@ -134,7 +134,7 @@ impl Guarded {
 
     /// Whether the guard admits one match beginning at `start`.
     ///
-    /// The predecessor spells this as a negative look-behind for one backslash,
+    /// The profile spells this as a negative look-behind for one backslash,
     /// so a match the source escaped is not an access.
     fn admits(&self, line: &str, start: usize) -> bool {
         !self.guarded || !line[..start].ends_with('\\')
@@ -175,11 +175,6 @@ pub(super) fn family(extension: &str) -> Option<&'static str> {
         .iter()
         .find(|(_, suffixes)| suffixes.contains(&suffix.as_str()))
         .map(|(family, _)| *family)
-}
-
-/// Whether one selected-tree path is the scanner's own implementation.
-pub(super) fn is_scanner_itself(path: &str) -> bool {
-    path.ends_with(PACKAGED_ENV_PROFILE.self_path_suffix)
 }
 
 /// Every one-based line of one decoded file the waiver marker covers.
@@ -268,7 +263,7 @@ fn gate_starts(family: &str, line: &str) -> BTreeSet<usize> {
 
 /// Every environment name one line references, deduplicated and ordered.
 ///
-/// A reference is any of the four things the predecessor counts: a literal read
+/// A reference is any of four things: a literal read
 /// at an access site of the line's own family, a literal bound to a declaration
 /// symbol, any quoted literal on a line already about the environment, and any
 /// literal the watchlist recognizes. Waivers do not enter here, because a
@@ -307,7 +302,7 @@ pub(super) fn references(family: Option<&str>, line: &str) -> BTreeSet<String> {
 
 /// Every environment-name reference in one file, with its one-based line.
 ///
-/// Ordinary references retain the predecessor's one-line rules. Rust adds one
+/// Ordinary references follow one-line rules. Rust adds one
 /// closed construction the line scanner cannot see: a literal-only `concat!`
 /// whose fragments reconstruct a watchlisted or declared ledger name. The
 /// macro may wrap across lines, and its reference belongs to the line where the
@@ -556,9 +551,9 @@ fn is_ledger_name(name: &str) -> bool {
 
 /// The stable finding name one access family reports under.
 ///
-/// The packaged table names every family it declares an idiom for. The
-/// predecessor still spells a default for a family it does not, and that
-/// spelling is carried here rather than invented at the call site.
+/// The packaged table names every family it declares an idiom for; any other
+/// family reports under the default spelled here rather than one invented at
+/// the call site.
 fn finding_name(family: &str) -> String {
     PACKAGED_ENV_PROFILE
         .finding_names
@@ -656,7 +651,7 @@ fn delimiter_delta(line: &str) -> i32 {
 /// Every regex spelling one template stands for, in quote-character order.
 ///
 /// A template naming a quoted literal compiles twice, once per quote character,
-/// because the predecessor holds the opening and closing quote equal with a
+/// because the profile holds the opening and closing quote equal with a
 /// back-reference this engine has none of.
 fn spellings(template: &str) -> Vec<String> {
     let named = template.replace(NAME_HOLE, &format!("(?P<name>{NAME_LITERAL})"));
@@ -683,12 +678,11 @@ fn compiled(templates: &[&str]) -> Vec<Guarded> {
         .collect()
 }
 
-/// Compile one watchlist pattern into the quoted form the predecessor reads.
+/// Compile one watchlist pattern into its quoted form.
 ///
-/// This is the predecessor's own quoted spelling for watchlist and declared
-/// names, which admits a literal opened and closed by different quote
-/// characters. It is deliberately not the back-referenced form used at access
-/// sites, and the difference is the predecessor's, not this build's.
+/// Watchlist and declared names admit a literal opened and closed by different
+/// quote characters. This is deliberately not the back-referenced form used at
+/// access sites.
 fn quoted_watch(patterns: impl IntoIterator<Item = String>) -> Vec<Guarded> {
     patterns
         .into_iter()

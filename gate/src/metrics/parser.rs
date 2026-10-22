@@ -31,7 +31,7 @@ pub use markdown::{
 pub enum ParseError {
     /// The selected input is outside the parser's declared file class.
     NotApplicable { reason: String },
-    /// Predecessor input has no exact current representation.
+    /// The selected input has no exact representation in this release.
     Unsupported {
         source_field: String,
         reason: String,
@@ -53,7 +53,7 @@ impl ParseError {
                 source_field,
                 reason,
                 recovery,
-            } => EvidenceState::predecessor_unsupported(source_field, reason, recovery),
+            } => EvidenceState::unsupported(source_field, reason, recovery),
             Self::Malformed { input, reason } => EvidenceState::Failed {
                 reason: format!("malformed {input}: {reason}"),
                 exit_code: None,
@@ -102,7 +102,7 @@ impl fmt::Display for ParseError {
                 recovery,
             } => write!(
                 formatter,
-                "unsupported predecessor field {source_field}: {reason}; recovery: {recovery}"
+                "unsupported field {source_field}: {reason}; recovery: {recovery}"
             ),
             Self::Malformed { input, reason } => {
                 write!(formatter, "malformed {input}: {reason}")

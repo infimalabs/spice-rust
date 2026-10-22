@@ -371,7 +371,7 @@ fn minted_claims(repository: &Tree, actor: &str, paths: &[&str]) -> Vec<PeerClai
 /// the ledger cannot describe one document two ways.
 ///
 /// The two documents are deliberately unlike. They sit at different depths, so
-/// the migration's per-depth Markdown rules select a different rule for each,
+/// the packaged per-depth Markdown rules select a different rule for each,
 /// and only one of them breaches anything: the root document is capped and over
 /// its cap, while the nested one is lifted to unlimited and inside it. A
 /// decision vector built from one occurrence, or from the first resolution
