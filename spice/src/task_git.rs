@@ -195,10 +195,10 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     let target = resolve_target(root)?.ok_or_else(|| {
         Error::refusal(
             "git::capture-no-baseline",
-            "task capture found no origin-backed task baseline",
+            "task capture found no upstream-backed task baseline",
             concat!(
-                "configure origin and branch tracking before ",
-                "capturing loose commits",
+                "configure branch tracking (branch.<lane>.remote and ",
+                "branch.<lane>.merge) before capturing loose commits",
             ),
         )
     })?;
@@ -885,53 +885,76 @@ fn boundary(
     }
 }
 
+/// The branch the lane's work integrates into, as the repository's own
+/// configuration declares it: `branch.<lane>.remote` and `branch.<lane>.merge`
+/// read beneath the lane's Git shadow, which points the lane at itself. A
+/// remote of `.` names a branch of this repository, so that branch is the
+/// baseline and nothing is fetched. A lane that declares no remote tracks
+/// `origin`, and one that declares no merge branch takes its remote's HEAD;
+/// a repository with no `origin` and no declared remote has no target.
 fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
-    let remotes = required_read(root, &["remote"], "list Git remotes")?;
-    if !remotes.lines().any(|remote| remote == "origin") {
-        return Ok(None);
-    }
-    let origin = run(root, &["remote", "get-url", "origin"])?;
-    if !origin.success() {
-        return Err(Error::fault(
-            "git::remote-invalid",
-            origin.detail("resolve origin remote"),
-        ));
-    }
-    let branch = required_read(
+    let lane = required_read(
         root,
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         "resolve current branch",
     )?;
-    let configured = try_read(
-        root,
-        &["config", "--get", &format!("branch.{branch}.merge")],
-    )?;
-    if let Some(branch) =
-        configured.and_then(|value| value.strip_prefix("refs/heads/").map(str::to_owned))
-    {
-        return Ok(Some(Target {
-            baseline: format!("origin/{branch}"),
-            remote: "origin".to_owned(),
+    let declared = try_read_native(root, &["config", "--get", &format!("branch.{lane}.remote")])?;
+    let merge = try_read_native(root, &["config", "--get", &format!("branch.{lane}.merge")])?
+        .and_then(|value| value.strip_prefix("refs/heads/").map(str::to_owned));
+    let remote = declared.clone().unwrap_or_else(|| "origin".to_owned());
+    if remote == "." {
+        return Ok(merge.map(|branch| Target {
+            baseline: format!("refs/heads/{branch}"),
+            remote,
             branch,
         }));
     }
-    let symbolic = required_read(
-        root,
-        &["symbolic-ref", "refs/remotes/origin/HEAD"],
-        "resolve origin HEAD",
-    )?;
-    let branch = symbolic
-        .strip_prefix("refs/remotes/origin/")
-        .ok_or_else(|| Error::fault("git::baseline-invalid", symbolic.clone()))?
-        .to_owned();
+    let remotes = required_read(root, &["remote"], "list Git remotes")?;
+    if !remotes.lines().any(|candidate| candidate == remote) {
+        return match declared {
+            Some(declared) => Err(Error::fault(
+                "git::remote-invalid",
+                format!(
+                    "branch {lane} tracks remote {declared}, which this repository does not define"
+                ),
+            )),
+            None => Ok(None),
+        };
+    }
+    let url = run(root, &["remote", "get-url", &remote])?;
+    if !url.success() {
+        return Err(Error::fault(
+            "git::remote-invalid",
+            url.detail(&format!("resolve {remote} remote")),
+        ));
+    }
+    let branch = match merge {
+        Some(branch) => branch,
+        None => {
+            let head = format!("refs/remotes/{remote}/HEAD");
+            let symbolic = required_read(
+                root,
+                &["symbolic-ref", &head],
+                &format!("resolve {remote} HEAD"),
+            )?;
+            symbolic
+                .strip_prefix(&format!("refs/remotes/{remote}/"))
+                .ok_or_else(|| Error::fault("git::baseline-invalid", symbolic.clone()))?
+                .to_owned()
+        }
+    };
     Ok(Some(Target {
-        baseline: format!("origin/{branch}"),
-        remote: "origin".to_owned(),
+        baseline: format!("{remote}/{branch}"),
+        remote,
         branch,
     }))
 }
 
 fn fetch(root: &Path, target: &Target) -> Result<(), Error> {
+    if target.remote == "." {
+        // The baseline is a branch of this repository: there is nothing to fetch.
+        return Ok(());
+    }
     // The Git common directory is bare and may name this remote-tracking ref
     // as its own HEAD while linked worktrees carry independent branch HEADs.
     // Fetch owns this one explicit update and ignores configured refspecs that
