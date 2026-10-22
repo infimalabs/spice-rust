@@ -800,10 +800,6 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     watchband::use_team_arrangement_focus(&state.team_controls, true);
     watchband::use_command_modifier_preview();
     watchband::use_composer_reading_focus();
-    watchband::use_team_fleet_right_edge(
-        state.team_fleet.clone(),
-        teamed_lane_count(&state.surface),
-    );
     use_route_settlement(&state.route, &state.surface, state.route_navigate.clone());
 }
 
@@ -828,16 +824,6 @@ fn project_work(runtime: Option<&AppRuntime>) -> Option<WorkProjection<'_>> {
     runtime
         .board()
         .map(|board| WorkProjection::from_board_and_lanes(board, runtime.lanes()))
-}
-
-fn teamed_lane_count(surface: &SurfaceData) -> usize {
-    surface
-        .read()
-        .as_ref()
-        .and_then(AppRuntime::lanes)
-        .map_or(0, |lanes| {
-            lanes.lanes.iter().filter(|team| team.teamed()).count()
-        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
