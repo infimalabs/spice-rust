@@ -907,15 +907,15 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .app-spice-sidebar-anchor .app-spice-turbo:not(:disabled):active, .agent-menu > .agent-menu-button:active {
   transform: translateY(1.5px); box-shadow: var(--team-send-command-ring), var(--team-control-contact), var(--team-send-glass-catch, 0 0 0 0 transparent);
 }
-.team-composer .team-turbo[data-lit="true"]:not(:disabled),
-.app-spice-sidebar-anchor .app-spice-turbo[data-lit="true"]:not(:disabled) { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); color: var(--ink); }
-.team-composer .team-turbo[data-lit="false"], .app-spice-sidebar-anchor .app-spice-turbo[data-lit="false"] { color: var(--muted); }
-/* TURBO's lockup splits its fixed lettering box by letter share exactly as SEND becomes FULL SEND: TURBO alone off, FULL|TURBO on, FULL in the focus accent. */
-.app-turbo-button .turbo-lockup { --turbo-lockup-full-opacity: 0; --turbo-lockup-full-scale: 0; --turbo-lockup-word-offset: 0px; --turbo-lockup-word-scale: 1; position: relative; display: block; inline-size: 22px; block-size: 8px; }
-.app-turbo-button .turbo-lockup > * { position: absolute; inset: 0; transform-origin: left center; transition: transform var(--app-motion-fast) var(--app-ease-standard), opacity var(--app-motion-fast) var(--app-ease-standard); }
-.app-turbo-button .turbo-lockup__full { color: var(--focus); opacity: var(--turbo-lockup-full-opacity); transform: scaleX(var(--turbo-lockup-full-scale)); }
-.app-turbo-button .turbo-lockup__turbo { transform: translateX(var(--turbo-lockup-word-offset)) scaleX(var(--turbo-lockup-word-scale)); }
-.app-turbo-button[data-lit="true"] .turbo-lockup { --turbo-lockup-full-opacity: 1; --turbo-lockup-full-scale: calc(4 / 9); --turbo-lockup-word-offset: calc(22px * 4 / 9); --turbo-lockup-word-scale: calc(5 / 9); }
+/* A lit TURBO is backlit the way a lit slider is: the amber of the sliders' high stop washes the glass, pools at its foot, and leaks a dull halo past the edge; the lettering stays the one word TURBO in ink. */
+.app-turbo-button[data-lit="true"]:not(:disabled) {
+  --app-turbo-accent: #efc36b; --app-turbo-halo: 0 0 6px color-mix(in srgb, var(--app-turbo-accent) 18%, transparent); color: var(--ink);
+  background: radial-gradient(ellipse 84% 46% at 50% 108%, color-mix(in srgb, var(--app-turbo-accent) 36%, transparent), transparent 74%), linear-gradient(color-mix(in srgb, var(--app-turbo-accent) 22%, transparent), color-mix(in srgb, var(--app-turbo-accent) 22%, transparent)), var(--team-control-face);
+  box-shadow: var(--team-send-command-ring), var(--team-control-rest), inset 0 -4px 6px -4px color-mix(in srgb, var(--app-turbo-accent) 38%, transparent), var(--app-turbo-halo);
+}
+.app-turbo-button[data-lit="true"]:not(:disabled):hover { background-color: color-mix(in srgb, var(--app-turbo-accent) 10%, transparent); }
+.app-turbo-button[data-lit="true"]:not(:disabled):is(:active, [data-touch-contact]) { box-shadow: var(--team-send-command-ring), var(--team-control-contact), var(--app-turbo-halo); }
+.app-turbo-button[data-lit="false"] { color: var(--muted); }
 .team-composer .team-menu[aria-expanded="true"]:not(:disabled), .agent-menu[open] > .agent-menu-button { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); }
 .team-composer .fit-word, .app-spice-turbo .fit-word { filter: drop-shadow(0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent)); }
 .team-composer .team-send::before {
@@ -1013,7 +1013,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 @media (prefers-reduced-motion: reduce) {
   .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
-  .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button, .app-turbo-button .turbo-lockup > *, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
+  .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
   .team-composer :is(.team-send-full, .team-send-word) { transition: none; }
 }
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }

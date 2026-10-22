@@ -709,9 +709,9 @@ pub(in crate::browser) struct TurboButtonProps {
 }
 
 /// Shared stable TURBO lettering; pressed state reflects team or global fast
-/// mode. Inside one fixed lettering box it reads TURBO off and FULL|TURBO on,
-/// exactly as SEND becomes FULL SEND; the words are presentation and the
-/// pressed state and label stay the accessible truth.
+/// mode. The word never changes: engaged, the button's glass backlights in
+/// amber the way a lit slider does, and the pressed state and label stay the
+/// accessible truth.
 #[function_component(TurboButton)]
 pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
     let label = props
@@ -729,10 +729,7 @@ pub(in crate::browser) fn turbo_button(props: &TurboButtonProps) -> Html {
             disabled={props.disabled}
             onclick={props.onclick.clone()}
         >
-            <span class="turbo-lockup" aria-hidden="true">
-                <span class="turbo-lockup__full">{fit_word("Full")}</span>
-                <span class="turbo-lockup__turbo">{fit_word("Turbo")}</span>
-            </span>
+            {fit_word("Turbo")}
         </button>
     }
 }
