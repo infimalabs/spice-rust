@@ -141,13 +141,17 @@ beside the heading. The composer is a single **Observe** control until the
 operator opens it or it holds a draft, a refusal, or a submission; a landed
 observation folds it back. Its actions are **Add**, which publishes the draft
 as an observation, one completion beside **Delete** when the socket offers
-settlement: **Close** for a task, taking the draft as its validation, or
-**Conclude** for an open Design, which concludes it done and carries no text,
-so it refuses while a draft is unpublished rather than discard it. **Delete**
-withdraws the task with the draft as its reason. Each settlement confirms
-first, witnesses the heads the detail was drawn from, and names the live claim
-it takes. Control or Command+Enter is **Add**; Shift with it is the offered
-completion, never Delete. It records each input as its
+settlement: **Close** for a task, or **Conclude** for an open Design, which
+concludes it done and carries no text, so it refuses while a draft is
+unpublished rather than discard it. **Close** and **Delete** publish the draft
+as an observation too, and only once the room records it close the task with
+that text as its validation or withdraw it with that text as its reason; a
+refused observation settles nothing and keeps the draft. Each settlement
+confirms first, saying what becomes of the text, witnesses the heads the detail
+was drawn from, and names the live claim it takes. Control or Command+Enter is
+**Add**; Shift with it is the offered completion, never Delete. A closed or
+deleted task's room leads with its settlement card: who closed or deleted it,
+when, its text, and any claim it took. The composer records each input as its
 task-owned browser draft. A connection loss keeps that composer visible with
 its exact text read-only and no publish action until the resident returns;
 reconnect makes the same draft editable, and a generation reload hands it to
