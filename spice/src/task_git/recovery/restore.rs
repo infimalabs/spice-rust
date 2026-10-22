@@ -19,7 +19,7 @@ pub fn restore_recovery(
     repository: &Repository,
     recovery: &Recovery,
 ) -> Result<RestoreOutcome, Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     let mut manifest = read_expected(&root, recovery)?;
     let worktree = repository.worktree_root();
     let current = current_head(worktree)?;

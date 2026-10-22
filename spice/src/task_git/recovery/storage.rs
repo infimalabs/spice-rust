@@ -5,7 +5,12 @@ use std::fs::{File, OpenOptions};
 use std::io::Read as _;
 
 pub(super) fn create_recovery_root(repository: &Repository) -> Result<PathBuf, Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
+    let state = root
+        .parent()
+        .expect("recovery root has a state-root parent");
+    fs::create_dir_all(state)
+        .map_err(|error| recovery_filesystem("create worktree state root", state, error))?;
     fs::create_dir(&root)
         .map_err(|error| recovery_filesystem("create private recovery directory", &root, error))?;
     #[cfg(unix)]
@@ -16,12 +21,24 @@ pub(super) fn create_recovery_root(repository: &Repository) -> Result<PathBuf, E
         recovery_filesystem("create recovery object directory", &objects, error)
     })?;
     sync_directory(&root)?;
-    sync_directory(repository.git_dir())?;
+    sync_directory(state)?;
     Ok(root)
 }
 
-pub(super) fn recovery_root(repository: &Repository) -> PathBuf {
-    repository.git_dir().join(RECOVERY_DIRECTORY)
+/// Admit the worktree state root without following links, then name the
+/// recovery directory beneath it.
+pub(super) fn recovery_root(repository: &Repository) -> Result<PathBuf, Error> {
+    let state = repository.admit_state().map_err(|error| match error {
+        crate::repository::StateError::Filesystem { .. } => {
+            Error::fault("git::recovery-state-unavailable", error.to_string())
+        }
+        _ => recovery_refusal(
+            "git::recovery-state-unsafe",
+            error.to_string(),
+            "move the unexpected state path aside and retry",
+        ),
+    })?;
+    Ok(state.worktree_runtime().join(RECOVERY_DIRECTORY))
 }
 
 pub(super) fn recovery(manifest: &Manifest) -> Recovery {
@@ -357,7 +374,9 @@ pub(super) fn retire_recovery(root: &Path) -> Result<(), Error> {
             "preserve the unexpected path for inspection",
         ));
     }
-    let parent = root.parent().expect("recovery root has Git-dir parent");
+    let parent = root
+        .parent()
+        .expect("recovery root has a state-root parent");
     fs::remove_dir_all(root)
         .map_err(|error| recovery_filesystem("retire verified recovery", root, error))?;
     sync_directory(parent)
@@ -370,7 +389,9 @@ pub(super) fn retain_recovery(
     kind: &str,
     transaction: &str,
 ) -> Result<PathBuf, Error> {
-    let parent = root.parent().expect("recovery root has Git-dir parent");
+    let parent = root
+        .parent()
+        .expect("recovery root has a state-root parent");
     let retained = parent.join(format!("{RECOVERY_DIRECTORY}-{kind}-{transaction}"));
     match fs::symlink_metadata(&retained) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

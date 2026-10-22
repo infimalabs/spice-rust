@@ -19,7 +19,9 @@ use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as
 use std::path::{Component, Path, PathBuf};
 use wire::{Actor, CanonicalUuid, Phase, Seq, TaskHandle, TaskStamp};
 
-const RECOVERY_DIRECTORY: &str = "spice-task-recovery";
+/// Recovery root beneath this worktree's Rust state root; retained generations
+/// sit beside it as `task-recovery-KIND-TRANSACTION`.
+const RECOVERY_DIRECTORY: &str = "task-recovery";
 const MANIFEST_FILE: &str = "manifest.json";
 const OBJECT_DIRECTORY: &str = "objects";
 const RECOVERY_VERSION: u32 = 1;
@@ -198,7 +200,7 @@ struct ObservedEntry {
 
 /// Return the current private recovery, if this worktree owns one.
 pub fn pending_recovery(repository: &Repository) -> Result<Option<Recovery>, Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.file_type().is_dir() => {
             let manifest = read_manifest(&root)?;
@@ -245,7 +247,7 @@ pub fn quarantine_for_recovery(repository: &Repository) -> Result<Recovery, Erro
 }
 
 fn resume_quarantine(repository: &Repository, recovery: Recovery) -> Result<Recovery, Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     let manifest = read_expected(&root, &recovery)?;
     match manifest.state {
         RecoveryState::Captured => Err(recovery_refusal(
@@ -268,7 +270,7 @@ pub fn bind_recovery_claim(
     recovery: &Recovery,
     claim: RecoveryClaim,
 ) -> Result<(), Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     let mut manifest = read_expected(&root, recovery)?;
     let boundary = synchronized_boundary(&manifest)?;
     if boundary != claim.boundary {
@@ -301,7 +303,7 @@ pub fn recovery_claim(
     repository: &Repository,
     recovery: &Recovery,
 ) -> Result<Option<RecoveryClaim>, Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     let manifest = read_expected(&root, recovery)?;
     let Some(claim) = manifest.claim.clone() else {
         return Ok(None);
@@ -345,7 +347,7 @@ pub fn synchronize_recovery(
     repository: &Repository,
     recovery: &Recovery,
 ) -> Result<GitBoundary, Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     let manifest = read_expected(&root, recovery)?;
     verify_synchronization_identity(repository, &manifest)?;
     match manifest.state.clone() {
