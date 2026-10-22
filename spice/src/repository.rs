@@ -3,7 +3,7 @@
 //! Durable authority lives in `.spice-rs` beneath the Git common directory.
 //! The install appliance lives in the disjoint `.spice-install` sibling, and
 //! [`crate::git_shadow`] publishes the per-worktree Git shadow as
-//! `<git-dir>/spice-rs-agent.gitconfig`.
+//! `<git-dir>/agent.gitconfig`.
 //!
 //! The layout imposes these rules:
 //!
@@ -46,7 +46,7 @@
 //!   `.spice-install` appliance. The install receipt remains runtime state at
 //!   the [`StatePaths::install_record`] path below `.spice-rs`.
 //! * The **per-worktree Git shadow** is disposable and reconstructible.
-//!   [`crate::git_shadow`] writes `<git-dir>/spice-rs-agent.gitconfig`.
+//!   [`crate::git_shadow`] writes `<git-dir>/agent.gitconfig`.
 //!
 //! State outside the current fixed namespaces is ignored. In particular,
 //! obsolete layouts cannot affect current state admission or command startup.
