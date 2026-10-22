@@ -168,7 +168,6 @@ fn nothing_owed(room: &TaskHandle, kept: &[RoomListeningDuty]) -> String {
         .iter()
         .map(|duty| match duty {
             RoomListeningDuty::Work { task } => format!("work {task}"),
-            RoomListeningDuty::Coordination { key } => format!("coordination {key}"),
             RoomListeningDuty::Stop { key } => format!("stop {key}"),
         })
         .collect::<Vec<_>>();
@@ -190,9 +189,6 @@ fn kept_duties(reasons: &[AttentionReason], entries: &[Entry]) -> Vec<RoomListen
                     .map(|entry| RoomListeningDuty::Work {
                         task: entry.handle().clone(),
                     })
-            }
-            AttentionReason::Coordination { key, .. } => {
-                Some(RoomListeningDuty::Coordination { key: key.clone() })
             }
             AttentionReason::Stop { key, .. } => Some(RoomListeningDuty::Stop { key: key.clone() }),
             AttentionReason::Asked { .. } => None,

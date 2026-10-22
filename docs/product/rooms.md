@@ -37,19 +37,18 @@ owns each rule summarized here.
   returns a lapsed item to pending with the same key and a fresh expiry. Review
   coverage and execution authorization remain preparation authority, never
   conversation traffic.
-- **Coordination.** `spice room start|resume HANDLE ADDRESS` sends one scoped
-  operator direction naming the criterion, contribution, and stop condition;
-  the recipient acquires the anchor through ordinary native possession. A
-  passive Design refuses coordination (`room::design-passive`).
-  `spice room put-aside` cancels unanswered coordination and asks any holder to
-  checkpoint or free, without freeing it. `spice room status` reads the
-  standing.
+- **One push.** `spice preparation nudge HANDLE`, or the Nudge control in the
+  browser's Design menu, is the operator's only way to push a Design at a lane:
+  it selects and messages its recipient itself. A room records no
+  coordination; a passive Design refuses possession (`claim::design-passive`).
+  Making a held Design passive asks its holder to checkpoint and free through
+  one stop direction.
 - **Attention.** An authored room message or contribution makes its lane a
   participant; neither subscribes that lane, grants permission to post, nor
   restores listening. Routing a packet into a room and an owed receipt
   subscribe no one: steering delivers each directly, and room history stays
   readable on demand. Listening is derived from native
-  work, a live coordination request, and a stop request. Each native reason
+  work and a live stop request. Each native reason
   starts at the journal authority that created the current duty: a claim keeps
   its original win across renewal and occupant carry, ends with that claim,
   and a later claim starts fresh without replaying publications from the gap.
@@ -254,7 +253,7 @@ owns each rule summarized here.
 
   Every surface names the same cycle state, who acts next, and the exact
   command: `task show` and `task status`, `board` rows, dry and empty drain,
-  `group list`, `room status`, every preparation command reply, and the
+  `group list`, every preparation command reply, and the
   browser's Design room and working-group lights. A multi-pass Design reads,
   from the operator's chair:
 
@@ -337,16 +336,15 @@ owns each rule summarized here.
   foreground and are never shared.
 - **Design standing.** An open Design in an Explore or Converge group is
   [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
-  the allocator offers it, and capture, steal, and room coordination may reach
-  it. A Design in Passive or outside every group is
-  passive, and those possession paths refuse (`claim::design-passive`,
-  `room::design-passive`). A fresh group starts in Passive. The operator groups a
+  the allocator offers it, and capture, steal, and a nudge may reach it. A
+  Design in Passive or outside every group is passive, and those possession
+  paths refuse (`claim::design-passive`). A fresh group starts in Passive. The operator groups a
   Design with `spice group move DESIGN --to GROUP` or `--new`, then chooses its
   group's activity with `spice group stance GROUP passive|explore|converge`.
   Moving to Passive, into an existing Passive group, or out of every group makes the
-  Design passive. If a lane holds it, the change withdraws unanswered
-  coordination and sends that holder one stop direction, queued for the lane's
-  next seat when vacant. The holder checkpoints and runs ordinary `spice task
+  Design passive. If a lane holds it, the change sends that holder one stop
+  direction, queued for the lane's next seat when vacant. The holder
+  checkpoints and runs ordinary `spice task
   free DESIGN`, which parks unpublished commits and dirty work; its claim stays
   authoritative until then. A stance change names any held Design whose
   shelving is still owed; setting the group Passive again shelves it. Explore
@@ -380,10 +378,10 @@ refusals and repairs, are
   lane's next start.
 - Reads, invitations, ACK-only traffic, compaction, and renewal make no
   participant and grant no claim, read permission, team membership, or wake.
-- No automated coordination: only the operator's `room start` or `room resume
-  ADDRESS` asks one lane to hold and propose, and Design outreach asks each
-  continuing session about each question item at most once; nothing else
-  starts work, claims, decides, or authorizes.
+- No automated push: only the operator's `preparation nudge HANDLE` asks one
+  lane to hold and propose, and Design outreach asks each continuing session
+  about each question item at most once; nothing else starts work, claims,
+  decides, or authorizes.
 - Agreement, silence, message count, elapsed time, and ACK never count as
   progress or approval.
 - No timed deferral coordinates a room, and gating adds no task status.

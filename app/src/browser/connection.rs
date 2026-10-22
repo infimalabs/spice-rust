@@ -448,11 +448,6 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
-        ClientAction::RoomCoordination { request, respond } => {
-            rooms::send_room_coordination(principal, writer, actions, request, respond)
-                .await
-                .map(Some)
-        }
         ClientAction::Preparation { request, respond } => {
             rooms::send_preparation(principal, writer, actions, request, respond)
                 .await

@@ -126,8 +126,6 @@ pub enum RoomDutyKind {
     /// A recorded Design request asked the lane about this room at `position`;
     /// `source` names the retained task or conversation that supported it.
     Asked { source: String, position: Seq },
-    /// A live room coordination request addressing the lane.
-    Coordination { key: String, position: Seq },
     /// A live stop request addressing the lane's claim.
     Stop { key: String, position: Seq },
 }
@@ -265,8 +263,6 @@ pub enum AttentionReason {
     /// make a participant, and the lane's next room publication or leave
     /// answers or declines it.
     Asked { source: String, since: Seq },
-    /// A live room coordination request addresses the lane.
-    Coordination { key: String, since: Seq },
     /// A live stop request addresses the lane's claim.
     Stop { key: String, since: Seq },
     /// Native work records an explicit continuing responsibility.
@@ -286,7 +282,6 @@ impl AttentionReason {
         match self {
             Self::Work { since, .. }
             | Self::Asked { since, .. }
-            | Self::Coordination { since, .. }
             | Self::Stop { since, .. }
             | Self::Responsibility { since, .. } => *since,
         }
@@ -661,10 +656,6 @@ fn fold_attention(
                     since: *position,
                 }
             }
-            RoomDutyKind::Coordination { key, position } => AttentionReason::Coordination {
-                key: key.clone(),
-                since: *position,
-            },
             RoomDutyKind::Stop { key, position } => AttentionReason::Stop {
                 key: key.clone(),
                 since: *position,
@@ -1071,16 +1062,10 @@ mod tests {
             kind,
             standing: RoomDutyStanding::Owed,
         };
-        let duties = vec![
-            owed(RoomDutyKind::Coordination {
-                key: "1kKRRsDS2".to_owned(),
-                position: Seq::new(1).expect("duty position"),
-            }),
-            owed(RoomDutyKind::Stop {
-                key: "1kKRRsDS3".to_owned(),
-                position: Seq::new(1).expect("duty position"),
-            }),
-        ];
+        let duties = vec![owed(RoomDutyKind::Stop {
+            key: "1kKRRsDS3".to_owned(),
+            position: Seq::new(1).expect("duty position"),
+        })];
         let row = project_one(
             &room,
             &[
@@ -1092,7 +1077,7 @@ mod tests {
             &topology,
         );
         assert!(row.left.is_some());
-        assert_eq!(row.attention.len(), 3, "{row:?}");
+        assert_eq!(row.attention.len(), 2, "{row:?}");
         assert!(row.attention.iter().all(AttentionReason::is_native));
     }
 
@@ -1248,7 +1233,7 @@ mod tests {
         let duties = vec![RoomDuty {
             room: room.clone(),
             lane: lane_id,
-            kind: RoomDutyKind::Coordination {
+            kind: RoomDutyKind::Stop {
                 key: "1kKRRsDS0".to_owned(),
                 position: Seq::new(1).expect("duty position"),
             },
@@ -1320,7 +1305,7 @@ mod tests {
         let duties = vec![RoomDuty {
             room: room.clone(),
             lane: old_lane,
-            kind: RoomDutyKind::Coordination {
+            kind: RoomDutyKind::Stop {
                 key: "1kKRRsDS0".to_owned(),
                 position: Seq::new(1).expect("duty position"),
             },
@@ -1388,7 +1373,7 @@ mod tests {
         let settled = vec![RoomDuty {
             room: room.clone(),
             lane: lane_id,
-            kind: RoomDutyKind::Coordination {
+            kind: RoomDutyKind::Stop {
                 key: "1kKRRsDS0".to_owned(),
                 position: Seq::new(1).expect("duty position"),
             },

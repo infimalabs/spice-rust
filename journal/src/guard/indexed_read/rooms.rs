@@ -3,10 +3,9 @@
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, CandidateWithdrawal, DesignPassProposal,
-    ExecutionAuthorization, PreparationDecision, ProposalRef, RoomAuthorityStamp,
-    RoomCoordinationStarted, RoomDelivered, RoomDestination, RoomHorizon, RoomLeft, RoomMessaged,
-    RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
-    RoomReceiptRef, WorkingGroupPartition,
+    ExecutionAuthorization, PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomDelivered,
+    RoomDestination, RoomHorizon, RoomLeft, RoomMessaged, RoomPublication, RoomPublished,
+    RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
 };
 
 use super::{
@@ -19,9 +18,7 @@ mod relevance;
 mod support;
 
 pub use relevance::{RoomRelevanceMetrics, RoomRelevancePage, RoomRelevanceRecord};
-use support::{
-    ROOM_AUTHORITY_PAGE, ROOM_AUTHORITY_REMAINING, indexed_length, probe_limit, require_room,
-};
+use support::{ROOM_AUTHORITY_PAGE, ROOM_AUTHORITY_REMAINING, indexed_length, probe_limit};
 
 /// One write-once proposal head, decoded as its subject's family.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -467,25 +464,6 @@ impl JournalRead<'_> {
         }
         Ok(Some(publication))
     }
-    /// A room's latest `room::directed` record, absent before its first one.
-    pub fn room_direction(
-        &self,
-        room: &wire::TaskStamp,
-    ) -> Result<Option<JournalHead<RoomCoordinationStarted>>, GuardError> {
-        let head =
-            self.text_head::<RoomCoordinationStarted>("room_directions", "room", room.as_str())?;
-        require_room(head, room, |body| &body.room)
-    }
-
-    /// A room's latest `room::shelved` record, absent before its first one.
-    pub fn room_shelving(
-        &self,
-        room: &wire::TaskStamp,
-    ) -> Result<Option<JournalHead<RoomPutAside>>, GuardError> {
-        let head = self.text_head::<RoomPutAside>("room_shelvings", "room", room.as_str())?;
-        require_room(head, room, |body| &body.room)
-    }
-
     /// One operator item's immutable record and current guarded head, absent
     /// before its publication opens it; the head's position is its latest move.
     pub fn room_item(

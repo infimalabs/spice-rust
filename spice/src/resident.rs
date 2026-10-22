@@ -222,9 +222,7 @@ mod room_catch_up;
 mod settings_surface;
 mod shutdown;
 mod steering;
-pub(crate) use steering::{
-    OperatorDirective, append_cancellation, append_operator_directive, steering_envelope_admits,
-};
+pub(crate) use steering::{OperatorDirective, append_operator_directive, steering_envelope_admits};
 pub(crate) mod supervisor;
 mod taste_surface;
 mod timers;

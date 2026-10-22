@@ -488,38 +488,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "room::history"
     ),
-    operator!(
-        ["room", "status"],
-        "room status HANDLE",
-        Read,
-        [],
-        Reply,
-        "room::coordination-read"
-    ),
-    operator!(
-        ["room", "start"],
-        "room start HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP]",
-        Command,
-        [SteerSent, RoomCoordinationStarted],
-        Reply,
-        "room::coordinate"
-    ),
-    operator!(
-        ["room", "resume"],
-        "room resume HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP]",
-        Command,
-        [SteerSent, RoomCoordinationStarted],
-        Reply,
-        "room::coordinate"
-    ),
-    operator!(
-        ["room", "put-aside"],
-        "room put-aside HANDLE",
-        Command => SnapshotOrCommitted,
-        [SteerCanceled, SteerSent, RoomPutAside],
-        Reply,
-        "room::put-aside"
-    ),
     row!(
         ["room", "leave"],
         "room leave HANDLE [--clause TEXT]",

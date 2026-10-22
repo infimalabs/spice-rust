@@ -74,7 +74,7 @@ pub fn is_open_design(intent: Option<crate::TaskIntent>, workflow: &crate::Workf
 pub enum DesignStanding {
     /// Open outside every working group: no path grants it a claim.
     Passive,
-    /// Open inside a working group: lanes may claim or be coordinated onto it.
+    /// Open inside a working group: lanes may claim it or be nudged onto it.
     Active,
     /// The operator concluded it done.
     Done,

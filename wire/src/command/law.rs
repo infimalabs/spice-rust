@@ -121,25 +121,6 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// A scoped room request binds the exact anchor heads and destination
-    /// residency observed by the operator.
-    pub const ROOM_COORDINATE: Self = Self {
-        required: &[
-            WitnessKind::Task,
-            WitnessKind::Workflow,
-            WitnessKind::Claim,
-            WitnessKind::Residency,
-        ],
-        optional: &[],
-        authority: Authority::Operator,
-    };
-    /// Put-aside binds the exact anchor heads. It may additionally witness the
-    /// live room directives it retires and the current holder's residency.
-    pub const ROOM_PUT_ASIDE: Self = Self {
-        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
-        optional: &[WitnessKind::Directive, WitnessKind::Residency],
-        authority: Authority::Operator,
-    };
     /// A lane leaves one room. Any connection may submit; the resident admits
     /// only a lane principal and guards nothing a caller could propose.
     pub const ROOM_LEAVE: Self = Self {
@@ -593,7 +574,6 @@ impl CommandKind {
             Self::GlobalSettingsRead
             | Self::VendorCatalog
             | Self::BoardHandout
-            | Self::RoomCoordinationRead
             | Self::RoomConversationText => Law::OPERATOR_READ,
             Self::WorkingGroupMove
             | Self::WorkingGroupArrange
@@ -603,8 +583,6 @@ impl CommandKind {
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomContribute => Law::ROOM_CONTRIBUTE,
-            Self::RoomCoordinate => Law::ROOM_COORDINATE,
-            Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::DesignPropose => Law::DESIGN_PROPOSE,
             Self::CandidateCritiqueRecord
@@ -787,8 +765,6 @@ impl CommandKind {
     fn witnessed_room(self, expected: &[Witness], body: &Intent) -> Result<(), LawError> {
         let room = match (self, body) {
             (Self::RoomPost, Intent::RoomPost(post)) => Some(&post.room),
-            (Self::RoomCoordinate, Intent::RoomCoordinate(request)) => Some(&request.room),
-            (Self::RoomPutAside, Intent::RoomPutAside(request)) => Some(&request.room),
             (Self::RoomContribute, Intent::RoomContribute(request)) => Some(&request.room),
             _ => None,
         };
@@ -825,9 +801,7 @@ impl CommandKind {
     const fn non_task_law(self) -> Law {
         match self {
             Self::RoomPost => Law::ROOM_POST,
-            Self::RoomCoordinationRead | Self::RoomConversationText => Law::OPERATOR_READ,
-            Self::RoomCoordinate => Law::ROOM_COORDINATE,
-            Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
+            Self::RoomConversationText => Law::OPERATOR_READ,
             Self::RoomLeave => Law::ROOM_LEAVE,
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::DocApply => Law::APPLY,

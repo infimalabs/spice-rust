@@ -1,13 +1,10 @@
 use super::*;
 
 use serde_json::Value;
-use wire::intent::{
-    RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomLeave,
-    RoomPutAside,
-};
+use wire::intent::RoomLeave;
 use wire::rooms::{
-    CoordinationControl, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp, RoomCoordinationStarted,
-    RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
+    ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp, RoomMessaged, RoomPost, RoomPostOutcome,
+    RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
 mod conversation;
@@ -46,104 +43,6 @@ fn prove_seat_addresses(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         bus.commit(write).expect("fixture births reach writer"),
         CommitOutcome::Committed(_)
     ));
-}
-
-fn coordinate_command(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    room: &TaskHandle,
-    seat: &Seat,
-    action: RoomCoordinateAction,
-) -> wire::AdmittedCommand {
-    let current = board(bus, epoch, Actor::Operator);
-    let heads = at(&current, room);
-    let target = current
-        .addresses
-        .get(&seat.lane)
-        .and_then(wire::SeatAddress::address)
-        .expect("fixture seat has a proved base-52 address");
-    fixture_command(
-        epoch,
-        Actor::Operator,
-        CommandKind::RoomCoordinate,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-            residency_witness(&current, seat.lane, seat.occupant),
-        ],
-        &RoomCoordinate {
-            room: room.clone(),
-            target,
-            action,
-            criterion: "Choose the exact retained candidate.".to_owned(),
-            contribution: "Inspect and capture only this anchor.".to_owned(),
-            stop: "Stop after recording the native disposition.".to_owned(),
-        },
-    )
-}
-
-fn coordinate(bus: &Bus, command: &wire::AdmittedCommand) -> Outcome<CommandAnswer> {
-    let wire::intent::Intent::RoomCoordinate(request) = command.body() else {
-        panic!("fixture command carries room coordination");
-    };
-    room_coordinate(
-        bus,
-        command,
-        request,
-        &steer::Config::default(),
-        &room_projects(),
-        &board::NextConfig::default(),
-    )
-}
-
-fn coordinate_after_validation(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    before_commit: impl FnOnce(),
-) -> Outcome<CommandAnswer> {
-    let wire::intent::Intent::RoomCoordinate(request) = command.body() else {
-        panic!("fixture command carries room coordination");
-    };
-    room_coordinate_with(
-        bus,
-        command,
-        request,
-        &steer::Config::default(),
-        &room_projects(),
-        &board::NextConfig::default(),
-        before_commit,
-    )
-}
-
-fn put_aside_command(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> wire::AdmittedCommand {
-    let current = board(bus, epoch, Actor::Operator);
-    let heads = at(&current, room);
-    fixture_command(
-        epoch,
-        Actor::Operator,
-        CommandKind::RoomPutAside,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-        ],
-        &RoomPutAside { room: room.clone() },
-    )
-}
-
-fn put_aside(bus: &Bus, command: &wire::AdmittedCommand) -> Outcome<CommandAnswer> {
-    let wire::intent::Intent::RoomPutAside(request) = command.body() else {
-        panic!("fixture command carries room put-aside");
-    };
-    room_put_aside(
-        bus,
-        command,
-        request,
-        &steer::Config::default(),
-        &room_projects(),
-        &board::NextConfig::default(),
-    )
 }
 
 fn leave(
@@ -188,23 +87,6 @@ fn post_listeners(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> Vec<Can
         }
         _ => Vec::new(),
     }
-}
-
-fn coordination_status(bus: &Bus, room: &TaskHandle) -> RoomCoordinationView {
-    let outcome = room_coordination_read(
-        bus,
-        &RoomCoordinationRead { room: room.clone() },
-        &room_projects(),
-        &board::NextConfig::default(),
-    );
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::RoomCoordination(view),
-        ..
-    }) = outcome
-    else {
-        panic!("room coordination status returned another outcome: {outcome:?}");
-    };
-    view
 }
 
 fn publication_page(bus: &Bus, room: &TaskHandle) -> journal::SelectedFactPage {
@@ -778,14 +660,14 @@ fn complete_through_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &T
 }
 
 #[test]
-fn room_history_pages_posts_packets_and_coordination_in_one_order() {
-    let (root, bus, epoch, seats) = fixture("room-history-coordination", 1);
+fn room_history_pages_posts_and_packets_in_one_order() {
+    let (root, bus, epoch, seats) = fixture("room-history-order", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let room = add(
         &bus,
         epoch,
         Actor::Operator,
-        "room-history-coordination",
+        "room-history-order",
         "Room history",
         None,
     );
@@ -793,26 +675,28 @@ fn room_history_pages_posts_packets_and_coordination_in_one_order() {
         dispatch(&bus, &post_command(&bus, epoch, &room, "before")).expect("room post dispatches"),
     );
     publish_packet(&bus, &room, &seats[0]);
-    assert_committed(coordinate(
-        &bus,
-        &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start),
-    ));
     assert_committed(
         dispatch(&bus, &post_command(&bus, epoch, &room, "after")).expect("room post dispatches"),
     );
-    assert_committed(put_aside(&bus, &put_aside_command(&bus, epoch, &room)));
+    publish_message(
+        &bus,
+        &room,
+        seats[0].lane,
+        seats[0].occupant,
+        1_790_000_000_000_002,
+    );
 
     let first = history_page(&root, &[room.as_str(), "--limit", "3"]);
-    assert_eq!(first["page"]["omission"]["population"], 5);
+    assert_eq!(first["page"]["omission"]["population"], 4);
     assert_eq!(first["page"]["omission"]["shown"], 3);
-    assert_eq!(first["page"]["omission"]["withheld"], 2);
+    assert_eq!(first["page"]["omission"]["withheld"], 1);
     let first_rows = first["page"]["rows"].as_array().expect("first page rows");
     assert_eq!(
         first_rows
             .iter()
             .map(|row| row["content"]["state"].as_str())
             .collect::<Vec<_>>(),
-        [Some("text"), Some("unavailable"), Some("linked")]
+        [Some("text"), Some("unavailable"), Some("text")]
     );
     let continuation: Vec<String> =
         serde_json::from_value(first["page"]["omission"]["continuation"].clone())
@@ -822,7 +706,6 @@ fn room_history_pages_posts_packets_and_coordination_in_one_order() {
         .map(String::as_str)
         .collect::<Vec<_>>();
     let second = history_page(&root, &words);
-    assert_eq!(second["page"]["rows"].as_array().map(Vec::len), Some(2));
     assert!(second["page"]["omission"].is_null());
     let second_rows = second["page"]["rows"].as_array().expect("second page rows");
     assert_eq!(
@@ -830,7 +713,7 @@ fn room_history_pages_posts_packets_and_coordination_in_one_order() {
             .iter()
             .map(|row| row["content"]["state"].as_str())
             .collect::<Vec<_>>(),
-        [Some("text"), Some("linked")]
+        [Some("unavailable")]
     );
 
     let shown = first_rows
@@ -844,291 +727,4 @@ fn room_history_pages_posts_packets_and_coordination_in_one_order() {
         .map(|row| serde_json::to_value(row.seq).expect("sequence encodes"))
         .collect::<Vec<_>>();
     assert_eq!(shown, indexed, "history and publication index order agree");
-    for row in first_rows.iter().chain(second_rows) {
-        if row["content"]["state"] == "linked" {
-            assert_eq!(row["content"]["source"]["kind"], "journal");
-            let fact = row["content"]["source"]["fact"]
-                .as_str()
-                .expect("journal fact is base-52")
-                .parse::<wire::SequenceCode>()
-                .expect("journal fact decodes");
-            assert_eq!(fact.get(), row["seq"].as_u64().expect("row sequence"));
-        }
-    }
-}
-
-#[test]
-fn room_coordination_waits_for_native_capture_and_stop_clears_on_native_free() {
-    let (root, bus, epoch, seats) = fixture("room-coordinate-native", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let room = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-coordinate-native",
-        "Room controller",
-        None,
-    );
-    let start = coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start);
-    let first = coordinate(&bus, &start);
-    let started = assert_committed(first.clone());
-    let replay_command = start.clone();
-    assert_eq!(
-        bus.read(move |read| read.command_replay(&replay_command))
-            .expect("coordination retry receipt reads"),
-        Some(journal::CommandReplay::Exact(first)),
-    );
-    let CommandAnswer::RoomCoordination(started) = started else {
-        panic!("start returned another answer shape: {started:?}");
-    };
-    assert_eq!(started.requests.len(), 1);
-    assert_eq!(
-        coordination_lane(&bus, started.requests[0].target),
-        Some(seats[0].lane),
-    );
-    assert!(!started.hide);
-    let key = started.requests[0].key.clone();
-    let sent = bus
-        .fact_snapshot()
-        .expect("coordination facts read")
-        .facts()
-        .iter()
-        .find_map(|envelope| {
-            envelope
-                .fact
-                .read::<wire::body::SteerSent>()
-                .filter(|sent| sent.key == key)
-        })
-        .expect("coordination direction is durable");
-    let named = sent
-        .text
-        .split_once("`spice task capture ")
-        .and_then(|(_, rest)| rest.split_once('`'))
-        .map(|(handle, _)| handle)
-        .expect("direction names a native capture command")
-        .parse::<TaskHandle>()
-        .expect("direction names a valid task handle");
-    assert_eq!(named, room);
-    let duplicate = coordinate(
-        &bus,
-        &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Resume),
-    );
-    assert!(
-        matches!(duplicate, Outcome::Refusal(_)),
-        "an unanswered scoped request is not duplicated: {duplicate:?}",
-    );
-
-    let lane = Actor::Lane(seats[0].lane);
-    let available = board(&bus, epoch, lane.clone());
-    let rule: wire::Name = "capture".parse().expect("named capture rule");
-    let heads = at(&available, &named);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimWin,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-            Witness::Eligibility { rule: rule.clone() },
-            residency(&available, &seats[0]),
-        ],
-        &wire::intent::ClaimWin {
-            rule,
-            recovery: None,
-        },
-    ));
-    let aside = assert_committed(put_aside(&bus, &put_aside_command(&bus, epoch, &room)));
-    let CommandAnswer::RoomCoordination(aside) = aside else {
-        panic!("put-aside returned another answer shape: {aside:?}");
-    };
-    let stop = aside
-        .stop
-        .expect("active native holder receives a stop request");
-    assert!(aside.hide);
-    assert_eq!(coordination_lane(&bus, stop.target), Some(seats[0].lane),);
-    let visible = coordination_status(&bus, &room);
-    assert!(visible.requests.is_empty());
-    let publications = publication_page(&bus, &room).rows.len();
-    let repeated = put_aside(&bus, &put_aside_command(&bus, epoch, &room));
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Snapshot(_),
-        body: CommandAnswer::RoomCoordination(repeated),
-    }) = repeated
-    else {
-        panic!("unchanged put-aside returned another outcome: {repeated:?}");
-    };
-    assert!(repeated.hide);
-    assert_eq!(repeated.stop, visible.stop);
-    assert_eq!(publication_page(&bus, &room).rows.len(), publications);
-    assert_eq!(visible.stop, Some(stop));
-
-    assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimFree,
-        claim_free_witnesses(&bus, epoch, &lane, &seats[0], &room),
-        &TaskRef { task: room.clone() },
-    ));
-    assert_eq!(coordination_status(&bus, &room).stop, None);
-    clean(&root, bus);
-}
-
-#[test]
-fn room_coordination_resolves_only_an_occupied_seat_address() {
-    let (root, bus, epoch, seats) = fixture("room-coordinate-seat-state", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let mut current = board(&bus, epoch, Actor::Operator);
-    let target = current
-        .addresses
-        .get(&seats[0].lane)
-        .and_then(wire::SeatAddress::address)
-        .expect("fixture seat has a proved address");
-    assert_eq!(
-        coordinate_target(&current, target).expect("occupied seat resolves"),
-        (seats[0].lane, seats[0].occupant)
-    );
-
-    current.residency.body.lanes[0].disposition = crate::resident::SIMULATED_DISPOSITION.to_owned();
-    let Err(Outcome::Refusal(refusal)) = coordinate_target(&current, target) else {
-        panic!("a simulated seat address must refuse before command submission");
-    };
-    assert_eq!(refusal.reason(), "room::address-unoccupied");
-    assert!(
-        refusal.explanation().contains(&target.to_string())
-            && refusal
-                .explanation()
-                .contains(crate::resident::SIMULATED_DISPOSITION),
-        "the refusal names both the submitted address and seat disposition: {refusal:?}"
-    );
-    clean(&root, bus);
-}
-
-#[test]
-fn room_coordination_vacancy_race_records_nothing() {
-    let (root, bus, epoch, seats) = fixture("room-coordinate-vacancy", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let room = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-coordinate-vacancy",
-        "Room controller",
-        None,
-    );
-    let command = coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start);
-    vacate(&bus, epoch, &seats[0]);
-    assert!(
-        !matches!(coordinate(&bus, &command), Outcome::Reply(_)),
-        "a stale occupied-lane witness refuses the whole coordination write",
-    );
-    assert!(publication_page(&bus, &room).rows.is_empty());
-    clean(&root, bus);
-}
-
-#[test]
-fn room_coordination_refuses_a_lane_that_won_other_work() {
-    let (root, bus, epoch, seats) = fixture("room-coordinate-busy", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let other = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-coordinate-other",
-        "Other work",
-        None,
-    );
-    let lane = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &lane, &other);
-    let room = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-coordinate-busy",
-        "Room controller",
-        None,
-    );
-
-    let outcome = coordinate(
-        &bus,
-        &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start),
-    );
-    assert!(
-        matches!(outcome, Outcome::Refusal(_)),
-        "a lane cannot acquire a second native claim: {outcome:?}",
-    );
-    assert!(publication_page(&bus, &room).rows.is_empty());
-    clean(&root, bus);
-}
-
-#[test]
-fn room_coordination_refuses_a_claim_won_after_validation_without_recording() {
-    let (root, bus, epoch, seats) = fixture("room-coordinate-claim-race", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let room = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-coordinate-race-room",
-        "Room controller",
-        None,
-    );
-    let other = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "room-coordinate-race-other",
-        "Other work",
-        None,
-    );
-    let command = coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start);
-    let lane = Actor::Lane(seats[0].lane);
-    let outcome = coordinate_after_validation(&bus, &command, || {
-        claim_task(&bus, epoch, &seats[0], &lane, &other);
-    });
-    assert!(
-        matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == "room::lane-busy"),
-        "a claim won after validation must refuse the coordination write: {outcome:?}",
-    );
-
-    let room_stamp = room.born().expect("fixture room has a birth stamp");
-    let control = CoordinationControl::Coordinate(room_stamp.clone()).to_string();
-    let facts = bus.fact_snapshot().expect("coordination race facts read");
-    assert!(
-        !facts.facts().iter().any(|envelope| {
-            envelope
-                .fact
-                .read::<wire::body::SteerSent>()
-                .is_some_and(|sent| sent.control.as_deref() == Some(&control))
-        }),
-        "refused coordination published a steering direction",
-    );
-    assert!(
-        !facts.facts().iter().any(|envelope| {
-            envelope
-                .fact
-                .read::<RoomCoordinationStarted>()
-                .is_some_and(|started| started.room == room_stamp)
-        }),
-        "refused coordination published a room record",
-    );
-
-    assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimFree,
-        claim_free_witnesses(&bus, epoch, &lane, &seats[0], &other),
-        &TaskRef {
-            task: other.clone(),
-        },
-    ));
-    claim_task(&bus, epoch, &seats[0], &lane, &room);
-    assert_committed(coordinate(
-        &bus,
-        &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Resume),
-    ));
-    clean(&root, bus);
 }

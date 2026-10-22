@@ -161,12 +161,9 @@ handle.
 | Group membership | Open Design tasks only | `group::design-only`: choose a Design whose current phase is `design`, or finish its admitted intake first |
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Group stance | Passive, Explore, or Converge on one standing group at the partition revision read; Passive on a group already Passive while one of its held Designs still owes shelving | `group::missing`, `group::stance-unchanged`, or `group::partition-moved`: read the groups and retry only if authority changed; `group::shelving-owed`: owed shelving did not commit, so set the group Passive again |
-| Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a committed disband can name ungrouped Designs still owed shelving, each repaired with `spice room put-aside HANDLE` |
-| Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
+| Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a committed disband can name ungrouped Designs still owed shelving, each repaired by moving it into a Passive group, such as `spice group move DESIGN --new` |
+| Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery; a nudge readies a passive Design but delivers it to no lane: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
 | Steeping Design | open, active Design whose cycle is not yet ready for proposal | `claim::design-held` on capture or recovery, naming the Design, its cycle, and that cycle's next action; `spice preparation nudge DESIGN` readies it, and the allocator and steal keep their own gate |
-| Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: a move records nothing, while a stance change commits and names that Design owed; free or reseat the holder, then retry the move or set the group Passive again |
-| Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
-| Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large` |

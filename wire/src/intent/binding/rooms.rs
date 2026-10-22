@@ -9,7 +9,6 @@ impl AnswerShape {
     ) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
             Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
-            Self::RoomCoordination => CommandAnswer::RoomCoordination(body.read()?),
             Self::RoomLeave => CommandAnswer::RoomLeave(body.read()?),
             Self::RoomContribute => CommandAnswer::RoomContribute(body.read()?),
             Self::RoomContributionRead => CommandAnswer::RoomContributionRead(body.read()?),
@@ -27,12 +26,9 @@ impl CommandKind {
 
         match self {
             Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
-            Self::RoomCoordinationRead => Binding::of(B::RoomCoordinationRead, A::RoomCoordination),
             Self::RoomConversationText => {
                 Binding::of(B::RoomConversationText, A::RoomConversationText)
             }
-            Self::RoomCoordinate => Binding::of(B::RoomCoordinate, A::RoomCoordination),
-            Self::RoomPutAside => Binding::of(B::RoomPutAside, A::RoomCoordination),
             Self::RoomLeave => Binding::of(B::RoomLeave, A::RoomLeave),
             Self::RoomContribute => Binding::of(B::RoomContribute, A::RoomContribute),
             Self::RoomContributionRead => {
@@ -48,10 +44,7 @@ impl Intent {
     pub(super) const fn room_shape(&self) -> BodyShape {
         match self {
             Self::RoomPost(_) => BodyShape::RoomPost,
-            Self::RoomCoordinationRead(_) => BodyShape::RoomCoordinationRead,
             Self::RoomConversationText(_) => BodyShape::RoomConversationText,
-            Self::RoomCoordinate(_) => BodyShape::RoomCoordinate,
-            Self::RoomPutAside(_) => BodyShape::RoomPutAside,
             Self::RoomLeave(_) => BodyShape::RoomLeave,
             Self::RoomContribute(_) => BodyShape::RoomContribute,
             Self::RoomContributionRead(_) => BodyShape::RoomContributionRead,
@@ -65,10 +58,7 @@ impl BodyShape {
     pub(super) fn decode_room_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
-            Self::RoomCoordinationRead => Intent::RoomCoordinationRead(crate::decode(bytes)?),
             Self::RoomConversationText => Intent::RoomConversationText(crate::decode(bytes)?),
-            Self::RoomCoordinate => Intent::RoomCoordinate(crate::decode(bytes)?),
-            Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
             Self::RoomLeave => Intent::RoomLeave(crate::decode(bytes)?),
             Self::RoomContribute => Intent::RoomContribute(crate::decode(bytes)?),
             Self::RoomContributionRead => Intent::RoomContributionRead(crate::decode(bytes)?),

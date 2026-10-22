@@ -145,9 +145,8 @@ impl<'a> wire::grouping::Kind for DesignKind<'a> {
 /// Move one design into a group, founding the group when no group holds that
 /// identity, or out of every group; a group its last design leaves ends.
 ///
-/// A move that changes an active Design to passive withdraws its room's
-/// unanswered coordination and asks the lane holding it to checkpoint and
-/// free; the returned lane is the one asked to park.
+/// A move that changes an active Design to passive asks the lane holding it
+/// to checkpoint and free; the returned lane is the one asked to park.
 pub(crate) fn move_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -384,8 +383,8 @@ pub(super) fn set_working_group_fast(
 }
 
 /// Most reads one group command makes of a room before reporting its
-/// shelving owed. Passive standing refuses new claims and coordination on
-/// the group's Designs, so a room that moved settles within a read or two.
+/// shelving owed. Passive standing refuses new claims on the group's
+/// Designs, so a room that moved settles within a read or two.
 const SHELVING_ATTEMPTS: usize = 4;
 
 /// End one standing group and leave all of its Designs ungrouped. The

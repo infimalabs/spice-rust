@@ -56,17 +56,16 @@ impl JournalRead<'_> {
         self.steering_row("steer_key", key)
     }
 
-    /// Live coordination and stop requests bound to `room`, in creation order.
-    /// At most `limit` rows return; a caller that receives `limit` rows cannot
-    /// know the set is complete.
-    pub fn live_room_controls(
+    /// Live stop requests bound to `room`, in creation order. At most `limit`
+    /// rows return; a caller that receives `limit` rows cannot know the set is
+    /// complete.
+    pub fn live_room_stops(
         &self,
         room: &wire::TaskStamp,
         limit: usize,
     ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
         self.require_current_steering_index()?;
-        let coordinate = wire::rooms::CoordinationControl::Coordinate(room.clone()).to_string();
-        let stop = format!("room-stop:{room}:%");
+        let stop = format!("{}:{room}:%", wire::rooms::StopControl::PREFIX);
         let limit = i64::try_from(limit)
             .map_err(|_| GuardError::Invalid("room steering limit exceeds SQLite".to_owned()))?;
         let mut statement = self
@@ -75,14 +74,13 @@ impl JournalRead<'_> {
                 "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
                  room, head_seq, body FROM steering_heads \
                  WHERE disposition = 'live' \
-                 AND (json_extract(CAST(body AS TEXT), '$.control') = ?1 \
-                 OR json_extract(CAST(body AS TEXT), '$.control') LIKE ?2) \
-                 ORDER BY created_seq LIMIT ?3",
+                 AND json_extract(CAST(body AS TEXT), '$.control') LIKE ?1 \
+                 ORDER BY created_seq LIMIT ?2",
             )
             .map_err(GuardError::Store)?;
         read_metrics::observe_query();
         let rows = statement
-            .query_map(params![coordinate, stop, limit], read_steering_columns)
+            .query_map(params![stop, limit], read_steering_columns)
             .map_err(GuardError::Store)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(GuardError::Store)?;
@@ -94,13 +92,8 @@ impl JournalRead<'_> {
                     .body
                     .control
                     .as_deref()
-                    .and_then(|control| control.parse().ok())
-                    .is_some_and(|control| match control {
-                        wire::rooms::CoordinationControl::Coordinate(anchor)
-                        | wire::rooms::CoordinationControl::Stop { room: anchor, .. } => {
-                            anchor == *room
-                        }
-                    });
+                    .and_then(|control| control.parse::<wire::rooms::StopControl>().ok())
+                    .is_some_and(|control| control.room == *room);
                 if !bound {
                     return Err(GuardError::Invalid(format!(
                         "steering {} indexed into room {room} is not bound to it",
@@ -110,6 +103,18 @@ impl JournalRead<'_> {
                 Ok(head)
             })
             .collect()
+    }
+
+    /// The stop request carrying exactly `control`, whatever its disposition,
+    /// absent when none was ever sent.
+    pub fn room_stop(
+        &self,
+        control: &wire::rooms::StopControl,
+    ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
+        self.steering_row(
+            "json_extract(CAST(body AS TEXT), '$.control')",
+            &control.to_string(),
+        )
     }
 
     /// One fixed page of live steering for one lane or every lane.

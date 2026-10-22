@@ -53,7 +53,7 @@ pub(super) fn refuse_retained(transaction: &rusqlite::Transaction<'_>) -> Result
     if let Some(seq) = fact {
         return Err(retained_fact_error(
             seq,
-            "this predecessor cannot retire room question authority",
+            "this predecessor cannot retire room question authority".to_owned(),
         ));
     }
     let receipt = transaction
@@ -195,7 +195,7 @@ fn validate_row(
     {
         return Err(retained_fact_error(
             row.seq,
-            "retired fact envelope disagrees with its indexed columns",
+            "retired fact envelope disagrees with its indexed columns".to_owned(),
         ));
     }
     Ok(())
@@ -266,7 +266,7 @@ fn retire_row(
     if changed != 1 {
         return Err(retained_fact_error(
             row.seq,
-            "retired fact changed during exclusive migration",
+            "retired fact changed during exclusive migration".to_owned(),
         ));
     }
     Ok(())
@@ -289,21 +289,23 @@ fn repair_projections(
             .optional()
             .map_err(OpenError::Sqlite)?;
         if let Some(lane) = cursor {
-            restore_cursor(transaction, &lane, seq)?;
+            restore_cursor(transaction, &lane, seq, retained_fact_error)?;
         }
     }
     Ok(())
 }
 
-/// Restore the newest surviving delivery for `lane`, exactly as replay does.
-fn restore_cursor(
+/// Restore the newest surviving delivery for `lane`, exactly as replay does;
+/// `refuse` names the retiring release in each refusal.
+pub(super) fn restore_cursor(
     transaction: &rusqlite::Transaction<'_>,
     lane: &str,
     retired_head: i64,
+    refuse: fn(i64, String) -> OpenError,
 ) -> Result<(), OpenError> {
     let lane_id = lane
         .parse()
-        .map_err(|_| retained_fact_error(retired_head, "room cursor has an invalid lane"))?;
+        .map_err(|_| refuse(retired_head, "room cursor has an invalid lane".to_owned()))?;
     let previous = {
         let mut statement = transaction
             .prepare(
@@ -318,31 +320,26 @@ fn restore_cursor(
             let bytes = row.get::<_, Vec<u8>>(1).map_err(OpenError::Sqlite)?;
             let envelope: wire::Envelope<wire::AnyFact> =
                 wire::decode(&bytes).map_err(|error| {
-                    retained_fact_error(seq, format!("surviving delivery does not decode: {error}"))
+                    refuse(seq, format!("surviving delivery does not decode: {error}"))
                 })?;
             let indexed = u64::try_from(seq).map_err(|_| {
-                retained_fact_error(seq, "surviving delivery has a negative position")
+                refuse(seq, "surviving delivery has a negative position".to_owned())
             })?;
             if envelope.seq.get() != indexed {
-                return Err(retained_fact_error(
+                return Err(refuse(
                     seq,
-                    "surviving delivery disagrees with its indexed position",
+                    "surviving delivery disagrees with its indexed position".to_owned(),
                 ));
             }
             let delivered = envelope
                 .fact
                 .read::<wire::rooms::RoomDelivered>()
-                .ok_or_else(|| {
-                    retained_fact_error(seq, "surviving delivery has no delivery body")
-                })?;
+                .ok_or_else(|| refuse(seq, "surviving delivery has no delivery body".to_owned()))?;
             if delivered.hunk.head.lane == lane_id {
                 previous = Some((
                     seq,
                     wire::encode(&delivered).map_err(|error| {
-                        retained_fact_error(
-                            seq,
-                            format!("surviving delivery does not encode: {error}"),
-                        )
+                        refuse(seq, format!("surviving delivery does not encode: {error}"))
                     })?,
                 ));
                 break;
@@ -363,9 +360,9 @@ fn restore_cursor(
     }
     .map_err(OpenError::Sqlite)?;
     if changed != 1 {
-        return Err(retained_fact_error(
+        return Err(refuse(
             retired_head,
-            "room cursor changed during exclusive migration",
+            "room cursor changed during exclusive migration".to_owned(),
         ));
     }
     Ok(())
@@ -386,7 +383,7 @@ fn drop_projections(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenE
         .map_err(OpenError::Sqlite)
 }
 
-fn retained_fact_error(seq: i64, detail: impl Into<String>) -> OpenError {
+fn retained_fact_error(seq: i64, detail: String) -> OpenError {
     MigrationError::RetiredFact {
         seq,
         kind: "retired room question authority",

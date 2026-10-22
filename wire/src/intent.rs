@@ -70,12 +70,10 @@ mod rooms;
 pub use rooms::{
     RoomConcernedDirection, RoomContribute, RoomContributeAnswer, RoomContributionRead,
     RoomContributionReadAnswer, RoomControl, RoomControlAnswer, RoomConversationContent,
-    RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinateAction,
-    RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView,
-    RoomFactSummary, RoomFactTask, RoomItemMove, RoomLeave, RoomLeaveAnswer, RoomListeningDuty,
-    RoomPutAside, WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange,
-    WorkingGroupChangeStatus, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
-    WorkingGroupPage, WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
+    RoomConversationText, RoomConversationTextAnswer, RoomFactSummary, RoomFactTask, RoomItemMove,
+    RoomLeave, RoomLeaveAnswer, RoomListeningDuty, WorkingGroupAnchor, WorkingGroupArrange,
+    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupDisband, WorkingGroupFast,
+    WorkingGroupMove, WorkingGroupPage, WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
 };
 
 mod task;

@@ -127,21 +127,6 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         design_cycles: std::collections::BTreeMap::new(),
         quote_tasks: std::rc::Rc::default(),
         environment: Environment::journal_schema(1).expect("fixture schema"),
-        seats: crate::runtime::Seats::new(residency(), std::collections::BTreeMap::new()),
-    }
-}
-
-/// A seated resident with no lanes.
-pub(crate) fn residency() -> wire::ResidencyHead {
-    wire::ResidencyHead {
-        epoch: "33333333-3333-4333-8333-333333333333"
-            .parse::<CanonicalUuid>()
-            .expect("fixture epoch"),
-        state: wire::ResidentState::Seated,
-        topology_revision: 0,
-        lanes: Vec::new(),
-        subscriptions: Vec::new(),
-        renewals: Vec::new(),
     }
 }
 

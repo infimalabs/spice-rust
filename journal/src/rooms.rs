@@ -29,7 +29,6 @@ use wire::{
 mod awareness;
 mod claims;
 mod conversation;
-mod coordination;
 mod dependencies;
 mod history;
 mod hunk;
@@ -44,10 +43,6 @@ pub(crate) use awareness::require_deliveries as require_return_deliveries;
 pub(crate) use conversation::{
     ITEM_SCHEMA_SQL as CONVERSATION_ITEM_SCHEMA_SQL, SCHEMA_SQL as CONVERSATION_SCHEMA_SQL,
     require_deliveries as require_conversation_deliveries,
-};
-pub(crate) use coordination::{
-    Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
-    require_writes as require_coordination_writes,
 };
 pub(crate) use history::History;
 use hunk::require_hunk;
@@ -207,10 +202,6 @@ pub(crate) struct Projection {
     pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
     /// Logical lane to its catch-up horizon position and canonical body.
     pub(crate) horizons: BTreeMap<String, (u64, Vec<u8>)>,
-    /// Room to its latest `room::directed` head position and canonical body.
-    pub(crate) directed: BTreeMap<String, (u64, Vec<u8>)>,
-    /// Room to its latest `room::shelved` head position and canonical body.
-    pub(crate) shelved: BTreeMap<String, (u64, Vec<u8>)>,
     /// Conversation publications with their operator item heads.
     pub(crate) conversation: conversation::Heads,
     /// Append-only shadow relevance observations and operator assessments.
@@ -285,10 +276,6 @@ pub(crate) trait Authority {
     fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal>;
     /// Whether this decision already authorized a selection.
     fn decision_authorized(&self, decision: &str) -> Result<bool, Refusal>;
-    /// The room-coordination direction one steering key names, if any.
-    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal>;
-    /// Record a room-coordination direction's current state.
-    fn set_direction(&mut self, key: &str, direction: Direction);
     /// The lane the operator addressed with direction `key`, if the operator
     /// sent one under that key.
     fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal>;
@@ -343,12 +330,6 @@ pub(crate) enum Change {
     },
     Horizon {
         lane: String,
-        seq: u64,
-        body: Vec<u8>,
-    },
-    Coordination {
-        record: CoordinationRecord,
-        room: String,
         seq: u64,
         body: Vec<u8>,
     },
@@ -582,7 +563,7 @@ fn critique_candidate(
     record(authority, seq, &proposal, controller, critique)
 }
 
-/// Admit one coordination, catch-up, conversation, or leave fact, or `None`
+/// Admit one steering, catch-up, conversation, or leave fact, or `None`
 /// when `fact` is none of them.
 fn fold_traffic(
     authority: &mut impl Authority,
@@ -597,8 +578,11 @@ fn fold_traffic(
     if let Some(result) = awareness::fold(authority, seq, actor, fact) {
         return Some(result);
     }
-    if let Some(result) = coordination::fold(authority, seq, actor, fact) {
-        return Some(result);
+    if let Some(sent) = fact.read::<wire::body::SteerSent>() {
+        if is_principal(actor) && sent.fanout.is_some() {
+            authority.set_operator_direction(&sent.key, sent.lane);
+        }
+        return Some(Ok(()));
     }
     if let Some(result) = conversation::fold(authority, seq, at, actor, fact) {
         return Some(result);

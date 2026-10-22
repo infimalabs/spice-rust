@@ -306,7 +306,7 @@ impl<'a> Surface<'a> {
     fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         self.dispatch_room_reads(command)
             .map(CommandDispatch::ordinary)
-            .or_else(|| self.dispatch_room_coordination(command))
+            .or_else(|| self.dispatch_room_writes(command))
             .or_else(|| self.dispatch_steering(command))
             .or_else(|| self.dispatch_settings(command))
             .or_else(|| self.dispatch_policy(command).map(CommandDispatch::ordinary))
@@ -330,14 +330,6 @@ impl<'a> Surface<'a> {
         command: &wire::AdmittedCommand,
     ) -> Option<Outcome<CommandAnswer>> {
         Some(match (command.kind(), command.body()) {
-            (CommandKind::RoomCoordinationRead, Intent::RoomCoordinationRead(request)) => {
-                crate::board_command::room_coordination_read(
-                    self.bus,
-                    request,
-                    &self.config.projects,
-                    &self.config.allocation,
-                )
-            }
             (CommandKind::RoomConversationText, Intent::RoomConversationText(request)) => {
                 crate::room_command::conversation_text(self.bus, &self.paths.tape, request)
             }
@@ -355,45 +347,10 @@ impl<'a> Surface<'a> {
         })
     }
 
-    fn dispatch_room_coordination(
-        &self,
-        command: &wire::AdmittedCommand,
-    ) -> Option<CommandDispatch> {
+    /// Room and working-group writes, which notify each lane they address.
+    fn dispatch_room_writes(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         let (outcome, notify): (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) =
             match (command.kind(), command.body()) {
-                (CommandKind::RoomCoordinate, Intent::RoomCoordinate(request)) => (
-                    crate::board_command::room_coordinate(
-                        self.bus,
-                        command,
-                        request,
-                        &self.config.steering,
-                        &self.config.projects,
-                        &self.config.allocation,
-                    ),
-                    crate::board_command::coordination_lane(self.bus, request.target)
-                        .into_iter()
-                        .collect(),
-                ),
-                (CommandKind::RoomPutAside, Intent::RoomPutAside(request)) => {
-                    let outcome = crate::board_command::room_put_aside(
-                        self.bus,
-                        command,
-                        request,
-                        &self.config.steering,
-                        &self.config.projects,
-                        &self.config.allocation,
-                    );
-                    let notify = match &outcome {
-                        Outcome::Reply(Reply {
-                            body: CommandAnswer::RoomCoordination(view),
-                            ..
-                        }) => view.stop.as_ref().and_then(|stop| {
-                            crate::board_command::coordination_lane(self.bus, stop.target)
-                        }),
-                        _ => None,
-                    };
-                    (outcome, notify.into_iter().collect())
-                }
                 (CommandKind::WorkingGroupMove, Intent::WorkingGroupMove(request)) => {
                     let (outcome, parked) = crate::board_command::move_working_group(
                         self.bus,

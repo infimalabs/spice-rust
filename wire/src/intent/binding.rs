@@ -29,15 +29,15 @@ use super::{
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
     ReleasePublish, ReportAnswer, ReportRead, RoomContribute, RoomContributeAnswer,
     RoomContributionRead, RoomContributionReadAnswer, RoomControl, RoomControlAnswer,
-    RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
-    RoomCoordinationView, RoomLeave, RoomLeaveAnswer, RoomPutAside, StateAnswer, SteerDispose,
-    SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskConclude,
-    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskFile,
-    TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview,
-    TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord,
-    TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog,
-    VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange, WorkingGroupDisband,
-    WorkingGroupFast, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead, WorkingGroupStanceSet,
+    RoomConversationText, RoomConversationTextAnswer, RoomLeave, RoomLeaveAnswer, StateAnswer,
+    SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose,
+    TaskConclude, TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone,
+    TaskEdit, TaskFile, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
+    TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
+    TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
+    UpChange, VendorCatalog, VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange,
+    WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    WorkingGroupStanceSet,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -61,14 +61,8 @@ pub enum BodyShape {
     DocLedger,
     /// [`RoomPost`]
     RoomPost,
-    /// [`RoomCoordinationRead`]
-    RoomCoordinationRead,
     /// [`RoomConversationText`]
     RoomConversationText,
-    /// [`RoomCoordinate`]
-    RoomCoordinate,
-    /// [`RoomPutAside`]
-    RoomPutAside,
     /// [`RoomLeave`]
     RoomLeave,
     /// [`RoomContribute`]
@@ -240,8 +234,6 @@ pub enum AnswerShape {
     Text,
     /// [`RoomPostAnswer`]
     RoomPost,
-    /// [`RoomCoordinationView`]
-    RoomCoordination,
     /// [`RoomLeaveAnswer`]
     RoomLeave,
     /// [`RoomContributeAnswer`]
@@ -326,8 +318,6 @@ pub enum CommandAnswer {
     Text(TextAnswer),
     /// [`AnswerShape::RoomPost`]
     RoomPost(RoomPostAnswer),
-    /// [`AnswerShape::RoomCoordination`]
-    RoomCoordination(RoomCoordinationView),
     /// [`AnswerShape::RoomLeave`]
     RoomLeave(RoomLeaveAnswer),
     /// [`AnswerShape::RoomContribute`]
@@ -403,7 +393,6 @@ impl CommandAnswer {
             | Self::TaskTimeline(_)
             | Self::Text(_)
             | Self::RoomPost(_)
-            | Self::RoomCoordination(_)
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
             | Self::RoomContributionRead(_)
@@ -445,7 +434,6 @@ impl CommandAnswer {
             Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
             Self::Text(_) => AnswerShape::Text,
             Self::RoomPost(_) => AnswerShape::RoomPost,
-            Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
             Self::RoomLeave(_) => AnswerShape::RoomLeave,
             Self::RoomContribute(_) => AnswerShape::RoomContribute,
             Self::RoomContributionRead(_) => AnswerShape::RoomContributionRead,
@@ -522,10 +510,7 @@ impl CommandKind {
             | Self::PrincipalRevoke
             | Self::PrincipalDeauthorize => self.principal_binding(),
             Self::RoomPost
-            | Self::RoomCoordinationRead
             | Self::RoomConversationText
-            | Self::RoomCoordinate
-            | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionRead
@@ -770,14 +755,8 @@ pub enum Intent {
     DocLedger(DocLedger),
     /// [`BodyShape::RoomPost`]
     RoomPost(RoomPost),
-    /// [`BodyShape::RoomCoordinationRead`]
-    RoomCoordinationRead(RoomCoordinationRead),
     /// [`BodyShape::RoomConversationText`]
     RoomConversationText(RoomConversationText),
-    /// [`BodyShape::RoomCoordinate`]
-    RoomCoordinate(RoomCoordinate),
-    /// [`BodyShape::RoomPutAside`]
-    RoomPutAside(RoomPutAside),
     /// [`BodyShape::RoomLeave`]
     RoomLeave(RoomLeave),
     /// [`BodyShape::RoomContribute`]
@@ -948,10 +927,7 @@ impl Intent {
             | Self::PrincipalRoleRef(_)
             | Self::PrincipalDeauthorize(_) => self.principal_shape(),
             Self::RoomPost(_)
-            | Self::RoomCoordinationRead(_)
             | Self::RoomConversationText(_)
-            | Self::RoomCoordinate(_)
-            | Self::RoomPutAside(_)
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
             | Self::RoomContributionRead(_)
@@ -1159,10 +1135,7 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::RoomPost
-                | Self::RoomCoordinationRead
                 | Self::RoomConversationText
-                | Self::RoomCoordinate
-                | Self::RoomPutAside
                 | Self::RoomLeave
                 | Self::RoomContribute
                 | Self::RoomContributionRead
@@ -1216,10 +1189,7 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::RoomPost
-                | Self::RoomCoordinationRead
                 | Self::RoomConversationText
-                | Self::RoomCoordinate
-                | Self::RoomPutAside
                 | Self::RoomLeave
                 | Self::RoomContribute
                 | Self::RoomContributionRead
@@ -1263,10 +1233,7 @@ impl BodyShape {
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::RoomPost
-            | Self::RoomCoordinationRead
             | Self::RoomConversationText
-            | Self::RoomCoordinate
-            | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionRead

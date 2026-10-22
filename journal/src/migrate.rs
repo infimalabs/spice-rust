@@ -26,8 +26,8 @@ mod provenance;
 pub(crate) mod residual;
 mod retained_notes;
 mod review_status;
+mod room_coordination;
 mod room_questions;
-mod room_rules;
 mod settings_receipts;
 mod steering_rooms;
 mod task_evidence;
@@ -139,8 +139,6 @@ const PRINCIPAL_HEADS_SQL: &str = "CREATE TABLE principal_heads (
 pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 /// First schema whose baseline carries per-lane room catch-up cursors.
 pub(crate) const ROOM_CURSOR_SCHEMA: u32 = 41;
-/// First schema whose baseline carries room coordination heads.
-pub(crate) const ROOM_COORDINATION_SCHEMA: u32 = 44;
 /// First schema whose baseline carries per-lane room catch-up horizons.
 pub(crate) const ROOM_HORIZON_SCHEMA: u32 = 45;
 /// First schema whose baseline carries room conversation publications and
@@ -172,13 +170,9 @@ pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
 pub(crate) const RELEASE_NOTES_SCHEMA: u32 = 88;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
-    (
-        ROOM_COORDINATION_SCHEMA,
-        crate::rooms::COORDINATION_SCHEMA_SQL,
-    ),
     (ROOM_HORIZON_SCHEMA, crate::rooms::HORIZON_SCHEMA_SQL),
     (
         ROOM_CONVERSATION_SCHEMA,
@@ -415,11 +409,11 @@ fn cross_current_rows(
 /// Remove each retired member a current decoder would refuse, before any
 /// later crossing decodes a retained row strictly.
 fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    room_coordination::cross(transaction)?;
     preparation_edges::strip_authorization(transaction)?;
     task_evidence::cross(transaction)?;
     contribution_charges::cross(transaction)?;
     contribution_items::cross(transaction)?;
-    room_rules::cross(transaction)?;
     design_asks::cross(transaction)?;
     leave_receipts::cross(transaction)
 }

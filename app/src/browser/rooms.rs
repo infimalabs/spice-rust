@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::JsCast;
 use web_sys::HtmlElement;
 use wire::intent::WorkingGroupChangeStatus;
 use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupMove};
@@ -27,7 +27,6 @@ mod approval;
 mod conclusion;
 mod console;
 mod contributions;
-mod coordination;
 mod nudge;
 mod reading;
 mod standing;
@@ -625,13 +624,6 @@ pub(super) fn submit_group_change(
     );
 }
 
-fn input_value(node: &NodeRef) -> Option<String> {
-    let input = node.cast::<HtmlElement>()?;
-    js_sys::Reflect::get(input.as_ref(), &JsValue::from_str("value"))
-        .ok()?
-        .as_string()
-}
-
 /// A task's statement head, which a command naming the task witnesses.
 fn statement_witness(task: &wire::intent::BoardTask) -> wire::Witness {
     wire::Witness::Task {
@@ -820,21 +812,6 @@ fn event_summary(
         | RoomEventKind::Posted { .. } => (
             "Conversation",
             "Conversation authority is unavailable.".to_owned(),
-        ),
-        RoomEventKind::Coordination { key, target } => {
-            ("Coordination", format!("{key} → {target}"))
-        }
-        RoomEventKind::PutAside { canceled, stop } => (
-            "Put aside",
-            if let Some(stop) = stop {
-                format!(
-                    "Stop requested from {} · {} canceled",
-                    stop.target,
-                    canceled.len()
-                )
-            } else {
-                format!("{} request(s) canceled", canceled.len())
-            },
         ),
         RoomEventKind::Left { lane, clause } => (
             "Left",

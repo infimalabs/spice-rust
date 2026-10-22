@@ -14,23 +14,23 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 mod contribution;
 mod conversation;
-mod coordination;
 mod cycle;
 mod decision;
 mod maturity;
 mod notice;
 mod relevance;
+mod stop;
 mod withdrawal;
 mod working_group;
 
 pub use contribution::*;
 pub use conversation::*;
-pub use coordination::*;
 pub use cycle::*;
 pub use decision::*;
 pub use maturity::*;
 pub use notice::*;
 pub use relevance::*;
+pub use stop::*;
 pub use withdrawal::*;
 pub use working_group::*;
 
@@ -96,9 +96,8 @@ impl RoomAuthorityStamp {
 
 /// Canonical command attribution for working-group partition changes: the
 /// partition is one authority, whatever group a change touches. A move that
-/// takes a Design out of every group while its room has coordination or a
-/// lane holder to withdraw commits under that Design's task origin instead,
-/// so the withdrawal it records cites the room's own steering and claim.
+/// takes a held Design out of every group commits under that Design's task
+/// origin instead, so the stop direction it sends cites the room's own claim.
 #[must_use]
 pub fn working_group_origin() -> Origin {
     "group:partition"
@@ -385,7 +384,7 @@ pub struct RoomDelivered {
 /// Retained predecessor for the former lane-global catch-up start.
 ///
 /// Current catch-up derives its lower bound from each current task, Design
-/// request, coordination, or stop authority instead. The journal continues to
+/// request, or stop authority instead. The journal continues to
 /// admit and replay historical horizon facts so an existing repository keeps
 /// one valid history across the cutover; this fact claims no delivery,
 /// participation, or current listening authority.

@@ -22,6 +22,7 @@ mod release_notes;
 mod retained;
 mod retained_notes;
 mod review_status;
+mod room_coordination;
 mod room_questions;
 mod settings_receipts;
 mod task_evidence;
@@ -76,11 +77,6 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     };
     let cursors = if predecessor < crate::migrate::ROOM_CURSOR_SCHEMA {
         "DROP TABLE room_cursors;"
-    } else {
-        ""
-    };
-    let coordination = if predecessor < crate::migrate::ROOM_COORDINATION_SCHEMA {
-        "DROP TABLE room_directions; DROP TABLE room_shelvings;"
     } else {
         ""
     };
@@ -167,7 +163,7 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} \
+            "{rooms} {groups} {cursors} {horizons} {conversations} \
              {evidence} {relevance} {principals} {oops_generation} {steering} {release_notes}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",

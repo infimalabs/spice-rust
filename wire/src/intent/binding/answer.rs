@@ -38,7 +38,6 @@ impl AnswerShape {
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
             Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
             Self::RoomPost
-            | Self::RoomCoordination
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionRead

@@ -20,10 +20,7 @@ impl CommandKind {
         Self::BoardHandout,
         Self::DocLedger,
         Self::RoomPost,
-        Self::RoomCoordinationRead,
         Self::RoomConversationText,
-        Self::RoomCoordinate,
-        Self::RoomPutAside,
         Self::RoomLeave,
         Self::RoomContribute,
         Self::RoomContributionRead,
@@ -127,10 +124,7 @@ impl CommandKind {
             | Self::BoardHandout
             | Self::DocLedger
             | Self::RoomPost
-            | Self::RoomCoordinationRead
             | Self::RoomConversationText
-            | Self::RoomCoordinate
-            | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionRead
@@ -229,10 +223,7 @@ impl CommandKind {
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
             Self::RoomPost
-            | Self::RoomCoordinationRead
             | Self::RoomConversationText
-            | Self::RoomCoordinate
-            | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
             | Self::RoomContributionRead
@@ -272,10 +263,7 @@ impl CommandKind {
     const fn room_spelling(self) -> &'static str {
         match self {
             Self::RoomPost => "room::post",
-            Self::RoomCoordinationRead => "room::coordination-read",
             Self::RoomConversationText => "room::conversation-text",
-            Self::RoomCoordinate => "room::coordinate",
-            Self::RoomPutAside => "room::put-aside",
             Self::RoomLeave => "room::leave",
             Self::RoomContribute => "room::contribute",
             Self::RoomContributionRead => "room::contribution-read",
@@ -395,7 +383,6 @@ impl CommandKind {
                 | Self::LaneJobsRead
                 | Self::LaneJobRead
                 | Self::WorkingGroupRead
-                | Self::RoomCoordinationRead
                 | Self::RoomConversationText
                 | Self::RoomContributionRead
                 | Self::LaneRecall

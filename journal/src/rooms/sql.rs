@@ -9,13 +9,13 @@ use wire::{
 };
 
 use super::{
-    Authority, AuthorizationRow, Change, CoordinationRecord, Direction, Projection, ProposalRow,
-    Refusal, conversation, relevance, unsound,
+    Authority, AuthorizationRow, Change, Projection, ProposalRow, Refusal, conversation, relevance,
+    unsound,
 };
 
 /// Stored authority as one commit transaction sees it, overlaid with the
-/// tasks, transcript generations, and directions earlier facts of the same
-/// write introduce.
+/// tasks, transcript generations, and operator directions earlier facts of the
+/// same write introduce.
 pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
@@ -24,7 +24,6 @@ pub(crate) struct Stored<'a> {
     task_dependencies: BTreeMap<String, Vec<TaskStamp>>,
     active_claims: BTreeMap<String, Option<Seq>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
-    directions: BTreeMap<String, Direction>,
     operator_directions: BTreeMap<String, CanonicalUuid>,
 }
 
@@ -38,7 +37,6 @@ impl<'a> Stored<'a> {
             task_dependencies: BTreeMap::new(),
             active_claims: BTreeMap::new(),
             transcripts: BTreeMap::new(),
-            directions: BTreeMap::new(),
             operator_directions: BTreeMap::new(),
         }
     }
@@ -300,37 +298,6 @@ impl Authority for Stored<'_> {
         )
     }
 
-    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
-        if let Some(direction) = self.directions.get(key) {
-            return Ok(Some(direction.clone()));
-        }
-        let row = self
-            .connection
-            .query_row(
-                "SELECT steering.head_seq, steering.body, fact.actor FROM steering_heads AS steering \
-                 JOIN fact_envelopes AS fact ON fact.seq = steering.created_seq \
-                 WHERE steering.steer_key = ?1",
-                [key],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, Vec<u8>>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((head_seq, body, creator)) = row else {
-            return Ok(None);
-        };
-        let head = wire::decode::<wire::SteeringHead>(&body)?;
-        Ok(Direction::stored(&head, &creator, unsql(head_seq)))
-    }
-
-    fn set_direction(&mut self, key: &str, direction: Direction) {
-        self.directions.insert(key.to_owned(), direction);
-    }
-
     fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal> {
         if let Some(lane) = self.operator_directions.get(key) {
             return Ok(Some(*lane));
@@ -416,21 +383,6 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
             connection.execute(
                 "INSERT INTO room_horizons(lane, head_seq, body) VALUES (?1, ?2, ?3)",
                 params![lane, sql(seq), body],
-            )?;
-        }
-        Change::Coordination {
-            record,
-            room,
-            seq,
-            body,
-        } => {
-            connection.execute(
-                &format!(
-                    "INSERT INTO {}(room, head_seq, body) VALUES (?1, ?2, ?3) \
-                     ON CONFLICT(room) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
-                    record.table()
-                ),
-                params![room, sql(seq), body],
             )?;
         }
         Change::Conversation(edit) => conversation::apply_sql(connection, edit)?,
@@ -631,14 +583,6 @@ impl Projection {
             )?,
             cursors: heads(connection, "SELECT lane, head_seq, body FROM room_cursors")?,
             horizons: heads(connection, "SELECT lane, head_seq, body FROM room_horizons")?,
-            directed: heads(
-                connection,
-                "SELECT room, head_seq, body FROM room_directions",
-            )?,
-            shelved: heads(
-                connection,
-                "SELECT room, head_seq, body FROM room_shelvings",
-            )?,
             conversation: conversation::Heads::load(connection)?,
             relevance: relevance::Heads::load(connection)?,
         })
@@ -672,8 +616,7 @@ pub(crate) fn write_projection(
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_maturity; \
          DELETE FROM oops_generation_head; DELETE FROM group_partition; DELETE FROM proposal_heads; \
-         DELETE FROM authorization_heads; DELETE FROM room_cursors; DELETE FROM room_horizons; \
-         DELETE FROM room_directions; DELETE FROM room_shelvings;",
+         DELETE FROM authorization_heads; DELETE FROM room_cursors; DELETE FROM room_horizons;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -716,20 +659,6 @@ pub(crate) fn write_projection(
             "INSERT INTO room_horizons(lane, head_seq, body) VALUES (?1, ?2, ?3)",
             params![lane, sql(*seq), body],
         )?;
-    }
-    for (record, heads) in [
-        (CoordinationRecord::Directed, &projection.directed),
-        (CoordinationRecord::Shelved, &projection.shelved),
-    ] {
-        for (room, (seq, body)) in heads {
-            connection.execute(
-                &format!(
-                    "INSERT INTO {}(room, head_seq, body) VALUES (?1, ?2, ?3)",
-                    record.table()
-                ),
-                params![room, sql(*seq), body],
-            )?;
-        }
     }
     projection.conversation.write(connection)?;
     projection.relevance.write(connection)

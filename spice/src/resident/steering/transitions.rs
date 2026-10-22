@@ -61,30 +61,6 @@ pub(crate) fn append_operator_directive(
     Ok((key.to_string(), pending))
 }
 
-/// Retire one exact live directive inside a larger guarded command.
-pub(crate) fn append_cancellation(
-    proposal: &mut JournalWrite,
-    directive: &journal::JournalHead<wire::SteeringHead>,
-    at: Instant,
-) -> Result<String, Outcome<CommandAnswer>> {
-    proposal.guard(live_guard(directive.body().directive, directive.position()));
-    let canceled = wire::body::SteerCanceled {
-        key: directive.body().key.clone(),
-        lane: directive.body().lane,
-    };
-    let pending = proposal
-        .fact(
-            canceled.clone(),
-            FactCause::Existing(directive.body().created),
-        )
-        .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
-    let next =
-        steer::Ledger::transition_head(directive.body(), steer::Steering::Canceled(&canceled), at)
-            .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
-    proposal.steering_head(pending, move |_| next);
-    Ok(directive.body().key.clone())
-}
-
 pub(in crate::resident) fn send(
     bus: &Bus,
     epoch: CanonicalUuid,
