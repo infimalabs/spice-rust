@@ -276,6 +276,69 @@ fn uncertain_schema_recovery_preserves_the_successor_and_names_both_causes() {
     );
 }
 
+/// A resident start refused over an unchanged schema rolls back through the
+/// parked executable's own installer, plan then apply by digest, and restarts
+/// the resident it stopped; the in-process installer never runs.
+#[test]
+fn a_refused_resident_start_restores_through_the_parked_executables_installer() {
+    let fixture = Fixture::new("start-refused-restore");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    let endpoint = "http://127.0.0.1:8767";
+    place(&repository, b"predecessor\n");
+    let parked = park(&repository, &installed)
+        .expect("predecessor parks")
+        .expect("predecessor exists");
+    place(&repository, b"successor\n");
+    let mut host = Scripted::new(parked_installer(
+        parked.clone(),
+        &repository,
+        |_: &Issued| ready(endpoint),
+    ));
+    let mut output = Vec::new();
+
+    let error = recover_start_failure_after(
+        &mut host,
+        &repository,
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            resident_executable: None,
+            published: Some(endpoint),
+            restart: true,
+            binding: restart_binding(Some("127.0.0.1"), Some(8767)),
+            resident: Default::default(),
+        },
+        Some(spice::journal_schema::CURRENT),
+        Ok(Some(spice::journal_schema::CURRENT)),
+        &mut output,
+        RefreshError::ResidentStartRefused("journal::schema-refused".to_owned()),
+    );
+
+    assert!(
+        matches!(&error, RefreshError::ResidentStartRefused(refusal) if refusal == "journal::schema-refused"),
+        "the start refusal was not reported after the rollback: {error}"
+    );
+    assert_eq!(
+        host.issued,
+        [
+            Issued::install(&parked, None),
+            Issued::install(&parked, Some(&parked_plan_digest())),
+            Issued::up(&installed, &["--host", "127.0.0.1", "--port", "8767"]),
+        ],
+        "the rollback did not run the parked executable's installer: {}",
+        String::from_utf8_lossy(&output)
+    );
+    assert!(
+        host.installs.is_empty(),
+        "the in-process installer ran for a rollback"
+    );
+    assert_eq!(
+        fs::read(&installed).expect("installed reads"),
+        b"predecessor\n"
+    );
+}
+
 /// How many names one fixture tries before giving up on an exclusive root.
 const SCRATCH_ATTEMPTS: usize = 100;
 
@@ -409,8 +472,33 @@ impl Issued {
         }
     }
 
+    fn install(program: &Path, apply: Option<&Digest>) -> Self {
+        let mut arguments = vec!["--json".to_owned(), "install".to_owned()];
+        if let Some(digest) = apply {
+            arguments.push(format!("--apply={digest}"));
+        }
+        Self {
+            program: program.to_path_buf(),
+            arguments,
+        }
+    }
+
     fn is_down(&self) -> bool {
         self.arguments == ["down"]
+    }
+
+    /// The plan digest this is an `install --apply` of, if it is one.
+    fn applies(&self) -> Option<Digest> {
+        match self.arguments.as_slice() {
+            [json, install, apply] if json == "--json" && install == "install" => apply
+                .strip_prefix("--apply=")
+                .and_then(|digest| digest.parse().ok()),
+            _ => None,
+        }
+    }
+
+    fn is_install_plan(&self) -> bool {
+        self.arguments == ["--json", "install"]
     }
 }
 
@@ -489,6 +577,86 @@ fn ready(endpoint: &str) -> Output {
     let mut stdout = wire::encode(&readiness).expect("readiness encodes");
     stdout.push(b'\n');
     exited(0, stdout, "")
+}
+
+/// The plan digest a parked executable's own `install` preview names.
+fn parked_plan_digest() -> Digest {
+    Digest::compute(wire::Domain::InstallPlan, b"parked executable plan")
+}
+
+/// One typed reply as a successful `--json` answer on stdout.
+fn replied<T: serde::Serialize>(body: T) -> Output {
+    let reply = wire::Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body,
+    });
+    exited(0, wire::encode(&reply).expect("a reply encodes"), "")
+}
+
+/// A parked executable's `--json install` preview naming `digest`.
+fn install_preview(digest: &Digest) -> Output {
+    let preview: install::InstallPreview = wire::decode(
+        serde_json::json!({
+            "digest": digest,
+            "plan": {"version": 1, "operation_count": 0, "operations": [], "retirements": []},
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .expect("a minimal preview decodes");
+    replied(preview)
+}
+
+/// A parked executable's `--json install --apply` receipt for `digest`.
+fn install_receipt(digest: &Digest) -> Output {
+    let receipt: install::InstallReceipt = wire::decode(
+        serde_json::json!({
+            "plan": {"version": 1, "operation_count": 0, "operations": [], "retirements": []},
+            "digest": digest,
+            "status": "complete",
+            "completed": 0,
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .expect("a minimal receipt decodes");
+    replied(receipt)
+}
+
+/// A parked executable's `--json install` refusal: the outcome on stderr with
+/// a failing status, as the appliance answers.
+fn install_refused(reason: &str, detail: &str) -> Output {
+    let refusal: wire::Outcome<install::InstallPreview> =
+        wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new(reason.to_owned(), None, None, None).with_detail(detail),
+        ));
+    let encoded = wire::encode(&refusal).expect("a refusal encodes");
+    exited(2, Vec::new(), &String::from_utf8(encoded).expect("utf-8"))
+}
+
+/// Answer the parked executable's own install stages, publishing its bytes
+/// into place on apply exactly as that executable's installer would, and hand
+/// every other command to `rest`.
+fn parked_installer(
+    parked: PathBuf,
+    repository: &Repository,
+    mut rest: impl FnMut(&Issued) -> Output,
+) -> impl FnMut(&Issued) -> Output {
+    let installed = install::installed_binary(repository);
+    move |issued: &Issued| {
+        if issued.program != parked {
+            return rest(issued);
+        }
+        if issued.is_install_plan() {
+            return install_preview(&parked_plan_digest());
+        }
+        if let Some(digest) = issued.applies() {
+            assert_eq!(digest, parked_plan_digest(), "apply named another plan");
+            fs::copy(&parked, &installed).expect("the parked executable publishes itself");
+            return install_receipt(&digest);
+        }
+        rest(issued)
+    }
 }
 
 /// A port nothing is bound to, taken by binding one and letting it go.
@@ -996,7 +1164,8 @@ fn an_untouched_install_refusal_restarts_the_resident_it_stopped() {
 }
 
 /// A refresh that fails after the executable moved puts the previous one back
-/// and still reports the failure that forced it.
+/// through that executable's own installer, plan then apply by digest, and
+/// still reports the failure that forced it.
 #[test]
 fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
     let fixture = Fixture::new("restore");
@@ -1007,7 +1176,7 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
         .expect("the installed executable is parked")
         .expect("an installed executable exists to park");
     place(&repository, b"second build\n");
-    let mut host = Scripted::new(unexpected);
+    let mut host = Scripted::new(parked_installer(parked.clone(), &repository, unexpected));
 
     let mut output = Vec::new();
     let reported = restore(
@@ -1031,8 +1200,91 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
         "a successful restore replaced the reported cause: {reported}"
     );
     assert_eq!(
+        host.issued,
+        [
+            Issued::install(&parked, None),
+            Issued::install(&parked, Some(&parked_plan_digest())),
+        ],
+        "the parked executable did not publish itself: {}",
+        String::from_utf8_lossy(&output)
+    );
+    assert!(
+        host.installs.is_empty(),
+        "the in-process installer ran for a restore"
+    );
+    assert_eq!(
         fs::read(&installed).expect("installed executable reads"),
         b"first build\n"
+    );
+}
+
+/// A parked executable that refuses its own install leaves the restore
+/// reported as such, carrying the failure that forced it, with no in-process
+/// installer standing in and no resident restarted over a mixed tree.
+#[test]
+fn a_parked_executable_refusing_its_install_is_a_failed_restore() {
+    let fixture = Fixture::new("restore-refused");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    place(&repository, b"first build\n");
+    let parked = park(&repository, &installed)
+        .expect("the installed executable is parked")
+        .expect("an installed executable exists to park");
+    place(&repository, b"second build\n");
+    let mut host = Scripted::new({
+        let parked = parked.clone();
+        move |issued: &Issued| {
+            assert_eq!(issued, &Issued::install(&parked, None));
+            install_refused(
+                "install::record-refused",
+                "the install record is a later plan version",
+            )
+        }
+    });
+
+    let mut output = Vec::new();
+    let reported = restore(
+        &mut host,
+        &repository,
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            resident_executable: None,
+            published: Some("http://127.0.0.1:8767"),
+            restart: true,
+            binding: restart_binding(Some("127.0.0.1"), Some(8767)),
+            resident: Default::default(),
+        },
+        &mut output,
+        RefreshError::ResidentStartRefused("journal::schema-refused".to_owned()),
+    );
+
+    match &reported {
+        RefreshError::RestoreFailed { cause, error } => {
+            assert!(
+                cause.contains("journal::schema-refused"),
+                "the start refusal was not carried: {cause}"
+            );
+            assert!(
+                matches!(
+                    error,
+                    RestoreError::Refused { stage: RestoreStage::Plan, reason, .. }
+                        if reason == "install::record-refused"
+                ),
+                "the parked executable's refusal was not reported: {error}"
+            );
+        }
+        other => panic!("a refused restore was not reported: {other}"),
+    }
+    assert_eq!(host.issued, [Issued::install(&parked, None)]);
+    assert!(
+        host.installs.is_empty(),
+        "the in-process installer stood in for the parked executable"
+    );
+    assert_eq!(
+        fs::read(&installed).expect("installed executable reads"),
+        b"second build\n",
+        "a refused restore changed the installed executable"
     );
 }
 
@@ -1050,7 +1302,11 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
         .expect("the installed executable is parked")
         .expect("an installed executable exists to park");
     place(&repository, b"second build\n");
-    let mut host = Scripted::new(|_: &Issued| ready(endpoint));
+    let mut host = Scripted::new(parked_installer(
+        parked.clone(),
+        &repository,
+        |_: &Issued| ready(endpoint),
+    ));
 
     let mut output = Vec::new();
     let reported = restore(
@@ -1075,11 +1331,12 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
     );
     assert_eq!(
         host.issued,
-        [Issued::up(
-            &resident,
-            &["--host", "127.0.0.1", "--port", "8767"]
-        )],
-        "the stopped resident authority was not restarted"
+        [
+            Issued::install(&parked, None),
+            Issued::install(&parked, Some(&parked_plan_digest())),
+            Issued::up(&resident, &["--host", "127.0.0.1", "--port", "8767"]),
+        ],
+        "the parked executable was not republished before its resident restarted"
     );
     assert_eq!(
         fs::read(&installed).expect("installed executable reads"),
