@@ -217,10 +217,9 @@ fn speech_resolves_from_local_settings_with_device_default_voice() {
 }
 
 #[test]
-fn speech_configuration_refuses_retired_or_malformed_settings() {
+fn speech_configuration_refuses_malformed_settings() {
     for (document, path) in [
         ("[say]\nbackend = 'mystery'\n", "say.backend"),
-        ("[say]\nbackend = 'external'\n", "say.backend"),
         ("[say]\nvoices = ['Zoe', '']\n", "say.voices"),
         ("[say]\nwords_per_minute = 0\n", "say.words_per_minute"),
     ] {
