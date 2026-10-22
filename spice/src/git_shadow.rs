@@ -159,9 +159,6 @@ fn git_read(
 }
 
 /// Writes the whole shadow, or leaves the identical file already there.
-///
-/// The Rust-only filename keeps this whole-file publication outside Python's
-/// `agent.gitconfig` authority while retaining the same Git shadow semantics.
 fn publish_shadow(git_dir: &Path, branch: &str, system_config: &str) -> Result<PathBuf, Error> {
     let path = git_dir.join(AGENT_GITCONFIG_NAME);
     // Git refnames admit a double quote but refuse a backslash, so only the

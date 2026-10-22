@@ -6,8 +6,8 @@
 //!
 //! # The only cross-system bridge
 //!
-//! This is the sole bridge from the predecessor into this port, and the
-//! coexistence policy in `crate::repository` binds it:
+//! This is the sole bridge from foreign state into this runtime, and the
+//! ownership rules in `crate::repository` bind it:
 //!
 //! - **Operator trigger.** Refused by default. Nothing invokes this module on
 //!   its own; it runs only when an operator types `spice config migrate-tasks`
@@ -22,8 +22,7 @@
 //!   traces back to the byte that produced it.
 //! - **Verified backup.** None is required, and that is a property rather than
 //!   an omission: the translation reads bytes and returns a report, so there is
-//!   no prior state to preserve. `tests/coexistence.rs` holds it to that by
-//!   identity, not by assertion.
+//!   no prior state to preserve.
 //! - **Failure boundary.** The whole export is validated before anything is
 //!   emitted. A refusal is typed, names its witness, and is total -- there is no
 //!   partially translated result to reason about.

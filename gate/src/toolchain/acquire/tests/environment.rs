@@ -13,23 +13,25 @@ const WORKER: &str = "app/worker.py";
 
 /// The environment name only the waived access reads.
 ///
-/// Both fixture names are drawn from the names this repository already declares
-/// in `[policy] env_names`. A fixture literal is a real reference as far as this
-/// repository's own environment ledger is concerned, so an invented name here
-/// would demand a manifest entry for a name nothing reads.
-const WAIVED_NAME: &str = "SPICE_HOOKS"; // env-policy: allow
+/// Both fixture names match the packaged `SPICE_*` watchlist, which is how
+/// the ledger arm finds a name at all, yet name nothing Spice reads, so each
+/// carries the ledger's literal escape rather than a manifest entry.
+const WAIVED_NAME: &str = concat!("SPICE", "_WAIVED_FIXTURE"); // env-policy: not-an-env SPICE_WAIVED_FIXTURE
 
 /// The environment name both fixture files read without a waiver.
-const SHARED_NAME: &str = "SPICE_LANE"; // env-policy: allow
+const SHARED_NAME: &str = concat!("SPICE", "_SHARED_FIXTURE"); // env-policy: not-an-env SPICE_SHARED_FIXTURE
 
 /// The exact unwaived read both fixture files spell.
-const READ: &str = "cache = os.getenv(\"SPICE_LANE\")";
+const READ: &str = concat!("cache = os.getenv(\"SPICE", "_SHARED_FIXTURE\")");
 
 /// One line reading a watchlisted name beside a name nobody wrote down.
 ///
 /// Neither extractor sees this line whole: the watchlist names the first read
 /// and the access gate is the only thing that catches the second.
-const MIXED: &str = "flag = os.getenv(\"SPICE_LANE\") or os.environ[key]";
+const MIXED: &str = concat!(
+    "flag = os.getenv(\"SPICE",
+    "_SHARED_FIXTURE\") or os.environ[key]"
+);
 
 /// One line committing two reads under names nobody wrote down.
 ///

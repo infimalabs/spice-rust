@@ -249,8 +249,9 @@ fn constructs(
 
 /// Refuse a created, filed, edited, or relinked statement whose post state
 /// would discharge the construction duty of a pending Plan that already
-/// recorded a no-construction disposition, so the two routes never coexist in
-/// either order. Corrections carry preparation without construction and pass.
+/// recorded a no-construction disposition, so the two routes never both hold,
+/// in either order. Corrections carry preparation without construction and
+/// pass.
 pub(super) fn refuse_disposed_construction(
     snapshot: &ValidatedSnapshot,
     statement: &TaskHead,

@@ -60,7 +60,7 @@ pub enum TreeError {
         /// Lossy rendering of the refused bytes.
         path: String,
     },
-    /// Two selected paths cannot coexist in one filesystem tree.
+    /// Two selected paths collide in one filesystem tree.
     PathCollision {
         /// First colliding path.
         first: String,
@@ -191,7 +191,7 @@ impl fmt::Display for TreeError {
             ),
             Self::PathCollision { first, second } => write!(
                 formatter,
-                "Git paths {first:?} and {second:?} cannot coexist in one tree"
+                "Git paths {first:?} and {second:?} collide in one tree"
             ),
             Self::Symlink { path } => write!(
                 formatter,
