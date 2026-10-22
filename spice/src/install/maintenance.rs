@@ -39,7 +39,7 @@ pub struct InstallTempInspection {
 }
 
 impl InstallTempInspection {
-    /// Whether the repository-common Rust runtime directory exists.
+    /// Whether the repository-common state root exists.
     #[must_use]
     pub const fn runtime_present(&self) -> bool {
         self.runtime_present

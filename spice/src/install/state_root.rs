@@ -1,7 +1,7 @@
 //! The one move of a live predecessor state root to its current name.
 //!
-//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] while Python Spice
-//! held [`wire::STATE_DIRECTORY`].
+//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] before this release
+//! owned [`wire::STATE_DIRECTORY`].
 //! Every admission refuses a symlinked component, so no link can bridge the
 //! two names: the live root moves as a real directory, exactly once, and the
 //! install that puts this build in place is where it moves. The move is a

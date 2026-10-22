@@ -274,11 +274,11 @@ pattern-wide process kills that can match a live peer worktree.
 
 ## State root crossing
 
-Rust Spice's state root is `.spice` under the Git-common directory and under
-each linked worktree's Git directory; Python Spice's archived root is
-`.spice-py`. A repository whose live root still carries the earlier
-`-rs`-suffixed name moves it exactly once, at the first `install --apply` of
-an executable that owns `.spice`: the preview lists each `move`, and the
+The state root is `.spice` under the Git-common directory and under each
+linked worktree's Git directory. A repository whose live root still carries
+the earlier `-rs`-suffixed name moves it exactly once, at the first
+`install --apply` of an executable that owns `.spice`: the preview lists each
+`move`, and the
 retired residue (`learnings`, `install-recovery`, `data/spicefolds.sqlite3`,
 per-worktree `inbox` and `full-verifier-evidence.json`) the move deletes
 first. The rename keeps the journal, gate evidence, supervisors, and every

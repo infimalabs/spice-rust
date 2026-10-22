@@ -24,8 +24,8 @@
 //!
 //! # One root name, one move
 //!
-//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] while Python Spice held
-//! `.spice`. A live root by that older name is still this runtime's state:
+//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] before this release
+//! owned `.spice`. A live root by that older name is still this runtime's state:
 //! [`wire::state_root`] keeps it current until the install crossing moves it,
 //! as a real directory, exactly once. Every admission refuses a symlinked
 //! component, so no link can bridge the two names, and no command opens a
@@ -48,8 +48,8 @@
 //!   so an advertised path is stable and directly readable. A tracked
 //!   `<worktree>/.spice` lookalike is ordinary repository content that
 //!   neither authority surface opens.
-//! * **Artifacts and dynamically named locks** remain Rust-only because their
-//!   parents are below the common exclusive state root.
+//! * **Artifacts and dynamically named locks** stay below the common
+//!   exclusive state root, which is their only parent.
 //!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
 //! * **Installed hooks, skills, and binaries** stay in the disjoint
@@ -84,7 +84,7 @@ pub struct Repository {
     common: PathBuf,
 }
 
-/// Exact repository state paths admitted for Rust-owned state.
+/// Exact repository state paths admitted for this runtime's state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatePaths {
     runtime: PathBuf,
@@ -190,7 +190,7 @@ impl StatePaths {
         &self.runtime
     }
 
-    /// Rust-only state root beneath this worktree's own Git directory.
+    /// State root beneath this worktree's own Git directory.
     #[must_use]
     pub fn worktree_runtime(&self) -> &Path {
         &self.worktree_runtime
@@ -619,7 +619,7 @@ fn admit(path: &Path, expected: StateShape) -> Result<(), StateError> {
     }
 }
 
-/// Failure to admit the fixed Rust-owned repository namespaces.
+/// Failure to admit the fixed repository state namespaces.
 #[derive(Debug)]
 pub enum StateError {
     /// An existing state component is a symbolic link.

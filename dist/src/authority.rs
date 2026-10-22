@@ -1,4 +1,4 @@
-//! One tracked Git authority for external Rust Spice releases.
+//! One tracked Git authority for external Spice releases.
 
 use std::fs;
 use std::path::{Path, PathBuf};

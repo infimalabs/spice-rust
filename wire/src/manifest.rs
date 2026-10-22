@@ -1058,7 +1058,7 @@ pub struct ReleasePackageTarget {
     pub signature_path: String,
 }
 
-/// Canonical index of one externally installable Rust Spice release.
+/// Canonical index of one externally installable Spice release.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePackage {

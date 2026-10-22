@@ -19,7 +19,7 @@ pub const NARROWEST_FILE_CLASSES: &str = concat!(
 );
 
 /// Packaged file-class policy used only when a generic installed repository
-/// has no Rust Spice policy document at all.
+/// has no Spice policy document at all.
 ///
 /// This is not a fallback for an incomplete document: once a repository
 /// authors its tracked policy document, all three selections remain required and the
