@@ -163,14 +163,16 @@ flowchart LR
   and to construct child work when it is.
   An ordinary claimed duplicate is not a Plan disposition; remove it through
   `task delete HANDLE REASON --force-claimed`.
-- A description opens with one plain, unlabeled, accessible sentence or short
-  paragraph saying why the task matters, before any mechanism, history, or
-  invariant, so a reader can decide whether to spend more attention; a Design's
-  opener is its problem sentence. This is an authoring contract carried by
-  `task add`/`task modify` help and the bootstrap skill, not a field: no
-  record changes, the appliance never rewrites an existing description, and
-  the Design request pitch quotes that opener as the first substantive
-  description sentence.
+- Every task statement stores a pitch: one plain, unlabeled, accessible
+  sentence saying why the task matters, required on `task add`, `task plan`,
+  and `task design` and refused when missing, blank, multi-line, or over 160
+  characters; a Design's pitch is its problem sentence. The description is the
+  how: durable need, mechanism, and invariants, with no opener to carry. A
+  filing with no author to ask derives its pitch once and never asks again: a
+  retained task at the schema crossing and a review follow-up from the first
+  substantive description sentence or else the title, a `task oops` report
+  from its title. The appliance never rewrites an existing description. The
+  Design request prints the stored pitch.
 - `task add --draft` (and `task plan --draft`, `task design --draft`) records a
   typed Draft: prospective work under an admitted public project, distinct from
   Filed work. Default reads show it only to the operator and its origin thread,

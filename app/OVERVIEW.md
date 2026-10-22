@@ -248,7 +248,8 @@ The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
 operator can read, then keeps the Task/Plan/Design creator behind one compact
 **New Draft** disclosure. Opening it reveals every creation field; closing it
 returns focus to the same summary without changing any entered values. A new
-Draft needs a title and an admitted public project, and takes an optional Plan
+Draft leads with its title and pitch, the one plain sentence saying why the
+work matters, needs an admitted public project, and takes an optional Plan
 or Design intent, description, and acceptance. Recording one opens it in task
 detail, which shows the full editor beside the Draft's contract. **Save Draft**
 writes only the fields that changed, including project, intent, and flow. The

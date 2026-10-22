@@ -56,7 +56,7 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     (
         "task add",
         "description",
-        "The detail behind the pitch: what changes and how",
+        "How the work is done: need, mechanism, invariants; the why belongs in --pitch",
     ),
     (
         "task plan",
@@ -81,7 +81,7 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     (
         "task modify",
         "description",
-        "The detail behind the pitch: what changes and how",
+        "How the work is done: need, mechanism, invariants; the why belongs in --pitch",
     ),
     (
         "preparation propose",
