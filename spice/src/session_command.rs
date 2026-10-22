@@ -701,13 +701,8 @@ mod tests {
     ///
     /// The resolved-input event is queued before the wait begins, so the wait
     /// observes it by construction rather than by a worker thread being
-    /// scheduled inside a one-millisecond budget. A held worker thread used to
-    /// send it while the clock ran, and losing that race surfaced two ways: a
-    /// send that beat the dropped receiver but not the budget left the refusal
-    /// naming requested inputs instead of resolved ones, and a send arriving
-    /// after the drop panicked the worker, which stranded the release this
-    /// helper then sent it. Nothing here sends after the wait starts, so
-    /// neither remains reachable.
+    /// scheduled inside a one-millisecond budget, and nothing sends after the
+    /// wait starts to race the dropped receiver.
     ///
     /// `sender` stays live across the wait because a dropped one turns the
     /// budget into a disconnected-worker refusal, which is a different path
