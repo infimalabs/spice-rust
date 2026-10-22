@@ -452,6 +452,7 @@ fn task_detail_answer_round_trips_through_its_registered_shape() {
                     .expect("fixture lane"),
             )),
         }),
+        deletion: None,
         disposition: Some(wire::intent::TaskDetailDisposition {
             position: seq(8),
             at: instant("2026-08-01T06:51:03.000Z"),
