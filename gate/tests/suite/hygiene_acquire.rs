@@ -7,9 +7,7 @@ use gate::{
     HygieneSource, Jurisdiction, Selector, SuppressedPath, acquire_hygiene,
 };
 
-mod support;
-
-use support::{Tree, git_commit, git_repository, selected_contract};
+use super::support::{Tree, git_commit, git_repository, selected_contract};
 
 #[test]
 fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {

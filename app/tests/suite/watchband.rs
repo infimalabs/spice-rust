@@ -1121,10 +1121,11 @@ fn tool_ticker_chunks_accent_only_the_first_whitespace_delimited_token() {
         ticker_chunks("assistant", "concise response", 80),
         ("assistant".to_owned(), "concise response".to_owned()),
     );
-    let (prefix, detail) = ticker_chunks("tool", "Bash: a deliberately long command", 18);
+    let budget = 18;
+    let (prefix, detail) = ticker_chunks("tool", "Bash: a deliberately long command", budget);
     assert_eq!(prefix, "Bash");
     assert!(detail.ends_with('…'));
-    assert!(format!("{prefix} {detail}").chars().count() <= 18);
+    assert!(format!("{prefix} {detail}").chars().count() <= budget);
 }
 
 /// One team holding several agents, so a join has more than one agent to move.

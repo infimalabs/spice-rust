@@ -10,9 +10,7 @@ use gate::{
     PeerClaim, RenameMap, RepoDocLimit, StateKey, evaluate_core,
 };
 
-mod support;
-
-use support::{
+use super::support::{
     Tree, acquired, acquired_arm, acquired_inputs, contract_repository, git_commit,
     workspace_document,
 };
@@ -258,8 +256,8 @@ fn a_breach_the_actor_owns_is_told_to_tighten_rather_than_to_stay_append_only() 
 /// packaged rule can reach either one and the declaration is the only thing
 /// that can put one in front of the arm. `CHARTER.txt` is present and
 /// undeclared in both halves, so an arm that measured every tracked file would
-/// fail here; `GUIDE.md` is measured in both, so an arm that measured nothing
-/// at all would fail too.
+/// fail here; the fixture's one markdown guide is measured in both, so an arm
+/// that measured nothing at all would fail too.
 #[test]
 fn a_tracked_document_declaration_decides_what_the_arm_measures() {
     let silent = document_repository("core-acquire-repo-docs-undeclared", None);

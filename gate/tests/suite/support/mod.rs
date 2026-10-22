@@ -1,8 +1,8 @@
 use gate::metrics::BaselineCapture;
 use gate::{
-    ActorCapture, ArmObservation, ArmOutcome, CORE_GATE_IDS, ClaimCapture, CoreArmInput,
-    CoreArmReport, CoreEvidence, CoreInputs, CoreObservation, CoreReport, CoreSource, GateId,
-    LatchEntry, ParsedContract, Selector, ToolchainDeclaration, acquire_core, evaluate_core,
+    ActorCapture, CORE_GATE_IDS, ClaimCapture, CoreArmInput, CoreArmReport, CoreEvidence,
+    CoreInputs, CoreObservation, CoreReport, CoreSource, GateId, LatchEntry, ParsedContract,
+    Selector, acquire_core, evaluate_core,
 };
 
 use std::fs;
@@ -44,16 +44,14 @@ impl Tree {
         fs::write(&path, contents).expect("write a fixture file");
     }
 
-    #[allow(dead_code)]
     pub(crate) fn path(&self, relative: &str) -> PathBuf {
         self.root.join(relative)
     }
 
     /// Remove the owned tree and prove it is gone.
     ///
-    /// Each integration binary compiles this module alone; enforcement relies
-    /// on `Drop`, while the ownership tests call this observable path.
-    #[allow(dead_code)]
+    /// Enforcement relies on `Drop`; the ownership tests call this observable
+    /// path.
     pub(crate) fn remove(mut self) {
         fs::remove_dir_all(&self.root)
             .unwrap_or_else(|error| panic!("remove fixture at {}: {error}", self.root.display()));
@@ -77,10 +75,6 @@ impl Drop for Tree {
 }
 
 /// One initialized fixture repository with a committed identity.
-///
-/// Each integration binary compiles this module alone, so the fixture helpers
-/// only some binaries reach are still live code for the ones that do.
-#[allow(dead_code)]
 pub(crate) fn git_repository(label: &str) -> Tree {
     let repository = Tree::new(label);
     repository.initialize();
@@ -88,14 +82,12 @@ pub(crate) fn git_repository(label: &str) -> Tree {
 }
 
 /// Stage everything present and commit it under one message.
-#[allow(dead_code)]
 pub(crate) fn git_commit(repository: &Tree, message: &str) {
     repository.stage_all();
     repository.commit(message);
 }
 
 /// One tracked workspace document, read from the real workspace.
-#[allow(dead_code)]
 pub(crate) fn workspace_document(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(name);
     fs::read_to_string(&path)
@@ -106,13 +98,11 @@ pub(crate) fn workspace_document(name: &str) -> String {
 ///
 /// Every document carries the file-class selections parsing requires, so a
 /// fixture states only what it is actually about and still loads at all.
-#[allow(dead_code)]
 pub(crate) fn policy_document(body: &str) -> String {
     format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
 }
 
 /// One committed fixture repository carrying the tracked contract documents.
-#[allow(dead_code)]
 pub(crate) fn contract_repository(label: &str) -> Tree {
     let repository = git_repository(label);
     repository.write("spice.toml", &workspace_document("spice.toml"));
@@ -123,7 +113,6 @@ pub(crate) fn contract_repository(label: &str) -> Tree {
 }
 
 /// Parse a fixture's already selected contract bytes without executing its tools.
-#[allow(dead_code)]
 pub(crate) fn selected_contract(root: &Path) -> ParsedContract {
     let policy_path = root.join(wire::TRACKED_POLICY_FILE);
     let baseline_path = root.join(gate::BASELINE_PATH);
@@ -131,22 +120,6 @@ pub(crate) fn selected_contract(root: &Path) -> ParsedContract {
     let baseline = fs::read_to_string(&baseline_path).expect("read selected baseline");
     ParsedContract::from_tracked(&policy_path, &policy, &baseline_path, &baseline)
         .expect("parse the selected contract")
-}
-
-#[allow(dead_code)]
-pub(crate) fn inapplicable_without_tools(
-    declaration: ToolchainDeclaration,
-    observation: &ArmObservation,
-) -> bool {
-    if observation.outcome != ArmOutcome::NotApplicable {
-        return false;
-    }
-    assert!(
-        observation.tools.is_empty(),
-        "{} probed tools before its applicability predicate",
-        declaration.id().as_str()
-    );
-    true
 }
 
 /// The first candidate this call creates, never one it merely finds.
@@ -166,7 +139,6 @@ pub(crate) fn create_scratch_root(candidates: impl Iterator<Item = PathBuf>) -> 
 /// Every acquisition is checked for the two invariants no arm may break: the
 /// battery covers each compiled declaration in canonical order, and every arm
 /// is labelled with the digest of the tree it was actually taken from.
-#[allow(dead_code)]
 pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture, actor: ActorCapture) -> CoreReport {
     evaluate_core(&acquired_inputs(repository, claim, actor, &[]))
 }
@@ -177,7 +149,6 @@ pub(crate) fn acquired(repository: &Tree, claim: ClaimCapture, actor: ActorCaptu
 /// decided live on them: judging consumes the inputs to produce arm standings,
 /// and a caller reading the decisions from a report would be reading a
 /// fold rather than what the arms were held to.
-#[allow(dead_code)]
 pub(crate) fn acquired_inputs(
     repository: &Tree,
     claim: ClaimCapture,
@@ -226,7 +197,6 @@ pub(crate) fn captured_baselines(repository: &Tree, contract: &ParsedContract) -
 }
 
 /// The one arm of an acquired report a test is speaking about.
-#[allow(dead_code)]
 pub(crate) fn acquired_arm(report: &CoreReport, id: GateId) -> &CoreArmReport {
     report
         .arms()
@@ -236,7 +206,6 @@ pub(crate) fn acquired_arm(report: &CoreReport, id: GateId) -> &CoreArmReport {
 }
 
 /// The measured observation one piece of evidence stands for.
-#[allow(dead_code)]
 pub(crate) fn measured(evidence: CoreEvidence) -> CoreObservation {
     CoreObservation::Measured { evidence }
 }

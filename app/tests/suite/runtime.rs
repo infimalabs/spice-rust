@@ -10,27 +10,18 @@ use wire::{
     ViewSubject, WireVersion,
 };
 
-#[path = "runtime/consent.rs"]
 mod consent;
-#[path = "runtime/detail.rs"]
 mod detail;
-#[path = "runtime/invalidation_and_chronology.rs"]
 mod invalidation_and_chronology;
-#[path = "runtime/lane_authority.rs"]
 mod lane_authority;
-#[path = "runtime/member_control.rs"]
 mod member_control;
-#[path = "runtime/message_history.rs"]
 mod message_history;
-#[path = "runtime/renewal.rs"]
 mod renewal;
-#[path = "runtime/rooms.rs"]
 mod rooms;
-#[path = "runtime/roster.rs"]
 mod roster;
-#[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
-mod support;
+
+use super::support;
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
 const LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c6";

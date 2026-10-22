@@ -10,9 +10,7 @@ use serde_json::Value;
 use std::fs;
 use wire::{Digest, Domain};
 
-mod support;
-
-use support::{acquired, acquired_arm, contract_repository, measured, selected_contract};
+use super::support::{acquired, acquired_arm, contract_repository, measured, selected_contract};
 
 #[test]
 fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {

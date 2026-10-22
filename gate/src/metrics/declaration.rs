@@ -170,26 +170,12 @@ impl RustDocMarkdownCitationAllowance {
 ///
 /// Each names a document created inside one test fixture and is bound to that
 /// source, so the same missing name anywhere else remains a finding.
-pub const RUST_DOC_MARKDOWN_CITATION_ALLOWANCES: [RustDocMarkdownCitationAllowance; 3] = [
-    RustDocMarkdownCitationAllowance {
+pub const RUST_DOC_MARKDOWN_CITATION_ALLOWANCES: [RustDocMarkdownCitationAllowance; 1] =
+    [RustDocMarkdownCitationAllowance {
         source_path: "gate/src/battery/tests/file_shape.rs",
         target_path: "app/notes.md",
         reason: "the battery test names this path inside its synthetic repository fixture",
-    },
-    RustDocMarkdownCitationAllowance {
-        source_path: "gate/tests/core_docs.rs",
-        target_path: "GUIDE.md",
-        reason: concat!(
-            "the core-docs test creates and measures this document inside its ",
-            "fixture repository"
-        ),
-    },
-    RustDocMarkdownCitationAllowance {
-        source_path: "gate/tests/input.rs",
-        target_path: "AGENTS.md",
-        reason: "the input test names this packaged default as fixture document identity",
-    },
-];
+    }];
 
 /// One parser declaration fixed at compile time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

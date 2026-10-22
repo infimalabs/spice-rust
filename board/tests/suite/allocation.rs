@@ -1,4 +1,4 @@
-mod support;
+use super::support;
 
 use board::Snapshot;
 use board::allocate::{Mint, mint};

@@ -36,7 +36,6 @@ impl Tree {
         persist_index(&mut index);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn stage(&self, paths: &[&str]) {
         let repository = self.open_repository();
         let mut index = repository
@@ -52,7 +51,6 @@ impl Tree {
         persist_index(&mut index);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn stage_submodule(&self, path: &str, commit: &str) {
         let repository = self.open_repository();
         let mut index = repository
@@ -70,7 +68,6 @@ impl Tree {
         persist_index(&mut index);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn staged_object(&self, path: &str) -> String {
         let repository = self.open_repository();
         let index = repository.index().expect("open fixture index");
@@ -82,7 +79,6 @@ impl Tree {
         entry.id.to_string()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn create_ambiguous_ref(&self, name: &str) {
         let head = self.head();
         for class in ["heads", "tags"] {
@@ -122,7 +118,6 @@ impl Tree {
             .to_string()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn head(&self) -> String {
         self.open_repository()
             .head_id()

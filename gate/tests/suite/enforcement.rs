@@ -6,9 +6,7 @@ use gate::ratchet::{Malady, Movement};
 use gate::{Ignore, Jurisdiction, Metric, Parser, Policy, Ratchet, measurement_digest};
 use wire::{Digest, Domain};
 
-mod support;
-
-use support::Tree;
+use super::support::Tree;
 
 fn ratchet(text: &str) -> Ratchet {
     Ratchet::parse(text).expect("parse the fixture ratchet")

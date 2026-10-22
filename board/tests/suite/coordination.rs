@@ -1,4 +1,4 @@
-mod support;
+use super::support;
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -1396,11 +1396,6 @@ fn named_output_with(
     .expect("controlled output")
 }
 
-#[path = "coordination/late.rs"]
-mod late;
-
-#[path = "coordination/design_wait.rs"]
 mod design_wait;
-
-#[path = "coordination/work_wait.rs"]
+mod late;
 mod work_wait;

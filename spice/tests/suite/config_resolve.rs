@@ -953,5 +953,4 @@ message = "Done."
     );
 }
 
-#[path = "config_resolve/tail.rs"]
 mod tail;

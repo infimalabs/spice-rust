@@ -1,9 +1,0 @@
-[policy.pre_commit_builtins]
-"magic-numbers" = false
-
-[policy.pre_commit_builtins.formatters]
-label = "repository formatters"
-
-[policy.pre_commit_builtins.complexity]
-label = "discarded complexity"
-enabled = false

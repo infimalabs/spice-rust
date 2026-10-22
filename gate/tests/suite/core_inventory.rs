@@ -4,9 +4,7 @@ use gate::{
     acquire_core,
 };
 
-mod support;
-
-use support::{
+use super::support::{
     Tree, acquired, acquired_arm, captured_baselines, contract_repository, git_commit,
     git_repository, measured, policy_document, selected_contract, workspace_document,
 };
