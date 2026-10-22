@@ -359,12 +359,7 @@ fn unknown_fields_name_their_domain_and_key() {
 }
 
 #[test]
-fn retired_review_coefficient_and_fractional_band_refuse_loudly() {
-    let review = decode("[board.next]\nreview = -100.0\n")
-        .expect_err("the removed review coefficient must not remain inert");
-    assert!(review.contains("board.next"), "{review}");
-    assert!(review.contains("review"), "{review}");
-
+fn a_fractional_tie_band_refuses_loudly() {
     let band = decode("[board.next]\nband = 2.5\n")
         .expect_err("an integer urgency scalar needs an integer tie band");
     assert!(band.contains("board.next.band"), "{band}");

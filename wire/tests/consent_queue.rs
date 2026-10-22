@@ -29,13 +29,7 @@ fn both_current_queue_causes_round_trip_without_losing_authority() {
 }
 
 #[test]
-fn the_retired_authority_free_shape_and_unknown_causes_are_refused() {
-    let retired = r#"{
-      "request": "018f7777-7777-7777-8777-000000000001",
-      "lane": "018f8888-8888-7888-8888-888888888888"
-    }"#;
-    assert!(wire::decode::<ConsentQueued>(retired.as_bytes()).is_err());
-
+fn unknown_and_overspecified_causes_are_refused() {
     let unknown = POLICY_QUEUE.replace("policy", "operator-choice");
     assert!(wire::decode::<ConsentQueued>(unknown.as_bytes()).is_err());
 

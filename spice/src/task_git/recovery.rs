@@ -108,13 +108,11 @@ enum RecoveryState {
         boundary: GitBoundary,
     },
     /// A forward restore journals the lane HEAD it replays onto, beside the
-    /// synchronized boundary when one was reached. A restore begun before the
-    /// target was journaled names only its boundary, whose head is the target.
+    /// synchronized boundary when one was reached.
     Restoring {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         boundary: Option<GitBoundary>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        target: Option<String>,
+        target: String,
     },
     Replaying {
         boundary: GitBoundary,

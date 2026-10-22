@@ -118,9 +118,7 @@ pub(super) fn restore_mode(
         | RecoveryState::Quarantined
         | RecoveryState::Syncing { .. }
         | RecoveryState::Synchronized { .. } => None,
-        RecoveryState::Restoring { boundary, target } => target
-            .as_deref()
-            .or_else(|| boundary.as_ref().map(|boundary| boundary.head.as_str())),
+        RecoveryState::Restoring { target, .. } => Some(target.as_str()),
     };
     let forward = !matches!(state, RecoveryState::Captured)
         && ancestry.is_some_and(|ancestry| ancestry.sealed && ancestry.boundary)
@@ -161,7 +159,7 @@ pub(super) fn restore_forward(
     }
     manifest.state = RecoveryState::Restoring {
         boundary,
-        target: Some(target.clone()),
+        target: target.clone(),
     };
     write_manifest(root, manifest)?;
     if let Err(error) = apply_replay_patches(worktree, root, manifest, true) {
@@ -240,10 +238,10 @@ mod tests {
         boundary: true,
     });
 
-    fn restoring(boundary_head: Option<&str>, target: Option<&str>) -> RecoveryState {
+    fn restoring(boundary_head: Option<&str>, target: &str) -> RecoveryState {
         RecoveryState::Restoring {
             boundary: boundary_head.map(boundary),
-            target: target.map(str::to_owned),
+            target: target.to_owned(),
         }
     }
 
@@ -271,7 +269,7 @@ mod tests {
             RecoveryState::Synchronized {
                 boundary: boundary("published"),
             },
-            restoring(Some("published"), Some("later")),
+            restoring(Some("published"), "later"),
         ] {
             assert_eq!(
                 restore_mode(&state, "sealed", "sealed", None).unwrap(),
@@ -346,7 +344,7 @@ mod tests {
     fn restore_mode_resumes_only_onto_the_journaled_target() {
         assert_eq!(
             restore_mode(
-                &restoring(Some("published"), Some("later")),
+                &restoring(Some("published"), "later"),
                 "sealed",
                 "later",
                 DESCENDS
@@ -355,22 +353,19 @@ mod tests {
             forward(Some("published"), "later")
         );
         assert_eq!(
-            restore_mode(&restoring(None, Some("later")), "sealed", "later", DESCENDS).unwrap(),
+            restore_mode(&restoring(None, "later"), "sealed", "later", DESCENDS).unwrap(),
             forward(None, "later")
         );
         assert_eq!(
-            refusal(&restoring(None, Some("later")), "further", DESCENDS),
+            refusal(&restoring(None, "later"), "further", DESCENDS),
             "git::recovery-head-moved"
         );
-        // A restore journaled before targets were recorded is pinned to its
-        // synchronized boundary head.
-        let legacy = restoring(Some("published"), None);
         assert_eq!(
-            restore_mode(&legacy, "sealed", "published", DESCENDS).unwrap(),
-            forward(Some("published"), "published")
-        );
-        assert_eq!(
-            refusal(&legacy, "later", DESCENDS),
+            refusal(
+                &restoring(Some("published"), "later"),
+                "published",
+                DESCENDS
+            ),
             "git::recovery-head-moved"
         );
     }
@@ -391,14 +386,5 @@ mod tests {
                 "git::recovery-already-claimed"
             );
         }
-    }
-
-    #[test]
-    fn legacy_restoring_manifest_state_still_reads() {
-        let legacy = serde_json::json!({ "restoring": { "boundary": boundary("published") } });
-        assert_eq!(
-            serde_json::from_value::<RecoveryState>(legacy).unwrap(),
-            restoring(Some("published"), None)
-        );
     }
 }
