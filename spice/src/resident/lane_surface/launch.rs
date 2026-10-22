@@ -383,72 +383,8 @@ fn vendor_unsupported(asked: String) -> Outcome<()> {
 
 /// Require the initialized Git-common skill before composing any vendor argv.
 fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
-    let skill = spice::install::installed_skill(repository);
-    let metadata = fs::symlink_metadata(&skill).map_err(|error| {
-        store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill {} is unavailable: {error}",
-                skill.display()
-            ),
-        )
-    })?;
-    if !metadata.is_file() {
-        return Err(store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill {} is not a regular file",
-                skill.display()
-            ),
-        ));
-    }
-    let common = fs::canonicalize(repository.common_dir()).map_err(|error| {
-        store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill authority {} is unavailable: {error}",
-                repository.common_dir().display()
-            ),
-        )
-    })?;
-    let physical = fs::canonicalize(&skill).map_err(|error| {
-        store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill {} is unavailable: {error}",
-                skill.display()
-            ),
-        )
-    })?;
-    if !physical.starts_with(&common) {
-        return Err(store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill {} resolves outside Git-common authority: {}",
-                skill.display(),
-                physical.display()
-            ),
-        ));
-    }
-    let bytes = fs::read(&skill).map_err(|error| {
-        store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill {} is unavailable: {error}",
-                skill.display()
-            ),
-        )
-    })?;
-    if bytes != ::std::include_bytes!("../../../agent/SKILL.md") {
-        return Err(store_fault(
-            "lane::skill-unavailable",
-            &format!(
-                "initialized skill {} does not match this appliance",
-                skill.display()
-            ),
-        ));
-    }
-    Ok(skill)
+    spice::install::current_skill(repository)
+        .map_err(|detail| store_fault("lane::skill-unavailable", &detail))
 }
 
 /// Ambient names a supervised occupant inherits verbatim when present.
