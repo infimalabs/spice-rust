@@ -1,7 +1,7 @@
-//! A task's room read in place: a Design's Standing and Maturity side by
-//! side beneath the room heading, the composer that publishes into the room,
-//! the Design's positive conclusion control, immutable proposal versions and
-//! exact decisions, and the room's conversation newest first, for open and
+//! A task's room read in place: a Design's Standing beside its Maturity and
+//! provenance beneath the room heading, the composer that publishes into the
+//! room, the Design's positive conclusion control, immutable proposal versions
+//! and exact decisions, and the room's conversation newest first, for open and
 //! settled tasks alike. Showing the view joins, groups, or wakes nothing.
 
 use wire::TaskStamp;
@@ -16,8 +16,11 @@ use crate::browser::sender::SenderHandle;
 /// The read view of one task's room around `composer`. `detail` is the
 /// task's row from its task detail; the board's row wins while the board
 /// carries it, since only the board follows working-group moves. A Design's
-/// room pairs its Standing and Maturity above the composer and adds its
-/// Design authority above the same conversation.
+/// room pairs its Standing with a column of Maturity over `aside` (the
+/// sheet's provenance facts) above the composer, so the shorter column fills
+/// the height the lane list takes, and adds its Design authority above the
+/// same conversation. While the room is still loading, `aside` follows the
+/// loading notice so the facts never disappear.
 pub(in crate::browser) fn render_task_room(
     runtime: &AppRuntime,
     controls: &Controls,
@@ -25,6 +28,7 @@ pub(in crate::browser) fn render_task_room(
     open_task: &Callback<(TaskStamp, web_sys::Element)>,
     detail: &BoardTask,
     composer: Html,
+    aside: Html,
 ) -> Html {
     let room = &detail.statement.body.born;
     let row = runtime
@@ -35,11 +39,11 @@ pub(in crate::browser) fn render_task_room(
     let projection = runtime.room_projection();
     let (pair, body) = match projection.status() {
         RoomProjectionStatus::Loading => (
-            Html::default(),
+            aside,
             html! { <p class="room-empty" aria-busy="true">{"Loading room…"}</p> },
         ),
         RoomProjectionStatus::RequiresSnapshot => (
-            Html::default(),
+            aside,
             html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> },
         ),
         RoomProjectionStatus::Available => {
@@ -79,15 +83,18 @@ pub(in crate::browser) fn render_task_room(
                 html! {
                     <div class="room-design-pair">
                         {super::standing::render_standing(runtime, room, Some(row))}
-                        {render_maturity(
-                            projection.maturity(room),
-                            room,
-                            &row.statement.body.acceptance,
-                        )}
+                        <div class="room-design-aside">
+                            {render_maturity(
+                                projection.maturity(room),
+                                room,
+                                &row.statement.body.acceptance,
+                            )}
+                            {aside}
+                        </div>
                     </div>
                 }
             } else {
-                Html::default()
+                aside
             };
             let body = html! {
                 <>

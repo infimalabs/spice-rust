@@ -345,13 +345,32 @@ fn render_available(
 ) -> Html {
     let row = &answer.task;
     let statement = &row.statement.body;
-    let workflow = &row.workflow.body;
     let projected = render
         .work
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == statement.born);
-    let completion = workflow.status.completion();
+    // A Design's facts fill the column its Maturity leaves short beside the
+    // room's lane list; any other task closes its sheet with them.
+    let in_room = render.runtime.is_some() && row.design_standing().is_some();
+    let facts = render_facts(render, answer);
+    let (aside, closing) = if in_room {
+        let aside = html! {
+            <section class="room-provenance" aria-label="Task provenance">
+                <header><h4>{"Provenance"}</h4></header>
+                {facts}
+            </section>
+        };
+        (aside, Html::default())
+    } else {
+        let closing = html! {
+            <section class="app-sheet-section">
+                <h3>{"Provenance"}</h3>
+                {facts}
+            </section>
+        };
+        (Html::default(), closing)
+    };
     html! {
         <div class="app-sheet-body">
             if statement.description.is_none() && statement.acceptance.is_empty() {
@@ -373,33 +392,45 @@ fn render_available(
                 projected.map_or(row, |task| task.row()),
             )}
             {task_detail::render_media(&answer.media)}
-            {render_room(render, answer)}
+            {render_room(render, answer, aside)}
             {render_relationships(render.work, projected, statement, &RelationTargets {
                 selection: render.selection,
                 focus: focus_task,
                 navigate: render.navigate,
             })}
-            <section class="app-sheet-section">
-                <h3>{"Provenance"}</h3>
-                <dl class="app-fact-grid">
-                    {project_fact(render, &statement.project)}
-                    {fact("Status", workflow.status.as_str().to_owned())}
-                    {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
-                    {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
-                    {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref()))}
-                    {instant_fact("Completion", completion.as_ref())}
-                    {possession_facts(row)}
-                    {origin_fact(render, &statement.provenance, answer.origin_request.as_ref())}
-                    {fact("Origin thread", row.origin_thread.clone())}
-                    {creator_team_fact(row.creator_team, render)}
-                    {fact("Queue fact", statement.queue_origin.to_string())}
-                    {fact("Statement revision", statement.revision.to_string())}
-                    {fact("Workflow fact", row.workflow.position.to_string())}
-                    {claim_context_facts(row, render)}
-                    {git_context_facts(row)}
-                </dl>
-            </section>
+            {closing}
         </div>
+    }
+}
+
+/// Every remaining scalar fact about the task in one grid: state, lease,
+/// origin, claim context, and repository boundary.
+fn render_facts(
+    render: &WorkDetailRender<'_, '_>,
+    answer: &wire::intent::TaskDetailAnswer,
+) -> Html {
+    let row = &answer.task;
+    let statement = &row.statement.body;
+    let workflow = &row.workflow.body;
+    let completion = workflow.status.completion();
+    html! {
+        <dl class="app-fact-grid">
+            {project_fact(render, &statement.project)}
+            {fact("Status", workflow.status.as_str().to_owned())}
+            {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
+            {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
+            {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref()))}
+            {instant_fact("Completion", completion.as_ref())}
+            {possession_facts(row)}
+            {origin_fact(render, &statement.provenance, answer.origin_request.as_ref())}
+            {fact("Origin thread", row.origin_thread.clone())}
+            {creator_team_fact(row.creator_team, render)}
+            {fact("Queue fact", statement.queue_origin.to_string())}
+            {fact("Statement revision", statement.revision.to_string())}
+            {fact("Workflow fact", row.workflow.position.to_string())}
+            {claim_context_facts(row, render)}
+            {git_context_facts(row)}
+        </dl>
     }
 }
 
@@ -425,7 +456,11 @@ fn item_standings(
 
 /// The task's room beneath the composer that publishes into it, so a
 /// submitted observation lands directly above the conversation it joins.
-fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDetailAnswer) -> Html {
+fn render_room(
+    render: &WorkDetailRender<'_, '_>,
+    answer: &wire::intent::TaskDetailAnswer,
+    aside: Html,
+) -> Html {
     let statement = &answer.task.statement.body;
     let note_id = format!("work-detail-note-{}", statement.born);
     let composer = html! {
@@ -473,6 +508,7 @@ fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDet
             &render.open_message_task,
             &answer.task,
             composer,
+            aside,
         ),
         None => html! { <section class="app-sheet-section room-reading">{composer}</section> },
     }

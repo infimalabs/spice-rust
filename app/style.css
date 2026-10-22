@@ -738,18 +738,16 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-sheet-section ul { margin: 8px 0 0; padding-left: 20px; }
 .app-sheet-section ul > li + li { margin-top: 4px; }
 .app-sheet-media { --mosaic-image-size: 8.75rem; min-width: 0; }
-.app-fact-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 18px;
-  margin: 0;
-  font-size: var(--app-type-chip);
-}
+.app-fact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 18px; margin: 0; font-size: var(--app-type-chip); }
 .app-fact-grid > div { min-width: 0; }
+/* A quoted origin request is prose, not a scalar: it takes the whole row so
+   the facts beside it never stretch into a blank column. */
+.app-fact-grid > div:has(.app-origin-request) { grid-column: 1 / -1; }
 .app-fact-grid dt { color: var(--muted); font-weight: 700; }
 .app-fact-grid dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 .app-origin-request { margin: 4px 0 0; white-space: pre-wrap; }
 .app-fact-link {
+  min-height: 0;
   padding: 0;
   border: 0;
   background: none;
