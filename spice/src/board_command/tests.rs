@@ -743,7 +743,7 @@ fn recovery_foreign_claim_then_free_is_explicitly_restorable() {
 }
 
 #[test]
-fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
+fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
     let (root, bus, epoch, seats) = fixture("claim-overlap", 3);
     let first = add_project_with_acceptance(
         &bus,
@@ -785,7 +785,11 @@ fn claims_warn_on_shared_acceptance_surface_not_shared_project_stem() {
         &[wire::intent::ClaimWarning {
             task: first,
             lane: seats[0].lane,
-            surface: vec!["mosaic".to_owned(), "watchband".to_owned()],
+            surface: vec![
+                "lane".to_owned(),
+                "mosaic".to_owned(),
+                "watchband".to_owned()
+            ],
         }]
     );
 
