@@ -270,6 +270,35 @@ fn a_live_claim_refuses_the_withdrawal_until_it_is_forced_and_then_names_the_hol
         ClaimDisposition::Freed,
         "the same transaction releases the lane, or it renews against a settled row"
     );
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::TaskDetail(detail),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDetail,
+        Vec::new(),
+        &wire::intent::TaskDetail {
+            task: task.born().expect("fixture stamp"),
+        },
+    )
+    else {
+        panic!("task detail answers with the withdrawn task");
+    };
+    assert!(detail.closure.is_none());
+    let deletion = detail
+        .deletion
+        .expect("task detail reads the withdrawal back beside the closure record");
+    assert_eq!(
+        (deletion.author, deletion.reason.as_str(), deletion.claimed),
+        (
+            Actor::Operator,
+            "filed against the wrong surface",
+            Some(lane)
+        ),
+        "the detail names who withdrew it, why, and whose claim it took"
+    );
     clean(&root, bus);
 }
 

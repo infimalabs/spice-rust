@@ -139,7 +139,15 @@ and appears right beneath the draft that wrote it. A Design's room is the same
 section with its Design authority added and its permalink as a compact control
 beside the heading. The composer is a single **Observe** control until the
 operator opens it or it holds a draft, a refusal, or a submission; a landed
-observation folds it back. It records each input as its
+observation folds it back. **Add** (Command- or Control-Enter) publishes the
+draft as an observation. While the task can be settled, **Close**
+(Shift-Command- or Shift-Control-Enter, when offered) and **Delete** (no
+chord) confirm, publish the same text as an observation, and only once the
+room records it close the task with that text as its validation or delete it
+with that text as its reason; a refused observation settles nothing and keeps
+the draft. A closed or deleted task's room leads with its settlement card:
+who closed or deleted it, when, its text, and any claim it took. The composer
+records each input as its
 task-owned browser draft. A connection loss keeps that composer visible with
 its exact text read-only and no publish action until the resident returns;
 reconnect makes the same draft editable, and a generation reload hands it to

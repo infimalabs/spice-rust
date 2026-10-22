@@ -16,6 +16,7 @@ fn detail_answer(label: &str, title: &str) -> TaskDetailAnswer {
         ),
         media: Vec::new(),
         closure: None,
+        deletion: None,
         disposition: None,
         origin_request: None,
     }

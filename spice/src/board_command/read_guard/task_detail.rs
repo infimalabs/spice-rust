@@ -51,6 +51,7 @@ pub(in crate::board_command) fn read_task_detail(
     };
     let mut record = task_record(observed.facts(), &selected, &roles);
     let closure = record.closures.remove(&detail.task);
+    let deletion = record.deletions.remove(&detail.task);
     let disposition = record.dispositions.remove(&detail.task);
     let origin_request = match &task.statement.body.provenance {
         wire::TaskProvenance::Steering(key) => {
@@ -67,6 +68,7 @@ pub(in crate::board_command) fn read_task_detail(
             task,
             media,
             closure,
+            deletion,
             disposition,
             origin_request,
         })),
@@ -84,6 +86,10 @@ pub(super) struct TaskRecord {
     /// The operator's closure of each closed task; a settled task closes once.
     pub(super) closures:
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailClosure>,
+    /// The operator's withdrawal of each deleted task; a settled task settles
+    /// once.
+    pub(super) deletions:
+        std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailDeletion>,
     /// The no-construction disposition each Plan recorded, through settlement.
     pub(super) dispositions:
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailDisposition>,
@@ -141,6 +147,20 @@ pub(super) fn task_record(
                     validation: closed.validation,
                     phase: closed.phase,
                     claimed: closed.claimed,
+                },
+            );
+        }
+        if let Some(deleted) = envelope.fact.read::<body::TaskDeleted>()
+            && tasks.contains(&deleted.task)
+        {
+            record.deletions.insert(
+                deleted.task,
+                wire::intent::TaskDetailDeletion {
+                    position: envelope.seq,
+                    at: envelope.at,
+                    author: roles.author(&envelope.actor),
+                    reason: deleted.reason,
+                    claimed: deleted.claimed,
                 },
             );
         }

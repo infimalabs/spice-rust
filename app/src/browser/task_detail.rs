@@ -447,29 +447,26 @@ fn live_holder(heads: &wire::intent::BoardTask) -> Option<wire::Actor> {
         .map(|claim| claim.body.actor.clone())
 }
 
-/// The operator's closure of a task. Closing records no note, so this is the
-/// one place its validation reads back, beside the observations it replaced.
-pub(super) fn render_closure_record(
-    closure: Option<&wire::intent::TaskDetailClosure>,
+/// The operator's closure or withdrawal of a task. Its text reads back here,
+/// beside the observations; the composer also publishes it as one.
+pub(super) fn render_settlement_record(
+    record: Option<crate::work::SettlementRecord<'_>>,
     name: impl Fn(&wire::Actor) -> String,
     resolves: impl Fn(&TaskStamp) -> bool,
 ) -> Html {
-    let Some(closure) = closure else {
+    let Some(record) = record else {
         return Html::default();
     };
-    let displaced = closure
+    let displaced = record
         .claimed
-        .as_ref()
         .map(|actor| format!("Took the claim from {}.", name(actor)));
     html! {
-        <article class="work-note-card work-closure-card" data-closure-position={closure.position.to_string()}>
+        <article class="work-note-card work-closure-card" data-settlement-position={record.position.to_string()}>
             <header>
-                <h4 title={closure.author.to_string()}>
-                    {format!("Closed by {} at {}", name(&closure.author), closure.phase)}
-                </h4>
-                {task_time(&closure.at, TaskTimePresentation::Elapsed)}
+                <h4 title={record.author.to_string()}>{record.heading(&name(record.author))}</h4>
+                {task_time(record.at, TaskTimePresentation::Elapsed)}
             </header>
-            {render_task_text(&closure.validation, "work-note-body", resolves)}
+            {render_task_text(record.text, "work-note-body", resolves)}
             if let Some(displaced) = displaced {
                 <p class="work-closure-claim">{displaced}</p>
             }
@@ -556,9 +553,9 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
 /// task-owned toast. It is a single Observe control until opened, unless it
 /// already holds a draft, a refusal, or a submission. Typed input enters that
 /// retained draft immediately, so a connection loss can leave the same
-/// composer visible and read-only until it returns. Its draft publishes an
-/// observation in the task's room; with a `closure`, the same draft can
-/// instead close the task as its validation.
+/// composer visible and read-only until it returns. Add publishes the draft as
+/// an observation in the task's room; with a `closure`, Close or Delete
+/// publishes it the same way and then settles the task on it.
 #[expect(
     clippy::too_many_arguments,
     reason = "one composer binds its task, capabilities, draft, and opener"
@@ -647,8 +644,8 @@ pub(super) fn render_note_composer(
 }
 
 /// Publish one observation in the room of the task named by the submitting
-/// surface, or settle that task with the draft as validation/reason when a
-/// destructive submitter sent the form.
+/// surface and, when a destructive submitter sent the form, then settle that
+/// task on the same text as its validation or reason.
 pub(super) fn note_submit_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
@@ -684,28 +681,16 @@ pub(super) fn note_submit_callback(
             (
                 detail.task.statement.body.handle.clone(),
                 detail.task.statement.position,
-                requested_settlement.map(|settlement| {
-                    (
-                        settlement,
-                        close_witnesses(&detail.task),
-                        live_holder(&detail.task).is_some(),
-                        detail.task.controlled.clone(),
-                    )
+                requested_settlement.map(|kind| WitnessedSettlement {
+                    kind,
+                    expected: close_witnesses(&detail.task),
+                    force_claimed: live_holder(&detail.task).is_some(),
+                    controlled: detail.task.controlled.clone(),
                 }),
             )
         };
-        if let Some((settlement, expected, force_claimed, controlled)) = settlement {
-            queue_settlement(
-                &sender,
-                &notes,
-                &task,
-                handle,
-                &text,
-                expected,
-                force_claimed,
-                &controlled,
-                settlement,
-            );
+        if let Some(settlement) = settlement {
+            queue_settlement(&sender, &notes, &task, handle, head, &text, settlement);
             return;
         }
         let text = match compose::observation(&text) {
@@ -746,22 +731,27 @@ pub(super) fn note_submit_callback(
     })
 }
 
-/// Validate, confirm, and queue one destructive task settlement against the
-/// exact heads and controlled closure set the operator saw.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the composer supplies one fully witnessed settlement"
-)]
+/// A settlement the operator requested, with the heads and controlled closure
+/// set of the detail it was requested from.
+struct WitnessedSettlement {
+    kind: ComposerSettlement,
+    expected: Vec<wire::Witness>,
+    force_claimed: bool,
+    controlled: Vec<wire::TaskHandle>,
+}
+
+/// Validate and confirm one destructive task settlement, publish its text as
+/// the task's observation, and only once the room records it settle the task
+/// on that same text against the heads the operator saw. A refused
+/// observation settles nothing and keeps the draft.
 fn queue_settlement(
     sender: &SenderHandle,
     notes: &NoteComposers,
     task: &TaskStamp,
     handle: wire::TaskHandle,
+    head: wire::Seq,
     text: &str,
-    expected: Vec<wire::Witness>,
-    force_claimed: bool,
-    controlled: &[wire::TaskHandle],
-    settlement: ComposerSettlement,
+    settlement: WitnessedSettlement,
 ) {
     let text = match compose::close(text) {
         Ok(text) => text,
@@ -770,41 +760,73 @@ fn queue_settlement(
             return;
         }
     };
-    if !confirm_settlement(settlement, &handle, &text, controlled) {
+    let kind = settlement.kind;
+    if !confirm_settlement(kind, &handle, &text, &settlement.controlled) {
         return;
     }
-    let queued = action_identity(sender).is_some_and(|id| {
-        let action = match settlement {
-            ComposerSettlement::Close => ClientAction::Close {
-                id,
-                task: handle,
-                validation: text,
+    let settle = {
+        let sender = sender.clone();
+        let notes = notes.clone();
+        let task = task.clone();
+        let handle = handle.clone();
+        let text = text.clone();
+        move || {
+            let WitnessedSettlement {
                 expected,
                 force_claimed,
-            },
-            ComposerSettlement::Delete => ClientAction::Delete {
-                id,
-                task: handle,
-                reason: text,
-                expected,
-                force_claimed,
-            },
-        };
-        admit_action(sender, action)
-    });
-    notes.update(task, |composer| {
-        composer.notice = Notice::none();
-        composer.submission = if queued {
-            match settlement {
+                ..
+            } = settlement;
+            let queued = action_identity(&sender).is_some_and(|id| {
+                let action = match kind {
+                    ComposerSettlement::Close => ClientAction::Close {
+                        id,
+                        task: handle,
+                        validation: text,
+                        expected,
+                        force_claimed,
+                    },
+                    ComposerSettlement::Delete => ClientAction::Delete {
+                        id,
+                        task: handle,
+                        reason: text,
+                        expected,
+                        force_claimed,
+                    },
+                };
+                admit_action(&sender, action)
+            });
+            if !queued {
+                notes.update(&task, |composer| {
+                    composer.submission = NoteSubmission::Failed(
+                        "The observation was published, but the settlement could not be \
+                         queued; the draft was retained."
+                            .to_owned(),
+                    );
+                });
+            }
+        }
+    };
+    let refused = {
+        let notes = notes.clone();
+        let task = task.clone();
+        move |issue| {
+            notes.update(&task, |composer| {
+                composer.submission = NoteSubmission::Failed(issue);
+            });
+        }
+    };
+    let post = crate::client_action::RoomPostAction::then(handle, head, text, settle, refused);
+    if admit_action(sender, ClientAction::RoomPost(post)) {
+        notes.update(task, |composer| {
+            composer.notice = Notice::none();
+            composer.submission = match kind {
                 ComposerSettlement::Close => NoteSubmission::Closing,
                 ComposerSettlement::Delete => NoteSubmission::Deleting,
-            }
-        } else {
-            NoteSubmission::Failed(
-                "Settlement could not be queued; the draft was retained.".to_owned(),
-            )
-        };
-    });
+            };
+        });
+    } else {
+        retain_note_failure(notes, task);
+    }
 }
 
 fn confirm_settlement(
@@ -817,7 +839,14 @@ fn confirm_settlement(
         ComposerSettlement::Close => "Close",
         ComposerSettlement::Delete => "Delete",
     };
-    let mut message = format!("{verb} {handle}?\n\nReason or validation:\n{text}");
+    let fate = match settlement {
+        ComposerSettlement::Close => "closes the task with this text as its validation",
+        ComposerSettlement::Delete => "deletes the task with this text as its reason",
+    };
+    let mut message = format!(
+        "{verb} {handle}?\n\nThis publishes the text below as an observation in the task's room, \
+         then {fate}:\n{text}"
+    );
     if !controlled.is_empty() {
         message.push_str("\n\nThis also closes these controlled tasks:");
         for task in controlled {

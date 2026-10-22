@@ -465,8 +465,8 @@ fn render_room(
     let note_id = format!("work-detail-note-{}", statement.born);
     let composer = html! {
         <>
-            {task_detail::render_closure_record(
-                answer.closure.as_ref(),
+            {task_detail::render_settlement_record(
+                crate::work::SettlementRecord::of(answer),
                 |actor| actor_name(actor, render),
                 |task| selection_has(render.selection, task),
             )}

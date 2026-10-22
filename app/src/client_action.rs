@@ -26,6 +26,34 @@ pub(crate) struct RoomPostAction {
     pub(crate) respond: RoomPostResponse,
 }
 
+impl RoomPostAction {
+    /// Publish `text` in `room` at statement `head`, and run `then` only once
+    /// the room records it; a refused post reports its reason to `refused`
+    /// and nothing follows.
+    pub(crate) fn then(
+        room: TaskHandle,
+        head: wire::Seq,
+        text: String,
+        then: impl FnOnce() + 'static,
+        refused: impl Fn(String) + 'static,
+    ) -> Self {
+        let then = std::cell::Cell::new(Some(then));
+        Self {
+            room,
+            head,
+            text,
+            respond: std::rc::Rc::new(move |result| match result {
+                Ok(_) => {
+                    if let Some(then) = then.take() {
+                        then();
+                    }
+                }
+                Err(issue) => refused(issue),
+            }),
+        }
+    }
+}
+
 /// One operator item disposition, reply, recovery, or relevance assessment.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum RoomControlRequest {
@@ -318,3 +346,6 @@ pub(crate) enum ClientAction {
         attachments: Vec<DirectiveAttachment>,
     },
 }
+
+#[cfg(test)]
+mod tests;

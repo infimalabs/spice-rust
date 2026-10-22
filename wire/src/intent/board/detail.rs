@@ -36,6 +36,28 @@ pub struct TaskDetailClosure {
     pub claimed: Option<Actor>,
 }
 
+/// The operator's withdrawal of a task, read back from its `task::deleted`
+/// fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetailDeletion {
+    /// Position of the withdrawal fact.
+    pub position: crate::Seq,
+    /// Commit time recorded by the journal.
+    pub at: crate::Instant,
+    /// Principal that withdrew the task.
+    pub author: Actor,
+    /// Stated reason for the withdrawal.
+    pub reason: String,
+    /// Actor whose live claim the withdrawal overrode, when it overrode one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claimed: Option<Actor>,
+}
+
 /// The disposition a Plan's lane recorded instead of constructing work, read
 /// back from the Plan's latest completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +164,13 @@ pub struct TaskDetailAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub closure: Option<TaskDetailClosure>,
+    /// The operator's withdrawal, when the task was deleted.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub deletion: Option<TaskDetailDeletion>,
     /// The no-construction disposition the Plan's latest completion recorded.
     #[serde(
         default,

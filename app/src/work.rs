@@ -10,6 +10,7 @@ pub(crate) mod lens;
 mod operator;
 mod overview;
 mod relationship;
+mod settlement;
 mod wall;
 pub use operator::{OperatorQueue, OperatorWait};
 pub use overview::{
@@ -22,6 +23,7 @@ pub use relationship::{
     WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
+pub use settlement::{SettlementAct, SettlementRecord};
 pub use wall::DependencyWall;
 #[cfg(test)]
 mod team_scope_tests;
