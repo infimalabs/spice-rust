@@ -246,7 +246,11 @@ owns each rule summarized here.
   names the Design and its title, says the operator pushed it to proposal,
   lists its open questions and the room's operator posts no lane had heard,
   and asks for `spice task capture HANDLE` and a pass that ends with
-  `preparation propose`. Once the recipient acknowledges or declines that
+  `preparation propose`. For two minutes from the nudge, unless the Design's
+  phase changes first, allocation holds the Design for the recipient as it
+  holds a phase handoff: no other lane is offered it, and the recipient ranks
+  it first. Capture by name stays open to any lane, and a later nudge's hold
+  replaces an earlier one. Once the recipient acknowledges or declines that
   message, the browser stops marking the posts it carried as unheard. The
   reply names the recipient and its match score, or says no lane could take
   the Design, which then waits ready for allocation.

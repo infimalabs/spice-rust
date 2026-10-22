@@ -496,6 +496,7 @@ fn a_nudge_message_its_lane_acknowledges_hears_the_posts_before_it() {
         &wire::rooms::DesignNudged {
             design: room(),
             message: Some(authority(NUDGE)),
+            recipient: None,
         },
     );
     let mut runtime = conversation_runtime(&session, &[room_post(1), sent, posted, nudged]);

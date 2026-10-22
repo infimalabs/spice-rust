@@ -39,7 +39,7 @@ pub use next::{
     unaccepted_output_of, work_waits, work_waits_resolved,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
-pub use phase::{HANDOFF_SECONDS, PhaseRefusal, Transition, TransitionKind};
+pub use phase::{HANDOFF_SECONDS, NUDGE_HOLD_SECONDS, PhaseRefusal, Transition, TransitionKind};
 pub use task::{
     BUILTIN_HIDDEN_STEMS, Dependency, Entry, Family, PhaseHandoff, PhaseHandoffKind, Project,
     ProjectError, ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,

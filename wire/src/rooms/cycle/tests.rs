@@ -296,6 +296,7 @@ fn first_pass_needs_steeped_maturity_or_a_nudge() {
     nudged.operator(&any(DesignNudged {
         design: design(),
         message: None,
+        recipient: None,
     }));
     assert_eq!(nudged.cycle(false), DesignCycle::ReadyForProposal);
 }
@@ -324,6 +325,7 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
             any(DesignNudged {
                 design: design(),
                 message: None,
+                recipient: None,
             }),
         ),
         ("task-routed MSG", true, posted(task_route())),

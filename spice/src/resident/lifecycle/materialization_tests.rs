@@ -222,9 +222,19 @@ fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
         bus.commit(nudge_write(&design, instant(6)))
             .expect("nudge commits"),
     );
+    let nudged = projected(&bus, &projects, &mut incremental, &design);
     assert_eq!(
-        cycle(projected(&bus, &projects, &mut incremental, &design)),
+        cycle(nudged.clone()),
         wire::rooms::DesignCycle::ReadyForProposal
+    );
+    assert_eq!(
+        nudged.phase_handoff(),
+        Some(&board::PhaseHandoff::new(
+            board::PhaseHandoffKind::Continue,
+            Actor::Lane(uuid(2)),
+            "2030-04-12T18:46:06.271Z".parse().expect("hold end"),
+        )),
+        "allocation holds the nudged Design for its recipient for the hold window"
     );
     bus.shutdown().expect("cycle fixture bus stops");
 }
@@ -269,7 +279,7 @@ fn standing(
     projected(bus, projects, incremental, design).grouped()
 }
 
-/// The operator's nudge that readies `design`'s first pass.
+/// The operator's nudge that readies `design`'s first pass and messages lane 2.
 fn nudge_write(design: &TaskStamp, at: Instant) -> JournalWrite {
     let origin = format!("resident:{}", epoch())
         .parse::<Origin>()
@@ -280,6 +290,7 @@ fn nudge_write(design: &TaskStamp, at: Instant) -> JournalWrite {
             wire::rooms::DesignNudged {
                 design: design.clone(),
                 message: None,
+                recipient: Some(uuid(2)),
             },
             FactCause::Root,
         )

@@ -1,12 +1,38 @@
 use super::*;
 
-/// Project the current phase's ownership policy from durable transition evidence.
+/// Project the current allocation hold from durable transition evidence.
 ///
-/// Published repository work asks for independent ownership. A transition with
-/// another declared phase still ahead stays with its prior claimant. Task birth,
-/// an unrecorded transition into the final declared phase, and an edit that
-/// withdrew a taste hold's plan phase carry no inferred handoff preference.
+/// A Design nudged since its current phase began is held for the lane its
+/// nudge messaged for [`board::NUDGE_HOLD_SECONDS`]. Otherwise published
+/// repository work asks for independent ownership, and a transition with
+/// another declared phase still ahead stays with its prior claimant. Task
+/// birth, an unrecorded transition into the final declared phase, and an edit
+/// that withdrew a taste hold's plan phase carry no inferred handoff
+/// preference.
 pub(crate) fn phase_handoff(
+    facts: &bus::TaskFacts,
+    heads: &journal::TaskHeads,
+) -> Result<Option<board::PhaseHandoff>, Outcome<CommandAnswer>> {
+    let recipient = facts.design(heads.statement().body()).cycle.recipient;
+    let Some(recipient) =
+        recipient.filter(|recipient| recipient.nudged > heads.workflow().position())
+    else {
+        return transition_handoff(facts, heads);
+    };
+    let nudged = facts.at(recipient.nudged).ok_or_else(|| {
+        protocol_fault(
+            "board::nudge-hold-missing",
+            "a Design's recorded nudge is absent from its facts",
+        )
+    })?;
+    Ok(Some(board::PhaseHandoff::new(
+        board::PhaseHandoffKind::Continue,
+        wire::Actor::Lane(recipient.lane),
+        hold_until(nudged.at, board::NUDGE_HOLD_SECONDS)?,
+    )))
+}
+
+fn transition_handoff(
     facts: &bus::TaskFacts,
     heads: &journal::TaskHeads,
 ) -> Result<Option<board::PhaseHandoff>, Outcome<CommandAnswer>> {
@@ -49,18 +75,20 @@ pub(crate) fn phase_handoff(
     let Some(kind) = handoff_kind(&done, continues) else {
         return Ok(None);
     };
-    let until = workflow
-        .at
-        .get()
-        .checked_add(jiff::SignedDuration::from_secs(board::HANDOFF_SECONDS))
-        .map_err(|error| environment_fault("board::phase-handoff-range", &error.to_string()))?;
-    let until = Instant::new(until)
-        .map_err(|error| environment_fault("board::phase-handoff-invalid", &error.to_string()))?;
     Ok(Some(board::PhaseHandoff::new(
         kind,
         claim.body().actor.clone(),
-        until,
+        hold_until(workflow.at, board::HANDOFF_SECONDS)?,
     )))
+}
+
+fn hold_until(at: Instant, seconds: i64) -> Result<Instant, Outcome<CommandAnswer>> {
+    let until = at
+        .get()
+        .checked_add(jiff::SignedDuration::from_secs(seconds))
+        .map_err(|error| environment_fault("board::phase-handoff-range", &error.to_string()))?;
+    Instant::new(until)
+        .map_err(|error| environment_fault("board::phase-handoff-invalid", &error.to_string()))
 }
 
 fn handoff_kind(done: &body::TaskDone, continues: bool) -> Option<board::PhaseHandoffKind> {

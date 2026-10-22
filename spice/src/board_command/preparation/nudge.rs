@@ -93,6 +93,7 @@ fn staged(
         let nudged = DesignNudged {
             design: design.clone(),
             message: None,
+            recipient: None,
         };
         return Ok((
             record(
@@ -231,6 +232,7 @@ fn deliver(
             DesignNudged {
                 design: design.clone(),
                 message: Some(publication),
+                recipient: Some(recipient.lane),
             },
             FactCause::Root,
         )
