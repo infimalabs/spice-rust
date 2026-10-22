@@ -99,11 +99,7 @@ fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError>
         .take_while(|retirement| crossing::is_sidecar(&retirement.path))
         .count();
     let (fixed, sidecars) = plan.retirements.split_at(plan.retirements.len() - sidecars);
-    let mut expected = vec![
-        RETIRED_XTASK_PATH,
-        RETIRED_XTASK_GUARD_PATH,
-        RETIRED_FOLD_STORE_PATH,
-    ];
+    let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
     // Only a plan without symbols may discard a retained bundle.
     if plan.symbols.is_none()
         && fixed
@@ -176,8 +172,7 @@ fn validate_retirement(
     if let Some(parent) = &retirement.publication_parent {
         validate_bound_parent(&retirement.destination, parent)?;
     }
-    let current_discard = retirement.path == RETIRED_FOLD_STORE_PATH
-        || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())
+    let current_discard = symbols::DISCARD_PATHS.contains(&retirement.path.as_str())
         || crossing::is_sidecar(&retirement.path);
     let invalid_discard = if current_discard {
         !retirement.discard || retirement.previous.is_some() || retirement.observed.is_some()

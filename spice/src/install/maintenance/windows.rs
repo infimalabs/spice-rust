@@ -18,8 +18,7 @@ use sill::authority::{Directory, Entry, FileIdentity};
 use super::super::handle::in_use;
 use super::super::{BINARY_PATH, InstallError};
 use super::{
-    CANDIDATE_LIMIT, ENTRY_LIMIT, InstallTempInspection, RUNTIME_DIRECTORY, STALE_GRACE,
-    candidate_pid, concern,
+    CANDIDATE_LIMIT, ENTRY_LIMIT, InstallTempInspection, STALE_GRACE, candidate_pid, concern,
 };
 use crate::repository::Repository;
 
@@ -63,8 +62,11 @@ fn scan(repository: &Repository, reclaim: bool) -> Result<InstallTempInspection,
     let mut report = InstallTempInspection::default();
     let mut directories = Vec::new();
     let mut candidates = Vec::new();
-    for relative in [Path::new(RUNTIME_DIRECTORY), executables] {
-        let path = repository.common_dir().join(relative);
+    let runtime = repository.state_root();
+    for (path, is_runtime) in [
+        (runtime, true),
+        (repository.common_dir().join(executables), false),
+    ] {
         let directory = match Directory::open(&path) {
             Ok(directory) => directory,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
@@ -76,7 +78,7 @@ fn scan(repository: &Repository, reclaim: bool) -> Result<InstallTempInspection,
                 ));
             }
         };
-        report.runtime_present |= relative == Path::new(RUNTIME_DIRECTORY);
+        report.runtime_present |= is_runtime;
         collect_candidates(
             &directory,
             &path,

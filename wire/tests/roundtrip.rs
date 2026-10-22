@@ -249,13 +249,13 @@ fn lane_purge_report_names_every_retired_path_by_lane() {
 
 #[test]
 fn rtk_gain_report_requires_exact_agent_database_and_output_provenance() {
-    let document = r#"{"agent":"019fe52f10ad7c839df4511323d1b7fb","database":"/repo/.spice-rs/rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb/history.db","output":"Saved 42 tokens\n"}"#;
+    let document = r#"{"agent":"019fe52f10ad7c839df4511323d1b7fb","database":"/repo/.spice/rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb/history.db","output":"Saved 42 tokens\n"}"#;
     let report: RtkGainReport = round_trip(document);
     assert_eq!(report.agent, "019fe52f10ad7c839df4511323d1b7fb");
 
     for malformed in [
         document.replace(
-            ",\"database\":\"/repo/.spice-rs/rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb/history.db\"",
+            ",\"database\":\"/repo/.spice/rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb/history.db\"",
             "",
         ),
         document.replace("\"output\":\"Saved 42 tokens\\n\"", "\"output\":null"),

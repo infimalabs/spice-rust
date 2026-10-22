@@ -195,6 +195,15 @@ impl ChangeSelectionPolicy {
         if self.generated(path) {
             return gates.into_iter().collect();
         }
+        self.extend_declared_class_gates(path, &mut gates);
+        self.extend_language_authority_gates(path, &mut gates);
+        self.extend_extension_gates(path, &mut gates);
+        gates.into_iter().collect()
+    }
+
+    /// Gates the repository's typed declarations select for `path`, before
+    /// its extension is consulted.
+    fn extend_declared_class_gates(&self, path: &str, gates: &mut BTreeSet<GateId>) {
         if contains_exact(&self.declared_rust_sources, path) {
             gates.extend([GateId::RustTypecheck, GateId::AppWebTypecheck]);
         }
@@ -211,8 +220,10 @@ impl ChangeSelectionPolicy {
         if selected_suffix(path, &self.magic_suffixes) {
             gates.insert(GateId::MagicNumbers);
         }
+    }
 
-        self.extend_language_authority_gates(path, &mut gates);
+    /// Gates `path`'s extension selects.
+    fn extend_extension_gates(&self, path: &str, gates: &mut BTreeSet<GateId>) {
         let extension = extension(path);
         match extension.as_str() {
             "rs" => {
@@ -287,9 +298,11 @@ impl ChangeSelectionPolicy {
             "lock" if path == "Cargo.lock" && self.rust_workspace() => {
                 gates.extend([GateId::RustTypecheck, GateId::AppWebTypecheck]);
             }
+            "" if known_extensionless(path) => {
+                gates.insert(GateId::RepoShape);
+            }
             _ => {}
         }
-        gates.into_iter().collect()
     }
 
     fn policy_authority(&self, path: &str) -> bool {
@@ -501,6 +514,11 @@ fn cargo_manifest(path: &str) -> bool {
     Path::new(path).file_name().and_then(|name| name.to_str()) == Some("Cargo.toml")
 }
 
+/// Extensionless repository files whose shape the repository gate measures.
+fn known_extensionless(path: &str) -> bool {
+    matches!(path, ".gitignore" | ".gitattributes" | "LICENSE")
+}
+
 fn contains_exact(values: &[String], expected: &str) -> bool {
     values
         .binary_search_by(|candidate| candidate.as_str().cmp(expected))
@@ -547,5 +565,9 @@ mod tests {
             assert!(selected.contains(&expected));
         }
         assert!(policy.gates_for_path("OTHER").is_err());
+        assert_eq!(
+            policy.gates_for_path(".gitignore").expect("ignore rules"),
+            [GateId::RepoShape]
+        );
     }
 }

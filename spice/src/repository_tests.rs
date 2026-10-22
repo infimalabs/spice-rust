@@ -26,40 +26,37 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     let state = repository
         .admit_state()
         .expect("admit absent current state");
-    assert_eq!(state.runtime(), common.join(".spice-rs"));
-    assert_eq!(state.worktree_runtime(), common.join(".spice-rs"));
-    assert_eq!(state.worktree_locks(), common.join(".spice-rs/locks"));
+    assert_eq!(state.runtime(), common.join(".spice"));
+    assert_eq!(state.worktree_runtime(), common.join(".spice"));
+    assert_eq!(state.worktree_locks(), common.join(".spice/locks"));
     assert_eq!(
         state.steering_delivery(),
-        common.join(".spice-rs/steering-delivery.json")
+        common.join(".spice/steering-delivery.json")
     );
     assert_eq!(
         state.steering_delivery_lock(),
-        common.join(".spice-rs/locks/steering-delivery")
+        common.join(".spice/locks/steering-delivery")
     );
-    assert_eq!(
-        state.steering_media(),
-        common.join(".spice-rs/steering-media")
-    );
+    assert_eq!(state.steering_media(), common.join(".spice/steering-media"));
     let delivery = repository
         .admit_steering_delivery()
         .expect("admit absent hook delivery state");
     assert_eq!(delivery.state(), state.steering_delivery());
     assert_eq!(delivery.lock(), state.steering_delivery_lock());
     assert_eq!(delivery.projections(), state.steering_media());
-    assert_eq!(state.data(), common.join(".spice-rs/data"));
+    assert_eq!(state.data(), common.join(".spice/data"));
     assert_eq!(
         state.journal(),
-        common.join(".spice-rs/data/spicejournal.sqlite3")
+        common.join(".spice/data/spicejournal.sqlite3")
     );
-    assert_eq!(state.locks(), common.join(".spice-rs/locks"));
-    assert_eq!(state.proof(), common.join(".spice-rs/proof"));
-    assert_eq!(state.resident(), common.join(".spice-rs/resident"));
-    assert_eq!(state.serve(), common.join(".spice-rs/serve"));
-    assert_eq!(state.degraded(), common.join(".spice-rs/degraded"));
-    assert_eq!(state.tape(), common.join(".spice-rs/tape"));
-    assert_eq!(state.rtk(), common.join(".spice-rs/rtk"));
-    assert_eq!(state.supervisors(), common.join(".spice-rs/supervisors"));
+    assert_eq!(state.locks(), common.join(".spice/locks"));
+    assert_eq!(state.proof(), common.join(".spice/proof"));
+    assert_eq!(state.resident(), common.join(".spice/resident"));
+    assert_eq!(state.serve(), common.join(".spice/serve"));
+    assert_eq!(state.degraded(), common.join(".spice/degraded"));
+    assert_eq!(state.tape(), common.join(".spice/tape"));
+    assert_eq!(state.rtk(), common.join(".spice/rtk"));
+    assert_eq!(state.supervisors(), common.join(".spice/supervisors"));
     assert_eq!(
         state
             .lane_families()
@@ -71,13 +68,13 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
             "steering-media",
             "serve-lanes"
         ]
-        .map(|name| Path::new(".spice-rs").join(name)),
+        .map(|name| Path::new(".spice").join(name)),
     );
     assert_eq!(
         state.rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1))),
-        common.join(".spice-rs/rtk/00000000-0000-0000-0000-000000000001/history.db")
+        common.join(".spice/rtk/00000000-0000-0000-0000-000000000001/history.db")
     );
-    let retired_learnings = common.join(".spice-rs/learnings");
+    let retired_learnings = common.join(".spice/learnings");
     assert!(
         !state
             .owned_directories()
@@ -137,19 +134,19 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
         state.runtime(),
         fs::canonicalize(&common)
             .expect("canonical Rust state parent")
-            .join(".spice-rs")
+            .join(".spice")
     );
     assert_eq!(
         state.worktree_runtime(),
         fs::canonicalize(&git)
             .expect("canonical linked worktree state parent")
-            .join(".spice-rs")
+            .join(".spice")
     );
     assert_eq!(
         state.worktree_locks(),
         fs::canonicalize(&git)
             .expect("canonical linked worktree lock parent")
-            .join(".spice-rs/locks")
+            .join(".spice/locks")
     );
     assert_common_steering_media(&repository, &common, &state);
     assert_eq!(
@@ -205,7 +202,7 @@ fn assert_common_steering_media(repository: &Repository, common: &Path, state: &
         state.steering_media(),
         fs::canonicalize(common)
             .expect("canonical Rust media parent")
-            .join(".spice-rs/steering-media"),
+            .join(".spice/steering-media"),
         "linked worktree media uses the stable common runtime rather than Git administration",
     );
     assert_eq!(

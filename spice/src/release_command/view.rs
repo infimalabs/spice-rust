@@ -15,9 +15,9 @@ use wire::{Digest, Outcome, Refusal, ReleaseNotes, SpiceCommand};
 
 /// The file a complete note export names by default.
 const NOTES_FILE: &str = "release-notes.md";
-/// Where publish previews retain their complete plans under the Git common
-/// directory.
-const PLAN_DIRECTORY: [&str; 2] = [".spice-rs", "release-plans"];
+/// Where publish previews retain their complete plans under the Git-common
+/// state root.
+const PLAN_DIRECTORY: &str = "release-plans";
 /// Curated note lines a publish preview shows before naming the plan file.
 const NOTE_LINES: usize = 8;
 /// Bytes of one curated note line a preview carries.
@@ -274,9 +274,8 @@ impl NotesExcerpt {
 
 /// The file one plan is retained in.
 pub(super) fn plan_path(common_git: &Path, key: &Digest) -> PathBuf {
-    PLAN_DIRECTORY
-        .iter()
-        .fold(common_git.to_path_buf(), |path, part| path.join(part))
+    wire::state_root(common_git)
+        .join(PLAN_DIRECTORY)
         .join(format!("release-plan-{key}.json"))
 }
 

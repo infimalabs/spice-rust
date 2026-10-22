@@ -10,7 +10,6 @@ use super::*;
 mod collection;
 pub(super) use collection::collect_layout;
 
-const STATE_DIRECTORY: &str = ".spice-rs";
 const STORE_DIRECTORY: &str = "gate-evidence";
 const VERSION_DIRECTORY: &str = "v1";
 const MARKER_FILE: &str = "store.json";
@@ -118,7 +117,7 @@ pub(super) struct Layout {
 
 impl Layout {
     pub(super) fn initialize(common_git: &Path) -> Result<Self, EvidenceStoreError> {
-        let state = common_git.join(STATE_DIRECTORY);
+        let state = wire::state_root(common_git);
         create_directory(&state)?;
         let store = state.join(STORE_DIRECTORY);
         create_directory(&store)?;

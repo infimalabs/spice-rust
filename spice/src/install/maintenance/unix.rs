@@ -12,8 +12,7 @@ use std::os::unix::fs::MetadataExt as _;
 
 use super::super::InstallError;
 use super::{
-    CANDIDATE_LIMIT, ENTRY_LIMIT, InstallTempInspection, RUNTIME_DIRECTORY, STALE_GRACE,
-    candidate_pid, concern,
+    CANDIDATE_LIMIT, ENTRY_LIMIT, InstallTempInspection, STALE_GRACE, candidate_pid, concern,
 };
 use crate::repository::Repository;
 
@@ -178,7 +177,7 @@ fn scan_with_hooks(
     probe: &mut impl FnMut(Pid) -> ProcessState,
     hooks: &mut impl MaintenanceHooks,
 ) -> Result<InstallTempInspection, InstallError> {
-    let runtime = repository.common_dir().join(RUNTIME_DIRECTORY);
+    let runtime = repository.state_root();
     let descriptor = match unix_fs::open(
         &runtime,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
@@ -517,13 +516,13 @@ mod tests {
                 NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
             ));
             fs::create_dir(&root).expect("create maintenance fixture");
-            fs::create_dir_all(root.join(".git/.spice-rs")).expect("create runtime directory");
+            fs::create_dir_all(root.join(".git/.spice")).expect("create runtime directory");
             let repository = Repository::discover(&root).expect("discover maintenance fixture");
             Self { root, repository }
         }
 
         fn runtime(&self) -> PathBuf {
-            self.root.join(".git/.spice-rs")
+            self.root.join(".git/.spice")
         }
 
         fn name(pid: u32, counter: u64) -> String {

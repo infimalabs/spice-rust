@@ -548,7 +548,7 @@ fn state_failure(error: StateError) -> Failure {
         | StateError::NotDirectory { .. }
         | StateError::NotRegularFile { .. } => Failure::refusal(
             "repository::state-path-refused",
-            "real fixed components beneath the canonical Git-common .spice-rs directory",
+            spice::repository::state_shape_expectation(),
             error.to_string(),
             format!(
                 "repair the malformed state component at {}",

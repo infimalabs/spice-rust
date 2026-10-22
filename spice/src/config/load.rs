@@ -30,8 +30,16 @@ use wire::TRACKED_POLICY_FILE;
 /// Per-worktree document under the worktree's own Git directory. Its name
 /// differs from [`LOCAL_FILE`] because the main worktree's Git directory is the
 /// Git-common directory itself.
-const WORKTREE_FILE: &str = ".spice-rs/worktree.toml";
-const LOCAL_FILE: &str = ".spice-rs/config.toml";
+const WORKTREE_FILE: &str = "worktree.toml";
+const LOCAL_FILE: &str = "config.toml";
+
+/// `file` below the live state root of `git_directory`, relative to that Git
+/// directory so the acquisition walk opens the root component itself and
+/// refuses a link there like anywhere else.
+fn state_relative(git_directory: &Path, file: &str) -> PathBuf {
+    let root = wire::state_root(git_directory);
+    Path::new(root.file_name().expect("a state root has a file name")).join(file)
+}
 
 /// Exact repository configuration locations.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -210,8 +218,12 @@ impl Locations {
 pub fn locations(repository: &Repository) -> Locations {
     Locations {
         tracked: repository.worktree_root().join(TRACKED_POLICY_FILE),
-        worktree: repository.git_dir().join(WORKTREE_FILE),
-        local: repository.common_dir().join(LOCAL_FILE),
+        worktree: repository
+            .git_dir()
+            .join(state_relative(repository.git_dir(), WORKTREE_FILE)),
+        local: repository
+            .common_dir()
+            .join(state_relative(repository.common_dir(), LOCAL_FILE)),
     }
 }
 
@@ -513,14 +525,14 @@ pub fn capture_repository(
     let worktree = acquire(
         ConfigSource::Worktree,
         repository.git_dir(),
-        Path::new(WORKTREE_FILE),
+        &state_relative(repository.git_dir(), WORKTREE_FILE),
         &mut budget,
         &mut acquisition,
     );
     let local = acquire(
         ConfigSource::Local,
         repository.common_dir(),
-        Path::new(LOCAL_FILE),
+        &state_relative(repository.common_dir(), LOCAL_FILE),
         &mut budget,
         &mut acquisition,
     );

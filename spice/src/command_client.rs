@@ -173,7 +173,13 @@ fn foreign_repository_from_paths(
         .parent()?;
     let addressed = operator_discovery
         .parent()
-        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".spice-rs"))?
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name == wire::STATE_DIRECTORY || name == wire::predecessor_state_directory()
+                })
+        })?
         .parent()?;
     if source == addressed {
         return None;

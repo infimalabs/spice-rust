@@ -28,7 +28,6 @@ pub const STATE_RECEIPT_VERSION: u64 = 2;
 pub const PEER_CLAIM_TTL_SECONDS: u64 = 6 * 60 * 60;
 
 const CURRENT_STATE_RELEASE: &str = "current";
-pub(crate) const CURRENT_STATE_DIRECTORY: &str = ".spice-rs";
 const CURRENT_STATE_DATA_DIRECTORY: &str = "data";
 const CURRENT_STATE_FILE: &str = "gate-state.json";
 const CURRENT_STATE_LOCK_FILE: &str = "gate-state.lock";
@@ -36,8 +35,7 @@ const CURRENT_STATE_LOCK_FILE: &str = "gate-state.lock";
 /// The current gate-state path below one canonical Git common directory.
 #[must_use]
 pub fn current_state_path(common_git_directory: &Path) -> PathBuf {
-    common_git_directory
-        .join(CURRENT_STATE_DIRECTORY)
+    wire::state_root(common_git_directory)
         .join(CURRENT_STATE_DATA_DIRECTORY)
         .join(CURRENT_STATE_FILE)
 }

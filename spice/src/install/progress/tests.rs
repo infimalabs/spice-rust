@@ -199,7 +199,7 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
 
     let resumed = prepare(&repository, None).expect("interrupted apply reloads");
     apply_prepared_record(&repository, None, resumed).expect("interrupted apply completes");
-    let record_length = fs::metadata(repository.common_dir().join(RECORD_PATH))
+    let record_length = fs::metadata(repository.state_root().join(RECORD_PATH))
         .expect("receipt metadata reads")
         .len();
     assert!(

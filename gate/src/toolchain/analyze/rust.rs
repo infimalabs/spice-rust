@@ -354,9 +354,7 @@ pub(in crate::toolchain) fn rust_analysis_workspace(
             repository.display()
         )
     })?;
-    let source = worktree_git
-        .join(crate::state::CURRENT_STATE_DIRECTORY)
-        .join(RUST_SOURCE_DIRECTORY);
+    let source = wire::state_root(&worktree_git).join(RUST_SOURCE_DIRECTORY);
     let cargo_target = repository.join("target").join(RUST_TARGET_DIRECTORY);
     let cargo_build = cargo_target.join(RUST_BUILD_DIRECTORY);
     Ok(RustAnalysisWorkspace {

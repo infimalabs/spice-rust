@@ -263,22 +263,6 @@ pub(super) fn process_exists(pid: u32) -> CommandResult<bool> {
     })
 }
 
-#[cfg(unix)]
-pub(super) fn process_exists_raw(pid: u32) -> io::Result<bool> {
-    let pid = i32::try_from(pid).map_err(io::Error::other)?;
-    // SAFETY: signal zero changes no process state and only probes this exact PID.
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return Ok(true);
-    }
-    let error = io::Error::last_os_error();
-    match error.raw_os_error() {
-        Some(libc::ESRCH) => Ok(false),
-        Some(libc::EPERM) => Ok(true),
-        _ => Err(error),
-    }
-}
-
-#[cfg(windows)]
 pub(super) fn process_exists_raw(pid: u32) -> io::Result<bool> {
     sill::process_running(pid)
 }

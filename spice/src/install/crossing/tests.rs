@@ -110,9 +110,15 @@ fn retained_operation(
     }
 }
 
+/// Seal as schema 18 did: below the Git-common directory, under the plan tag
+/// that release minted and the crossing verifies once.
 fn reseal(record: &mut RetainedRecord) {
     let plan = wire::encode(&record.plan).expect("fixture plan encodes");
-    record.plan_digest = Digest::compute(Domain::InstallPlan, &plan);
+    record.plan_digest = Digest::compute(Domain::InstallPlanRetained, &plan);
+}
+
+fn retained_record_path() -> String {
+    format!("{}/{RECORD_PATH}", wire::predecessor_state_directory())
 }
 
 /// A complete schema-18 receipt: one fixed effect with an operator reversal
@@ -164,7 +170,8 @@ fn retained(repository: &Repository) -> RetainedRecord {
     let plan = RetainedPlan {
         version: SCHEMA,
         repository: identity.clone(),
-        record: bind_destination(repository.common_dir(), RECORD_PATH).expect("record binds"),
+        record: bind_destination(repository.common_dir(), &retained_record_path())
+            .expect("record binds"),
         operations,
         app: Some(generation("current")),
         app_predecessors: vec![generation("older")],
@@ -201,7 +208,7 @@ fn retained(repository: &Repository) -> RetainedRecord {
 }
 
 fn cross_bytes(bytes: &[u8]) -> Result<Crossed, InstallError> {
-    cross(Path::new(RECORD_PATH), bytes)
+    cross(Path::new(&retained_record_path()), bytes)
 }
 
 fn cross_record(record: &RetainedRecord) -> Result<Crossed, InstallError> {
@@ -322,7 +329,7 @@ fn sidecar_discards_follow_the_receipt_and_withdraw_only_owned_empty_directories
         matches!(refused, Some(InstallError::Drift { .. })),
         "{refused:?}"
     );
-    assert!(!common.join(RECORD_PATH).exists());
+    assert!(!repository.state_root().join(RECORD_PATH).exists());
     assert!(common.join(POINTER).exists());
     write(&drifted, b"current html");
 

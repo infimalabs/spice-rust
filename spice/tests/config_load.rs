@@ -39,11 +39,11 @@ fn repository(scratch: &Scratch, name: &str) -> PathBuf {
 }
 
 fn local_path(root: &Path) -> PathBuf {
-    root.join(".git/.spice-rs/config.toml")
+    root.join(".git/.spice/config.toml")
 }
 
 fn worktree_path(git_dir: &Path) -> PathBuf {
-    git_dir.join(".spice-rs/worktree.toml")
+    git_dir.join(".spice/worktree.toml")
 }
 
 fn write(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) {
@@ -197,9 +197,9 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
         root.join(".spice/config.toml"),
         root.join(".git/spice.toml"),
         root.join(".git/.spice/config/spice.toml"),
-        root.join(".git/.spice-rs/local.toml"),
-        root.join(".spice-rs/local.toml"),
-        root.join(".spice-rs/config.toml"),
+        root.join(".git/.spice/local.toml"),
+        root.join(".spice/local.toml"),
+        root.join(".spice/config.toml"),
         scratch.join("spice.toml"),
     ] {
         write(ignored, b"[tasks]\nforbidden = true\n");
@@ -272,7 +272,7 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
     write(first.join("spice.toml"), b"[lane]\nvendor = \"omp\"\n");
     write(second.join("spice.toml"), b"[lane]\nvendor = \"gemini\"\n");
     write(
-        common.join(".spice-rs/config.toml"),
+        common.join(".spice/config.toml"),
         b"[listen]\nwindow = \"5m\"\n",
     );
     write(
@@ -369,7 +369,7 @@ fn symlink_and_directory_documents_are_both_typed_without_following() {
     assert_eq!(error.acquisition()[1].kind(), AcquisitionKind::Directory);
     assert_eq!(
         error.acquisition()[1].path(),
-        canonical.join(".git/.spice-rs/config.toml")
+        canonical.join(".git/.spice/config.toml")
     );
     assert!(error.resolution().is_none());
     assert_eq!(
@@ -409,8 +409,8 @@ fn linked_root_and_intermediate_parent_refuse_without_following() {
 
     fs::remove_file(&root).expect("remove root link");
     fs::rename(&displaced, &root).expect("restore admitted root");
-    let local_parent = root.join(".git/.spice-rs");
-    let admitted_local_parent = admitted.common_dir().join(".spice-rs");
+    let local_parent = root.join(".git/.spice");
+    let admitted_local_parent = admitted.common_dir().join(".spice");
     let outside = scratch.join("outside local policy");
     fs::create_dir(&outside).expect("create outside local directory");
     write(outside.join("config.toml"), b"[listen]\nwindow = \"8m\"\n");

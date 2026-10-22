@@ -58,7 +58,7 @@ impl Fixture {
     pub(crate) fn layout(&self) -> Layout {
         Layout::new(
             &self.worktree,
-            self.common.join(".spice-rs/proof"),
+            self.common.join(".spice/proof"),
             self.target,
         )
     }

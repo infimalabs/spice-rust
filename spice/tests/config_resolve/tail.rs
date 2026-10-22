@@ -96,7 +96,7 @@ value = 1
         (
             "serve.pack.rows",
             ConfigSource::Tracked,
-            ".spice-rs/config.toml",
+            ".spice/config.toml",
         ),
     ] {
         let refusal = error
@@ -122,10 +122,7 @@ fn syntax_positions_and_other_layer_diagnostics_are_both_returned() {
             "config/spice.toml",
             "# caf\u{e9}\n[lane]\nlease = [\n",
         )),
-        Some(Document::new(
-            ".spice-rs/local.toml",
-            "[unknown]\nvalue = 1\n",
-        )),
+        Some(Document::new(".spice/local.toml", "[unknown]\nvalue = 1\n")),
         &[],
     ))
     .expect_err("syntax and unknown table refuse");

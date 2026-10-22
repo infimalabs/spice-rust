@@ -267,10 +267,29 @@ Windows PowerShell:
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Deleting `<git-common>/.spice-rs`, `<git-dir>/.spice-rs`,
+Deleting `<git-common>/.spice`, `<git-dir>/.spice`,
 `<git-common>/.spice-install`, or foreign state is a separate destructive act
 that needs explicit authorization and preserved evidence. Never use
 pattern-wide process kills that can match a live peer worktree.
+
+## State root crossing
+
+Rust Spice's state root is `.spice` under the Git-common directory and under
+each linked worktree's Git directory; Python Spice's archived root is
+`.spice-py`. A repository whose live root still carries the earlier
+`-rs`-suffixed name moves it exactly once, at the first `install --apply` of
+an executable that owns `.spice`: the preview lists each `move`, and the
+retired residue (`learnings`, `install-recovery`, `data/spicefolds.sqlite3`,
+per-worktree `inbox` and `full-verifier-evidence.json`) the move deletes
+first. The rename keeps the journal, gate evidence, supervisors, and every
+other child in place; the receipt binds relative to the root, so the preview
+digest taken before the move applies after it. While a resident holds the
+root's lock or a lane supervisor is still running below it, apply refuses
+with `install::state-root-held` and names each holder: run `spice down`, let
+the supervisors exit, and rerun the preview. Both names present at one Git
+directory refuse with `install::state-root-ambiguous`; keep exactly one. No
+symlink bridges the names, because every admission refuses a linked
+component.
 
 ## Recovery
 
