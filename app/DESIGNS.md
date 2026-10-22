@@ -192,11 +192,12 @@ the room snapshot, its live facts, the board, and lane topology on every render:
   - native work;
   - a live coordination request;
   - a claim-bound stop request;
-  - a leave with the lane's clause.
-  Nothing ages. The lane's next room publication, a leave included, ends a
-  Design request it postdates. Authored messages and contributions never
-  create listening or end a leave; only a later Design request restores
-  listening. History and native duties stay.
+  - a leave with the lane's clause, the decline of a Design request it owed.
+  Nothing ages. The lane's next room publication, a contribution or a leave,
+  answers a Design request it postdates and ends that request's listening; a
+  lane owing no request has nothing to leave. Authored messages and
+  contributions never create listening; only a later Design request restores
+  it. History and native duties stay.
 - **Relevance**: the resident's shadow relevance observations, each with its
   classification, progress standing, explanation, exceptions, uncertainty,
   source coverage, and operator verdict.

@@ -518,6 +518,10 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
         .expect("current listener receives the changed room");
     assert!(notice.text.contains("appended before accounting"));
     assert!(
+        !notice.text.contains("spice room leave"),
+        "native work owes no Design request, so no leave is offered"
+    );
+    assert!(
         diagnostics.is_empty(),
         "{}",
         String::from_utf8_lossy(&diagnostics)

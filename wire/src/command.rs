@@ -55,7 +55,7 @@ pub enum CommandKind {
     RoomCoordinate,
     /// Withdraw unanswered coordination and request native holder disposition.
     RoomPutAside,
-    /// A lane stops listening to one anchor task's room.
+    /// A lane declines the Design request it owes in one anchor task's room.
     RoomLeave,
     /// A lane records one typed problem-space contribution in an open Design.
     RoomContribute,

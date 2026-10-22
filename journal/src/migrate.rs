@@ -16,6 +16,7 @@ mod design_asks;
 mod design_invitations;
 mod designs;
 mod fact_bounds;
+mod leave_receipts;
 mod maturity;
 mod oops_design;
 mod oops_generation;
@@ -103,8 +104,9 @@ const PREPARED: &str = "prepared";
 /// contribution label with its receipt crosses to its charge, every
 /// retained item-bearing contribution takes its item's text identity,
 /// every retained room coordination record, direction head, and coordination
-/// receipt loses its retired automated-resume rule, and every retained
-/// single-ask Design invitation takes its one-element ask list.
+/// receipt loses its retired automated-resume rule, every retained
+/// single-ask Design invitation takes its one-element ask list, and every
+/// retained leave answer loses its retired repeat-leave flag.
 const OLDEST_PREDECESSOR_SCHEMA: u32 = 33;
 
 /// Whether `version` is a predecessor this release crosses forward.
@@ -416,7 +418,8 @@ fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), 
     contribution_charges::cross(transaction)?;
     contribution_items::cross(transaction)?;
     room_rules::cross(transaction)?;
-    design_asks::cross(transaction)
+    design_asks::cross(transaction)?;
+    leave_receipts::cross(transaction)
 }
 
 /// Move a finalized predecessor authority to the current schema exactly once.
