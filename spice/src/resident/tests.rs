@@ -418,19 +418,32 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
     });
     commit(&bus, sent).expect("pending steering commits");
     let woken = super::steering::woken_inbox(&bus, lane).expect("pending steering reads");
-    let failure = Outcome::Refusal(Refusal::bare(
-        wire::RefusalDiagnostic::new("lifecycle::wake-launch-failed".to_owned(), None, None, None)
-            .with_detail("repair the vendor launch"),
-    ));
+    // A supervisor's start failure carries its state.json failure text as
+    // detail; the dead-letter line must reproduce it byte for byte.
+    let recorded = "lane::cargo-isolation-unavailable; cargo-isolation::native-toolchain-unavailable: /home/bin/rustup";
+    let failure = store_fault("lane::supervisor-start-failed", recorded);
 
-    let parked = super::steering::dead_letter_pending(&bus, &paths, epoch, lane, &woken, &failure)
+    let dead = super::steering::dead_letter_pending(&bus, &paths, epoch, lane, &woken, &failure)
         .expect("terminal start failure parks pending steering");
 
-    assert_eq!(parked.len(), 1);
-    assert_eq!(parked[0].key, "1kJK6N3R");
+    assert_eq!(dead.parked.len(), 1);
+    assert_eq!(dead.parked[0].key, "1kJK6N3R");
     assert_eq!(
-        parked[0].requeue,
+        dead.parked[0].requeue,
         format!("spice steer recover {directive}")
+    );
+    let mut log = Vec::new();
+    dead.log(&mut log, "pending-inbox", lane);
+    let log = String::from_utf8(log).expect("dead-letter log is UTF-8");
+    let line = log.strip_suffix('\n').expect("one terminated line");
+    assert!(!line.contains('\n'), "{log}");
+    assert!(
+        line.contains(" reason=lane::supervisor-start-failed "),
+        "{line}"
+    );
+    assert_eq!(
+        line.split_once(" detail=").map(|(_, detail)| detail),
+        Some(recorded)
     );
     let snapshot = bus.fact_snapshot().expect("dead-letter facts read");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("dead letter replays");

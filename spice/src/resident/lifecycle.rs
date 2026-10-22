@@ -114,7 +114,7 @@ enum Resolution {
 
 enum Attempted {
     Started,
-    DeadLettered(Vec<super::steering::DeadLetter>),
+    DeadLettered(super::steering::DeadLettered),
     Launching(Launching),
 }
 
@@ -469,19 +469,9 @@ impl Runtime {
                 );
                 Ok(None)
             }
-            Ok(Attempted::DeadLettered(parked)) => {
+            Ok(Attempted::DeadLettered(dead)) => {
                 self.backoff.release(lane);
-                for directive in parked {
-                    let _ = writeln!(
-                        diagnostic,
-                        "lifecycle dead-lettered trigger={} lane={} key={} directive={} requeue={}",
-                        trigger.as_str(),
-                        lane,
-                        directive.key,
-                        directive.directive,
-                        directive.requeue,
-                    );
-                }
+                dead.log(diagnostic, trigger.as_str(), lane);
                 Ok(None)
             }
             Err(Outcome::Refusal(refusal)) => {

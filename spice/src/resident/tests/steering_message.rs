@@ -601,9 +601,11 @@ impl Lanes {
         );
     }
 
-    fn dead_letter_removed_lanes(&self) {
-        steering::dead_letter_removed_lanes(&self.bus, &mut Vec::new())
-            .expect("removed lanes read");
+    /// Park removed lanes' peer duties, answering the resident log they wrote.
+    fn dead_letter_removed_lanes(&self) -> String {
+        let mut log = Vec::new();
+        steering::dead_letter_removed_lanes(&self.bus, &mut log).expect("removed lanes read");
+        String::from_utf8(log).expect("dead-letter log is UTF-8")
     }
 
     /// Remove one vacant lane from the residency.
