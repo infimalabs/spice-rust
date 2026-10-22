@@ -85,13 +85,20 @@ fn recipient(
                 profiles,
             )?;
             let mut state = message_surface::lock_state(profiles)?;
-            choose(&mut state.profiles, &frequency, vector.as_ref(), &free)
+            choose(
+                &mut state.profiles,
+                &frequency,
+                vector.as_ref(),
+                &free,
+                design,
+            )
         }
         None => choose(
             &mut SessionProfiles::default(),
             &frequency,
             vector.as_ref(),
             &free,
+            design,
         ),
     };
     chosen.map_err(|error| {

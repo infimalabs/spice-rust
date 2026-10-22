@@ -131,7 +131,8 @@ fn staged(
     Ok((outcome, Some(recipient.lane)))
 }
 
-/// The reply naming the recipient, its match score, and whether it wakes.
+/// The reply naming the recipient, its match score, whether it wakes, and
+/// whether every free lane had already worked the Design.
 fn messaged_text(
     snapshot: &bus::TaskSnapshot,
     handle: &wire::TaskHandle,
@@ -149,13 +150,18 @@ fn messaged_text(
         })
         .map_or_else(String::new, |name| format!("\"{name}\" "));
     format!(
-        "nudged {handle}: messaged {name}(lane {}) at match score {:.3}{}",
+        "nudged {handle}: messaged {name}(lane {}) at match score {:.3}{}{}",
         recipient.lane,
         recipient.score,
         if recipient.seated {
             ""
         } else {
             "; no seated lane was free, so the message wakes this vacant lane"
+        },
+        if recipient.last_resort {
+            "; every free lane has worked this Design, so this one is a last resort"
+        } else {
+            ""
         },
     )
 }
@@ -336,10 +342,16 @@ fn message(
 ) -> String {
     let mut text = format!(
         "The operator pushed Design {handle} \"{title}\" to proposal before its room steeped, and \
-         chose {} to take its next pass: this lane's retained work matched it at {:.3}, the best \
-         of the lanes free to take it.\n\nOpen questions:",
+         chose {} to take its next pass: this lane's retained work matched it at {:.3}, {}.\n\n\
+         Open questions:",
         if recipient.seated { "you" } else { "this lane" },
         recipient.score,
+        if recipient.last_resort {
+            "and every lane free to take it had already worked a phase of it, so this lane is \
+             its last resort"
+        } else {
+            "the best of the lanes free to take it"
+        },
     );
     let questions = spice::rooms::awareness::request_questions(acceptance);
     for (item, question) in questions.iter().enumerate() {
