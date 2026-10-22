@@ -55,6 +55,19 @@ pub(super) fn move_fixture_lane_to_team(
     seat: &Seat,
     team: CanonicalUuid,
 ) {
+    place_fixture_lane(bus, epoch, seat, team, wire::intent::TeamLife::Drive, None);
+}
+
+/// Move the fixture lane onto `team` under `policy`, restating the row's own
+/// life when `life` is given, the way `lane add --life` seeds it.
+pub(super) fn place_fixture_lane(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    team: CanonicalUuid,
+    policy: wire::intent::TeamLife,
+    life: Option<&str>,
+) {
     let snapshot = bus
         .task_snapshot()
         .expect("residency head reads before move");
@@ -69,13 +82,16 @@ pub(super) fn move_fixture_lane_to_team(
         .expect("fixture lane remains seated");
     let from_team = row.team;
     row.team = team;
+    if let Some(life) = life {
+        row.life = life.to_owned();
+    }
     next.topology_revision += 1;
     next.subscriptions
         .retain(|subscription| subscription.team != from_team);
     next.subscriptions.push(wire::TeamSubscription {
         team,
         formed_at: None,
-        policy: wire::intent::TeamLife::Drive,
+        policy,
         fast_mode: false,
     });
 
@@ -91,8 +107,8 @@ pub(super) fn move_fixture_lane_to_team(
                 member: Some(seat.lane),
                 from_team: Some(from_team),
                 source_rekeyed_to: None,
-                from: wire::intent::TeamLife::Drive,
-                life: wire::intent::TeamLife::Drive,
+                from: policy,
+                life: policy,
                 from_fast_mode: false,
                 fast_mode: false,
                 sources: Vec::new(),
@@ -132,7 +148,6 @@ fn assert_scope(
         selectable_handles(answer, actor),
         expected.iter().map(|handle| handle.to_string()).collect(),
     );
-    assert_eq!(answer.residency.body.lanes[0].life, "drive");
     assert_eq!(answer.residency.body.lanes[0].disposition, "occupied");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("scoped board has one durable lineage subscription");
@@ -308,14 +323,15 @@ fn drive_does_not_move_existing_work_with_its_creator_lane() {
     clean(&root, bus);
 }
 
-/// An agent seated alone under its own identity is not on a team.
+/// A lane allocates under its current team's policy and nothing else.
 ///
-/// Its configured lifetime stays durable, but allocation honours it only for
-/// a team: alone, the lane selects nothing, exactly as Steer would, while its
-/// seat keeps running. Joining a team resumes the configured lifetime.
+/// The row's own life is the seed its initial team took when `lane add`
+/// formed it; once seated it decides nothing. A lane alone on its own team
+/// follows that team's policy, and a lane placed on another team follows that
+/// team's, whatever life the row still names.
 #[test]
-fn an_agent_without_a_team_allocates_as_steer_until_it_joins_one() {
-    let (root, bus, epoch, seats) = fixture("unteamed-allocation", 1);
+fn a_lane_allocates_under_its_current_team_policy_alone() {
+    let (root, bus, epoch, seats) = fixture("team-policy-allocation", 1);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
     authorize_lane_creation(&bus, epoch, seat);
@@ -329,36 +345,36 @@ fn an_agent_without_a_team_allocates_as_steer_until_it_joins_one() {
         "task.alone",
         Some("todo"),
     );
-    let teamed = board(&bus, epoch, lane.clone());
-    assert_scope(&teamed, &lane, wire::intent::TeamLife::Drive, &[&task]);
-
-    move_fixture_lane_to_team(&bus, epoch, seat, seat.lane);
-    let alone = board(&bus, epoch, lane.clone());
-    assert_eq!(
-        alone
-            .residency
-            .body
-            .subscriptions
-            .iter()
-            .find(|subscription| subscription.team == seat.lane)
-            .map(|subscription| subscription.policy),
-        Some(wire::intent::TeamLife::Drive),
-        "the configured lifetime stays durable while the agent is alone",
+    let (drain, drive, steer) = (
+        wire::intent::TeamLife::Drain,
+        wire::intent::TeamLife::Drive,
+        wire::intent::TeamLife::Steer,
     );
-    assert_scope(&alone, &lane, wire::intent::TeamLife::Steer, &[]);
+
+    place_fixture_lane(&bus, epoch, seat, seat.lane, drain, Some("steer"));
+    let alone = board(&bus, epoch, lane.clone());
+    assert_scope(&alone, &lane, drain, &[&task]);
+
+    place_fixture_lane(&bus, epoch, seat, seat.team, steer, Some("drain"));
+    let steered = board(&bus, epoch, lane.clone());
+    assert_scope(&steered, &lane, steer, &[]);
     assert_eq!(
         allocated(&bus, epoch, &lane),
         None,
-        "an agent without a team is handed no work",
+        "a drain row in a steer team is handed no work",
     );
 
-    move_fixture_lane_to_team(&bus, epoch, seat, seat.team);
-    let rejoined = board(&bus, epoch, lane.clone());
-    assert_scope(&rejoined, &lane, wire::intent::TeamLife::Drive, &[&task]);
+    place_fixture_lane(&bus, epoch, seat, seat.team, drive, Some("drain"));
+    let driven = board(&bus, epoch, lane.clone());
+    assert_scope(&driven, &lane, drive, &[&task]);
+
+    place_fixture_lane(&bus, epoch, seat, seat.lane, drain, Some("drain"));
+    let lone_drain = board(&bus, epoch, lane.clone());
+    assert_scope(&lone_drain, &lane, drain, &[&task]);
     assert_eq!(
         allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
         Some(task.to_string()),
-        "joining a team restores the configured lifetime",
+        "a lone drain lane draws assignable work",
     );
     clean(&root, bus);
 }

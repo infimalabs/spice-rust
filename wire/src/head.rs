@@ -1107,27 +1107,6 @@ impl TeamSubscription {
     pub fn admits_creator_team(&self, creator: Option<CanonicalUuid>) -> bool {
         self.policy.admits_creator_team(creator, self.team)
     }
-
-    /// The policy allocation honours for this team's current members.
-    ///
-    /// The configured policy stays durable, but only a [`teamed`] formation
-    /// draws work under it: an unteamed agent allocates as
-    /// [`TeamLife::Steer`](crate::intent::TeamLife::Steer) until it joins a
-    /// team, when its configured lifetime resumes.
-    #[must_use]
-    pub fn effective(&self, members: impl IntoIterator<Item = CanonicalUuid>) -> Self {
-        let policy = if teamed(self.team, members) {
-            self.policy
-        } else {
-            crate::intent::TeamLife::Steer
-        };
-        Self {
-            team: self.team,
-            formed_at: self.formed_at,
-            policy,
-            fast_mode: self.fast_mode,
-        }
-    }
 }
 
 /// Maximum membership admitted when forming or growing an app team: the one
@@ -1140,9 +1119,11 @@ pub const TEAM_MEMBER_LIMIT: usize = crate::grouping::MEMBER_LIMIT;
 ///
 /// A fresh seat sits in a team carrying its own lane identity, so a team whose
 /// only member is that identity is merely a defined agent, not a team. This is
-/// the one definition of teamed: the fleet renders a surface only for a teamed
-/// row, the global menu lists an unteamed agent for placement, and allocation
-/// admits work only to a teamed formation.
+/// the one definition of teamed, and it is a rendering distinction: the fleet
+/// renders a surface only for a teamed row and the global menu lists an
+/// unteamed agent for placement. Allocation and wake never ask it; a lane
+/// follows its team's [`TeamSubscription::policy`] whether or not the team is
+/// a formation.
 #[must_use]
 pub fn teamed(team: CanonicalUuid, members: impl IntoIterator<Item = CanonicalUuid>) -> bool {
     let mut members = members.into_iter();

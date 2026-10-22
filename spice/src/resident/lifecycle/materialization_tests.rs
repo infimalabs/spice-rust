@@ -298,102 +298,62 @@ fn nudge_write(design: &TaskStamp, at: Instant) -> JournalWrite {
     write
 }
 
+/// Each lane follows its team's policy alone: placed on a team or seated alone
+/// under its own identity, and whatever life its own row still names, Steer
+/// holds, Drain attempts the queue, and Drive waits for its own team's work,
+/// which the fixture task is only when the lane sits on its creator team.
 #[test]
-fn org_policy_drives_every_member_while_terminal_seat_life_remains_an_override() {
-    for (policy, expected) in [
-        (wire::intent::TeamLife::Steer, Resolution::Idle),
-        (
-            wire::intent::TeamLife::Drive,
+fn a_lane_projects_under_its_team_policy_however_it_was_seated() {
+    for (seated_under, drain_row) in [
+        (team(), false),
+        (lane(), false),
+        (team(), true),
+        (lane(), true),
+    ] {
+        let drive = if seated_under == team() {
             Resolution::Wait {
                 trigger: Trigger::AvailableWork,
                 lane: lane(),
                 deadline: "2030-04-12T18:47:01.271Z"
                     .parse()
                     .expect("starvation deadline"),
-            },
-        ),
-        (
-            wire::intent::TeamLife::Drain,
-            Resolution::Attempt {
-                trigger: Trigger::DrainQueue,
-                lane: lane(),
-            },
-        ),
-    ] {
-        let (bus, _, projection) = policy_fixture(policy, false);
-        let snapshot = bus.task_snapshot().expect("policy snapshot reads");
-        let targets = project_targets(
-            &snapshot,
-            &projection,
-            instant(50),
-            &Holds::new(3),
-            &board::NextConfig::default(),
-        )
-        .expect("team policy projects lifecycle targets");
-        assert_eq!(
-            resolve(
-                &targets,
-                &Backoff::default(),
-                instant(50),
-                lane::WakeOrder::default()
+            }
+        } else {
+            Resolution::Idle
+        };
+        for (policy, expected) in [
+            (wire::intent::TeamLife::Steer, Resolution::Idle),
+            (wire::intent::TeamLife::Drive, drive),
+            (
+                wire::intent::TeamLife::Drain,
+                Resolution::Attempt {
+                    trigger: Trigger::DrainQueue,
+                    lane: lane(),
+                },
             ),
-            expected
-        );
-        bus.shutdown().expect("policy fixture bus stops");
-    }
-
-    let (bus, _, projection) = policy_fixture(wire::intent::TeamLife::Drain, true);
-    let snapshot = bus
-        .task_snapshot()
-        .expect("terminal override snapshot reads");
-    let targets = project_targets(
-        &snapshot,
-        &projection,
-        instant(50),
-        &Holds::new(3),
-        &board::NextConfig::default(),
-    )
-    .expect("terminal override projects");
-    assert!(
-        targets.is_empty(),
-        "terminal seat life suppresses team startup"
-    );
-    bus.shutdown().expect("terminal override bus stops");
-}
-
-/// A vacant lane seated alone under its own identity is not on a team.
-///
-/// Its configured policy stays durable, but only a team draws work under it:
-/// the lane holds at Idle under every policy, exactly as a steered team does,
-/// however much ready work the board carries.
-#[test]
-fn a_vacant_lane_without_a_team_projects_no_startup_under_any_policy() {
-    for policy in [
-        wire::intent::TeamLife::Steer,
-        wire::intent::TeamLife::Drive,
-        wire::intent::TeamLife::Drain,
-    ] {
-        let (bus, _, projection) = seated_policy_fixture(policy, false, lane());
-        let snapshot = bus.task_snapshot().expect("unteamed snapshot reads");
-        let targets = project_targets(
-            &snapshot,
-            &projection,
-            instant(50),
-            &Holds::new(3),
-            &board::NextConfig::default(),
-        )
-        .expect("an unteamed lane projects lifecycle targets");
-        assert_eq!(
-            resolve(
-                &targets,
-                &Backoff::default(),
+        ] {
+            let (bus, _, projection) = seated_policy_fixture(policy, drain_row, seated_under);
+            let snapshot = bus.task_snapshot().expect("policy snapshot reads");
+            let targets = project_targets(
+                &snapshot,
+                &projection,
                 instant(50),
-                lane::WakeOrder::default()
-            ),
-            Resolution::Idle,
-            "{policy:?} starts no agent on a lane without a team",
-        );
-        bus.shutdown().expect("unteamed fixture bus stops");
+                &Holds::new(3),
+                &board::NextConfig::default(),
+            )
+            .expect("team policy projects lifecycle targets");
+            assert_eq!(
+                resolve(
+                    &targets,
+                    &Backoff::default(),
+                    instant(50),
+                    lane::WakeOrder::default()
+                ),
+                expected,
+                "{policy:?} under team {seated_under} with a drain row {drain_row}"
+            );
+            bus.shutdown().expect("policy fixture bus stops");
+        }
     }
 }
 
@@ -803,10 +763,8 @@ fn policy_fixture(
     seated_policy_fixture(policy, terminal, team())
 }
 
-/// The policy fixture with its one lane seated under `team`.
-///
-/// Seating the lane under its own identity leaves it without a team, which is
-/// how every lane starts before an operator places it.
+/// The policy fixture with its one lane seated under `team`, which is the
+/// lane's own identity until an operator places it elsewhere.
 fn seated_policy_fixture(
     policy: wire::intent::TeamLife,
     terminal: bool,
@@ -1402,11 +1360,8 @@ fn lane() -> CanonicalUuid {
     uuid(1)
 }
 
-/// The team the fixture lane is placed on.
-///
-/// Its identity differs from the lane's: a lane seated alone under its own
-/// identity is not on a team and draws no work, so the fixture places its
-/// seat the way an operator would.
+/// The team the fixture lane is placed on when a test seats it the way an
+/// operator's placement would, under an identity distinct from the lane's.
 fn team() -> CanonicalUuid {
     uuid(7)
 }

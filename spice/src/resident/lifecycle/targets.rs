@@ -10,12 +10,12 @@ pub(super) fn project_targets(
     let Some(residency) = snapshot.residency() else {
         return Ok(Vec::new());
     };
-    if !residency.body().lanes.iter().any(|row| {
-        row.occupant.is_none()
-            && row.disposition != "occupied"
-            && row.life != "drain"
-            && holds.seats(row.lane)
-    }) {
+    if !residency
+        .body()
+        .lanes
+        .iter()
+        .any(|row| row.occupant.is_none() && row.disposition != "occupied" && holds.seats(row.lane))
+    {
         return Ok(Vec::new());
     }
     let entries = projection.entries();
@@ -29,11 +29,7 @@ pub(super) fn project_targets(
     let ready_at = projection.ready_at();
     let mut targets = Vec::new();
     for row in &projected_residency.lanes {
-        if row.occupant.is_some()
-            || row.disposition == "occupied"
-            || row.life == "drain"
-            || !holds.seats(row.lane)
-        {
+        if row.occupant.is_some() || row.disposition == "occupied" || !holds.seats(row.lane) {
             continue;
         }
         let pending_inbox = projection.has_operator_steering(row.lane);
@@ -153,11 +149,10 @@ pub(super) fn await_regular_jobs(
     }
 }
 
-/// The effective task-allocation lifetime of one vacant lane's team.
+/// The task-allocation lifetime of one vacant lane's team.
 ///
-/// An agent seated alone under its own identity is not on a team, so it
-/// follows no capacity: its configured lifetime resumes once placement moves
-/// it onto a team.
+/// The team policy alone decides whether the lane follows capacity; the row's
+/// own life is the seed its initial team took, not a lifecycle of the lane.
 fn subscription(
     residency: &wire::ResidencyHead,
     row: &wire::LaneResidency,
@@ -173,7 +168,7 @@ fn subscription(
             "one lifecycle target has more than one durable task-allocation lifetime",
         ));
     }
-    Ok(subscription.map(|subscription| subscription.effective(residency.team_members(row.team))))
+    Ok(subscription.cloned())
 }
 
 fn work_availability(
