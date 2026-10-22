@@ -59,7 +59,6 @@ pub(super) fn apply_prepared_record(
         receipt: record_generation,
         fresh,
     } = prepared;
-    cross_state_root(repository)?;
     reclaim_temporary_records(repository)?;
     match record.status {
         InstallStatus::Complete => return Ok(record.receipt()),
@@ -271,21 +270,17 @@ pub(super) fn prepare_over(
     spice_binary: Option<&Path>,
     refresh: RefreshRecord,
 ) -> Result<PreparedInstall, InstallError> {
-    let (LoadedRecord { record, generation }, repair) = refresh.into_parts();
+    let repair = refresh.is_repairable();
+    let LoadedRecord { record, generation } = refresh.into_loaded();
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
         return fresh(build_plan(repository, spice_binary)?, Some(generation));
     }
     if record.status == InstallStatus::Complete
-        && (repair.is_some() || refresh_required(repository, &record.plan, spice_binary)?)
+        && (repair || refresh_required(repository, &record.plan, spice_binary)?)
     {
         return fresh(
-            refresh_plan(
-                repository,
-                spice_binary,
-                &record,
-                repair.as_deref().unwrap_or_default(),
-            )?,
+            refresh_plan(repository, spice_binary, &record)?,
             Some(generation),
         );
     }
@@ -314,7 +309,6 @@ fn refresh_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
     record: &InstallRecord,
-    sidecars: &[crossing::Sidecar],
 ) -> Result<InstallPlan, InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
@@ -325,7 +319,6 @@ fn refresh_plan(
         spice_binary,
         Some(&record.plan),
         binary_superseded.as_ref(),
-        sidecars,
     )
 }
 

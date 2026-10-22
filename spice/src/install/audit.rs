@@ -297,7 +297,6 @@ fn stale_receipt(error: &InstallError) -> bool {
         InstallError::Decode(_)
             | InstallError::InvalidRecord(_)
             | InstallError::LegacyRecord { .. }
-            | InstallError::RetainedRecord { .. }
             | InstallError::PathShape(_)
             | InstallError::PathOutsideRoot(_)
             | InstallError::ParentChanged(_)

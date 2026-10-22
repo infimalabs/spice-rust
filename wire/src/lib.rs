@@ -134,9 +134,9 @@ pub use reply::{
     RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
     ThreadReport, Version,
 };
+pub use state_root::STATE_DIRECTORY;
 #[cfg(not(target_arch = "wasm32"))]
 pub use state_root::state_root;
-pub use state_root::{PREDECESSOR_STATE_SUFFIX, STATE_DIRECTORY, predecessor_state_directory};
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
     DirectiveBadge, MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,

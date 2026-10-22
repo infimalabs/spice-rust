@@ -22,14 +22,12 @@
 //!    [`StatePaths::rtk_history`] database may be passed to RTK through the
 //!    documented `RTK_DB_PATH` input. Worktree-local state is not inspected.
 //!
-//! # One root name, one move
+//! # One root name
 //!
-//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] before this release
-//! owned `.spice`. A live root by that older name is still this runtime's state:
-//! [`wire::state_root`] keeps it current until the install crossing moves it,
-//! as a real directory, exactly once. Every admission refuses a symlinked
-//! component, so no link can bridge the two names, and no command opens a
-//! second root beside the live one.
+//! The state root is [`STATE_DIRECTORY`] beneath the Git-common directory and
+//! beneath each worktree's own Git directory, and no other name is
+//! recognized. A directory by any other name is foreign state under rule 2:
+//! nothing reads, moves, or deletes it.
 //!
 //! # Why durable authority is common
 //!
@@ -506,14 +504,14 @@ impl Repository {
         &self.common
     }
 
-    /// The live Git-common state root: [`STATE_DIRECTORY`], or the
-    /// predecessor name while an install has yet to move it.
+    /// The Git-common state root: [`STATE_DIRECTORY`] beneath the Git-common
+    /// directory.
     #[must_use]
     pub fn state_root(&self) -> PathBuf {
         wire::state_root(&self.common)
     }
 
-    /// The live state root beneath this worktree's own Git directory.
+    /// The state root beneath this worktree's own Git directory.
     #[must_use]
     pub fn worktree_state_root(&self) -> PathBuf {
         wire::state_root(&self.git)

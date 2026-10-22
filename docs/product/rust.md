@@ -240,17 +240,13 @@ the Windows 11 ARM VM, Wine, and the macOS cross-build are development evidence
 only. Making the repository public is the wake condition for
 `DIST-dWLh7gXP1`; no Enterprise-plan change or self-hosted signing key is a
 substitute.
-Install schema 18 published app sidecars. It is a one-crossing
-boundary: `spice install` alone reads a complete schema-18 receipt and
-discards the sidecars it owned. Owners:
-[`canvas/src/lib.rs`](../../canvas/src/lib.rs) for the symbols,
+Owners: [`canvas/src/lib.rs`](../../canvas/src/lib.rs) for the symbols,
 [`dist/src/canvas.rs`](../../dist/src/canvas.rs) and
 [`dist/src/canvas/coff.rs`](../../dist/src/canvas/coff.rs) for object writing
 and final-image section admission, [`xtask/src/app.rs`](../../xtask/src/app.rs)
 for the link arguments, and
-[`spice/src/install/canvas.rs`](../../spice/src/install/canvas.rs) and
-[`spice/src/install/crossing.rs`](../../spice/src/install/crossing.rs) for
-install admission and the schema-18 crossing.
+[`spice/src/install/canvas.rs`](../../spice/src/install/canvas.rs) for install
+admission.
 
 The resident serves app routes through one boundary, `CanvasAssets`, with
 exactly two sources. Only a staged `spice up` serves `DevelopmentDirectory`:

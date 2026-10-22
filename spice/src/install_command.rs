@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
-use spice::install::{InstallError, InstallPreview, InstallReceipt, StateRootCrossing};
+use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
 use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
@@ -25,32 +25,18 @@ pub(crate) enum Answer {
 /// apply derives and checks the plan afresh.
 pub(crate) struct PlanPreview {
     preview: InstallPreview,
-    crossing: Option<StateRootCrossing>,
     apply: String,
 }
 
 impl PlanPreview {
-    fn source(preview: InstallPreview, crossing: Option<StateRootCrossing>, program: &str) -> Self {
+    fn source(preview: InstallPreview, program: &str) -> Self {
         let apply = source_apply_command(program, preview.digest());
-        Self {
-            preview,
-            crossing,
-            apply,
-        }
+        Self { preview, apply }
     }
 
-    fn package(
-        preview: InstallPreview,
-        crossing: Option<StateRootCrossing>,
-        program: &str,
-        package: &str,
-    ) -> Self {
+    fn package(preview: InstallPreview, program: &str, package: &str) -> Self {
         let apply = package_apply_command(program, package, preview.digest());
-        Self {
-            preview,
-            crossing,
-            apply,
-        }
+        Self { preview, apply }
     }
 }
 
@@ -62,8 +48,7 @@ impl serde::Serialize for PlanPreview {
 
 impl fmt::Display for PlanPreview {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.preview
-            .write_text(formatter, self.crossing.as_ref(), &self.apply)
+        self.preview.write_text(formatter, &self.apply)
     }
 }
 
@@ -101,7 +86,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
         let json = matches.get_flag("json");
         if apply.is_none() && !json {
             return match crate::install_package::preview(&repository, Path::new(package)) {
-                Ok(outcome) => Answer::Plan(package_preview(&repository, package, outcome)),
+                Ok(outcome) => Answer::Plan(package_preview(package, outcome)),
                 Err(error) => request.package_failure(error),
             };
         }
@@ -119,13 +104,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             Answer::Plan(result(
                 spice::install::plan(&repository, Some(&executable))
                     .and_then(InstallPreview::from_plan)
-                    .and_then(|preview| {
-                        spice::install::state_root_crossing(&repository)
-                            .map(|crossing| (preview, crossing))
-                    })
-                    .map(|(preview, crossing)| {
-                        PlanPreview::source(preview, crossing, &invoked_program())
-                    }),
+                    .map(|preview| PlanPreview::source(preview, &invoked_program())),
             ))
         }
         Request::Apply(spelling) => {
@@ -226,23 +205,13 @@ fn executable<B>() -> Result<PathBuf, Outcome<B>> {
 }
 
 /// A sealed package's preview as this front-end renders it: the child's
-/// structured preview, plus the state-root crossing this repository is due,
-/// which only this executable can see.
-fn package_preview(
-    repository: &Repository,
-    package: &str,
-    outcome: Outcome<InstallPreview>,
-) -> Outcome<PlanPreview> {
+/// structured preview with the command that applies it.
+fn package_preview(package: &str, outcome: Outcome<InstallPreview>) -> Outcome<PlanPreview> {
     match outcome {
-        Outcome::Reply(Reply { position, body }) => {
-            match spice::install::state_root_crossing(repository) {
-                Ok(crossing) => Outcome::Reply(Reply {
-                    position,
-                    body: PlanPreview::package(body, crossing, &invoked_program(), package),
-                }),
-                Err(error) => failure(error),
-            }
-        }
+        Outcome::Reply(Reply { position, body }) => Outcome::Reply(Reply {
+            position,
+            body: PlanPreview::package(body, &invoked_program(), package),
+        }),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
     }
@@ -274,13 +243,10 @@ pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
         | InstallError::LegacyRecord { .. }
-        | InstallError::RetainedRecord { .. }
         | InstallError::CanvasRefused { .. }
         | InstallError::RecordMissing
         | InstallError::ApplyInProgress
         | InstallError::UnapplyInProgress
-        | InstallError::StateRootHeld { .. }
-        | InstallError::StateRootAmbiguous { .. }
         | InstallError::Drift { .. } => install_refusal(
             &error,
             "install-plan",
@@ -340,17 +306,13 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::OccupantUnrestorable { .. } => "install::occupant-unrestorable",
         InstallError::ForeignHookPath { .. } => "install::foreign-hooks",
         InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
-        InstallError::LegacyRecord { .. } | InstallError::RetainedRecord { .. } => {
-            "install::release-owned-state"
-        }
+        InstallError::LegacyRecord { .. } => "install::release-owned-state",
         InstallError::CanvasRefused { .. } => "install::canvas-refused",
         InstallError::RecordMissing => "install::record-missing",
         InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
             "install::transition-incomplete"
         }
         InstallError::Drift { .. } => "install::drift",
-        InstallError::StateRootHeld { .. } => "install::state-root-held",
-        InstallError::StateRootAmbiguous { .. } => "install::state-root-ambiguous",
         InstallError::PathOutsideRoot(_) => "install::path-outside-root",
         InstallError::ParentChanged(_) => "install::parent-changed",
         InstallError::GenerationChanged(_) => "install::generation-changed",
@@ -412,10 +374,6 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             "inspect the {owner}-owned record with `{}`; run that retired release's own executable with `install --unapply` before retrying the current preview",
             inspect_path(path),
         ),
-        InstallError::RetainedRecord { path, owner, .. } => format!(
-            "inspect the schema-18 record with `{}`; a complete one crosses forward ({owner}) only through this executable's `install` preview and `install --apply=<printed-digest>`, so finish or unapply an interrupted one with the schema-18 release's own executable first",
-            inspect_path(path),
-        ),
         InstallError::CanvasRefused { path, .. } => format!(
             "inspect the selected executable with `{}`; install an appliance that links its canvas archive, built by `spice dev xtask -- install` or taken from a sealed release package",
             inspect_path(path),
@@ -423,18 +381,6 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         InstallError::RecordMissing => format!(
             "the `{}/install.json` record is absent; omit `--unapply` and run this executable's `install` preview instead",
             wire::STATE_DIRECTORY
-        ),
-        InstallError::StateRootHeld { .. } => format!(
-            "stop the resident with `spice down` and let every lane supervisor exit, then rerun this executable's `install` preview; the live state root moves to `{}` exactly once, at apply",
-            wire::STATE_DIRECTORY
-        ),
-        InstallError::StateRootAmbiguous {
-            current,
-            predecessor,
-        } => format!(
-            "inspect `{}` and `{}`; keep exactly one of them as a real directory and remove the other before retrying",
-            current.display(),
-            predecessor.display()
         ),
         InstallError::ApplyInProgress => format!(
             "the `{}/install.json` record notes an interrupted apply; rerun this executable's `install` preview, finish `install --apply=<printed-digest>`, then retry `--unapply`",

@@ -73,8 +73,7 @@ fn refresh_without_binary(repository: &Repository) -> Vec<(Location, String)> {
     let LoadedRecord { record, generation } = read_record(repository)
         .expect("receipt reads")
         .expect("receipt exists");
-    let plan =
-        refresh_plan(repository, None, &record, &[]).expect("refresh plan carries ownership");
+    let plan = refresh_plan(repository, None, &record).expect("refresh plan carries ownership");
     let reversals = parent_reversals(&plan);
     let prepared = fresh(plan, Some(generation)).expect("refresh prepares");
     apply_prepared_record(repository, None, prepared).expect("refresh applies");
@@ -102,6 +101,40 @@ fn refresh_keeps_each_initial_parent_reversal_until_unapply() {
             "empty introduced directory survived unapply: {relative}"
         );
     }
+}
+
+/// `.spice` is the only state root name: a directory by any other name is
+/// foreign state an install neither reads, moves, nor deletes.
+#[test]
+fn install_creates_the_state_root_and_leaves_a_differently_named_root_untouched() {
+    let (_scratch, repository) = repository("foreign-root");
+    let foreign = repository.common_dir().join(".spice-rs");
+    let journal = foreign.join("data/spicejournal.sqlite3");
+    let note = foreign.join("notes/note.md");
+    write_mode(&journal, b"foreign journal", 0o600);
+    write_mode(&note, b"foreign note", 0o600);
+
+    install_without_binary(&repository);
+
+    assert_eq!(
+        repository.state_root(),
+        repository.common_dir().join(".spice")
+    );
+    assert!(repository.state_root().join(RECORD_PATH).is_file());
+    assert_eq!(
+        fs::read(&journal).expect("foreign journal remains"),
+        b"foreign journal"
+    );
+    assert_eq!(
+        fs::read(&note).expect("foreign note remains"),
+        b"foreign note"
+    );
+    let mut children = fs::read_dir(&foreign)
+        .expect("foreign root remains")
+        .map(|entry| entry.expect("foreign child reads").file_name())
+        .collect::<Vec<_>>();
+    children.sort();
+    assert_eq!(children, ["data", "notes"]);
 }
 
 #[test]
