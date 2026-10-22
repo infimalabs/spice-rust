@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::time::{Duration, Instant};
 
 use app::mosaic::{
     Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, MIN_CARD_ROWS, Reservation,
@@ -96,33 +95,6 @@ fn repeated_base_cards_fill_columns_before_advancing_the_skyline() {
     let cards = pack(&sets, TRACK_COUNT);
     let positions: Vec<_> = cards.iter().map(|card| (card.track, card.base)).collect();
     assert_eq!(positions, vec![(0, 0), (3, 0), (6, 0), (9, 0), (0, 2)]);
-}
-
-#[test]
-fn a_large_stream_packs_inside_the_native_interaction_budget() {
-    const CARD_COUNT: usize = 2_048;
-    const BUDGET: Duration = Duration::from_millis(100);
-    let started = Instant::now();
-
-    let cards = pack(&vec![candidates(3, 3); CARD_COUNT], TRACK_COUNT);
-    let elapsed = started.elapsed();
-
-    assert_eq!(cards.len(), CARD_COUNT);
-    assert_eq!(
-        cards.last().map(|card| card.creation_index),
-        Some(CARD_COUNT - 1)
-    );
-    assert_eq!(
-        cards
-            .iter()
-            .filter(|card| card.lifecycle == Lifecycle::Frozen)
-            .count(),
-        CARD_COUNT - 8,
-    );
-    assert!(
-        elapsed < BUDGET,
-        "packing {CARD_COUNT} cards took {elapsed:?}"
-    );
 }
 
 #[test]

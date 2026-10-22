@@ -510,7 +510,7 @@ fn a_live_foreign_resident_refuses_the_lane_before_discovery_waits() {
         &resident_lock_path(&fixture.serve),
         Some(&foreign),
         &COMMAND_CONTRACT,
-        Duration::from_secs(1),
+        FIXTURE_PEER_TIMEOUT,
         |_| panic!("a proved foreign resident does not enter publication handoff"),
     ) {
         Err(outcome) => outcome,
@@ -527,8 +527,8 @@ fn a_live_foreign_resident_refuses_the_lane_before_discovery_waits() {
     assert_eq!(diagnostic.expected(), foreign.source.to_str());
     assert_eq!(diagnostic.observed(), foreign.addressed.to_str());
     assert!(
-        started.elapsed() < Duration::from_millis(100),
-        "a healthy foreign resident is classified without the one-second discovery bound"
+        started.elapsed() < FIXTURE_PEER_TIMEOUT / 10,
+        "a healthy foreign resident is classified without waiting on the discovery bound"
     );
     assert_eq!(
         fs::read(&fixture.serve).expect("operator discovery remains readable"),
