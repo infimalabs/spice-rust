@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use wire::rooms::{RoomSource, RoomSourceUnavailable, RoomSourceView};
-use wire::{Digest, Seq, TaskStamp};
+use wire::{Digest, Seq, SequenceCode, TaskStamp};
 
 /// The authorities outside the journal that own cited bytes.
 #[derive(Clone, Copy)]
@@ -53,13 +53,9 @@ impl<'a> RoomSources<'a> {
         before: Seq,
     ) -> Result<(), RoomSourceUnavailable> {
         match source {
-            RoomSource::Journal { fact } => {
-                if (1..before.get()).contains(&fact.get()) {
-                    Ok(())
-                } else {
-                    Err(RoomSourceUnavailable::Missing {})
-                }
-            }
+            RoomSource::Journal { fact } => preceding_fact(*fact, before)
+                .map(drop)
+                .ok_or(RoomSourceUnavailable::Missing {}),
             RoomSource::Contribution { .. } => Ok(()),
             RoomSource::Transcript(hunk) => {
                 let tape = self.tape().ok_or(RoomSourceUnavailable::Unreadable {})?;
@@ -92,6 +88,12 @@ impl<'a> RoomSources<'a> {
             },
         }
     }
+}
+
+/// The journal position of `fact` when it yields its bytes to a record at
+/// `before`: a fact earlier than that record.
+pub(crate) fn preceding_fact(fact: SequenceCode, before: Seq) -> Option<Seq> {
+    Seq::new(fact.get()).filter(|at| *at < before)
 }
 
 /// Digests of every artifact retained on `design`.

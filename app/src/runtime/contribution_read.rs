@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use wire::TaskStamp;
-use wire::intent::RoomContributionReadAnswer;
+use wire::intent::{RoomContributionReadAnswer, RoomFactSummary};
 use wire::rooms::{RoomAnchor, RoomAuthorityStamp, RoomSourceView};
 use wire::{Outcome, Response};
 
@@ -26,6 +26,8 @@ pub enum ContributionRead {
         /// Each cited source, in the author's order, as a link it can still
         /// follow or the typed reason it cannot.
         sources: Vec<RoomSourceView>,
+        /// What each available cited journal fact is, in citation order.
+        facts: Vec<RoomFactSummary>,
         /// The weighed question item's text, absent once the statement the
         /// contribution witnessed has been revised.
         question: Option<String>,
@@ -120,6 +122,7 @@ impl AppRuntime {
             Outcome::Reply(reply) if reply.body.publication == *publication => {
                 ContributionRead::Read {
                     sources: reply.body.sources.clone(),
+                    facts: reply.body.facts.clone(),
                     question: reply.body.question.clone(),
                 }
             }

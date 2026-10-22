@@ -208,10 +208,37 @@ pub struct RoomContributionReadAnswer {
     pub publication: RoomAuthorityStamp,
     /// Its sources at the read barrier.
     pub sources: Vec<RoomSourceView>,
+    /// What each available cited journal fact is, in citation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facts: Vec<RoomFactSummary>,
     /// The text of the question item the contribution names, present only
     /// while the statement it witnessed is still the Design's current one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<String>,
+}
+
+/// What one cited journal fact is at the read barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomFactSummary {
+    /// The cited fact.
+    pub fact: SequenceCode,
+    /// Its registered kind.
+    pub kind: crate::FactKind,
+    /// The task it concerns while that task exists: its task subject, else
+    /// the Design room that holds a room record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<RoomFactTask>,
+}
+
+/// One existing task a cited fact concerns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomFactTask {
+    /// Sole durable task identity.
+    pub born: TaskStamp,
+    /// Handle rendered from the task's current project.
+    pub handle: TaskHandle,
 }
 
 /// Read one room's current coordination projection.

@@ -25,6 +25,7 @@ pub(crate) mod sections;
 mod sources;
 
 pub(crate) use newest::{NewestRows, newest_rows};
+use sources::preceding_fact;
 pub(crate) use sources::{RoomSources, SourceOwners};
 
 use std::collections::BTreeSet;
@@ -935,7 +936,8 @@ pub(crate) fn contribution_read(
             return Ok((cursor, None));
         };
         let question = question_text(read, &contributed)?;
-        Ok((cursor, Some((seq, contributed, question))))
+        let facts = fact_summaries(read, &contributed.sources, seq)?;
+        Ok((cursor, Some((seq, contributed, question, facts))))
     });
     let (cursor, contributed) = match read {
         Ok((Some(cursor), contributed)) => (cursor, contributed),
@@ -951,7 +953,7 @@ pub(crate) fn contribution_read(
             return fault(FaultClass::Store, "room::journal-unreadable", error).outcome();
         }
     };
-    let Some((seq, contributed, question)) = contributed else {
+    let Some((seq, contributed, question, facts)) = contributed else {
         return Outcome::Refusal(crate::read_page::refusal(
             "room",
             "contribution-missing",
@@ -970,10 +972,67 @@ pub(crate) fn contribution_read(
                     .into_iter()
                     .map(|source| sources.view(source, seq))
                     .collect(),
+                facts,
                 question,
             },
         ),
     })
+}
+
+/// What each journal fact `sources` cites is, in citation order, for every
+/// fact that yields its bytes to the contribution at `seq`.
+fn fact_summaries(
+    read: &journal::JournalRead<'_>,
+    sources: &[RoomSource],
+    seq: Seq,
+) -> Result<Vec<wire::intent::RoomFactSummary>, journal::GuardError> {
+    let mut summaries = Vec::new();
+    for source in sources {
+        let RoomSource::Journal { fact } = source else {
+            continue;
+        };
+        let Some(at) = preceding_fact(*fact, seq) else {
+            continue;
+        };
+        let page = read.fact_page(
+            journal::FactPageStart::At(at),
+            at,
+            journal::FactReadBudget::RETAINED,
+        )?;
+        let Some(envelope) = page.rows.into_iter().next() else {
+            continue;
+        };
+        let task = match envelope
+            .fact
+            .task_subject()
+            .or_else(|| envelope.fact.room_record())
+        {
+            Some(born) => existing_task(read, born)?,
+            None => None,
+        };
+        summaries.push(wire::intent::RoomFactSummary {
+            fact: *fact,
+            kind: envelope.fact.kind(),
+            task,
+        });
+    }
+    Ok(summaries)
+}
+
+/// `born` and its current handle while the task exists and is not deleted.
+fn existing_task(
+    read: &journal::JournalRead<'_>,
+    born: &TaskStamp,
+) -> Result<Option<wire::intent::RoomFactTask>, journal::GuardError> {
+    let (Some(task), Some(workflow)) = (read.task_head(born)?, read.workflow_head(born)?) else {
+        return Ok(None);
+    };
+    Ok(
+        (!workflow.body().status.is_deleted()).then(|| wire::intent::RoomFactTask {
+            born: born.clone(),
+            handle: TaskHandle::for_project(&task.body().project, born),
+        }),
+    )
 }
 
 /// The text of the question item `contributed` names, only while the

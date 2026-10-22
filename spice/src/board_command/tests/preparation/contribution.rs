@@ -280,6 +280,83 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
     clean(&root, bus);
 }
 
+/// The browser's contribution read says what each cited journal fact is: a
+/// task fact and a room record name their task's current handle, and a fact
+/// about no task names only its kind.
+#[test]
+fn a_cited_journal_fact_reads_with_its_kind_and_task() {
+    let (root, bus, epoch, seats) = fixture("design-contribution-facts", 1);
+    let design = add_controller(&bus, epoch, "Cited design", wire::TaskIntent::Design, None);
+    let born = design.born().expect("fixture Design has a birth");
+    let visible = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::RoomPost,
+        vec![statement_witness(at(&visible, &design))],
+        &RoomPost {
+            room: design.clone(),
+            text: "Weigh the journal index.".to_owned(),
+        },
+    ));
+    let post = journal::JournalReader::open(root.as_ref().join("authority.sqlite3"))
+        .expect("fixture journal opens to read")
+        .read(|read| Ok(read.cursor()?.expect("the post is recorded")))
+        .expect("cursor reads");
+    let journal = |fact: u64| RoomSource::Journal {
+        fact: wire::SequenceCode::new(fact),
+    };
+    let statement = at(&visible, &design).statement.position.get();
+    let written = contributed(contribute(
+        &bus,
+        epoch,
+        root.as_ref(),
+        Actor::Lane(seats[0].lane),
+        contribution_body(
+            &design,
+            RoomContributionKind::charge(0),
+            "Cited three ways.",
+            vec![journal(statement), journal(post.get()), journal(1)],
+        ),
+    ));
+    let store = artifacts(root.as_ref());
+    let tape = root.as_ref().join("tape");
+    let Outcome::Reply(reply) = crate::room_command::contribution_read(
+        &bus,
+        SourceOwners {
+            tape: &tape,
+            artifacts: &store,
+        },
+        &wire::intent::RoomContributionRead {
+            room: born.clone(),
+            publication: written.publication,
+        },
+    ) else {
+        panic!("the contribution read answers");
+    };
+    let CommandAnswer::RoomContributionRead(answer) = reply.body else {
+        panic!("another answer shape: {:?}", reply.body);
+    };
+    let task = Some(wire::intent::RoomFactTask {
+        born,
+        handle: design.clone(),
+    });
+    assert_eq!(
+        answer
+            .facts
+            .iter()
+            .map(|summary| (summary.fact.get(), summary.task.clone()))
+            .collect::<Vec<_>>(),
+        [(statement, task.clone()), (post.get(), task), (1, None)],
+    );
+    assert_ne!(
+        answer.facts[0].kind, answer.facts[1].kind,
+        "each summary names its own fact's kind"
+    );
+    clean(&root, bus);
+}
+
 /// An artifact the reader's store no longer retains reads as a typed
 /// unavailable link, never as fabricated text, and a retained authority from a
 /// store generation this release cannot decode stays distinct from missing or

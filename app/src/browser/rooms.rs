@@ -35,6 +35,33 @@ pub(super) use reading::render_task_room;
 
 const STORAGE: &str = "spice:room-views:v2";
 
+/// Opens one task's sheet, returning focus to the activating element.
+type OpenTask = Callback<(TaskStamp, web_sys::Element)>;
+
+/// A task's handle as a link that opens that task's sheet.
+fn task_handle_link(open_task: &OpenTask, born: &TaskStamp, handle: &wire::TaskHandle) -> Html {
+    let handle = handle.to_string();
+    let open = {
+        let (open_task, born) = (open_task.clone(), born.clone());
+        Callback::from(move |event: MouseEvent| {
+            if let Some(target) = event
+                .current_target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            {
+                open_task.emit((born.clone(), target));
+            }
+        })
+    };
+    html! {
+        <button
+            type="button"
+            class="app-fact-link"
+            aria-label={format!("Open task {handle}")}
+            onclick={open}
+        ><code>{handle}</code></button>
+    }
+}
+
 thread_local! {
     static LAST_GROUP_MICROS: Cell<i64> = const { Cell::new(0) };
 }
