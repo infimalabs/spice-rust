@@ -5,9 +5,7 @@ use std::fmt;
 
 use wire::Digest;
 
-use super::{
-    Asset, GeneratedImage, InstallError, InstallPlan, Location, StateRootCrossing, SymbolProvenance,
-};
+use super::{Asset, GeneratedImage, InstallError, InstallPlan, Location, SymbolProvenance};
 
 /// Kind of durable action represented by one ordered public stage.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -341,12 +339,10 @@ impl InstallPreview {
     }
 
     /// Write the person-facing preview, ending with the exact command that
-    /// applies this digest from where the preview came from. A pending state
-    /// root crossing is what apply does first, so it is shown first.
+    /// applies this digest from where the preview came from.
     pub fn write_text(
         &self,
         formatter: &mut fmt::Formatter<'_>,
-        crossing: Option<&StateRootCrossing>,
         apply: &dyn fmt::Display,
     ) -> fmt::Result {
         let files = self
@@ -368,10 +364,6 @@ impl InstallPreview {
             .map_or(0, HookActivationSummary::mutation_count);
 
         writeln!(formatter, "install plan {}", self.digest)?;
-        if let Some(crossing) = crossing {
-            writeln!(formatter, "state root: move to {}", wire::STATE_DIRECTORY)?;
-            write!(formatter, "{crossing}")?;
-        }
         if files == 0 && retirements == 0 && hooks == 0 {
             writeln!(formatter, "changes: none")?;
         } else {

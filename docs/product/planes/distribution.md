@@ -617,16 +617,10 @@ named by the executable's linked archive, beside the executable operation. A
 plan reads the selected executable once and admits that archive, inflating
 only its shell. Upgrading the app is replacing the executable.
 
-**Invariant —** Install schema 18, which published app sidecar files under
-`.spice-install/app`, is a one-crossing boundary. Only `spice install` reads
-such a receipt, and only a complete, canonical, digest-exact one. Its fixed,
-executable, symbol, and hook effects keep their reversal images in a schema-19
-refresh. Its app operations serve only as evidence of the sidecar files it
-owns. That refresh publishes its `applying` receipt first. It then discards
-each owned sidecar only while the file still holds the image schema 18
-recorded, and withdraws each generation, `generations`, and `app` directory
-only once empty. An interrupted, inexact, or otherwise unadmissible schema-18
-receipt refuses, naming its schema and owner.
+**Invariant —** An install receipt of an earlier schema, including schema 18,
+which published app sidecar files under `.spice-install/app`, is refused
+before any mutation, naming the release that owns it; that release's own
+executable unapplies it.
 
 **Invariant —** Generated artifacts live in a directory the product owns and are
 activated by redirecting the host tool there, never by writing into the location

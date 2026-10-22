@@ -203,12 +203,6 @@ pub enum Domain {
     /// One capability issued to a born human principal, which the journal
     /// keeps only as this digest.
     PrincipalCapability,
-    /// The tag [`Domain::InstallPlan`] carried before it was renamed.
-    ///
-    /// No new digest is minted under it. A receipt persisted under the old
-    /// tag is verified against it exactly once, when the install crosses the
-    /// receipt to the current tag.
-    InstallPlanRetained,
 }
 
 impl Domain {
@@ -245,7 +239,6 @@ impl Domain {
             | Self::DistArtifact
             | Self::InstallArtifact
             | Self::InstallPlan
-            | Self::InstallPlanRetained
             | Self::DistPins
             | Self::DistInventory
             | Self::DistSourceCommit
@@ -322,7 +315,6 @@ impl Domain {
             Self::DistArtifact => "spice.dist.artifact.v1",
             Self::InstallArtifact => "spice.install.artifact.v1",
             Self::InstallPlan => "spice.install.plan.v1",
-            Self::InstallPlanRetained => "spice.install.coexistence-plan.v1",
             Self::DistPins => "spice.dist.pins.v1",
             Self::DistInventory => "spice.dist.inventory.v1",
             Self::DistSourceCommit => "spice.dist.source-commit.v1",

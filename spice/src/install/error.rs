@@ -69,26 +69,10 @@ pub enum InstallError {
         path: PathBuf,
         owner: &'static str,
     },
-    /// A schema-18 receipt its one forward crossing cannot admit.
-    RetainedRecord {
-        path: PathBuf,
-        owner: &'static str,
-        reason: String,
-    },
     /// The selected executable carries no admissible linked canvas archive.
     CanvasRefused {
         path: PathBuf,
         reason: String,
-    },
-    /// A live predecessor state root that a resident or lane still holds.
-    StateRootHeld {
-        root: PathBuf,
-        holders: Vec<String>,
-    },
-    /// Both the current and the predecessor state-root names are occupied.
-    StateRootAmbiguous {
-        current: PathBuf,
-        predecessor: PathBuf,
     },
     RecordMissing,
     ApplyInProgress,
@@ -135,10 +119,7 @@ impl fmt::Display for InstallError {
             | Self::DigestMismatch { .. }
             | Self::InvalidRecord(_)
             | Self::LegacyRecord { .. }
-            | Self::RetainedRecord { .. }
             | Self::CanvasRefused { .. }
-            | Self::StateRootHeld { .. }
-            | Self::StateRootAmbiguous { .. }
             | Self::RecordMissing
             | Self::ApplyInProgress
             | Self::UnapplyInProgress
@@ -264,37 +245,10 @@ fn fmt_progress_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) 
                  unapply it with that release before installing Spice",
             path.display(),
         ),
-        InstallError::RetainedRecord {
-            path,
-            owner,
-            reason,
-        } => write!(
-            formatter,
-            "install record at {} is schema {}, which {owner} crosses forward only from one \
-                 complete exact receipt refreshed by `spice install`: {reason}",
-            path.display(),
-            super::crossing::SCHEMA,
-        ),
         InstallError::CanvasRefused { path, reason } => write!(
             formatter,
             "Spice executable {} carries no admissible linked canvas archive: {reason}",
             path.display(),
-        ),
-        InstallError::StateRootHeld { root, holders } => write!(
-            formatter,
-            "state root {} cannot move to {} while it is held by {}",
-            root.display(),
-            wire::STATE_DIRECTORY,
-            holders.join(", "),
-        ),
-        InstallError::StateRootAmbiguous {
-            current,
-            predecessor,
-        } => write!(
-            formatter,
-            "both {} and the predecessor root {} exist; keep exactly one before installing",
-            current.display(),
-            predecessor.display(),
         ),
         InstallError::RecordMissing => formatter.write_str("no Spice install record exists"),
         InstallError::ApplyInProgress => formatter.write_str("Spice installation is incomplete"),

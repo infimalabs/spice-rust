@@ -41,7 +41,7 @@ fn source_preview_replays_the_invoked_program_with_the_digest() {
         let preview = preview();
         let digest = preview.digest().to_string();
 
-        let text = PlanPreview::source(preview, None, program).to_string();
+        let text = PlanPreview::source(preview, program).to_string();
 
         assert_eq!(
             shell_words::split(apply_line(&text)).expect("the replay command parses"),
@@ -63,7 +63,7 @@ fn package_preview_replays_the_program_and_original_source_as_single_arguments()
             let preview = preview();
             let digest = preview.digest().to_string();
 
-            let text = PlanPreview::package(preview, None, program, package).to_string();
+            let text = PlanPreview::package(preview, program, package).to_string();
 
             assert_eq!(
                 shell_words::split(apply_line(&text)).expect("the replay command parses"),
@@ -110,27 +110,17 @@ fn windows_replay_quotes_every_program_as_one_powershell_literal() {
     }
 }
 
-/// Neither replay guidance nor a pending state-root crossing reaches the
-/// structured preview: an installed front-end decodes it with unknown fields
-/// denied, and both are this executable's rendering concerns.
+/// Replay guidance never reaches the structured preview: an installed
+/// front-end decodes it with unknown fields denied, and the guidance is this
+/// executable's rendering concern.
 #[test]
 fn guidance_never_changes_the_structured_preview() {
     let preview = preview();
     let expected = serde_json::to_value(&preview).expect("preview encodes");
-    let predecessor = PathBuf::from("/repo/.git").join(wire::predecessor_state_directory());
-    let crossing = StateRootCrossing {
-        common: Some(spice::install::StateRootMove {
-            from: predecessor.clone(),
-            to: PathBuf::from("/repo/.git").join(wire::STATE_DIRECTORY),
-        }),
-        worktrees: Vec::new(),
-        residue: vec![predecessor.join("learnings")],
-        holders: vec!["resident pid 7".to_owned()],
-    };
 
     for guided in [
-        PlanPreview::source(preview.clone(), Some(crossing), "spice"),
-        PlanPreview::package(preview, None, "spice", "/tmp/My Packages/spice"),
+        PlanPreview::source(preview.clone(), "spice"),
+        PlanPreview::package(preview, "spice", "/tmp/My Packages/spice"),
     ] {
         assert_eq!(
             serde_json::to_value(&guided).expect("guided preview encodes"),

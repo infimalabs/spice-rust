@@ -124,8 +124,7 @@ const fn position(domain: Domain) -> usize {
         | Domain::RoomSource
         | Domain::PrincipalCapability
         | Domain::RoomProfileEvidence
-        | Domain::RoomQuestionItem
-        | Domain::InstallPlanRetained => final_position(domain),
+        | Domain::RoomQuestionItem => final_position(domain),
     }
 }
 
@@ -214,7 +213,6 @@ const fn final_position(domain: Domain) -> usize {
         Domain::PrincipalCapability => 62,
         Domain::RoomProfileEvidence => 63,
         Domain::RoomQuestionItem => 64,
-        Domain::InstallPlanRetained => 65,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -231,7 +229,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 66] = [
+const DOMAINS: [Domain; 65] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -297,7 +295,6 @@ const DOMAINS: [Domain; 66] = [
     Domain::PrincipalCapability,
     Domain::RoomProfileEvidence,
     Domain::RoomQuestionItem,
-    Domain::InstallPlanRetained,
 ];
 
 #[test]
@@ -414,7 +411,6 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.principal.capability.v1",
             "spice.room.profile-evidence.v1",
             "spice.room.question-item.v1",
-            "spice.install.coexistence-plan.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );

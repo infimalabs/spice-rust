@@ -92,13 +92,7 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
 }
 
 fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError> {
-    let sidecars = plan
-        .retirements
-        .iter()
-        .rev()
-        .take_while(|retirement| crossing::is_sidecar(&retirement.path))
-        .count();
-    let (fixed, sidecars) = plan.retirements.split_at(plan.retirements.len() - sidecars);
+    let fixed = &plan.retirements;
     let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
     // Only a plan without symbols may discard a retained bundle.
     if plan.symbols.is_none()
@@ -123,7 +117,7 @@ fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError>
             "install retirement inventory is not exact and ordered".to_owned(),
         ));
     }
-    crossing::validate_retirements(sidecars)
+    Ok(())
 }
 
 fn validate_plan_destinations(
@@ -172,8 +166,7 @@ fn validate_retirement(
     if let Some(parent) = &retirement.publication_parent {
         validate_bound_parent(&retirement.destination, parent)?;
     }
-    let current_discard = symbols::DISCARD_PATHS.contains(&retirement.path.as_str())
-        || crossing::is_sidecar(&retirement.path);
+    let current_discard = symbols::DISCARD_PATHS.contains(&retirement.path.as_str());
     let invalid_discard = if current_discard {
         !retirement.discard || retirement.previous.is_some() || retirement.observed.is_some()
     } else {

@@ -14,7 +14,6 @@ use crate::repository::Repository;
 mod audit;
 mod binding;
 mod canvas;
-mod crossing;
 mod error;
 mod files;
 mod fold;
@@ -27,7 +26,6 @@ mod path;
 mod progress;
 mod record;
 mod reversal;
-mod state_root;
 mod symbol_sample;
 mod symbol_verification;
 mod symbols;
@@ -60,7 +58,6 @@ pub use maintenance::{
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
-pub use state_root::{StateRootCrossing, StateRootMove};
 pub use symbol_sample::{
     DwarfLookup, DwarfdumpLookup, LookupError, MAX_SAMPLE_ADDRESSES, MAX_SAMPLE_BYTES, SampleError,
     SampleSymbolization, SampleTarget, SampledFrame, SourceLocation, SymbolizedFrame,
@@ -78,8 +75,6 @@ pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_A
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiptSupport {
     Current,
-    /// Crossed forward once by [`crossing`], and read by nothing else.
-    Retained,
     Retired(&'static str),
 }
 
@@ -101,7 +96,7 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 19] = [
     (15, ReceiptSupport::Retired("BROWSER-dV0xw93ND")),
     (16, ReceiptSupport::Retired("INSTALL-dV1QSGJ71")),
     (17, ReceiptSupport::Retired("INSTALL-dVvBGPX6p")),
-    (crossing::SCHEMA, ReceiptSupport::Retained),
+    (18, ReceiptSupport::Retired("CANVAS-dWF0m0T7z")),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
 
@@ -110,10 +105,7 @@ fn receipt_support(version: u16) -> Option<ReceiptSupport> {
         .iter()
         .find_map(|(candidate, support)| (*candidate == version).then_some(*support))
 }
-/// The receipt, relative to the state root it lives in. Binding it there,
-/// rather than naming the root from the Git-common directory, is what keeps a
-/// preview taken before the root crossing and the apply taken after it
-/// deriving one plan: the root's inode is the same on both sides of its rename.
+/// The receipt, relative to the state root it lives in.
 const RECORD_PATH: &str = "install.json";
 /// Reversal payloads, relative to the state root.
 const REVERSAL_PATH: &str = "install-reversals";
@@ -225,8 +217,7 @@ impl InstallPlan {
         &self.operations
     }
 
-    /// Legacy paths and receipt-owned schema-18 sidecar files this plan
-    /// removes only after all live assets publish.
+    /// Retired paths this plan removes only after all live assets publish.
     pub fn retirements(&self) -> &[Retirement] {
         &self.retirements
     }
@@ -330,7 +321,8 @@ impl InstallPlan {
             }
         }
         for retirement in &self.retirements {
-            let (destination, parent) = retirement_binding(repository, retirement)?;
+            let bound = bind_destination(repository.common_dir(), &retirement.path)?;
+            let (destination, parent) = (bound.destination, bound.parent);
             if destination != retirement.destination || parent != *retirement.publication_parent() {
                 return Err(InstallError::ParentChanged(
                     retirement.destination(repository),
@@ -415,14 +407,6 @@ pub fn capture_generation(repository: &Repository) -> Result<Option<Digest>, Ins
     Ok(read_record_for_refresh(repository)?.map(|refresh| refresh.receipt_digest().clone()))
 }
 
-/// The state-root move an install of this build would perform first, if a
-/// root still carries the predecessor name. Reading changes nothing.
-pub fn state_root_crossing(
-    repository: &Repository,
-) -> Result<Option<StateRootCrossing>, InstallError> {
-    state_root::pending(repository)
-}
-
 /// Inspect one repository and derive the exact Spice installation plan.
 pub fn plan(
     repository: &Repository,
@@ -462,22 +446,8 @@ pub fn apply_prepared(
     apply_prepared_record(repository, spice_binary, prepared)
 }
 
-/// Move every live predecessor state root to its current name, once, before
-/// any plan is applied; refuse while a resident or lane holds the common root.
-///
-/// The plan was derived against the predecessor root and is applied against
-/// the current one. The two agree because the record binds relative to the
-/// root, whose inode the rename preserves.
-fn cross_state_root(repository: &Repository) -> Result<(), InstallError> {
-    match state_root::pending(repository)? {
-        Some(crossing) => state_root::cross(&crossing),
-        None => Ok(()),
-    }
-}
-
-/// Create the current state root when no root exists at all, so the receipt
-/// binds below a real directory; a live predecessor root is left for the
-/// crossing to move.
+/// Create the state root when it does not exist, so the receipt binds below a
+/// real directory.
 fn ensure_state_root(repository: &Repository) -> Result<(), InstallError> {
     let root = repository.state_root();
     match fs::symlink_metadata(&root) {
@@ -514,7 +484,7 @@ fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    build_plan_over(repository, spice_binary, None, None, &[])
+    build_plan_over(repository, spice_binary, None, None)
 }
 
 /// Assemble every planned operation in canonical order: the fixed prefix, the
@@ -562,14 +532,11 @@ fn append_planned_operations(
 /// Passing a completed plan makes this a refresh: every operation keeps that
 /// plan's reversal image and names its generated image as superseded, so apply
 /// replaces each destination in place instead of reversing the install first.
-/// `sidecars` is the schema-18 app publication a crossed receipt owned; the
-/// plan discards each file after every live asset publishes.
 fn build_plan_over(
     repository: &Repository,
     spice_binary: Option<&Path>,
     installed: Option<&InstallPlan>,
     binary_superseded: Option<&GeneratedImage>,
-    sidecars: &[crossing::Sidecar],
 ) -> Result<InstallPlan, InstallError> {
     ensure_state_root(repository)?;
     let binary = spice_binary
@@ -598,7 +565,7 @@ fn build_plan_over(
     // predecessor retained, so the executable and dSYM leave together.
     let discard_symbols =
         symbols.is_none() && installed.is_some_and(|plan| symbols::operations(plan).count() > 0);
-    let planned_retirements = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH]
+    let retirements = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH]
         .into_iter()
         .chain(
             discard_symbols
@@ -608,8 +575,6 @@ fn build_plan_over(
         )
         .map(|path| retirement(repository, installed, path))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut retirements = planned_retirements;
-    retirements.extend(crossing::retirements(repository, sidecars)?);
     let hook_activation = spice_binary
         .is_some()
         .then(|| hook_activation::plan(repository, installed, false))
@@ -626,20 +591,6 @@ fn build_plan_over(
     };
     plan.validate_pristine(repository)?;
     Ok(plan)
-}
-
-/// The binding a retirement must carry: sidecar discards anchor at
-/// `.spice-install` (see [`crossing::binding`]); every other retirement binds
-/// its own path.
-fn retirement_binding(
-    repository: &Repository,
-    retirement: &Retirement,
-) -> Result<(String, ParentObservation), InstallError> {
-    if retirement.discard && crossing::is_sidecar(&retirement.path) {
-        return crossing::binding(repository, &retirement.path);
-    }
-    let bound = bind_destination(repository.common_dir(), &retirement.path)?;
-    Ok((bound.destination, bound.parent))
 }
 
 /// Paths a current plan discards outright, without a reversal image.
