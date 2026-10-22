@@ -25,6 +25,7 @@ mod model;
 mod path;
 mod progress;
 mod record;
+mod ref_storage;
 mod reversal;
 mod symbol_sample;
 mod symbol_verification;

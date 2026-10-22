@@ -541,10 +541,24 @@ pub(crate) fn open_repository(path: &Path) -> Result<gix::Repository, TreeError>
             "index.skipHash=false",
             "diff.algorithm=myers",
         ]);
-    gix::open_opts(path, options).map_err(|source| TreeError::Repository {
+    let repository = gix::open_opts(path, options).map_err(|source| TreeError::Repository {
         path: path.to_path_buf(),
         evidence: source.to_string(),
-    })
+    })?;
+    // gix reads only the files backend; a reftable repository opens but
+    // cannot instantiate `HEAD`, so name the format and its remedy up front.
+    let storage = repository
+        .config_snapshot()
+        .string("extensions.refStorage")
+        .map(|value| value.to_string());
+    match storage {
+        None => Ok(repository),
+        Some(format) if format.eq_ignore_ascii_case("files") => Ok(repository),
+        Some(format) => Err(TreeError::ReferenceStorage {
+            path: path.to_path_buf(),
+            format,
+        }),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

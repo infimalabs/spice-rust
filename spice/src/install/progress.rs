@@ -258,6 +258,7 @@ pub(super) fn prepare(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<PreparedInstall, InstallError> {
+    super::ref_storage::verify_files_storage(repository)?;
     match read_record_for_refresh(repository)? {
         Some(refresh) => prepare_over(repository, spice_binary, refresh),
         None => fresh(build_plan(repository, spice_binary)?, None),

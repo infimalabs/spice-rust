@@ -204,6 +204,27 @@ fn revision_refusals_name_the_requested_revision() {
     ));
 }
 
+#[test]
+fn a_reftable_repository_is_refused_by_name_before_head_is_read() {
+    let tree = repository("reftable-refusal");
+    tree.write("tracked.txt", "one\n");
+    commit_all(&tree, "one commit");
+    let config = tree.path(".git/config");
+    let mut body = fs::read_to_string(&config).expect("read the fixture config");
+    body = body.replace("repositoryformatversion = 0", "repositoryformatversion = 1");
+    body.push_str("[extensions]\n\trefStorage = reftable\n");
+    fs::write(&config, body).expect("declare reftable storage");
+
+    let refused = Selector::staged()
+        .materialize(&tree.root)
+        .expect_err("a reftable repository is refused");
+    assert!(matches!(
+        &refused,
+        TreeError::ReferenceStorage { path, format } if path == &tree.root && format == "reftable"
+    ));
+    assert!(refused.to_string().contains("--ref-format=files"));
+}
+
 #[cfg(target_family = "unix")]
 #[test]
 fn symlinks_and_submodules_are_named_before_materialization() {

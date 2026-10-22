@@ -177,6 +177,23 @@ $Git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
 & $Git -C C:\absolute\path\to\worktree config --show-origin --show-scope --get-all core.hooksPath
 ```
 
+## Reference storage
+
+Spice gates commits by reading Git references through gix, which has only the
+files backend. A repository whose Git-common `config` sets
+`extensions.refStorage` to `reftable`, as `git init` does under
+`feature.experimental` or Git 3.0, would install cleanly and then refuse every
+gated commit, so preview refuses first with `install::ref-storage-unsupported`,
+naming the backend. Migrate before previewing again, or create the repository
+with `git init --ref-format=files`:
+
+```sh
+/usr/bin/git -C /absolute/path/to/worktree refs migrate --ref-format=files
+```
+
+A repository migrated to reftable after install is refused by the gate itself
+with the same remedy.
+
 ## Upgrade
 
 An installed appliance verifies a sealed release package (index, manifest,
