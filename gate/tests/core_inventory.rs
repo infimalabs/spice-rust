@@ -78,23 +78,19 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
     repository.remove();
 }
 
-/// Only the `[policy]` subtables migration requires are admitted.
+/// Only the `[policy]` subtables the registry declares are admitted.
 ///
-/// Most subtables the rule-policy migration reads are predecessor spellings it
-/// translates once, not settings a current repository declares, and the
-/// workspace schema refuses them. Admitting one would tell a repository it may
-/// write a key that makes its whole document fail to load, so admission names
-/// each instead.
+/// Limits, flex, magic, Markdown depth, and anonymous rule rows are packaged
+/// rather than tracked, so the registry refuses each by name; admitting one
+/// would tell a repository it may write a key the gate never reads.
 ///
 /// The file classes are the exception, and the document below carries both
 /// kinds at once because that is the only way to see the registry tell them
-/// apart. `policy.file_shape` and `policy.languages` are predecessor spellings
-/// too, but no repository loads without them, which makes them settings this
-/// release reads rather than relics it tolerates. Reporting them absent from
-/// the registry would refuse every document that can be gated at all.
+/// apart. No repository loads without them, so reporting them absent from the
+/// registry would refuse every document that can be gated at all.
 #[test]
-fn configuration_key_admission_separates_required_file_classes_from_migrated_subtables() {
-    let repository = git_repository("core-acquire-config-key-migrated");
+fn configuration_key_admission_separates_required_file_classes_from_packaged_subtables() {
+    let repository = git_repository("core-acquire-config-key-packaged");
     repository.write(
         "spice-rust.toml",
         &policy_document(concat!(
@@ -116,7 +112,7 @@ fn configuration_key_admission_separates_required_file_classes_from_migrated_sub
     );
     repository.write("baseline.toml", &workspace_document("baseline.toml"));
     repository.write("src/app.rs", "pub fn app() {}\n");
-    git_commit(&repository, "every migrated policy subtable");
+    git_commit(&repository, "every packaged policy subtable");
 
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let configuration = acquired_arm(&report, GateId::ConfigKeyValidity);
@@ -138,7 +134,7 @@ fn configuration_key_admission_separates_required_file_classes_from_migrated_sub
                     "tracked layer key {key} is absent from the packaged configuration registry"
                 ),
             )
-            .expect("migrated subtable evidence")
+            .expect("packaged subtable evidence")
         })
         .collect(),
     );

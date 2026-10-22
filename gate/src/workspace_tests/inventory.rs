@@ -417,16 +417,16 @@ impl Inventory {
                     target_shape_matches(base_package, base_target, successor, target)
                 }) {
                     let successor_id = successor.id.clone();
-                    let predecessor = root.join(relative_package);
-                    if let Some(owner) = self.moved_package_roots.get(&predecessor)
+                    let moved_root = root.join(relative_package);
+                    if let Some(owner) = self.moved_package_roots.get(&moved_root)
                         && owner != &successor_id
                     {
                         return Err(WorkspaceTestError::new(format!(
                             "moved package root {} has conflicting successors {owner:?} and {successor_id:?}",
-                            predecessor.display(),
+                            moved_root.display(),
                         )));
                     }
-                    self.moved_package_roots.insert(predecessor, successor_id);
+                    self.moved_package_roots.insert(moved_root, successor_id);
                     continue;
                 }
                 return Err(WorkspaceTestError::new(format!(

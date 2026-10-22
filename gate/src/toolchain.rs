@@ -171,7 +171,7 @@ impl ToolRequirement {
     }
 }
 
-/// One arm declaration in canonical predecessor-relative order.
+/// One arm declaration in canonical battery order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ToolchainDeclaration {
     id: GateId,
@@ -482,7 +482,7 @@ pub enum FindingDetail {
     },
 }
 
-/// Finding-bearing predecessor status for a JavaScript declaration.
+/// Finding-bearing status for a JavaScript declaration.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum JavascriptUnusedStatus {
@@ -492,7 +492,7 @@ pub enum JavascriptUnusedStatus {
     TestOnly,
 }
 
-/// Finding-bearing predecessor status for a C# declaration.
+/// Finding-bearing status for a C# declaration.
 ///
 /// A C# member can be reached by a framework rather than by name, so a bare
 /// absence of references is never reported as a deletion. A declaration that
@@ -506,7 +506,7 @@ pub enum CsharpUnusedStatus {
     CandidateUnused,
 }
 
-/// Exact predecessor environment-ledger mismatch kind.
+/// Exact environment-ledger mismatch kind.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EnvironmentLedgerKind {
@@ -1326,9 +1326,6 @@ fn contracted_version(version: &str) -> &str {
     let line = version.strip_suffix('\n').unwrap_or(version);
     line.strip_suffix('\r').unwrap_or(line)
 }
-
-mod predecessor;
-pub use predecessor::*;
 
 #[cfg(test)]
 mod scratch;

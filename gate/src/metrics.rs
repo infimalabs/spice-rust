@@ -1,8 +1,8 @@
 //! Compiled structural metric arms and their complete evidence vocabulary.
 //!
-//! The predecessor spread file, routine, document, magic-number, and Markdown
-//! measurements across Python callables. This module declares the sole current
-//! metric identities and parsers. Every selected scope produces an explicit
+//! This module declares the sole metric identities and parsers for file,
+//! routine, document, magic-number, and Markdown measurements. Every selected
+//! scope produces an explicit
 //! [`MetricEvidence`] state; a missing parser, tool, file class, or policy
 //! context is therefore evidence and never an omitted row or invented zero.
 
@@ -12,7 +12,6 @@ mod acquire;
 mod baseline;
 mod declaration;
 mod evidence;
-mod parity;
 mod parser;
 mod policy_binding;
 mod state_binding;
@@ -32,10 +31,6 @@ pub use evidence::{
     EvidenceError, EvidenceState, FunctionKey, LatchBinding, MEASUREMENT_FINDING_LIMIT,
     MetricEvidence, MetricFinding, MetricKey, MetricMeasurement, MetricReport, ParserEvidence,
     RuleBinding, STRUCTURAL_METRIC_REPORT_VERSION, StructuralArmEvidence,
-};
-pub use parity::{
-    MetricParity, ParityError, PredecessorMetricObservation, PredecessorMetricResult,
-    compare_predecessor_metric,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use parser::{

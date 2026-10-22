@@ -212,8 +212,8 @@ pub enum PolicyError {
     Rules {
         /// Fixed policy path.
         path: PathBuf,
-        /// Typed migration refusal naming the exact tracked field.
-        source: crate::policy::MigrationError,
+        /// Typed parse refusal naming the exact tracked field.
+        source: crate::policy::ParseError,
     },
     /// A compiled default skip is not a current jurisdiction spelling.
     Selector {

@@ -31,7 +31,7 @@ pub(crate) use acquire::{acquire_core_arm, acquire_core_with_observations};
 pub use config_keys::{CONFIG_KEY_DECLARATIONS, ConfigKeyDeclaration};
 pub use declaration::{
     CoreArmDeclaration, CoreTimeoutContract, CoreToolContract, GitCommandContract,
-    PredecessorObservation, core_declarations,
+    core_declarations,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use evaluate::evaluate_core_arm;
@@ -42,9 +42,9 @@ use crate::state::BoundDecision;
 use admission::{validate_observation, validate_repo_path};
 
 /// Current core-family report schema.
-pub const CORE_REPORT_VERSION: u64 = 2;
+pub const CORE_REPORT_VERSION: u64 = 3;
 
-/// The first predecessor family in its fixed battery order.
+/// The core family in its fixed battery order.
 pub const CORE_GATE_IDS: [GateId; 8] = [
     GateId::MergeIntegrity,
     GateId::PlanningPhase,
@@ -55,69 +55,6 @@ pub const CORE_GATE_IDS: [GateId; 8] = [
     GateId::ConfigFalseDisable,
     GateId::ConfigTrackedTrust,
 ];
-
-/// Exact source of one acquired arm observation.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct CoreProvenance {
-    release: String,
-    document: String,
-    observation: String,
-}
-
-impl CoreProvenance {
-    /// Build one explicit observation origin.
-    ///
-    /// # Errors
-    ///
-    /// Refuses an empty release, document, or observation name.
-    pub fn new(
-        release: impl Into<String>,
-        document: impl Into<String>,
-        observation: impl Into<String>,
-    ) -> Result<Self, CoreInputError> {
-        let provenance = Self {
-            release: release.into(),
-            document: document.into(),
-            observation: observation.into(),
-        };
-        provenance.validate()?;
-        Ok(provenance)
-    }
-
-    /// Release that understood the observation grammar.
-    #[must_use]
-    pub fn release(&self) -> &str {
-        &self.release
-    }
-
-    /// Source document or compiled provider.
-    #[must_use]
-    pub fn document(&self) -> &str {
-        &self.document
-    }
-
-    /// Exact observation supplied by that source.
-    #[must_use]
-    pub fn observation(&self) -> &str {
-        &self.observation
-    }
-
-    fn validate(&self) -> Result<(), CoreInputError> {
-        for (field, value) in [
-            ("release", self.release.as_str()),
-            ("document", self.document.as_str()),
-            ("observation", self.observation.as_str()),
-        ] {
-            if value.trim().is_empty() {
-                return Err(CoreInputError::new(format!(
-                    "core provenance {field} must be non-empty"
-                )));
-            }
-        }
-        Ok(())
-    }
-}
 
 /// A successfully acquired merge-integrity observation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -519,7 +456,6 @@ pub enum CoreObservation {
 pub struct CoreArmInput {
     id: GateId,
     tree: Digest,
-    provenance: CoreProvenance,
     observation: CoreObservation,
 }
 
@@ -528,19 +464,16 @@ impl CoreArmInput {
     ///
     /// # Errors
     ///
-    /// Refuses mismatched evidence, empty state detail, or invalid provenance.
+    /// Refuses mismatched evidence or empty state detail.
     pub fn new(
         id: GateId,
         tree: Digest,
-        provenance: CoreProvenance,
         observation: CoreObservation,
     ) -> Result<Self, CoreInputError> {
-        provenance.validate()?;
         validate_observation(id, &observation)?;
         Ok(Self {
             id,
             tree,
-            provenance,
             observation,
         })
     }
@@ -555,12 +488,6 @@ impl CoreArmInput {
     #[must_use]
     pub const fn tree(&self) -> &Digest {
         &self.tree
-    }
-
-    /// Exact observation provenance.
-    #[must_use]
-    pub const fn provenance(&self) -> &CoreProvenance {
-        &self.provenance
     }
 
     /// Typed acquisition result.
@@ -579,7 +506,7 @@ pub struct CoreInputs {
 }
 
 impl CoreInputs {
-    /// Admit exactly the eight core arms in compiled predecessor order.
+    /// Admit exactly the eight core arms in compiled battery order.
     ///
     /// # Errors
     ///
@@ -636,7 +563,7 @@ impl CoreInputs {
         &self.tree
     }
 
-    /// Inputs in fixed predecessor-relative order.
+    /// Inputs in fixed battery order.
     #[must_use]
     pub fn arms(&self) -> &[CoreArmInput] {
         &self.arms
@@ -680,20 +607,14 @@ pub struct CoreArmReport {
     id: GateId,
     tree: Digest,
     standing: CoreStanding,
-    provenance: CoreProvenance,
     diagnostic: String,
     observation: CoreObservation,
 }
 
 impl CoreArmReport {
     pub(crate) fn validate(&self) -> Result<(), CoreReportDecodeError> {
-        let input = CoreArmInput::new(
-            self.id,
-            self.tree.clone(),
-            self.provenance.clone(),
-            self.observation.clone(),
-        )
-        .map_err(|error| CoreReportDecodeError::Inconsistent(error.to_string()))?;
+        let input = CoreArmInput::new(self.id, self.tree.clone(), self.observation.clone())
+            .map_err(|error| CoreReportDecodeError::Inconsistent(error.to_string()))?;
         if evaluate::evaluate_core_arm(&input) != *self {
             return Err(CoreReportDecodeError::Inconsistent(format!(
                 "{} standing or diagnostic disagrees with its observation",
@@ -719,12 +640,6 @@ impl CoreArmReport {
     #[must_use]
     pub const fn standing(&self) -> CoreStanding {
         self.standing
-    }
-
-    /// Exact source of the observation or acquisition failure.
-    #[must_use]
-    pub const fn provenance(&self) -> &CoreProvenance {
-        &self.provenance
     }
 
     /// Stable human-readable diagnostic.
@@ -771,7 +686,7 @@ impl CoreReport {
         &self.tree
     }
 
-    /// Entries in fixed predecessor-relative order.
+    /// Entries in fixed battery order.
     #[must_use]
     pub fn arms(&self) -> &[CoreArmReport] {
         &self.arms

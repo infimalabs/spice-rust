@@ -10,7 +10,8 @@ const SUPPORTED_SUFFIXES: &[&str] = &[
     ".c", ".cc", ".cpp", ".go", ".h", ".hpp", ".java", ".kt", ".m", ".mm", ".rs", ".scala",
     ".swift", ".ts",
 ];
-const PREDECESSOR_PARSER_SUFFIXES: &[&str] = &[".py", ".cs", ".js"];
+/// Source classes whose comparisons need AST parent semantics this parser lacks.
+const AST_PARENT_SUFFIXES: &[&str] = &[".py", ".cs", ".js"];
 
 /// One new comparison-adjacent literal absent from the baseline file.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -37,11 +38,11 @@ impl MagicFinding {
     }
 }
 
-/// Detect predecessor-equivalent C-grammar magic-number regressions.
+/// Detect C-grammar magic-number regressions.
 ///
-/// Python, C#, and JavaScript used AST/tree-sitter parent classifications in
-/// release 0.31.0. They are refused by field until an exact native parser is
-/// compiled; substituting this comparison scanner would silently weaken them.
+/// Python, C#, and JavaScript need AST/tree-sitter parent classifications.
+/// They are refused by field until an exact native parser is compiled;
+/// substituting this comparison scanner would silently weaken them.
 pub fn scan_magic_regressions(
     path: &str,
     current: &str,
@@ -80,9 +81,9 @@ pub fn scan_magic_regressions(
 ///
 /// # Errors
 ///
-/// Returns the predecessor-owned refusal for a class released 0.31.0 parsed by
-/// AST parent semantics, and the inapplicability for a path in no declared magic
-/// class at all. A path this parser reads exactly returns nothing.
+/// Returns the unsupported refusal for a class that needs AST parent semantics,
+/// and the inapplicability for a path in no declared magic class at all. A path
+/// this parser reads exactly returns nothing.
 pub fn admit_magic_source(path: &str) -> Result<(), ParseError> {
     admit_suffix(&canonical_path(path)?)
 }
@@ -95,12 +96,10 @@ fn admit_suffix(path: &str) -> Result<(), ParseError> {
     if SUPPORTED_SUFFIXES.contains(&suffix.as_str()) {
         return Ok(());
     }
-    if PREDECESSOR_PARSER_SUFFIXES.contains(&suffix.as_str()) {
+    if AST_PARENT_SUFFIXES.contains(&suffix.as_str()) {
         return Err(ParseError::unsupported(
             "policy.languages.magic",
-            format!(
-                "source class {suffix:?} requires predecessor AST/tree-sitter parent semantics"
-            ),
+            format!("source class {suffix:?} requires AST/tree-sitter parent semantics"),
             "compile an exact native parser for this source class or remove it from magic scope",
         ));
     }

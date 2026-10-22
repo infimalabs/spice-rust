@@ -34,9 +34,9 @@ use super::configuration_inventory::ConfigurationInventorySource;
 use super::declaration::CoreArmDeclaration;
 use super::shape::repo_shape;
 use super::{
-    CoreArmInput, CoreEvidence, CoreInputError, CoreInputs, CoreObservation, CoreProvenance,
-    DocMeasurement, MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence,
-    RepoDocsEvidence, StagingEvidence, core_declarations,
+    CoreArmInput, CoreEvidence, CoreInputError, CoreInputs, CoreObservation, DocMeasurement,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence, RepoDocsEvidence,
+    StagingEvidence, core_declarations,
 };
 use crate::GateId;
 use crate::input::ParsedContract;
@@ -108,7 +108,7 @@ pub enum ClaimCapture {
 ///
 /// The active bound claims ride with the actor because a claim is peer-held
 /// only relative to someone: with no actor there is no peer to be outranked by,
-/// which is exactly the point at which the predecessor resolves no claims at
+/// which is exactly the point at which no claim resolves at
 /// all. Production capture replaces this caller observation with the active
 /// claims from its fixed-clock [`crate::BatteryStateRun`]; direct acquisition
 /// tests may still provide the typed observation explicitly.
@@ -520,16 +520,9 @@ pub(crate) fn acquire_core_with_observations(
     let mut bounds = Vec::new();
     let mut observations = Vec::new();
     for declaration in core_declarations() {
-        let predecessor = declaration.predecessor();
-        let provenance = CoreProvenance::new(
-            predecessor.release(),
-            predecessor.source(),
-            predecessor.observation(),
-        )?;
         arms.push(CoreArmInput::new(
             declaration.id(),
             source.digest.clone(),
-            provenance,
             observe(
                 declaration,
                 source,
@@ -563,12 +556,6 @@ pub(crate) fn acquire_core_arm(
     )
     .then(|| ConfigurationInventorySource::capture(source))
     .transpose()?;
-    let predecessor = declaration.predecessor();
-    let provenance = CoreProvenance::new(
-        predecessor.release(),
-        predecessor.source(),
-        predecessor.observation(),
-    )?;
     let mut bounds = Vec::new();
     let mut observations = Vec::new();
     let observation = observe(
@@ -581,7 +568,7 @@ pub(crate) fn acquire_core_arm(
         &mut bounds,
         &mut observations,
     )?;
-    CoreArmInput::new(gate_id, source.digest.clone(), provenance, observation)
+    CoreArmInput::new(gate_id, source.digest.clone(), observation)
         .map(|input| (input, bounds, observations))
 }
 
@@ -714,7 +701,7 @@ fn repo_docs(
 /// the prior breach is visible in the ledger or in the committed document.
 ///
 /// A bound claim is resolved only for a document that breached its cap, which
-/// is the same set the predecessor asks the ledger about: a document inside its
+/// is the only set worth asking the ledger about: a document inside its
 /// bound claims nothing and can be held by nobody. An unlimited document is
 /// never claimed for the same reason, since it has no cap left to breach.
 fn document_measurement(

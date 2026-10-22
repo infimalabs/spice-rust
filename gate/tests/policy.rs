@@ -1,21 +1,18 @@
 use gate::{
     BoundName, PolicyContext, PolicyDocument, RulePolicy, RuleSourceKind, ScopeAxis,
-    migrate_predecessor_policy,
+    parse_tracked_policy,
 };
 
-/// One predecessor document that can load: a fixture body carrying the
-/// file-class selections migration requires of every document.
-///
-/// The refusal fixtures below need this as much as the passing ones do. A
-/// document that omits file classes is refused for that, so a fixture testing
-/// some other malformed field would never reach the field it names, and would
-/// pass while proving nothing about it.
-fn loadable(body: &str) -> String {
-    format!("{}{body}", gate::NARROWEST_FILE_CLASSES)
-}
-
 const OVERLAPPING: &str = r#"
-[policy.limits]
+regex_dialect = "rust-regex-1"
+magic_examine_threshold = 10
+
+[file_classes]
+file_shape = [".rs"]
+complexity = [".rs"]
+magic = [".rs"]
+
+[limits]
 file_loc = 10
 file_bytes = 100
 routine_ccn = 5
@@ -23,43 +20,57 @@ routine_length = 8
 commit_message_wrap = 72
 repo_truth_doc_chars = 1000
 
-[policy.flex]
+[ratchet]
 ratio = 2.0
-jitter_percent = 7
+variation_percent = 7
 routine_ccn = 12
 
-[policy.magic]
-examine_threshold = 10
-
-[policy.markdown_depth_budget]
-extensions = []
-
-[[policy.rules]]
+[[rules]]
+id = "src"
+source_order = 0
+priority = 1
 scopes = { paths = ["src/**"] }
+[rules.source]
+location = "current.toml"
+field = "rules.src"
+kind = "current"
+[rules.bounds.file_loc]
 multiplier = 2.0
-flex = 2.0
+ratchet = 2.0
+[rules.bounds.file_bytes]
+multiplier = 2.0
+ratchet = 2.0
 
-[[policy.rules]]
-scopes = { paths = ["src/legacy/**"] }
-
-[policy.rules.file_loc]
+[[rules]]
+id = "src-vendored"
+source_order = 1
+priority = 1
+scopes = { paths = ["src/vendored/**"] }
+magic = { examine_threshold = 100 }
+[rules.source]
+location = "current.toml"
+field = "rules.src-vendored"
+kind = "current"
+[rules.bounds.file_loc]
 multiplier = 3.0
-min = 35
-max = 40
-flex = 1.5
+minimum = 35
+maximum = 40
+ratchet = 1.5
 
-[policy.rules.magic]
-examine_threshold = 100
-
-[[policy.rules]]
+[[rules]]
+id = "docs-markdown"
+source_order = 2
+priority = 1
 scopes = { paths = ["Docs"], extensions = [".md"] }
-
-[policy.rules.file_loc]
-min = 25
-max = 25
-flex = 1.0
-
-[policy.rules.routine_length]
+[rules.source]
+location = "current.toml"
+field = "rules.docs-markdown"
+kind = "current"
+[rules.bounds.file_loc]
+minimum = 25
+maximum = 25
+ratchet = 1.0
+[rules.bounds.routine_length]
 unlimited = true
 "#;
 
@@ -146,51 +157,38 @@ multiplier = 2.0
 "#;
 
 #[test]
-fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
-    let policy = migrate_predecessor_policy("fixtures/policy.toml", &loadable(OVERLAPPING))
-        .expect("legacy policy migrates");
+fn resolution_prefers_the_most_specific_rule_and_otherwise_takes_global_policy() {
+    let policy = current_policy(OVERLAPPING);
 
-    assert_eq!(policy.document().rules().len(), 3);
-    assert_eq!(policy.document().ratchet().variation_percent(), 7);
-    assert_eq!(
-        policy.document().rules()[1].id().as_str(),
-        "legacy-rule:fixtures%2fpolicy.toml:policy.rules%5b2%5d"
-    );
-    assert_eq!(policy.document().rules()[1].source_order(), 1);
-    assert_eq!(
-        policy.document().rules()[1].source().kind(),
-        RuleSourceKind::PredecessorList
-    );
-
-    let legacy = policy
+    let vendored = policy
         .resolve_bound(
             BoundName::FileLoc,
-            &PolicyContext::new().with_path("src/legacy/app.rs"),
+            &PolicyContext::new().with_path("src/vendored/app.rs"),
         )
         .expect("specific bound resolves");
-    assert_eq!(legacy.limit(), 35);
-    assert_eq!(legacy.ratchet_limit(), 52);
-    assert!(!legacy.unlimited());
-    let evidence = legacy.selection().expect("specific rule selected");
-    assert_eq!(
-        evidence.rule_id().as_str(),
-        "legacy-rule:fixtures%2fpolicy.toml:policy.rules%5b2%5d"
-    );
+    assert_eq!(vendored.limit(), 35);
+    assert_eq!(vendored.ratchet_limit(), 52);
+    assert!(!vendored.unlimited());
+    let evidence = vendored.selection().expect("specific rule selected");
+    assert_eq!(evidence.rule_id().as_str(), "src-vendored");
     assert_eq!(evidence.metric(), "file_loc");
     assert_eq!(evidence.priority(), 1);
     assert_eq!(evidence.source_order(), 1);
-    assert_eq!(evidence.source().field(), "policy.rules[2]");
-    assert!(evidence.match_basis().contains("src/legacy/**"));
+    assert_eq!(evidence.source().field(), "rules.src-vendored");
+    assert!(evidence.match_basis().contains("src/vendored/**"));
     assert_eq!(evidence.specificity().constrained_axes(), 1);
 
-    let flat = policy
+    let broad = policy
         .resolve_bound(
             BoundName::FileBytes,
             &PolicyContext::new().with_path("src/app.rs"),
         )
-        .expect("flat rule resolves");
-    assert_eq!((flat.limit(), flat.ratchet_limit()), (200, 400));
-    assert_eq!(flat.selection().expect("flat selection").source_order(), 0);
+        .expect("broad rule resolves");
+    assert_eq!((broad.limit(), broad.ratchet_limit()), (200, 400));
+    assert_eq!(
+        broad.selection().expect("broad selection").source_order(),
+        0
+    );
 
     let global = policy
         .resolve_bound(
@@ -229,7 +227,7 @@ fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
     );
 
     let magic = policy
-        .resolve_magic(&PolicyContext::new().with_path("src/legacy/app.rs"))
+        .resolve_magic(&PolicyContext::new().with_path("src/vendored/app.rs"))
         .expect("magic resolves");
     assert_eq!(magic.metric(), "magic.examine_threshold");
     assert_eq!(magic.examine_threshold(), 100);
@@ -243,62 +241,32 @@ fn migration_assigns_stable_ids_and_preserves_selection_and_bound_order() {
 }
 
 #[test]
-fn generated_markdown_rules_retain_regex_one_letter_depth_and_priority() {
-    let policy = migrate_predecessor_policy(
-        "tracked/spice-rust.toml",
-        &loadable(
-            r#"
-        [policy.limits]
-        repo_truth_doc_chars = 1000
-
-        [policy.markdown_depth_budget]
-        extensions = [".mdoc"]
-        stem_pattern = "[A-Z_]+"
-
-        [policy.markdown_depth]
-        base_chars = 7000
-        max_bounded_chars = 15000
-        "#,
-        ),
-    )
-    .expect("generated policy migrates");
+fn packaged_markdown_budgets_grow_with_depth_and_skip_one_letter_stems() {
+    let policy = parse_tracked_policy("spice-rust.toml", gate::NARROWEST_FILE_CLASSES)
+        .expect("tracked policy parses");
 
     assert_eq!(policy.document().rules().len(), 4);
-    assert!(
-        policy
-            .document()
-            .rules()
-            .iter()
-            .all(|rule| rule.priority() == 0)
-    );
-    assert!(
-        policy
-            .document()
-            .rules()
-            .iter()
-            .all(|rule| { rule.source().kind() == RuleSourceKind::GeneratedMarkdownDepth })
-    );
+    assert!(policy.document().rules().iter().all(|rule| {
+        rule.priority() == 0 && rule.source().kind() == RuleSourceKind::GeneratedMarkdownDepth
+    }));
 
-    let root = resolve_doc(&policy, "DOCS_MAIN.mdoc");
-    assert_eq!((root.limit(), root.ratchet_limit()), (7000, 10500));
-    assert!(
-        root.selection()
-            .expect("generated root selection")
-            .match_basis()
-            .contains("dialect=rust-regex-1")
+    let root = resolve_doc(&policy, "README.md");
+    assert_eq!((root.limit(), root.ratchet_limit()), (10_000, 15_000));
+    assert!(root.selection().is_some());
+    assert_eq!(resolve_doc(&policy, "docs/guide.md").limit(), 20_000);
+    assert_eq!(
+        resolve_doc(&policy, "docs/reference/guide.md").limit(),
+        30_000
     );
+    assert!(resolve_doc(&policy, "docs/reference/generated/guide.md").unlimited());
 
-    let nested = resolve_doc(&policy, "docs/DOCS_MAIN.mdoc");
-    assert_eq!(nested.limit(), 14000);
-    let deep = resolve_doc(&policy, "docs/reference/DOCS_MAIN.mdoc");
-    assert_eq!(deep.limit(), 15000);
-    let unbounded = resolve_doc(&policy, "docs/reference/generated/DOCS_MAIN.mdoc");
-    assert!(unbounded.unlimited());
-
-    for path in ["A.mdoc", "guide.mdoc", "DOCS_MAIN.md"] {
-        let fallback = resolve_doc(&policy, path);
-        assert_eq!(fallback.limit(), 1000, "{path}");
-        assert!(fallback.selection().is_none(), "{path}");
+    for path in [
+        "docs/reference/generated/A.md",
+        "docs/reference/generated/guide.txt",
+    ] {
+        let global = resolve_doc(&policy, path);
+        assert_eq!(global.limit(), 10_000, "{path}");
+        assert!(global.selection().is_none(), "{path}");
     }
 }
 
@@ -530,14 +498,12 @@ fn resolver_order_is_priority_then_specificity_then_earlier_source() {
     );
 }
 
-/// The current dialect is held to the file-class law the predecessor one is.
+/// A current document is held to the same file-class law as the tracked one.
 ///
-/// Migration refuses an empty or period-less selection while reading the
-/// predecessor spelling, but that is only the door a predecessor document
-/// arrives through. A current [`PolicyDocument`] is deserialized directly, so
-/// without this the same unusable selection would compile — and the whole point
-/// of requiring the field is that no door admits a document selecting nothing.
-/// The refusals name the current field rather than the predecessor one, because
+/// A current [`PolicyDocument`] is deserialized directly rather than parsed
+/// from tracked fields, so without this an unusable selection would compile —
+/// and the whole point of requiring the field is that no door admits a
+/// document selecting nothing. The refusals name the current field, because
 /// that is the field the author of this document actually wrote.
 #[test]
 fn compiling_a_current_document_refuses_the_same_unusable_file_classes() {

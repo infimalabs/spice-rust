@@ -334,7 +334,7 @@ fn declared_rows(
 /// even when its suffix is in the class. Those answer to a character bound on
 /// the repository-document arm, and a document measured here as well would be
 /// held to two limits at once and could fail its file-shape one while passing
-/// the bound the predecessor actually holds it to.
+/// the bound that arm actually holds it to.
 fn file_shape_metrics(
     source: &MetricSource<'_>,
     declaration: ArmDeclaration,
@@ -750,19 +750,19 @@ fn complexity_rows(
         Err(state) => return whole_file_complexity(path, &state, metrics),
     };
     for routine in routines {
-        let predecessor = committed
+        let prior = committed
             .iter()
             .find(|candidate| candidate.function() == routine.function());
         for (metric, value, committed) in [
             (
                 MetricId::RoutineCcn,
                 routine.ccn(),
-                predecessor.map(ComplexityRoutine::ccn),
+                prior.map(ComplexityRoutine::ccn),
             ),
             (
                 MetricId::RoutineLength,
                 routine.length(),
-                predecessor.map(ComplexityRoutine::length),
+                prior.map(ComplexityRoutine::length),
             ),
         ] {
             let (evidence, observed) =
@@ -779,7 +779,7 @@ fn complexity_rows(
 
 /// Parse the committed version of one current complexity source when reachable.
 ///
-/// A missing or unparseable predecessor supplies no prior metric value, so no
+/// A missing or unparseable committed version supplies no prior metric value, so no
 /// inferred latch can be formed. The current parse reports its own refusal
 /// separately.
 fn committed_complexity(

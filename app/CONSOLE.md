@@ -42,10 +42,7 @@ has moved it; a group whose last design moves out ends there. A move naming a
 task without Design intent refuses as `group::design-only`, and one naming a
 seventh design refuses as `group::design-limit`; an arrangement that drops,
 repeats, or invents a design, or names a group without designs, refuses with
-its `group::arrangement-*` reason. The journal folds no group past six
-designs, and a predecessor journal holding one, a named group, a per-group
-head, or a receipt of the retired whole-group put refuses to cross, naming the
-last release that admitted it. Anchors resolve by
+its `group::arrangement-*` reason. Anchors resolve by
 immutable task birth stamp and display the task's current handle. An anchor
 whose task is deleted or no longer declares Design intent remains explicit as
 unavailable. Saved edits are visible to other repository clients, but never
@@ -55,9 +52,8 @@ lane creation; **New working group** is repository organization.
 
 In the Spice menu, Jobs follows the operator identity before the Working groups
 catalog and its New working group and ungrouped Designs targets. The catalog is
-an ordinary sheet section: its prominent primary title, secondary label,
-inset, and spacing use the same heading row as Jobs, Resident topology, and
-Provider quota at every sidebar width. A design tile is a teamed agent tile's
+an ordinary sheet section with the same heading row as Jobs, Resident topology,
+and Provider quota. A design tile is a teamed agent tile's
 twin in box, lines, and activation: its handle in its accent with its standing
 at the end of line one, its task title muted beneath, and a click anywhere on
 it opening that Design's read view as an agent tile opens its composer. A
@@ -68,9 +64,7 @@ an ungrouped design wears the Design base.
 The browser reads an opened group as a team console with tasks and agents
 swapped: one composer per design, posting to that design's room, and the
 team toolbar read from the group's designs (see [Group toolbar](#group-toolbar)).
-Everything the toolbar shows is derived from the board, room projection, and
-lane topology on every read; the group stores and grants none of it, and
-reading it changes nothing.
+The group derives all of it on every read and stores or grants none of it.
 A group opens its console when a completed room snapshot first holds a group
 this browser has not seen, so a new group shows itself beside the other teams
 and groups; the first snapshot a browser reads only records the groups it
@@ -112,11 +106,10 @@ none:
   Fast mode stays additive: a lane is fast when its own, its team's, or the
   global flag is on, or a flagged group covers it, and no level switches
   another off. A claim starting or ending, a design moving into or out of the
-  group, or the flag changing takes effect at the next occupant launch and
-  live for a running OMP occupant, exactly as team TURBO does, and only when
-  the lane's effective fast mode changes. Its title names the lanes it runs fast
-  or says no lane works on the group's Design-associated tasks, and it is
-  disabled when the resident cannot configure the group.
+  group, or the flag changing takes effect exactly as for team TURBO. Its title
+  names the lanes it runs fast or says no lane works on the group's
+  Design-associated tasks, and it is disabled when the resident cannot
+  configure the group.
 - **The speech slider** reads Quiet / Speak / Narrate with the team rules,
   browser-local and stored per group, applied in the input that selects it. It
   covers the same Design-associated workers as group TURBO: each lane's live
@@ -237,23 +230,10 @@ sits on its button. Its title and accessible name then lead with that count.
 The dot is out of flow, so marking or clearing a tab never moves its box,
 badge, label, or focus ring; local task tabs carry no mark.
 
-The resident classifies each closed allocation gate once as human-actionable
-blocked work, neutral workflow waiting, or an open Design's pass cycle state.
 Dependency graphs, detail standings, counts, operator attention, and tab marks
-consume that same partition. **Blocked** means no path reaches work an agent
-can advance: missing authority or prerequisites, cycles, and walls at closed,
-parked, deferred, or environment-held work require a human act.
-Ordinary dependency chains that still reach active, ready, review,
-awaiting-decision, or other neutral work are **Waiting** and carry no danger
-mark. An open Design, active or passive and in any pass cycle, is such a wait
-for its outputs and the work behind them only when its own dependency path has
-no true wall. A Design cycle never hides a wall beneath it: that wall makes
-every dependent Blocked. The Design's own row remains **Awaiting decision**
-when that action is available, is Blocked in another active cycle, or remains
-**Passive** outside the partition. A lapsed claim is likewise **Stale** on its
-own row. Stale, Passive, and Awaiting-decision rows are transparent to the
-dependency walk, so their underlying gates decide whether dependents are
-Waiting or Blocked. A tab marks only when
+consume the resident's one
+[gate-wait classification](../docs/product/invariants/identity.md#work-gate-waits-have-one-resident-owned-classification).
+A tab marks only when
 its own partition holds work only the operator can move now: human-actionable
 blocked work, environment-held work, or an unclaimed, undeferred Design
 awaiting the operator's decision on its candidate, which marks only a Design

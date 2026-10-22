@@ -48,7 +48,6 @@ pub(crate) fn evaluate_core_arm(input: &CoreArmInput) -> CoreArmReport {
         id: input.id(),
         tree: input.tree().clone(),
         standing,
-        provenance: input.provenance().clone(),
         diagnostic,
         observation: input.observation().clone(),
     }

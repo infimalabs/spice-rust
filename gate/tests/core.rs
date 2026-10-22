@@ -1,10 +1,10 @@
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence,
-    CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreProvenance, CoreReport,
-    CoreReportDecodeError, CoreSource, CoreStanding, CoreTimeoutContract, CoreToolContract,
-    DocMeasurement, GateId, MergeIntegrityEvidence, MergeTreeCompletion, PREDECESSOR_GATE_RELEASE,
-    PlanningPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, Selector,
-    StagingEvidence, core_declarations, evaluate_core,
+    CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreReport, CoreReportDecodeError,
+    CoreSource, CoreStanding, CoreTimeoutContract, CoreToolContract, DocMeasurement, GateId,
+    MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence, RepoDocLimit,
+    RepoDocsEvidence, RepoShapeEvidence, Selector, StagingEvidence, core_declarations,
+    evaluate_core,
 };
 use serde_json::Value;
 use std::fs;
@@ -42,10 +42,6 @@ fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
 
     for declaration in declarations {
         assert!(!declaration.schema().is_empty());
-        let predecessor = declaration.predecessor();
-        assert_eq!(predecessor.release(), PREDECESSOR_GATE_RELEASE);
-        assert!(!predecessor.source().is_empty());
-        assert!(!predecessor.observation().is_empty());
         match declaration.tool() {
             CoreToolContract::Compiled { provider } => assert!(!provider.is_empty()),
             CoreToolContract::Git { commands, timeout } => {
@@ -113,7 +109,6 @@ fn immutable_input_admission_refuses_order_tree_and_evidence_drift() {
     let mismatch = CoreArmInput::new(
         GateId::PlanningPhase,
         tree,
-        provenance(GateId::PlanningPhase),
         measured(passing_evidence(GateId::RepoShape)),
     );
     assert!(mismatch.is_err());
@@ -134,21 +129,12 @@ fn incomplete_observation_admission_requires_explicit_detail_and_bounds() {
         },
         CoreObservation::TimedOut { milliseconds: 0 },
     ] {
-        assert!(
-            CoreArmInput::new(
-                GateId::MergeIntegrity,
-                tree.clone(),
-                provenance(GateId::MergeIntegrity),
-                observation,
-            )
-            .is_err()
-        );
+        assert!(CoreArmInput::new(GateId::MergeIntegrity, tree.clone(), observation,).is_err());
     }
     assert!(
         CoreArmInput::new(
             GateId::MergeIntegrity,
             tree,
-            provenance(GateId::MergeIntegrity),
             CoreObservation::Unsupported {
                 reason: "legacy grammar".to_owned(),
                 recovery: String::new(),
@@ -160,7 +146,6 @@ fn incomplete_observation_admission_requires_explicit_detail_and_bounds() {
         CoreArmInput::new(
             GateId::Staging,
             fixture_tree(),
-            provenance(GateId::Staging),
             CoreObservation::Skipped {
                 reason: "operator requested bypass".to_owned(),
             },
@@ -217,15 +202,7 @@ fn repo_doc_evidence_refuses_duplicates_and_preserves_unlimited_bounds() {
 
 fn assert_merge_evidence_refused(evidence: MergeIntegrityEvidence) {
     let observation = measured(CoreEvidence::MergeIntegrity(evidence));
-    assert!(
-        CoreArmInput::new(
-            GateId::MergeIntegrity,
-            fixture_tree(),
-            provenance(GateId::MergeIntegrity),
-            observation,
-        )
-        .is_err()
-    );
+    assert!(CoreArmInput::new(GateId::MergeIntegrity, fixture_tree(), observation,).is_err());
 }
 
 #[test]
@@ -288,17 +265,7 @@ fn passing_arms(tree: &Digest) -> Vec<CoreArmInput> {
 }
 
 fn arm(id: GateId, tree: Digest, observation: CoreObservation) -> CoreArmInput {
-    CoreArmInput::new(id, tree, provenance(id), observation).expect("valid fixture arm")
-}
-
-fn provenance(id: GateId) -> CoreProvenance {
-    let predecessor = declaration(id).predecessor();
-    CoreProvenance::new(
-        predecessor.release(),
-        predecessor.source(),
-        predecessor.observation(),
-    )
-    .expect("valid compiled predecessor provenance")
+    CoreArmInput::new(id, tree, observation).expect("valid fixture arm")
 }
 
 fn declaration(id: GateId) -> gate::CoreArmDeclaration {

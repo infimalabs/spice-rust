@@ -1,8 +1,8 @@
 //! Compiled declarations and typed measurements for hygiene analysis.
 //!
-//! The five arms in this module replace Python-AST predecessor execution with
-//! versioned Rust analyzers. Observations retain each analysis stage instead of
-//! translating absence, parse errors, or provider failures into a clean scan.
+//! The five arms in this module run versioned Rust analyzers. Observations
+//! retain each analysis stage instead of translating absence, parse errors, or
+//! provider failures into a clean scan.
 
 use std::error::Error;
 use std::fmt;
@@ -20,7 +20,6 @@ mod acquire;
 #[cfg(not(target_arch = "wasm32"))]
 mod analyze;
 mod measure;
-mod predecessor;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{HYGIENE_SOURCE_FILE_BYTE_LIMIT, HygieneSource, acquire_hygiene};
@@ -32,10 +31,6 @@ pub use analyze::{HygieneAnalysisError, HygieneConfiguration, HygieneExclusion};
 pub(crate) use analyze::{analyze_hygiene, analyze_hygiene_arm};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use measure::{measure_hygiene, measure_hygiene_arm};
-pub use predecessor::{
-    MigrationRefusal, PredecessorComparison, PredecessorComparisonError, PredecessorObservation,
-    PredecessorResult, compare_predecessor,
-};
 
 /// The only report schema emitted by this compiled arm family.
 pub const HYGIENE_REPORT_VERSION: u64 = 1;
@@ -162,7 +157,7 @@ impl HygieneAnalyzer {
     }
 }
 
-/// One native declaration in fixed predecessor-relative order.
+/// One native declaration in fixed battery order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HygieneDeclaration {
     id: GateId,
@@ -784,14 +779,6 @@ impl HygieneFindingDetail {
             Self::AssertionFree { .. } | Self::PrivateCoupling { .. } => {}
         }
     }
-
-    fn has_external_provider(&self) -> bool {
-        match self {
-            Self::ModuleReachability { provider, .. }
-            | Self::SymbolReachability { provider, .. } => provider != "python",
-            _ => false,
-        }
-    }
 }
 
 /// One structured finding with stable selected-tree identity.
@@ -888,12 +875,6 @@ pub struct HygieneMeasurement {
 impl HygieneMeasurement {
     pub(crate) fn validate(&self) -> Result<(), HygieneError> {
         measure::validate_measurement(self)
-    }
-
-    fn has_external_provider(&self) -> bool {
-        self.findings
-            .iter()
-            .any(|finding| finding.detail.has_external_provider())
     }
 }
 

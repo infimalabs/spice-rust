@@ -44,12 +44,12 @@ impl RepositoryDocumentMeasurement {
     }
 }
 
-/// Measure predecessor-equivalent source lines and exact file bytes.
+/// Measure source lines, split at every Unicode line boundary, and exact bytes.
 ///
 /// # Errors
 ///
 /// NUL-bearing binary inputs and invalid UTF-8 are explicit unsupported
-/// states, matching the predecessor source-file admission boundary.
+/// states: a source file is UTF-8 text or it is not measured.
 pub fn measure_file_shape(path: &str, bytes: &[u8]) -> Result<FileShapeMeasurement, ParseError> {
     let path = canonical_path(path)?;
     if bytes.contains(&0) {
@@ -73,10 +73,10 @@ pub fn measure_file_shape(path: &str, bytes: &[u8]) -> Result<FileShapeMeasureme
     })
 }
 
-/// Measure Python-compatible decoded character count for a doctrine document.
+/// Measure the decoded character count of a doctrine document.
 ///
-/// Invalid UTF-8 sequences become one replacement scalar each, matching the
-/// predecessor's `errors="replace"`; NUL-bearing binary documents are refused.
+/// Invalid UTF-8 sequences become one replacement scalar each; NUL-bearing
+/// binary documents are refused.
 pub fn measure_repository_document(
     path: &str,
     bytes: &[u8],

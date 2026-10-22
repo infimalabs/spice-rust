@@ -341,14 +341,12 @@ fn metric_finding(result: &BatteryArmResult, metric: &MetricEvidence) -> Option<
         }
         MetricState::Unsupported {
             source_field,
-            owning_release,
             reason,
             recovery,
         } => {
             finding.push_str(&format!(
-                " source_field={} owning_release={} reason={} recovery={}",
+                " source_field={} reason={} recovery={}",
                 quoted(source_field),
-                quoted(owning_release),
                 quoted(reason),
                 quoted(recovery)
             ));
