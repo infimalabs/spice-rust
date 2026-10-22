@@ -62,6 +62,14 @@ The resident runs in the foreground of its owning process. `spice up` may detach
 that process, `spice down` owns semantic shutdown, and an operating-system
 service manager may own restart policy.
 
+A resident starts only over its own installed skill. `spice up`, foreground or
+detached, refuses `resident::skill-unavailable` with `spice install` as the
+repair when the Git-common `.spice-install/agents/skills/spice/SKILL.md` is
+absent, not a regular file, outside Git-common authority, or not the bytes its
+executable compiles in: a resident that cannot launch a lane is not serving.
+Lane launch applies the same predicate, since the skill can change under a
+running resident.
+
 A session's acceptance names the release the resident runs. A client that
 receives an answer its command registry cannot bind refuses it unread with
 `command::answer-binding`; when the two releases differ, the refusal names both

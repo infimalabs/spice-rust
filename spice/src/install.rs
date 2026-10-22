@@ -1007,6 +1007,49 @@ pub fn installed_skill(repository: &Repository) -> PathBuf {
     repository.common_dir().join(SKILL_PATH)
 }
 
+/// The installed skill, admitted only as a regular file under Git-common
+/// authority whose bytes are this release's [`skill_document`].
+///
+/// # Errors
+///
+/// Names the installed path and why it cannot serve this release.
+pub fn current_skill(repository: &Repository) -> Result<PathBuf, String> {
+    let skill = installed_skill(repository);
+    let unavailable = |error: std::io::Error| {
+        format!(
+            "initialized skill {} is unavailable: {error}",
+            skill.display()
+        )
+    };
+    if !fs::symlink_metadata(&skill).map_err(unavailable)?.is_file() {
+        return Err(format!(
+            "initialized skill {} is not a regular file",
+            skill.display()
+        ));
+    }
+    let common = fs::canonicalize(repository.common_dir()).map_err(|error| {
+        format!(
+            "initialized skill authority {} is unavailable: {error}",
+            repository.common_dir().display()
+        )
+    })?;
+    let physical = fs::canonicalize(&skill).map_err(unavailable)?;
+    if !physical.starts_with(&common) {
+        return Err(format!(
+            "initialized skill {} resolves outside Git-common authority: {}",
+            skill.display(),
+            physical.display()
+        ));
+    }
+    if fs::read(&skill).map_err(unavailable)? != SKILL.as_bytes() {
+        return Err(format!(
+            "initialized skill {} does not match this appliance",
+            skill.display()
+        ));
+    }
+    Ok(skill)
+}
+
 /// Complete authoritative agent skill compiled into this release.
 #[must_use]
 pub const fn skill_document() -> &'static str {

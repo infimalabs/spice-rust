@@ -245,8 +245,37 @@ fn non_regular_cargo_lock_refuses_before_rust_tool_probe() {
     ));
 }
 
+/// Lane launch and resident start share one skill predicate: every skill that
+/// is not this release's own faults the launch and refuses the start with the
+/// reinstall repair, and only the initialized Git-common copy can satisfy it.
 #[test]
-fn launch_skill_comes_only_from_initialized_git_common_state() {
+fn launch_and_resident_start_admit_only_the_initialized_common_skill() {
+    fn refused(root: &Path, repository: &Repository) {
+        let common = spice::install::installed_skill(repository)
+            .display()
+            .to_string();
+        let Err(Outcome::Fault(launch)) = required_skill(repository) else {
+            panic!("launch must fault")
+        };
+        assert_eq!(launch.reason, "lane::skill-unavailable");
+        assert!(launch.detail.contains(&common), "{}", launch.detail);
+        let Outcome::Refusal(start) = crate::resident::up_from(
+            root,
+            crate::resident::AppBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
+        ) else {
+            panic!("resident start must refuse")
+        };
+        assert_eq!(start.reason(), "resident::skill-unavailable");
+        assert_eq!(
+            start.command().map(wire::SpiceCommand::arguments),
+            Some(&["install".to_owned()][..])
+        );
+        let detail = start
+            .diagnostic()
+            .and_then(|diagnostic| diagnostic.detail());
+        assert_eq!(detail, Some(launch.detail.as_str()));
+    }
+
     let root = std::env::temp_dir().join(format!(
         "spice-launch-skill-{}-{}",
         std::process::id(),
@@ -258,32 +287,15 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
     fs::create_dir_all(accidental.parent().expect("accidental skill parent"))
         .expect("accidental worktree skill parent creates");
     fs::write(&accidental, b"wrong worktree skill\n").expect("accidental worktree skill writes");
+    refused(&root, &repository);
 
-    let missing = required_skill(&repository).expect_err("worktree copy cannot satisfy launch");
-    let Outcome::Fault(missing) = missing else {
-        panic!("missing common skill must fault")
-    };
-    assert_eq!(missing.reason, "lane::skill-unavailable");
     let common = spice::install::installed_skill(&repository);
-    assert!(missing.detail.contains(&common.display().to_string()));
-
     fs::create_dir_all(&common).expect("invalid common skill directory creates");
-    let invalid = required_skill(&repository).expect_err("skill directory cannot satisfy launch");
-    assert!(matches!(
-        invalid,
-        Outcome::Fault(ref fault)
-            if fault.reason == "lane::skill-unavailable"
-    ));
+    refused(&root, &repository);
     fs::remove_dir(&common).expect("invalid common skill directory removes");
     fs::write(&common, b"stale common skill\n").expect("stale common skill writes");
-    assert!(matches!(
-        required_skill(&repository),
-        Err(Outcome::Fault(ref fault))
-            if fault.reason == "lane::skill-unavailable"
-    ));
-    fs::write(&common, ::std::include_bytes!("../../../../agent/SKILL.md"))
-        .expect("current common skill writes");
-
+    refused(&root, &repository);
+    fs::write(&common, spice::install::skill_document()).expect("current common skill writes");
     assert_eq!(
         required_skill(&repository).expect("common regular skill admits"),
         common
@@ -298,29 +310,18 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
 
         fs::remove_file(&common).expect("common skill removes");
         symlink(&accidental, &common).expect("redirected common skill creates");
-        assert!(matches!(
-            required_skill(&repository),
-            Err(Outcome::Fault(ref fault))
-                if fault.reason == "lane::skill-unavailable"
-        ));
+        refused(&root, &repository);
         fs::remove_file(&common).expect("redirected common skill removes");
         fs::remove_dir(common.parent().expect("common skill parent"))
             .expect("common skill parent removes");
-        fs::write(
-            &accidental,
-            ::std::include_bytes!("../../../../agent/SKILL.md"),
-        )
-        .expect("redirect target carries current skill");
+        fs::write(&accidental, spice::install::skill_document())
+            .expect("redirect target carries current skill");
         symlink(
             accidental.parent().expect("accidental skill parent"),
             common.parent().expect("common skill parent"),
         )
         .expect("redirected common skill parent creates");
-        assert!(matches!(
-            required_skill(&repository),
-            Err(Outcome::Fault(ref fault))
-                if fault.reason == "lane::skill-unavailable"
-        ));
+        refused(&root, &repository);
     }
     fs::remove_dir_all(&root).expect("fixture removes");
 }

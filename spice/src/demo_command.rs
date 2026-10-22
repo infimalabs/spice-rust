@@ -274,6 +274,15 @@ fn finish_seed_prepared_root(
         .map_err(|error| crate::state_failure(&error).outcome())?;
     fs::write(root.join(wire::TRACKED_POLICY_FILE), CONFIG_BYTES)
         .map_err(|error| environment_fault("demo::config-unwritable", error.to_string()))?;
+    let skill = spice::install::installed_skill(&repository);
+    fs::create_dir_all(skill.parent().expect("the installed skill has a directory"))
+        .and_then(|()| fs::write(&skill, spice::install::skill_document()))
+        .map_err(|error| {
+            environment_fault(
+                "demo::skill-unwritable",
+                format!("{}: {error}", skill.display()),
+            )
+        })?;
     fs::create_dir_all(state.data()).map_err(|error| {
         environment_fault(
             "demo::state-unavailable",
