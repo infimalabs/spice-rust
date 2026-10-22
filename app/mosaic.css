@@ -849,16 +849,16 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-send-rim-width: 3px; --team-send-command-ring-width: 1px;
 }
 /* The sharp 80 × 192 panel holds two round utility buttons, two pill flyers,
-   and SEND below a three-pixel top inset. Each slider row is exactly its
+   and SEND below a four-pixel top inset. Each slider row is exactly its
    groove, and the remaining height divides into three equal gaps. */
 .team-composer .team-composer-controls {
-  --team-control-inset: 3px;
-  --team-control-send-size: 62px;
+  --team-control-inset: 4px;
+  --team-control-send-size: 72px;
   --team-control-button-size: var(--app-round-control-size);
   --team-slider-inset: var(--team-control-inset);
-  --team-slider-groove-block: 23px;
-  --team-slider-thumb-inline: 46px;
-  --team-slider-thumb-block: 19px;
+  --team-slider-groove-block: 28px;
+  --team-slider-thumb-inline: 48px;
+  --team-slider-thumb-block: 24px;
   --team-slider-thumb-inset: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
   --team-control-row-gap: calc((var(--team-composer-block-size) - var(--team-control-inset) - var(--team-control-button-size) - var(--team-slider-groove-block) - var(--team-slider-groove-block) - var(--team-control-send-size)) / 3);
   position: relative; display: grid; row-gap: var(--team-control-row-gap); column-gap: 0; inline-size: var(--team-control-inline-size);
