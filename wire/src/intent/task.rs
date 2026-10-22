@@ -665,7 +665,8 @@ pub struct ClaimWarning {
     pub task: TaskHandle,
     /// Lane holding the other claim.
     pub lane: CanonicalUuid,
-    /// Exact normalized acceptance terms shared by both tasks.
+    /// Rare exact identifiers both statements name, then their strongest
+    /// shared weighted terms.
     pub surface: Vec<String>,
 }
 

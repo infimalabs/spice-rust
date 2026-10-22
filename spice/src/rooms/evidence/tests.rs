@@ -1,5 +1,5 @@
 use super::*;
-use crate::rooms::awareness::MATCH_SCORE_BASE;
+use board::similarity::MATCH_SCORE_BASE;
 
 fn word(index: usize) -> String {
     let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);

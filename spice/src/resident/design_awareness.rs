@@ -6,10 +6,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use journal::{GuardError, JournalRead};
-use spice::rooms::awareness::{
-    FrequencyProfile, MATCH_SCORE_BASE, TermCounts, pitch, request_questions,
+use board::similarity::{
+    FrequencyProfile, GenerationMismatch, MATCH_SCORE_BASE, Prepared, TermCounts,
 };
+use journal::{GuardError, JournalRead};
+use spice::rooms::awareness::{pitch, request_questions};
 use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
@@ -367,18 +368,13 @@ fn plan_profile_requests(
 fn prepare_open_designs<'e>(
     entries: &'e [board::Entry],
     frequency: &FrequencyProfile,
-) -> Vec<(&'e board::Entry, spice::rooms::awareness::Prepared)> {
+) -> Vec<(&'e board::Entry, Prepared)> {
     entries
         .iter()
         .filter(|entry| entry.is_filed() && open_design(entry))
         .filter_map(|entry| {
-            let statement = entry.statement();
             frequency
-                .prepare(&TermCounts::statement(
-                    &statement.title,
-                    statement.description.as_deref(),
-                    &statement.acceptance,
-                ))
+                .prepare(&TermCounts::task(entry.statement()))
                 .map(|vector| (entry, vector))
         })
         .collect()
@@ -388,7 +384,7 @@ fn prepare_open_designs<'e>(
 struct Scoring<'e> {
     facts: &'e bus::TaskFacts,
     frequency: &'e FrequencyProfile,
-    prepared: &'e [(&'e board::Entry, spice::rooms::awareness::Prepared)],
+    prepared: &'e [(&'e board::Entry, Prepared)],
 }
 
 /// The Design one session's current cards select for an opportunity.
@@ -421,7 +417,7 @@ fn select_design(
         frequency,
         prepared,
     } = *scoring;
-    let mismatch = |error: spice::rooms::awareness::GenerationMismatch| {
+    let mismatch = |error: GenerationMismatch| {
         store_fault(
             "room::awareness-profile-generation-mismatch",
             &error.to_string(),
@@ -519,7 +515,7 @@ fn choose_ask(
     design: &board::Entry,
     asks: Vec<DesignAsk>,
     floor: f64,
-) -> Result<Option<DesignAsk>, spice::rooms::awareness::GenerationMismatch> {
+) -> Result<Option<DesignAsk>, GenerationMismatch> {
     let statement = design.statement();
     let problem = pitch(&statement.title, statement.description.as_deref());
     let mut best: Option<(f64, usize)> = None;
@@ -544,7 +540,7 @@ fn choose_ask(
 /// One prepared open Design weighted under its effective stance's floor.
 fn candidate<'a>(
     facts: &bus::TaskFacts,
-    (design, vector): &'a (&'a board::Entry, spice::rooms::awareness::Prepared),
+    (design, vector): &'a (&'a board::Entry, Prepared),
 ) -> DesignCandidate<'a, board::Entry> {
     DesignCandidate::new(
         design.born(),

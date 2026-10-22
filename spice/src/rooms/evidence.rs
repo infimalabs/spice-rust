@@ -19,12 +19,11 @@
 use std::cmp::Ordering;
 use std::ops::Range;
 
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
-use wire::TaskStamp;
-
-use super::awareness::{
+use board::similarity::{
     FrequencyProfile, Generation, GenerationMismatch, Prepared, TermCounts, utf8_prefix,
 };
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use wire::TaskStamp;
 
 /// Most UTF-8 bytes of cleaned prose one conversation card retains.
 pub const CONVERSATION_BYTES: usize = 4 * 1024;
@@ -179,7 +178,7 @@ impl<K> Evidence<K> {
         acceptance: &[String],
         validation: &str,
     ) -> Self {
-        let validation = utf8_prefix(validation, super::awareness::COMPLETION_VALIDATION_BYTES);
+        let validation = utf8_prefix(validation, wire::rooms::COMPLETION_VALIDATION_BYTES);
         let mut hasher = digest_kind(b"task");
         digest_field(&mut hasher, title.as_bytes());
         digest_field(&mut hasher, description.unwrap_or_default().as_bytes());

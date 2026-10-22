@@ -18,6 +18,7 @@ pub mod lapse;
 pub mod next;
 pub mod overlap;
 pub mod phase;
+pub mod similarity;
 pub mod task;
 pub mod urgency;
 
