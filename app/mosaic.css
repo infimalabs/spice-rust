@@ -877,7 +877,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   --team-send-command-ring: 0 0 0 0 transparent;
   --inactive-lane-opacity: .72;
 }
-.app-turbo-button .fit-word { inline-size: 22px; block-size: 8px; }
+.app-turbo-button .fit-word { inline-size: 26px; block-size: 10px; }
 /* Flush controls are transmitted glass, with no opaque accent face or dome. */
 .team-composer :is(.team-send, .team-turbo, .team-menu),
 .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button {
@@ -983,11 +983,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-slider:has(input:disabled) { opacity: .5; cursor: not-allowed; }
 .team-slider input:disabled { cursor: not-allowed; }
-/* The word rides the thumb inside seven pixels at each rounded end. */
+/* The word rides the thumb inside nine pixels at each rounded end; its 30 × 11 box and TURBO's 26 × 10 box sit within a pixel of one cap height. */
 .team-slider .team-slider-words {
   position: absolute; inset-block: 0; margin-block: auto;
-  inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-thumb-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - 2 * var(--team-slider-thumb-inset) - var(--team-slider-thumb-inline)) + 7px);
-  inline-size: calc(var(--team-slider-thumb-inline) - 14px); block-size: calc(var(--team-slider-thumb-block) - 10px);
+  inset-inline-start: calc(var(--team-slider-inset) + var(--team-slider-thumb-inset) + var(--team-slider-position) * (100% - 2 * var(--team-slider-inset) - 2 * var(--team-slider-thumb-inset) - var(--team-slider-thumb-inline)) + 9px);
+  inline-size: calc(var(--team-slider-thumb-inline) - 18px); block-size: calc(var(--team-slider-thumb-block) - 13px);
   z-index: 1; color: var(--ink); pointer-events: none; transition: inset-inline-start var(--app-motion-settle) var(--app-ease-standard);
 }
 .team-slider-words > span { position: absolute; inset: 0; }
