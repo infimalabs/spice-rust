@@ -12,6 +12,10 @@ use crate::task::Entry;
 /// only transition ownership consults this bound.
 pub const HANDOFF_SECONDS: i64 = 3;
 
+/// How long allocation holds a nudged Design for the lane its nudge messaged,
+/// long enough for a vacant lane to wake and capture it.
+pub const NUDGE_HOLD_SECONDS: i64 = 120;
+
 /// One guarded workflow change ready for the journal transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Transition {

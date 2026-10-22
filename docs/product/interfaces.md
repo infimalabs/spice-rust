@@ -164,6 +164,7 @@ handle.
 | Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a committed disband can name ungrouped Designs still owed shelving, each repaired by moving it into a Passive group, such as `spice group move DESIGN --new` |
 | Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery; a nudge readies a passive Design but delivers it to no lane: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
 | Steeping Design | open, active Design whose cycle is not yet ready for proposal | `claim::design-held` on capture or recovery, naming the Design, its cycle, and that cycle's next action; `spice preparation nudge DESIGN` readies it, and the allocator and steal keep their own gate |
+| Nudge hold | 120 seconds from the nudge, for the lane its message went to | allocation offers the Design to no other lane meanwhile; capture by name stays open |
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large` |
