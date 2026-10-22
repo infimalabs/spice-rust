@@ -48,27 +48,24 @@ pub struct RoomPutAside {
     pub room: TaskHandle,
 }
 
-/// One lane stops listening to an anchor task's room.
+/// One lane declines the Design request it owes in an anchor task's room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomLeave {
     /// Current rendered handle of the anchor task.
     pub room: TaskHandle,
-    /// Why the lane leaves; recorded in the room.
+    /// Why the lane declines; recorded in the room.
     pub clause: String,
 }
 
-/// The leave in force and each native duty that keeps the lane listening.
+/// The recorded leave and each native duty that keeps the lane listening.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomLeaveAnswer {
     /// Current rendered anchor handle.
     pub room: TaskHandle,
-    /// The lane's leave publication in force: this command's, or the earlier
-    /// one no contribution has ended since.
+    /// This command's leave publication.
     pub publication: RoomAuthorityStamp,
-    /// Whether this command recorded the leave.
-    pub recorded: bool,
     /// Native duties leaving cannot end; empty when the lane stopped listening.
     pub kept: Vec<RoomListeningDuty>,
 }

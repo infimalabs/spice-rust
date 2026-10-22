@@ -56,12 +56,13 @@ owns each rule summarized here.
   A recorded Design request also keeps the asked lane listening from that
   request's position, without making it a participant, until the lane's next
   room publication answers or declines it. Nothing ages. Each room catch-up
-  names the lane's reasons and the leave
-  command. `spice room leave HANDLE --clause TEXT` is an attributed lane act
-  recorded once in room history and standing. It declines earlier Design
-  requests until a later request asks the lane. It never frees a claim,
-  settles a delivery, and its reply names each native
-  duty that still holds the lane. Relevance is
+  names the lane's reasons, and the leave command only for a room whose
+  Design request it owes. `spice room leave HANDLE --clause TEXT` is an
+  attributed lane act recorded once in room history and standing: the decline
+  of the owed request and nothing else. A lane owing none there is refused with
+  `room::leave-nothing-owed`, naming each native duty that keeps it listening,
+  and nothing is written. A leave never frees a claim or settles a delivery,
+  and its reply names each native duty that still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
 - **Contribution.** A lane records its reasoning on an open Design with
@@ -143,11 +144,11 @@ owns each rule summarized here.
   more, shows the contribute form once, and offers the supporting task as a
   `--cite` key; conversation evidence is not citable. A whole-Design request
   lists a bounded prefix of whole open questions. One contribution or `spice
-  room leave --clause` answers it.
-  Selection, `task next`, and room catch-up share one owed-request
+  room leave --clause` answers it and ends its listening; the text says so.
+  Selection, `task next`, room catch-up, and `room leave` share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced
   transcript source, or lost task statement, completion, or claim evidence
-  releases it on all three surfaces. Stance and group movement do not release
+  releases it on all of them. Stance and group movement do not release
   an otherwise-current open Design request. Compaction does not either, but
   one landing between selection and recording refuses the recording;
   unrelated writes do not release it. The request grants no claim, work,

@@ -3,7 +3,7 @@ use super::*;
 use serde_json::Value;
 use wire::intent::{
     RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomLeave,
-    RoomLeaveAnswer, RoomListeningDuty, RoomPutAside,
+    RoomPutAside,
 };
 use wire::rooms::{
     CoordinationControl, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp, RoomCoordinationStarted,
@@ -172,16 +172,6 @@ fn leave(
         &room_projects(),
         &board::NextConfig::default(),
     )
-}
-
-fn leave_answer(outcome: Outcome<CommandAnswer>) -> (bool, RoomLeaveAnswer) {
-    match outcome {
-        Outcome::Reply(Reply {
-            position,
-            body: CommandAnswer::RoomLeave(answer),
-        }) => (matches!(position, ReplyPosition::Committed(_)), answer),
-        other => panic!("room leave returned another outcome: {other:?}"),
-    }
 }
 
 fn post_listeners(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> Vec<CanonicalUuid> {
@@ -513,7 +503,7 @@ fn authored_observations_enforce_the_room_publication_byte_bound() {
 }
 
 #[test]
-fn leaving_names_the_claim_that_keeps_a_lane_listening() {
+fn a_lane_owing_no_design_request_cannot_leave_and_hears_which_claim_keeps_it_listening() {
     let (_root, bus, epoch, seats) = fixture("room-leave-native", 1);
     let lane = seats[0].lane;
     let room = add(
@@ -526,12 +516,18 @@ fn leaving_names_the_claim_that_keeps_a_lane_listening() {
     );
     super::resolution::claim_task(&bus, epoch, &seats[0], &Actor::Lane(lane), &room);
 
-    let (committed, answer) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
-    assert!(committed && answer.recorded, "{answer:?}");
-    assert_eq!(
-        answer.kept,
-        vec![RoomListeningDuty::Work { task: room.clone() }]
+    let outcome = leave(&bus, epoch, Actor::Lane(lane), &room);
+    let Outcome::Refusal(wire::Refusal::Bare { diagnostic }) = &outcome else {
+        panic!("a leave owing nothing refuses: {outcome:?}");
+    };
+    assert_eq!(diagnostic.reason(), "room::leave-nothing-owed");
+    assert!(
+        diagnostic
+            .observed()
+            .is_some_and(|observed| observed.contains(&format!("work {room}"))),
+        "the refusal names the claim that keeps the lane listening: {diagnostic:?}"
     );
+    assert!(publication_page(&bus, &room).rows.is_empty());
     assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
 }
 

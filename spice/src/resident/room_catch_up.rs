@@ -56,10 +56,12 @@ pub(in crate::resident) struct Changes {
     pub(in crate::resident) rooms: BTreeSet<TaskStamp>,
 }
 
-/// Why `lane` listens to one room and how it leaves, as one notice block.
+/// Why `lane` listens to one room and, while it owes the Design request there
+/// (`owed`), how it declines it, as one notice block.
 fn listening(
     handle: &TaskHandle,
     row: Option<&spice::rooms::RoomLaneAttention>,
+    owed: bool,
     entries: &[board::Entry],
 ) -> String {
     use spice::rooms::AttentionReason as Reason;
@@ -86,16 +88,19 @@ fn listening(
     if reasons.len() > LISTENING_REASONS {
         named.push(format!("{} more", reasons.len() - LISTENING_REASONS));
     }
-    let native = reasons.iter().any(Reason::is_native);
-    format!(
-        "\nlistening {handle}: {}\nleave: spice room leave {handle} --clause TEXT{}\n",
-        named.join(", "),
-        if native {
-            " (native work and duties keep this lane listening until they end)"
-        } else {
-            ""
-        }
-    )
+    let leave = if owed {
+        format!(
+            "\nleave: spice room leave {handle} --clause TEXT{}",
+            if reasons.iter().any(Reason::is_native) {
+                " (native work and duties keep this lane listening until they end)"
+            } else {
+                ""
+            }
+        )
+    } else {
+        String::new()
+    };
+    format!("\nlistening {handle}: {}{leave}\n", named.join(", "))
 }
 
 /// Publish the current bounded delivery for every occupied lane, then notify
@@ -397,6 +402,7 @@ fn plan(
             handles.insert(room, entry.handle().clone());
         }
     }
+    let mut owed_room = None;
     if let Some(owed) = super::design_awareness::owed_request(
         bus,
         &planning.snapshot,
@@ -429,7 +435,8 @@ fn plan(
                 item: Item::Invitation(text),
             },
         );
-        handles.insert(owed.design, entry.handle().clone());
+        handles.insert(owed.design.clone(), entry.handle().clone());
+        owed_room = Some(owed.design);
     }
     let selected = select_catch_up(lane, after, &attention, sources, CatchUpBudget::STANDARD)
         .map_err(|error| store_fault("room::catch-up-authority-invalid", &error.to_string()))?;
@@ -443,6 +450,7 @@ fn plan(
         &presented,
         &attention,
         &handles,
+        owed_room.as_ref(),
         &planning.entries,
     );
     Ok(Some(Notice {
@@ -453,7 +461,8 @@ fn plan(
 }
 
 /// The notice text for `selected`: each publication or owed Design request
-/// under its room, then why `lane` listens to each room shown and how it leaves.
+/// under its room, then why `lane` listens to each room shown and, for
+/// `owed`'s room, how it declines the request.
 fn render(
     lane: CanonicalUuid,
     through: Seq,
@@ -461,6 +470,7 @@ fn render(
     presented: &BTreeMap<Seq, Presented>,
     attention: &[spice::rooms::RoomAttention],
     handles: &BTreeMap<TaskStamp, TaskHandle>,
+    owed: Option<&TaskStamp>,
     entries: &[board::Entry],
 ) -> String {
     let mut text = String::from(
@@ -488,7 +498,7 @@ fn render(
             .iter()
             .find(|view| view.room == *room)
             .and_then(|view| view.lanes.iter().find(|row| row.lane == lane));
-        text.push_str(&listening(&handles[room], row, entries));
+        text.push_str(&listening(&handles[room], row, owed == Some(room), entries));
     }
     if let Some(continuation) = selected.continuation {
         let withheld = presented

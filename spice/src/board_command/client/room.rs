@@ -293,14 +293,10 @@ fn client_room_leave(
 
 fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
     use wire::intent::RoomListeningDuty as Duty;
-    let mut lines = vec![if answer.recorded {
-        format!("left {} publication {}", answer.room, answer.publication)
-    } else {
-        format!(
-            "already left {} publication {}",
-            answer.room, answer.publication
-        )
-    }];
+    let mut lines = vec![format!(
+        "left {} publication {}",
+        answer.room, answer.publication
+    )];
     if answer.kept.is_empty() {
         lines.push(
             "no longer listening; a later room message or Design request restores listening"

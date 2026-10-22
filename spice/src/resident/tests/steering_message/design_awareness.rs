@@ -794,17 +794,6 @@ fn compaction_preserves_participation_and_settled_request_history() {
         "a later opportunity cannot turn participation back into recruitment"
     );
     assert!(lanes.request(&config, FIRST).is_none());
-
-    lanes.leave(52, &config, FIRST, &design);
-    let later = lanes.claimed("dVrD245Kq", FIRST);
-    lanes.complete(&later, &format!("{MATCHING} Paged once more."));
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
-    assert_eq!(
-        lanes.noticed().len(),
-        1,
-        "an explicit leave does not reopen a settled request"
-    );
-    assert!(lanes.request(&config, FIRST).is_none());
     seated.release_all();
     lanes.finish();
 }
@@ -964,7 +953,7 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
     let task = lanes.claimed("dVrD245Kc", FIRST);
-    lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     lanes.complete(&task, MATCHING);
     lanes.reconcile_completions(&config, &seated, &mut completions);
 
@@ -990,6 +979,13 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
     assert!(
         notice.text.contains(&shown),
         "catch-up carries the request task next shows: {}",
+        notice.text
+    );
+    assert!(
+        notice
+            .text
+            .contains(&format!("leave: spice room leave {design} --clause TEXT\n")),
+        "the owed request's room offers its leave: {}",
         notice.text
     );
     for expected in [

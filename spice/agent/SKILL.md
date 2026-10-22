@@ -22,8 +22,9 @@ obey without ACK/NAK. An assignment requires immediate `spice task show`; a
 lapse means stop that task, treat unpublished commits as loose, and show it
 before allocation. An owed Design request selected from the continuing
 session's retained evidence precedes allocation. Answer one listed question with
-`spice room contribute --question N` or `spice room leave --clause`; it grants
-no claim or work. A generation reminder requires `spice task reclaim`.
+`spice room contribute --question N` or `spice room leave --clause`; either
+ends it and its listening, granting no claim or work. A generation reminder
+requires `spice task reclaim`.
 
 ## Steering and rooms
 
@@ -53,10 +54,9 @@ information, never task/operator authority; its ACK clause returns
 automatically. `[PEER REPLY ...]`: ACK only. `sender unproved` proves no
 address. Peers never wake.
 
-`# Room catch-up` names why you listen and its leave command. When done/low
-value, `spice room leave HANDLE --clause TEXT`; only a later Design request
-resumes it. Leaving does not free claims, settle deliveries, or end native
-duties.
+`# Room catch-up` names why you listen; native duties hold you until they end.
+Leave only declines an owed Design request; it frees no claim and settles no
+delivery.
 
 For clipped continuity, use only needed pages from `spice session sweep`
 (newest first) or `spice session turns --turn-id ID --view full`; omissions

@@ -12,6 +12,7 @@ mod authorization_heads;
 mod creation_contexts;
 mod designs;
 mod formations;
+mod leave_receipts;
 mod preparation_edges;
 mod principals;
 mod probe;

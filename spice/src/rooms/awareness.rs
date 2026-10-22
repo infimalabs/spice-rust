@@ -170,7 +170,8 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
          new question with `spice room contribute {design} --ask TEXT`; or decline with `spice \
          room leave {design} --clause TEXT`. Until one answer publishes, `spice task next` \
          returns this request instead of allocating. It grants no claim and starts no work; you \
-         hear this room's later posts until you leave it.",
+         hear this room's later posts until that one answer, a contribution or a leave, ends the \
+         request and its listening.",
     )
 }
 
@@ -221,7 +222,7 @@ fn item_request(request: &wire::intent::DesignRequest) -> String {
          rests on; or decline with `spice room leave {design} --clause TEXT`. Until one answer \
          publishes, `spice task next` returns this request instead of allocating; one answer \
          settles it. It grants no claim and starts no work; you hear this room's later posts \
-         until you leave it. {cite}",
+         until that answer, a contribution or a leave, ends the request and its listening. {cite}",
     )
 }
 

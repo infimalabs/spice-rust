@@ -8,9 +8,10 @@ use wire::rooms::RoomLeft;
 
 use super::room::mint_publication;
 
-/// Record that the commanding lane leaves `leave.room`, once per leave in
-/// force, and name every native duty that still keeps it listening. Leaving
-/// frees no claim, settles no delivery, and answers no question.
+/// Record that the commanding lane declines the Design request it owes in
+/// `leave.room`, and name every native duty that still keeps it listening. A
+/// lane owing no request there has nothing to decline. Leaving frees no claim,
+/// settles no delivery, and answers no question.
 pub(crate) fn room_leave(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -71,20 +72,29 @@ pub(crate) fn room_leave(
         Ok(attention) => attention,
         Err(outcome) => return outcome,
     };
-    let row = attention.lanes.iter().find(|row| row.lane == lane);
-    let kept = row
+    let kept = attention
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
         .map(|row| kept_duties(&row.attention, &snapshot.entries))
         .unwrap_or_default();
-    if let Some(publication) = row.and_then(leave_in_force) {
-        return Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(snapshot.cursor),
-            body: CommandAnswer::RoomLeave(RoomLeaveAnswer {
-                room: anchor.handle().clone(),
-                publication,
-                recorded: false,
-                kept,
-            }),
-        });
+    match owes_request(
+        bus,
+        &snapshot.entries,
+        &snapshot.answer.residency.body,
+        lane,
+        &room,
+    ) {
+        Ok(true) => {}
+        Ok(false) => {
+            return refusal(
+                "room::leave-nothing-owed",
+                Some(nothing_owed(anchor.handle(), &kept)),
+                "a leave only declines the Design request this lane owes; a contribution \
+                 already answered any, and native duties end only with their work",
+            );
+        }
+        Err(outcome) => return outcome,
     }
     let publication = match mint_publication(bus, &room, now.as_microsecond()) {
         Ok(publication) => publication,
@@ -97,7 +107,6 @@ pub(crate) fn room_leave(
     let answer = RoomLeaveAnswer {
         room: anchor.handle().clone(),
         publication: publication.clone(),
-        recorded: true,
         kept,
     };
     let mut write = JournalWrite::new(Actor::Lane(lane), origin, at, Producer::CommandDoor);
@@ -123,16 +132,50 @@ pub(crate) fn room_leave(
     committed(bus, write, CommandAnswer::RoomLeave(answer))
 }
 
-/// The lane's leave still in force: one no later Design request has restored
-/// listening since.
-fn leave_in_force(
-    row: &spice::rooms::RoomLaneAttention,
-) -> Option<wire::rooms::RoomAuthorityStamp> {
-    let restored = row
-        .attention
+/// Whether the lane's seated occupant owes the Design request in `room`, by
+/// the one owed-ness rule `task next` and room catch-up share.
+fn owes_request(
+    bus: &Bus,
+    entries: &[Entry],
+    residency: &wire::ResidencyHead,
+    lane: wire::CanonicalUuid,
+    room: &TaskStamp,
+) -> Result<bool, Outcome<CommandAnswer>> {
+    let Some(occupant) = residency
+        .lanes
         .iter()
-        .any(|reason| matches!(reason, AttentionReason::Asked { .. }));
-    row.left.clone().filter(|_| !restored)
+        .find(|row| row.lane == lane && row.disposition == "occupied")
+        .and_then(|row| row.occupant)
+    else {
+        return Ok(false);
+    };
+    let observed = bus
+        .task_snapshot()
+        .map_err(|error| store_fault("room::leave-heads-unreadable", &error.to_string()))?;
+    Ok(
+        crate::resident::design_awareness::owed_request(bus, &observed, entries, lane, occupant)?
+            .is_some_and(|owed| owed.design == *room),
+    )
+}
+
+/// Why `room` refuses a leave: no Design request is owed there, and what, if
+/// anything, still keeps the lane listening.
+fn nothing_owed(room: &TaskHandle, kept: &[RoomListeningDuty]) -> String {
+    if kept.is_empty() {
+        return format!("{room} owes this lane no Design request and it does not listen there");
+    }
+    let duties = kept
+        .iter()
+        .map(|duty| match duty {
+            RoomListeningDuty::Work { task } => format!("work {task}"),
+            RoomListeningDuty::Coordination { key } => format!("coordination {key}"),
+            RoomListeningDuty::Stop { key } => format!("stop {key}"),
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "{room} owes this lane no Design request; it listens for {}",
+        duties.join(", ")
+    )
 }
 
 /// The native duties among `reasons`, each named as the lane acts on it.
