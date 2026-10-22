@@ -1,82 +1,55 @@
-//! Resolve the repository state namespaces owned only by this runtime.
+//! Resolve the repository state namespaces this runtime owns.
 //!
-//! Python Spice owns `.spice`; this runtime owns `.spice-rs`. Durable authority
-//! is beneath the Git common directory. Equal lane, task, thread, or steering
-//! identifiers cannot make either implementation discover, consume,
-//! acknowledge, or overwrite the other's state. The install appliance remains
-//! in the already-disjoint `.spice-install` sibling.
+//! Durable authority lives in `.spice-rs` beneath the Git common directory.
+//! The install appliance lives in the disjoint `.spice-install` sibling, and
+//! [`crate::git_shadow`] publishes the per-worktree Git shadow as
+//! `<git-dir>/spice-rs-agent.gitconfig`.
 //!
-//! The same rule covers the per-worktree Git shadow. Python owns
-//! `<git-dir>/agent.gitconfig`; [`crate::git_shadow`] owns
-//! `<git-dir>/spice-rs-agent.gitconfig`. Neither implementation relies on
-//! byte-compatible whole-file writes by the other.
+//! The layout imposes these rules:
 //!
-//! The ownership split imposes these rules:
-//!
-//! 1. No command in this port may import, convert, or rewrite the predecessor's
-//!    durable state, and none may do so as an incidental effect of another verb.
-//!    An in-place rewrite is still an in-place rewrite when it is called a
-//!    migration.
-//! 2. Every runtime-state path this port creates or writes is below one of its
-//!    exclusive `.spice-rs` roots. [`StatePaths::owned_directories`] and
+//! 1. Every runtime-state path this runtime creates or writes is below one of
+//!    its exclusive `.spice-rs` roots. [`StatePaths::owned_directories`] and
 //!    [`StatePaths::owned_files`] inventory the fixed paths, while
 //!    [`StatePaths::exclusive_directories`] makes every dynamically named child
-//!    Rust-owned without extending ownership into a Python `.spice` root.
-//! 3. The per-worktree Git shadow follows the same separation rule: this runtime
-//!    publishes only `spice-rs-agent.gitconfig` and never Python's
-//!    `agent.gitconfig`.
-//! 4. A cross-system bridge is refused by default. No translator reads
-//!    predecessor task data; the Python archive under the Git-common
-//!    `.spice-py` root is not consulted. `spice rtk gain` is a read-only
-//!    inspector rather than a translator: an operator must name one agent UUID
-//!    and only its current Git-common [`StatePaths::rtk_history`] database may
-//!    be passed to RTK through the documented `RTK_DB_PATH` input.
-//!    Worktree-local and predecessor state are not inspected.
+//!    belong to this runtime.
+//! 2. No verb reads, imports, converts, or rewrites state outside those roots,
+//!    and none does so as an incidental effect of another verb. An in-place
+//!    rewrite is still an in-place rewrite when it is called a migration.
+//! 3. A bridge from foreign state is refused: no translator exists. `spice rtk
+//!    gain` is a read-only inspector rather than a translator: an operator must
+//!    name one agent UUID and only its current Git-common
+//!    [`StatePaths::rtk_history`] database may be passed to RTK through the
+//!    documented `RTK_DB_PATH` input. Worktree-local state is not inspected.
 //!
-//! `tests/coexistence.rs` enforces the filesystem ownership boundary by identity:
-//! it seeds Python's complete `.spice` root, runs the real Rust binary against
-//! `.spice-rs`, and compares the predecessor bytes back. `tests/git_shadow.rs`
-//! independently pins the Rust filename and denies publication at Python's
-//! shadow path.
+//! # Why durable authority is common
 //!
-//! # Why ownership is split but durable authority is common
-//!
-//! Separate Python and Rust roots make ownership a path-containment invariant
-//! rather than a convention every leaf filename must preserve. Within the Rust
-//! namespace, repository authority belongs to the resident spanning linked
-//! worktrees.
+//! One exclusive root makes ownership a path-containment invariant rather than
+//! a convention every leaf filename must preserve. Within it, repository
+//! authority belongs to the resident spanning linked worktrees.
 //!
 //! * The **journal and all other durable runtime state** live below
-//!   `<git-common-dir>/.spice-rs`. Python's databases live below its `.spice`
-//!   sibling, so equal database, lane, task, or steering names still cannot
-//!   resolve to the same path.
+//!   `<git-common-dir>/.spice-rs`.
 //! * **Config** is separate by name and anchor. This runtime reads tracked
 //!   `spice-rust.toml`, common-root `.spice-rs/config.toml`, and each
-//!   worktree's Git-directory `.spice-rs/worktree.toml`; Python owns tracked
-//!   `spice.toml` and its own `.spice` configuration.
+//!   worktree's Git-directory `.spice-rs/worktree.toml`.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
 //!   NAK dispositions are facts in the common-root journal. Hook media is
 //!   projected beneath the Git-common `.spice-rs` root and partitioned by lane,
 //!   so an advertised path is stable and directly readable. A tracked
 //!   `<worktree>/.spice-rs` lookalike is ordinary repository content that
 //!   neither authority surface opens.
-//! * **Artifacts and dynamically named locks** remain Rust-only because their
-//!   parents are below the common exclusive `.spice-rs` root.
+//! * **Artifacts and dynamically named locks** belong to this runtime because
+//!   their parents are below the common exclusive `.spice-rs` root.
 //!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
-//! * **Installed hooks, skills, and binaries** stay in the already-disjoint
+//! * **Installed hooks, skills, and binaries** stay in the disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at
 //!   the [`StatePaths::install_record`] path below `.spice-rs`.
 //! * The **per-worktree Git shadow** is disposable and reconstructible.
-//!   [`crate::git_shadow`] writes `<git-dir>/spice-rs-agent.gitconfig`; Python
-//!   writes `<git-dir>/agent.gitconfig`. `tests/git_shadow.rs` uses a linked
-//!   worktree to pin the per-worktree anchor, the Rust shadow bytes, and the
-//!   absence of publication at Python's filename.
+//!   [`crate::git_shadow`] writes `<git-dir>/spice-rs-agent.gitconfig`.
 //!
 //! State outside the current fixed namespaces is ignored. In particular,
 //! obsolete layouts cannot affect current state admission or command startup.
-//! `tests/coexistence.rs` proves native commands leave the complete predecessor
-//! root byte-identical.
 
 use std::error::Error;
 use std::fmt;
@@ -313,9 +286,7 @@ impl StatePaths {
     ///
     /// `crate::install` spells this name a second time, as a path relative to
     /// the common directory, because a plan describes its operations before a
-    /// [`StatePaths`] exists to resolve them against. `tests/coexistence.rs`
-    /// closes that gap by identity rather than by comparing the two literals:
-    /// it applies a real plan and requires the receipt to land here.
+    /// [`StatePaths`] exists to resolve them against.
     #[must_use]
     pub fn install_record(&self) -> &Path {
         &self.install_record
@@ -383,8 +354,8 @@ impl StatePaths {
     ///
     /// The common authority root and, for a linked worktree, its distinct
     /// worktree root are the architectural boundary. New child names cannot
-    /// accidentally become Python-owned merely because a registry below forgot
-    /// to enumerate them.
+    /// fall outside this runtime's ownership merely because a registry below
+    /// forgot to enumerate them.
     #[must_use]
     pub fn exclusive_directories(&self) -> Vec<&Path> {
         let mut roots = vec![self.runtime()];
@@ -446,38 +417,22 @@ impl Repository {
     /// a linked worktree owns a `.git` pointer whose target may in turn carry
     /// Git's `commondir` file. Those are the only admitted shapes.
     ///
-    /// This is also why the port owes no equivalent of the predecessor's
-    /// worktree re-exec. Its `_reexec_dev_command_for_worktree_checkout`
-    /// re-runs a `dev` command under the worktree's own `.venv`, so an
-    /// installed console script cannot import one checkout's package while
-    /// acting on another's files. Nothing here resolves code or data from
-    /// the binary's own location: data is baked by `include_str!`, and the
-    /// gate's own `current_exe` read digests the running binary instead of
-    /// loading beside it. One installed binary is shared by every worktree
-    /// on purpose, and a caller-supplied start is what keeps the worktree
-    /// it acts on unambiguous.
+    /// Nothing here resolves code or data from the binary's own location:
+    /// data is baked by `include_str!`, and the gate's own `current_exe` read
+    /// digests the running binary instead of loading beside it. One installed
+    /// binary is shared by every worktree on purpose, and a caller-supplied
+    /// start is what keeps the worktree it acts on unambiguous.
     ///
-    /// Unambiguous is not current, and only the first of those is settled
-    /// here. The start fixes which worktree is acted on; nothing fixes which
-    /// build acts. [`crate::install::installed_binary`] resolves one file
-    /// under the common directory that every linked worktree shares, and
-    /// `INSTALL.md` requires it to hash equal to the installing lane's own
-    /// `target/debug/spice`, so the code running here is whichever lane
-    /// installed last. The predecessor bounds that same mismatch to one
-    /// subcommand family, re-execing only when `argv[:1] == ["dev"]`; one
-    /// shared binary is bounded to nothing and serves every verb.
-    ///
-    /// Its remedy still does not transfer. Exec-ing this lane's own
-    /// `target/debug/spice` would fix the build to this checkout, but only
-    /// as far as its last `cargo build`, trading a shared binary whose
-    /// contents were digest-checked at install for a private one that
-    /// silently lags its own source. That is not the correction to reach for.
-    ///
-    /// The hazard above is the state after the first install, not today's.
-    /// Today the worktrees on this machine share one common directory and it
-    /// holds no `.spice-install` at all, so no lane has installed, and
-    /// `core.hooksPath` still names the predecessor's scripts. Nothing
-    /// diverges yet; the divergence begins at the first install.
+    /// Unambiguous is not current. The start fixes which worktree is acted on;
+    /// nothing fixes which build acts. [`crate::install::installed_binary`]
+    /// resolves one file under the common directory that every linked
+    /// worktree shares, and `INSTALL.md` requires it to hash equal to the
+    /// installing lane's own `target/debug/spice`, so the code running here is
+    /// whichever lane installed last. Exec-ing this lane's own
+    /// `target/debug/spice` would fix the build to this checkout only as far
+    /// as its last `cargo build`, trading a shared binary whose contents were
+    /// digest-checked at install for a private one that silently lags its own
+    /// source.
     pub fn discover(start: impl AsRef<Path>) -> Result<Self, ResolveError> {
         let requested = start.as_ref();
         let start = fs::canonicalize(requested)

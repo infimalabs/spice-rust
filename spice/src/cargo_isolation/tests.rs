@@ -665,7 +665,7 @@ fn recognized_interrupted_temporaries_are_reclaimed_but_live_generation_is_not()
 }
 
 #[test]
-fn manual_reader_pins_coexist_and_unlocked_crash_residue_is_reclaimed() {
+fn concurrent_manual_reader_pins_hold_and_unlocked_crash_residue_is_reclaimed() {
     let fixture = Fixture::new();
     let host = fixture.host();
     let first = fixture.prepare(None).expect("prepare first reader");

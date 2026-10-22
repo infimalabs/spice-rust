@@ -57,11 +57,10 @@ generated_paths = [
     "app/renderer/renderer-000.txt",
 ]
 
-# Environment names referenced by the current product, build, gate, and
-# coexistence surfaces. Foreign names remain listed because Gate accounts every
-# reference, but Doctor reports only the typed Spice-owned subset. The three
-# predecessor shell names are read-only coexistence sentinels. Selected-tree
-# tests receive private writable and shared-output roots; Git, RTK, and shell
+# Environment names referenced by the current product, build, and gate
+# surfaces. Foreign names remain listed because Gate accounts every reference,
+# but Doctor reports only the typed Spice-owned subset. Selected-tree tests
+# receive private writable and shared-output roots; Git, RTK, and shell
 # startup selectors retain their upstream spellings.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
@@ -72,15 +71,12 @@ env_names = [
     "RTK_DB_PATH",
     "SPICE_AGENT_VENDOR",
     "SPICE_APP_SOURCE_IDENTITY",
-    "SPICE_HOOKS",
     "SPICE_HOSTED_STAGE",
     "SPICE_HOSTED_VENDOR",
     "SPICE_INSTALL_TEST_EXECUTABLE",
-    "SPICE_LANE",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
-    "SPICE_NATIVE_SHELL",
     "SPICE_RS_BOOTSTRAP_CARGO_HOME",
     "SPICE_RS_DAEMON_HANDOFF",
     "SPICE_RS_HOOKS",

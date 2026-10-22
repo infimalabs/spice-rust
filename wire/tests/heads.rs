@@ -243,7 +243,7 @@ fn witness_heads_admit_each_settled_predicate_class() {
 }
 
 #[test]
-fn both_witness_vocabularies_coexist_without_shadowing() {
+fn both_witness_vocabularies_decode_without_shadowing() {
     let head: WitnessHead = wire::decode(WITNESS.as_bytes()).expect("witness head decodes");
     let command: Command<serde_json::Value> =
         wire::decode(COMMAND.as_bytes()).expect("command decodes");
@@ -314,7 +314,7 @@ fn assert_value_fields(value: &serde_json::Value, fields: &[&str]) {
 /// two types has to be asserted rather than assumed — the day either becomes a
 /// subset of the other is the day to merge them, and this fails then.
 #[test]
-fn both_witness_vocabularies_coexist_unqualified() {
+fn both_witness_vocabularies_stay_distinct_unqualified() {
     use wire::{WitnessClass, WitnessKind};
 
     let head: WitnessHead = wire::decode(WITNESS.as_bytes()).expect("witness head decodes");
