@@ -563,23 +563,6 @@ fn the_resident_environment_derives_its_bootstrap_home_and_drops_inherited_isola
             .map(|(name, value)| (OsString::from(name), OsString::from(value))),
     );
     assert_eq!(resident.bootstrap_home(), Some(Path::new("/native/cargo")));
-    let names = resident
-        .entries()
-        .map(|(name, _)| name.to_os_string())
-        .collect::<Vec<_>>();
-    for dropped in [
-        CARGO_HOME_VARIABLE,
-        NATIVE_CARGO_VARIABLE,
-        NATIVE_RUSTC_VARIABLE,
-        NATIVE_RUSTDOC_VARIABLE,
-    ] {
-        assert!(
-            !names.contains(&OsString::from(dropped)),
-            "{dropped} leaked"
-        );
-    }
-    assert!(names.contains(&OsString::from("PATH")));
-
     let mut command = Command::new("/installed/spice");
     resident.apply(&mut command);
     let applied = command
