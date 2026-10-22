@@ -165,8 +165,8 @@ fn a_captured_bundle_verifies_the_transcript_head_it_carries() {
 /// with the writer about what a key is. This addresses it the way a caller
 /// actually would -- from lane, vendor and stream, with no key composed by hand
 /// -- and pins the miss too: the same head read under a key built from a
-/// different lane is `Ok(None)`, so the reader really is discriminating on all
-/// three fields rather than on the stream name it used to take.
+/// different lane is `Ok(None)`, so the reader discriminates on all three
+/// fields.
 #[test]
 fn a_transcript_head_is_addressed_by_lane_vendor_and_stream_together() {
     let mut journal = authority_fixture();

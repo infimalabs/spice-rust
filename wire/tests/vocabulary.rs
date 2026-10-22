@@ -222,10 +222,9 @@ fn a_nested_body_keeps_its_specified_entry_fields() {
 
 /// A killed occupant is a different ending from an exited one, on the wire.
 ///
-/// The two used to be one record: the resident's own kill was published as
-/// `lane::exited` carrying the `-1` the platform reports for any signalled
-/// process, which is the same document an occupant that returned `-1` itself
-/// produces. Reading a kill back out of the journal meant guessing.
+/// A signalled process reports `-1`, the same code an occupant may return
+/// itself, so only a separate kind lets a journal reader tell a kill from an
+/// exit.
 ///
 /// The round trip alone would not prove that, because a kind that decoded as
 /// either ending would still re-encode to its own document. So the second half

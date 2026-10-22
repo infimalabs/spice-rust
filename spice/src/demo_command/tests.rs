@@ -881,11 +881,9 @@ fn persistent_and_unrelated_readiness_scan_failures_are_preserved() {
 
 /// A readiness scan that fails refuses under its own name.
 ///
-/// Three unrelated failures used to share `demo::readiness-unavailable`:
-/// creating the watcher, registering the watch, and a scan error raised while
-/// waiting. One string for three causes is why a real failure under load could
-/// only be reported as "not the reason I wanted" -- the panic could not say
-/// which of the three had happened.
+/// Creating the watcher, registering the watch, and a scan error raised while
+/// waiting each refuse under a distinct reason, so a failure under load names
+/// which of the three happened.
 ///
 /// This forces the third, which is also the one that actually fires: a
 /// `PollWatcher` does *not* reject a missing directory at registration, it

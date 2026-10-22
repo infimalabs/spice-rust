@@ -41,19 +41,27 @@ fn retention_keeps_each_lanes_newest_entries_and_trims_least_recent_lanes_first(
 
 #[test]
 fn a_restored_document_beyond_the_bounds_is_trimmed_before_use() {
-    let lanes = (0..12)
+    let large = "y".repeat(BUDGET_BYTES / 10);
+    let mut lanes = (0..11)
         .map(|lane| LaneHistory {
             lane: format!("lane-{lane}"),
-            entries: vec!["y".repeat(BUDGET_BYTES / 10); LANE_ENTRIES + 1],
+            entries: vec![large.clone()],
         })
-        .collect();
+        .collect::<Vec<_>>();
+    lanes.push(LaneHistory {
+        lane: "recent".to_owned(),
+        entries: (0..=LANE_ENTRIES).map(|index| index.to_string()).collect(),
+    });
     let oversized = InputHistory { lanes }.document();
 
     let restored = InputHistory::restore(&oversized);
 
+    assert!(oversized.len() > BUDGET_BYTES);
     assert!(restored.document().len() <= BUDGET_BYTES);
     assert!(restored.entries("lane-0").is_empty());
-    assert!(!restored.entries("lane-11").is_empty());
+    assert_eq!(restored.entries("lane-10"), [large]);
+    assert_eq!(restored.entries("recent").len(), LANE_ENTRIES);
+    assert_eq!(restored.entries("recent")[0], "1");
 }
 
 #[test]

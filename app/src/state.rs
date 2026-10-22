@@ -65,8 +65,7 @@ impl Applied {
 /// otherwise have rendered. And a retained header costs about a hundred bytes: a
 /// [`Seq`], an [`Origin`] such as `task:1kKRRsDP` or `lane:<uuid>`, an
 /// optional [`Seq`], plus the map node that keys it. The window is therefore near
-/// 100 KiB — a fixed price a tab pays once against a cost that previously had no
-/// ceiling at all.
+/// 100 KiB — a fixed price a tab pays once against an otherwise unbounded cost.
 ///
 /// It is a constant rather than configuration because the socket is this
 /// crate's whole system boundary. A configured bound could only arrive from the

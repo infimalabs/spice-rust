@@ -1,11 +1,8 @@
 //! Deadline-driven relative ages for the browser app.
 //!
-//! Ages used to be arithmetic done during render: a component read
-//! `Date::now()`, subtracted an instant, and spelled the difference. That makes
-//! the age a property of *when the frame happened* rather than of the thing
-//! being aged, so a lane the resident has stopped talking about keeps showing
-//! the span it had when its last frame arrived. The app looked idle because
-//! it was idle.
+//! An age belongs to the thing being aged, not to the frame that rendered it:
+//! arithmetic done only during render would leave a lane the resident has
+//! stopped talking about showing the span it had when its last frame arrived.
 //!
 //! Each relative label schedules only the next instant at which its visible
 //! spelling can change. A seconds-old message wakes each second, while a lease

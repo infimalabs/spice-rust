@@ -47,14 +47,13 @@ exec "$@"
 /// stubs — `gre0`, `sit0`, `tunl0`, `ip6tnl0` and their relatives — as soon as
 /// those modules are loaded anywhere on the host, and `/sys/class/net` also
 /// holds `bonding_masters`, which is a control file and not an interface at
-/// all. Deciding on the name `lo` therefore turned away exactly the isolated
+/// all, so deciding on the name `lo` would turn away exactly the isolated
 /// `--network=none` container this boundary exists to admit.
 ///
 /// So the rule asks what an interface can do rather than what it is called.
 /// Only an administratively up interface can carry a packet, which admits
 /// every stub while it stays down, and `IFF_LOOPBACK` is set by the kernel for
-/// the loopback device alone, which is what a name comparison could not check:
-/// a real adapter renamed `lo` used to pass on its name and no longer does.
+/// the loopback device alone, so a real adapter renamed `lo` is refused.
 macro_rules! network_rule {
     () => {
         r#"
