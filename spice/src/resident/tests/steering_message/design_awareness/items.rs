@@ -148,3 +148,84 @@ fn a_whole_statement_match_asks_the_lowest_unheld_item_when_no_item_clears_the_f
     seated.release_all();
     lanes.finish();
 }
+
+/// The invitation floor the planner reads for `design` now.
+fn floor(lanes: &Lanes, config: &SurfaceConfig, design: &wire::TaskHandle) -> f64 {
+    let planning =
+        crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
+    let born = stamp(design);
+    let entry = planning
+        .entries
+        .iter()
+        .find(|entry| *entry.born() == born)
+        .expect("the Design is on the board");
+    crate::resident::design_awareness::invitation_floor(planning.snapshot.facts(), entry)
+}
+
+#[test]
+fn a_steeped_design_invites_at_converges_floor_until_an_item_contests() {
+    use wire::rooms::WorkingGroupStance::{Converge, Explore, Passive};
+
+    let lanes = Lanes::new("design-request-steeped-floor");
+    lanes.seat(THIRD);
+    let config = surface(&lanes);
+    let design = item_design(&lanes, &[UNRELATED[0], UNRELATED[1]]);
+    lanes.group(30, &config, &design, Passive);
+    let expected = crate::resident::design_awareness::match_score_floor;
+    assert_eq!(floor(&lanes, &config, &design), expected(Passive));
+
+    lanes.charge(50, &config, SENDER, &design, 1, 1);
+    lanes.charge(51, &config, SECOND, &design, 1, 1);
+    assert_eq!(
+        floor(&lanes, &config, &design),
+        expected(Passive),
+        "two opinions leave the item unopposed"
+    );
+    lanes.charge(52, &config, THIRD, &design, 1, 1);
+    assert_eq!(
+        floor(&lanes, &config, &design),
+        expected(Converge),
+        "three lanes concur, and a steeped Design asks as Converge does"
+    );
+    lanes.stance(53, &config, Explore);
+    assert_eq!(
+        floor(&lanes, &config, &design),
+        expected(Converge),
+        "Explore cannot lower a steeped Design's floor"
+    );
+
+    lanes.charge(54, &config, SENDER, &design, 1, -1);
+    assert_eq!(
+        floor(&lanes, &config, &design),
+        expected(Explore),
+        "a contesting charge un-steeps the Design and its stance's floor returns"
+    );
+    lanes.finish();
+}
+
+#[test]
+fn every_item_concurring_owes_no_whole_design_ask() {
+    let lanes = Lanes::new("design-request-all-concurred");
+    lanes.seat(THIRD);
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let design = item_design(&lanes, &[UNRELATED[0]]);
+    for (id, lane) in [(50, SENDER), (51, SECOND), (52, THIRD)] {
+        lanes.charge(id, &config, lane, &design, 1, 1);
+    }
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    lanes.complete(&task, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    assert_eq!(
+        lanes.request(&config, FIRST),
+        None,
+        "a Design whose every item concurs has nothing left for an outside lane to weigh"
+    );
+    assert!(lanes.noticed().is_empty());
+    seated.release_all();
+    lanes.finish();
+}

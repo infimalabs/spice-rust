@@ -328,6 +328,17 @@ impl DesignItems {
         steeped(&self.states(acceptance))
     }
 
+    /// Whether the statement names at least one item and every current item
+    /// concurs, leaving nothing for an outside lane to weigh.
+    #[must_use]
+    pub fn all_concurred(&self, acceptance: &[String]) -> bool {
+        let states = self.states(acceptance);
+        !states.is_empty()
+            && states
+                .iter()
+                .all(|state| *state == DesignItemState::Concurred)
+    }
+
     /// Each current item's standing, in statement order.
     #[must_use]
     pub fn standings(&self, acceptance: &[String]) -> Vec<DesignItemStanding> {
@@ -1190,6 +1201,35 @@ mod tests {
             maturity.state(&acceptance(&ITEMS[..1])),
             DesignMaturityState::Steeped { quiet: 0 },
             "a removed item leaves the gate"
+        );
+    }
+
+    #[test]
+    fn every_item_concurring_is_judged_apart_from_steeped() {
+        let mut maturity = DesignMaturity::default();
+        let current = acceptance(&ITEMS);
+        assert!(!maturity.items.all_concurred(&current));
+        assert!(
+            !maturity.items.all_concurred(&[]),
+            "a statement without items leaves nothing to concur"
+        );
+        for lane in 1..=3 {
+            maturity.observe_contribution(&charge(lane, ITEMS[0], 1));
+        }
+        assert!(maturity.items.steeped(&current));
+        assert!(
+            !maturity.items.all_concurred(&current),
+            "a quiet item is still open to an outside lane"
+        );
+        for lane in 1..=3 {
+            maturity.observe_contribution(&charge(lane, ITEMS[1], -1));
+        }
+        assert!(maturity.items.all_concurred(&current));
+        assert!(
+            !maturity
+                .items
+                .all_concurred(&acceptance(&[ITEMS[0], "Who answers it first?"])),
+            "a reworded item reopens the statement"
         );
     }
 
