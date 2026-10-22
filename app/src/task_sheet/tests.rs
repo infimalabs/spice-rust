@@ -3,7 +3,7 @@ use wire::rooms::{
 };
 use wire::{Seq, SequenceCode};
 
-use super::{ProposalLine, SheetBlock, proposal_lines, sheet_blocks};
+use super::{ProposalLine, proposal_lines, sheet_blocks};
 use crate::work::tests::{stamp, task};
 
 #[test]
@@ -19,22 +19,15 @@ fn sheet_blocks_read_description_acceptance_history_with_their_counts() {
 }
 
 #[test]
-fn a_design_counts_questions_and_an_empty_block_names_its_absence() {
+fn a_design_counts_questions_and_an_absent_description_counts_zero() {
     let mut row = task(2, "rooms.design");
     row.statement.body.intent = Some(wire::TaskIntent::Design);
     row.statement.body.description = None;
-    row.statement.body.acceptance.clear();
-    let [description, questions, _] = sheet_blocks(&row.statement.body, 0);
+    row.statement.body.acceptance = vec!["Which store?".to_owned(), "Who owns it?".to_owned()];
     assert_eq!(
-        description,
-        SheetBlock {
-            label: "Description",
-            count: 0,
-            empty: "No description was recorded."
-        }
+        sheet_blocks(&row.statement.body, 0).map(|block| (block.label, block.count)),
+        [("Description", 0), ("Questions", 2), ("History", 0)]
     );
-    assert_eq!((questions.label, questions.count), ("Questions", 0));
-    assert_eq!(questions.empty, "No open questions were recorded.");
 }
 
 #[test]
