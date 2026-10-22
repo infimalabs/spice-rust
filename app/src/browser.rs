@@ -133,6 +133,8 @@ enum NoteSubmission {
     Posting,
     /// The composed text was sent as this task's closing validation.
     Closing,
+    /// The Design was sent to conclude done.
+    Concluding,
     /// The composed text was sent as this task's withdrawal reason.
     Deleting,
     Failed(String),
@@ -140,7 +142,10 @@ enum NoteSubmission {
 
 impl NoteSubmission {
     const fn busy(&self) -> bool {
-        matches!(self, Self::Posting | Self::Closing | Self::Deleting)
+        matches!(
+            self,
+            Self::Posting | Self::Closing | Self::Concluding | Self::Deleting
+        )
     }
 }
 

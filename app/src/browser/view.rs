@@ -191,6 +191,8 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
                 connected: render.connection.is_online(),
                 can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::RoomPost)),
                 can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
+                can_conclude: runtime
+                    .is_some_and(|runtime| runtime.offers(CommandKind::TaskConclude)),
                 blocker_review: render.blocker_review,
                 blocker_review_button_ref: render.blocker_review_button,
                 blocker_review_close_ref: render.blocker_review_close,

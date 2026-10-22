@@ -30,6 +30,14 @@ pub enum Refusal {
         /// What an accepted value for that field looks like.
         hint: &'static str,
     },
+    /// Text was typed into a field whose submission carries none.
+    #[error("{field} would be discarded: {hint}.")]
+    Unused {
+        /// Label of the field as the form spells it.
+        field: &'static str,
+        /// How to keep the text instead.
+        hint: &'static str,
+    },
     /// No seated agent is selected to receive the message.
     #[error("Select a seated agent before sending direction.")]
     Unseated,
@@ -95,6 +103,22 @@ pub fn close(text: &str) -> Result<String, Refusal> {
         });
     }
     Ok(text.to_owned())
+}
+
+/// Admit concluding a Design done from its composer: the conclusion carries
+/// no text, so a draft must be published or cleared first rather than lost.
+///
+/// # Errors
+///
+/// Returns [`Refusal::Unused`] when the draft is not blank.
+pub fn conclusion(text: &str) -> Result<(), Refusal> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    Err(Refusal::Unused {
+        field: "Observation",
+        hint: "a conclusion carries no text; Add it as an observation first or clear it",
+    })
 }
 
 /// A refusal held for display, or nothing while the last submission stood.

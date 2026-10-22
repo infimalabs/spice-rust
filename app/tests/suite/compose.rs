@@ -36,3 +36,14 @@ fn steering_a_blank_message_is_refused_by_name() {
         assert!(matches!(refusal, Refusal::Missing { .. }));
     }
 }
+
+/// A conclusion carries no text, so a drafted observation is never silently
+/// consumed by it; only a blank composer concludes.
+#[test]
+fn concluding_with_a_drafted_observation_is_refused_rather_than_discarded() {
+    for blank in ["", " ", "\n\t "] {
+        compose::conclusion(blank).expect("a blank composer concludes");
+    }
+    let refusal = compose::conclusion(" evidence ").expect_err("a draft would be lost");
+    assert!(matches!(refusal, Refusal::Unused { .. }));
+}

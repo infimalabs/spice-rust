@@ -6,6 +6,7 @@ use super::*;
 enum PendingFeedback {
     NotePosting { task: TaskStamp, subject: String },
     Closing { task: TaskStamp, subject: String },
+    Concluding { task: TaskStamp, subject: String },
     Deleting { task: TaskStamp, subject: String },
     Reconnecting { task: TaskStamp },
 }
@@ -15,6 +16,7 @@ impl PendingFeedback {
         match self {
             Self::NotePosting { task, .. }
             | Self::Closing { task, .. }
+            | Self::Concluding { task, .. }
             | Self::Deleting { task, .. }
             | Self::Reconnecting { task } => task,
         }
@@ -26,6 +28,7 @@ impl PendingFeedback {
                 format!("Publishing observation in {subject}'s room…").into()
             }
             Self::Closing { subject, .. } => format!("Closing {subject}…").into(),
+            Self::Concluding { subject, .. } => format!("Concluding {subject}…").into(),
             Self::Deleting { subject, .. } => format!("Deleting {subject}…").into(),
             Self::Reconnecting { .. } => {
                 "Showing admitted detail while reconnecting. Updates and observations will resume when spice reconnects.".into()
@@ -39,6 +42,7 @@ impl PendingFeedback {
                 Some(format!("Observation published in {subject}'s room.").into())
             }
             Self::Closing { subject, .. } => Some(format!("Closed {subject} as completed.").into()),
+            Self::Concluding { subject, .. } => Some(format!("Concluded {subject} done.").into()),
             Self::Deleting { subject, .. } => Some(format!("Deleted {subject}.").into()),
             Self::Reconnecting { .. } => None,
         }
@@ -83,6 +87,10 @@ fn feedback(state: &AppState) -> Feedback {
                     task: task.clone(),
                     subject: task_subject(runtime, task),
                 }),
+                NoteSubmission::Concluding => Some(PendingFeedback::Concluding {
+                    task: task.clone(),
+                    subject: task_subject(runtime, task),
+                }),
                 NoteSubmission::Deleting => Some(PendingFeedback::Deleting {
                     task: task.clone(),
                     subject: task_subject(runtime, task),
@@ -106,6 +114,7 @@ fn feedback(state: &AppState) -> Feedback {
                     NoteSubmission::Idle
                     | NoteSubmission::Posting
                     | NoteSubmission::Closing
+                    | NoteSubmission::Concluding
                     | NoteSubmission::Deleting => None,
                 });
         }
