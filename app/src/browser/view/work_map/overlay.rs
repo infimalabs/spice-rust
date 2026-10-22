@@ -17,6 +17,7 @@ pub(super) struct MapNodeTarget {
     pub(super) selected: bool,
     pub(super) availability: Option<&'static str>,
     pub(super) disposition: Option<&'static str>,
+    pub(super) mark: Option<&'static str>,
     pub(super) state: Option<&'static str>,
 }
 
@@ -77,6 +78,7 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
                         data-task-stamp={target.task.to_string()}
                         data-work-availability={target.availability}
                         data-work-disposition={target.disposition}
+                        data-work-mark={target.mark}
                         data-work-state={target.state}
                         aria-label={label.clone()}
                         title={label}

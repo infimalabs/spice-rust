@@ -27,6 +27,8 @@
 .work-map-node-button[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
 .work-map-node-button[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
 .work-map-node-button[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
+/* A Design ready for proposal wears the live tone its tab mark carries. */
+.work-map-node-button[data-work-mark="proposal"] { --work-card-tone: var(--app-semantic-live); }
 
 .work-context-link {
   flex: none;
