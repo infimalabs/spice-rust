@@ -368,7 +368,8 @@ pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
     }
 }
 
-/// `actor`'s nudge of `design` at the heads `current` shows.
+/// `actor`'s nudge of `design` at the heads `current` shows, with no lane free
+/// to take it.
 pub(super) fn nudge_design(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -377,16 +378,24 @@ pub(super) fn nudge_design(
     design: &TaskHandle,
 ) -> Outcome<CommandAnswer> {
     let heads = at(current, design);
-    issue(
-        bus,
+    let request = wire::rooms::DesignNudge {
+        design: design.clone(),
+    };
+    let command = fixture_command(
         epoch,
         actor,
         CommandKind::DesignNudge,
         vec![statement_witness(heads), workflow_witness(heads)],
-        &wire::rooms::DesignNudge {
-            design: design.clone(),
-        },
+        &request,
+    );
+    crate::board_command::design_nudge(
+        bus,
+        &command,
+        &request,
+        &steer::Config::default(),
+        |_, _| Ok(None),
     )
+    .0
 }
 
 /// The rows an Open read reports as blocked execution trouble, after proving

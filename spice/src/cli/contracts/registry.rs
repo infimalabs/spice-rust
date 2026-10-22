@@ -723,7 +723,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["preparation", "nudge"],
         "preparation nudge DESIGN",
         Command,
-        [DesignNudged],
+        [SteerSent, RoomPosted, DesignNudged],
         Reply,
         "preparation::nudge"
     ),

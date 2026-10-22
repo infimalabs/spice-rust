@@ -782,8 +782,9 @@ fn newest_words<'a>(
 }
 
 /// A design's menu carries what its room holds besides conversation: its
-/// standing, the coordination that asks a lane for a contribution, and its
-/// preparation authority. Its group rail mirrors an agent's team rail.
+/// standing, the operator's Nudge to proposal, the coordination that asks a
+/// lane for a contribution, and its preparation authority. Its group rail
+/// mirrors an agent's team rail.
 fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let label = format!("Menu for {}", channel.label);
     html! {
@@ -808,6 +809,7 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                 </header>
                 {render_group_actions(render, channel)}
                 {super::standing::render_standing(render.runtime, &channel.stamp, render.runtime.board().and_then(|board| board.row(&channel.stamp)))}
+                {super::nudge::nudge_control(render.runtime, &toast(render), render.sender, &channel.stamp)}
                 {super::coordination::coordination_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
                 {render_preparation(render.runtime, &channel.stamp)}
             </div>

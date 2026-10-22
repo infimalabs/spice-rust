@@ -227,6 +227,9 @@ pub struct RoomState {
     /// Latest lane-authored event, used to prove earlier posts were heard
     /// without rescanning the room for every rendered card.
     latest_lane_event: Option<Seq>,
+    /// Each nudge that messaged a lane: its position and the publication that
+    /// carried the room's unheard operator posts.
+    nudges: BTreeMap<Seq, RoomAuthorityStamp>,
     /// Each asked lane's newest recorded Design request: its position, exact
     /// retained evidence, and asked question items in asked order.
     asked: BTreeMap<
@@ -746,27 +749,14 @@ impl RoomProjection {
                         )
                     }),
             ),
-            FactKind::DesignNoticed => {
-                Some(fact.read::<authority::DesignNoticed>().is_some_and(|body| {
-                    self.rooms
-                        .entry(body.design.clone())
-                        .or_default()
-                        .asked
-                        .insert(
-                            body.lane,
-                            (
-                                fact.seq(),
-                                body.evidence.clone(),
-                                body.asks.iter().map(|ask| ask.question).collect(),
-                            ),
-                        );
-                    self.maturity
-                        .entry(body.design.clone())
-                        .or_default()
-                        .observe_request(&body);
-                    true
-                }))
-            }
+            FactKind::DesignNoticed => Some(
+                fact.read::<authority::DesignNoticed>()
+                    .is_some_and(|body| self.apply_noticed(fact.seq(), &body)),
+            ),
+            FactKind::DesignNudged => Some(
+                fact.read::<authority::DesignNudged>()
+                    .is_some_and(|body| self.apply_nudged(fact.seq(), body)),
+            ),
             FactKind::RoomRelevanceObserved => Some(
                 fact.read::<authority::RoomRelevanceObserved>()
                     .is_some_and(|body| self.apply_observed(fact.seq(), body.observation)),
@@ -777,6 +767,39 @@ impl RoomProjection {
             ),
             _ => None,
         }
+    }
+
+    fn apply_noticed(&mut self, position: Seq, body: &authority::DesignNoticed) -> bool {
+        self.rooms
+            .entry(body.design.clone())
+            .or_default()
+            .asked
+            .insert(
+                body.lane,
+                (
+                    position,
+                    body.evidence.clone(),
+                    body.asks.iter().map(|ask| ask.question).collect(),
+                ),
+            );
+        self.maturity
+            .entry(body.design.clone())
+            .or_default()
+            .observe_request(body);
+        true
+    }
+
+    /// Retain a nudge's message, whose acknowledgement hears every earlier
+    /// operator post in its Design's room.
+    fn apply_nudged(&mut self, position: Seq, body: authority::DesignNudged) -> bool {
+        body.message.is_some_and(|message| {
+            self.rooms
+                .entry(body.design)
+                .or_default()
+                .nudges
+                .insert(position, message)
+                .is_none()
+        })
     }
 
     fn apply_messaged(&mut self, position: Seq, body: authority::RoomMessaged) -> bool {

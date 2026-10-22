@@ -121,8 +121,10 @@ impl RoomProjection {
     ///
     /// Current listening authority suppresses the mark immediately. A later
     /// lane-authored room event suppresses it permanently, including after
-    /// that lane leaves and no current listening reason remains. Callers
-    /// rendering several cards compute `has_current_listener` once.
+    /// that lane leaves and no current listening reason remains, as does a
+    /// later nudge whose message, which carried the room's unheard posts, its
+    /// lane acknowledged or declined. Callers rendering several cards compute
+    /// `has_current_listener` once.
     #[must_use]
     pub fn unheard_post(
         &self,
@@ -147,6 +149,29 @@ impl RoomProjection {
             && state
                 .latest_lane_event
                 .is_none_or(|position| position <= post.position)
+            && !state
+                .nudges
+                .range(post.position..)
+                .any(|(_, message)| self.message_heard(message))
+    }
+
+    /// Whether the lane a nudge's `message` was directed to acknowledged or
+    /// declined it.
+    fn message_heard(&self, message: &authority::RoomAuthorityStamp) -> bool {
+        self.conversation
+            .conversation(message)
+            .is_some_and(|conversation| {
+                conversation.directed.iter().any(|directive| {
+                    self.conversation
+                        .delivery(directive)
+                        .is_some_and(|delivery| {
+                            matches!(
+                                delivery.value.disposition,
+                                Disposition::Acked | Disposition::Declined
+                            )
+                        })
+                })
+            })
     }
 
     /// Reasons a lane listens regardless of any leave: a claim on associated

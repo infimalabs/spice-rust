@@ -187,7 +187,7 @@ pub(super) async fn send_room_coordination(
     }
 }
 
-/// Submit one exact proposal decision under the heads its preview observed.
+/// Submit one preparation write under the heads its surface observed.
 pub(super) async fn send_preparation(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -206,6 +206,18 @@ pub(super) async fn send_preparation(
                 actions,
                 pending,
                 CommandKind::PreparationDecide,
+                expected.clone(),
+                request.clone(),
+            )
+            .await
+        }
+        crate::client_action::PreparationRequest::Nudge { request, expected } => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::DesignNudge,
                 expected.clone(),
                 request.clone(),
             )

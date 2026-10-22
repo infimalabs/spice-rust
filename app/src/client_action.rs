@@ -76,11 +76,16 @@ pub(crate) enum RoomCoordinationRequest {
     },
 }
 
-/// One exact proposal decision with the heads its preview observed.
+/// One preparation write with the heads its surface observed: an exact
+/// proposal decision, or a nudge pushing an open Design to proposal.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum PreparationRequest {
     Decide {
         request: wire::rooms::PreparationDecide,
+        expected: Vec<wire::Witness>,
+    },
+    Nudge {
+        request: wire::rooms::DesignNudge,
         expected: Vec<wire::Witness>,
     },
 }
