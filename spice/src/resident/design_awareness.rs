@@ -49,6 +49,29 @@ pub(in crate::resident) fn match_score_floor(stance: WorkingGroupStance) -> f64 
     MATCH_SCORE_BASE * parts / MATCH_SCORE_PARTS
 }
 
+/// The stance whose floor one Design's invitations clear: its group's,
+/// raised to Converge once its current items steep. A steeped Design is
+/// close, so it asks only the lanes Converge would; the floor falls back with
+/// the fold as soon as a later charge contests an item or a statement edit
+/// un-steeps it. The notice records this stance as the one that admitted the
+/// match.
+fn admitting_stance(facts: &bus::TaskFacts, design: &board::Entry) -> WorkingGroupStance {
+    let born = design.born();
+    let steeped = facts
+        .design_items(born)
+        .is_some_and(|items| items.steeped(&design.statement().acceptance));
+    if steeped {
+        WorkingGroupStance::Converge
+    } else {
+        facts.design_stance(born)
+    }
+}
+
+/// The floor one Design's invitations clear.
+pub(in crate::resident) fn invitation_floor(facts: &bus::TaskFacts, design: &board::Entry) -> f64 {
+    match_score_floor(admitting_stance(facts, design))
+}
+
 /// One Design request and the journal position its planning read covered.
 #[derive(Clone)]
 struct PlannedRequest {
@@ -459,10 +482,16 @@ fn select_design(
     let evidence = durable_evidence(matched.evidence, matched.digest);
     let excerpt = matched.excerpt.to_owned();
     let terms = matched.terms;
-    let stance = facts.design_stance(design.born());
+    let stance = admitting_stance(facts, design);
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
-    let ask = choose_ask(profile, frequency, design, asks, match_score_floor(stance))
-        .map_err(mismatch)?;
+    let ask = choose_ask(
+        profile,
+        frequency,
+        design,
+        asks,
+        invitation_floor(facts, design),
+    )
+    .map_err(mismatch)?;
     Ok(Some(Selection {
         design: design.born().clone(),
         statement: design.statement().revision,
@@ -477,7 +506,8 @@ fn select_design(
 /// What `design` still owes this continuing session: each item the stance
 /// makes askable of the lane that the session was not yet asked and did not
 /// answer, or, when no current item is askable of the lane, the whole Design
-/// (an empty list) unless asked or answered. `None` when it owes nothing.
+/// (an empty list) unless asked or answered. `None` when it owes nothing,
+/// including once every current item concurs: nothing is left to weigh.
 fn pending_asks(
     facts: &bus::TaskFacts,
     lane: CanonicalUuid,
@@ -487,10 +517,12 @@ fn pending_asks(
     let born = design.born();
     let acceptance = &design.statement().acceptance;
     let stance = facts.design_stance(born);
-    let askable = match facts.design_items(born) {
-        Some(items) => items.askable(acceptance, stance, lane),
-        None => DesignItems::default().askable(acceptance, stance, lane),
-    };
+    let quiet = DesignItems::default();
+    let items = facts.design_items(born).unwrap_or(&quiet);
+    if items.all_concurred(acceptance) {
+        return None;
+    }
+    let askable = items.askable(acceptance, stance, lane);
     let open = |item: Option<&RoomQuestionItem>| {
         !facts.design_was_asked_in_session(lane, session, born, item)
             && !facts.design_ask_answered_in_session(lane, session, born, item)
@@ -537,7 +569,7 @@ fn choose_ask(
     Ok(asks.into_iter().nth(best.map_or(0, |(_, index)| index)))
 }
 
-/// One prepared open Design weighted under its effective stance's floor.
+/// One prepared open Design weighted under its invitation floor.
 fn candidate<'a>(
     facts: &bus::TaskFacts,
     (design, vector): &'a (&'a board::Entry, Prepared),
@@ -546,7 +578,7 @@ fn candidate<'a>(
         design.born(),
         *design,
         vector,
-        match_score_floor(facts.design_stance(design.born())),
+        invitation_floor(facts, design),
     )
 }
 

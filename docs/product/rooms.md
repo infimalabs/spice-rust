@@ -104,17 +104,22 @@ owns each rule summarized here.
   views use the same 256-statement corpus, logarithmic term frequency, smooth
   inverse document frequency, L2 normalization, and durable Design-identity
   tie break. Each candidate owns its stance-weighted cosine floor: passive uses
-  the balanced 0.15 base, Explore uses 0.10, and Converge uses 0.20. The floor
-  decides qualification only; finite cosine score still decides ranking. One
-  opportunity selects one Design at most; one session has one unanswered
-  request at most. Whether a lane is asked is decided on the whole statement;
-  what it is asked is one question item. Passive and Explore ask a lane about
-  quiet and unopposed items whose charge series does not hold it; while an
-  item is contested, Converge instead asks a lane already in that item's
-  series to re-charge it at strength 2, and otherwise asks as Explore does. A
-  concurred item is never asked. Of the items still owed, the request names the
-  one whose text, read with the problem sentence, scores best against any
-  retained card view at or above the floor, else the lowest-index one.
+  the balanced 0.15 base, Explore uses 0.10, and Converge uses 0.20. A Design
+  whose maturity is steeped clears Converge's floor whatever its group's
+  stance: it is close, so it asks only the lanes Converge would, and its
+  group's floor returns as soon as a later charge contests an item or a
+  statement edit un-steeps it; the notice records Converge as the admitting
+  stance. The floor decides qualification only; finite cosine score still
+  decides ranking. One opportunity selects one Design at most; one session has
+  one unanswered request at most. Whether a lane is asked is decided on the
+  whole statement; what it is asked is one question item. Passive and Explore
+  ask a lane about quiet and unopposed items whose charge series does not hold
+  it; while an item is contested, Converge instead asks a lane already in that
+  item's series to re-charge it at strength 2, and otherwise asks as Explore
+  does. A concurred item is never asked. Of the items still owed, the request
+  names the one whose text, read with the problem sentence, scores best
+  against any retained card view at or above the floor, else the lowest-index
+  one.
   A `room::noticed` record names the exact Design statement, session,
   compaction race witness, opportunity, evidence and immutable identity, the
   stance whose floor admitted the match, at most six strongest weighted
@@ -122,9 +127,11 @@ owns each rule summarized here.
   its match was cast slightly wider than usual under the lower floor, so the
   invited lane weighs the listed terms accordingly. Each item is asked once per
   continuing session, and a Design with no item the lane may be asked is asked
-  as a whole once. An item ask settles only on the lane's own contribution
-  against that item or its leave; a whole-Design ask settles on any room record
-  by the lane. Answers stay settled across occupants, restarts, and compaction.
+  as a whole once, unless every current item concurs: then nothing is left to
+  weigh and the Design asks nobody. An item ask settles only on the lane's own
+  contribution against that item or its leave; a whole-Design ask settles on
+  any room record by the lane. Answers stay settled across occupants,
+  restarts, and compaction.
   Prior contribution retains bounded room context without creating attention
   or recruitment.
   Compaction neither resets history nor creates an opportunity. A fresh vendor
