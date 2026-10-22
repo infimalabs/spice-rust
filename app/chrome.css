@@ -269,3 +269,38 @@ body:has(.shell),
 }
 /* The model field keeps a usable width; its buttons wrap beneath it first. */
 .member-model input { flex-basis: 8em; }
+/* A held leave lists the unsent work that held it, over the workspace and
+   beneath the command bar, until the operator dismisses it. */
+.unsent-work {
+  position: fixed;
+  inset-block-start: calc(var(--app-commandbar-block-size) + var(--mosaic-gap));
+  inset-inline: var(--app-shell-edge-start) var(--app-shell-edge-end);
+  z-index: 11;
+  display: grid;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(36rem, 100% - var(--app-shell-edge-start) - var(--app-shell-edge-end));
+  margin-inline: auto;
+  padding: 10px 14px;
+  font-size: var(--app-type-toast);
+}
+.unsent-work-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.unsent-work-header h2 { margin: 0; font-size: var(--app-type-section); }
+.unsent-work-items { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.unsent-work-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: center;
+}
+.unsent-work-excerpt {
+  grid-column: 1;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.unsent-work-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 6px; }

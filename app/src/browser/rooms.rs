@@ -30,7 +30,7 @@ mod contributions;
 mod coordination;
 mod reading;
 mod standing;
-pub(super) use console::{GroupRender, group_base, render_group_surfaces};
+pub(super) use console::{GroupRender, design_of_key, group_base, render_group_surfaces};
 pub(super) use reading::render_task_room;
 
 const STORAGE: &str = "spice:room-views:v2";

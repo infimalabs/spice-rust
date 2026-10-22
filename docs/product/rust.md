@@ -287,6 +287,18 @@ then still requires that explicit update. Owners:
 [`app/src/browser/mermaid/service.rs`](../../app/src/browser/mermaid/service.rs),
 and [`app/src/browser/draft_handoff.rs`](../../app/src/browser/draft_handoff.rs).
 
+One inventory of unsent work arms the page's leave guard: every handed-off
+composer and observation draft (live text included, mounted or not), the
+submissions the resident has not yet accepted, and annotation marks not yet
+applied to an image. An empty inventory leaves the guard disarmed. The
+browser's leave dialog carries no page text, so a leave the operator cancels
+lists each item under the command bar, naming its kind and owner: the lane and
+its team, a Design's handle, a task's handle, or an image. **Show** reveals and
+focuses a draft's composer; a draft whose lane no console shows says so, and
+**Discard** removes any draft after a confirm naming its owner. Owners:
+[`app/src/unsent_work.rs`](../../app/src/unsent_work.rs) and
+[`app/src/browser/unsent.rs`](../../app/src/browser/unsent.rs).
+
 ## Version identity
 
 `spice --version`, `spice version`, and the app menu report the tracked version

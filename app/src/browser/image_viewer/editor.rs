@@ -455,7 +455,6 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         apply: apply_command.reform(|_: MouseEvent| ()),
     };
     let dirty = history.differs_from(base.shapes.as_ref());
-    super::super::use_unsafe_intent_guard(dirty);
     {
         let ondirty = props.ondirty.clone();
         use_effect_with(dirty, move |dirty| ondirty.emit(*dirty));

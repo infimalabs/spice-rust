@@ -86,7 +86,7 @@ pub(super) struct AppRender<'a> {
     pub composer_slots: &'a super::watchband::ComposerSlots,
     pub team_drag: &'a super::watchband::TeamDragState,
     pub team_fleet: &'a NodeRef,
-    pub unsafe_intent: bool,
+    pub unsent: &'a UseStateHandle<Option<Vec<crate::unsent_work::UnsentWork>>>,
     pub sender: &'a SenderHandle,
     pub room_controls: &'a super::rooms::Controls,
     pub draft_controls: &'a super::drafts::Controls,
@@ -121,7 +121,6 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
         <div
             class="shell"
             data-topology-revision={topology_revision}
-            data-unsafe-intent={render.unsafe_intent.to_string()}
             data-submission-count={render.submissions.status.len().to_string()}
         >
             {chrome::render_command_bar(chrome::CommandBarRender {
@@ -132,6 +131,13 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
                 app_update: render.app_update,
                 work,
                 surface: render.surface,
+            })}
+            {super::unsent::render(&super::unsent::UnsentRender {
+                held: render.unsent,
+                runtime: surface.as_ref(),
+                drafts: render.composer_drafts,
+                notes: render.notes,
+                select_task: &render.select_task,
             })}
             {watchband::render_feedback(surface.as_ref(), render.team_controls)}
             if let Some(notice) = &render.card_target_notice {

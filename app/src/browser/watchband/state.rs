@@ -273,10 +273,6 @@ impl ComposerDrafts {
             .get(lane)
             .is_some_and(|draft| !draft.quotes.is_empty() || !draft.attachments.is_empty())
     }
-
-    pub(in crate::browser) fn is_unsafe(&self) -> bool {
-        self.0.is_unsafe()
-    }
 }
 
 /// Announce each composer refusal through the root toast, so the refusal
