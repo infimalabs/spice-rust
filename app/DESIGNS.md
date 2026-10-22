@@ -9,16 +9,16 @@ the [team console](CONSOLE.md).
 
 Every read derives one standing from the Design's workflow and the
 working-group partition alone. Board rows, `spice task show`, `spice group
-list`, `spice room status`, and the browser agree:
+list`, and the browser agree:
 
 Standing terms run from durable to volatile: lifecycle first, then
 working-group activity, then pass cycle or claim state. The most volatile term
 therefore comes last, limiting label jitter as the Design moves.
 
-- **open, passive**: open and in no working group. No lane can claim it or be
-  coordinated onto it until the operator moves it into a group.
+- **open, passive**: open and in no working group. No lane can claim it until
+  the operator moves it into a group.
 - **open, active**: open and in a working group, so allocation, capture, and
-  room coordination may reach it.
+  a nudge may reach it.
 - **concluded done**: the operator concluded it done.
 - **concluded collapsed**: the operator collapsed it, with the durable reason
   that collapse recorded.
