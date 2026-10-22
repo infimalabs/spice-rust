@@ -57,6 +57,7 @@ pub(super) fn report(
         Ok(Published::Sent {
             lanes,
             queued,
+            redirected,
             unreached,
             rooms,
             operator,
@@ -65,12 +66,13 @@ pub(super) fn report(
             for lane in lanes {
                 notify_inbox(paths, *lane);
             }
-            if !rooms.is_empty() || *operator || !queued.is_empty() {
+            if !rooms.is_empty() || *operator || !queued.is_empty() || !redirected.is_empty() {
                 teller.published(
                     &Recorded {
                         rooms,
                         operator: *operator,
                         queued,
+                        redirected,
                         reached: lanes.len(),
                         held_room: *held_room,
                     },
@@ -106,6 +108,7 @@ struct Recorded<'a> {
     rooms: &'a [TaskHandle],
     operator: bool,
     queued: &'a [OccupantAddress],
+    redirected: &'a [String],
     reached: usize,
     held_room: bool,
 }
@@ -179,6 +182,7 @@ impl Teller<'_> {
             rooms,
             operator,
             queued,
+            redirected,
             reached,
             held_room,
         } = *outcome;
@@ -190,6 +194,9 @@ impl Teller<'_> {
         }
         if !queued.is_empty() {
             let _ = write!(outcome, " queued for [{}]", queued.join(", "));
+        }
+        if !redirected.is_empty() {
+            let _ = write!(outcome, " redirected [{}]", redirected.join("; "));
         }
         let _ = writeln!(
             diagnostic,
@@ -216,6 +223,7 @@ impl Teller<'_> {
                     rooms,
                     operator,
                     queued,
+                    redirected: redirected.to_vec(),
                     reached,
                     held_room,
                 },
@@ -242,6 +250,11 @@ pub(in crate::resident) struct MessageRecordedNotice {
     /// Historical addresses whose vacant logical lanes hold queued delivery.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(in crate::resident) queued: Vec<String>,
+    /// Each route that named an earlier occupant and reached its successor:
+    /// the named address, the address that heard it, and the interval between
+    /// their births.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::resident) redirected: Vec<String>,
     /// Whether the packet opened one pending operator item.
     pub(in crate::resident) operator: bool,
     /// How many named recipients the packet reached.
@@ -255,6 +268,13 @@ impl MessageRecordedNotice {
     /// The notice its author hears.
     pub(in crate::resident) fn text(&self) -> String {
         let mut clauses = Vec::new();
+        if !self.redirected.is_empty() {
+            clauses.push(format!(
+                "reached a later occupant of a lane you addressed by an earlier code: {}; its \
+                 delivery header tells the receiver the same",
+                self.redirected.join("; ")
+            ));
+        }
         if !self.queued.is_empty() {
             clauses.push(format!(
                 "queued for {}; unheard until each lane's next occupant starts; nothing woke anyone",

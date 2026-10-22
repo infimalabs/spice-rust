@@ -631,7 +631,10 @@ pub(super) fn inbox(
             Err(outcome) => return outcome,
         };
         for directive in &mut pending {
-            directive.sender = snapshot.peers.get(&directive.directive).copied();
+            if let Some(origin) = snapshot.peers.get(&directive.directive) {
+                directive.sender = Some(origin.sender);
+                directive.addressed = origin.addressed;
+            }
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
         }
@@ -702,15 +705,24 @@ struct SteeringSnapshot {
     /// Pending directives an operator send opened, which alone wake a lane.
     waking: BTreeSet<CanonicalUuid>,
     /// Pending peer directives whose sending occupant the journal proves.
-    peers: BTreeMap<CanonicalUuid, wire::intent::PeerSender>,
+    peers: BTreeMap<CanonicalUuid, PeerOrigin>,
     retired: Vec<journal::RetiredSteering>,
     position: Seq,
     authority: bus::TaskSnapshot,
     residency: journal::JournalHead<ResidencyHead>,
 }
 
+/// Who sent one pending peer directive and, for a message that named an
+/// earlier occupant of its lane, whom it named.
+#[derive(Clone, Copy)]
+struct PeerOrigin {
+    sender: wire::intent::PeerSender,
+    addressed: Option<wire::intent::PeerAddressed>,
+}
+
 /// The exact occupant that sent the pending peer directive `head`'s creating
-/// fact opened, when the journal proves one.
+/// fact opened, when the journal proves one, with the earlier occupant a
+/// redirected message named.
 ///
 /// An MSG names its authoring occupant. A reply is spoken by whichever
 /// occupant of the answered lane retired the MSG: the reply's cause is that
@@ -721,18 +733,29 @@ fn peer_origin(
     authority: &bus::TaskSnapshot,
     reader: &bus::BusReader,
     head: &wire::SteeringHead,
-) -> Result<Option<wire::intent::PeerSender>, String> {
+) -> Result<Option<PeerOrigin>, String> {
     let facts = authority.facts();
     let Some(created) = facts.at(head.created) else {
         return Ok(None);
     };
     if let Some(message) = created.fact.read::<wire::body::SteerMessaged>() {
-        return Ok((message.directive == head.directive)
-            .then(|| peer_sender(authority, message.from, message.sender)));
+        if message.directive != head.directive {
+            return Ok(None);
+        }
+        let addressed = message
+            .addressed
+            .map(|address| peer_addressed(authority, reader, &message, address))
+            .transpose()?;
+        return Ok(Some(PeerOrigin {
+            sender: peer_sender(authority, message.from, message.sender),
+            addressed,
+        }));
     }
     if let Some(message) = created.fact.read::<wire::body::SteerQueued>() {
-        return Ok((message.directive == head.directive)
-            .then(|| peer_sender(authority, message.from, message.sender)));
+        return Ok((message.directive == head.directive).then(|| PeerOrigin {
+            sender: peer_sender(authority, message.from, message.sender),
+            addressed: None,
+        }));
     }
     if created.fact.read::<wire::body::SteerReplied>().is_none() {
         return Ok(None);
@@ -759,7 +782,36 @@ fn peer_origin(
     let session = reader
         .transcript_session(lane, source, locus.member, locus.offset)
         .map_err(|error| format!("{error:?}"))?;
-    Ok(session.map(|session| peer_sender(authority, lane, session.occupant)))
+    Ok(session.map(|session| PeerOrigin {
+        sender: peer_sender(authority, lane, session.occupant),
+        addressed: None,
+    }))
+}
+
+/// The earlier occupant a redirected message named, with its birth and the
+/// birth of the occupant that heard the message, both proved from the
+/// journal's `lane::started` facts.
+fn peer_addressed(
+    authority: &bus::TaskSnapshot,
+    reader: &bus::BusReader,
+    message: &wire::body::SteerMessaged,
+    address: wire::OccupantAddress,
+) -> Result<wire::intent::PeerAddressed, String> {
+    let birth = |address| {
+        reader
+            .occupant_birth(address)
+            .map_err(|error| format!("{error:?}"))?
+            .map_err(|refusal| refusal.to_string())
+    };
+    let successor = authority
+        .facts()
+        .occupant_address(message.lane, message.occupant)
+        .map_err(|refusal| refusal.to_string())?;
+    Ok(wire::intent::PeerAddressed {
+        address,
+        born: birth(address)?.at,
+        successor_born: birth(successor)?.at,
+    })
 }
 
 /// One exact sending occupant, with the address its birth on `lane` proves.
@@ -956,6 +1008,7 @@ fn pending_directive(
         from: directive.from(),
         sender: None,
         room,
+        addressed: None,
         wakes,
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),

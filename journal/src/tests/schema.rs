@@ -268,6 +268,7 @@ fn schema_39_projects_frozen_peer_rooms_into_steering_heads_once() {
             column: 1,
         },
         room: Some(room.clone()),
+        addressed: None,
         expires,
     };
     let mut write = crate::JournalWrite::new(

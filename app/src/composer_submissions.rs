@@ -985,6 +985,7 @@ mod tests {
             from: None,
             sender: None,
             room: None,
+            addressed: None,
             wakes: true,
             fanout: None,
             directive: uuid(id),

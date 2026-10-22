@@ -114,11 +114,14 @@ pub(in crate::resident) struct Packet<'a> {
 pub(in crate::resident) enum Published {
     /// The packet committed now: immediate messages to these recipient lanes,
     /// queued routes to these exact historical addresses, and one record in
-    /// each named room. Each `unreached` entry names one address that received
-    /// or queued nothing, and why.
+    /// each named room. Each `redirected` entry names one address an earlier
+    /// occupant held whose proved successor heard the packet instead, and
+    /// each `unreached` entry names one address that received or queued
+    /// nothing, and why.
     Sent {
         lanes: Vec<CanonicalUuid>,
         queued: Vec<OccupantAddress>,
+        redirected: Vec<String>,
         unreached: Vec<String>,
         rooms: Vec<TaskHandle>,
         /// The packet's conversation record opened one operator item.
@@ -534,12 +537,15 @@ type Directed = (OccupantAddress, Option<TaskHandle>);
 /// The guard re-proves at commit that the residency is the one the view
 /// read and that every route still names either its resolved occupant or its
 /// proved vacant lane. A seat change between read and commit refuses the whole
-/// write instead of redirecting a message. A valid address for a lane whose
-/// latest occupant has departed queues one lane-scoped directive; an older
-/// address stays expired even after its successor departs. Every `#` context
-/// must name a task the view holds, or the whole packet refuses; each room a
-/// packet names records the packet's exact transcript bytes once. A packet
-/// that can neither deliver nor queue and names no room publishes nothing.
+/// write instead of resolving again. A valid address for a lane whose latest
+/// occupant has departed queues one lane-scoped directive. An expired address
+/// whose lane now seats a later proved occupant delivers to that occupant,
+/// recording the address it named so both ends hear about the change; once
+/// that successor departs too, the older address stays expired. Every `#`
+/// context must name a task the view holds, or the whole packet refuses; each
+/// room a packet names records the packet's exact transcript bytes once. A
+/// packet that can neither deliver nor queue and names no room publishes
+/// nothing.
 pub(in crate::resident) fn publish_packet(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -620,6 +626,10 @@ fn publish_message(
             .iter()
             .filter(|target| target.occupant.is_none())
             .map(|target| target.recipient)
+            .collect(),
+        redirected: targets
+            .iter()
+            .filter_map(|target| target.redirected.as_ref().map(Redirected::note))
             .collect(),
         unreached,
         held_room: names_held_task(&record.rooms, view, packet.lane),
@@ -785,6 +795,7 @@ impl Sending<'_, '_> {
                         text: self.packet.body.to_owned(),
                         locus: self.packet.locus.clone(),
                         room: target.room.clone(),
+                        addressed: target.redirected.map(|route| route.addressed.address),
                         expires: self.expires,
                     };
                     let pending = proposal
@@ -843,6 +854,31 @@ struct Target {
     directive: CanonicalUuid,
     /// The room the route's context freezes into its message.
     room: Option<TaskStamp>,
+    /// The earlier occupant the route named, when `occupant` is its proved
+    /// successor on the same lane.
+    redirected: Option<Redirected>,
+}
+
+/// A route that named an earlier occupant of a lane and reached its proved
+/// successor there.
+#[derive(Clone, Copy)]
+struct Redirected {
+    addressed: bus::OccupantBirth,
+    successor: bus::OccupantBirth,
+}
+
+impl Redirected {
+    /// What the author hears about this route: the named address, the address
+    /// that heard it, and how long after the named occupant's birth the
+    /// successor was born.
+    fn note(&self) -> String {
+        format!(
+            "{} expired; its lane now seats {}, born {} after it",
+            self.addressed.address,
+            self.successor.address,
+            steer::inbox::compact_age(self.addressed.at, self.successor.at)
+        )
+    }
 }
 
 /// What the rooms a packet names record of it: each room, and, when it names
@@ -889,7 +925,9 @@ fn resolve_rooms(
 
 /// Each directed route's target, in route order, and why each unproved,
 /// removed, or expired address receives nothing. A proved address whose birth
-/// lane is currently vacant opens a lane-scoped queued directive.
+/// lane is currently vacant opens a lane-scoped queued directive; one whose
+/// birth lane now seats a later proved occupant delivers to that occupant,
+/// keeping the named address beside the route.
 fn resolve_targets(
     bus: &Bus,
     residency: &[wire::LaneResidency],
@@ -908,41 +946,69 @@ fn resolve_targets(
     let mut targets = Vec::with_capacity(directed.len());
     let mut unreached = Vec::new();
     for ((recipient, context), directive) in directed.iter().zip(identities) {
+        let room = context_room(context.as_ref());
+        let target = |lane, occupant, redirected| Target {
+            lane,
+            occupant,
+            recipient: *recipient,
+            directive: *directive,
+            room: room.clone(),
+            redirected,
+        };
         if let Some((lane, occupant)) = seated.get(recipient) {
-            targets.push(Target {
-                lane: *lane,
-                occupant: Some(*occupant),
-                recipient: *recipient,
-                directive: *directive,
-                room: context_room(context.as_ref()),
-            });
+            targets.push(target(*lane, Some(*occupant), None));
             continue;
         }
-        let birth = bus.occupant_birth(*recipient).map_err(|error| {
-            Unpublished::Failed(typed_store_fault(
-                "steer::address-unreadable",
-                &error.to_string(),
-            ))
-        })?;
-        match birth {
-            Ok(birth)
-                if lanes.get(&birth.lane).is_some_and(Option::is_none)
-                    && view.facts().latest_lane_occupant(birth.lane) == Some(birth.occupant) =>
-            {
-                targets.push(Target {
-                    lane: birth.lane,
-                    occupant: None,
-                    recipient: *recipient,
-                    directive: *directive,
-                    room: context_room(context.as_ref()),
-                });
-            }
-            Ok(_) | Err(_) => {
-                unreached.push(unavailable(bus, &lanes, view, *recipient)?);
-            }
+        let Ok(birth) = occupant_birth(bus, *recipient)? else {
+            unreached.push(unavailable(bus, &lanes, view, *recipient)?);
+            continue;
+        };
+        let vacant = lanes.get(&birth.lane).is_some_and(Option::is_none)
+            && view.facts().latest_lane_occupant(birth.lane) == Some(birth.occupant);
+        if vacant {
+            targets.push(target(birth.lane, None, None));
+        } else if let Some(successor) = successor_seat(bus, &lanes, &birth)? {
+            let redirected = Redirected {
+                addressed: birth,
+                successor,
+            };
+            targets.push(target(
+                birth.lane,
+                Some(successor.occupant),
+                Some(redirected),
+            ));
+        } else {
+            unreached.push(unavailable(bus, &lanes, view, *recipient)?);
         }
     }
     Ok((targets, unreached))
+}
+
+/// The proved occupant now seated on an expired address's birth lane, when the
+/// residency seats one with a proved address of its own.
+fn successor_seat(
+    bus: &Bus,
+    lanes: &Seats,
+    birth: &bus::OccupantBirth,
+) -> Result<Option<bus::OccupantBirth>, Unpublished> {
+    let Some(Some((occupant, Some(address)))) = lanes.get(&birth.lane) else {
+        return Ok(None);
+    };
+    if *occupant == birth.occupant {
+        return Ok(None);
+    }
+    Ok(occupant_birth(bus, *address)?
+        .ok()
+        .filter(|successor| successor.lane == birth.lane && successor.occupant == *occupant))
+}
+
+fn occupant_birth(bus: &Bus, address: OccupantAddress) -> Result<bus::AddressProof, Unpublished> {
+    bus.occupant_birth(address).map_err(|error| {
+        Unpublished::Failed(typed_store_fault(
+            "steer::address-unreadable",
+            &error.to_string(),
+        ))
+    })
 }
 
 /// Stage one `room::messaged` record of the packet in each room, naming the
@@ -1136,10 +1202,11 @@ fn seats(lanes: &[wire::LaneResidency], view: &bus::TaskSnapshot) -> Seats {
         .collect()
 }
 
-/// Why a recipient the view neither seats nor admits onto a vacant proved
-/// lane cannot hear the packet, led by its address so a bounded notice still
-/// names it. An expired address names the current seat or the latest address
-/// whose successor birth expired it; the packet itself never follows the lane.
+/// Why a recipient the view neither seats, redirects to a proved successor,
+/// nor admits onto a vacant proved lane cannot hear the packet, led by its
+/// address so a bounded notice still names it. An expired address names the
+/// unproved current seat, or the latest address whose successor birth expired
+/// it once that successor left.
 fn unavailable(
     bus: &Bus,
     lanes: &Seats,

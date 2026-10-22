@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc;
 
 use journal::crossing::{
-    CanonicalUuid, FactKind, LaneResidency, OccupantAddress, ResidencyHead, SeatAddress, Seq,
+    CanonicalUuid, FactKind, Instant, LaneResidency, OccupantAddress, ResidencyHead, SeatAddress,
+    Seq,
 };
 use journal::{FactPageStart, FactReadBudget, GuardError, Journal, JournalRead};
 
@@ -192,6 +193,8 @@ pub struct OccupantBirth {
     pub occupant: CanonicalUuid,
     /// Resident generation that observed the birth.
     pub epoch: CanonicalUuid,
+    /// Commit instant of the birth fact.
+    pub at: Instant,
 }
 
 /// Why an address or occupant has no proved, executable birth.
@@ -301,6 +304,7 @@ fn prove_birth(
             lane: started.lane,
             occupant: started.occupant,
             epoch: started.epoch,
+            at: row.at,
         })),
         _ => Err(GuardError::Invalid(format!(
             "occupant birth index disagrees with the lane start at {position}"

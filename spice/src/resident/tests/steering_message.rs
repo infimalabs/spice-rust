@@ -328,6 +328,16 @@ impl Lanes {
             .collect()
     }
 
+    fn withheld(&self) -> Vec<wire::body::SteerWithheld> {
+        self.bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .filter_map(|envelope| envelope.fact.read::<wire::body::SteerWithheld>())
+            .collect()
+    }
+
     fn pending(&self, lane: u8) -> Vec<wire::intent::PendingDirective> {
         let request = wire::intent::SteerInbox {
             lane: None,
@@ -390,6 +400,38 @@ impl Lanes {
             .expect("exit fact is valid");
         ending.residency_head(exited, move |_| vacant);
         commit(&self.bus, ending).expect("vacancy commits");
+    }
+
+    /// Seat `occupant` on a vacated lane with no `lane::started` fact, so the
+    /// journal proves no birth for it.
+    fn seat_unproved(&self, lane: u8, occupant: CanonicalUuid) {
+        let lane = test_uuid(lane);
+        let observed = current_residency(&self.bus, self.epoch).expect("residency reads");
+        let mut reseated = observed.body().clone();
+        let row = reseated
+            .lanes
+            .iter_mut()
+            .find(|row| row.lane == lane)
+            .expect("fixture lane exists");
+        assert!(row.occupant.is_none(), "the lane is vacant");
+        row.occupant = Some(occupant);
+        row.lineage.push(occupant);
+        row.disposition = "occupied".to_owned();
+        let mut seating = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
+            .expect("seating write starts");
+        crate::resident::shutdown::guard_residency(&mut seating, &observed);
+        let seated = seating
+            .fact(
+                wire::body::LaneExited {
+                    lane,
+                    occupant: test_uuid(99),
+                    code: 0,
+                },
+                FactCause::Existing(observed.position()),
+            )
+            .expect("the carrier fact is valid");
+        seating.residency_head(seated, move |_| reseated);
+        commit(&self.bus, seating).expect("unproved seat commits");
     }
 
     /// Start another occupant on a vacated lane, born there now.
@@ -740,6 +782,7 @@ fn sent_queued(
     steering::Published::Sent {
         lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
         queued: queued.to_vec(),
+        redirected: Vec::new(),
         unreached: unreached.iter().map(|entry| (*entry).to_owned()).collect(),
         rooms: Vec::new(),
         operator: false,
