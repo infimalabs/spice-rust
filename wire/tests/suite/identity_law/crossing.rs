@@ -1,6 +1,5 @@
 use super::*;
 
-#[path = "crossing/responses.rs"]
 mod responses;
 
 use responses::{cover_packed_frames, cover_refusal_frames, cover_reply_frames};
