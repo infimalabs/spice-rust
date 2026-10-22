@@ -176,28 +176,55 @@ fn a_worktree_in_another_repository_refuses_the_lane_instead_of_faulting_the_res
     );
 }
 
+#[cfg(unix)]
 #[test]
-fn regular_cargo_lock_retains_the_complete_isolated_rust_environment() {
-    let fixture = LaunchFixture::new();
-    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
-    let environment = cargo_environment(&repository, fixture.lane)
-        .expect("regular Cargo lock prepares isolation");
-    let names = environment
-        .iter()
-        .map(|(name, _)| name.to_str().expect("Rust variable name is UTF-8"))
-        .collect::<Vec<_>>();
+fn isolation_binds_the_private_home_and_the_admitted_native_toolchain() {
+    use std::os::unix::fs::PermissionsExt as _;
 
+    let fixture = LaunchFixture::new();
+    let bootstrap = fixture.root.join("bootstrap");
+    fs::create_dir(&bootstrap).expect("fixture bootstrap home creates");
+    let tool = |name: &str| {
+        let path = fixture.root.join(name);
+        fs::write(&path, "#!/bin/sh\nexit 0\n").expect("fixture tool writes");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("fixture tool becomes executable");
+        path
+    };
+    let (cargo, rustc, rustdoc) = (tool("cargo"), tool("rustc"), tool("rustdoc"));
+    let host = spice::cargo_isolation::Host::new(bootstrap, cargo, rustc, rustdoc)
+        .expect("fixture host admits");
+    let home = fixture.root.join("lane-home");
+
+    let environment = isolated_cargo_environment(&host, &home);
+    let path = |path: &Path| path.as_os_str().to_owned();
     assert_eq!(
-        names,
+        environment,
         [
-            spice::cargo_isolation::CARGO_HOME_VARIABLE,
-            spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
-            spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
-            spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
-            spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
-            spice::cargo_isolation::RUSTC_VARIABLE,
-            spice::cargo_isolation::RUSTDOC_VARIABLE,
+            (spice::cargo_isolation::CARGO_HOME_VARIABLE, path(&home)),
+            (
+                spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
+                path(host.bootstrap_home())
+            ),
+            (
+                spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+                path(host.cargo())
+            ),
+            (
+                spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+                path(host.rustc())
+            ),
+            (
+                spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+                path(host.rustdoc())
+            ),
+            (spice::cargo_isolation::RUSTC_VARIABLE, path(host.rustc())),
+            (
+                spice::cargo_isolation::RUSTDOC_VARIABLE,
+                path(host.rustdoc())
+            ),
         ]
+        .map(|(name, value)| (OsString::from(name), value))
     );
 }
 
@@ -209,8 +236,8 @@ fn non_regular_cargo_lock_refuses_before_rust_tool_probe() {
     fs::create_dir(&lock).expect("replace Cargo lock with directory");
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
 
-    let error =
-        cargo_environment(&repository, fixture.lane).expect_err("non-regular Cargo lock refuses");
+    let error = cargo_environment(&repository, fixture.lane, &InertProbes)
+        .expect_err("non-regular Cargo lock refuses");
     assert!(matches!(
         error,
         Outcome::Fault(ref fault)
@@ -316,6 +343,14 @@ impl LaunchProbes for UnreadAuthority {
 
     fn shadow(&self, repository: &Repository, base: Environment) -> CommandResult<Environment> {
         InertProbes.shadow(repository, base)
+    }
+
+    fn cargo(
+        &self,
+        repository: &Repository,
+        lane: CanonicalUuid,
+    ) -> CommandResult<Vec<(OsString, OsString)>> {
+        InertProbes.cargo(repository, lane)
     }
 
     fn rtk(

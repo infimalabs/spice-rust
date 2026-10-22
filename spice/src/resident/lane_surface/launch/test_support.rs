@@ -111,9 +111,10 @@ impl Drop for LaunchFixture {
     }
 }
 
-/// Launch probes that answer without Git or RTK: the worktree is already on
-/// its baseline, the Git shadow adds nothing, RTK launched, and the briefing
-/// leaves the working state unread.
+/// Launch probes that answer without Git, RTK, or the host toolchain: the
+/// worktree is already on its baseline, the Git shadow adds nothing, RTK
+/// launched, Cargo isolation names a private home inside the worktree without
+/// preparing it, and the briefing leaves the working state unread.
 pub(in crate::resident) struct InertProbes;
 
 impl LaunchProbes for InertProbes {
@@ -136,6 +137,20 @@ impl LaunchProbes for InertProbes {
             None,
             "in-process launch probe",
         )
+    }
+
+    fn cargo(
+        &self,
+        repository: &Repository,
+        _lane: CanonicalUuid,
+    ) -> CommandResult<Vec<(std::ffi::OsString, std::ffi::OsString)>> {
+        Ok(vec![(
+            spice::cargo_isolation::CARGO_HOME_VARIABLE.into(),
+            repository
+                .worktree_root()
+                .join("cargo-home")
+                .into_os_string(),
+        )])
     }
 
     fn session(&self, worktree: PathBuf) -> crate::session_command::Environment {
