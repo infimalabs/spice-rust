@@ -7,14 +7,24 @@
 //! installs its own delegate that puts those dialogs on screen as native
 //! alerts, keeps the file panel, and sends new-window requests out to the
 //! system browser.
+//!
+//! A process without a main menu has no key equivalents: Cmd+C, Cmd+V, and
+//! Cmd+Q do nothing in its window. The shell installs the standard menu bar
+//! before the event loop runs. Editing items send the ordinary responder
+//! actions, which the webview answers for its focused field; Quit and Close
+//! ask the window to close, so they end the event loop exactly as its close
+//! button does and the command still settles the resident afterwards.
 
 use std::ptr::null_mut;
 
 use block2::Block;
 use objc2::rc::Retained;
-use objc2::runtime::{Bool, NSObject, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSModalResponseOK, NSOpenPanel};
+use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject, Sel};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
+use objc2_app_kit::{
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSMenu, NSMenuItem, NSModalResponseOK,
+    NSOpenPanel, NSWindow,
+};
 use objc2_foundation::{MainThreadMarker, NSArray, NSObjectProtocol, NSString, NSURL};
 use objc2_web_kit::{
     WKFrameInfo, WKNavigationAction, WKOpenPanelParameters, WKUIDelegate, WKWebView,
@@ -23,6 +33,7 @@ use objc2_web_kit::{
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
+use tao::platform::macos::WindowExtMacOS;
 use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::window::WindowBuilder;
 use wry::{WebViewBuilder, WebViewExtMacOS};
@@ -59,6 +70,13 @@ pub(crate) fn show(
             .webview()
             .setUIDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     }
+    // SAFETY: `ns_window` is the window's live NSWindow until the window is
+    // dropped, which happens after the event loop returns; retaining it here
+    // keeps the menu target's reference valid for exactly that span.
+    let ns_window = unsafe { Retained::retain(window.ns_window().cast::<NSWindow>()) }
+        .ok_or_else(|| WindowError::Platform("the window has no NSWindow".into()))?;
+    let menu_target = MenuTarget::new(main_thread, ns_window);
+    install_main_menu(main_thread, &menu_target);
     event_loop.run_return(|event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         if let Event::WindowEvent {
@@ -70,7 +88,144 @@ pub(crate) fn show(
         }
     });
     drop(delegate);
+    NSApplication::sharedApplication(main_thread).setMainMenu(None);
+    drop(menu_target);
     Ok(())
+}
+
+/// The standard menu bar: the application menu with Hide and Quit, Edit with
+/// the responder-chain editing actions, and Window with Minimize and Close.
+///
+/// Quit and Close are not `terminate:`: they target the shell's own window
+/// close, so `spice app` regains control after the window goes and settles
+/// the resident it started.
+fn install_main_menu(main_thread: MainThreadMarker, target: &MenuTarget) {
+    let menu = NSMenu::new(main_thread);
+    let application = NSMenu::new(main_thread);
+    application.addItem(&menu_item(
+        main_thread,
+        "Hide Spice",
+        sel!(hide:),
+        "h",
+        None,
+    ));
+    application.addItem(&NSMenuItem::separatorItem(main_thread));
+    application.addItem(&menu_item(
+        main_thread,
+        "Quit Spice",
+        sel!(closeWindow:),
+        "q",
+        Some(target),
+    ));
+    menu.addItem(&submenu_item(main_thread, "Spice", &application));
+
+    let edit = NSMenu::initWithTitle(NSMenu::alloc(main_thread), &NSString::from_str("Edit"));
+    for (title, action, key) in [
+        ("Undo", sel!(undo:), "z"),
+        ("Redo", sel!(redo:), "Z"),
+        ("Cut", sel!(cut:), "x"),
+        ("Copy", sel!(copy:), "c"),
+        ("Paste", sel!(paste:), "v"),
+        ("Select All", sel!(selectAll:), "a"),
+    ] {
+        edit.addItem(&menu_item(main_thread, title, action, key, None));
+    }
+    menu.addItem(&submenu_item(main_thread, "Edit", &edit));
+
+    let window = NSMenu::initWithTitle(NSMenu::alloc(main_thread), &NSString::from_str("Window"));
+    window.addItem(&menu_item(
+        main_thread,
+        "Minimize",
+        sel!(performMiniaturize:),
+        "m",
+        None,
+    ));
+    window.addItem(&menu_item(
+        main_thread,
+        "Close",
+        sel!(closeWindow:),
+        "w",
+        Some(target),
+    ));
+    menu.addItem(&submenu_item(main_thread, "Window", &window));
+
+    let app = NSApplication::sharedApplication(main_thread);
+    app.setWindowsMenu(Some(&window));
+    app.setMainMenu(Some(&menu));
+}
+
+/// One menu item sending `action` to `target`, or down the responder chain
+/// when there is none; `key` with Command is its key equivalent, an uppercase
+/// letter adding Shift.
+fn menu_item(
+    main_thread: MainThreadMarker,
+    title: &str,
+    action: Sel,
+    key: &str,
+    target: Option<&MenuTarget>,
+) -> Retained<NSMenuItem> {
+    // SAFETY: every selector named here is an AppKit responder action or one
+    // `MenuTarget` defines; the target, when set, outlives the menu.
+    unsafe {
+        let item = NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(main_thread),
+            &NSString::from_str(title),
+            Some(action),
+            &NSString::from_str(key),
+        );
+        if let Some(target) = target {
+            let target: &AnyObject = target;
+            item.setTarget(Some(target));
+        }
+        item
+    }
+}
+
+/// The menu-bar item that opens `submenu`.
+fn submenu_item(
+    main_thread: MainThreadMarker,
+    title: &str,
+    submenu: &NSMenu,
+) -> Retained<NSMenuItem> {
+    let item = NSMenuItem::new(main_thread);
+    item.setTitle(&NSString::from_str(title));
+    item.setSubmenu(Some(submenu));
+    item
+}
+
+struct MenuTargetIvars {
+    window: Retained<NSWindow>,
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "SpiceShellMenuTarget"]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = MenuTargetIvars]
+    struct MenuTarget;
+
+    unsafe impl NSObjectProtocol for MenuTarget {}
+
+    impl MenuTarget {
+        /// Close the shell window the way its close button does: `tao`
+        /// answers `windowShouldClose:` with a `CloseRequested` event and the
+        /// event loop exits on it.
+        #[unsafe(method(closeWindow:))]
+        fn close_window(&self, _sender: Option<&AnyObject>) {
+            self.ivars().window.performClose(None);
+        }
+    }
+);
+
+impl MenuTarget {
+    fn new(main_thread: MainThreadMarker, window: Retained<NSWindow>) -> Retained<Self> {
+        let target = main_thread
+            .alloc::<Self>()
+            .set_ivars(MenuTargetIvars { window });
+        // SAFETY: plain NSObject init on a freshly allocated instance whose
+        // ivars are set.
+        unsafe { msg_send![super(target), init] }
+    }
 }
 
 struct ShellDelegateIvars {
