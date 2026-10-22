@@ -32,12 +32,13 @@ pub struct DesignRequest {
     /// record kept it; Explore admits on a slightly wider cast.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stance: Option<crate::rooms::WorkingGroupStance>,
-    /// The question item asked; absent asks about the whole Design.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ask: Option<DesignRequestAsk>,
+    /// The question items asked, the best-scoring first and the rest in
+    /// statement order; empty asks about the whole Design.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asks: Vec<DesignRequestAsk>,
 }
 
-/// The one question item a Design request asks about, at its statement.
+/// One question item a Design request asks about, at its statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignRequestAsk {

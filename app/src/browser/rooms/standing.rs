@@ -290,22 +290,26 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
     let leave;
     let (kind, label, source) = match reason {
         ParticipantReason::Publication(_) => return None,
-        ParticipantReason::Asked(
-            DesignNoticeEvidence::Task { task, .. } | DesignNoticeEvidence::TaskClaim { task, .. },
-        ) => (
+        ParticipantReason::Asked {
+            evidence,
+            questions,
+        } => (
             "invitation",
             "Asked",
             format!(
-                "A Design request asked this lane from retained evidence about {}",
-                task_label(runtime, task)
-            ),
-        ),
-        ParticipantReason::Asked(DesignNoticeEvidence::Conversation { source }) => (
-            "invitation",
-            "Asked",
-            format!(
-                "A Design request asked this lane from retained conversation evidence at member {}, byte {}",
-                source.locus.member, source.locus.offset
+                "{}{}",
+                match evidence {
+                    DesignNoticeEvidence::Task { task, .. }
+                    | DesignNoticeEvidence::TaskClaim { task, .. } => format!(
+                        "A Design request asked this lane from retained evidence about {}",
+                        task_label(runtime, task)
+                    ),
+                    DesignNoticeEvidence::Conversation { source } => format!(
+                        "A Design request asked this lane from retained conversation evidence at member {}, byte {}",
+                        source.locus.member, source.locus.offset
+                    ),
+                },
+                asked_questions(questions)
             ),
         ),
         ParticipantReason::Work(task) => (
@@ -338,6 +342,23 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
         }
     };
     Some(reason_chip(kind, label, &source))
+}
+
+/// The questions a Design request asked, in asked order; nothing for a
+/// whole-Design ask.
+fn asked_questions(questions: &[wire::rooms::RoomQuestion]) -> String {
+    if questions.is_empty() {
+        return String::new();
+    }
+    let listed = questions
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        " on question{} {listed}",
+        if questions.len() == 1 { "" } else { "s" }
+    )
 }
 
 fn reason_chip(kind: &'static str, label: &str, source: &str) -> Html {

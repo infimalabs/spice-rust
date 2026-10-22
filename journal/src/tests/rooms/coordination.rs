@@ -497,7 +497,7 @@ fn room_authority_pages_every_design_notice() {
                 excerpt: "coordinated rooms".to_owned(),
                 terms: vec!["rooms".to_owned()],
                 stance: None,
-                ask: None,
+                asks: Vec::new(),
             },
             crate::FactCause::Root,
         )

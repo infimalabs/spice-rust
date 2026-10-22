@@ -940,7 +940,7 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
                     excerpt: "fixture rooms".to_owned(),
                     terms: vec!["rooms".to_owned()],
                     stance: None,
-                    ask: None,
+                    asks: Vec::new(),
                 },
             ),
         );
@@ -956,7 +956,10 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
     let mut answered = asked();
     assert_eq!(
         reasons(&answered),
-        Some(vec![app::ParticipantReason::Asked(evidence.clone())])
+        Some(vec![app::ParticipantReason::Asked {
+            evidence: evidence.clone(),
+            questions: Vec::new(),
+        }])
     );
     let contribution = later_publication(1);
     live(

@@ -54,6 +54,9 @@ pub(crate) struct Noticed {
     evidence: wire::rooms::DesignNoticeEvidence,
     statement: Seq,
     terms: Vec<String>,
+    /// Question items asked, in asked order; empty asks about the whole Design.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    asks: Vec<wire::rooms::DesignAsk>,
 }
 
 /// Read one bounded page of a Design's awareness records from the working
@@ -213,6 +216,7 @@ fn noticed(
             .into_iter()
             .map(str::to_owned)
             .collect(),
+        asks: body.asks,
     })
 }
 
@@ -303,10 +307,18 @@ impl fmt::Display for Noticed {
             self.evidence,
             self.statement,
         )?;
-        if self.terms.is_empty() {
-            Ok(())
-        } else {
-            write!(formatter, " terms {}", self.terms.join(", "))
+        if !self.terms.is_empty() {
+            write!(formatter, " terms {}", self.terms.join(", "))?;
         }
+        for (index, ask) in self.asks.iter().enumerate() {
+            let lead = if index == 0 { " asks" } else { "," };
+            write!(
+                formatter,
+                "{lead} question {} ({})",
+                ask.question,
+                ask.state.label()
+            )?;
+        }
+        Ok(())
     }
 }
