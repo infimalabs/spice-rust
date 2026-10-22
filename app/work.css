@@ -864,7 +864,7 @@
 .room-approval > header,
 .room-approval-withdrawn > header,
 .room-conclusion > header,
-.room-maturity > header,
+.room-maturity > header, .room-provenance > header,
 .room-standing > header,
 .room-history > header {
   display: flex;
@@ -872,7 +872,7 @@
   color: var(--muted);
   font-size: var(--app-type-meta);
 }
-:is(.room-standing, .room-maturity, .room-conclusion, .room-approval, .room-approval-withdrawn, .room-approval-card, .room-history) > header > h4 { margin: 0; color: inherit; font-size: inherit; }
+:is(.room-standing, .room-maturity, .room-provenance, .room-conclusion, .room-approval, .room-approval-withdrawn, .room-approval-card, .room-history) > header > h4 { margin: 0; color: inherit; font-size: inherit; }
 .room-approval-card > header > h4 { text-transform: none; }
 
 .room-reading,
@@ -881,10 +881,16 @@
 .room-history { display: grid; gap: 8px; }
 .room-reading > .app-section-heading { justify-content: start; }
 
-/* A Design's Standing and Maturity share one row and one frame, so the
-   lifecycle and how near the Design is to steeping read together. */
-.room-design-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.room-design-pair > section {
+/* A Design's Standing shares one row with a column of Maturity over the
+   task's provenance facts, so the lifecycle, how near the Design is to
+   steeping, and its record read together and the lane list leaves no idle
+   column beside it: Provenance takes the height Maturity leaves and reads as
+   label-value rows. The same framed Provenance follows the loading notice
+   while the room is not yet readable. */
+.room-design-pair, .room-design-aside { display: grid; gap: 8px; }
+.room-design-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.room-design-aside { grid-template-rows: auto minmax(0, 1fr); }
+.room-design-pair > section, .room-maturity, .room-provenance {
   grid-column: auto;
   padding: 8px;
   border: var(--app-edge-soft);
@@ -892,8 +898,11 @@
   background: var(--control-surface-soft);
   font-size: var(--app-type-detail);
 }
-.room-maturity { display: grid; align-content: start; gap: 6px; }
+.room-design-pair > .room-standing, .room-maturity, .room-provenance { display: grid; align-content: start; gap: 6px; }
 .room-maturity > :is(p, dl, small) { margin: 0; }
+.room-provenance .app-fact-grid { grid-template-columns: max-content minmax(0, 1fr); gap: 4px 8px; margin: 0; }
+.room-provenance .app-fact-grid > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+.room-provenance .app-fact-grid dd { margin: 0; }
 .room-maturity-state {
   color: var(--ink);
   font-weight: 650;
