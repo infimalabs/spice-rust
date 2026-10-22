@@ -61,7 +61,8 @@
 /// Design invitation name the one question item it asks, which an older
 /// release would refuse. Schema 93 retires the automated room-resume rule
 /// from every retained coordination record, direction head, and receipt.
-pub const SCHEMA_VERSION: u32 = 93;
+/// Schema 94 lets one Design invitation list every question item it asks.
+pub const SCHEMA_VERSION: u32 = 94;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

@@ -176,7 +176,7 @@ pub enum DesignNoticeEvidence {
     Conversation { source: DesignConversationEvidence },
 }
 
-/// The one question item a Design request asks a lane about.
+/// One question item a Design request asks a lane about.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignAsk {
@@ -225,10 +225,11 @@ pub struct DesignNoticed {
     /// lowers it, Converge raises it. Absent on records older than the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stance: Option<WorkingGroupStance>,
-    /// The question item asked. Absent asks about the whole Design: no
-    /// current item was askable of the lane, or the record predates items.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ask: Option<DesignAsk>,
+    /// The question items asked, the best-scoring first and the rest in
+    /// statement order. Empty asks about the whole Design: no current item
+    /// was askable of the lane, or the record predates items.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asks: Vec<DesignAsk>,
 }
 
 /// The resident handed an active Design's holder the operator's newest return

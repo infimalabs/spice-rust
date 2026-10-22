@@ -1,9 +1,10 @@
-//! A Design request asks one unmet question item: the one scoring best
-//! against the session's evidence, else the lowest-index one; each item is
-//! asked at most once per continuing session, and only the lane's own answer
-//! to that item, or its leave, settles the ask.
+//! A Design request asks every question item pending for the lane, the one
+//! scoring best against the session's evidence first and the rest in
+//! statement order; the lane's own answer to any of them, or its leave,
+//! settles the request for the session, and a later session is owed only the
+//! items the lane has not weighed.
 
-use wire::rooms::{DesignItemState, RoomQuestion, RoomQuestionItem};
+use wire::rooms::{DesignItemState, RoomQuestionItem};
 
 use super::*;
 
@@ -29,11 +30,19 @@ fn item_design(lanes: &Lanes, questions: &[&str]) -> wire::TaskHandle {
     )
 }
 
-/// The question position and text the lane's owed request asks.
-fn asked(lanes: &Lanes, config: &SurfaceConfig) -> Option<(u16, String, DesignItemState)> {
-    let ask = lanes.request(config, FIRST)?.ask?;
-    let position = u16::try_from(ask.question.offset() + 1).expect("fixture position");
-    Some((position, ask.text, ask.state))
+/// The question positions and states the lane's owed request asks, in order.
+fn asked(lanes: &Lanes, config: &SurfaceConfig) -> Option<Vec<(u16, DesignItemState)>> {
+    let request = lanes.request(config, FIRST)?;
+    Some(
+        request
+            .asks
+            .iter()
+            .map(|ask| {
+                let position = u16::try_from(ask.question.offset() + 1).expect("fixture position");
+                (position, ask.state)
+            })
+            .collect(),
+    )
 }
 
 impl Lanes {
@@ -59,67 +68,79 @@ impl Lanes {
 }
 
 #[test]
-fn an_item_ask_names_the_best_item_and_settles_only_on_the_lanes_answer() {
-    let lanes = Lanes::new("design-request-item-ask");
+fn one_request_asks_every_pending_item_and_one_answer_settles_the_session() {
+    use DesignItemState::Quiet;
+
+    let lanes = Lanes::new("design-request-item-asks");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
-    let design = item_design(&lanes, &[UNRELATED[0], RELEVANT]);
+    let design = item_design(&lanes, &[UNRELATED[0], RELEVANT, UNRELATED[1]]);
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
     let mut seated = claimant_seats();
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
-    let mut opportunity = |stamp: &str| {
+    let opportunity = |stamp: &str, seated: &Seats, completions: &mut _| {
         let task = lanes.claimed(stamp, FIRST);
         lanes.complete(&task, &format!("{MATCHING} Completed as {stamp}."));
-        lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+        lanes.reconcile_profiles(&config, seated, completions, &profiles);
     };
 
-    opportunity("dVrD245Kc");
+    opportunity("dVrD245Kc", &seated, &mut completions);
     assert_eq!(
         asked(&lanes, &config),
-        Some((2, RELEVANT.to_owned(), DesignItemState::Quiet)),
-        "the item scoring best against the evidence is asked, not the lowest"
+        Some(vec![(2, Quiet), (1, Quiet), (3, Quiet)]),
+        "the best-scoring item leads and the rest keep statement order"
     );
+    let notices = lanes.noticed();
+    assert_eq!(notices.len(), 1, "one notice carries every pending item");
     assert_eq!(
-        lanes.noticed().last().and_then(|notice| notice.ask.clone()),
-        Some(wire::rooms::DesignAsk {
-            question: RoomQuestion::new(2).expect("position"),
-            item: RoomQuestionItem::of(RELEVANT),
-            state: DesignItemState::Quiet,
-        })
+        notices[0]
+            .asks
+            .iter()
+            .map(|ask| ask.item.clone())
+            .collect::<Vec<_>>(),
+        [RELEVANT, UNRELATED[0], UNRELATED[1]].map(RoomQuestionItem::of)
     );
+    let text = spice::rooms::awareness::request_text(
+        &lanes.request(&config, FIRST).expect("the request is owed"),
+    );
+    for question in [RELEVANT, UNRELATED[0], UNRELATED[1]] {
+        assert_eq!(text.matches(question).count(), 1, "{text}");
+    }
+    assert_eq!(text.matches("spice room contribute").count(), 1, "{text}");
 
     lanes.contribute(50, &config, FIRST, &design);
     lanes.post_listeners(51, &config, &design);
-    assert_eq!(
-        asked(&lanes, &config).map(|(position, ..)| position),
-        Some(2),
-        "an open question and another actor's post leave the item unanswered"
+    assert!(
+        asked(&lanes, &config).is_some(),
+        "an open question and another actor's post leave the request owed"
     );
 
     lanes.charge(52, &config, FIRST, &design, 2, 1);
-    assert_eq!(asked(&lanes, &config), None);
-    opportunity("dVrD245Kp");
     assert_eq!(
-        asked(&lanes, &config).map(|(position, ..)| position),
-        Some(1),
-        "the session's next opportunity asks the item it was not yet asked"
+        asked(&lanes, &config),
+        None,
+        "an answer to any item settles it"
     );
-
-    lanes.charge(53, &config, FIRST, &design, 2, 1);
-    assert_eq!(
-        asked(&lanes, &config).map(|(position, ..)| position),
-        Some(1),
-        "a charge against another item leaves the ask owed"
-    );
-    lanes.leave(54, &config, FIRST, &design);
-    assert_eq!(asked(&lanes, &config), None);
-    opportunity("dVrD245Kq");
+    opportunity("dVrD245Kp", &seated, &mut completions);
     assert_eq!(lanes.request(&config, FIRST), None);
     assert_eq!(
         lanes.noticed().len(),
-        2,
-        "each item is asked once per session"
+        1,
+        "a settled request is not reissued for its other items in the session"
+    );
+
+    seated.release_all();
+    let successor = test_uuid(FIRST.saturating_add(40));
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, successor);
+    lanes.declare_identity(FIRST, test_uuid(FIRST.saturating_add(41)).to_string());
+    seated = seats(&[(FIRST, successor)]);
+    opportunity("dVrD245Kq", &seated, &mut completions);
+    assert_eq!(
+        asked(&lanes, &config),
+        Some(vec![(1, Quiet), (3, Quiet)]),
+        "a later session is owed only the items the lane has not weighed"
     );
     seated.release_all();
     lanes.finish();
@@ -142,8 +163,11 @@ fn a_whole_statement_match_asks_the_lowest_unheld_item_when_no_item_clears_the_f
 
     assert_eq!(
         asked(&lanes, &config),
-        Some((2, UNRELATED[1].to_owned(), DesignItemState::Quiet)),
-        "the item whose series holds the lane is passed over for the next one"
+        Some(vec![
+            (2, DesignItemState::Quiet),
+            (3, DesignItemState::Quiet)
+        ]),
+        "the item whose series holds the lane is passed over"
     );
     seated.release_all();
     lanes.finish();

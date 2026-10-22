@@ -523,10 +523,13 @@ impl Indexes {
             let asked = Arc::make_mut(&mut self.noticed_asks)
                 .entry(session_key.clone())
                 .or_default();
-            Arc::make_mut(asked).insert((
-                noticed.design.clone(),
-                noticed.ask.as_ref().map(|ask| ask.item.clone()),
-            ));
+            let asked = Arc::make_mut(asked);
+            if noticed.asks.is_empty() {
+                asked.insert((noticed.design.clone(), None));
+            }
+            for ask in &noticed.asks {
+                asked.insert((noticed.design.clone(), Some(ask.item.clone())));
+            }
             Arc::make_mut(&mut self.design_notices).insert(session_key, (row.seq, noticed));
         }
     }

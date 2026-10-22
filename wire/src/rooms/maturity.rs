@@ -843,7 +843,7 @@ mod tests {
                 "measure".to_owned(),
             ],
             stance: None,
-            ask: None,
+            asks: Vec::new(),
         }
     }
 
