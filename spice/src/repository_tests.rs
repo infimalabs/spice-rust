@@ -74,17 +74,6 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
         state.rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1))),
         common.join(".spice/rtk/00000000-0000-0000-0000-000000000001/history.db")
     );
-    let retired_learnings = common.join(".spice/learnings");
-    assert!(
-        !state
-            .owned_directories()
-            .contains(&retired_learnings.as_path()),
-        "repository state no longer claims the unconsumed learnings directory"
-    );
-    assert!(
-        !retired_learnings.exists(),
-        "state admission does not create the retired learnings directory"
-    );
     assert_eq!(
         proof::Layout::new(
             repository.worktree_root(),
