@@ -1,4 +1,5 @@
-//! A retained leave answer crosses without its retired repeat-leave flag.
+//! A retained leave answer crosses without its retired repeat-leave flag or
+//! the retired duties it kept.
 
 use super::*;
 
@@ -6,7 +7,7 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
 const LEAVE_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116311";
 
 #[test]
-fn writable_open_drops_the_repeat_leave_flag_from_a_retained_leave_answer() {
+fn writable_open_drops_the_repeat_leave_flag_and_retired_duties_from_a_retained_leave_answer() {
     let scratch = Scratch::new();
     let path = scratch.path().join("leave-receipts.sqlite3");
     let journal = authority_file_fixture(&path);
@@ -16,10 +17,17 @@ fn writable_open_drops_the_repeat_leave_flag_from_a_retained_leave_answer() {
         room: room.clone(),
         publication: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
             .expect("fixture publication"),
-        kept: Vec::new(),
+        kept: vec![wire::intent::RoomListeningDuty::Stop {
+            key: "dWJyMVkz4".to_owned(),
+        }],
     };
     let mut retained = serde_json::to_value(&answer).expect("answer encodes");
     retained["recorded"] = json!(true);
+    retained["kept"] = json!([
+        {"duty": "result", "key": "dWJyMVkz3"},
+        {"duty": "stop", "key": "dWJyMVkz4"},
+        {"duty": "receipt", "key": "dWJyMVkz5"},
+    ]);
     let command = Command {
         v: WireVersion::CURRENT,
         id: uuid(LEAVE_COMMAND),
