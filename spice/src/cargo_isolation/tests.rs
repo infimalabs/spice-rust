@@ -501,6 +501,139 @@ fn partial_native_toolchain_authority_is_refused() {
 }
 
 #[test]
+fn a_store_home_offered_as_the_bootstrap_home_is_refused_by_name() {
+    let fixture = Fixture::new();
+    let store_home = fixture
+        .bootstrap
+        .join(STORE_RELATIVE)
+        .join(STORE_HOMES)
+        .join("874bc16b");
+    fs::create_dir_all(&store_home).expect("store home exists");
+    let by_path = Host::from_environment(
+        &fixture.repository,
+        [(
+            OsString::from(CARGO_HOME_VARIABLE),
+            store_home.clone().into_os_string(),
+        )],
+    )
+    .expect_err("a store home below the homes segment is not a bootstrap home");
+    assert_eq!(by_path.reason(), "cargo-isolation::bootstrap-home-isolated");
+    assert!(
+        by_path
+            .to_string()
+            .contains(&store_home.display().to_string())
+    );
+
+    let owned = fixture.root.join("relocated-home");
+    fs::create_dir_all(&owned).expect("relocated home exists");
+    fs::write(owned.join(STORE_OWNER), b"{}").expect("ownership record written");
+    let by_record = Host::from_environment(
+        &fixture.repository,
+        [(
+            OsString::from(CARGO_HOME_VARIABLE),
+            owned.clone().into_os_string(),
+        )],
+    )
+    .expect_err("a home carrying the ownership record is not a bootstrap home");
+    assert_eq!(
+        by_record.reason(),
+        "cargo-isolation::bootstrap-home-isolated"
+    );
+    assert!(by_record.to_string().contains(&owned.display().to_string()));
+}
+
+#[test]
+fn the_resident_environment_derives_its_bootstrap_home_and_drops_inherited_isolation() {
+    let store_home = Path::new("/native/cargo")
+        .join(STORE_RELATIVE)
+        .join(STORE_HOMES)
+        .join("874bc16b");
+    let launcher = [
+        ("PATH", "/usr/bin"),
+        ("HOME", "/home/op"),
+        (CARGO_HOME_VARIABLE, store_home.to_str().expect("ascii")),
+        (NATIVE_CARGO_VARIABLE, "/elsewhere/cargo"),
+        (NATIVE_RUSTC_VARIABLE, "/elsewhere/rustc"),
+        (NATIVE_RUSTDOC_VARIABLE, "/elsewhere/rustdoc"),
+        ("SPICE_RS_BOOTSTRAP_CARGO_HOME", "/retired/name"), // env-policy: not-an-env SPICE_RS_BOOTSTRAP_CARGO_HOME
+    ];
+    let resident = ResidentLaunchEnvironment::derive(
+        launcher
+            .iter()
+            .map(|(name, value)| (OsString::from(name), OsString::from(value))),
+    );
+    assert_eq!(resident.bootstrap_home(), Some(Path::new("/native/cargo")));
+    let names = resident
+        .entries()
+        .map(|(name, _)| name.to_os_string())
+        .collect::<Vec<_>>();
+    for dropped in [
+        CARGO_HOME_VARIABLE,
+        NATIVE_CARGO_VARIABLE,
+        NATIVE_RUSTC_VARIABLE,
+        NATIVE_RUSTDOC_VARIABLE,
+    ] {
+        assert!(
+            !names.contains(&OsString::from(dropped)),
+            "{dropped} leaked"
+        );
+    }
+    assert!(names.contains(&OsString::from("PATH")));
+
+    let mut command = Command::new("/installed/spice");
+    resident.apply(&mut command);
+    let applied = command
+        .get_envs()
+        .map(|(name, value)| (name.to_os_string(), value.map(OsStr::to_os_string)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        applied.get(OsStr::new(BOOTSTRAP_HOME_VARIABLE)),
+        Some(&Some(OsString::from("/native/cargo")))
+    );
+    for removed in [
+        CARGO_HOME_VARIABLE,
+        NATIVE_CARGO_VARIABLE,
+        NATIVE_RUSTC_VARIABLE,
+        NATIVE_RUSTDOC_VARIABLE,
+    ] {
+        assert_eq!(
+            applied.get(OsStr::new(removed)),
+            Some(&None),
+            "{removed} reaches the resident"
+        );
+    }
+
+    let explicit = ResidentLaunchEnvironment::derive([
+        (
+            OsString::from(BOOTSTRAP_HOME_VARIABLE),
+            OsString::from("/explicit/cargo"),
+        ),
+        (
+            OsString::from(CARGO_HOME_VARIABLE),
+            store_home.clone().into_os_string(),
+        ),
+    ]);
+    assert_eq!(
+        explicit.bootstrap_home(),
+        Some(Path::new("/explicit/cargo"))
+    );
+
+    let plain = ResidentLaunchEnvironment::derive([(
+        OsString::from(CARGO_HOME_VARIABLE),
+        OsString::from("/plain/cargo"),
+    )]);
+    assert_eq!(plain.bootstrap_home(), Some(Path::new("/plain/cargo")));
+
+    let home_only =
+        ResidentLaunchEnvironment::derive([(OsString::from("HOME"), OsString::from("/home/op"))]);
+    assert_eq!(
+        home_only.bootstrap_home(),
+        Some(Path::new("/home/op/.cargo"))
+    );
+    assert_eq!(ResidentLaunchEnvironment::derive([]).bootstrap_home(), None);
+}
+
+#[test]
 fn mixed_native_toolchain_directories_are_refused() {
     let fixture = Fixture::new();
     let other = fixture.root.join("other");

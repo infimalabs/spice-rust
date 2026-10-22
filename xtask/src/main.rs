@@ -323,6 +323,8 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
         return ExitCode::from(USAGE_EXIT);
     };
     request.lane = bootstrap_environment(wire::SpiceVariable::Lane.as_str());
+    request.resident =
+        spice::cargo_isolation::ResidentLaunchEnvironment::derive(launcher_environment());
     let mut output = io::stdout().lock();
     match xtask::refresh(&request, &release_environment(), &mut output) {
         Ok(_) => ExitCode::SUCCESS,
@@ -630,6 +632,14 @@ fn release_environment() -> xtask::ReleaseEnvironment {
 )]
 fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
     env::var_os(name)
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the xtask binary rim captures the shell environment a resident restart derives from"
+)]
+fn launcher_environment() -> std::env::VarsOs {
+    env::vars_os()
 }
 
 #[cfg(test)]

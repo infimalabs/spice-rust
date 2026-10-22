@@ -6,7 +6,7 @@
 //! replacement configuration.
 
 use std::error::Error as StdError;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
 #[cfg(unix)]
@@ -57,6 +57,17 @@ pub const DEVELOPER_CHILD_EXCLUDED_VARIABLES: [&str; 3] = [
 ];
 
 const STORE_RELATIVE: &str = "spice/source-store-v2";
+const STORE_HOMES: &str = "homes";
+const STORE_OWNER: &str = "owner.json";
+/// Variables the resident never inherits from whoever restarted it: its Cargo
+/// host authority is set explicitly by [`ResidentLaunchEnvironment`].
+const RESIDENT_INHERITED_ISOLATION_VARIABLES: [&str; 5] = [
+    CARGO_HOME_VARIABLE,
+    BOOTSTRAP_HOME_VARIABLE,
+    NATIVE_CARGO_VARIABLE,
+    NATIVE_RUSTC_VARIABLE,
+    NATIVE_RUSTDOC_VARIABLE,
+];
 
 /// Host authorities captured before an isolated Cargo home is installed.
 #[derive(Clone, Eq, PartialEq)]
@@ -107,6 +118,15 @@ impl Host {
                     "neither SPICE_BOOTSTRAP_CARGO_HOME, CARGO_HOME, nor HOME names the native Cargo home",
                 )
             })?;
+        if let Some(store_home) = isolated_store_home(Path::new(&bootstrap)) {
+            return Err(IsolationError::new(
+                "cargo-isolation::bootstrap-home-isolated",
+                format!(
+                    "the bootstrap Cargo home candidate is itself an isolated Spice store home, {}: set SPICE_BOOTSTRAP_CARGO_HOME to the native Cargo home the store was seeded from",
+                    store_home.display()
+                ),
+            ));
+        }
         let toolchain = resolve_native_toolchain(repository, &bootstrap, &entries)?;
         let environment = Environment::new(entries).map_err(|error| {
             IsolationError::new(
@@ -248,6 +268,117 @@ impl Host {
 
     fn store_root(&self) -> PathBuf {
         self.bootstrap_home.join(STORE_RELATIVE)
+    }
+}
+
+/// The one way a path shows it is an isolated store home rather than a native
+/// Cargo home: it carries the store's ownership record, or it lies below a
+/// `spice/source-store-v2/homes` segment.
+///
+/// The answer names the store home itself, which is the path when the record
+/// is present and the `homes` child otherwise, so a deeper path below a store
+/// home is refused the same way.
+fn isolated_store_home(path: &Path) -> Option<PathBuf> {
+    if path.join(STORE_OWNER).is_file() {
+        return Some(path.to_path_buf());
+    }
+    store_root_of(path).map(|(_, home)| home)
+}
+
+/// Split `path` at a `<root>/spice/source-store-v2/homes/<home>` segment into
+/// the native root that seeded the store and the store home below it.
+fn store_root_of(path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let store = Path::new(STORE_RELATIVE).join(STORE_HOMES);
+    let mut ancestors = path.ancestors().peekable();
+    while let Some(home) = ancestors.next() {
+        let homes = *ancestors.peek()?;
+        if homes.ends_with(&store) {
+            let root = homes.ancestors().nth(store.components().count())?;
+            return Some((root.to_path_buf(), home.to_path_buf()));
+        }
+    }
+    None
+}
+
+/// The process environment a restarted resident launches with.
+///
+/// The resident's Cargo host authority is a fact of the installation, not of
+/// whichever shell restarted it: `CARGO_HOME` and every isolation variable the
+/// launcher carried are dropped, and `SPICE_BOOTSTRAP_CARGO_HOME` alone is
+/// set to the native home derived from the launcher's own host. A launcher
+/// whose `CARGO_HOME` is an isolated store home names the native home that
+/// store was seeded from, so a development shell restarts a resident that can
+/// still launch lanes.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResidentLaunchEnvironment {
+    entries: std::collections::BTreeMap<OsString, OsString>,
+}
+
+impl ResidentLaunchEnvironment {
+    /// Derive the resident environment from the launcher's `entries`.
+    ///
+    /// The bootstrap home is `SPICE_BOOTSTRAP_CARGO_HOME` when the launcher
+    /// carried one; else `CARGO_HOME`, lifted to the native root when it is a
+    /// store home; else `HOME/.cargo`. With none of those the variable stays
+    /// absent and [`Host::from_environment`] names what is missing.
+    pub fn derive(entries: impl IntoIterator<Item = (OsString, OsString)>) -> Self {
+        let mut entries = entries
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let bootstrap = entries
+            .get(OsStr::new(BOOTSTRAP_HOME_VARIABLE))
+            .cloned()
+            .or_else(|| {
+                entries.get(OsStr::new(CARGO_HOME_VARIABLE)).map(|home| {
+                    store_root_of(Path::new(home))
+                        .map_or_else(|| home.clone(), |(root, _)| root.into_os_string())
+                })
+            })
+            .or_else(|| default_cargo_home(entries.get(OsStr::new("HOME"))));
+        for variable in RESIDENT_INHERITED_ISOLATION_VARIABLES {
+            entries.remove(OsStr::new(variable));
+        }
+        if let Some(bootstrap) = bootstrap {
+            entries.insert(OsString::from(BOOTSTRAP_HOME_VARIABLE), bootstrap);
+        }
+        Self { entries }
+    }
+
+    /// The native Cargo home the resident will seed lanes from, when derived.
+    #[must_use]
+    pub fn bootstrap_home(&self) -> Option<&Path> {
+        self.entries
+            .get(OsStr::new(BOOTSTRAP_HOME_VARIABLE))
+            .map(Path::new)
+    }
+
+    /// Every variable the resident starts with.
+    pub fn entries(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
+        self.entries
+            .iter()
+            .map(|(name, value)| (name.as_os_str(), value.as_os_str()))
+    }
+
+    /// Admit the host this environment resolves to, as the resident will.
+    ///
+    /// # Errors
+    ///
+    /// Every refusal [`Host::from_environment`] makes, so the installer can
+    /// refuse before it restarts a resident that could not launch a lane.
+    pub fn host(&self, repository: &Path) -> Result<Host, IsolationError> {
+        Host::from_environment(repository, self.entries.clone())
+    }
+
+    /// Bind `command` to this environment: every inherited isolation variable
+    /// is removed explicitly and `SPICE_BOOTSTRAP_CARGO_HOME` alone is set,
+    /// so the launcher's remaining environment passes through unchanged.
+    pub fn apply(&self, command: &mut Command) {
+        for variable in RESIDENT_INHERITED_ISOLATION_VARIABLES {
+            command.env_remove(variable);
+        }
+        if let Some(bootstrap) = self.bootstrap_home() {
+            command.env(BOOTSTRAP_HOME_VARIABLE, bootstrap);
+        }
     }
 }
 

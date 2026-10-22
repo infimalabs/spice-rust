@@ -18,6 +18,17 @@ channel `rust-toolchain.toml` declares, resolved by the bootstrap home's own
 toolchain directories refuse before Cargo starts; `PATH` never selects the
 compiler.
 
+The resident's host authority is a fact of the installation, not of the shell
+that restarted it. `spice dev xtask -- install` and the detached `spice up`
+launcher drop `CARGO_HOME` and every `SPICE_BOOTSTRAP_CARGO_HOME` and
+`SPICE_NATIVE_*` variable from the resident's environment and set
+`SPICE_BOOTSTRAP_CARGO_HOME` alone, derived from the launcher's own host: an
+explicit bootstrap home, else `CARGO_HOME` lifted to the native root when it is
+an isolated store home, else `HOME/.cargo`. A store home offered as the
+bootstrap home refuses `cargo-isolation::bootstrap-home-isolated` by name, and
+the installer refuses the restart before publishing when the derived host does
+not resolve, so a lane never learns about a broken host at its own launch.
+
 Package trees are sealed after atomic publication, except that regular source
 files keep owner-write permission: build scripts that copy inputs into
 `OUT_DIR` preserve permissions, and read-only inputs would poison later

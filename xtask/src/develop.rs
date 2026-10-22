@@ -46,6 +46,9 @@ pub struct RefreshRequest {
     pub up_arguments: Vec<OsString>,
     /// Lane binding of the invoking shell, when a supervised lane runs it.
     pub lane: Option<OsString>,
+    /// Environment the restarted resident launches with, derived from the
+    /// invoking shell's host rather than inherited from it.
+    pub resident: spice::cargo_isolation::ResidentLaunchEnvironment,
 }
 
 /// What one completed refresh published.
@@ -119,6 +122,9 @@ pub enum RefreshError {
     ResidentStartRefused(String),
     /// Restart metadata could not be tied to the resident's published generation.
     ResidentLaunchUncertain(String),
+    /// The invoking shell's host does not resolve a Cargo authority the
+    /// restarted resident could launch lanes with.
+    ResidentHost(spice::cargo_isolation::IsolationError),
     /// An authenticated resident cannot be restarted without its bearer token.
     ResidentAuthTokenRequired,
     /// Startup failed after the journal crossed an irreversible schema boundary.
@@ -185,6 +191,10 @@ impl fmt::Display for RefreshError {
             Self::ResidentLaunchUncertain(detail) => write!(
                 formatter,
                 "resident::restart-binding-unavailable; refusing to stop the resident: {detail}"
+            ),
+            Self::ResidentHost(error) => write!(
+                formatter,
+                "resident::host-unavailable; refusing to restart a resident that could not launch a lane: {error}"
             ),
             Self::ResidentAuthTokenRequired => write!(
                 formatter,

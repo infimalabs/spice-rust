@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use spice::cargo_isolation::ResidentLaunchEnvironment;
 
 pub(crate) mod observer;
 
@@ -228,6 +229,7 @@ impl PreparedLaunch {
             .try_clone()
             .map_err(|error| daemon_fault("resident::log-unavailable", error))?;
         let mut command = ProcessCommand::new(&executable);
+        ResidentLaunchEnvironment::derive(launcher_environment()).apply(&mut command);
         command
             .args([
                 "--json",
@@ -269,6 +271,14 @@ impl PreparedLaunch {
             child,
         })
     }
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the detached launcher is the rim that captures the shell a resident restart derives from"
+)]
+fn launcher_environment() -> std::env::VarsOs {
+    std::env::vars_os()
 }
 
 struct SpawnedLaunch {
