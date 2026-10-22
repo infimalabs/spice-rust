@@ -81,8 +81,8 @@ owns each rule summarized here.
   not a listener. A contribution is problem-space record, never a decision: it
   changes no task, claim, group, candidate, or authorization, and a concluded
   Design accepts none.
-- **Design statements.** A Design description opens with a plain sentence that
-  states the problem, not a one-word heading. Each unresolved question is its
+- **Design statements.** A Design's pitch is the plain sentence that states
+  its problem, not a one-word heading. Each unresolved question is its
   own item in the statement list; Design surfaces label that typed list
   Questions while ordinary tasks continue to present it as Acceptance.
 - **Session evidence.** Design matching retains bounded evidence under the
@@ -138,13 +138,13 @@ owns each rule summarized here.
   or recruitment.
   Compaction neither resets history nor creates an opportunity. A fresh vendor
   identity may receive a later ordinary offer without deleting the lane.
-  The request quotes the first substantive description sentence (the opening
-  hook every description is authored to carry). An item request then lists
-  each item with its position and standing, says the lane may weigh any one or
-  more, shows the contribute form once, and offers the supporting task as a
-  `--cite` key; conversation evidence is not citable. A whole-Design request
-  lists a bounded prefix of whole open questions. One contribution or `spice
-  room leave --clause` answers it and ends its listening; the text says so.
+  The request prints the Design's stored pitch (its problem sentence). An item
+  request then lists each item with its position and standing, says the lane
+  may weigh any one or more, shows the contribute form once, and offers the
+  supporting task as a `--cite` key; conversation evidence is not citable. A
+  whole-Design request lists a bounded prefix of whole open questions. One
+  contribution or `spice room leave --clause` answers it and ends its
+  listening; the text says so.
   Selection, `task next`, room catch-up, and `room leave` share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced
   transcript source, or lost task statement, completion, or claim evidence

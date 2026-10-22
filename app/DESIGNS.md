@@ -46,8 +46,9 @@ standing. Opening or reading the view moves no group, joins, acknowledges,
 authorizes, and wakes nothing, and commits no journal fact. Operator decision
 controls appear only on an open Design.
 Lanes refine a Design's statement through ordinary task edit authority, `spice
-task modify` or a `spice://task/HANDLE/description` write, never from the
-browser, which hosts only principal sessions.
+task modify --pitch` for its problem sentence (the why), `task modify
+--description` or a `spice://task/HANDLE/description` write for the how, never
+from the browser, which hosts only principal sessions.
 
 ## Concluding a Design
 
@@ -261,9 +262,9 @@ danger or workflow state, and maturity never blocks or authorizes a Design
 decision.
 
 An open Design's view offers the reader no contribution control. A lane learns
-of an open Design matching its claimed
-work from the resident's private notice and `spice room awareness`. Each names
+of an open Design matching its claimed work from the resident's private notice
+and `spice room awareness`. Each names the Design's title and stored pitch,
 the claimed task and its matched terms, each distinct term once and at most
-six, along with the statement revision, the optional `task modify --title`,
-`task modify --description`, and typed `room contribute` commands, and states
-that the invitation creates no assignment and requires no response.
+six, along with the statement revision and the typed `room contribute`
+commands, and states that the invitation creates no assignment and requires no
+response.

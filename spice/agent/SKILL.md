@@ -78,11 +78,12 @@ name continuations.
   authorize no task.
 - Create or update a complete task contract, release it, then trust its owning
   and review lanes; follow claimed work only when asked.
-- A pitch is one plain sentence saying why a task matters; description holds
-  durable need, reason, and invariants, not incidents. Acceptance is
-  claimant-driven and checkable, never awaited activity. A Design's pitch is
-  its problem; it itemizes each open question. Update changed needs.
-  Code/docs/tests state contract; task/commit records keep history.
+- A pitch is one required plain sentence saying why a task matters; the
+  description is the how: durable need, mechanism, and invariants, not
+  incidents. Acceptance is claimant-driven and checkable, never awaited
+  activity. A Design's pitch is its problem; it itemizes each open question.
+  Update changed needs. Code/docs/tests state contract; task/commit records
+  keep history.
 - Permanent tests are fast, deterministic, in-process current contracts: no
   process, incident, source-text, plumbing, wording, incidental-default, or
   retired-behavior tests. Delete inadmissible tests unless a valuable contract
