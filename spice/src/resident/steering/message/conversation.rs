@@ -31,8 +31,14 @@ pub(super) fn publish_conversation(
         .collect();
     let rooms = packet_rooms(contexts, view)?;
     let identities = identities(packet, &directed);
-    let (targets, unreached) =
-        resolve_targets(bus, &residency.body().lanes, view, &directed, &identities)?;
+    let (targets, unreached) = resolve_targets(
+        bus,
+        &residency.body().lanes,
+        view,
+        packet.lane,
+        &directed,
+        &identities,
+    )?;
     let mut minted_micros = minted(bus)?;
     let at = current_instant().map_err(Unpublished::Failed)?;
     let expires = expiry(at, config.expiry().get()).map_err(Unpublished::Failed)?;
