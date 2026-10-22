@@ -352,13 +352,6 @@ impl ResidentLaunchEnvironment {
             .map(Path::new)
     }
 
-    /// Every variable the resident starts with.
-    pub fn entries(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
-        self.entries
-            .iter()
-            .map(|(name, value)| (name.as_os_str(), value.as_os_str()))
-    }
-
     /// Admit the host this environment resolves to, as the resident will.
     ///
     /// # Errors
