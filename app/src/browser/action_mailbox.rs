@@ -679,6 +679,11 @@ fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usiz
                 .saturating_add(outcome)
                 .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
         }
+        crate::client_action::PreparationRequest::Nudge { request, expected } => request
+            .design
+            .as_str()
+            .len()
+            .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
     }
 }
 

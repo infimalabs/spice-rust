@@ -513,7 +513,7 @@ fn guard_residence(write: &mut JournalWrite, lane: CanonicalUuid) {
 
 /// The first conversation stamp at or after `micros` no admitted
 /// conversation or room publication already holds.
-fn mint_stamp(
+pub(super) fn mint_stamp(
     bus: &Bus,
     room: Option<&RoomAnchor>,
     mut micros: i64,
@@ -575,7 +575,10 @@ fn now() -> Result<Instant, Outcome<CommandAnswer>> {
         .map_err(|error| environment_fault("room::clock-invalid", &error.to_string()))
 }
 
-fn expiry(at: Instant, config: &steer::Config) -> Result<Instant, Outcome<CommandAnswer>> {
+pub(super) fn expiry(
+    at: Instant,
+    config: &steer::Config,
+) -> Result<Instant, Outcome<CommandAnswer>> {
     let invalid = |error: &dyn std::fmt::Display| {
         environment_fault("room::expiry-invalid", &error.to_string())
     };

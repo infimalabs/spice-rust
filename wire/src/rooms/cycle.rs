@@ -42,6 +42,11 @@ pub struct DesignNudge {
 pub struct DesignNudged {
     /// The nudged Design.
     pub design: TaskStamp,
+    /// The operator MSG the same write sent one lane in the Design's room,
+    /// carrying the room's unheard operator posts; absent when no lane could
+    /// take the Design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<super::RoomAuthorityStamp>,
 }
 
 /// What one open Design's pass cycle waits on.

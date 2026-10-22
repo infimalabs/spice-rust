@@ -2,6 +2,7 @@
 //! Every admitted command reaches exactly one domain handler from this table.
 
 use std::io;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bus::Bus;
 use lane::occupant::Seats;
@@ -13,7 +14,7 @@ use wire::{CanonicalUuid, CommandKind, Outcome, Refusal, Reply, ReplyPosition};
 use super::{
     CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, consent_surface,
     current_residency, dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change,
-    lane_recovery, lane_surface, lifecycle, policy_surface, principal_surface,
+    lane_recovery, lane_surface, lifecycle, message_surface, policy_surface, principal_surface,
     read_materializations::CurrentReads, settings_surface, steering, vendor_surface,
 };
 
@@ -26,6 +27,9 @@ pub(super) struct Surface<'a> {
     recovery: lane_recovery::Runtime,
     pub(super) config: &'a SurfaceConfig,
     reads: &'a CurrentReads,
+    /// Retained session profiles a nudge scores, once message startup
+    /// restores them.
+    profiles: OnceLock<Arc<Mutex<message_surface::MessageState>>>,
 }
 
 pub(super) struct Runtimes<'a> {
@@ -59,7 +63,13 @@ impl<'a> Surface<'a> {
             recovery,
             config,
             reads,
+            profiles: OnceLock::new(),
         }
+    }
+
+    /// Give nudges the retained session profiles message startup restored.
+    pub(super) fn attach_profiles(&self, profiles: Arc<Mutex<message_surface::MessageState>>) {
+        let _ = self.profiles.set(profiles);
     }
 
     /// Record a seated occupant's consent request and answer what policy
@@ -432,6 +442,9 @@ impl<'a> Surface<'a> {
                     ),
                     Vec::new(),
                 ),
+                (CommandKind::DesignNudge, Intent::DesignNudge(nudge)) => {
+                    self.dispatch_design_nudge(command, nudge)
+                }
                 (CommandKind::RoomControl, Intent::RoomControl(control)) => {
                     let (outcome, notify) = crate::board_command::room_control(
                         self.bus,
@@ -456,6 +469,21 @@ impl<'a> Surface<'a> {
             }
         }
         Some(CommandDispatch::with_effects(outcome, effects))
+    }
+
+    fn dispatch_design_nudge(
+        &self,
+        command: &wire::AdmittedCommand,
+        nudge: &wire::rooms::DesignNudge,
+    ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+        let (outcome, notify) = super::design_nudge::nudge(
+            self.bus,
+            self.config,
+            self.profiles.get().map(AsRef::as_ref),
+            command,
+            nudge,
+        );
+        (outcome, notify.into_iter().collect())
     }
 
     fn dispatch_working_group_disband(

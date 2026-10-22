@@ -488,6 +488,7 @@ impl JournalRead<'_> {
         let (first, last) = (sql(first)?, sql(horizon.get())?);
         let directed = wire::FactKind::RoomCoordinationStarted.as_str();
         let noticed = wire::FactKind::DesignNoticed.as_str();
+        let nudged = wire::FactKind::DesignNudged.as_str();
         let admitted = wire::FactKind::PrincipalAdmitted.as_str();
         read_metrics::observe_query();
         let mut statement = self
@@ -498,6 +499,7 @@ impl JournalRead<'_> {
             .query(params![
                 directed,
                 noticed,
+                nudged,
                 admitted,
                 first,
                 last,
@@ -531,7 +533,7 @@ impl JournalRead<'_> {
                     .connection
                     .query_row(
                         ROOM_AUTHORITY_REMAINING,
-                        params![directed, noticed, admitted, continuation, last],
+                        params![directed, noticed, nudged, admitted, continuation, last],
                         |row| row.get::<_, i64>(0),
                     )
                     .map_err(GuardError::Store)?;

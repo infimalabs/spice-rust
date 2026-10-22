@@ -459,10 +459,11 @@ fn room_authority_pages_current_heads_through_their_horizon() {
     );
 }
 
-/// Every Design notice belongs to the room snapshot, so a lane's invitation
-/// survives a reconnect; the tasks it names do not enter it.
+/// Every Design notice and nudge belongs to the room snapshot, so a lane's
+/// invitation and the posts a nudge carried survive a reconnect; the tasks a
+/// notice names do not enter it.
 #[test]
-fn room_authority_pages_every_design_notice() {
+fn room_authority_pages_every_design_notice_and_nudge() {
     let mut journal = Journal::in_memory().expect("journal");
     let design = task(&mut journal, 1, None);
     let claimed = task(&mut journal, 2, None);
@@ -475,7 +476,7 @@ fn room_authority_pages_every_design_notice() {
     write
         .fact(
             wire::rooms::DesignNoticed {
-                design,
+                design: design.clone(),
                 statement: wire::Seq::new(1).expect("fixture statement"),
                 lane: uuid(HOLDER),
                 occupant: uuid(HOLDER),
@@ -504,14 +505,31 @@ fn room_authority_pages_every_design_notice() {
         .expect("notice builds");
     journal.apply(write).expect("notice stored");
     let noticed = cursor(&journal).expect("noticed");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "task:rooms".parse().expect("room origin"),
+        instant(),
+        wire::Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::rooms::DesignNudged {
+                design,
+                message: Some("dVsYdDj7d".parse::<RoomAuthorityStamp>().expect("message")),
+            },
+            crate::FactCause::Root,
+        )
+        .expect("nudge builds");
+    journal.apply(write).expect("nudge stored");
+    let nudged = cursor(&journal).expect("nudged");
     let page = journal
         .read(|read| {
-            read.room_authority_page(crate::FactPageStart::After(None), noticed, fact_budget(8))
+            read.room_authority_page(crate::FactPageStart::After(None), nudged, fact_budget(8))
         })
         .expect("room authority reads");
     assert_eq!(
         page.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
-        vec![noticed]
+        vec![noticed, nudged]
     );
 }
 

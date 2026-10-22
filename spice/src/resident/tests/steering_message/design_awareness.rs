@@ -13,6 +13,8 @@ const TASK_DESCRIPTION: &str = "Bound the cursor of retained publications per la
 
 #[path = "design_awareness/items.rs"]
 mod items;
+#[path = "design_awareness/nudge.rs"]
+mod nudge;
 #[path = "design_awareness/replacement.rs"]
 mod replacement;
 

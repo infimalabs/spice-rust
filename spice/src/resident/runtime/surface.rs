@@ -338,6 +338,7 @@ pub(super) async fn run_surface(
     };
     let _ = progress.write_all(&message_startup.diagnostic);
     let message_state = Arc::new(std::sync::Mutex::new(message_startup.reader.into_state()));
+    command_surface.attach_profiles(Arc::clone(&message_state));
     let session_compactions =
         message_surface::SessionCompactions::new(crate::session_environment());
     LiveSurface {

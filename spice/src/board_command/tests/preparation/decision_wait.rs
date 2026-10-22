@@ -38,6 +38,7 @@ fn an_operator_nudge_readies_only_an_open_design_gathering_its_first_pass() {
         offered(&bus, epoch, &seats[0]),
         Some(design.born().expect("Design stamp"))
     );
+    capture_for(&bus, epoch, &seats[0], &design);
     clean(&root, bus);
 }
 

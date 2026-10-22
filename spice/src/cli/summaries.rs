@@ -165,7 +165,7 @@ const SUMMARIES: &[(&str, &str)] = &[
     ),
     (
         "preparation nudge",
-        "Ask one open Design to take its next pass",
+        "Push one open Design to proposal and message the best-matching free lane",
     ),
     (
         "preparation propose",

@@ -231,6 +231,27 @@ owns each rule summarized here.
   the Design gathers input, awaits the operator's decision, or waits on its
   released work, deferred work included.
 
+  `preparation nudge HANDLE`, or the Nudge control in the browser's Design
+  menu, is the operator's push of one open Design to proposal before its room
+  steeps; steeping stays the default. The same guarded write that readies the
+  Design delivers it to one lane. A lane is free to take it while it holds no
+  active claim but the Design's; a Design some lane holds goes only to that
+  holder, and a passive Design to no lane. Among free lanes the resident ranks
+  by the TF-IDF match Design awareness uses, with no stance floor: each seated
+  lane scores its occupant's continuing session profile against the Design's
+  current statement, and only when no seated lane is free does a vacant lane
+  the lifecycle may wake compete, scoring its best retained session. Higher
+  score wins, then the lower lane identity. The recipient gets one ordinary
+  operator MSG in the Design's room, which wakes a vacant lane as any operator
+  direction does and reaches its first seat. The message stands alone: it
+  names the Design and its title, says the operator pushed it to proposal,
+  lists its open questions and the room's operator posts no lane had heard,
+  and asks for `spice task capture HANDLE` and a pass that ends with
+  `preparation propose`. Once the recipient acknowledges or declines that
+  message, the browser stops marking the posts it carried as unheard. The
+  reply names the recipient and its match score, or says no lane could take
+  the Design, which then waits ready for allocation.
+
   Every surface names the same cycle state, who acts next, and the exact
   command: `task show` and `task status`, `board` rows, dry and empty drain,
   `group list`, `room status`, every preparation command reply, and the

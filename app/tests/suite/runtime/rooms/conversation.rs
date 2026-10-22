@@ -438,3 +438,89 @@ fn inbox_text_reads_once_and_routes_only_to_its_principal() {
         }
     );
 }
+
+/// The operator post at `position` under `publication`.
+fn operator_post_at(position: u64, publication: &RoomAuthorityStamp) -> serde_json::Value {
+    envelope(
+        position,
+        "room::published",
+        &wire::rooms::RoomPublished {
+            room: room(),
+            publication: publication.clone(),
+            content: wire::rooms::RoomPublicationContent::Authored {
+                text: "Please inspect this room.".to_owned(),
+            },
+        },
+    )
+}
+
+#[test]
+fn a_nudge_message_its_lane_acknowledges_hears_the_posts_before_it() {
+    const NUDGE: &str = "dVsYdDj7q";
+    const DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
+    const KEY: &str = "dNudgeKey1";
+    let session = session(OPERATOR, EPOCH);
+    let sent = envelope(
+        2,
+        "steer::sent",
+        &serde_json::json!({
+            "directive": DIRECTIVE,
+            "fanout": DIRECTIVE,
+            "key": KEY,
+            "lane": SECOND_LANE,
+            "text": "The operator pushed this Design to proposal.",
+            "expires": "2030-04-13T18:44:09.271Z",
+        }),
+    );
+    let posted = envelope(
+        3,
+        "room::posted",
+        &RoomPosted {
+            publication: authority(NUDGE),
+            text: "The operator pushed this Design to proposal.".to_owned(),
+            operation: RoomPublicationKind::Msg {},
+            routes: vec![RoomRoute {
+                destination: RoomDestination::Lane {
+                    lane: uuid(SECOND_LANE),
+                },
+                context: Some(room()),
+                direction: None,
+            }],
+            directed: vec![uuid(DIRECTIVE)],
+            expires: instant("2030-04-13T18:44:09.271Z"),
+        },
+    );
+    let nudged = envelope(
+        4,
+        "proposal::nudged",
+        &wire::rooms::DesignNudged {
+            design: room(),
+            message: Some(authority(NUDGE)),
+        },
+    );
+    let mut runtime = conversation_runtime(&session, &[room_post(1), sent, posted, nudged]);
+    let later = RoomAuthorityStamp::for_micros(authority(NUDGE).micros() + 1)
+        .expect("fixture later post authority");
+    live(&mut runtime, &session, operator_post_at(5, &later));
+    let unheard = |runtime: &AppRuntime, post: &RoomAuthorityStamp| {
+        runtime.room_projection().unheard_post(&room(), post, false)
+    };
+    assert!(
+        unheard(&runtime, &operator_post()),
+        "an undelivered nudge proves nothing heard"
+    );
+
+    live(
+        &mut runtime,
+        &session,
+        acked(6, DIRECTIVE, KEY, SECOND_LANE),
+    );
+    assert!(
+        !unheard(&runtime, &operator_post()),
+        "the acknowledged nudge carried the earlier post"
+    );
+    assert!(
+        unheard(&runtime, &later),
+        "a post after the nudge was never carried"
+    );
+}

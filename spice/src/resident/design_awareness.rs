@@ -222,7 +222,7 @@ pub(in crate::resident) fn reconcile(
     Ok(())
 }
 
-fn bind_current_sessions(
+pub(super) fn bind_current_sessions(
     facts: &bus::TaskFacts,
     occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
     profiles: &std::sync::Mutex<message_surface::MessageState>,
@@ -843,7 +843,7 @@ fn supporting_evidence_is_current(
         })
 }
 
-fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::CommandAnswer> {
+pub(super) fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::CommandAnswer> {
     match outcome {
         Outcome::Reply(_) => unreachable!("Design recognition does not reply on failure"),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),

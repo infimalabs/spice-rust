@@ -293,7 +293,10 @@ fn first_pass_needs_steeped_maturity_or_a_nudge() {
     let mut nudged = Journal::new();
     nudged.lane(&contributed(DESIGN, 1, RoomContributionKind::charge(0)));
     assert_eq!(nudged.cycle(false), DesignCycle::GatheringInput);
-    nudged.operator(&any(DesignNudged { design: design() }));
+    nudged.operator(&any(DesignNudged {
+        design: design(),
+        message: None,
+    }));
     assert_eq!(nudged.cycle(false), DesignCycle::ReadyForProposal);
 }
 
@@ -315,7 +318,14 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
             false,
             contributed(DESIGN, 2, RoomContributionKind::charge(0)),
         ),
-        ("nudge", true, any(DesignNudged { design: design() })),
+        (
+            "nudge",
+            true,
+            any(DesignNudged {
+                design: design(),
+                message: None,
+            }),
+        ),
         ("task-routed MSG", true, posted(task_route())),
         ("context MSG", true, posted(context_route())),
         (

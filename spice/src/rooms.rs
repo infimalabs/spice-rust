@@ -17,6 +17,7 @@ use wire::{Actor, CanonicalUuid, Seq, TaskStamp};
 pub mod awareness;
 mod catch_up;
 pub mod evidence;
+pub mod nudge;
 pub mod profile;
 
 pub use catch_up::{

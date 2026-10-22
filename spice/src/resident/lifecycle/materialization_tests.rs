@@ -279,6 +279,7 @@ fn nudge_write(design: &TaskStamp, at: Instant) -> JournalWrite {
         .fact(
             wire::rooms::DesignNudged {
                 design: design.clone(),
+                message: None,
             },
             FactCause::Root,
         )
