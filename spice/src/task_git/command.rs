@@ -17,12 +17,21 @@ pub(super) fn try_read(root: &Path, args: &[&str]) -> Result<Option<String>, Err
     Ok(output.success().then(|| output.stdout.trim().to_owned()))
 }
 
+/// Read through the repository's own configuration, without the lane's Git
+/// shadow: the shadow points the lane's upstream at itself so an occupant's
+/// bare `git push` or `git pull` cannot reach the integration branch, while
+/// task publication must name the branch the repository really tracks.
+pub(super) fn try_read_native(root: &Path, args: &[&str]) -> Result<Option<String>, Error> {
+    let output = run_bounded(root, args, None, &[], Scope::Native)?;
+    Ok(output.success().then(|| output.stdout.trim().to_owned()))
+}
+
 pub(super) fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
-    run_bounded(root, args, None, &[])
+    run_bounded(root, args, None, &[], Scope::Lane)
 }
 
 pub(super) fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, Error> {
-    run_bounded(root, args, Some(input), &[])
+    run_bounded(root, args, Some(input), &[], Scope::Lane)
 }
 
 pub(super) fn run_with_environment(
@@ -30,7 +39,16 @@ pub(super) fn run_with_environment(
     args: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<GitOutput, Error> {
-    run_bounded(root, args, None, environment)
+    run_bounded(root, args, None, environment, Scope::Lane)
+}
+
+/// Which Git configuration a child command sees.
+#[derive(Clone, Copy)]
+enum Scope {
+    /// The lane's environment as inherited, Git shadow included.
+    Lane,
+    /// The inherited environment with the Git shadow's variables removed.
+    Native,
 }
 
 fn run_bounded(
@@ -38,8 +56,9 @@ fn run_bounded(
     args: &[&str],
     input: Option<&[u8]>,
     environment: &[(&str, &str)],
+    scope: Scope,
 ) -> Result<GitOutput, Error> {
-    let spec = git_spec(root, args, input.is_some(), environment)?;
+    let spec = git_spec(root, args, input.is_some(), environment, scope)?;
     let mut running =
         sill::spawn(spec).map_err(|error| Error::fault("git::launch-failed", error.to_string()))?;
     if let Some(input) = input {
@@ -58,13 +77,19 @@ fn git_spec(
     args: &[&str],
     piped_input: bool,
     environment: &[(&str, &str)],
+    scope: Scope,
 ) -> Result<sill::Spec, Error> {
     let mut arguments = Vec::with_capacity(args.len() + 2);
     arguments.push(OsString::from("-C"));
     arguments.push(root.as_os_str().to_owned());
     arguments.extend(args.iter().map(OsString::from));
 
-    let mut inherited = std::env::vars_os().collect::<BTreeMap<_, _>>();
+    let mut inherited = std::env::vars_os()
+        .filter(|(key, _)| match scope {
+            Scope::Lane => true,
+            Scope::Native => !crate::git_shadow::is_shadow_variable(key),
+        })
+        .collect::<BTreeMap<_, _>>();
     inherited.insert(OsString::from("GIT_TERMINAL_PROMPT"), OsString::from("0"));
     inherited.insert(
         OsString::from("GIT_SSH_COMMAND"),

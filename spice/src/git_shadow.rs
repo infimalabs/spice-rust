@@ -96,7 +96,9 @@ fn native_environment(environment: &Environment) -> BTreeMap<OsString, OsString>
         .collect()
 }
 
-fn is_shadow_variable(key: &OsStr) -> bool {
+/// Whether `key` is one the lane's Git shadow sets: the system-scope file and
+/// the command-scope merge and remote pairs.
+pub(crate) fn is_shadow_variable(key: &OsStr) -> bool {
     if key == GIT_CONFIG_SYSTEM || key == GIT_CONFIG_COUNT {
         return true;
     }

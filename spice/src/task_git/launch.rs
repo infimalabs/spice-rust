@@ -36,7 +36,7 @@ pub enum LaunchAdvance {
 /// Why a launch advance safely declined.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LaunchSkip {
-    /// No `origin` to advance towards.
+    /// No integration branch to advance towards: the lane tracks no remote.
     NoRemote,
     /// Uncommitted work in the tree, which is the lane's and is kept.
     Dirty,

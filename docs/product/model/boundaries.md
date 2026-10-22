@@ -27,6 +27,16 @@ A content conflict is presented as overlap with the baseline, not as an agent
 responsibility to synchronize with an upstream. Typed footprint and admission
 refusals remain distinct from raw synchronization failures.
 
+The baseline is the branch the lane's own pairing declares in the repository's
+configuration, `branch.<lane>.remote` and `branch.<lane>.merge`, read beneath
+the lane's process-local Git shadow; the shadow points an occupant's bare
+`git push` and `git pull` at the lane itself and never chooses the baseline. A
+pairing on a named remote integrates through that remote's tracking ref; a
+pairing on `.` integrates into this repository's own branch with nothing
+fetched; a lane that declares no remote takes `origin`, and one that declares no
+merge branch takes its remote's HEAD. A declared remote the repository does not
+define is a fault, not a silent fall-back to `origin`.
+
 ## Landing refusals
 
 A landing may touch only the task's footprint: paths touched by its own
