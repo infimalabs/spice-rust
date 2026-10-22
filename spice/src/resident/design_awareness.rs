@@ -484,14 +484,8 @@ fn select_design(
     let terms = matched.terms;
     let stance = admitting_stance(facts, design);
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
-    let asks = rank_asks(
-        profile,
-        frequency,
-        design,
-        asks,
-        invitation_floor(facts, design),
-    )
-    .map_err(mismatch)?;
+    let asks =
+        rank_asks(profile, frequency, design, asks, match_score_floor(stance)).map_err(mismatch)?;
     Ok(Some(Selection {
         design: design.born().clone(),
         statement: design.statement().revision,
