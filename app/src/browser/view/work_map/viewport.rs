@@ -79,6 +79,15 @@ fn frame(viewport: (f64, f64), view: Rect, zoom: f64) -> Option<Frame> {
     })
 }
 
+/// Block size the frame needs to show the whole drawing at its width-limited
+/// fit, margin included. It depends on the frame's width alone, so sizing the
+/// frame by it settles in one pass; a taller drawing scrolls inside the clamp.
+fn content_block(inline: f64, view: Rect) -> Option<f64> {
+    let room = inline - 2.0 * MARGIN;
+    (room > 0.0 && view.width > 0.0 && view.height > 0.0)
+        .then(|| view.height * (room / view.width).min(1.0) + 2.0 * MARGIN)
+}
+
 impl Canvas {
     /// The overlay reports the drawn diagram's bounds once its geometry lands.
     pub(super) fn show(&self, view: Rect) {
@@ -103,9 +112,14 @@ impl Canvas {
 
     fn apply(&self) -> Option<Frame> {
         let element = self.element()?;
+        let style = element.style();
+        if let Some(block) = content_block(f64::from(element.client_width()), self.view.get()?) {
+            style
+                .set_property("--work-map-content-block", &format!("{block}px"))
+                .expect("Work map writes --work-map-content-block");
+        }
         let frame = self.frame(&element)?;
         self.zoom.set(self.zoom.get().clamp(1.0, frame.max_zoom));
-        let style = element.style();
         for (property, value) in [
             ("--work-map-scale", frame.scale.to_string()),
             ("--work-map-drawn-inline", format!("{}px", frame.drawn.0)),

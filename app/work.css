@@ -337,14 +337,14 @@
 }
 .work-map-heading h3 { margin: 0; font-size: var(--app-type-section); }
 .work-map-heading > span { color: var(--muted); font-size: var(--app-type-sm); text-align: right; }
-/* The viewport is one fixed, unframed footprint: neither the first enrichment
-   answer nor a refreshed graph of another shape resizes it. The viewport
-   publishes the drawing's fit, zoomed size, stage and centering offset; the
-   stage scrolls natively and node controls follow the same scale in diagram
-   units. */
+/* The unframed viewport takes the block the drawing needs at its width fit,
+   capped beyond which the graph scrolls; zoom never resizes it. It publishes
+   that size, the fit, zoomed size, stage and centering offset; the stage
+   scrolls natively and node controls follow the scale in diagram units. */
 .work-map-viewport {
+  --work-map-cap: clamp(18rem, 42vh, 28rem);
   position: relative;
-  height: clamp(18rem, 42vh, 28rem);
+  height: min(var(--work-map-cap), var(--work-map-content-block, var(--work-map-cap)));
   overflow: auto;
   scrollbar-width: none;
   touch-action: pan-x pan-y;

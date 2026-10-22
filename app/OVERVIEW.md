@@ -87,7 +87,8 @@ A **Draft** row is prospective work its author is still editing. It counts in
 no standing, and nothing offers it until `spice task file` turns it into Filed
 work.
 
-The graph region holds one fixed footprint whatever the diagram's shape. A
+The graph region is as tall as the diagram needs at its width-limited fit, up
+to a capped footprint beyond which the graph scrolls; zoom never resizes it. A
 truncated typed read states how many relationships lie outside it in the map
 controls beside a More nodes control that raises the node budget up to the
 repository bound; it never lists the omitted edges. The Dependency lens lists
