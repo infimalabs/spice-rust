@@ -312,10 +312,9 @@ fn url_scheme_regex() -> &'static Regex {
 
 /// A Markdown path in doc text, decorated or bare.
 ///
-/// The trailing `\b` is what a closing backtick used to do. Without it the
-/// pattern reads a Markdown name out of the middle of any longer suffix, so a
-/// bundle spelled `page.mdoc` would be refused for not tracking a document
-/// nobody wrote.
+/// The trailing `\b` ends the match at the name. Without it the pattern reads a
+/// Markdown name out of the middle of any longer suffix, so a bundle spelled
+/// `page.mdoc` would be refused for not tracking a document nobody wrote.
 #[cfg(not(target_arch = "wasm32"))]
 fn rust_doc_citation_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();

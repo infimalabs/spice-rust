@@ -644,10 +644,10 @@ fn rust_doc_markdown_citations_use_live_inventory_and_refuse_the_unfixed_arm() {
 /// names the document it could not resolve, not merely that something was
 /// wrong.
 ///
-/// The second case is what the closing backtick used to do for free. Once the
-/// span stops delimiting the match, a Markdown name sits inside every longer
-/// suffix, and a pattern that stopped there would read one out of `page.mdoc`
-/// and then refuse the file for not tracking a document nobody wrote.
+/// The second case pins the match boundary. Without a closing backtick to
+/// delimit it, a Markdown name sits inside every longer suffix, and a pattern
+/// that stopped there would read one out of `page.mdoc` and then refuse the
+/// file for not tracking a document nobody wrote.
 #[test]
 fn a_prose_citation_is_judged_and_a_longer_suffix_is_not_one() {
     let tracked = vec!["README.md".to_owned()];

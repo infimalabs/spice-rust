@@ -294,8 +294,7 @@ pub(super) fn command(kind: &str, expected: Vec<Witness>) -> Command<body::TaskD
 /// The two identities a command could have — its canonical bytes and its
 /// value equality — have to agree, or a caller that de-duplicates by value and
 /// a journal that de-duplicates by bytes would disagree about whether they had
-/// already seen a request. They previously did disagree: canonicalization
-/// sorted `expected` while derived equality compared the vector position-wise.
+/// already seen a request.
 #[test]
 fn a_command_is_the_predicates_it_names_not_the_order_it_named_them() {
     let asked = command("task::done", vec![task_witness(), workflow_witness()]);

@@ -24,12 +24,9 @@ fn note_envelope_length(note_bytes: usize, position: u64) -> usize {
 }
 
 fn note_bytes_for_envelope(target: usize, position: u64) -> usize {
-    let fixed = note_envelope_length(0, position);
-    let note = target
-        .checked_sub(fixed)
-        .expect("target exceeds fixed wire");
-    assert_eq!(note_envelope_length(note, position), target);
-    note
+    target
+        .checked_sub(note_envelope_length(0, position))
+        .expect("target exceeds fixed wire")
 }
 
 fn note_write(note_bytes: usize) -> JournalWrite {
