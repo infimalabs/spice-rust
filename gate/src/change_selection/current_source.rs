@@ -239,39 +239,40 @@ fn known_workspace_package_root(root: &str) -> bool {
 }
 
 pub(crate) fn selector_authority(path: &str) -> bool {
-    matches!(
-        path,
-        ".cargo/config"
-            | ".cargo/config.toml"
-            | ".githooks/pre-commit"
-            | "spice-rust.toml"
-            | "baseline.toml"
-            | "rust-toolchain"
-            | "rust-toolchain.toml"
-            | "Cargo.lock"
-            | "Cargo.toml"
-            | "dist/proof-image/Dockerfile"
-            | "gate/src/battery/manifest.toml"
-            | "gate/src/change_selection.rs"
-            | "gate/src/lib.rs"
-            | "gate/src/manifest.rs"
-            | "gate/src/test_evidence.rs"
-            | "gate/src/workspace_tests.rs"
-            | "spice/src/change_gate.rs"
-            | "spice/src/cli.rs"
-            | "spice/src/cli/contracts.rs"
-            | "spice/src/cli/mounts.rs"
-            | "spice/src/cli/syntax.rs"
-            | "spice/src/gate.rs"
-            | "spice/src/gate_command.rs"
-            | "spice/src/install/git-hooks/pre-commit"
-            | "spice/src/install/git_hooks.rs"
-            | "spice/src/lib.rs"
-            | "spice/src/main.rs"
-            | "xtask/src/gate_command.rs"
-            | "xtask/src/lib.rs"
-            | "xtask/src/main.rs"
-    ) || path.starts_with("gate/src/change_selection/")
+    path == wire::TRACKED_POLICY_FILE
+        || matches!(
+            path,
+            ".cargo/config"
+                | ".cargo/config.toml"
+                | ".githooks/pre-commit"
+                | "baseline.toml"
+                | "rust-toolchain"
+                | "rust-toolchain.toml"
+                | "Cargo.lock"
+                | "Cargo.toml"
+                | "dist/proof-image/Dockerfile"
+                | "gate/src/battery/manifest.toml"
+                | "gate/src/change_selection.rs"
+                | "gate/src/lib.rs"
+                | "gate/src/manifest.rs"
+                | "gate/src/test_evidence.rs"
+                | "gate/src/workspace_tests.rs"
+                | "spice/src/change_gate.rs"
+                | "spice/src/cli.rs"
+                | "spice/src/cli/contracts.rs"
+                | "spice/src/cli/mounts.rs"
+                | "spice/src/cli/syntax.rs"
+                | "spice/src/gate.rs"
+                | "spice/src/gate_command.rs"
+                | "spice/src/install/git-hooks/pre-commit"
+                | "spice/src/install/git_hooks.rs"
+                | "spice/src/lib.rs"
+                | "spice/src/main.rs"
+                | "xtask/src/gate_command.rs"
+                | "xtask/src/lib.rs"
+                | "xtask/src/main.rs"
+        )
+        || path.starts_with("gate/src/change_selection/")
         || path.starts_with("gate/src/test_evidence/")
         || path.starts_with("gate/src/workspace_tests/")
         || path.starts_with("spice/src/gate_command/pre_commit")

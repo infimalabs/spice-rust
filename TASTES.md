@@ -7,7 +7,7 @@ and stays worth hearing when a harmless mention fires it. Guidance that depends
 on one task, one subsystem, or a long exception list belongs in that task or
 its review.
 
-The tracked `[taste]` table in `spice-rust.toml` is the only configured set; the
+The tracked `[taste]` table in `spice.toml` is the only configured set; the
 binary ships no named tastes. Matching, adjudication, reminder, and selector
 rules live in the
 [maxim register](docs/product/invariants/session.md#session-a-maxim-bag-is-one-opinion-with-several-triggers).

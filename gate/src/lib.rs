@@ -129,8 +129,8 @@ pub use hygiene::{
 pub use input::{
     BASELINE_PATH, BASELINE_VERSION, Baseline, BaselineError, Contract, ContractError,
     ExecutableDeclaration, FieldError, Floor, FloorDeclaration, FloorKind, GateSet, GateSetError,
-    KillProfile, LONG_LINE_LIMIT, POLICY_PATH, ParsedContract, PolicyError, ToolError,
-    ToolIdentity, declared_mutation_tools, declared_tools,
+    KillProfile, LONG_LINE_LIMIT, ParsedContract, PolicyError, ToolError, ToolIdentity,
+    declared_mutation_tools, declared_tools,
 };
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,

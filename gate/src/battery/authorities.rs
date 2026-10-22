@@ -19,7 +19,7 @@ use super::{
 };
 use crate::core::{ActorCapture, ClaimCapture};
 use crate::hygiene::HygieneConfiguration;
-use crate::input::{Contract, POLICY_PATH};
+use crate::input::Contract;
 use crate::manifest::OriginLayer;
 use crate::policy::Policy as RulePolicy;
 use crate::state::{ActorInputs, ActorResolution, BoundDecision, StateLedger, StateReceipt};
@@ -725,7 +725,7 @@ impl<'trace> BatteryCapture<'trace> {
 /// the answer: it is present because the resolver takes one, and the tracked
 /// contract is the only path a run-wide resolution could name.
 fn run_actor(actor: &ActorCapture) -> Result<ActorResolution, BatteryError> {
-    let candidate = ActorInputs::new(POLICY_PATH)
+    let candidate = ActorInputs::new(wire::TRACKED_POLICY_FILE)
         .map_err(|error| BatteryError::new(format!("battery actor provenance: {error}")))?;
     let Some(active) = actor.active_actor() else {
         return Err(BatteryError::new(
@@ -790,7 +790,7 @@ fn resolve_value(
         Digest::compute(Domain::GateConfiguration, &encoded),
         CURRENT_RELEASE,
         OriginLayer::Repository,
-        POLICY_PATH,
+        wire::TRACKED_POLICY_FILE,
         field.clone(),
     )?);
     Ok(())

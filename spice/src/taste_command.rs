@@ -434,8 +434,10 @@ pub(crate) fn add(
             project: Some(PROJECT.to_owned()),
             description: Some(description),
             acceptance: vec![
-                "Operator review adds one exact [taste.NAME] row to tracked spice-rust.toml."
-                    .to_owned(),
+                format!(
+                    "Operator review adds one exact [taste.NAME] row to tracked {}.",
+                    wire::TRACKED_POLICY_FILE
+                ),
                 concat!(
                     "Paired behavior and mention fixtures confirm and clear the proposed bag, ",
                     "and the standing non-hit corpus remains clear."
@@ -552,11 +554,9 @@ pub(crate) fn drop(
             description: Some(description),
             acceptance: vec![
                 format!(
-                    concat!(
-                        "Operator review narrows, revises, or deletes [taste.{}] in tracked ",
-                        "spice-rust.toml."
-                    ),
-                    row.name
+                    "Operator review narrows, revises, or deletes [taste.{}] in tracked {}.",
+                    row.name,
+                    wire::TRACKED_POLICY_FILE
                 ),
                 "Earlier durable judgments remain history and cannot restore deleted membership."
                     .to_owned(),

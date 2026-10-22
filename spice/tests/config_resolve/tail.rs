@@ -92,7 +92,7 @@ value = 1
         );
     }
     for (path, source, home) in [
-        ("lane.life", ConfigSource::Local, "tracked spice-rust.toml"),
+        ("lane.life", ConfigSource::Local, "tracked spice.toml"),
         (
             "serve.pack.rows",
             ConfigSource::Tracked,
@@ -119,7 +119,7 @@ value = 1
 fn syntax_positions_and_other_layer_diagnostics_are_both_returned() {
     let error = resolve(Inputs::new(
         Some(Document::new(
-            "config/spice-rust.toml",
+            "config/spice.toml",
             "# caf\u{e9}\n[lane]\nlease = [\n",
         )),
         Some(Document::new(
@@ -135,7 +135,7 @@ fn syntax_positions_and_other_layer_diagnostics_are_both_returned() {
         .iter()
         .find(|issue| issue.kind() == IssueKind::Syntax)
         .expect("syntax issue");
-    assert_eq!(syntax.document(), "config/spice-rust.toml");
+    assert_eq!(syntax.document(), "config/spice.toml");
     assert_eq!(syntax.source(), ConfigSource::Tracked);
     assert!(syntax.line().is_some_and(|line| line >= 3));
     assert!(syntax.column().is_some());

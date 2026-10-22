@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use gate::{BASELINE_PATH, ContractError, POLICY_PATH, ParsedContract, PolicyError};
+use gate::{BASELINE_PATH, ContractError, ParsedContract, PolicyError};
 use serde::Deserialize;
+use wire::TRACKED_POLICY_FILE;
 
 mod support;
 
-const TRACKED_POLICY: &str = ::std::include_str!("../../spice-rust.toml");
+const TRACKED_POLICY: &str = ::std::include_str!("../../spice.toml");
 const TRACKED_BASELINE: &str = ::std::include_str!("../../baseline.toml");
 
 #[test]
@@ -135,7 +136,7 @@ fn the_tracked_repository_document_inventory_reaches_the_compiled_rule_policy() 
         panic!("an escaping document lost its typed tracked refusal: {refused:?}");
     };
     assert_eq!(path, policy_path());
-    assert_eq!(refusal.source(), POLICY_PATH);
+    assert_eq!(refusal.source(), TRACKED_POLICY_FILE);
     assert_eq!(refusal.field(), "policy.repo_truth.docs");
 }
 
@@ -160,7 +161,7 @@ fn fixture_contract(policy: &str, baseline: &str) -> Result<ParsedContract, Cont
 }
 
 fn policy_path() -> PathBuf {
-    PathBuf::from("fixture/spice-rust.toml")
+    PathBuf::from("fixture/spice.toml")
 }
 
 fn baseline_path() -> PathBuf {

@@ -8,7 +8,7 @@ pub(super) fn configured_repository(root: &Path, words: &[&str]) -> Repository {
         .collect::<Vec<_>>()
         .join(", ");
     fs::write(
-        root.join("spice-rust.toml"),
+        root.join("spice.toml"),
         format!(
             "[taste.taskwording]\nwords = [{words}]\nmessage = \"Rewrite the task wording.\"\n"
         ),

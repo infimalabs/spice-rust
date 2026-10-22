@@ -345,7 +345,7 @@ impl DispatchPolicy {
     }
 
     fn verify_selected(&self, selected_root: &Path) -> Result<(), ConfiguredFailure> {
-        let selected = match fs::read_to_string(selected_root.join("spice-rust.toml")) {
+        let selected = match fs::read_to_string(selected_root.join(wire::TRACKED_POLICY_FILE)) {
             Ok(text) => Some(text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {

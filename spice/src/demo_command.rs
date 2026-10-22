@@ -24,7 +24,6 @@ use recovery::{preserve_environment_failure, preserve_failure, require_utf8, she
 
 const MANIFEST_NAME: &str = ".spice-demo.json";
 const TRANSCRIPT_NAME: &str = "spice-demo-transcript.jsonl";
-const CONFIG_NAME: &str = "spice-rust.toml";
 const CONFIG_BYTES: &[u8] = b"[tasks]\nproject_max_depth = 3\n";
 const DEMO_TASK: &str = "DEMO-1kKRRsDP";
 const DEMO_STAMP: &str = "1kKRRsDP";
@@ -273,7 +272,7 @@ fn finish_seed_prepared_root(
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
-    fs::write(root.join(CONFIG_NAME), CONFIG_BYTES)
+    fs::write(root.join(wire::TRACKED_POLICY_FILE), CONFIG_BYTES)
         .map_err(|error| environment_fault("demo::config-unwritable", error.to_string()))?;
     fs::create_dir_all(state.data()).map_err(|error| {
         environment_fault(

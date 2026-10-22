@@ -12,6 +12,11 @@ use serde::de::{Deserializer, Error as DeError};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
+/// The one tracked repository policy document, at the worktree root. Every
+/// reader of tracked policy, from configuration loading through Gate and the
+/// installed hook, names it through this constant.
+pub const TRACKED_POLICY_FILE: &str = "spice.toml";
+
 /// A duration written as an unsigned ASCII decimal followed by `s`, `m`, or `h`.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DurationWord {
@@ -115,7 +120,7 @@ impl DurationUnit {
 pub enum ConfigSource {
     /// Value compiled into the binary.
     Builtin,
-    /// Intent read from tracked `spice-rust.toml`.
+    /// Intent read from the tracked policy document, [`TRACKED_POLICY_FILE`].
     Tracked,
     /// Admitted machine-local override shared through Git common state.
     Local,

@@ -1,11 +1,12 @@
-# Tracked repository policy owned by Python Spice. Rust Spice reads
-# `spice-rust.toml`; this file retains only the predecessor's scheduler,
-# judge, policy, and taste declarations while an operator still addresses its
-# task plane directly.
-# Agent command routing belongs to Rust's tracked `[wrappers]` vocabulary.
+# Tracked repository policy owned by Rust Spice. Every active entry is admitted
+# through Rust Spice's typed configuration registry and compiled Gate.
 
-[commands]
-gate = ["cargo", "run", "--locked", "--package", "spice", "--", "gate"]
+[wrappers]
+# Agent-authored `spice` commands stay on the repository-local Rust appliance.
+# The runtime resolves this declarative reference beneath the Git-common
+# directory and refuses redirected, escaping, or non-executable installed
+# commands.
+spice = "appliance"
 
 [tasks]
 # Any `[0-9a-z_]+` root names a project; authors choose it. A root names the
@@ -16,14 +17,24 @@ gate = ["cargo", "run", "--locked", "--package", "spice", "--", "gate"]
 project_min_depth = 2
 project_max_depth = 3
 
+[vendor.omp]
+# OMP lanes merge `.omp/lsp.json` into its built-in workspace server
+# definitions; each lane keeps the selected server in its supervised process.
+lsp = true
+
 [judge]
 # Adjudicate maxim trigger candidates before they become lane direction.
 enabled = true
 
 [policy]
-# The repository declares its complete pre-commit command below; do not run the
-# Python predecessor's built-in Rust gate a second time around it.
+# The installed Rust hook reaches this source tree's current gate through the
+# exact Git-common appliance and its private dev-Cargo lifecycle rather than
+# ambient Cargo. The configured-command trust boundary keeps this exact argv
+# inert until an operator grants the digest of these tracked bytes.
 pre_commit_builtins = false
+pre_commit = [
+    { label = "Spice source gate", run = ["spice", "dev", "cargo", "--", "run", "--quiet", "--locked", "--package", "spice", "--bin", "spice", "--", "gate", "selection"] },
+]
 
 # The native Git publisher runs this cheap repository load over every
 # synthesized integration before it can reach the shared baseline.
@@ -31,54 +42,60 @@ admission = [
     "cargo", "metadata", "--no-deps", "--offline", "--format-version", "1",
 ]
 
-# The predecessor-owned hook reaches Rust from outside the Rust configured-step
-# recursion boundary, so this bridge may enter `spice gate pre-commit`. Once the
-# installed Rust appliance owns the hook, Rust reads only spice-rust.toml and
-# its configured edge builds and invokes `spice gate selection` instead of
-# redispatching that same command under SPICE_RS_PRE_COMMIT_SOURCE.
-pre_commit = [
-    { label = "Rust gate", run = ["cargo", "run", "--locked", "--package", "spice", "--", "gate", "pre-commit"] },
+# Installed packaged gates run no test process unless the repository names a
+# compiled engine. This source enables the canonical Cargo workspace selector;
+# repository data cannot replace its executable or argument contract.
+test_engines = ["cargo-workspace"]
+
+# Upstream-generated Mermaid 12.0.0 ESM and its generated provenance index.
+# The handwritten renderer-000.mjs bridge and every license remain measured.
+# Exact upstream members and checksums: app/renderer/renderer-000.txt.
+generated_paths = [
+    "app/renderer/renderer-00[1-9].mjs",
+    "app/renderer/renderer-0[1-9][0-9].mjs",
+    "app/renderer/renderer-10[0-5].mjs",
+    "app/renderer/renderer-000.txt",
 ]
 
-# Every environment name this workspace defines, spelled once.
-#
-# This is the workspace's own vocabulary: the names Spice writes and the names
-# Spice reads back. Gate matches it against the tracked tree in both
-# directions, so a name used without being listed fails, and a name listed
-# after its last use fails too. That is what makes the vocabulary countable
-# rather than a set of literals accumulating across crates.
-#
-# Environment names referenced by the packaged product, gate, and
-# coexistence surfaces. Foreign names remain listed because Gate accounts every
-# reference, while Doctor reports only the typed Spice-owned subset. The
-# predecessor shell names are read-only coexistence sentinels. Selected-tree
-# tests receive private writable and shared-output roots.
+# Environment names referenced by the current product, build, and gate
+# surfaces. Foreign names remain listed because Gate accounts every reference,
+# but Doctor reports only the typed Spice-owned subset. Selected-tree tests
+# receive private writable and shared-output roots; Git, RTK, and shell
+# startup selectors retain their upstream spellings.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
+    "BASH_ENV",
     "GIT_CONFIG_COUNT",
     "GIT_CONFIG_SYSTEM",
-    "GIT_DIR",
     "GIT_EDITOR",
-    "GIT_INDEX_FILE",
-    "GIT_WORK_TREE",
+    "RTK_DB_PATH",
     "SPICE_AGENT_VENDOR",
     "SPICE_APP_SOURCE_IDENTITY",
-    "SPICE_HOOKS",
+    "SPICE_HOSTED_STAGE",
+    "SPICE_HOSTED_VENDOR",
     "SPICE_INSTALL_TEST_EXECUTABLE",
-    "SPICE_LANE",
     "SPICE_MUTATION_ATTEMPT",
     "SPICE_MUTATION_SEED",
     "SPICE_NATIVE_PINS",
-    "SPICE_NATIVE_SHELL",
+    "SPICE_RS_BOOTSTRAP_CARGO_HOME",
+    "SPICE_RS_DAEMON_HANDOFF",
     "SPICE_RS_HOOKS",
     "SPICE_RS_LANE",
+    "SPICE_RS_NATIVE_CARGO",
+    "SPICE_RS_NATIVE_RUSTC",
+    "SPICE_RS_NATIVE_RUSTDOC",
     "SPICE_RS_NATIVE_SHELL",
     "SPICE_RS_PRE_COMMIT_PATHS",
     "SPICE_RS_PRE_COMMIT_SOURCE",
+    "SPICE_RS_RTK_EXECUTABLE",
+    "SPICE_RS_SESSION",
+    "SPICE_RS_WRAPPER_SPICE",
+    "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",
+    "SPICE_SOURCE_STAMP",
     # Selected-tree tests receive these workspace-test fixture authorities.
     "SPICE_WORKSPACE_TEST_SHARED_OUTPUTS",
     "SPICE_WORKSPACE_TEST_WRITABLE_ROOT",
-    "TMPDIR",
+    "ZDOTDIR",
 ]
 
 # Which files the shape arm measures lines and bytes over.

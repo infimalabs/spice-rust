@@ -1083,18 +1083,18 @@ pub(super) fn test_relevant_source(path: &str) -> bool {
 }
 
 fn workspace_wide_source(path: &str) -> bool {
-    matches!(
-        path,
-        ".cargo/config"
-            | ".cargo/config.toml"
-            | "Cargo.toml"
-            | "Cargo.lock"
-            | "rust-toolchain"
-            | "rust-toolchain.toml"
-            | "spice-rust.toml"
-            | "baseline.toml"
-            | "gate/src/battery/manifest.toml"
-    )
+    path == wire::TRACKED_POLICY_FILE
+        || matches!(
+            path,
+            ".cargo/config"
+                | ".cargo/config.toml"
+                | "Cargo.toml"
+                | "Cargo.lock"
+                | "rust-toolchain"
+                | "rust-toolchain.toml"
+                | "baseline.toml"
+                | "gate/src/battery/manifest.toml"
+        )
 }
 
 fn package_wide_source(changed: &str, package: &PackageInventory, absolute: &Path) -> bool {

@@ -20,8 +20,6 @@ use crate::input::ParsedContract;
 use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape, WalkBudget};
 use crate::tree::SelectedTree;
 
-/// Declaration metadata that names tracked policy rather than a path pattern.
-const TRACKED_EXCLUSION_SOURCE: &str = "spice-rust.toml:policy.exclude";
 const SOURCE_FILE_LIMIT: usize = 4 * 1024;
 const SOURCE_ENTRY_LIMIT: usize = SOURCE_FILE_LIMIT * 4;
 const SOURCE_PATH_BYTES_LIMIT: usize = 1024 * 1024;
@@ -127,7 +125,7 @@ impl<'a> HygieneSource<'a> {
         let mut project_markers = Vec::new();
         for entry in jurisdiction.measurable() {
             check_capture_time(started, entry.path())?;
-            if matches!(entry.path(), "pyproject.toml" | "spice-rust.toml") {
+            if entry.path() == "pyproject.toml" || entry.path() == wire::TRACKED_POLICY_FILE {
                 project_markers.push(entry.path().to_owned());
             }
         }
@@ -526,7 +524,7 @@ fn hygiene_ignore(
     let mut compiled = BTreeSet::new();
     for declaration in HYGIENE_ARMS {
         for exclusion in declaration.jurisdiction().excludes() {
-            if *exclusion == TRACKED_EXCLUSION_SOURCE || !compiled.insert(*exclusion) {
+            if *exclusion == super::TRACKED_EXCLUSION_SOURCE || !compiled.insert(*exclusion) {
                 continue;
             }
             let rule = Rule::parse(exclusion)
@@ -576,7 +574,7 @@ fn tracked_walk_provenance(index: usize) -> HygieneProvenance {
     HygieneProvenance {
         release: CURRENT_RELEASE.to_owned(),
         layer: "repository".to_owned(),
-        document: "spice-rust.toml".to_owned(),
+        document: wire::TRACKED_POLICY_FILE.to_owned(),
         field: format!("gate.walk.skip[{index}]"),
     }
 }

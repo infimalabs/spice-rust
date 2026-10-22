@@ -30,7 +30,7 @@
 //! * The **journal and all other durable runtime state** live below
 //!   `<git-common-dir>/.spice-rs`.
 //! * **Config** is separate by name and anchor. This runtime reads tracked
-//!   `spice-rust.toml`, common-root `.spice-rs/config.toml`, and each
+//!   `spice.toml`, common-root `.spice-rs/config.toml`, and each
 //!   worktree's Git-directory `.spice-rs/worktree.toml`.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
 //!   NAK dispositions are facts in the common-root journal. Hook media is

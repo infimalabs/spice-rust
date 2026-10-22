@@ -507,7 +507,10 @@ fn sanitize(
                     "{leaf} is a per-worktree preference, never tracked; set it in Git-common .spice-rs/config.toml or in this worktree's Git-directory .spice-rs/worktree.toml"
                 )
             } else if layers.contains(&ConfigSource::Tracked) {
-                format!("{leaf} is tracked policy; set it in tracked spice-rust.toml")
+                format!(
+                    "{leaf} is tracked policy; set it in tracked {}",
+                    wire::TRACKED_POLICY_FILE
+                )
             } else {
                 format!("{leaf} is machine-local; set it in Git-common .spice-rs/config.toml")
             };

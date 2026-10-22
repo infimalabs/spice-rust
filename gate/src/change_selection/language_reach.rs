@@ -98,10 +98,8 @@ pub fn compile_language_reach(
             ),
             gate if PYTHON_ARMS.contains(&gate) => {
                 if sources.iter().any(|source| {
-                    matches!(
-                        source.as_str(),
-                        "pyproject.toml" | "pyrightconfig.json" | "spice-rust.toml"
-                    )
+                    source == wire::TRACKED_POLICY_FILE
+                        || matches!(source.as_str(), "pyproject.toml" | "pyrightconfig.json")
                 }) {
                     exhaustive(
                         gate_id,

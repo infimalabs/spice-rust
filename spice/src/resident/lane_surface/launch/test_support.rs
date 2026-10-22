@@ -50,7 +50,7 @@ impl LaunchFixture {
         .expect("fixture toolchain declaration writes");
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture source writes");
         fs::create_dir(root.join(".git")).expect("fixture Git directory creates");
-        fs::write(root.join("spice-rust.toml"), "[lane]\nlease = \"20s\"\n")
+        fs::write(root.join("spice.toml"), "[lane]\nlease = \"20s\"\n")
             .expect("fixture launch configuration writes");
         let repository = Repository::discover(&root).expect("fixture repository discovers");
         let skill = spice::install::installed_skill(&repository);

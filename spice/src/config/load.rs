@@ -25,8 +25,8 @@ use super::{
     Resolved, resolve,
 };
 use crate::repository::{Repository, ResolveError as RepositoryError};
+use wire::TRACKED_POLICY_FILE;
 
-const TRACKED_FILE: &str = "spice-rust.toml";
 /// Per-worktree document under the worktree's own Git directory. Its name
 /// differs from [`LOCAL_FILE`] because the main worktree's Git directory is the
 /// Git-common directory itself.
@@ -209,7 +209,7 @@ impl Locations {
 #[must_use]
 pub fn locations(repository: &Repository) -> Locations {
     Locations {
-        tracked: repository.worktree_root().join(TRACKED_FILE),
+        tracked: repository.worktree_root().join(TRACKED_POLICY_FILE),
         worktree: repository.git_dir().join(WORKTREE_FILE),
         local: repository.common_dir().join(LOCAL_FILE),
     }
@@ -506,7 +506,7 @@ pub fn capture_repository(
     let tracked = acquire(
         ConfigSource::Tracked,
         repository.worktree_root(),
-        Path::new(TRACKED_FILE),
+        Path::new(TRACKED_POLICY_FILE),
         &mut budget,
         &mut acquisition,
     );
@@ -1221,7 +1221,7 @@ mod tests {
         let root = env::temp_dir().join(format!("spice-config-capture-{}", std::process::id()));
         file_system::create_dir(&root).expect("create capture fixture");
         let admitted_root = file_system::canonicalize(&root).expect("canonical capture fixture");
-        let path = admitted_root.join(TRACKED_FILE);
+        let path = admitted_root.join(TRACKED_POLICY_FILE);
         let displaced = admitted_root.join("displaced.toml");
         let replacement = admitted_root.join("replacement.toml");
         file_system::write(&path, b"[listen]\nwindow = \"2m\"\n").expect("write original");
@@ -1232,7 +1232,7 @@ mod tests {
         let error = acquire_document_with(
             ConfigSource::Tracked,
             &admitted_root,
-            Path::new(TRACKED_FILE),
+            Path::new(TRACKED_POLICY_FILE),
             &mut budget,
             || {
                 file_system::rename(&path, &displaced).expect("displace opened generation");

@@ -21,7 +21,7 @@ const SESSION_PROJECT: &str = "spice.session";
 fn fake_repository(root: &Path) {
     fs::create_dir(root.join(".git")).expect("fixture git directory is created");
     fs::write(
-        root.join("spice-rust.toml"),
+        root.join(wire::TRACKED_POLICY_FILE),
         "[tasks]\nproject_min_depth = 2\nproject_max_depth = 3\n",
     )
     .expect("fixture tracked task policy is written");
@@ -1226,7 +1226,7 @@ fn a_claim_the_current_policy_refuses_reads_as_unknown_possession_not_none() {
     // The held row's two-segment project falls below this floor, so the
     // claim exists but its board entry cannot be admitted.
     fs::write(
-        scratch.path().join("spice-rust.toml"),
+        scratch.path().join(wire::TRACKED_POLICY_FILE),
         "[tasks]\nproject_min_depth = 3\nproject_max_depth = 3\n",
     )
     .expect("fixture tracked task policy is tightened");

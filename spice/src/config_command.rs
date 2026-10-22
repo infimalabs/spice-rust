@@ -179,7 +179,10 @@ fn set(
             return Err(refusal(
                 "config::tracked-policy",
                 Some(key.to_owned()),
-                "edit tracked spice-rust.toml in an operator-reviewed commit",
+                &format!(
+                    "edit tracked {} in an operator-reviewed commit",
+                    wire::TRACKED_POLICY_FILE
+                ),
             ));
         }
         PolicyClass::WorktreeLocal => MutationTarget::Worktree,
@@ -1090,7 +1093,7 @@ mod tests {
         let parent = root.join("parent");
         let parked = root.join("parked");
         let outside = root.join("outside");
-        let tracked_path = root.join("spice-rust.toml");
+        let tracked_path = root.join(wire::TRACKED_POLICY_FILE);
         let worktree_path = root.join(".git/.spice-rs/worktree.toml");
         let local_path = parent.join("config.toml");
         fs::create_dir(&outside).unwrap();
@@ -1138,7 +1141,7 @@ mod tests {
             tracked: None,
             worktree: None,
             local: None,
-            tracked_path: root.join("spice-rust.toml"),
+            tracked_path: root.join(wire::TRACKED_POLICY_FILE),
             worktree_path: root.join("worktree.toml"),
             local_path: root.join("config.toml"),
             worktree_parent: ParentWitness::Absent,

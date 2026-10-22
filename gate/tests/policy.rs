@@ -242,7 +242,7 @@ fn resolution_prefers_the_most_specific_rule_and_otherwise_takes_global_policy()
 
 #[test]
 fn packaged_markdown_budgets_grow_with_depth_and_skip_one_letter_stems() {
-    let policy = parse_tracked_policy("spice-rust.toml", gate::NARROWEST_FILE_CLASSES)
+    let policy = parse_tracked_policy(wire::TRACKED_POLICY_FILE, gate::NARROWEST_FILE_CLASSES)
         .expect("tracked policy parses");
 
     assert_eq!(policy.document().rules().len(), 4);

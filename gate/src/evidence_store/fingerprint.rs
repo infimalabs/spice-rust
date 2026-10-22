@@ -626,7 +626,7 @@ mod tests {
     }
 
     fn selection(authority: &ActionFingerprintAuthority) -> ChangeSelectionReport {
-        let tracked = vec!["spice-rust.toml".to_owned()];
+        let tracked = vec![wire::TRACKED_POLICY_FILE.to_owned()];
         let suffixes = vec![".rs".to_owned()];
         let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
             tracked_sources: &tracked,
