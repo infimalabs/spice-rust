@@ -742,10 +742,6 @@ mod tests {
             design_cycles: std::collections::BTreeMap::new(),
             quote_tasks: std::rc::Rc::default(),
             environment: Environment::journal_schema(1).expect("fixture schema"),
-            seats: crate::runtime::Seats::new(
-                crate::work::tests::residency(),
-                std::collections::BTreeMap::new(),
-            ),
         }
     }
 

@@ -18,7 +18,7 @@ pub use contributions::Contribution;
 pub use conversation::{
     Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem,
 };
-pub use standing::{CoordinationStanding, Relevance};
+pub use standing::Relevance;
 
 /// Whether the room snapshot can be rendered as current authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,20 +164,6 @@ pub enum RoomEventKind {
         /// The human that posted it.
         author: wire::Actor,
     },
-    /// Scoped request linked to ordinary steering.
-    Coordination {
-        /// Human steering key.
-        key: String,
-        /// Exact occupant address asked to contribute.
-        target: wire::OccupantAddress,
-    },
-    /// Put-aside action, including any claim-bound stop request.
-    PutAside {
-        /// Coordination keys canceled by this action.
-        canceled: Vec<String>,
-        /// Exact stop authority, absent when the anchor was idle.
-        stop: Option<authority::RoomStopRequest>,
-    },
     /// A lane stopped listening for this reason; native duties still hold it.
     Left {
         /// Logical lane that left.
@@ -276,8 +262,6 @@ pub enum ParticipantReason {
     },
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
-    /// A live room coordination request addresses the lane.
-    Coordination(String),
     /// A live stop request addresses the lane's exact claim.
     Stop(String),
     /// The lane recorded a leave; only a later Design request and native
@@ -342,19 +326,22 @@ pub struct CandidateWithdrawalRecord {
     pub at: wire::Instant,
 }
 
+/// One stop request sent against a room's active claim, as the steering
+/// control `room-stop:ROOM:CLAIM` names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct CoordinationState {
-    room: TaskStamp,
-    lane: CanonicalUuid,
-    disposition: wire::Disposition,
+pub struct StopRequest {
+    /// Human steering key.
+    pub key: String,
+    /// Logical lane the request addresses.
+    pub lane: CanonicalUuid,
+    /// The exact claim win the stop applies to.
+    pub claim: wire::SequenceCode,
 }
 
-/// The direction a room coordination record follows, one position earlier.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Direction {
-    position: Seq,
-    key: String,
-    lane: CanonicalUuid,
+struct StopState {
+    request: StopRequest,
+    disposition: wire::Disposition,
 }
 
 /// Capability-local fold of one subscription's room snapshot and the live
@@ -369,7 +356,6 @@ pub struct RoomProjection {
     last_fact: Option<Seq>,
     /// Greatest live position seen before the snapshot completed.
     early: Option<Seq>,
-    direction: Option<Direction>,
     /// Earliest-born human principal, used only to present historical
     /// operator-authored room authority under its durable human identity.
     bootstrap: Option<CanonicalUuid>,
@@ -380,12 +366,8 @@ pub struct RoomProjection {
     /// The run of room packet records directly before the current position,
     /// which a conversation record ends when the packet admitted one.
     messaged: Vec<(Seq, TaskStamp, RoomAuthorityStamp)>,
-    coordination: BTreeMap<String, CoordinationState>,
-    stops: BTreeMap<TaskStamp, RoomPositioned<authority::RoomStopRequest>>,
-    /// Each room's latest coordination record.
-    directed: BTreeMap<TaskStamp, RoomPositioned<authority::RoomCoordinationStarted>>,
-    /// Each room's latest put-aside position.
-    shelved: BTreeMap<TaskStamp, Seq>,
+    /// Each room's latest stop request, whatever its disposition.
+    stops: BTreeMap<TaskStamp, RoomPositioned<StopState>>,
     relevance: BTreeMap<RoomAuthorityStamp, RoomPositioned<Relevance>>,
     /// Bounded maturity evidence incrementally folded per Design.
     maturity: BTreeMap<TaskStamp, authority::DesignMaturity>,
@@ -399,17 +381,13 @@ impl Default for RoomProjection {
             continuation: None,
             last_fact: None,
             early: None,
-            direction: None,
             bootstrap: None,
             partition: authority::WorkingGroupPartition::default(),
             rooms: BTreeMap::new(),
             preparation: PreparationProjection::default(),
             conversation: ConversationProjection::default(),
             messaged: Vec::new(),
-            coordination: BTreeMap::new(),
             stops: BTreeMap::new(),
-            directed: BTreeMap::new(),
-            shelved: BTreeMap::new(),
             relevance: BTreeMap::new(),
             maturity: BTreeMap::new(),
         }
@@ -525,13 +503,13 @@ impl RoomProjection {
         }
     }
 
-    /// A stop remains current only while the board shows the exact claim win
-    /// it names still active.
+    /// A stop remains current only while it is live and the board shows the
+    /// exact claim win it names still active.
     pub fn current_stop(
         &self,
         room: &TaskStamp,
         board: Option<&BoardView>,
-    ) -> Option<&RoomPositioned<authority::RoomStopRequest>> {
+    ) -> Option<RoomPositioned<&StopRequest>> {
         self.stop_holder(room, board).map(|(stop, _)| stop)
     }
 
@@ -539,8 +517,11 @@ impl RoomProjection {
         &self,
         room: &TaskStamp,
         board: Option<&BoardView>,
-    ) -> Option<(&RoomPositioned<authority::RoomStopRequest>, CanonicalUuid)> {
+    ) -> Option<(RoomPositioned<&StopRequest>, CanonicalUuid)> {
         let stop = self.stops.get(room)?;
+        if stop.value.disposition != wire::Disposition::Live {
+            return None;
+        }
         let claim = board?
             .tasks
             .iter()
@@ -549,9 +530,15 @@ impl RoomProjection {
             .as_ref()
             .filter(|claim| {
                 claim.body.disposition == wire::ClaimDisposition::Active
-                    && claim.body.claimed.get() == stop.value.claim.get()
+                    && claim.body.claimed.get() == stop.value.request.claim.get()
             })?;
-        Some((stop, claim.body.lane))
+        Some((
+            RoomPositioned {
+                position: stop.position,
+                value: &stop.value.request,
+            },
+            claim.body.lane,
+        ))
     }
 
     pub(super) fn requires_snapshot(&self) -> bool {
@@ -701,14 +688,6 @@ impl RoomProjection {
             FactKind::RoomPosted => Some(
                 fact.read::<authority::RoomPosted>()
                     .is_some_and(|body| self.apply_posted(fact, body)),
-            ),
-            FactKind::RoomCoordinationStarted => Some(
-                fact.read::<authority::RoomCoordinationStarted>()
-                    .is_some_and(|body| self.apply_coordination(fact.seq(), body)),
-            ),
-            FactKind::RoomPutAside => Some(
-                fact.read::<authority::RoomPutAside>()
-                    .is_some_and(|body| self.apply_put_aside(fact.seq(), body)),
             ),
             FactKind::RoomLeft => Some(fact.read::<authority::RoomLeft>().is_some_and(|body| {
                 if let Some(maturity) = self.maturity.get_mut(&body.room) {
@@ -899,69 +878,6 @@ impl RoomProjection {
         admitted | recorded
     }
 
-    /// A coordination record directly follows the direction it links, which
-    /// names the asked lane.
-    fn apply_coordination(
-        &mut self,
-        position: Seq,
-        body: authority::RoomCoordinationStarted,
-    ) -> bool {
-        let record = replace(
-            &mut self.directed,
-            body.room.clone(),
-            position,
-            body.clone(),
-        );
-        let changed = record
-            | self.insert_event(
-                body.room.clone(),
-                body.publication,
-                RoomEvent {
-                    position,
-                    kind: RoomEventKind::Coordination {
-                        key: body.key.clone(),
-                        target: body.target,
-                    },
-                },
-            );
-        let Some(direction) = self.direction.take().filter(|direction| {
-            direction.position.get().checked_add(1) == Some(position.get())
-                && direction.key == body.key
-        }) else {
-            return changed;
-        };
-        let current = CoordinationState {
-            room: body.room,
-            lane: direction.lane,
-            disposition: wire::Disposition::Live,
-        };
-        changed | replace_plain(&mut self.coordination, body.key, current)
-    }
-
-    fn apply_put_aside(&mut self, position: Seq, body: authority::RoomPutAside) -> bool {
-        let changed = self.insert_event(
-            body.room.clone(),
-            body.publication,
-            RoomEvent {
-                position,
-                kind: RoomEventKind::PutAside {
-                    canceled: body.canceled.clone(),
-                    stop: body.stop.clone(),
-                },
-            },
-        );
-        let mut authority_changed =
-            self.shelved.insert(body.room.clone(), position) != Some(position);
-        for key in body.canceled {
-            authority_changed |= self.retire_coordination(&key, wire::Disposition::Canceled);
-        }
-        authority_changed |= match body.stop {
-            Some(stop) => replace(&mut self.stops, body.room, position, stop),
-            None => self.stops.remove(&body.room).is_some(),
-        };
-        changed | authority_changed
-    }
-
     fn apply_preparation_fact(&mut self, fact: &StreamFact) -> Option<bool> {
         match fact.kind() {
             FactKind::DesignProposed => Some(fact.read::<authority::DesignProposed>().is_some_and(
@@ -1049,41 +965,53 @@ impl RoomProjection {
 
     fn apply_steering_fact(&mut self, fact: &StreamFact) -> Option<bool> {
         match fact.kind() {
-            FactKind::SteerSent => {
-                self.direction = fact.read::<wire::body::SteerSent>().map(|body| Direction {
-                    position: fact.seq(),
-                    key: body.key,
-                    lane: body.lane,
-                });
-                Some(false)
-            }
-            FactKind::SteerAcked => {
-                Some(fact.read::<wire::body::SteerAcked>().is_some_and(|body| {
-                    self.retire_coordination(&body.key, wire::Disposition::Acked)
-                }))
-            }
-            FactKind::SteerDeclined => Some(fact.read::<wire::body::SteerDeclined>().is_some_and(
-                |body| self.retire_coordination(&body.key, wire::Disposition::Declined),
-            )),
-            FactKind::SteerLapsed => {
-                Some(fact.read::<wire::body::SteerLapsed>().is_some_and(|body| {
-                    self.retire_coordination(&body.key, wire::Disposition::Lapsed)
-                }))
-            }
+            FactKind::SteerSent => Some(fact.read::<wire::body::SteerSent>().is_some_and(|body| {
+                let Some(control) = body
+                    .control
+                    .as_deref()
+                    .and_then(|control| control.parse::<authority::StopControl>().ok())
+                else {
+                    return false;
+                };
+                replace(
+                    &mut self.stops,
+                    control.room,
+                    fact.seq(),
+                    StopState {
+                        request: StopRequest {
+                            key: body.key,
+                            lane: body.lane,
+                            claim: control.claim,
+                        },
+                        disposition: wire::Disposition::Live,
+                    },
+                )
+            })),
+            FactKind::SteerAcked => Some(
+                fact.read::<wire::body::SteerAcked>()
+                    .is_some_and(|body| self.dispose_stop(&body.key, wire::Disposition::Acked)),
+            ),
+            FactKind::SteerDeclined => Some(
+                fact.read::<wire::body::SteerDeclined>()
+                    .is_some_and(|body| self.dispose_stop(&body.key, wire::Disposition::Declined)),
+            ),
+            FactKind::SteerLapsed => Some(
+                fact.read::<wire::body::SteerLapsed>()
+                    .is_some_and(|body| self.dispose_stop(&body.key, wire::Disposition::Lapsed)),
+            ),
             FactKind::SteerDeadLettered => Some(
                 fact.read::<wire::steering::SteerDeadLettered>()
                     .is_some_and(|body| {
-                        self.retire_coordination(&body.key, wire::Disposition::DeadLettered)
+                        self.dispose_stop(&body.key, wire::Disposition::DeadLettered)
                     }),
             ),
-            FactKind::SteerCanceled => Some(fact.read::<wire::body::SteerCanceled>().is_some_and(
-                |body| self.retire_coordination(&body.key, wire::Disposition::Canceled),
-            )),
+            FactKind::SteerCanceled => Some(
+                fact.read::<wire::body::SteerCanceled>()
+                    .is_some_and(|body| self.dispose_stop(&body.key, wire::Disposition::Canceled)),
+            ),
             FactKind::SteerRecovered => Some(
                 fact.read::<wire::body::SteerRecovered>()
-                    .is_some_and(|body| {
-                        self.retire_coordination(&body.key, wire::Disposition::Live)
-                    }),
+                    .is_some_and(|body| self.dispose_stop(&body.key, wire::Disposition::Live)),
             ),
             _ => None,
         }
@@ -1097,13 +1025,16 @@ impl RoomProjection {
         replace_plain(&mut state.events, id, event)
     }
 
-    /// Move a coordination request to `disposition`; `Live` is a recovery.
-    fn retire_coordination(&mut self, key: &str, disposition: wire::Disposition) -> bool {
-        self.coordination.get_mut(key).is_some_and(|state| {
-            let changed = state.disposition != disposition;
-            state.disposition = disposition;
-            changed
-        })
+    /// Move the stop request keyed `key` to `disposition`; `Live` is a recovery.
+    fn dispose_stop(&mut self, key: &str, disposition: wire::Disposition) -> bool {
+        self.stops
+            .values_mut()
+            .find(|stop| stop.value.request.key == key)
+            .is_some_and(|stop| {
+                let changed = stop.value.disposition != disposition;
+                stop.value.disposition = disposition;
+                changed
+            })
     }
 
     fn replace_partition(&mut self, partition: authority::WorkingGroupPartition) -> bool {

@@ -149,13 +149,8 @@ mod room_leave;
 pub(crate) use room_leave::room_leave;
 mod room_contribute;
 pub(crate) use room_contribute::room_contribute;
-mod room_coordination;
-#[cfg(test)]
-pub(crate) use room_coordination::room_coordinate_with;
-use room_coordination::{Deactivation, Shelving, coordinate_target};
-pub(crate) use room_coordination::{
-    coordination_lane, room_coordinate, room_coordination_read, room_put_aside,
-};
+mod deactivation;
+use deactivation::{Deactivation, Shelving};
 mod steering_origin;
 use steering_origin::*;
 mod task_step;

@@ -43,8 +43,7 @@ pub(super) use message::{Packet, Published, Unpublished, publish_packet};
 use preview::directive_preview;
 use transitions::evidence_refusal;
 pub(crate) use transitions::{
-    OperatorDirective, admit_send_envelope as steering_envelope_admits, append_cancellation,
-    append_operator_directive,
+    OperatorDirective, admit_send_envelope as steering_envelope_admits, append_operator_directive,
 };
 pub(super) use transitions::{cancel, recover, resend, send};
 

@@ -2,7 +2,7 @@
 
 use wire::TaskStamp;
 
-use super::{Change, CoordinationRecord, Projection, Refusal};
+use super::{Change, Projection, Refusal};
 
 impl Projection {
     pub(super) fn apply(&mut self, change: Change) -> Result<(), Refusal> {
@@ -34,18 +34,6 @@ impl Projection {
             }
             Change::Horizon { lane, seq, body } => {
                 self.horizons.insert(lane, (seq, body));
-            }
-            Change::Coordination {
-                record,
-                room,
-                seq,
-                body,
-            } => {
-                let heads = match record {
-                    CoordinationRecord::Directed => &mut self.directed,
-                    CoordinationRecord::Shelved => &mut self.shelved,
-                };
-                heads.insert(room, (seq, body));
             }
             Change::Conversation(edit) => self.conversation.apply(edit),
             Change::Relevance(edit) => self.relevance.apply(edit),

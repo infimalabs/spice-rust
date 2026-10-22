@@ -264,7 +264,6 @@ impl PendingKind {
             | Self::WorkingGroup { .. }
             | Self::RoomPost { .. }
             | Self::RoomControl { .. }
-            | Self::RoomCoordination { .. }
             | Self::Preparation { .. }
             | Self::PrincipalWrite { .. }
             | Self::Draft { .. }
@@ -462,7 +461,6 @@ impl ClientAction {
             Self::WorkingGroupChange { change, .. } => change.bytes(),
             Self::RoomPost(post) => room_post_bytes(post),
             Self::RoomControl { request, .. } => room_control_bytes(request),
-            Self::RoomCoordination { request, .. } => room_coordination_bytes(request),
             Self::Preparation { request, .. } => preparation_bytes(request),
             Self::Principal { request, .. } => request.text_bytes(),
             Self::Draft { request, .. } => draft_bytes(request),
@@ -635,21 +633,6 @@ fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usi
                 ..
             } => observation.as_str().len().saturating_add(explanation.len()),
         },
-    }
-}
-
-fn room_coordination_bytes(request: &crate::client_action::RoomCoordinationRequest) -> usize {
-    match request {
-        crate::client_action::RoomCoordinationRequest::Coordinate { request, .. } => request
-            .room
-            .as_str()
-            .len()
-            .saturating_add(request.criterion.len())
-            .saturating_add(request.contribution.len())
-            .saturating_add(request.stop.len()),
-        crate::client_action::RoomCoordinationRequest::PutAside { request, .. } => {
-            request.room.as_str().len()
-        }
     }
 }
 

@@ -516,10 +516,6 @@ impl NativeInvocation<'_> {
                 board_command::GraphView::text,
             ),
             ["room", "post"]
-            | ["room", "status"]
-            | ["room", "start"]
-            | ["room", "resume"]
-            | ["room", "put-aside"]
             | ["room", "leave"]
             | ["room", "contribute"]
             | ["room", "ack"]

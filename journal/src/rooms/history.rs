@@ -8,12 +8,11 @@ use wire::{
 };
 
 use super::{
-    Authority, Change, Direction, Projection, Refusal, claims, conversation, dependencies, fold,
-    relevance,
+    Authority, Change, Projection, Refusal, claims, conversation, dependencies, fold, relevance,
 };
 
-/// Every task, transcript generation, proposal author, and room-coordination
-/// direction the history has introduced, beside the projection it derives.
+/// Every task, transcript generation, proposal author, and operator direction
+/// the history has introduced, beside the projection it derives.
 #[derive(Default)]
 pub(crate) struct History {
     projection: Projection,
@@ -26,8 +25,6 @@ pub(crate) struct History {
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     /// Proposal head position to the actor that recorded it.
     authors: BTreeMap<u64, Actor>,
-    /// Steering key to the room-coordination direction it names.
-    directions: BTreeMap<String, Direction>,
     /// Operator direction key to the lane it addresses.
     operator_directions: BTreeMap<String, CanonicalUuid>,
 }
@@ -203,14 +200,6 @@ impl Authority for History {
             .authorizations
             .values()
             .any(|row| row.decision == decision))
-    }
-
-    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
-        Ok(self.directions.get(key).cloned())
-    }
-
-    fn set_direction(&mut self, key: &str, direction: Direction) {
-        self.directions.insert(key.to_owned(), direction);
     }
 
     fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal> {

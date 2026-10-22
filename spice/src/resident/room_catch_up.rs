@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spice::rooms::{CatchUpBudget, CatchUpKind, CatchUpSource, select_catch_up};
-use wire::rooms::{CoordinationControl, RoomDelivered, TextRange, TranscriptHunk};
+use wire::rooms::{RoomDelivered, StopControl, TextRange, TranscriptHunk};
 use wire::{
     Actor, AnyFact, CanonicalUuid, Producer, Seq, SequenceCode, SteeringHead, TaskHandle, TaskStamp,
 };
@@ -82,7 +82,6 @@ fn listening(
                 format!("responsibility {}", task(work))
             }
             Reason::Asked { source, .. } => format!("asked from {source}"),
-            Reason::Coordination { key, .. } => format!("coordination request {key}"),
             Reason::Stop { key, .. } => format!("stop request {key}"),
         })
         .collect::<Vec<_>>();
@@ -354,19 +353,16 @@ fn changes_task_attention(fact: &AnyFact) -> bool {
         || fact.kind() == wire::FactKind::PreparationDecided
 }
 
-/// A live coordination or stop request is the only steering that changes room
-/// attention; routing a packet into a room subscribes no one.
+/// A live stop request is the only steering that changes room attention;
+/// routing a packet into a room subscribes no one.
 fn extend_control_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
-    let Some(control) = head
+    if let Some(control) = head
         .control
         .as_deref()
-        .and_then(|control| control.parse::<CoordinationControl>().ok())
-    else {
-        return;
-    };
-    rooms.insert(match control {
-        CoordinationControl::Coordinate(room) | CoordinationControl::Stop { room, .. } => room,
-    });
+        .and_then(|control| control.parse::<StopControl>().ok())
+    {
+        rooms.insert(control.room);
+    }
 }
 
 fn plan(

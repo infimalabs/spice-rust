@@ -166,8 +166,8 @@ fn render_pip(channel: &Channel, standing: DesignStanding) -> Html {
 }
 
 /// The newest words said across the group's Designs, aged and coloured by the
-/// Design they landed in. A departure or coordination says nothing, so it
-/// never displaces the latest message.
+/// Design they landed in. A departure says nothing, so it never displaces
+/// the latest message.
 fn render_ticker(
     render: &GroupRender<'_, '_>,
     channels: &[Channel],

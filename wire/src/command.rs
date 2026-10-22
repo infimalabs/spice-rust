@@ -47,14 +47,8 @@ pub enum CommandKind {
     DocLedger,
     /// Publish one authored observation to an anchor task's room.
     RoomPost,
-    /// Read one anchor's current native coordination projection.
-    RoomCoordinationRead,
     /// Read one conversation publication's text from its owning source.
     RoomConversationText,
-    /// Send one scoped preparation request to a chosen logical lane.
-    RoomCoordinate,
-    /// Withdraw unanswered coordination and request native holder disposition.
-    RoomPutAside,
     /// A lane declines the Design request it owes in one anchor task's room.
     RoomLeave,
     /// A lane records one typed problem-space contribution in an open Design.

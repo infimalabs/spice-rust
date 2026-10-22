@@ -103,7 +103,7 @@ pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead,
     OOPS_DESIGN_DESCRIPTION, OOPS_DESIGN_PITCH, OOPS_DESIGN_PROJECT, OOPS_DESIGN_TITLE,
-    OopsGenerationHead, RenewalIdentity, ResidencyHead, ResidentState, SeatRefusal, StatementField,
+    OopsGenerationHead, RenewalIdentity, ResidencyHead, ResidentState, StatementField,
     SteeringHead, TapeLocus, TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation,
     TaskPriority, TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal, TeamSubscription,
     TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,

@@ -17,6 +17,8 @@ use crate::replay::{ReceiptRow, VerifyError, Violation, ViolationClass};
 
 /// Release that retired the room question commands into inert authority.
 const RETIRED_ROOM_RELEASE: &str = "963a54c37";
+/// Release that retired room coordination into inert authority.
+const RETIRED_COORDINATION_RELEASE: &str = "54e357267";
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 enum HistoricalKind {
@@ -28,6 +30,12 @@ enum HistoricalKind {
     RoomClose,
     #[serde(rename = "room::control")]
     RoomControl,
+    #[serde(rename = "room::coordinate")]
+    RoomCoordinate,
+    #[serde(rename = "room::coordination-read")]
+    RoomCoordinationRead,
+    #[serde(rename = "room::put-aside")]
+    RoomPutAside,
     #[serde(rename = "steer::tell")]
     SteerTell,
     #[serde(rename = "task::edit")]
@@ -41,6 +49,9 @@ impl HistoricalKind {
             Self::PreparationAuthorize => "preparation::authorize",
             Self::RoomClose => "room::close",
             Self::RoomControl => "room::control",
+            Self::RoomCoordinate => "room::coordinate",
+            Self::RoomCoordinationRead => "room::coordination-read",
+            Self::RoomPutAside => "room::put-aside",
             Self::SteerTell => "steer::tell",
             Self::TaskEdit => "task::edit",
         }
@@ -84,6 +95,39 @@ pub(crate) fn reserve_identities(connection: &Connection) -> Result<(), OpenErro
 /// Move receipts for the retired operator question protocol into inert,
 /// verifiable authority while preserving their exact body and response.
 pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenError> {
+    retire_receipts(
+        connection,
+        "SELECT command_id, command_kind, request \
+         FROM command_receipts \
+         WHERE command_kind = 'room::close' \
+         OR (command_kind = 'room::control' AND (\
+             json_extract(CAST(request AS TEXT), '$.body.control') = 'answer' \
+             OR json_type(CAST(response AS TEXT), '$.outcome.body.answer') IS NOT NULL \
+             OR json_type(CAST(response AS TEXT), '$.outcome.body.results') IS NOT NULL\
+         )) \
+         ORDER BY command_id",
+        RETIRED_ROOM_RELEASE,
+    )
+}
+
+/// Move receipts for the retired room coordination commands into inert,
+/// verifiable authority while preserving their exact body and response.
+pub(crate) fn retire_room_coordination(connection: &Connection) -> Result<(), OpenError> {
+    retire_receipts(
+        connection,
+        "SELECT command_id, command_kind, request \
+         FROM command_receipts \
+         WHERE command_kind IN ('room::coordinate', 'room::coordination-read', 'room::put-aside') \
+         ORDER BY command_id",
+        RETIRED_COORDINATION_RELEASE,
+    )
+}
+
+fn retire_receipts(
+    connection: &Connection,
+    select: &str,
+    release: &'static str,
+) -> Result<(), OpenError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct RetiredCommand {
@@ -95,20 +139,10 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
         body: serde_json::Value,
     }
 
+    let retained =
+        |row: String, detail: String| residual::retained("command_receipts", row, release, detail);
     let rows = {
-        let mut statement = connection
-            .prepare(
-                "SELECT command_id, command_kind, request \
-                 FROM command_receipts \
-                 WHERE command_kind = 'room::close' \
-                 OR (command_kind = 'room::control' AND (\
-                     json_extract(CAST(request AS TEXT), '$.body.control') = 'answer' \
-                     OR json_type(CAST(response AS TEXT), '$.outcome.body.answer') IS NOT NULL \
-                     OR json_type(CAST(response AS TEXT), '$.outcome.body.results') IS NOT NULL\
-                 )) \
-                 ORDER BY command_id",
-            )
-            .map_err(OpenError::Sqlite)?;
+        let mut statement = connection.prepare(select).map_err(OpenError::Sqlite)?;
         statement
             .query_map([], |row| {
                 Ok((
@@ -132,6 +166,9 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
         let historical_kind = match kind.as_str() {
             "room::close" => HistoricalKind::RoomClose,
             "room::control" => HistoricalKind::RoomControl,
+            "room::coordinate" => HistoricalKind::RoomCoordinate,
+            "room::coordination-read" => HistoricalKind::RoomCoordinationRead,
+            "room::put-aside" => HistoricalKind::RoomPutAside,
             _ => unreachable!("query admits only retired room command kinds"),
         };
         if retired.kind.as_str() != Some(kind.as_str()) || retired.id.to_string() != id {
@@ -185,10 +222,6 @@ pub(crate) fn retire_room_questions(connection: &Connection) -> Result<(), OpenE
         }
     }
     Ok(())
-}
-
-fn retained(row: String, detail: String) -> OpenError {
-    residual::retained("command_receipts", row, RETIRED_ROOM_RELEASE, detail)
 }
 
 pub(crate) fn verify(

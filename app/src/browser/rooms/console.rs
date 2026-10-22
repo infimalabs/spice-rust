@@ -514,7 +514,7 @@ fn render_departure(
 
 /// What a design composer's post does, exposed through its accessible label:
 /// it records in this room and asks no lane.
-const POST_GUARANTEE: &str = "Posts are recorded in this room for its listeners and ask no lane for anything. To ask a lane, use Coordinate in this design's menu.";
+const POST_GUARANTEE: &str = "Posts are recorded in this room for its listeners and ask no lane for anything. To push this Design to a lane, use Nudge in this design's menu.";
 
 /// One open design's composer: its heading and menu, the textarea posting to
 /// exactly that design's room, and the quote shards drafted beneath it.
@@ -757,7 +757,7 @@ fn design_title(runtime: &AppRuntime, design: &TaskStamp) -> Option<String> {
 
 /// The newest room event, in journal order, whose words this browser holds,
 /// with its publication and first authored line. A lane's contribution speaks
-/// as a post or message does; a departure or coordination carries no words.
+/// as a post or message does; a departure carries no words.
 fn newest_words<'a>(
     runtime: &'a AppRuntime,
     design: &TaskStamp,
@@ -782,9 +782,9 @@ fn newest_words<'a>(
 }
 
 /// A design's menu carries what its room holds besides conversation: its
-/// standing, the operator's Nudge to proposal, the coordination that asks a
-/// lane for a contribution, and its preparation authority. Its group rail
-/// mirrors an agent's team rail.
+/// standing, the operator's Nudge that asks the best-matching lane for its
+/// next contribution, and its preparation authority. Its group rail mirrors
+/// an agent's team rail.
 fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let label = format!("Menu for {}", channel.label);
     html! {
@@ -810,7 +810,6 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                 {render_group_actions(render, channel)}
                 {super::standing::render_standing(render.runtime, &channel.stamp, render.runtime.board().and_then(|board| board.row(&channel.stamp)))}
                 {super::nudge::nudge_control(render.runtime, &toast(render), render.sender, &channel.stamp)}
-                {super::coordination::coordination_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
                 {render_preparation(render.runtime, &channel.stamp)}
             </div>
         </details>

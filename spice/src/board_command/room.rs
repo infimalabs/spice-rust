@@ -95,18 +95,6 @@ pub(super) fn room_post(
     committed(bus, write, CommandAnswer::RoomPost(answer))
 }
 
-/// The terminal standing that settled a room's anchor, or `None` while the
-/// anchor is unresolved. Only an unresolved anchor's room takes new
-/// coordination; a settled room still takes observations, and duties already
-/// open in it still settle.
-pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'static str> {
-    match workflow.status.conclusion()? {
-        wire::WorkflowConclusion::Positive { .. } => Some("completed"),
-        wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Closed) => Some("closed"),
-        wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Deleted) => Some("deleted"),
-    }
-}
-
 /// Refuse a publication into a deleted task's room; every other task's room
 /// takes observations, whatever its standing.
 pub(super) fn publishable_room(anchor: &Entry) -> Result<(), Outcome<CommandAnswer>> {
@@ -205,8 +193,8 @@ fn bounded_room_publications(
     Ok(rows)
 }
 
-/// One room's listeners: lanes with native work, live coordination, or stop
-/// requests in it, and lanes a recorded Design request asked about it until
+/// One room's listeners: lanes with native work or live stop requests in it,
+/// and lanes a recorded Design request asked about it until
 /// their next room publication answers or declines it. Authoring a message or
 /// contribution, routing a packet into the room, an owed receipt, or a pending
 /// ASK result subscribes no one: steering delivers each directly. A lane's
@@ -303,8 +291,8 @@ fn notice_source(evidence: &wire::rooms::DesignNoticeEvidence) -> String {
     }
 }
 
-/// Every native duty bound to `room` that no leave can end: each live
-/// coordination or stop request addresses its lane.
+/// Every native duty bound to `room` that no leave can end: each live stop
+/// request addresses its lane.
 fn room_native_duties(
     bus: &Bus,
     room: &wire::TaskStamp,
@@ -312,38 +300,31 @@ fn room_native_duties(
     let limit = spice::rooms::MAX_ROOM_ATTENTION_SIGNALS;
     let probe = room.clone();
     let steering = bus
-        .read(move |read| read.live_room_controls(&probe, limit))
+        .read(move |read| read.live_room_stops(&probe, limit))
         .map_err(|error| store_fault("room::duties-unreadable", &error.to_string()))?;
     if steering.len() >= limit {
         return Err(refusal(
             "room::attention-budget",
             Some(format!(
-                "room {room} holds {limit} or more live coordination or stop requests"
+                "room {room} holds {limit} or more live stop requests"
             )),
-            "settle or cancel live room coordination or stop requests before retrying",
+            "settle or cancel live room stop requests before retrying",
         ));
     }
     Ok(steering
         .into_iter()
-        .filter_map(|head| {
+        .map(|head| {
             let position = head.body().created;
             let head = head.into_body();
-            let kind = match head.control.as_deref()?.parse().ok()? {
-                wire::rooms::CoordinationControl::Coordinate(_) => RoomDutyKind::Coordination {
-                    key: head.key,
-                    position,
-                },
-                wire::rooms::CoordinationControl::Stop { .. } => RoomDutyKind::Stop {
-                    key: head.key,
-                    position,
-                },
-            };
-            Some(RoomDuty {
+            RoomDuty {
                 room: room.clone(),
                 lane: head.lane,
-                kind,
+                kind: RoomDutyKind::Stop {
+                    key: head.key,
+                    position,
+                },
                 standing: RoomDutyStanding::Owed,
-            })
+            }
         })
         .collect())
 }

@@ -138,49 +138,30 @@ authority is available through bounded `spice preparation show HANDLE` and
 `spice://task/HANDLE/preparation` pages.
 Reading or opening these records joins, acknowledges, and changes nothing.
 
-## Room coordination
+## Nudge
 
-Start and Resume are explicit coordination, not browser-open events. The
-operator names a seated occupant's current base-52 address plus the unresolved
-criterion, bounded contribution, and stop condition. Spice records one ordinary
-durable direction with the room marker; the recipient then acquires the exact
-anchor or related preparation through ordinary native task possession. Filing
-visibility keeps hidden controller anchors out of automatic allocation; the
-room command adds no other eligibility or possession rule.
+The design menu's **Nudge** control, beneath the room's standing, is the
+operator's one way to push an open Design at a lane; the room records no
+coordination. It shows while the Design is open, active or passive, and a
+concluded or deleted one shows no control. The button stays disabled while the
+resident does not offer `preparation nudge`. The submission witnesses the
+anchor's statement and workflow heads, so a moved anchor refuses with the
+resident's reason. The resident readies the Design and messages the one free
+lane whose retained session best matches it, waking a vacant lane when no
+seated one is free; the composer's report names that lane, or says the Design
+waits ready for allocation because every lane holds other work, none can be
+woken, or its working group is passive.
 
-Put aside cancels only unanswered coordination for that room. If the anchor has
-a native holder, it sends that holder a checkpoint/free direction and shows a
-stop request until that exact claim is completed, freed, or lapsed; it never
-force-frees work or releases child claims and unrelated direction. The answer
-asks its initiating consumer to hide the room locally; the team console keeps
-the design's composer, since the group partition decides what it shows. Room
-history, drafts, groups, selected outputs, other browsers, and repository
-authority remain unchanged.
+Making a held Design passive, by moving it out of every group or into a
+Passive one or by setting its group Passive, sends its holder one stop
+direction asking it to checkpoint and `spice task free`. The standing shows
+that stop request until that exact claim is completed, freed, or lapsed; it
+never force-frees work or releases child claims and unrelated direction.
 
-The design menu's **Coordinate** form, beneath the room's standing, offers
-these commands while the Design is open and active. A passive Design shows
-instead that no lane can claim it or be coordinated onto it until it moves
-into a working group, and a concluded or deleted one shows no form. A lane
-address field suggests each occupied seat's address with its lane name;
-Criterion, Contribution, and Stop when complete Start and Resume, and Put
-aside needs only the room. Each
-button stays disabled while the resident does not offer its command. Before
-submitting, the browser resolves the address against the board's residency
-and addresses with the resident's own rule: an unknown, vacant, or simulated
-seat refuses in place with the resident's reason and explanation, and nothing
-is written. The submission
-witnesses the anchor's statement, workflow, and claim heads and the target
-seat's residency, so a moved anchor or seat refuses with the resident's
-reason. The composer's report names the request key and target, or after Put
-aside the stop request's key, target, and claim, which stays held until its
-holder settles it.
-
-The native command surface is `spice room status HANDLE`,
-`spice room start|resume HANDLE ADDRESS --criterion TEXT --contribution TEXT
---stop TEXT`, and `spice room put-aside HANDLE`. Nothing repeats a Start or
-Resume on the operator's behalf: each asks one lane to hold and propose, and
-only another operator command, or Design outreach's own once-per-item-per-session
-bound, asks again.
+The native command surface is `spice preparation nudge HANDLE`. Nothing
+repeats a nudge on the operator's behalf: each asks one lane to hold and
+propose, and only another operator command, or Design outreach's own
+once-per-item-per-session bound, asks again.
 
 ## Room standing
 
@@ -189,14 +170,11 @@ the room snapshot, its live facts, the board, and lane topology on every render:
 
 - **Next action**: the one next useful action that authority supports, as one
   sentence naming who acts next and on what, never a command line.
-- **Latest coordination**: its request and that request's disposition, and
-  whether a put-aside followed it.
 - **Lanes**: each involved lane with whether it is seated, vacant, or unknown,
   plus one chip per reason, each naming its source:
   - authored message and contribution history;
   - a recorded Design request the lane has not answered or declined;
   - native work;
-  - a live coordination request;
   - a claim-bound stop request;
   - a leave with the lane's clause, the decline of a Design request it owed.
   Nothing ages. The lane's next room publication, a contribution or a leave,

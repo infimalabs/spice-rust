@@ -5,6 +5,7 @@ use super::super::preparation::add_controller;
 use super::super::reclaim::free_active;
 use super::*;
 use wire::intent::WorkingGroupChangeStatus;
+use wire::rooms::StopControl;
 
 pub(super) fn design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     add_controller(bus, epoch, name, wire::TaskIntent::Design, None)
@@ -82,12 +83,22 @@ fn stop_directions(bus: &Bus, room: &TaskHandle) -> Vec<wire::body::SteerSent> {
         .iter()
         .filter_map(|envelope| envelope.fact.read::<wire::body::SteerSent>())
         .filter(|sent| {
-            matches!(
-                sent.control.as_deref().map(str::parse),
-                Some(Ok(CoordinationControl::Stop { room: ref stopped, .. })) if *stopped == room
-            )
+            sent.control
+                .as_deref()
+                .and_then(|control| control.parse::<StopControl>().ok())
+                .is_some_and(|stop| stop.room == room)
         })
         .collect()
+}
+
+/// The one live stop request standing against `room`'s holder, if any.
+fn live_stop(bus: &Bus, room: &TaskHandle) -> Option<wire::SteeringHead> {
+    let room = born(room);
+    let mut stops = bus
+        .read(move |read| read.live_room_stops(&room, 2))
+        .expect("steering index reads");
+    assert!(stops.len() <= 1, "one live stop at most: {stops:?}");
+    stops.pop().map(|head| head.body().clone())
 }
 
 pub(super) fn move_out(
@@ -227,7 +238,7 @@ fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
     assert_eq!(notified, [seats[0].lane, seats[1].lane]);
     for (task, holder) in [(&first, first_holder), (&second, second_holder)] {
         assert_eq!(active_holder(&bus, epoch, task), Some(holder));
-        assert!(coordination_status(&bus, task).stop.is_some());
+        assert!(live_stop(&bus, task).is_some());
         assert_eq!(
             refused(&win_named(&bus, epoch, &seats[2], task, "steal")),
             "claim::design-passive"
@@ -249,7 +260,7 @@ fn a_repeated_passive_stance_shelves_what_its_change_left_owed() {
     claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &second);
     stand_passive_unshelved(&bus);
     let revision = partition_revision(&bus);
-    assert!(coordination_status(&bus, &first).stop.is_none());
+    assert!(live_stop(&bus, &first).is_none());
 
     let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
     let change = group_change(repaired);
@@ -263,7 +274,7 @@ fn a_repeated_passive_stance_shelves_what_its_change_left_owed() {
         "repair restates no partition"
     );
     for task in [&first, &second] {
-        assert!(coordination_status(&bus, task).stop.is_some());
+        assert!(live_stop(&bus, task).is_some());
         assert_eq!(stop_directions(&bus, task).len(), 1);
     }
 
@@ -349,10 +360,8 @@ fn a_held_design_leaving_its_group_asks_its_holder_to_park_and_returns_unchanged
     );
     // The live claim stays authoritative until its holder parks it.
     assert_eq!(active_holder(&bus, epoch, &task), Some(holder.clone()));
-    let stop = coordination_status(&bus, &task)
-        .stop
-        .expect("the room records the park request");
-    assert_eq!(coordination_lane(&bus, stop.target), Some(seats[0].lane));
+    let stop = live_stop(&bus, &task).expect("the room records the park request");
+    assert_eq!(stop.lane, seats[0].lane);
     let [sent] = stop_directions(&bus, &task)
         .try_into()
         .expect("one park request");
@@ -375,7 +384,7 @@ fn a_held_design_leaving_its_group_asks_its_holder_to_park_and_returns_unchanged
     assert_eq!(stop_directions(&bus, &task).len(), 1);
 
     free_active(&bus, epoch, &holder, &seats[0], &task);
-    assert_eq!(coordination_status(&bus, &task).stop, None);
+    assert_eq!(active_holder(&bus, epoch, &task), None);
     assert_eq!(
         offered(&bus, epoch, &seats[0]),
         None,
@@ -394,7 +403,7 @@ fn a_held_design_leaving_its_group_asks_its_holder_to_park_and_returns_unchanged
 }
 
 #[test]
-fn a_vacant_holder_is_asked_to_park_under_its_claimed_occupant_address() {
+fn a_vacant_holder_is_asked_to_park_through_its_lane() {
     let (root, bus, epoch, seats) = fixture("design-standing-vacant", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Vacant holder design");
@@ -404,16 +413,8 @@ fn a_vacant_holder_is_asked_to_park_under_its_claimed_occupant_address() {
     vacate(&bus, epoch, &seats[0]);
 
     assert_committed(move_out(&bus, epoch, &task).0);
-    let stop = coordination_status(&bus, &task)
-        .stop
-        .expect("a vacant holder still receives the park request");
-    let born_address = bus
-        .task_snapshot()
-        .expect("snapshot reads")
-        .facts()
-        .occupant_address(seats[0].lane, seats[0].occupant)
-        .expect("the claimed occupant's birth is proved");
-    assert_eq!(stop.target, born_address);
+    let stop = live_stop(&bus, &task).expect("a vacant holder still receives the park request");
+    assert_eq!(stop.lane, seats[0].lane);
     let [sent] = stop_directions(&bus, &task)
         .try_into()
         .expect("one park request");
@@ -422,66 +423,6 @@ fn a_vacant_holder_is_asked_to_park_under_its_claimed_occupant_address() {
         "the request queues for the lane's next seat"
     );
     assert_eq!(active_holder(&bus, epoch, &task), Some(holder));
-    clean(&root, bus);
-}
-
-#[test]
-fn leaving_every_group_withdraws_coordination_and_refuses_new_coordination() {
-    let (root, bus, epoch, seats) = fixture("design-standing-coordination", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let task = design(&bus, epoch, "Coordinated design");
-    assert_eq!(
-        refused(&coordinate(
-            &bus,
-            &coordinate_command(&bus, epoch, &task, &seats[0], RoomCoordinateAction::Start),
-        )),
-        "room::design-passive"
-    );
-
-    group_design(&bus, epoch, &task);
-    let started = assert_committed(coordinate(
-        &bus,
-        &coordinate_command(&bus, epoch, &task, &seats[0], RoomCoordinateAction::Start),
-    ));
-    let CommandAnswer::RoomCoordination(started) = started else {
-        panic!("start returned another answer shape: {started:?}");
-    };
-    let key = started.requests[0].key.clone();
-
-    let (moved, notified) = move_out(&bus, epoch, &task);
-    assert_committed(moved);
-    assert_eq!(notified, None, "an unheld Design has no holder to park");
-    assert!(coordination_status(&bus, &task).requests.is_empty());
-    let lookup = key.clone();
-    let head = bus
-        .read(move |read| read.steering_key(&lookup))
-        .expect("steering index reads")
-        .expect("the request exists");
-    assert_ne!(head.body().disposition, wire::Disposition::Live);
-    assert_eq!(
-        refused(&coordinate(
-            &bus,
-            &coordinate_command(&bus, epoch, &task, &seats[0], RoomCoordinateAction::Resume),
-        )),
-        "room::design-passive"
-    );
-    assert_eq!(
-        refused(&win_named(&bus, epoch, &seats[0], &task, "capture")),
-        "claim::design-passive"
-    );
-
-    // Back in a group, the directed lane acquires the Design through the
-    // capture its coordination direction names.
-    group_design(&bus, epoch, &task);
-    assert_committed(coordinate(
-        &bus,
-        &coordinate_command(&bus, epoch, &task, &seats[0], RoomCoordinateAction::Resume),
-    ));
-    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
-    assert_eq!(
-        active_holder(&bus, epoch, &task),
-        Some(Actor::Lane(seats[0].lane))
-    );
     clean(&root, bus);
 }
 

@@ -147,46 +147,6 @@ pub(super) async fn send_room_control(
     }
 }
 
-/// Start, resume, or put aside one room's coordination under the anchor and
-/// target heads it was drawn from.
-pub(super) async fn send_room_coordination(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    request: &crate::client_action::RoomCoordinationRequest,
-    respond: &crate::client_action::RoomCoordinationResponse,
-) -> Result<CanonicalUuid, String> {
-    let pending = PendingKind::RoomCoordination {
-        respond: respond.clone(),
-    };
-    match request {
-        crate::client_action::RoomCoordinationRequest::Coordinate { request, expected } => {
-            send_typed(
-                principal,
-                writer,
-                actions,
-                pending,
-                CommandKind::RoomCoordinate,
-                expected.clone(),
-                request.clone(),
-            )
-            .await
-        }
-        crate::client_action::RoomCoordinationRequest::PutAside { request, expected } => {
-            send_typed(
-                principal,
-                writer,
-                actions,
-                pending,
-                CommandKind::RoomPutAside,
-                expected.clone(),
-                request.clone(),
-            )
-            .await
-        }
-    }
-}
-
 /// Submit one preparation write under the heads its surface observed.
 pub(super) async fn send_preparation(
     principal: &Principal,

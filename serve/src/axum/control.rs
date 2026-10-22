@@ -37,10 +37,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
         | CommandKind::RoomPost
-        | CommandKind::RoomCoordinationRead
         | CommandKind::RoomConversationText
-        | CommandKind::RoomCoordinate
-        | CommandKind::RoomPutAside
         | CommandKind::RoomLeave
         | CommandKind::RoomContribute
         | CommandKind::RoomContributionRead

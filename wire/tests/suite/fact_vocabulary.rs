@@ -49,8 +49,6 @@ const PINNED: &[(&str, &str)] = &[
     ("ClaimLeaseWarned", "claim::warned"),
     ("RoomPublished", "room::published"),
     ("RoomMessaged", "room::messaged"),
-    ("RoomCoordinationStarted", "room::directed"),
-    ("RoomPutAside", "room::shelved"),
     ("RoomLeft", "room::left"),
     ("RoomContributed", "room::contributed"),
     ("RoomDelivered", "room::delivered"),

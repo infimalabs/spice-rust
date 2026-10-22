@@ -190,10 +190,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog
         | CommandKind::RoomPost
-        | CommandKind::RoomCoordinationRead
         | CommandKind::RoomConversationText
-        | CommandKind::RoomCoordinate
-        | CommandKind::RoomPutAside
         | CommandKind::RoomLeave
         | CommandKind::RoomContribute
         | CommandKind::RoomContributionRead
@@ -414,10 +411,6 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["board", "handout"]
             | ["room", "post"]
             | ["room", "history"]
-            | ["room", "status"]
-            | ["room", "start"]
-            | ["room", "resume"]
-            | ["room", "put-aside"]
             | ["room", "leave"]
             | ["room", "contribute"]
             | ["room", "inbox"]

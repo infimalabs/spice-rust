@@ -1,4 +1,4 @@
-//! Bounded room-coordination and working-group command DTOs.
+//! Bounded room and working-group command DTOs.
 
 use serde::{Deserialize, Serialize};
 
@@ -10,43 +10,7 @@ pub use crate::rooms::{
     WorkingGroupArrange, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
     WorkingGroupStanceSet,
 };
-use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
-
-/// Start or resume one bounded preparation contribution in an anchor room.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomCoordinate {
-    /// Current rendered handle of the anchor task.
-    pub room: TaskHandle,
-    /// Current base-52 address of the occupant asked to contribute.
-    pub target: OccupantAddress,
-    /// Whether the operator is starting or resuming this coordination.
-    pub action: RoomCoordinateAction,
-    /// One unresolved criterion the contribution must address.
-    pub criterion: String,
-    /// Finite useful contribution or check requested from the lane.
-    pub contribution: String,
-    /// Explicit condition at which the lane must stop and disposition work.
-    pub stop: String,
-}
-
-/// Operator vocabulary for a scoped room-coordination request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RoomCoordinateAction {
-    /// Begin coordination from quiescence.
-    Start,
-    /// Continue with new scope or evidence.
-    Resume,
-}
-
-/// Put one room aside without force-releasing native work.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomPutAside {
-    /// Current rendered handle of the anchor task.
-    pub room: TaskHandle,
-}
+use crate::{SequenceCode, TaskHandle, TaskStamp};
 
 /// One lane declines the Design request it owes in an anchor task's room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,8 +40,6 @@ pub struct RoomLeaveAnswer {
 pub enum RoomListeningDuty {
     /// The lane holds an active claim on the anchor or related work.
     Work { task: TaskHandle },
-    /// A live room coordination request addresses the lane.
-    Coordination { key: String },
     /// A live stop request addresses the lane's claim.
     Stop { key: String },
 }
@@ -241,14 +203,6 @@ pub struct RoomFactTask {
     pub handle: TaskHandle,
 }
 
-/// Read one room's current coordination projection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomCoordinationRead {
-    /// Current rendered handle of the anchor task.
-    pub room: TaskHandle,
-}
-
 /// Read one conversation publication's text from its owning source: an
 /// operator's from its journal fact, a lane's from its transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,49 +312,6 @@ pub struct RoomItemMove {
     /// Its state after the control: `acked`, `declined`, `cancelled`, or
     /// `pending` after recovery.
     pub state: String,
-}
-
-/// One live scoped request projected from ordinary steering authority.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomCoordinationRequest {
-    /// Human-sized steering key.
-    pub key: String,
-    /// Exact addressed occupant at admission.
-    pub target: OccupantAddress,
-}
-
-/// A stop request that remains visible while its exact native claim is active.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomCoordinationStop {
-    /// Human-sized steering key.
-    pub key: String,
-    /// Exact addressed holder at admission.
-    pub target: OccupantAddress,
-    /// Exact claim position, rendered as native base-52.
-    pub claim: SequenceCode,
-}
-
-/// Current coordination state of one anchor room.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomCoordinationView {
-    /// Current rendered anchor handle.
-    pub room: TaskHandle,
-    /// Live unanswered coordination requests, in admission order.
-    pub requests: Vec<RoomCoordinationRequest>,
-    /// Current holder's still-applicable stop request.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop: Option<RoomCoordinationStop>,
-    /// The anchor's Design lifecycle standing; absent for a non-Design anchor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub design: Option<crate::intent::DesignStanding>,
-    /// The anchor's pass cycle while it is an open Design.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cycle: Option<crate::rooms::DesignCyclePresentation>,
-    /// Presentation instruction local consumers apply without persisting geometry.
-    pub hide: bool,
 }
 
 /// Read the current working-group partition.

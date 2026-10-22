@@ -1,8 +1,7 @@
 //! A room's standing inside its design menu: why each lane is involved and
-//! whether it is available, what the latest coordination asks and how its
-//! request stands, and the resident's shadow relevance observations. Every
-//! row names the admitted source it traces to. Nothing here is a roster of
-//! authority, and rendering it mounts no view and wakes no lane.
+//! whether it is available, and the resident's shadow relevance observations.
+//! Every row names the admitted source it traces to. Nothing here is a roster
+//! of authority, and rendering it mounts no view and wakes no lane.
 
 use wasm_bindgen::JsCast as _;
 use wire::intent::{BoardTask, DesignStanding};
@@ -10,13 +9,11 @@ use wire::rooms::{
     DesignAvailability, DesignCycle, DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd,
     RoomProgressStanding, RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
 };
-use wire::{Disposition, SequenceCode, TaskStamp};
+use wire::{SequenceCode, TaskStamp};
 use yew::prelude::*;
 
 use crate::AppRuntime;
-use crate::runtime::{
-    CoordinationStanding, ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant,
-};
+use crate::runtime::{ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant};
 use crate::watchband;
 
 /// The standing section of one design's menu and of its read view; `row` is
@@ -28,7 +25,6 @@ pub(super) fn render_standing(
 ) -> Html {
     let projection = runtime.room_projection();
     let participants = projection.participants(room, runtime.board());
-    let coordination = projection.coordination_standing(room);
     let relevance = projection.relevance(room).collect::<Vec<_>>();
     let lifecycle = row.and_then(BoardTask::design_standing);
     let cycle = row.and_then(|row| {
@@ -62,11 +58,9 @@ pub(super) fn render_standing(
                 {next_action(
                     settled,
                     lifecycle.as_ref(),
-                    coordination.as_ref(),
                     cycle.as_ref().zip(row).map(|(cycle, row)| (cycle.cycle, row.design_availability())),
                 )}
             </p>
-            {coordination.as_ref().map_or_else(Html::default, render_coordination)}
             {render_lanes(runtime, &participants)}
             if !relevance.is_empty() {
                 <ul class="room-standing-relevance" aria-label="Shadow relevance observations">
@@ -78,31 +72,21 @@ pub(super) fn render_standing(
 }
 
 /// The one next useful action the current authority supports, as one
-/// sentence naming who acts and on what. An open Design's cycle names it
-/// once no coordination obligation is outstanding.
+/// sentence naming who acts and on what. An open Design's cycle names it.
 fn next_action(
     settled: bool,
     lifecycle: Option<&DesignStanding>,
-    coordination: Option<&CoordinationStanding<'_>>,
     cycle: Option<(DesignCycle, DesignAvailability)>,
 ) -> String {
     if settled {
-        return "The anchor is settled; nothing remains to coordinate.".to_owned();
+        return "The anchor is settled; nothing remains to do here.".to_owned();
     }
-    match (coordination, cycle) {
-        (Some(standing), _) if standing.request == Some(Disposition::Live) => format!(
-            "Wait for {} to acknowledge request {}.",
-            standing.record.value.target, standing.record.value.key
-        ),
-        (_, Some((cycle, availability))) => cycle_next(cycle, availability).to_owned(),
-        _ if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group to \
-            Explore or Converge before coordinating a lane onto it; if ungrouped, group it first."
+    match cycle {
+        Some((cycle, availability)) => cycle_next(cycle, availability).to_owned(),
+        None if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group \
+            to Explore or Converge so a lane can claim it; if ungrouped, group it first."
             .to_owned(),
-        (Some(standing), None) if !standing.put_aside => format!(
-            "Read {}'s contribution, then Resume or put the room aside.",
-            standing.record.value.target
-        ),
-        _ => "Start coordination to ask one lane for the next contribution.".to_owned(),
+        None => "Nudge this Design to ask one lane for its next contribution.".to_owned(),
     }
 }
 
@@ -190,35 +174,6 @@ pub(super) fn focus_in_place(selector: String) -> Callback<MouseEvent> {
             let _ = element.focus();
         }
     })
-}
-
-fn render_coordination(standing: &CoordinationStanding<'_>) -> Html {
-    let record = &standing.record.value;
-    let request = standing.request.map_or("unread", disposition_label);
-    let aside = if standing.put_aside {
-        " · put aside"
-    } else {
-        ""
-    };
-    html! {
-        <dl class="room-standing-scope" data-coordination={record.key.clone()}>
-            <dt>{"Request"}</dt>
-            <dd title={format!("Coordination record {}", record.publication)}>
-                {format!("{} → {} · {request}{aside}", record.key, record.target)}
-            </dd>
-        </dl>
-    }
-}
-
-const fn disposition_label(disposition: Disposition) -> &'static str {
-    match disposition {
-        Disposition::Live => "awaiting acknowledgment",
-        Disposition::Acked => "acknowledged",
-        Disposition::Declined => "declined",
-        Disposition::Lapsed => "lapsed",
-        Disposition::DeadLettered => "undeliverable",
-        Disposition::Canceled => "canceled",
-    }
 }
 
 fn render_lanes(runtime: &AppRuntime, participants: &[RoomParticipant]) -> Html {
@@ -316,11 +271,6 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "work",
             "Working",
             format!("Holds {}", task_label(runtime, task)),
-        ),
-        ParticipantReason::Coordination(key) => (
-            "requested",
-            "Requested",
-            format!("Live coordination request {key}"),
         ),
         ParticipantReason::Stop(key) => (
             "responsibility",

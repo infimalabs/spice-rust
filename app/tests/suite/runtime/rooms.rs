@@ -8,8 +8,8 @@ use wire::rooms::{
     CandidateRef, CandidateReference, CandidateWithdrawal, CandidateWithdrawn, CoverageRef,
     DecisionOutcome, DecisionRef, DesignPassProposal, DesignPassRecommendation, DesignProposed,
     ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPutAside, RoomSource,
-    RoomStopRequest, TextRange, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
+    RoomAuthorityStamp, RoomMessaged, RoomSource, TextRange, WorkingGroup, WorkingGroupMoved,
+    WorkingGroupPartition,
 };
 
 #[path = "rooms/contributions.rs"]
@@ -18,13 +18,13 @@ mod contributions;
 mod conversation;
 
 const ROOM_EVENT: &str = "dVsYdDj7d";
-const COORDINATION_EVENT: &str = "dVsYdDj7k";
+const LEAVE_EVENT: &str = "dVsYdDj7k";
 const GROUP: &str = "dVsYdDj7f";
-const STOP_EVENT: &str = "dVsYdDj7g";
 const CANDIDATE: &str = "dVsYdDj7h";
 const SECOND_CANDIDATE: &str = "dVsYdDj7m";
-const COORDINATION_KEY: &str = "dCoordKey1";
 const STOP_KEY: &str = "dStopKey1";
+/// The claim win the fixture stop request names.
+const STOPPED_CLAIM: u64 = 3;
 
 fn authority(text: &str) -> RoomAuthorityStamp {
     text.parse().expect("fixture room authority")
@@ -179,46 +179,26 @@ fn room_post(position: u64) -> serde_json::Value {
     )
 }
 
-/// The operator direction a coordination record follows, one position earlier.
-fn direction(position: u64, key: &str, lane: &str) -> serde_json::Value {
+/// The stop request asking `lane`, holding the room's claim won at
+/// [`STOPPED_CLAIM`], to checkpoint and free.
+fn stop_direction(position: u64, lane: &str) -> serde_json::Value {
     let body = serde_json::json!({
         "directive": REQUEST,
-        "fanout": REQUEST,
-        "key": key,
+        "key": STOP_KEY,
         "lane": lane,
-        "text": "Contribute the bounded review",
-        "control": format!("room-coordinate:{}", room()),
+        "text": "Checkpoint and free this Design",
+        "control": format!("room-stop:{}:{}", room(), wire::SequenceCode::new(STOPPED_CLAIM)),
         "expires": "2030-04-13T18:44:09.271Z",
     });
     envelope(position, "steer::sent", &body)
 }
 
-fn coordination(position: u64) -> serde_json::Value {
-    let body = RoomCoordinationStarted {
-        room: room(),
-        publication: authority(COORDINATION_EVENT),
-        key: COORDINATION_KEY.to_owned(),
-        target: wire::OccupantAddress::new(seq(1)),
-    };
-    envelope(position, "room::directed", &body)
-}
-
-fn stop() -> RoomStopRequest {
-    RoomStopRequest {
+fn stop() -> app::StopRequest {
+    app::StopRequest {
         key: STOP_KEY.to_owned(),
-        target: wire::OccupantAddress::new(seq(1)),
-        claim: wire::SequenceCode::new(3),
+        lane: uuid(LANE),
+        claim: wire::SequenceCode::new(STOPPED_CLAIM),
     }
-}
-
-fn put_aside(position: u64) -> serde_json::Value {
-    let body = RoomPutAside {
-        room: room(),
-        publication: authority(STOP_EVENT),
-        canceled: Vec::new(),
-        stop: Some(stop()),
-    };
-    envelope(position, "room::shelved", &body)
 }
 
 fn authorization(decision: u64) -> ExecutionAuthorization {
@@ -400,12 +380,7 @@ fn opening(session: &Session) -> [app::Admitted<StreamFrame>; 3] {
         ),
         room_page(
             session,
-            &[
-                authorized(4, 1),
-                direction(5, COORDINATION_KEY, SECOND_LANE),
-                coordination(6),
-                put_aside(7),
-            ],
+            &[authorized(4, 1), stop_direction(7, LANE)],
             None,
             8,
         ),
@@ -448,7 +423,7 @@ fn unheard_operator_post_tracks_current_listening_and_later_lane_events() {
             .has_current_listener(&room(), runtime.board()),
         "authoring the message creates participation but no listening authority"
     );
-    let left = authority(COORDINATION_EVENT);
+    let left = authority(LEAVE_EVENT);
     runtime.apply_stream(&admitted_stream(
         &session,
         &live_fact(envelope(
@@ -519,25 +494,17 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
         .collect::<std::collections::BTreeMap<_, _>>();
     assert_eq!(
         positions,
-        [(ROOM_EVENT, 2), (COORDINATION_EVENT, 6), (STOP_EVENT, 7)]
+        [(ROOM_EVENT, 2)]
             .map(|(id, position)| (authority(id), seq(position)))
             .into()
     );
     assert_eq!(
         participants(&runtime),
-        vec![
-            app::RoomParticipant {
-                lane: uuid(LANE),
-                reasons: vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
-            },
-            app::RoomParticipant {
-                lane: uuid(SECOND_LANE),
-                reasons: vec![app::ParticipantReason::Coordination(
-                    COORDINATION_KEY.to_owned()
-                )],
-            },
-        ],
-        "the coordination lane comes from its direction, never a message author occupant"
+        vec![app::RoomParticipant {
+            lane: uuid(LANE),
+            reasons: vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
+        }],
+        "a message author occupant is never a participant key, and a stop without a board is no duty"
     );
     assert!(
         runtime
@@ -754,13 +721,18 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
     for frame in opening(&session) {
         runtime.apply_stream(&frame);
     }
-    runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(3), None));
+    runtime.apply_board(&room_board(
+        &session,
+        Some("app.rooms"),
+        Some(STOPPED_CLAIM),
+        None,
+    ));
     assert_eq!(
         runtime
             .room_projection()
             .current_stop(&room(), runtime.board())
-            .map(|stop| &stop.value),
-        Some(&stop())
+            .map(|stop| (stop.position, stop.value.clone())),
+        Some((seq(7), stop()))
     );
     assert_eq!(
         participants(&runtime)[0].reasons,
@@ -771,45 +743,55 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
         ]
     );
 
-    let canceled = envelope(
-        9,
-        "steer::canceled",
-        &wire::body::SteerCanceled {
-            key: COORDINATION_KEY.to_owned(),
-            lane: uuid(SECOND_LANE),
-        },
-    );
-    runtime.apply_stream(&admitted_stream(&session, &live_fact(canceled)));
-    runtime.apply_stream(&admitted_stream(&session, &live_fact(authorized(10, 2))));
-    assert_eq!(
-        participants(&runtime)
-            .iter()
-            .map(|participant| participant.lane)
-            .collect::<Vec<_>>(),
-        vec![uuid(LANE)],
-        "a retired coordination no longer places its lane in the room"
-    );
-    assert_eq!(
-        runtime.room_projection().preparation().authorizations.len(),
-        2
-    );
-
     runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(5), None));
     assert!(
         runtime
             .room_projection()
             .current_stop(&room(), runtime.board())
             .is_none(),
-        "a later claim win leaves the stop in the timeline but not current"
+        "a later claim win leaves the stop sent but not current"
     );
     assert_eq!(
+        participants(&runtime)[0].reasons,
+        vec![
+            app::ParticipantReason::Publication(authority(ROOM_EVENT)),
+            app::ParticipantReason::Work(room()),
+        ]
+    );
+
+    runtime.apply_board(&room_board(
+        &session,
+        Some("app.rooms"),
+        Some(STOPPED_CLAIM),
+        None,
+    ));
+    let canceled = envelope(
+        9,
+        "steer::canceled",
+        &wire::body::SteerCanceled {
+            key: STOP_KEY.to_owned(),
+            lane: uuid(LANE),
+        },
+    );
+    runtime.apply_stream(&admitted_stream(&session, &live_fact(canceled)));
+    runtime.apply_stream(&admitted_stream(&session, &live_fact(authorized(10, 2))));
+    assert!(
         runtime
             .room_projection()
-            .room(&room())
-            .expect("room")
-            .events()[&authority(STOP_EVENT)]
-            .position,
-        seq(7)
+            .current_stop(&room(), runtime.board())
+            .is_none(),
+        "a retired stop no longer binds its lane"
+    );
+    assert_eq!(
+        participants(&runtime)[0].reasons,
+        vec![
+            app::ParticipantReason::Publication(authority(ROOM_EVENT)),
+            app::ParticipantReason::Work(room()),
+        ]
+    );
+    assert_eq!(
+        runtime.room_projection().preparation().authorizations.len(),
+        2
     );
 }
 
@@ -822,16 +804,12 @@ fn authored_message_records_participation_without_author_attention() {
         runtime.apply_stream(&frame);
     }
     assert_eq!(
-        participants(&runtime)[0].reasons,
-        vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
+        participants(&runtime),
+        vec![app::RoomParticipant {
+            lane: uuid(LANE),
+            reasons: vec![app::ParticipantReason::Publication(authority(ROOM_EVENT))],
+        }],
         "the author's room history is not a reason to deliver later catch-up"
-    );
-    assert_eq!(
-        participants(&runtime)[1].reasons,
-        vec![app::ParticipantReason::Coordination(
-            COORDINATION_KEY.to_owned()
-        )],
-        "another lane's native duty is unchanged"
     );
 }
 
@@ -868,22 +846,18 @@ fn an_authored_message_does_not_end_a_leave() {
     );
     let current = participants(&runtime);
     assert_eq!(
-        current[0].reasons,
-        vec![
-            app::ParticipantReason::Publication(authority(ROOM_EVENT)),
-            app::ParticipantReason::Left {
-                publication: left,
-                clause: "my part is done".to_owned(),
-            },
-        ],
+        current,
+        vec![app::RoomParticipant {
+            lane: uuid(LANE),
+            reasons: vec![
+                app::ParticipantReason::Publication(authority(ROOM_EVENT)),
+                app::ParticipantReason::Left {
+                    publication: left,
+                    clause: "my part is done".to_owned(),
+                },
+            ],
+        }],
         "the leave stands with its clause"
-    );
-    assert_eq!(
-        current[1].reasons,
-        vec![app::ParticipantReason::Coordination(
-            COORDINATION_KEY.to_owned()
-        )],
-        "another lane's native duty is untouched"
     );
 
     let returned = later_publication(3);
@@ -1090,7 +1064,7 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
         );
     }
 
-    // The socket drops; a renamed group and a coordination land unseen.
+    // The socket drops; a renamed group lands unseen.
     assert!(!runtime.reconnect(&accepted));
     assert_eq!(
         runtime.room_projection().status(),
@@ -1100,12 +1074,7 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
     runtime.apply_stream(&operator_facts(&session, 7));
     runtime.apply_stream(&room_page(
         &session,
-        &[
-            room_message(2),
-            group_moved(4, &["PUBLIC-work2"]),
-            direction(5, COORDINATION_KEY, SECOND_LANE),
-            coordination(6),
-        ],
+        &[room_message(2), group_moved(4, &["PUBLIC-work2"])],
         None,
         7,
     ));
@@ -1118,7 +1087,6 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
     assert_eq!(projection.partition().revision, 4);
     let events = projection.room(&room()).expect("room").events();
     assert_eq!(events[&authority(ROOM_EVENT)].position, seq(2));
-    assert!(events.contains_key(&authority(COORDINATION_EVENT)));
 
     assert_eq!(
         runtime

@@ -301,8 +301,6 @@ impl JournalRead<'_> {
                 wire::FactKind::RoomPublished
                     | wire::FactKind::RoomMessaged
                     | wire::FactKind::RoomPosted
-                    | wire::FactKind::RoomCoordinationStarted
-                    | wire::FactKind::RoomPutAside
                     | wire::FactKind::RoomLeft
                     | wire::FactKind::RoomContributed
             ) {
@@ -455,13 +453,12 @@ impl JournalRead<'_> {
 
     /// One page of the facts behind current room authority through
     /// `horizon`, in journal order: every room publication, the current head
-    /// of each working group, proposal, and authorization, for each room
-    /// coordination the direction it follows and that direction's current
-    /// steering head, every conversation record with the current head of
-    /// each operator item and question result, the opening and current
-    /// steering head of each directive a publication or conversation names,
-    /// every Design notice, and the first principal admission so an app can
-    /// resolve historical operator authors after reconnect.
+    /// of each working group, proposal, and authorization, every conversation
+    /// record with the current head of each operator item and question
+    /// result, the opening and current steering head of each directive a
+    /// publication or conversation names, every Design notice, and the first
+    /// principal admission so an app can resolve historical operator authors
+    /// after reconnect.
     ///
     /// A head that moves past `horizon` leaves this set, so the facts after
     /// `horizon` complete the authority it describes without overlap.
@@ -486,7 +483,6 @@ impl JournalRead<'_> {
                 .map_err(|_| GuardError::Invalid("room authority position exceeds SQLite".into()))
         };
         let (first, last) = (sql(first)?, sql(horizon.get())?);
-        let directed = wire::FactKind::RoomCoordinationStarted.as_str();
         let noticed = wire::FactKind::DesignNoticed.as_str();
         let nudged = wire::FactKind::DesignNudged.as_str();
         let admitted = wire::FactKind::PrincipalAdmitted.as_str();
@@ -497,7 +493,6 @@ impl JournalRead<'_> {
             .map_err(GuardError::Store)?;
         let mut rows = statement
             .query(params![
-                directed,
                 noticed,
                 nudged,
                 admitted,
@@ -533,7 +528,7 @@ impl JournalRead<'_> {
                     .connection
                     .query_row(
                         ROOM_AUTHORITY_REMAINING,
-                        params![directed, noticed, nudged, admitted, continuation, last],
+                        params![noticed, nudged, admitted, continuation, last],
                         |row| row.get::<_, i64>(0),
                     )
                     .map_err(GuardError::Store)?;

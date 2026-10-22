@@ -469,9 +469,6 @@ fn apply_task_mutation_response(
             "deleted",
             "Task was not deleted",
         )?,
-        PendingKind::RoomCoordination { respond } => {
-            apply_callback_reply(session, bytes, "Room coordination failed", &respond)?
-        }
         PendingKind::Preparation { respond } => {
             apply_callback_reply(session, bytes, "Preparation failed", &respond)?
         }

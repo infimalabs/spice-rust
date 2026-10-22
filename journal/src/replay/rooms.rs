@@ -91,18 +91,6 @@ pub(super) fn verify(
         violations,
     );
     compare(
-        "room_directions",
-        &expected.directed,
-        &stored.directed,
-        violations,
-    );
-    compare(
-        "room_shelvings",
-        &expected.shelved,
-        &stored.shelved,
-        violations,
-    );
-    compare(
         "room_conversations",
         &expected.conversation.publications,
         &stored.conversation.publications,
@@ -121,8 +109,6 @@ pub(super) fn verify(
         + stored.proposals.len()
         + stored.authorizations.len()
         + stored.cursors.len()
-        + stored.directed.len()
-        + stored.shelved.len()
         + stored.conversation.publications.len()
         + stored.conversation.items.len())
 }

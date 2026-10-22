@@ -222,10 +222,7 @@ const SUMMARIES: &[(&str, &str)] = &[
         "Verify a backup bundle without restoring it",
     ),
     ("retro", "Page preserved agent transcripts, newest first"),
-    (
-        "room",
-        "Coordinate in task rooms: post, reply, assess, and leave",
-    ),
+    ("room", "Work in task rooms: post, reply, assess, and leave"),
     (
         "room ack",
         "Acknowledge room delivery items as the operator",
@@ -244,19 +241,9 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("room leave", "Stop listening to a room, with a clause"),
     ("room nak", "Decline room delivery items as the operator"),
     ("room post", "Publish one observation to a task's room"),
-    (
-        "room put-aside",
-        "Cancel a room's unanswered coordination and ask its holder to stop",
-    ),
     ("room recover", "Recover one lapsed room item"),
     ("room relevance", "Page a room's relevance observations"),
     ("room reply", "Reply to a lane's room item as the operator"),
-    (
-        "room resume",
-        "Resume a room's coordination through one lane",
-    ),
-    ("room start", "Start a room's coordination through one lane"),
-    ("room status", "Read a room's coordination standing"),
     ("rtk", "Query an agent's RTK command history"),
     ("rtk gain", "Run the RTK gain query for one agent"),
     ("run", "Run one command through supervised-shell routing"),

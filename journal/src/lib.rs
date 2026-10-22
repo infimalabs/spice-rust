@@ -64,8 +64,10 @@
 /// Schema 94 lets one Design invitation list every question item it asks.
 /// Schema 95 drops the repeat-leave flag from every retained leave answer.
 /// Schema 96 fills a pitch on every retained task statement once, derived
-/// from its title and description.
-pub const SCHEMA_VERSION: u32 = 96;
+/// from its title and description. Schema 97 retires room coordination: its
+/// facts become inert evidence, its receipts move to the historical table,
+/// and its direction and shelving heads drop.
+pub const SCHEMA_VERSION: u32 = 97;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

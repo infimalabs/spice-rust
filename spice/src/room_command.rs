@@ -38,13 +38,13 @@ use spice::repository::Repository;
 use wire::output::{Bounded, Export};
 use wire::principal::{NamedActor, PrincipalCode, PrincipalDirectory};
 use wire::rooms::{
-    RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomCoordinationStarted, RoomLeft,
-    RoomMessaged, RoomPosted, RoomPublicationContent, RoomPublished, RoomPutAside, RoomQuestion,
-    RoomSource, RoomSourceUnavailable, RoomSourceView, TranscriptHunk,
+    RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomLeft, RoomMessaged, RoomPosted,
+    RoomPublicationContent, RoomPublished, RoomQuestion, RoomSource, RoomSourceUnavailable,
+    RoomSourceView, TranscriptHunk,
 };
 use wire::{
     Actor, CanonicalUuid, Disposition, Fault, FaultClass, Instant, Outcome, Refusal, Reply,
-    ReplyPosition, Seq, SequenceCode, TaskHandle, TaskStamp,
+    ReplyPosition, Seq, TaskHandle, TaskStamp,
 };
 
 use crate::read_page::{Page, Paged};
@@ -425,7 +425,7 @@ struct Row {
 
 /// What a publication's fact records.
 enum Record {
-    /// A conversation, coordination, or leave body.
+    /// A conversation or leave body.
     Body(Body),
     /// A typed contribution, owning its text and citing its sources.
     Contributed {
@@ -442,7 +442,6 @@ enum Body {
         hunk: TranscriptHunk,
         author: CanonicalUuid,
     },
-    Linked(RoomSource),
     Left {
         clause: String,
     },
@@ -579,24 +578,6 @@ fn row(
                 })),
                 posted.directed,
                 conversed,
-            )
-        } else if let Some(started) = envelope.fact.read::<RoomCoordinationStarted>() {
-            (
-                started.publication,
-                Record::Body(Body::Linked(RoomSource::Journal {
-                    fact: SequenceCode::new(envelope.seq.get()),
-                })),
-                Vec::new(),
-                None,
-            )
-        } else if let Some(shelved) = envelope.fact.read::<RoomPutAside>() {
-            (
-                shelved.publication,
-                Record::Body(Body::Linked(RoomSource::Journal {
-                    fact: SequenceCode::new(envelope.seq.get()),
-                })),
-                Vec::new(),
-                None,
             )
         } else if let Some(left) = envelope.fact.read::<RoomLeft>() {
             (
@@ -744,7 +725,6 @@ fn project_body(body: Body, tape: &Path) -> (Content, Option<CanonicalUuid>) {
             (Content::Linked { source: link }, None)
         }
         Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
-        Body::Linked(source) => (Content::Linked { source }, None),
         Body::Left { clause } => (Content::Left { clause }, None),
     }
 }

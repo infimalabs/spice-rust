@@ -1,5 +1,5 @@
-//! Why each lane is in a room, where the room's coordination stands, and its
-//! shadow relevance observations, each derived from admitted authority alone.
+//! Why each lane is in a room and its shadow relevance observations, each
+//! derived from admitted authority alone.
 
 use std::collections::BTreeMap;
 
@@ -18,17 +18,6 @@ pub struct Relevance {
     pub observation: authority::RoomRelevanceObservation,
     /// The operator's quality verdict, absent until assessed.
     pub verdict: Option<authority::RoomRelevanceVerdict>,
-}
-
-/// A room's latest coordination record and what it still allows.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CoordinationStanding<'a> {
-    /// The room's latest operator coordination record.
-    pub record: &'a RoomPositioned<authority::RoomCoordinationStarted>,
-    /// The request's steering disposition, absent until its direction folds.
-    pub request: Option<Disposition>,
-    /// Whether a put-aside followed the record.
-    pub put_aside: bool,
 }
 
 impl RoomProjection {
@@ -112,7 +101,6 @@ impl RoomProjection {
                 ParticipantReason::Publication(_) | ParticipantReason::Left { .. } => false,
                 ParticipantReason::Asked { .. }
                 | ParticipantReason::Work(_)
-                | ParticipantReason::Coordination(_)
                 | ParticipantReason::Stop(_) => true,
             })
     }
@@ -175,7 +163,7 @@ impl RoomProjection {
     }
 
     /// Reasons a lane listens regardless of any leave: a claim on associated
-    /// work, a live coordination request, and the stop it holds.
+    /// work and the stop it holds.
     fn native_reasons(
         &self,
         room: &TaskStamp,
@@ -196,32 +184,9 @@ impl RoomProjection {
                 );
             }
         }
-        for (key, request) in &self.coordination {
-            if request.disposition == Disposition::Live && request.room == *room {
-                add(request.lane, ParticipantReason::Coordination(key.clone()));
-            }
-        }
         if let Some((stop, lane)) = self.stop_holder(room, board) {
             add(lane, ParticipantReason::Stop(stop.value.key.clone()));
         }
-    }
-
-    /// The room's latest coordination record and its request's disposition.
-    pub fn coordination_standing(&self, room: &TaskStamp) -> Option<CoordinationStanding<'_>> {
-        let record = self.directed.get(room)?;
-        let request = self
-            .coordination
-            .get(&record.value.key)
-            .map(|state| state.disposition);
-        let put_aside = self
-            .shelved
-            .get(room)
-            .is_some_and(|shelf| *shelf > record.position);
-        Some(CoordinationStanding {
-            record,
-            request,
-            put_aside,
-        })
     }
 
     /// The room's shadow relevance observations in identity order.
