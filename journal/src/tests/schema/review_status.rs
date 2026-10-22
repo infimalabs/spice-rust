@@ -97,6 +97,7 @@ fn plant_design(journal: &Journal) {
             json!({
                 "task": DESIGN,
                 "title": "Design fixture",
+                "pitch": "A Design fixture needs a pitch.",
                 "project": "journal",
                 "intent": "design",
                 "depends": [],

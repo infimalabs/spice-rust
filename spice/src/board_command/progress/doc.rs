@@ -16,6 +16,9 @@ struct DocTaskSpec {
     task: TaskHandle,
     born: wire::TaskStamp,
     title: String,
+    /// Derived once from the node's title and description; a node has no
+    /// author to ask and an existing statement keeps the pitch it has.
+    pitch: String,
     description: Option<String>,
     annotations: Vec<String>,
     project: String,
@@ -274,6 +277,11 @@ fn doc_task_spec(
         .clone()
         .unwrap_or_else(|| "task.document".to_owned());
     validate_acceptance(&node.acceptance)?;
+    let existing = task_entry(&plan.snapshot.entries, &task);
+    let pitch = existing
+        .map(|entry| entry.statement().pitch.clone())
+        .filter(|pitch| !pitch.is_empty())
+        .unwrap_or_else(|| wire::pitch::derive(&node.title, Some(&node.description)));
     let mut flow = if node.flow.is_empty() {
         task_flow(None, &node.acceptance)?
     } else {
@@ -282,7 +290,6 @@ fn doc_task_spec(
             .map(|station| phase(station.as_str()))
             .collect()
     };
-    let existing = task_entry(&plan.snapshot.entries, &task);
     if existing.is_none() {
         let _dependency_witnesses = derive_dependency_flow(
             &mut flow,
@@ -296,6 +303,7 @@ fn doc_task_spec(
         &plan.snapshot,
         command.actor(),
         &node.title,
+        &pitch,
         None,
         &node.acceptance,
     )?;
@@ -326,6 +334,7 @@ fn doc_task_spec(
             .expect("document handles carry canonical task stamps"),
         task,
         title: node.title.clone(),
+        pitch,
         description: (!node.description.is_empty()).then(|| node.description.clone()),
         annotations: node.annotations.clone(),
         project,
@@ -430,6 +439,9 @@ fn edit_doc_task(
         .saturating_add(1);
     let mut statement = existing.statement().clone();
     statement.title = spec.title;
+    if statement.pitch.is_empty() {
+        statement.pitch = spec.pitch;
+    }
     statement.description = spec.description;
     statement.project = spec.project;
     statement.acceptance = spec.acceptance;
@@ -480,6 +492,7 @@ fn add_doc_task(
                 intent: None,
                 task: spec.born.clone(),
                 title: spec.title.clone(),
+                pitch: spec.pitch.clone(),
                 description: spec.description.clone(),
                 acceptance: spec.acceptance.clone(),
                 requirements: wire::EnvironmentRequirements::default(),
@@ -507,6 +520,7 @@ fn add_doc_task(
         born: statement_task,
         queue_origin: position,
         title: spec.title,
+        pitch: spec.pitch,
         description: spec.description,
         acceptance: spec.acceptance,
         requirements: wire::EnvironmentRequirements::default(),

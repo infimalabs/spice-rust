@@ -19,6 +19,7 @@ fn add_declared(
         &TaskAdd {
             preparation: None,
             title: format!("Declared {task}"),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: vec!["The declared intent holds".to_owned()],
@@ -38,6 +39,7 @@ fn edit(task: &TaskHandle) -> TaskEdit {
     TaskEdit {
         task: task.clone(),
         title: None,
+        pitch: None,
         description: None,
         acceptance: Vec::new(),
         requirements: None,
@@ -96,6 +98,7 @@ fn declared_planning_intent_survives_phases_and_corrections_without_reinterpreta
             preparation: Some(task.clone()),
             intent: None,
             title: "Planned output".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: vec!["The planned output holds".to_owned()],

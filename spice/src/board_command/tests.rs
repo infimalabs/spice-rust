@@ -258,6 +258,7 @@ fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str)
             preparation: None,
             intent: None,
             title: title.to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.identity".to_owned()),
             description: None,
             acceptance: Vec::new(),
@@ -1117,6 +1118,9 @@ mod oops_design;
 // this file stays inside the structural review bound as it grows.
 mod edit;
 use edit::*;
+// The pitch every statement leads with: its mechanical refusals, the hold its
+// prose findings raise, and the revision an authored change advances.
+mod pitch;
 // Whole-text replacement of a description or acceptance through the modify
 // intent, admitted only over the digest of the text its writer read.
 mod task_text;

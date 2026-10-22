@@ -32,6 +32,7 @@ fn add_output_after(
             preparation: Some(design.clone()),
             intent: None,
             title: name.to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: vec!["The output is delivered".to_owned()],

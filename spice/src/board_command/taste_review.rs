@@ -31,6 +31,7 @@ pub(super) fn taste_matches_refusal(
     for found in matches {
         let field = match found.field {
             StatementField::Title => "title",
+            StatementField::Pitch => "pitch",
             StatementField::Description => "description",
             StatementField::Acceptance => "acceptance criterion",
         };
@@ -70,6 +71,19 @@ pub(super) fn validate_acceptance(acceptance: &[String]) -> Result<(), Outcome<C
         ));
     }
     Ok(())
+}
+
+/// Admit an authored pitch against the three mechanical rules.
+pub(super) fn validate_pitch(pitch: &str) -> Result<(), Outcome<CommandAnswer>> {
+    wire::pitch::admit(pitch).map_err(|refused| {
+        let observed = match refused {
+            wire::pitch::PitchRefusal::Empty => None,
+            wire::pitch::PitchRefusal::Multiline | wire::pitch::PitchRefusal::TooLong { .. } => {
+                Some(wire::rooms::one_line(pitch, 80))
+            }
+        };
+        refusal(refused.reason(), observed, &refused.remedy())
+    })
 }
 
 /// Hold a new task for taste review in a plan phase.
@@ -262,16 +276,20 @@ impl ReleasedPlan {
     }
 }
 
+/// Read one statement against the repository taste policy and the built-in
+/// pitch shape, which applies even where no repository policy exists.
 pub(super) fn task_taste_review(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
     actor: &Actor,
     title: &str,
+    pitch: &str,
     description: Option<&str>,
     acceptance: &[String],
 ) -> Result<Option<TasteReview>, Outcome<CommandAnswer>> {
+    let mut matches = pitch_matches(pitch);
     let Some(repository) = repository else {
-        return Ok(None);
+        return Ok((!matches.is_empty()).then_some(TasteReview { matches }));
     };
     let loaded = spice::config::load_repository(repository, &[])
         .map_err(|error| environment_fault("task::taste-policy-unreadable", &error.to_string()))?;
@@ -296,6 +314,7 @@ pub(super) fn task_taste_review(
         listen::ProseRole::Assistant
     };
     let fields = std::iter::once((StatementField::Title, title))
+        .chain((!pitch.is_empty()).then_some((StatementField::Pitch, pitch)))
         .chain(description.map(|text| (StatementField::Description, text)))
         .chain(
             acceptance
@@ -303,7 +322,6 @@ pub(super) fn task_taste_review(
                 .map(|text| (StatementField::Acceptance, text.as_str())),
         )
         .collect::<Vec<_>>();
-    let mut matches = Vec::<TasteMatch>::new();
     // Task prose has no repository path, extension, or gate phase. A taste
     // constrained to one of those axes is inapplicable here, not unresolved.
     let applicable = bag
@@ -364,6 +382,24 @@ pub(super) fn task_taste_review(
         }
     }
     Ok(Some(TasteReview { matches }))
+}
+
+/// The built-in pitch findings as taste matches: an identifier or a second
+/// sentence holds the statement naming the matched text, as a taste word does.
+fn pitch_matches(pitch: &str) -> Vec<TasteMatch> {
+    wire::pitch::findings(pitch)
+        .into_iter()
+        .map(|finding| TasteMatch {
+            field: StatementField::Pitch,
+            line: 1,
+            taste: finding.taste.to_owned(),
+            finding: Some(wire::TasteFinding {
+                trigger: finding.trigger,
+                column: finding.column,
+                message: finding.message.to_owned(),
+            }),
+        })
+        .collect()
 }
 
 /// Withhold what each taste match found from a lane's read of one hold.

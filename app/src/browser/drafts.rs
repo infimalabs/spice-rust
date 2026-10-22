@@ -14,7 +14,7 @@ use yew::prelude::*;
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
 use crate::client_action::{ClientAction, DraftRequest};
-use crate::draft_form::{DraftField, DraftFields, DraftForm, criteria};
+use crate::draft_form::{DraftField, DraftFields, DraftForm, admitted_pitch, criteria};
 
 thread_local! {
     static LAST_DRAFT_MICROS: Cell<i64> = const { Cell::new(0) };
@@ -283,6 +283,7 @@ fn content_fields(editing: Option<(&DraftFields, &Callback<(DraftField, String)>
     html! {
         <>
             <label class="draft-field-title"><span>{"Title"}</span><input name="title" type="text" required=true value={value(DraftField::Title)} oninput={typed(DraftField::Title)} /></label>
+            <label class="draft-field-pitch"><span>{"Pitch"}</span><input name="pitch" type="text" required=true maxlength="160" placeholder="One plain sentence saying why this work matters" value={value(DraftField::Pitch)} oninput={typed(DraftField::Pitch)} /></label>
             <label class="draft-field-project"><span>{"Project"}</span><input name="project" type="text" required=true placeholder="spice.task" value={value(DraftField::Project)} oninput={typed(DraftField::Project)} /></label>
             <label class="draft-field-kind">
                 <span>{"Kind"}</span>
@@ -352,11 +353,13 @@ fn creation(form: &web_sys::HtmlFormElement, taken: &[TaskStamp]) -> Result<Draf
     if title.is_empty() || project.is_empty() {
         return Err("A Draft needs a title and an admitted public project.".to_owned());
     }
+    let pitch = admitted_pitch(&field(form, "pitch"))?;
     let description = field(form, "description");
     let born = mint_stamp(taken)?;
     Ok(DraftRequest::Create {
         request: TaskAdd {
             title,
+            pitch,
             project: Some(project),
             description: (!description.trim().is_empty()).then_some(description),
             acceptance: criteria(&field(form, "acceptance")),

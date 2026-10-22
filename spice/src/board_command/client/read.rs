@@ -451,6 +451,7 @@ pub(in crate::board_command) fn task_show_bounded(
     let mut lines = vec![
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
+        format!("pitch: {}", statement.pitch),
         format!("project {}", statement.project),
         format!("filing {}", statement.filing.as_str()),
         format!(

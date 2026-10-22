@@ -21,6 +21,7 @@ fn add_command(epoch: CanonicalUuid, lane: CanonicalUuid) -> wire::AdmittedComma
             preparation: None,
             intent: None,
             title: "Capture exact creation authority".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("task.provenance".to_owned()),
             description: None,
             acceptance: Vec::new(),

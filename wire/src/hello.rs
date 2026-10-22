@@ -32,9 +32,9 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 16 carries each born principal's code in its display identity,
-    /// beside the recorded profile that names that human.
-    pub const CURRENT: Self = Self(16);
+    /// Version 17 carries each task statement's pitch, the one sentence a
+    /// surface leads with before its description.
+    pub const CURRENT: Self = Self(17);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

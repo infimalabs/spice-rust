@@ -10,7 +10,7 @@ use board::similarity::{
     FrequencyProfile, GenerationMismatch, MATCH_SCORE_BASE, Prepared, TermCounts,
 };
 use journal::{GuardError, JournalRead};
-use spice::rooms::awareness::{pitch, request_questions};
+use spice::rooms::awareness::request_questions;
 use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
@@ -543,14 +543,13 @@ fn rank_asks(
     floor: f64,
 ) -> Result<Vec<DesignAsk>, GenerationMismatch> {
     let statement = design.statement();
-    let problem = pitch(&statement.title, statement.description.as_deref());
+    let problem = statement.pitch.as_str();
     let mut best: Option<(f64, usize)> = None;
     for (index, ask) in asks.iter().enumerate() {
         let Some(text) = ask.question.item(&statement.acceptance) else {
             continue;
         };
-        let Some(vector) = frequency.prepare(&TermCounts::from_texts([text, problem.as_str()]))
-        else {
+        let Some(vector) = frequency.prepare(&TermCounts::from_texts([text, problem])) else {
             continue;
         };
         let Some(score) = profile.evidence_mut().best_score(frequency, &vector)? else {
@@ -963,7 +962,7 @@ fn design_request(
         excerpt: notice.excerpt.clone(),
         title: statement.title.clone(),
         statement: SequenceCode::new(statement.revision.get()),
-        pitch: pitch(&statement.title, statement.description.as_deref()),
+        pitch: statement.pitch.clone(),
         questions: request_questions(&statement.acceptance),
         terms: wire::rooms::shown_notice_terms(&notice.terms)
             .into_iter()

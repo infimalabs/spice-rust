@@ -260,6 +260,7 @@ fn oops_decision_refuses_when_a_previewed_line_head_moves() {
         &TaskEdit {
             task: line.clone(),
             title: Some("Friction after revision".to_owned()),
+            pitch: None,
             description: None,
             acceptance: Vec::new(),
             requirements: None,

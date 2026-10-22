@@ -4,6 +4,7 @@ fn draft_add(name: &str, intent: Option<wire::TaskIntent>, acceptance: &[&str]) 
     TaskAdd {
         preparation: None,
         title: format!("Prospective {name}"),
+        pitch: "This work keeps the fixture honest.".to_owned(),
         project: Some("board.test".to_owned()),
         description: Some(format!("Context for {name}")),
         acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
@@ -45,6 +46,7 @@ fn edit(task: &TaskHandle) -> TaskEdit {
     TaskEdit {
         task: task.clone(),
         title: None,
+        pitch: None,
         description: None,
         acceptance: Vec::new(),
         requirements: None,

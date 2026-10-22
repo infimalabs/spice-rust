@@ -58,6 +58,7 @@ impl Lanes {
                 wire::body::TaskAdded {
                     task: task.clone(),
                     title: title.to_owned(),
+                    pitch: "Rooms need work to talk about.".to_owned(),
                     description: description.map(str::to_owned),
                     acceptance: acceptance.clone(),
                     requirements: wire::EnvironmentRequirements::default(),
@@ -87,6 +88,7 @@ impl Lanes {
             born,
             queue_origin: position,
             title,
+            pitch: "Rooms need work to talk about.".to_owned(),
             description,
             acceptance,
             requirements: wire::EnvironmentRequirements::default(),

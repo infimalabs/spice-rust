@@ -37,7 +37,8 @@ fn added(seq: u64, cause: Option<u64>, task: &str) -> StreamFact {
         &hour(0),
         cause,
         json!({"kind": "task::added", "task": task, "title": "fixture", "project": "report.fixture",
-            "depends": [], "flow": ["todo", "review"], "phase": "todo", "revision": 1,
+            "pitch": "A report needs a fixture.", "depends": [], "flow": ["todo", "review"],
+            "phase": "todo", "revision": 1,
             "creation": {"kind": "unavailable", "reason": "operator-actor"}}),
     )
 }

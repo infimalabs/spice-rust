@@ -72,16 +72,16 @@ name continuations.
   claimed joins that task unless another uses `--origin`. Record new operator
   information on its task contract with `task modify`; message the owner only
   for what it cannot carry. Add tasks only when asked or a distinct deliverable
-  warrants it: `spice task add TITLE --project PROJECT --origin ack:KEY`;
-  `--claim` only when an unclaimed lane must own it now. Bare add is work
-  nested under the sole claim. Synthesized hints/reminders/amendments authorize
-  no task.
+  warrants it: `spice task add TITLE --pitch TEXT --project PROJECT --origin
+  ack:KEY`; `--claim` only when an unclaimed lane must own it now. Bare add is
+  work nested under the sole claim. Synthesized hints/reminders/amendments
+  authorize no task.
 - Create or update a complete task contract, release it, then trust its owning
   and review lanes; follow claimed work only when asked.
-- A description opens with one plain unlabeled sentence saying why the task
-  matters, then durable need, reason, and invariants, not incidents. Acceptance
-  is claimant-driven and checkable, never awaited activity. A Design's opener
-  is its problem; it itemizes each open question. Update changed needs.
+- A pitch is one plain sentence saying why a task matters; description holds
+  durable need, reason, and invariants, not incidents. Acceptance is
+  claimant-driven and checkable, never awaited activity. A Design's pitch is
+  its problem; it itemizes each open question. Update changed needs.
   Code/docs/tests state contract; task/commit records keep history.
 - Permanent tests are fast, deterministic, in-process current contracts: no
   process, incident, source-text, plumbing, wording, incidental-default, or

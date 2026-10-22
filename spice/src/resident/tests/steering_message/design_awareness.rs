@@ -620,10 +620,7 @@ fn a_completion_profile_opportunity_selects_the_best_single_design() {
         } if evidence_task == &task.born().expect("fixture task has a birth")
     ));
     assert!(!request.terms.is_empty());
-    assert_eq!(
-        request.pitch,
-        "Lanes page retained publications through bounded cursors."
-    );
+    assert_eq!(request.pitch, "Rooms need work to talk about.");
     assert_eq!(
         request.questions,
         [

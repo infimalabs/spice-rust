@@ -658,6 +658,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
                 intent: None,
                 task: born.clone(),
                 title: DEMO_TITLE.to_owned(),
+                pitch: wire::pitch::derive(DEMO_TITLE, None),
                 description: None,
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
@@ -688,6 +689,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         born: statement_task,
         queue_origin: revision,
         title: DEMO_TITLE.to_owned(),
+        pitch: wire::pitch::derive(DEMO_TITLE, None),
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
@@ -867,6 +869,7 @@ fn seed_oops_task(
                 intent,
                 task: born.clone(),
                 title: title.to_owned(),
+                pitch: wire::pitch::derive(title, None),
                 description: None,
                 acceptance: acceptance.clone(),
                 requirements: wire::EnvironmentRequirements::default(),
@@ -891,6 +894,7 @@ fn seed_oops_task(
     let statement_provenance = wire::TaskProvenance::Task(born.clone());
     let workflow_task = born;
     let statement_title = title.to_owned();
+    let statement_pitch = wire::pitch::derive(title, None);
     let statement_project = project.to_owned();
     write.task_head(added, move |revision| TaskHead {
         preparation,
@@ -898,6 +902,7 @@ fn seed_oops_task(
         born: statement_task,
         queue_origin: revision,
         title: statement_title,
+        pitch: statement_pitch,
         description: None,
         acceptance,
         requirements: wire::EnvironmentRequirements::default(),

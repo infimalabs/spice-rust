@@ -1,45 +1,10 @@
-//! Design pitches and the request text every room surface presents.
+//! The request text every room surface presents for a Design.
 //!
 //! Matching completed work to open Designs scores with the shared statement
 //! engine in [`board::similarity`].
 
-use wire::rooms::one_line;
-
-/// Most characters of a Design's one-line pitch.
-pub const PITCH_CHARS: usize = 160;
 /// Most rendered bytes of whole open questions one Design request carries.
 pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
-
-/// A Design's one-line pitch: the first sentence of its description that is
-/// more than a one-word label, at most [`PITCH_CHARS`] characters, or its title
-/// when the description has no such sentence.
-#[must_use]
-pub fn pitch(title: &str, description: Option<&str>) -> String {
-    let Some(description) = description.map(str::trim).filter(|text| !text.is_empty()) else {
-        return title.to_owned();
-    };
-    let mut start = 0;
-    let mut selected = None;
-    for (index, punctuation) in description.match_indices(['.', '?', '!']) {
-        let end = index + punctuation.len();
-        if end < description.len() && !description[end..].starts_with(char::is_whitespace) {
-            continue;
-        }
-        let sentence = description[start..end].trim();
-        if sentence.split_whitespace().nth(1).is_some() {
-            selected = Some(sentence);
-            break;
-        }
-        start = end;
-    }
-    let sentence = selected
-        .or_else(|| {
-            let trailing = description[start..].trim();
-            trailing.split_whitespace().nth(1).map(|_| trailing)
-        })
-        .unwrap_or(title);
-    one_line(sentence, PITCH_CHARS)
-}
 
 /// The exact source and authored excerpt of the work that supported one Design
 /// request, phrased from the supporting claim's phase or as conversation.
@@ -251,26 +216,6 @@ pub fn request_questions(questions: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_pitch_skips_a_label_and_is_bounded_or_the_title() {
-        assert_eq!(pitch("Title", None), "Title");
-        assert_eq!(
-            pitch("Title", Some("\n  First idea. Second idea.\nMore")),
-            "First idea."
-        );
-        assert_eq!(
-            pitch(
-                "Title",
-                Some("Problem.\nThe room request needs a useful summary. More detail.")
-            ),
-            "The room request needs a useful summary."
-        );
-        let long = "word ".repeat(80);
-        let cut = pitch("Title", Some(&long));
-        assert_eq!(cut.chars().count(), PITCH_CHARS);
-        assert!(cut.ends_with('…'));
-    }
 
     #[test]
     fn request_questions_keep_only_the_whole_in_order_prefix_that_fits() {

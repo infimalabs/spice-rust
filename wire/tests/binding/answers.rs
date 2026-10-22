@@ -53,6 +53,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "handle": "SPICE-1kKRRsDP",
           "born": "1kKRRsDP",
           "queue_origin": 2,
+          "pitch": "Readers see why a row binds.",
           "description": "One task spelled through every field the shape carries.",
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
           "project": "wire.binding",

@@ -245,6 +245,7 @@ fn board_task(
                 handle: wire::TaskHandle::for_filing(project, &born, filing),
                 born: born.clone(),
                 queue_origin: seq(1),
+                pitch: "This work keeps the fixture honest.".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
                 requirements,

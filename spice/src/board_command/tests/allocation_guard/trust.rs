@@ -30,6 +30,7 @@ fn environment_movement_refuses_planned_claim(rule: &str, expected: &str) {
             intent: None,
             task: task.clone(),
             title: None,
+            pitch: None,
             description: None,
             acceptance: Vec::new(),
             requirements: Some(wire::intent::TaskRequirementsEdit::one(

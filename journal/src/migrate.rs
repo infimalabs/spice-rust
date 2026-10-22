@@ -20,6 +20,7 @@ mod leave_receipts;
 mod maturity;
 mod oops_design;
 mod oops_generation;
+mod pitch;
 mod preparation_edges;
 mod provenance;
 pub(crate) mod residual;
@@ -405,6 +406,7 @@ fn cross_current_rows(
     oops_design::cross(transaction)?;
     provenance::cross(transaction)?;
     task_tags::cross_heads(transaction)?;
+    pitch::cross_heads(transaction)?;
     let taste_audits = taste_holds::Audits::read(transaction)?;
     taste_holds::cross_heads(transaction, &taste_audits)?;
     Ok(taste_audits)
@@ -444,6 +446,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     if version < OOPS_GENERATION_SCHEMA {
         oops_generation::cross(&transaction)?;
     }
+    pitch::cross_facts(&transaction)?;
     task_tags::cross_facts(&transaction, &taste_audits)?;
     taste_holds::cross_facts(&transaction, &taste_audits)?;
     settings_receipts::cross(&transaction)?;

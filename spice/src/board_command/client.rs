@@ -882,6 +882,7 @@ fn client_modify(
 ) -> Outcome<CommandAnswer> {
     mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
         let title = matches.get_one::<String>("title").cloned();
+        let pitch = matches.get_one::<String>("pitch").cloned();
         let description = matches.get_one::<String>("description").cloned();
         let acceptance = matches
             .get_many::<String>("acceptance")
@@ -892,6 +893,7 @@ fn client_modify(
         let intent = intent_edit(matches)?;
         let flow = matches.get_one::<String>("flow").cloned();
         if title.is_none()
+            && pitch.is_none()
             && description.is_none()
             && acceptance.is_empty()
             && priority.is_none()
@@ -902,7 +904,7 @@ fn client_modify(
             return Err(refusal(
                 "task::edit-empty",
                 None,
-                "name at least one of --title, --description, --acceptance, --priority, --project, --intent, --clear-intent, or a Draft's --flow",
+                "name at least one of --title, --pitch, --description, --acceptance, --priority, --project, --intent, --clear-intent, or a Draft's --flow",
             ));
         }
         // Law::EDIT names the statement head alone. A workflow witness here is
@@ -916,6 +918,7 @@ fn client_modify(
                 intent,
                 task,
                 title,
+                pitch,
                 description,
                 acceptance,
                 requirements: None,

@@ -224,6 +224,7 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
                 "handle": handle,
                 "born": born,
                 "queue_origin": 1,
+                "pitch": "The watchband shows who holds what.",
                 "project": "canvas.fidelity",
                 "dependencies": [],
                 "provenance": format!("task:{born}"),

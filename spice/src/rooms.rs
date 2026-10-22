@@ -1158,6 +1158,7 @@ mod tests {
             born: task.clone(),
             queue_origin: Seq::new(1).expect("positive sequence"),
             title: "Relevant room work".to_owned(),
+            pitch: "Relevant work gives the room something to cite.".to_owned(),
             description: None,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),

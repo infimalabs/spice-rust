@@ -140,6 +140,7 @@ pub(crate) fn text_edit(
             intent: None,
             task: statement.handle.clone(),
             title: None,
+            pitch: None,
             description,
             acceptance,
             requirements: None,

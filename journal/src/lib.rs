@@ -63,7 +63,9 @@
 /// from every retained coordination record, direction head, and receipt.
 /// Schema 94 lets one Design invitation list every question item it asks.
 /// Schema 95 drops the repeat-leave flag from every retained leave answer.
-pub const SCHEMA_VERSION: u32 = 95;
+/// Schema 96 fills a pitch on every retained task statement once, derived
+/// from its title and description.
+pub const SCHEMA_VERSION: u32 = 96;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

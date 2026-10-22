@@ -768,6 +768,7 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
             intent: None,
             task: winner.clone(),
             title: Some("Retitled while the claim was in flight".to_owned()),
+            pitch: None,
             description: None,
             acceptance: Vec::new(),
             requirements: None,
