@@ -29,7 +29,7 @@ pub const STATE_RECEIPT_VERSION: u64 = 2;
 pub const PEER_CLAIM_TTL_SECONDS: u64 = 6 * 60 * 60;
 
 const CURRENT_STATE_RELEASE: &str = "current";
-const CURRENT_STATE_DIRECTORY: &str = ".spice-rs";
+pub(crate) const CURRENT_STATE_DIRECTORY: &str = ".spice-rs";
 const CURRENT_STATE_DATA_DIRECTORY: &str = "data";
 const CURRENT_STATE_FILE: &str = "gate-state.json";
 const CURRENT_STATE_LOCK_FILE: &str = "gate-state.lock";

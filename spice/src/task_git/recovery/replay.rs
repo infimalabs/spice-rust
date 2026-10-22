@@ -2,7 +2,7 @@ use super::*;
 
 /// Replay a synchronized quarantine, retaining all data on any conflict.
 pub fn replay_recovery(repository: &Repository, recovery: &Recovery) -> Result<(), Error> {
-    let root = recovery_root(repository);
+    let root = recovery_root(repository)?;
     let mut manifest = read_expected(&root, recovery)?;
     let resuming = matches!(manifest.state, RecoveryState::Replaying { .. });
     let boundary = replay_boundary(&manifest)?;
