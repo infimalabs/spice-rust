@@ -333,12 +333,11 @@ menu, the speech and allocation sliders, and SEND, with fixed geometry. The
 arrangement menu opens swap and join beside the panel and stays disabled,
 naming why, when no other team exists. Team TURBO and the Spice view's global
 TURBO are separately admitted controls. Every TURBO, team, group, or global,
-splits its fixed lettering box into a two-word lockup exactly the way SEND
-becomes FULL SEND: off it reads TURBO alone, on it reads FULL|TURBO with FULL
-in the blue focus accent. A toggle slides TURBO aside as FULL grows from the
-box's start, while the box itself never moves or resizes; reduced motion swaps
-the two lockups at once. The words are decorative and leave the button's
-pressed state and label as the accessible truth.
+reads the one word TURBO in both states. Off it rests as the same flush glass
+as the menu with muted lettering; on it is backlit the way a lit slider is,
+washed in the amber of the sliders' high stop, pooling at its foot and leaking
+a dull halo past the edge, with ink lettering. The word is decorative and
+leaves the button's pressed state and label as the accessible truth.
 
 The team menu can hide its team surface without changing membership, lane
 state, claims, drafts, or running work. Activating any of that team's agent
