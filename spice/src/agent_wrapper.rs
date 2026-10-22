@@ -74,7 +74,7 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// Exact Rust appliance path used by hooks and MCP commands.
+    /// Exact appliance path used by hooks and MCP commands.
     #[must_use]
     pub fn executable(&self) -> &Path {
         &self.executable

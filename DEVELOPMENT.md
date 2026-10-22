@@ -38,7 +38,7 @@ and browser code cannot reach server internals.
 
 Permanent tests follow [AGENTS.md](AGENTS.md#permanent-test-value). Retained
 data belongs behind a one-time forward migration or an owner-naming refusal;
-never preserve a predecessor DTO, command path, or process fixture as another
+never preserve an earlier release's DTO, command path, or process fixture as another
 executable test arm.
 
 | Surface | Command and boundary |

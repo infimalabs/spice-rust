@@ -368,7 +368,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
     }
     match error {
         InstallError::PathShape(path) => format!(
-            "inspect the Rust-owned install target with `{}` and restore it to an unlinked regular file or directory before rerunning this executable's `install` preview",
+            "inspect the install target with `{}` and restore it to an unlinked regular file or directory before rerunning this executable's `install` preview",
             inspect_path(path),
         ),
         InstallError::PathOutsideRoot(path) => format!(
@@ -421,7 +421,7 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             inspect_path(path),
         ),
         InstallError::RecordMissing => format!(
-            "the Rust-owned `{}/install.json` record is absent; omit `--unapply` and run this executable's `install` preview instead",
+            "the `{}/install.json` record is absent; omit `--unapply` and run this executable's `install` preview instead",
             wire::STATE_DIRECTORY
         ),
         InstallError::StateRootHeld { .. } => format!(
@@ -437,15 +437,15 @@ fn install_refusal_remedy(error: &InstallError) -> String {
             predecessor.display()
         ),
         InstallError::ApplyInProgress => format!(
-            "the Rust-owned `{}/install.json` records an interrupted apply; rerun this executable's `install` preview, finish `install --apply=<printed-digest>`, then retry `--unapply`",
+            "the `{}/install.json` record notes an interrupted apply; rerun this executable's `install` preview, finish `install --apply=<printed-digest>`, then retry `--unapply`",
             wire::STATE_DIRECTORY
         ),
         InstallError::UnapplyInProgress => format!(
-            "the Rust-owned `{}/install.json` records an interrupted reversal; rerun this executable with `install --unapply` to completion before previewing another install",
+            "the `{}/install.json` record notes an interrupted reversal; rerun this executable with `install --unapply` to completion before previewing another install",
             wire::STATE_DIRECTORY
         ),
         InstallError::Drift { path, .. } => format!(
-            "resolve the asset root with `{GIT} rev-parse --path-format=absolute --git-common-dir`, inspect its Rust-owned target with `{}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
+            "resolve the asset root with `{GIT} rev-parse --path-format=absolute --git-common-dir`, inspect its install target with `{}`, and preserve the operator replacement or restore the recorded installed image before retrying reversal",
             inspect_path(&Path::new("<printed-common-git>").join(path)),
         ),
         _ => {

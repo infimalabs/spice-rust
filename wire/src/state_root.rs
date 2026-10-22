@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// Name of the state root this runtime owns beneath a Git directory.
 pub const STATE_DIRECTORY: &str = ".spice";
 
-/// Suffix the root carried while Python Spice still held [`STATE_DIRECTORY`].
+/// Suffix the root carried before this release owned [`STATE_DIRECTORY`].
 ///
 /// A root by that older name is live state, not residue: every admission
 /// refuses a symlinked component, so nothing can bridge the two names. The

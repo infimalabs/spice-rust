@@ -1,6 +1,6 @@
 # Agent guidance
 
-This repository develops and self-hosts the Rust Spice appliance.
+This repository develops and self-hosts the Spice appliance.
 
 ## Harness authority
 
@@ -14,7 +14,7 @@ not authority for this repository.
 
 Resident lanes receive a private admitted `CARGO_HOME`. When a development
 command can create or refresh `Cargo.lock`, or needs dependencies outside the
-admitted generation, invoke the Rust-owned `dev cargo` surface through ambient
+admitted generation, invoke the appliance's `dev cargo` surface through ambient
 `spice`. Repository shell-wrapper policy resolves that word to the validated
 Git-common appliance. Repository xtasks use the sibling `dev xtask` surface
 backed by the same admitted Cargo home:
