@@ -7,8 +7,8 @@ This repository develops and self-hosts the Spice appliance.
 The active harness or an explicitly installed bootstrap skill owns task,
 thread, session, and steering state. Never infer a task, lane, session, or claim
 merely from the appliance binary's existence. Outside a Spice bootstrap, ignore
-allocator commands. Other implementations and control-plane conventions are
-not authority for this repository.
+allocator commands. No other control-plane convention is authority for this
+repository.
 
 ## Cargo isolation
 
