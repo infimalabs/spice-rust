@@ -17,7 +17,7 @@ use wire::{
     ReplyPosition, Response, Seq, SeqRange, WireVersion, body,
 };
 
-mod support;
+use super::support;
 
 /// Capability this session opens with.
 const CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";

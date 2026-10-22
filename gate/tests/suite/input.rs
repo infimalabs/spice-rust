@@ -4,10 +4,8 @@ use gate::{BASELINE_PATH, ContractError, ParsedContract, PolicyError};
 use serde::Deserialize;
 use wire::TRACKED_POLICY_FILE;
 
-mod support;
-
-const TRACKED_POLICY: &str = ::std::include_str!("../../spice.toml");
-const TRACKED_BASELINE: &str = ::std::include_str!("../../baseline.toml");
+const TRACKED_POLICY: &str = ::std::include_str!("../../../spice.toml");
+const TRACKED_BASELINE: &str = ::std::include_str!("../../../baseline.toml");
 
 #[test]
 fn identical_tracked_bytes_yield_identical_execution_identities() {

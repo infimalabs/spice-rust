@@ -24,7 +24,7 @@ use wire::{
     TrustState, WireVersion, Witness, WitnessKind,
 };
 
-mod support;
+use super::support;
 
 /// Capability the operator session opens with.
 const OPERATOR_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";

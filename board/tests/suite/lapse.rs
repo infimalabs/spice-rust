@@ -1,4 +1,4 @@
-mod support;
+use super::support;
 
 use std::fs;
 use std::path::{Path, PathBuf};

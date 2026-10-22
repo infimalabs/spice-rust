@@ -595,7 +595,7 @@ mod tests {
     /// The compiled defaults prune whole directories, and a pruned directory is
     /// a suppression, so a repository that tracks a path under `target/`
     /// reaches the compiled half through a real acquisition;
-    /// `gate/tests/hygiene_acquire.rs` does exactly that. What stays here is
+    /// `gate/tests/suite/hygiene_acquire.rs` does exactly that. What stays here is
     /// the arithmetic over a boundary no fixture has to arrange.
     #[test]
     fn the_boundary_decides_which_layer_owns_each_walk_rule() {

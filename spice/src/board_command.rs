@@ -100,29 +100,10 @@ fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<
     ))
 }
 
-// `mod` rather than `include!`, which reverses the decision EFFORT-1kKrXfRq
-// recorded here. That decision's measurements survive the reversal: a child
-// module does already read its ancestors' private items, so the guard tests
-// below keep calling `claim_plan` and `commit_claim` unchanged.
-//
-// A `tests/` root takes one extra precaution rather than an exemption. Every
-// file directly under `tests/` is its own crate root, and a root resolves
-// `mod foo;` against its own directory, so a bare `mod` there binds the
-// sibling integration target `tests/foo.rs` instead of the intended child
-// `tests/<root>/foo.rs` -- silently, with no compiler error. Pinning each
-// child with `#[path]` keeps it a split rather than a rename, which is how
-// `wire/tests/identity_law.rs` converted its four fragments here: a bare
-// `mod vocabulary;` in that root would have bound the 18-test sibling
-// `wire/tests/vocabulary.rs` rather than the one-test child
-// `wire/tests/identity_law/vocabulary.rs` one directory below.
-//
-// What it weighed against conversion was that the formatters gate covers a
-// fragment regardless, by naming every path it selects on the formatter's own
-// command line. That holds, and it is the gate's alone: stock
-// `cargo fmt --all --check` stays blind, still open as GATE-1kKs5TnZ, and the
-// fragment count kept by hand in that arm's own doc was filed as drifted twice,
-// GATE-1kKs7gfb and GATE-1kKsGmbV. `mod` closes all three by construction
-// instead of by an enumeration something has to keep current.
+// Ordinary `mod` children, never `include!`: a child module already reads its
+// ancestors' private items, so the guard tests below call `claim_plan` and
+// `commit_claim` unchanged, and the formatters gate covers each file by
+// construction rather than by an enumeration kept by hand.
 mod client;
 pub(super) use client::*;
 mod client_document;

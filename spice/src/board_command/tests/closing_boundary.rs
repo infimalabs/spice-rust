@@ -48,7 +48,7 @@ const SEEDED_OFFSET: u64 = 512;
 /// `transcript_source_heads` is filtered by lane, so seeding exactly one lane
 /// makes the read addressable -- that lane answers with this head while every
 /// other lane still answers with none. The same hazard is guarded the same way
-/// in `board/tests/allocation.rs`.
+/// in `board/tests/suite/allocation.rs`.
 fn seed_transcript(bus: &Bus, lane: CanonicalUuid) {
     let vendor: wire::Name = "omp".parse().expect("fixture vendor");
     let source: CanonicalUuid = SEEDED_SOURCE.parse().expect("fixture source generation");

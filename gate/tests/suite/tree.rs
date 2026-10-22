@@ -6,9 +6,7 @@ use std::os::unix::fs::{PermissionsExt as _, symlink};
 
 use gate::{Ignore, Jurisdiction, Selector, TreeError};
 
-mod support;
-
-use support::{Tree, git_repository};
+use super::support::{Tree, git_repository};
 
 fn repository(label: &str) -> Tree {
     git_repository(label)

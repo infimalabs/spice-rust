@@ -1,8 +1,0 @@
-[policy.pre_commit_builtins.magic_numbers]
-label = "worktree magic"
-
-[policy.pre_commit_builtins.formatters]
-enabled = false
-
-[policy.pre_commit_builtins]
-complexity = false
