@@ -81,7 +81,12 @@ joined keeps running until `spice down`. The window admits its endpoint
 through the same discovery check as `--open` and carries the token only in the
 URL fragment the window loads. Links the console opens in a new window go to
 the system browser. The window is macOS-only (WebKit); elsewhere `spice app`
-refuses and `spice up --open` remains the route.
+refuses and `spice up --open` remains the route. Under WebKit, the console
+reads `app_bg.wasm` from the resident twice per load, because WebKit doesn't
+reuse its integrity-checked preload. Over loopback that is one extra local read,
+so the preload stays for Chromium. A reload with a task graph open also logs an
+access-control error for the diagram renderer document. The reloaded graph
+still renders, so nothing changes for it.
 
 Supervised shells may route commands through an optional configured
 [RTK](https://github.com/rtk-ai/rtk) executable. An unusable rewrite reports
