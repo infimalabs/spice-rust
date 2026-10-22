@@ -24,6 +24,26 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ),
     ("up", "open", "Open the app in the default browser"),
     (
+        "app",
+        "host",
+        "Listen on this IP address when starting the resident",
+    ),
+    (
+        "app",
+        "port",
+        "Listen on this TCP port when starting the resident",
+    ),
+    (
+        "app",
+        "allow-insecure-bind",
+        "Confirm that a non-loopback network bind is intentional",
+    ),
+    (
+        "app",
+        "auth-token",
+        "Require this bearer token from app clients, and present it from the window",
+    ),
+    (
         "install",
         "package",
         "Read the release package at this path",

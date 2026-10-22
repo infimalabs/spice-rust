@@ -154,8 +154,9 @@ impl ChildStatus {
 }
 
 /// Start this exact executable as a detached resident and prove it is ready.
-pub(crate) fn launch(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
-    match PreparedLaunch::admit(leaf).and_then(|launch| launch.spawn(leaf)) {
+/// `open` asks that resident to dial the system browser once it announces.
+pub(crate) fn launch(leaf: &clap::ArgMatches, open: bool) -> Outcome<wire::AppOpen> {
+    match PreparedLaunch::admit(leaf).and_then(|launch| launch.spawn(leaf, open)) {
         Ok(launch) => launch.wait(),
         Err(outcome) => map_failure(outcome),
     }
@@ -212,7 +213,7 @@ impl PreparedLaunch {
         })
     }
 
-    fn spawn(self, leaf: &clap::ArgMatches) -> Result<SpawnedLaunch, Outcome<()>> {
+    fn spawn(self, leaf: &clap::ArgMatches, open: bool) -> Result<SpawnedLaunch, Outcome<()>> {
         let Self {
             listen,
             token,
@@ -247,7 +248,7 @@ impl PreparedLaunch {
         if leaf.get_flag("allow-insecure-bind") {
             command.arg("--allow-insecure-bind");
         }
-        if leaf.get_flag("open") {
+        if open {
             command.arg("--open");
         }
         handoff.grant(&mut command);

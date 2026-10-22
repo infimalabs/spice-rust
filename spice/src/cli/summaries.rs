@@ -6,6 +6,7 @@ pub(super) const MOUNTED_SUMMARY: &str = "Run a command this repository's config
 /// The one-line help row of each registered command path, keyed by its
 /// space-separated words.
 const SUMMARIES: &[(&str, &str)] = &[
+    ("app", "Open the console in a native window"),
     (
         "backup",
         "Write a backup bundle of the journal and task artifacts",

@@ -109,7 +109,7 @@ pub(super) fn run_mounted(selection: cli::MountSelection<'_>) -> ! {
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_app_stage: bool) -> ! {
     if !leaf.get_flag("foreground") {
-        deliver_display(&resident::launch(leaf), form);
+        deliver_display(&resident::launch(leaf, leaf.get_flag("open")), form);
     }
     let child = match resident::ChildLaunch::capture() {
         Ok(child) => child,

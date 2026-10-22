@@ -232,6 +232,48 @@ impl fmt::Display for AppOpen {
     }
 }
 
+/// Receipt for one native window session over the console, answered once
+/// the operator closes the window.
+///
+/// Like [`AppOpen`], it never carries the operator capability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppClosed {
+    /// Exact loopback HTTP origin the window showed.
+    pub endpoint: String,
+    /// Resident generation whose discovery admitted that origin.
+    pub epoch: CanonicalUuid,
+    /// What the window's close did to the resident behind it.
+    pub resident: AppResident,
+}
+
+/// Whether `spice app` owned the resident it showed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppResident {
+    /// The command started the resident for this window and drained it on close.
+    Drained,
+    /// The command joined a resident already serving and left it running.
+    Running,
+}
+
+impl fmt::Display for AppClosed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.resident {
+            AppResident::Drained => write!(
+                formatter,
+                "Spice app closed; the resident it started at {} was drained.",
+                self.endpoint
+            ),
+            AppResident::Running => write!(
+                formatter,
+                "Spice app closed; the resident at {} keeps running. `spice down` stops it.",
+                self.endpoint
+            ),
+        }
+    }
+}
+
 /// Deterministic environment and lifecycle receipt returned by `spice demo`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

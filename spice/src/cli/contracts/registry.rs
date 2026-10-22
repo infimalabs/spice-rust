@@ -12,6 +12,13 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "report::read"
     ),
     local_direct!(
+        ["app"],
+        "app [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN]",
+        [Daemonless, Offline],
+        Reply,
+        "spice::app"
+    ),
+    local_direct!(
         ["demo"],
         "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve] [--open]",
         [Daemonless, Offline],
