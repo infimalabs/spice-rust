@@ -88,14 +88,15 @@ fn ensure_payload(
     };
 
     let relative = payload_path(reference);
-    let bound = bind_destination(repository.common_dir(), &relative)?;
+    let root = repository.state_root();
+    let bound = bind_destination(&root, &relative)?;
     let image = FileImage {
         mode: RECORD_MODE,
         bytes: observed.image.bytes,
         digest: observed.image.digest,
     };
     publish_bound(
-        repository.common_dir(),
+        &root,
         &bound.destination,
         &bound.parent,
         bound.introduced_parents.len(),
@@ -110,8 +111,9 @@ fn stored_payload(
     reference: &GeneratedImage,
 ) -> Result<Option<FileImage>, InstallError> {
     let relative = payload_path(reference);
-    let bound = bind_destination(repository.common_dir(), &relative)?;
-    let (observed, _) = observe_bound(repository.common_dir(), &bound.destination, &bound.parent)?;
+    let root = repository.state_root();
+    let bound = bind_destination(&root, &relative)?;
+    let (observed, _) = observe_bound(&root, &bound.destination, &bound.parent)?;
     let Some(observed) = observed else {
         return Ok(None);
     };

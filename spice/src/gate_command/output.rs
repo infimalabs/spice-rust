@@ -36,7 +36,7 @@ pub(crate) const TAIL_BYTES: usize = 4_096;
 /// Retained capture files kept per repository; older ones are pruned.
 const RETAINED_CAPTURES: usize = 64;
 
-const CAPTURE_DIRECTORY: [&str; 2] = [".spice-rs", "gate-output"];
+const CAPTURE_DIRECTORY: &str = "gate-output";
 
 /// Cargo's machine-readable artifact records, which carry no diagnostic a
 /// person needs once `json-render-diagnostics` has rendered the compiler's.
@@ -414,9 +414,7 @@ impl fmt::Display for Elapsed {
 
 /// The directory complete captures are retained in.
 pub(super) fn capture_directory(common_git: &Path) -> PathBuf {
-    CAPTURE_DIRECTORY
-        .iter()
-        .fold(common_git.to_path_buf(), |path, part| path.join(part))
+    wire::state_root(common_git).join(CAPTURE_DIRECTORY)
 }
 
 /// Retain one complete capture as `DIGEST.log` and prune the oldest beyond

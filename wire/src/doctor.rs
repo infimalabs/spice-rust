@@ -705,8 +705,8 @@ mod tests {
             r#","locations":{"working":"/repo","repository":"/repo""#,
             r#","repository_common":"/repo/.git""#,
             r#","tracked_configuration":"/repo/spice.toml""#,
-            r#","worktree_configuration":"/repo/.git/.spice-rs/worktree.toml""#,
-            r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
+            r#","worktree_configuration":"/repo/.git/.spice/worktree.toml""#,
+            r#","local_configuration":"/repo/.git/.spice/config.toml"}"#,
             r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,
             r#","subsystems":[{"subsystem":"journal""#,

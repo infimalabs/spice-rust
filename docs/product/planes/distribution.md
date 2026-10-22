@@ -351,7 +351,7 @@ Provisioning:
 Updating a pin means changing it in the declaration and running
 `provision --replace`; a guest provisioned from other pins or templates is
 refused until then. Machine-local state lives in the shared
-`.spice-rs/windows-guest/` directory and is never tracked. Sizing is 4 vCPUs,
+`.spice/windows-guest/` directory and is never tracked. Sizing is 4 vCPUs,
 8 GiB RAM, and a sparse 64 GiB NVMe disk. Provisioning needs about 25 GB of host
 space for the download cache and media, and a working guest needs 10–20 GB.
 

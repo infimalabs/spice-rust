@@ -146,10 +146,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
                 wire::RefusalDiagnostic::new(
                     "repository::state-path-refused".to_owned(),
                     Some("repository-state-root".to_owned()),
-                    Some(
-                        "real fixed components beneath the canonical Git-common .spice-rs directory"
-                            .to_owned(),
-                    ),
+                    Some(spice::repository::state_shape_expectation()),
                     Some(error.to_string()),
                 )
                 .with_detail(format!(

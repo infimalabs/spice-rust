@@ -1,14 +1,15 @@
 //! Resolve the repository state namespaces this runtime owns.
 //!
-//! Durable authority lives in `.spice-rs` beneath the Git common directory.
-//! The install appliance lives in the disjoint `.spice-install` sibling, and
-//! [`crate::git_shadow`] publishes the per-worktree Git shadow as
-//! `<git-dir>/agent.gitconfig`.
+//! Durable authority lives in [`STATE_DIRECTORY`] beneath the Git common
+//! directory, and each linked worktree's own Git directory carries its
+//! worktree-local state below a root of the same name. The install appliance
+//! lives in the disjoint `.spice-install` sibling, and [`crate::git_shadow`]
+//! publishes the per-worktree Git shadow as `<git-dir>/agent.gitconfig`.
 //!
 //! The layout imposes these rules:
 //!
 //! 1. Every runtime-state path this runtime creates or writes is below one of
-//!    its exclusive `.spice-rs` roots. [`StatePaths::owned_directories`] and
+//!    its exclusive state roots. [`StatePaths::owned_directories`] and
 //!    [`StatePaths::owned_files`] inventory the fixed paths, while
 //!    [`StatePaths::exclusive_directories`] makes every dynamically named child
 //!    belong to this runtime.
@@ -21,30 +22,39 @@
 //!    [`StatePaths::rtk_history`] database may be passed to RTK through the
 //!    documented `RTK_DB_PATH` input. Worktree-local state is not inspected.
 //!
+//! # One root name, one move
+//!
+//! The root carried [`wire::PREDECESSOR_STATE_SUFFIX`] while Python Spice held
+//! `.spice`. A live root by that older name is still this runtime's state:
+//! [`wire::state_root`] keeps it current until the install crossing moves it,
+//! as a real directory, exactly once. Every admission refuses a symlinked
+//! component, so no link can bridge the two names, and no command opens a
+//! second root beside the live one.
+//!
 //! # Why durable authority is common
 //!
 //! One exclusive root makes ownership a path-containment invariant rather than
 //! a convention every leaf filename must preserve. Within it, repository
 //! authority belongs to the resident spanning linked worktrees.
 //!
-//! * The **journal and all other durable runtime state** live below
-//!   `<git-common-dir>/.spice-rs`.
+//! * The **journal and all other durable runtime state** live below the
+//!   Git-common state root.
 //! * **Config** is separate by name and anchor. This runtime reads tracked
-//!   `spice.toml`, common-root `.spice-rs/config.toml`, and each
-//!   worktree's Git-directory `.spice-rs/worktree.toml`.
+//!   `spice.toml`, common-root `config.toml`, and each worktree's
+//!   Git-directory `worktree.toml`, both below the state root.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
 //!   NAK dispositions are facts in the common-root journal. Hook media is
-//!   projected beneath the Git-common `.spice-rs` root and partitioned by lane,
+//!   projected beneath the Git-common state root and partitioned by lane,
 //!   so an advertised path is stable and directly readable. A tracked
-//!   `<worktree>/.spice-rs` lookalike is ordinary repository content that
+//!   `<worktree>/.spice` lookalike is ordinary repository content that
 //!   neither authority surface opens.
-//! * **Artifacts and dynamically named locks** belong to this runtime because
-//!   their parents are below the common exclusive `.spice-rs` root.
+//! * **Artifacts and dynamically named locks** remain Rust-only because their
+//!   parents are below the common exclusive state root.
 //!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
 //!   the rendered handle never becomes a second filesystem authority.
 //! * **Installed hooks, skills, and binaries** stay in the disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at
-//!   the [`StatePaths::install_record`] path below `.spice-rs`.
+//!   the [`StatePaths::install_record`] path below the state root.
 //! * The **per-worktree Git shadow** is disposable and reconstructible.
 //!   [`crate::git_shadow`] writes `<git-dir>/agent.gitconfig`.
 //!
@@ -57,8 +67,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Sole repository-common directory owned by the current Spice runtime.
-pub const STATE_DIRECTORY: &str = ".spice-rs";
+/// Sole name of the state root below a Git directory, owned by this runtime.
+pub use wire::STATE_DIRECTORY;
+
+/// What every state-shape refusal expected to find.
+#[must_use]
+pub fn state_shape_expectation() -> String {
+    format!("real fixed components beneath the canonical Git-common {STATE_DIRECTORY} directory")
+}
 
 /// One repository resolved to its worktree and shared Git directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -490,16 +506,30 @@ impl Repository {
         &self.common
     }
 
+    /// The live Git-common state root: [`STATE_DIRECTORY`], or the
+    /// predecessor name while an install has yet to move it.
+    #[must_use]
+    pub fn state_root(&self) -> PathBuf {
+        wire::state_root(&self.common)
+    }
+
+    /// The live state root beneath this worktree's own Git directory.
+    #[must_use]
+    pub fn worktree_state_root(&self) -> PathBuf {
+        wire::state_root(&self.git)
+    }
+
+    fn state_paths(&self) -> StatePaths {
+        StatePaths::new(self.state_root(), self.worktree_state_root())
+    }
+
     /// Admit every fixed component of the current state namespace.
     ///
     /// An absent namespace is valid and remains absent. Existing directory
     /// parents and regular-file leaves are inspected without following links.
     /// Entries outside the current fixed namespace are not inspected.
     pub fn admit_state(&self) -> Result<StatePaths, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
+        let paths = self.state_paths();
         for path in paths.admitted_directories() {
             admit(path, StateShape::Directory)?;
         }
@@ -518,10 +548,7 @@ impl Repository {
     ///
     /// Returns the exact malformed or unavailable client-path component.
     pub fn admit_resident_client(&self) -> Result<PathBuf, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
+        let paths = self.state_paths();
         for path in [paths.runtime(), paths.lane_serve()] {
             admit(path, StateShape::Directory)?;
         }
@@ -537,10 +564,7 @@ impl Repository {
     ///
     /// Returns the exact malformed or unavailable delivery-state component.
     pub fn admit_steering_delivery(&self) -> Result<SteeringDeliveryPaths, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
+        let paths = self.state_paths();
         for path in [
             paths.runtime(),
             paths.worktree_runtime(),

@@ -182,8 +182,10 @@ pub(super) fn cross(record_path: &Path, bytes: &[u8]) -> Result<Crossed, Install
             retained.status
         )));
     }
+    // Every schema-18 receipt was minted under the plan tag that has since
+    // been renamed; the crossed record is re-identified under the current one.
     let plan_bytes = wire::encode(&retained.plan).map_err(InstallError::Encode)?;
-    if Digest::compute(Domain::InstallPlan, &plan_bytes) != retained.plan_digest
+    if Digest::compute(Domain::InstallPlanRetained, &plan_bytes) != retained.plan_digest
         || retained.repository != retained.plan.repository
     {
         return Err(refuse(

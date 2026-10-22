@@ -20,7 +20,6 @@ use windows as platform;
 
 pub use platform::{inspect_temporary_records, reclaim_temporary_records};
 
-const RUNTIME_DIRECTORY: &str = ".spice-rs";
 const PREFIX: &[u8] = b".spice-install-";
 const SUFFIX: &[u8] = b".tmp";
 const ENTRY_LIMIT: usize = 4096;
