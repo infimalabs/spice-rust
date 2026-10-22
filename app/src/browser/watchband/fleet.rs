@@ -26,18 +26,24 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_drag: &'a TeamDragState,
 }
 
-/// Opened working groups follow the teams, in this browser's own order.
+/// The teamless console keeps a team surface's toolbar bands and stream, with
+/// `message` as the stream's empty placeholder. Opened working groups follow,
+/// in this browser's own order.
 pub(super) fn render_empty_fleet(fleet: &NodeRef, message: &'static str, groups: Html) -> Html {
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams">
             <section class="team-surface" data-team-weight="1">
                 <header class="team-toolbar">
-                    {view::chrome::render_empty_team_ticker()}
-
+                    <div class="team-task-rail"></div>
+                    <div class="app-glass-control-surface app-status-band team-status-row">
+                        {view::chrome::render_empty_team_ticker()}
+                    </div>
                 </header>
                 <div class="team-pane">
-                    {empty(message)}
+                    <div class="team-activity-grid" data-empty="true">
+                        <div class="mosaic-message-empty">{message}</div>
+                    </div>
                 </div>
             </section>
             {groups}
