@@ -29,6 +29,7 @@ use crate::preparation_decision::{
     DecisionComposer, DecisionDraft, DraftNotice, DraftPhase, Submission,
 };
 use crate::runtime::{CandidateWithdrawalRecord, PreparationProjection, RoomPositioned};
+use crate::task_sheet::ProposalLine;
 
 type DraftChange = Rc<dyn Fn(&mut DecisionDraft)>;
 type DraftCommand = Box<dyn Fn()>;
@@ -227,6 +228,36 @@ pub(super) fn render_proposal_face(
     };
     let version = format!("[data-candidate=\"{code}\"]");
     let fact = SequenceCode::new(positioned.position.get()).to_string();
+    let design_pitch = tasks
+        .iter()
+        .find(|task| task.statement.body.born == *room)
+        .map_or("", |task| task.statement.body.pitch.as_str());
+    let output_line = |stamp: &TaskStamp, selector: String| {
+        tasks
+            .iter()
+            .find(|task| task.statement.body.born == *stamp)
+            .map_or_else(
+                || html! { <li>{link(selector.clone(), html! { <code>{stamp.to_string()}</code> })}</li> },
+                |task| html! {
+                    <li>
+                        {task_handle_link(open_task, &task.statement.body.born, &task.statement.body.handle)}
+                        {" "}{link(selector.clone(), html! { {task.statement.body.pitch.clone()} })}
+                    </li>
+                },
+            )
+    };
+    let lines = crate::task_sheet::proposal_lines(candidate);
+    let outputs = lines.iter().filter_map(|line| match line {
+        ProposalLine::Output(output) => Some(output_line(
+            output,
+            format!("{version} [data-approval-output=\"{output}\"]"),
+        )),
+        _ => None,
+    });
+    let inputs = lines.iter().filter_map(|line| match line {
+        ProposalLine::Input(input) => Some(output_line(input, version.clone())),
+        _ => None,
+    });
     let tail = html! {
         <div class="room-proposal" data-proposal-card={code.clone()}>
             <p class="room-proposal-standing">
@@ -237,24 +268,16 @@ pub(super) fn render_proposal_face(
                 {" · fact "}{link(version.clone(), html! { <code>{fact}</code> })}
             </p>
             if !candidate.outputs.is_empty() {
-                <ul class="room-proposal-outputs" aria-label="Proposed outputs">
-                    {for candidate.outputs.iter().map(|output| {
-                        let selector = format!("{version} [data-approval-output=\"{output}\"]");
-                        let task = tasks.iter().find(|task| task.statement.body.born == *output);
-                        match task {
-                            Some(task) => html! {
-                                <li>
-                                    {link(selector, html! { {task.presentation_title.clone()} })}
-                                    {" "}{task_handle_link(open_task, &task.statement.body.born, &task.statement.body.handle)}
-                                </li>
-                            },
-                            None => html! {
-                                <li>{link(selector, html! { <code>{output.to_string()}</code> })}</li>
-                            },
-                        }
-                    })}
-                </ul>
+                <ul class="room-proposal-outputs" aria-label="Proposed outputs">{for outputs}</ul>
             }
+            if !candidate.governed_inputs.is_empty() {
+                <ul class="room-proposal-outputs" aria-label="Governed inputs">{for inputs}</ul>
+            }
+            {for lines.iter().filter_map(|line| match line {
+                ProposalLine::References(count) => Some(render_reference_count(*count)),
+                ProposalLine::Justification(justification) => Some(render_justification(justification)),
+                _ => None,
+            })}
         </div>
     };
     card::render(
@@ -268,14 +291,35 @@ pub(super) fn render_proposal_face(
                 label: "Proposal",
             }),
             words: format!(
-                "{} · {}",
+                "{} · {design_pitch}",
                 recommendation_label(candidate.recommendation),
-                candidate.justification
             ),
             tail,
         },
         None,
     )
+}
+
+/// Retained references as their count alone; the decision surface keeps the
+/// exact links.
+fn render_reference_count(count: usize) -> Html {
+    html! {
+        <p class="room-approval-references">
+            {"Retained references"}
+            <span class="app-count-badge">{count}</span>
+        </p>
+    }
+}
+
+/// The authored justification, collapsed beneath everything the operator
+/// decides on.
+fn render_justification(justification: &str) -> Html {
+    html! {
+        <details class="room-approval-justification">
+            <summary>{"Justification"}</summary>
+            <p>{justification.to_owned()}</p>
+        </details>
+    }
 }
 
 /// Journal time shown by a proposal card and used to interleave it with other
@@ -463,6 +507,7 @@ fn render_candidate(
         || html! { <span>{" · historical claim not witnessed"}</span> },
         |claim| html! { <span>{" · claim "}<code>{claim.to_string()}</code></span> },
     );
+    let lines = crate::task_sheet::proposal_lines(candidate);
     html! {
         <article
             class="room-card room-approval-card"
@@ -478,25 +523,34 @@ fn render_candidate(
             </header>
             {withdrawal.map_or_else(Html::default, |withdrawal| render_withdrawal(context.runtime, withdrawal))}
             <div class="room-approval-proposal">
-                <p>
+                <p class="room-approval-head">
                     <strong>{recommendation_label(candidate.recommendation)}</strong>
-                    {" · statement "}<code>{candidate.statement.to_string()}</code>
+                    {" · "}{context.task(context.design).map_or("", |task| task.statement.body.pitch.as_str())}
+                </p>
+                <p class="room-approval-facts">
+                    {"statement "}<code>{candidate.statement.to_string()}</code>
                     {claim}
                 </p>
-                {super::card::render_words(context.runtime, &candidate.justification, None, None)}
             </div>
-            {render_inputs(context, candidate)}
-            {render_references(candidate)}
-            {render_critiques(&critiques)}
-            {render_coverage(context.runtime, &coverage)}
             if interactive && !candidate.outputs.is_empty() {
                 {render_every_output_verdict(candidate, locked || draft.returning(), &edit)}
             }
             <ul class="room-approval-outputs" aria-label="Proposed outputs">
-                {for candidate.outputs.iter().map(|output| {
-                    render_output(context, output, draft, interactive, locked, &edit)
+                {for lines.iter().filter_map(|line| match line {
+                    ProposalLine::Output(output) => {
+                        Some(render_output(context, output, draft, interactive, locked, &edit))
+                    }
+                    _ => None,
                 })}
             </ul>
+            {render_inputs(context, &lines)}
+            {for lines.iter().filter_map(|line| match line {
+                ProposalLine::References(_) => Some(render_references(candidate)),
+                ProposalLine::Justification(justification) => Some(render_justification(justification)),
+                _ => None,
+            })}
+            {render_critiques(&critiques)}
+            {render_coverage(context.runtime, &coverage)}
             {render_decision_history(context.runtime, &decisions, &authorizations)}
             if interactive {
                 {render_controls(context, positioned, draft, locked, &edit)}
@@ -531,36 +585,51 @@ fn editor(controls: &Controls, candidate: &CandidateRef) -> impl Fn(DraftChange)
     }
 }
 
-fn render_inputs(context: &Context<'_>, candidate: &DesignPassProposal) -> Html {
-    if candidate.governed_inputs.is_empty() {
+/// Governed inputs as output lines without a verdict: handle and pitch.
+fn render_inputs(context: &Context<'_>, lines: &[ProposalLine<'_>]) -> Html {
+    let inputs = lines.iter().filter_map(|line| match line {
+        ProposalLine::Input(input) => Some(*input),
+        _ => None,
+    });
+    if !lines
+        .iter()
+        .any(|line| matches!(line, ProposalLine::Input(_)))
+    {
         return Html::default();
     }
     html! {
         <div class="room-approval-inputs">
             <strong>{"Governed inputs"}</strong>
-            <ul>
-                {for candidate.governed_inputs.iter().map(|input| match context.task(input) {
-                    Some(task) => html! {
-                        <li key={input.to_string()}>
-                            <strong>{task.presentation_title.clone()}</strong>
-                            {" "}<code>{task.statement.body.handle.to_string()}</code>
-                        </li>
-                    },
-                    None => html! {
-                        <li key={input.to_string()} data-reference-state="unavailable">
-                            <code>{input.to_string()}</code>{" · unavailable on the current board"}
-                        </li>
-                    },
-                })}
+            <ul class="room-approval-outputs" aria-label="Governed inputs">
+            {for inputs.map(|input| match context.task(input) {
+                Some(task) => html! {
+                    <li key={input.to_string()}>
+                        <div class="room-approval-output-title">
+                            {task_handle_link(context.open_task, &task.statement.body.born, &task.statement.body.handle)}
+                            <span>{task.statement.body.pitch.clone()}</span>
+                        </div>
+                    </li>
+                },
+                None => html! {
+                    <li key={input.to_string()} data-reference-state="unavailable">
+                        <code>{input.to_string()}</code>{" · unavailable on the current board"}
+                    </li>
+                },
+            })}
             </ul>
         </div>
     }
 }
 
+/// Retained references behind their count: the links stay exact and
+/// unresolved, and nothing decided depends on opening them.
 fn render_references(candidate: &DesignPassProposal) -> Html {
     html! {
-        <div class="room-approval-references">
-            <strong>{"Retained references"}</strong>
+        <details class="room-approval-references">
+            <summary>
+                {"Retained references"}
+                <span class="app-count-badge">{candidate.references.len()}</span>
+            </summary>
             <ul>
                 {for candidate.references.iter().map(|reference| html! {
                     <li>
@@ -570,7 +639,7 @@ fn render_references(candidate: &DesignPassProposal) -> Html {
                     </li>
                 })}
             </ul>
-        </div>
+        </details>
     }
 }
 
@@ -741,17 +810,17 @@ fn render_output(
     let statement = &task.statement.body;
     let kind = output_kind(task);
     let standing = output_standing(task, context.design);
+    // The line the operator decides on: handle, pitch, kind and standing, then
+    // its verdict control; a Plan's acceptance stays visible beneath because the
+    // decision weighs it. The description never joins the line.
     html! {
         <li data-approval-output={output.to_string()}>
             <div class="room-approval-output-title">
-                <strong>{task.presentation_title.clone()}</strong>
                 {task_handle_link(context.open_task, &task.statement.body.born, &task.statement.body.handle)}
+                <span class="room-approval-output-pitch" title={task.presentation_title.clone()}>{statement.pitch.clone()}</span>
                 <span data-approval-output-kind="">{kind}</span>
                 <span>{standing}</span>
             </div>
-            if let Some(description) = statement.description.as_deref() {
-                <p class="room-approval-output-statement">{description}</p>
-            }
             {controls}
             if !statement.acceptance.is_empty() {
                 <ul class="room-approval-acceptance" aria-label="Acceptance">

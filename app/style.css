@@ -737,6 +737,21 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 }
 .app-sheet-section ul { margin: 8px 0 0; padding-left: 20px; }
 .app-sheet-section ul > li + li { margin-top: 4px; }
+/* A sheet block is a native disclosure closed on open: its summary reads as
+   the section heading with the block's count, so the weight shows before the
+   prose does. */
+.app-sheet-block > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--app-type-section);
+  font-weight: 700;
+  cursor: pointer;
+  list-style-position: inside;
+}
+.app-sheet-block[open] > summary { margin-bottom: 12px; }
+.app-sheet-block > summary .app-count-badge { font-size: var(--app-type-chip); font-weight: 600; }
 .app-sheet-media { --mosaic-image-size: 8.75rem; min-width: 0; }
 .app-fact-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 18px; margin: 0; font-size: var(--app-type-chip); }
 .app-fact-grid > div { min-width: 0; }

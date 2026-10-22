@@ -251,6 +251,7 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 <header>
                     <p class="app-sheet-kicker">{"Waiting on you"}</p>
                     <h3>{task_detail::render_task_title(&row.presentation_title, controls)}</h3>
+                    <p class="work-task-pitch">{statement.pitch.clone()}</p>
                     <code>{statement.handle.to_string()}</code>
                     <button
                         type="button"

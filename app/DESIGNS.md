@@ -66,19 +66,24 @@ on the exact proposal version whose premise failed.
 
 The read view's **Design pass proposals** section lists every proposal recorded
 under the Design, newest first, without replacing earlier versions. Each card
-names its immutable proposal identity and journal fact, recommendation,
-justification, governed inputs, source references, cited question results,
-critiques, review coverage, and every earlier decision and execution
-authorization. Each work output
-shows its current title, handle, status, and acceptance. A referenced task or
-question result absent from the current projection is shown as unavailable;
-an exact source identity is shown as an unresolved link rather than being
-called available. Concluded Designs keep the same cards read-only. Output cards
-identify declared Plans and Designs by intent, and undeclared work as a task
-with its authored flow. A version its author withdrew leaves the open list and
-open count for a separate **Withdrawn versions** history naming its author,
-age, reason, and withdrawal fact, with no decision control; the view never
-picks among open versions by recency.
+names its immutable proposal identity and journal fact, then leads with the
+recommendation and the Design's own pitch. Below that head come the lines the
+operator decides on, never collapsed: one per work output with its handle, its
+pitch, its kind and status, its verdict control, and a Plan's acceptance; then
+the governed inputs the same way without a verdict. Source references follow
+as a count whose exact, unresolved links disclose on demand, and the authored
+justification is collapsed beneath them; cited question results, critiques,
+review coverage, and every earlier decision and execution authorization
+follow. The room's proposal card presents the same head and lines with the
+reference count alone. A referenced task or question result absent from the
+current projection is shown as unavailable; an exact source identity is shown
+as an unresolved link rather than being called available. Concluded Designs
+keep the same cards read-only. Output lines identify declared Plans and
+Designs by intent, and undeclared work as a task with its authored flow. A
+version its author withdrew leaves the open list and open count for a separate
+**Withdrawn versions** history naming its author, age, reason, and withdrawal
+fact, with no decision control; the view never picks among open versions by
+recency.
 
 On an open Design, an operator chooses one action for an exact undecided
 version:

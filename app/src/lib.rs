@@ -85,6 +85,8 @@ pub mod speech_queue;
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
 mod speech_rate;
 pub mod state;
+#[cfg(any(target_arch = "wasm32", test))]
+mod task_sheet;
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
 mod toast_state;
 #[cfg(any(target_arch = "wasm32", test))]
