@@ -465,6 +465,7 @@ fn render_publication(
             {card::render_face(
                 render.runtime,
                 Some(controls),
+                render.open_message_task,
                 &channel.stamp,
                 has_current_listener,
                 publication,

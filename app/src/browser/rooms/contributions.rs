@@ -2,10 +2,12 @@
 //! order beside ordinary conversation. Each entry names its lane, time, vote,
 //! the question item it weighs as a link into the Contract list, text, and
 //! every cited source as an exact link or the typed reason the resident
-//! cannot resolve it. Contributions are evidence for the operator's Design
+//! cannot resolve it; a cited journal fact also names its kind and the task
+//! it concerns. Contributions are evidence for the operator's Design
 //! judgment, never authority; reading them writes nothing.
 
 use wire::TaskStamp;
+use wire::intent::RoomFactSummary;
 use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomSource, RoomSourceView};
 use yew::prelude::*;
 
@@ -33,6 +35,7 @@ pub(super) const fn kind_label(kind: RoomContributionKind) -> &'static str {
 /// One contribution event's card face, or `None` for any other event.
 pub(super) fn face(
     runtime: &AppRuntime,
+    open_task: &super::OpenTask,
     room: &TaskStamp,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
@@ -49,6 +52,7 @@ pub(super) fn face(
     };
     Some(entry_face(
         runtime,
+        open_task,
         room,
         &Contribution {
             publication,
@@ -70,7 +74,12 @@ pub(super) const fn badge(kind: RoomContributionKind) -> Badge {
     }
 }
 
-fn entry_face(runtime: &AppRuntime, room: &TaskStamp, entry: &Contribution<'_>) -> Face {
+fn entry_face(
+    runtime: &AppRuntime,
+    open_task: &super::OpenTask,
+    room: &TaskStamp,
+    entry: &Contribution<'_>,
+) -> Face {
     Face {
         speaker: Some(Speaker {
             name: super::conversation::lane_label(runtime, entry.lane),
@@ -82,7 +91,7 @@ fn entry_face(runtime: &AppRuntime, room: &TaskStamp, entry: &Contribution<'_>) 
         tail: html! {
             <>
                 {render_question(runtime, room, entry)}
-                {render_sources(runtime, entry.publication, entry.sources)}
+                {render_sources(runtime, open_task, entry.publication, entry.sources)}
             </>
         },
     }
@@ -122,7 +131,8 @@ fn render_question(runtime: &AppRuntime, room: &TaskStamp, entry: &Contribution<
 /// How one source currently reads.
 #[derive(Clone, Copy)]
 enum SourceState<'a> {
-    Available,
+    /// The source yields its bytes; a journal fact also says what it is.
+    Available(Option<&'a RoomFactSummary>),
     Unavailable(&'a wire::rooms::RoomSourceUnavailable),
     /// The resident has not answered yet.
     Resolving,
@@ -130,8 +140,20 @@ enum SourceState<'a> {
     Unresolved,
 }
 
+/// What `facts` says the journal fact `source` cites is, if it is one.
+fn fact_summary<'a>(
+    facts: &'a [RoomFactSummary],
+    source: &RoomSource,
+) -> Option<&'a RoomFactSummary> {
+    let RoomSource::Journal { fact } = source else {
+        return None;
+    };
+    facts.iter().find(|summary| summary.fact == *fact)
+}
+
 fn render_sources(
     runtime: &AppRuntime,
+    open_task: &super::OpenTask,
     publication: &RoomAuthorityStamp,
     cited: &[RoomSource],
 ) -> Html {
@@ -139,13 +161,19 @@ fn render_sources(
         return html! { <p class="room-contribution-sources-none">{"No sources cited."}</p> };
     }
     let (busy, failure, rows) = match runtime.contribution_read(publication) {
-        Some(ContributionRead::Read { sources: views, .. }) => (
+        Some(ContributionRead::Read {
+            sources: views,
+            facts,
+            ..
+        }) => (
             false,
             None,
             views
                 .iter()
                 .map(|view| match view {
-                    RoomSourceView::Available { source } => (source, SourceState::Available),
+                    RoomSourceView::Available { source } => {
+                        (source, SourceState::Available(fact_summary(facts, source)))
+                    }
                     RoomSourceView::Unavailable {
                         source,
                         unavailable,
@@ -178,24 +206,54 @@ fn render_sources(
                 </p>
             }
             <ul aria-label="Sources" aria-busy={busy.to_string()}>
-                {for rows.into_iter().map(|(source, state)| render_source(runtime, source, state))}
+                {for rows.into_iter().map(|(source, state)| render_source(runtime, open_task, source, state))}
             </ul>
         </div>
     }
 }
 
-fn render_source(runtime: &AppRuntime, source: &RoomSource, state: SourceState<'_>) -> Html {
-    let (state_key, status) = match state {
-        SourceState::Available => ("available", "available".to_owned()),
-        SourceState::Unavailable(unavailable) => (
-            "unavailable",
-            format!(
+/// One cited source beside how it reads. The state takes only the width its
+/// row leaves and truncates, so resolution changes its words in place and
+/// never moves the card; the full words stay in its title.
+fn render_source(
+    runtime: &AppRuntime,
+    open_task: &super::OpenTask,
+    source: &RoomSource,
+    state: SourceState<'_>,
+) -> Html {
+    let (state_key, title, status) = match state {
+        SourceState::Available(Some(summary)) => {
+            let kind = summary.kind.as_str();
+            match &summary.task {
+                Some(task) => (
+                    "available",
+                    format!("{kind} · {}", task.handle),
+                    html! {
+                        <>
+                            {kind}{" · "}
+                            {super::task_handle_link(open_task, &task.born, &task.handle)}
+                        </>
+                    },
+                ),
+                None => ("available", kind.to_owned(), html! { {kind} }),
+            }
+        }
+        SourceState::Available(None) => {
+            ("available", "available".to_owned(), html! { "available" })
+        }
+        SourceState::Unavailable(unavailable) => {
+            let status = format!(
                 "unavailable: {}",
                 super::conversation::unavailable_reason(unavailable)
-            ),
+            );
+            ("unavailable", status.clone(), html! { {status} })
+        }
+        SourceState::Resolving => ("resolving", "resolving…".to_owned(), html! { "resolving…" }),
+        SourceState::Unresolved => (
+            "unresolved",
+            "not resolved".to_owned(),
+            html! { "not resolved" },
         ),
-        SourceState::Resolving => ("resolving", "resolving…".to_owned()),
-        SourceState::Unresolved => ("unresolved", "not resolved".to_owned()),
     };
     let (kind, link) = match source {
         RoomSource::Transcript(hunk) => {
@@ -208,7 +266,7 @@ fn render_source(runtime: &AppRuntime, source: &RoomSource, state: SourceState<'
                 hunk.text.start,
                 hunk.text.end,
             );
-            let href = matches!(state, SourceState::Available)
+            let href = matches!(state, SourceState::Available(_))
                 .then(|| super::conversation::transcript_card_href(runtime, hunk))
                 .flatten();
             let link = href.map_or_else(
@@ -254,7 +312,7 @@ fn render_source(runtime: &AppRuntime, source: &RoomSource, state: SourceState<'
     html! {
         <li data-source-kind={kind} data-source-state={state_key}>
             {link}
-            <span class="room-contribution-source-state">{status}</span>
+            <span class="room-contribution-source-state" {title}>{status}</span>
         </li>
     }
 }

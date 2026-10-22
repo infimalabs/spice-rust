@@ -59,6 +59,7 @@ pub(super) struct Anchor<'a> {
 pub(super) fn render_card(
     runtime: &AppRuntime,
     controls: Option<conversation::CardControls<'_>>,
+    open_task: &super::OpenTask,
     room: &wire::TaskStamp,
     has_current_listener: bool,
     publication: &RoomAuthorityStamp,
@@ -66,15 +67,20 @@ pub(super) fn render_card(
 ) -> Html {
     html! {
         <article class="room-card" key={publication.to_string()} tabindex="0">
-            {render_face(runtime, controls, room, has_current_listener, publication, event, None)}
+            {render_face(runtime, controls, open_task, room, has_current_listener, publication, event, None)}
         </article>
     }
 }
 
 /// One room event's face, for a surface that supplies its own card.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one face binds its surface's card controls and task opener beside the event"
+)]
 pub(super) fn render_face(
     runtime: &AppRuntime,
     controls: Option<conversation::CardControls<'_>>,
+    open_task: &super::OpenTask,
     room: &wire::TaskStamp,
     has_current_listener: bool,
     publication: &RoomAuthorityStamp,
@@ -85,7 +91,7 @@ pub(super) fn render_face(
         .room_projection()
         .unheard_post(room, publication, has_current_listener);
     let face = conversation::face(runtime, controls, publication, event, unheard)
-        .or_else(|| contributions::face(runtime, room, publication, event))
+        .or_else(|| contributions::face(runtime, open_task, room, publication, event))
         .unwrap_or_else(|| super::summary_face(runtime, event));
     render(runtime, publication.micros() / 1_000, face, anchor)
 }

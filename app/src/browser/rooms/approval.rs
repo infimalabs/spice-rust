@@ -20,7 +20,7 @@ use wire::{CommandKind, SequenceCode, TaskStamp};
 use yew::prelude::*;
 
 use super::standing::focus_in_place;
-use super::{Controls, card, conversation::lane_label};
+use super::{Controls, OpenTask, card, conversation::lane_label, task_handle_link};
 use crate::AppRuntime;
 use crate::browser::clock::Age;
 use crate::browser::sender::{SenderHandle, admit_action};
@@ -31,8 +31,6 @@ use crate::preparation_decision::{
 use crate::runtime::{CandidateWithdrawalRecord, PreparationProjection, RoomPositioned};
 
 type DraftChange = Rc<dyn Fn(&mut DecisionDraft)>;
-/// Opens one task's sheet, returning focus to the activating element.
-type OpenTask = Callback<(TaskStamp, web_sys::Element)>;
 type DraftCommand = Box<dyn Fn()>;
 
 /// This page's exact-version decision drafts. One pending version globally
@@ -247,7 +245,7 @@ pub(super) fn render_proposal_face(
                             Some(task) => html! {
                                 <li>
                                     {link(selector, html! { {task.presentation_title.clone()} })}
-                                    {" "}{output_handle(open_task, task)}
+                                    {" "}{task_handle_link(open_task, &task.statement.body.born, &task.statement.body.handle)}
                                 </li>
                             },
                             None => html! {
@@ -747,7 +745,7 @@ fn render_output(
         <li data-approval-output={output.to_string()}>
             <div class="room-approval-output-title">
                 <strong>{task.presentation_title.clone()}</strong>
-                {output_handle(context.open_task, task)}
+                {task_handle_link(context.open_task, &task.statement.body.born, &task.statement.body.handle)}
                 <span data-approval-output-kind="">{kind}</span>
                 <span>{standing}</span>
             </div>
@@ -761,30 +759,6 @@ fn render_output(
                 </ul>
             }
         </li>
-    }
-}
-
-/// An output's handle as a link that opens that task's sheet.
-fn output_handle(open_task: &OpenTask, task: &BoardTask) -> Html {
-    let handle = task.statement.body.handle.to_string();
-    let open = {
-        let (open_task, task) = (open_task.clone(), task.statement.body.born.clone());
-        Callback::from(move |event: MouseEvent| {
-            if let Some(target) = event
-                .current_target()
-                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-            {
-                open_task.emit((task.clone(), target));
-            }
-        })
-    };
-    html! {
-        <button
-            type="button"
-            class="app-fact-link"
-            aria-label={format!("Open task {handle}")}
-            onclick={open}
-        ><code>{handle}</code></button>
     }
 }
 

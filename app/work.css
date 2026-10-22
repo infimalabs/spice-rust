@@ -979,7 +979,16 @@
   align-items: baseline;
   overflow-wrap: anywhere;
 }
-.room-contribution-source-state { color: var(--muted); }
+/* The state takes only the width its row leaves (a zero basis never wraps the
+   row) and truncates, so a source resolving in place never moves the card. */
+.room-contribution-source-state {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .room-contribution-sources li[data-source-state="unavailable"] .room-contribution-source-state,
 .room-card-face p.room-contribution-sources-failed { color: var(--danger); }
 .room-card-face p.room-contribution-sources-none { color: var(--muted); font-size: var(--app-type-meta); }

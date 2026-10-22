@@ -183,6 +183,7 @@ fn sources_reply(
             body: RoomContributionReadAnswer {
                 publication: publication.clone(),
                 sources,
+                facts: Vec::new(),
                 question: None,
             },
         }),
@@ -276,6 +277,7 @@ fn shown_designs_resolve_each_cited_or_placed_contribution_once() {
         runtime.contribution_read(&third),
         Some(&ContributionRead::Read {
             sources: views.clone(),
+            facts: Vec::new(),
             question: None,
         })
     );
@@ -284,6 +286,7 @@ fn shown_designs_resolve_each_cited_or_placed_contribution_once() {
         runtime.contribution_read(&third),
         Some(&ContributionRead::Read {
             sources: views,
+            facts: Vec::new(),
             question: None,
         }),
         "a settled read is not overwritten by a late answer"

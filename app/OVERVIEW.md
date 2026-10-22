@@ -129,7 +129,9 @@ section, while one outside it, a proposal output's handle, and a parent-task
 origin replace the selection with that task; every lane name, from the
 claimant and Standing to each room and contribution card's speaker, opens that
 lane's Chat composer when Chat seats it and stays a plain label otherwise.
-Journal fact codes and steering origins have no card to open and read as text.
+Journal fact codes and steering origins have no card to open and read as
+text; a contribution's cited journal fact also names its fact kind and, while
+the task it concerns exists, that task's handle as a link opening its sheet.
 Each detail's
 **Room** section seats its composer directly above the room's conversation,
 newest first, so a submitted observation is published into the task's room
