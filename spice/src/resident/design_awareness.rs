@@ -86,7 +86,7 @@ struct PlannedRequest {
     statement: Seq,
     terms: Vec<String>,
     stance: Option<WorkingGroupStance>,
-    ask: Option<DesignAsk>,
+    asks: Vec<DesignAsk>,
     horizon: Option<Seq>,
 }
 
@@ -362,7 +362,7 @@ fn plan_profile_requests(
             excerpt,
             terms,
             stance,
-            ask,
+            asks,
         }) = selected
         else {
             continue;
@@ -380,7 +380,7 @@ fn plan_profile_requests(
             statement,
             terms,
             stance: Some(stance),
-            ask,
+            asks,
             horizon: planning.horizon,
         });
     }
@@ -418,15 +418,15 @@ struct Selection {
     excerpt: String,
     terms: Vec<String>,
     stance: WorkingGroupStance,
-    ask: Option<DesignAsk>,
+    asks: Vec<DesignAsk>,
 }
 
 /// The best Design `kind` admits that still owes this session an ask, unless
 /// it fails to strictly outrank the Design still owed to the session under the
 /// same frequency generation, current cards, and stance floors. An owed Design
 /// that no longer clears its floor bars nothing. Whether a Design is selected
-/// is judged on its whole statement; the selection then asks its pending item
-/// scoring best against the cards.
+/// is judged on its whole statement; the selection then asks every pending
+/// item, the one scoring best against the cards first.
 fn select_design(
     scoring: &Scoring<'_>,
     profile: &mut spice::rooms::profile::SessionProfile,
@@ -484,7 +484,7 @@ fn select_design(
     let terms = matched.terms;
     let stance = admitting_stance(facts, design);
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
-    let ask = choose_ask(
+    let asks = rank_asks(
         profile,
         frequency,
         design,
@@ -499,7 +499,7 @@ fn select_design(
         excerpt,
         terms,
         stance,
-        ask,
+        asks,
     }))
 }
 
@@ -537,17 +537,17 @@ fn pending_asks(
     (!pending.is_empty()).then_some(pending)
 }
 
-/// The pending ask whose item text, read with the Design's problem sentence,
-/// scores best against the session's cards at or above `floor`; the first
-/// pending ask, lowest in statement order, when none clears it. `None` asks
-/// about the whole Design.
-fn choose_ask(
+/// `asks` with the one whose item text, read with the Design's problem
+/// sentence, scores best against the session's cards at or above `floor`
+/// moved first and the rest kept in statement order; unchanged when none
+/// clears it. Empty asks about the whole Design.
+fn rank_asks(
     profile: &mut spice::rooms::profile::SessionProfile,
     frequency: &FrequencyProfile,
     design: &board::Entry,
-    asks: Vec<DesignAsk>,
+    mut asks: Vec<DesignAsk>,
     floor: f64,
-) -> Result<Option<DesignAsk>, GenerationMismatch> {
+) -> Result<Vec<DesignAsk>, GenerationMismatch> {
     let statement = design.statement();
     let problem = pitch(&statement.title, statement.description.as_deref());
     let mut best: Option<(f64, usize)> = None;
@@ -566,7 +566,10 @@ fn choose_ask(
             best = Some((score, index));
         }
     }
-    Ok(asks.into_iter().nth(best.map_or(0, |(_, index)| index)))
+    if let Some((_, index)) = best {
+        asks[..=index].rotate_right(1);
+    }
+    Ok(asks)
 }
 
 /// One prepared open Design weighted under its invitation floor.
@@ -907,30 +910,32 @@ fn restated_request(
         statement: notice.statement,
         terms: notice.terms.clone(),
         stance: notice.stance,
-        ask: notice.ask.clone(),
+        asks: notice.asks.clone(),
         horizon: planning.horizon,
     }))
 }
 
 /// Whether a recorded invitation is still owed. Design closure or statement
 /// replacement releases it, and so does the lane's answer: a contribution
-/// against the asked item or a leave, or any room record for a whole-Design
-/// ask. Another lane's post or a change in the item's standing never does.
+/// against any asked item or a leave, or any room record for a whole-Design
+/// ask. Another lane's post or a change in an item's standing never does.
 fn request_is_current(
     facts: &bus::TaskFacts,
     design: &board::Entry,
     notice: &DesignNoticed,
     noticed_at: Seq,
 ) -> bool {
+    let answered =
+        |item| facts.design_ask_answered_after(notice.lane, design.born(), item, noticed_at);
+    let settled = if notice.asks.is_empty() {
+        answered(None)
+    } else {
+        notice.asks.iter().any(|ask| answered(Some(&ask.item)))
+    };
     design.is_filed()
         && open_design(design)
         && design.statement().revision == notice.statement
-        && !facts.design_ask_answered_after(
-            notice.lane,
-            design.born(),
-            notice.ask.as_ref().map(|ask| &ask.item),
-            noticed_at,
-        )
+        && !settled
 }
 
 fn design_request(
@@ -939,18 +944,22 @@ fn design_request(
     notice: &DesignNoticed,
 ) -> DesignRequest {
     let statement = design.statement();
-    let ask = notice.ask.as_ref().and_then(|ask| {
-        let series = facts
-            .design_items(design.born())
-            .and_then(|items| items.series(&ask.item));
-        Some(DesignRequestAsk {
-            question: ask.question,
-            text: ask.question.item(&statement.acceptance)?.to_owned(),
-            state: ask.state,
-            charges: series.map_or(0, |series| series.charges),
-            lanes: series.map_or(0, DesignItemSeries::lanes),
+    let asks = notice
+        .asks
+        .iter()
+        .filter_map(|ask| {
+            let series = facts
+                .design_items(design.born())
+                .and_then(|items| items.series(&ask.item));
+            Some(DesignRequestAsk {
+                question: ask.question,
+                text: ask.question.item(&statement.acceptance)?.to_owned(),
+                state: ask.state,
+                charges: series.map_or(0, |series| series.charges),
+                lanes: series.map_or(0, DesignItemSeries::lanes),
+            })
         })
-    });
+        .collect();
     DesignRequest {
         design: wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing),
         lane: notice.lane,
@@ -967,7 +976,7 @@ fn design_request(
             .map(str::to_owned)
             .collect(),
         stance: notice.stance,
-        ask,
+        asks,
     }
 }
 
@@ -1182,7 +1191,7 @@ fn current_design(
 }
 
 /// Whether the lane answered this ask since its session was declared: any
-/// room record for a whole-Design ask, else a contribution against the asked
+/// room record for a whole-Design ask, else a contribution against any asked
 /// item or a leave of the room.
 fn answered_in_session(
     read: &JournalRead<'_>,
@@ -1192,9 +1201,9 @@ fn answered_in_session(
     let published = read
         .latest_room_publication(&request.design, &Actor::Lane(request.lane))?
         .is_some_and(|head| head.seq > session_declared);
-    let Some(ask) = request.ask.as_ref().filter(|_| published) else {
+    if !published || request.asks.is_empty() {
         return Ok(published);
-    };
+    }
     let mut after = Some(session_declared);
     loop {
         let page =
@@ -1204,7 +1213,9 @@ fn answered_in_session(
                 wire::FactKind::RoomContributed => {
                     envelope.fact.read::<RoomContributed>().map(|contributed| {
                         contributed.lane == request.lane
-                            && contributed.item.as_ref() == Some(&ask.item)
+                            && contributed.item.as_ref().is_some_and(|item| {
+                                request.asks.iter().any(|ask| &ask.item == item)
+                            })
                     })
                 }
                 wire::FactKind::RoomLeft => envelope
@@ -1279,7 +1290,7 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 excerpt: request.excerpt.clone(),
                 terms: request.terms.clone(),
                 stance: request.stance,
-                ask: request.ask.clone(),
+                asks: request.asks.clone(),
             },
             FactCause::Root,
         )

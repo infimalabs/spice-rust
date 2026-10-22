@@ -227,9 +227,16 @@ pub struct RoomState {
     /// Latest lane-authored event, used to prove earlier posts were heard
     /// without rescanning the room for every rendered card.
     latest_lane_event: Option<Seq>,
-    /// Each asked lane's newest recorded Design request: its position and
-    /// exact retained evidence.
-    asked: BTreeMap<CanonicalUuid, (Seq, authority::DesignNoticeEvidence)>,
+    /// Each asked lane's newest recorded Design request: its position, exact
+    /// retained evidence, and asked question items in asked order.
+    asked: BTreeMap<
+        CanonicalUuid,
+        (
+            Seq,
+            authority::DesignNoticeEvidence,
+            Vec<authority::RoomQuestion>,
+        ),
+    >,
 }
 
 impl RoomState {
@@ -257,9 +264,13 @@ pub enum ParticipantReason {
     /// The lane authored a room message or typed contribution; history never ages.
     Publication(RoomAuthorityStamp),
     /// A recorded Design request asks the lane from this exact retained
-    /// evidence; it never ages, and the lane's next room publication answers
-    /// or declines it.
-    Asked(authority::DesignNoticeEvidence),
+    /// evidence about these question items, or the whole Design when none;
+    /// it never ages, and the lane's next room publication answers or
+    /// declines it.
+    Asked {
+        evidence: authority::DesignNoticeEvidence,
+        questions: Vec<authority::RoomQuestion>,
+    },
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
     /// A live room coordination request addresses the lane.
@@ -741,7 +752,14 @@ impl RoomProjection {
                         .entry(body.design.clone())
                         .or_default()
                         .asked
-                        .insert(body.lane, (fact.seq(), body.evidence.clone()));
+                        .insert(
+                            body.lane,
+                            (
+                                fact.seq(),
+                                body.evidence.clone(),
+                                body.asks.iter().map(|ask| ask.question).collect(),
+                            ),
+                        );
                     self.maturity
                         .entry(body.design.clone())
                         .or_default()

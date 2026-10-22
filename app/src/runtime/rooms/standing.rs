@@ -67,9 +67,15 @@ impl RoomProjection {
                 let newest = published.entry(lane).or_insert(event.position);
                 *newest = (*newest).max(event.position);
             }
-            for (lane, (asked, task)) in &state.asked {
+            for (lane, (asked, evidence, questions)) in &state.asked {
                 if published.get(lane).is_none_or(|answered| asked > answered) {
-                    add(*lane, ParticipantReason::Asked(task.clone()));
+                    add(
+                        *lane,
+                        ParticipantReason::Asked {
+                            evidence: evidence.clone(),
+                            questions: questions.clone(),
+                        },
+                    );
                 }
             }
             for (lane, (publication, clause)) in leaves {
@@ -104,7 +110,7 @@ impl RoomProjection {
             .flat_map(|participant| &participant.reasons)
             .any(|reason| match reason {
                 ParticipantReason::Publication(_) | ParticipantReason::Left { .. } => false,
-                ParticipantReason::Asked(_)
+                ParticipantReason::Asked { .. }
                 | ParticipantReason::Work(_)
                 | ParticipantReason::Coordination(_)
                 | ParticipantReason::Stop(_) => true,

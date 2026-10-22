@@ -208,9 +208,9 @@ fn terms_and_ask(body: &DesignNoticed) -> Result<(), Refusal> {
         ));
     }
     if body
-        .ask
-        .as_ref()
-        .is_some_and(|ask| ask.state == wire::rooms::DesignItemState::Concurred)
+        .asks
+        .iter()
+        .any(|ask| ask.state == wire::rooms::DesignItemState::Concurred)
     {
         return unsound(format!(
             "design awareness for {} asks about a concurred question item",

@@ -150,8 +150,8 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         request.terms.join(", "),
         request.pitch,
     );
-    if let Some(ask) = &request.ask {
-        return format!("{head}{}", item_request(request, ask));
+    if !request.asks.is_empty() {
+        return format!("{head}{}", item_request(request));
     }
     let mut questions = String::new();
     for (item, question) in request.questions.iter().enumerate() {
@@ -174,28 +174,33 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
     )
 }
 
-/// The body of a request that asks about one question item: the item, its
-/// standing, the two answers, and the request's own supporting work offered
-/// as a citation.
-fn item_request(
-    request: &wire::intent::DesignRequest,
-    ask: &wire::intent::DesignRequestAsk,
-) -> String {
+/// The body of a request that asks about question items: each item with its
+/// standing, the one contribute form, and the request's own supporting work
+/// offered as a citation.
+fn item_request(request: &wire::intent::DesignRequest) -> String {
     use wire::rooms::DesignNoticeEvidence as Evidence;
 
     let design = &request.design;
-    let question = ask.question;
-    let standing = match (ask.charges, ask.lanes) {
-        (0, _) => "No charged post weighs it yet.".to_owned(),
-        (charges, lanes) => format!(
-            "It holds {charges} charged post{} from {lanes} lane{}.",
-            plural(charges),
-            plural(lanes as u64),
-        ),
-    };
-    let recharge = if ask.state == wire::rooms::DesignItemState::Contested {
-        " Both signs weigh it and you charged it before: a strength-2 re-charge, citing what \
-         your position rests on, would show where it now stands."
+    let mut questions = String::new();
+    for ask in &request.asks {
+        let lanes = match ask.lanes {
+            0 => String::new(),
+            lanes => format!(", {lanes} lane{}", plural(lanes as u64)),
+        };
+        questions.push_str(&format!(
+            "\nQuestion {} ({}{lanes}): \"{}\"",
+            ask.question,
+            ask.state.label(),
+            ask.text
+        ));
+    }
+    let recharge = if request
+        .asks
+        .iter()
+        .any(|ask| ask.state == wire::rooms::DesignItemState::Contested)
+    {
+        "\nBoth signs weigh a contested question and you charged it before: a strength-2 \
+         re-charge, citing what your position rests on, would show where it now stands."
     } else {
         ""
     };
@@ -209,15 +214,14 @@ fn item_request(
             .to_owned(),
     };
     format!(
-        "Question {question}: \"{}\"\n{standing}{recharge}\n\
-         Read its room with `spice room history {design}` (`spice://task/{design}/room`). \
-         Answer exactly once: weigh question {question} with `spice room contribute {design} \
-         --charge=C --question {question} [--cite KEY...] TEXT`, where C runs from -2 to +2, ±1 \
-         is an opinion, and 0 or ±2 cites what it rests on; or decline with `spice room leave \
-         {design} --clause TEXT`. Until one answer publishes, `spice task next` returns this \
-         request instead of allocating. It grants no claim and starts no work; you hear this \
-         room's later posts until you leave it. {cite}",
-        ask.text,
+        "Weigh any one or more of these questions:{questions}{recharge}\n\
+         Read its room with `spice room history {design}` (`spice://task/{design}/room`). Weigh \
+         question N with `spice room contribute {design} --charge=C --question N [--cite \
+         KEY...] TEXT`, where C runs from -2 to +2, ±1 is an opinion, and 0 or ±2 cites what it \
+         rests on; or decline with `spice room leave {design} --clause TEXT`. Until one answer \
+         publishes, `spice task next` returns this request instead of allocating; one answer \
+         settles it. It grants no claim and starts no work; you hear this room's later posts \
+         until you leave it. {cite}",
     )
 }
 

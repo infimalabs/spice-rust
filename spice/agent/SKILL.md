@@ -21,7 +21,7 @@ An unkeyed private `<system-notice>` is authoritative action, not steering:
 obey without ACK/NAK. An assignment requires immediate `spice task show`; a
 lapse means stop that task, treat unpublished commits as loose, and show it
 before allocation. An owed Design request selected from the continuing
-session's retained evidence precedes allocation. Answer its question once with
+session's retained evidence precedes allocation. Answer one listed question with
 `spice room contribute --question N` or `spice room leave --clause`; it grants
 no claim or work. A generation reminder requires `spice task reclaim`.
 

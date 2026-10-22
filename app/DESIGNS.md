@@ -173,7 +173,7 @@ The native command surface is `spice room status HANDLE`,
 `spice room start|resume HANDLE ADDRESS --criterion TEXT --contribution TEXT
 --stop TEXT`, and `spice room put-aside HANDLE`. Nothing repeats a Start or
 Resume on the operator's behalf: each asks one lane to hold and propose, and
-only another operator command, or Design outreach's own one-request-per-item
+only another operator command, or Design outreach's own once-per-item-per-session
 bound, asks again.
 
 ## Room standing
