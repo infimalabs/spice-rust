@@ -238,9 +238,15 @@ owns each rule summarized here.
   holder, and a passive Design to no lane. Among free lanes the resident ranks
   by the TF-IDF match Design awareness uses, with no stance floor: each seated
   lane scores its occupant's continuing session profile against the Design's
-  current statement, and only when no seated lane is free does a vacant lane
-  the lifecycle may wake compete, scoring its best retained session. Higher
-  score wins, then the lower lane identity. The recipient gets one ordinary
+  current statement, and each vacant lane the lifecycle may wake scores its
+  best retained session. The Design's own task cards, retained when a lane
+  completed one of its phases, never score, so the score measures only other
+  related work; a lane whose scored profile holds such a card has worked the
+  Design and is chosen only as a last resort, as a review reaches its author
+  only when no peer can take it. Every free lane that has not worked the
+  Design, seated first and then vacant, outranks every lane that has; within
+  either group a seated lane outranks a vacant one, then the higher score
+  wins, then the lower lane identity. The recipient gets one ordinary
   operator MSG in the Design's room, which wakes a vacant lane as any operator
   direction does and reaches its first seat. The message stands alone: it
   names the Design and its title, says the operator pushed it to proposal,
@@ -252,8 +258,9 @@ owns each rule summarized here.
   it first. Capture by name stays open to any lane, and a later nudge's hold
   replaces an earlier one. Once the recipient acknowledges or declines that
   message, the browser stops marking the posts it carried as unheard. The
-  reply names the recipient and its match score, or says no lane could take
-  the Design, which then waits ready for allocation.
+  reply names the recipient and its match score, says when it is a last
+  resort, or says no lane could take the Design, which then waits ready for
+  allocation.
 
   Every surface names the same cycle state, who acts next, and the exact
   command: `task show` and `task status`, `board` rows, dry and empty drain,

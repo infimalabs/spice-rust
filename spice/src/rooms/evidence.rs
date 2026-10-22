@@ -494,6 +494,22 @@ impl<K> EvidenceProfile<K> {
         frequency: &FrequencyProfile,
         vector: &Prepared,
     ) -> Result<Option<f64>, GenerationMismatch> {
+        self.best_score_where(frequency, vector, |_| true)
+    }
+
+    /// [`best_score`](Self::best_score) over the retained cards whose key
+    /// `keep` admits.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a vector weighted under a generation other than
+    /// `frequency`'s.
+    pub fn best_score_where(
+        &mut self,
+        frequency: &FrequencyProfile,
+        vector: &Prepared,
+        keep: impl Fn(&K) -> bool,
+    ) -> Result<Option<f64>, GenerationMismatch> {
         let generation = frequency.generation();
         if vector.generation() != generation {
             return Err(GenerationMismatch {
@@ -503,6 +519,9 @@ impl<K> EvidenceProfile<K> {
         }
         let mut best: Option<f64> = None;
         for card in &mut self.cards {
+            if !keep(&card.evidence.key) {
+                continue;
+            }
             card.prepare(frequency);
             let Some((_, views)) = &card.prepared else {
                 continue;
@@ -515,6 +534,12 @@ impl<K> EvidenceProfile<K> {
             }
         }
         Ok(best)
+    }
+
+    /// Whether any retained card's key satisfies `predicate`.
+    #[must_use]
+    pub fn holds(&self, predicate: impl Fn(&K) -> bool) -> bool {
+        self.cards.iter().any(|card| predicate(&card.evidence.key))
     }
 }
 

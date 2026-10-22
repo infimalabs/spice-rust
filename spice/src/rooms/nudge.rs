@@ -8,20 +8,38 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use board::similarity::{FrequencyProfile, GenerationMismatch, Prepared};
-use wire::CanonicalUuid;
+use wire::{CanonicalUuid, TaskStamp};
 
-use super::profile::SessionProfiles;
+use super::profile::{EvidenceKey, SessionProfiles};
 
 /// The lane a nudge messages and how well its retained profile matched.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Recipient {
     /// Logical lane the message addresses.
     pub lane: CanonicalUuid,
-    /// Best cosine of the lane's retained cards against the Design statement;
-    /// zero when no card scores.
+    /// Best cosine of the lane's retained cards, less the Design's own,
+    /// against the Design statement; zero when no card scores.
     pub score: f64,
     /// Whether an occupant is seated; otherwise the message wakes the lane.
     pub seated: bool,
+    /// Whether the lane already worked a phase of the Design, so it was chosen
+    /// only because no free lane that had not worked it could take it.
+    pub last_resort: bool,
+}
+
+impl Recipient {
+    /// Whether this lane is messaged ahead of `known`: a lane that never
+    /// worked the Design first, then seated over vacant, then the higher
+    /// score. Equal ranks keep `known`, the lower identity, because lanes
+    /// arrive in ascending identity order within each group.
+    fn outranks(&self, known: &Self) -> bool {
+        known
+            .last_resort
+            .cmp(&self.last_resort)
+            .then_with(|| self.seated.cmp(&known.seated))
+            .then_with(|| self.score.total_cmp(&known.score))
+            == Ordering::Greater
+    }
 }
 
 /// The lanes free to take a nudged Design: no active claim but the Design's.
@@ -33,14 +51,16 @@ pub struct FreeLanes {
     pub vacant: BTreeSet<CanonicalUuid>,
 }
 
-/// The recipient of one nudge.
+/// The recipient of one nudge of the Design born `nudged`.
 ///
-/// A free seated lane always outranks a vacant one, which is messaged only when
-/// no seated lane is free. Within either group the higher score wins and equal
-/// scores go to the lowest lane identity. A seated lane scores its occupant's
-/// continuing session; a vacant lane scores the best of its retained sessions.
-/// `design` is absent when the statement weighs no term, so every lane scores
-/// zero.
+/// Every lane scores without the Design's own task cards, so the score
+/// measures only other related work; a lane whose scored profile holds such a
+/// card has worked the Design and is chosen only as a last resort, after every
+/// free lane that has not. Within either group a seated lane outranks a vacant
+/// one, then the higher score wins and equal scores go to the lowest lane
+/// identity. A seated lane scores its occupant's continuing session; a vacant
+/// lane scores the best of its retained sessions. `design` is absent when the
+/// statement weighs no term, so every lane scores zero.
 ///
 /// # Errors
 ///
@@ -51,58 +71,68 @@ pub fn choose(
     frequency: &FrequencyProfile,
     design: Option<&Prepared>,
     free: &FreeLanes,
+    nudged: &TaskStamp,
 ) -> Result<Option<Recipient>, GenerationMismatch> {
+    let own = |key: &EvidenceKey| matches!(key, EvidenceKey::Task { task, .. } if task == nudged);
+    let foreign = |key: &EvidenceKey| !own(key);
     let mut best: Option<Recipient> = None;
     for (&lane, &occupant) in &free.seated {
-        let score = match (design, profiles.session(lane, occupant).cloned()) {
-            (Some(design), Some(session)) => match profiles.profile_mut(&session) {
-                Some(profile) => profile.evidence_mut().best_score(frequency, design)?,
-                None => None,
-            },
-            _ => None,
-        };
-        offer(&mut best, lane, score, true);
-    }
-    if best.is_some() {
-        return Ok(best);
-    }
-    let mut retained = BTreeMap::<CanonicalUuid, Option<f64>>::new();
-    if let Some(design) = design {
-        for (session, profile) in profiles.iter_mut() {
-            if !free.vacant.contains(&session.lane) {
-                continue;
+        let (score, worked) = match profiles
+            .session(lane, occupant)
+            .cloned()
+            .and_then(|session| profiles.profile_mut(&session))
+        {
+            Some(profile) => {
+                let evidence = profile.evidence_mut();
+                let worked = evidence.holds(own);
+                let score = match design {
+                    Some(design) => evidence.best_score_where(frequency, design, foreign)?,
+                    None => None,
+                };
+                (score, worked)
             }
-            let score = profile.evidence_mut().best_score(frequency, design)?;
-            let known = retained.entry(session.lane).or_default();
+            None => (None, false),
+        };
+        offer(&mut best, lane, score, true, worked);
+    }
+    let mut retained = BTreeMap::<CanonicalUuid, (Option<f64>, bool)>::new();
+    for (session, profile) in profiles.iter_mut() {
+        if !free.vacant.contains(&session.lane) {
+            continue;
+        }
+        let evidence = profile.evidence_mut();
+        let (known, worked) = retained.entry(session.lane).or_default();
+        *worked |= evidence.holds(own);
+        if let Some(design) = design {
+            let score = evidence.best_score_where(frequency, design, foreign)?;
             if score.is_some_and(|score| known.is_none_or(|known| score > known)) {
                 *known = score;
             }
         }
     }
     for &lane in &free.vacant {
-        offer(
-            &mut best,
-            lane,
-            retained.get(&lane).copied().flatten(),
-            false,
-        );
+        let (score, worked) = retained.get(&lane).copied().unwrap_or_default();
+        offer(&mut best, lane, score, false, worked);
     }
     Ok(best)
 }
 
-/// Keep `lane` when it strictly outscores the current best. Lanes arrive in
-/// ascending identity order, so a tie keeps the lower identity.
-fn offer(best: &mut Option<Recipient>, lane: CanonicalUuid, score: Option<f64>, seated: bool) {
-    let score = score.unwrap_or(0.0);
-    if best
-        .as_ref()
-        .is_none_or(|known| score.partial_cmp(&known.score) == Some(Ordering::Greater))
-    {
-        *best = Some(Recipient {
-            lane,
-            score,
-            seated,
-        });
+/// Keep `lane` when it strictly outranks the current best.
+fn offer(
+    best: &mut Option<Recipient>,
+    lane: CanonicalUuid,
+    score: Option<f64>,
+    seated: bool,
+    last_resort: bool,
+) {
+    let candidate = Recipient {
+        lane,
+        score: score.unwrap_or(0.0),
+        seated,
+        last_resort,
+    };
+    if best.as_ref().is_none_or(|known| candidate.outranks(known)) {
+        *best = Some(candidate);
     }
 }
 
