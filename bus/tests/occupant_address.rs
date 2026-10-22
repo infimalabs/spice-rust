@@ -314,6 +314,7 @@ fn birth(position: u64, lane: u64, occupant: u64) -> OccupantBirth {
         lane: uuid(lane),
         occupant: uuid(occupant),
         epoch: uuid(EPOCH),
+        at: at(),
     }
 }
 

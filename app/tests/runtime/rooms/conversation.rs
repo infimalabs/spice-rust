@@ -57,6 +57,7 @@ fn told(position: u64, directive: &str, key: &str, from: &str, to: &str) -> serd
                 column: 1,
             },
             room: Some(room()),
+            addressed: None,
             expires: instant("2030-04-13T18:44:09.271Z"),
         },
     )

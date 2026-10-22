@@ -321,6 +321,7 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
         Ok(steering::Published::Sent {
             lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
             queued: queued.to_vec(),
+            redirected: Vec::new(),
             unreached: unreached.to_vec(),
             rooms: vec![room.clone()],
             operator: false,

@@ -156,25 +156,246 @@ fn a_residency_move_between_resolution_and_commit_publishes_to_nobody() {
     lanes.finish();
 }
 
-/// An expired address receives nothing, and its author learns what its birth
-/// lane seats in the view the packet resolved against. A still-valid address
-/// whose lane is vacant queues instead of following any future occupant.
+/// Lane `SECOND` vacated and reseated by a proved successor: the fixture, the
+/// expired first address, the successor's address, and both proved births.
+struct Reseated {
+    lanes: Lanes,
+    expired: OccupantAddress,
+    current: OccupantAddress,
+    renewed: CanonicalUuid,
+    expired_birth: bus::OccupantBirth,
+    successor_birth: bus::OccupantBirth,
+}
+
+impl Reseated {
+    fn new(tag: &str) -> Self {
+        let lanes = Lanes::new(tag);
+        let expired = lanes.address(SECOND);
+        lanes.vacate(SECOND);
+        let renewed = test_uuid(40);
+        lanes.renew(SECOND, renewed);
+        let current = lanes
+            .bus
+            .task_snapshot()
+            .expect("snapshot reads")
+            .facts()
+            .occupant_address(test_uuid(SECOND), renewed)
+            .expect("the renewed occupant has one birth");
+        assert_ne!(current, expired);
+        let birth = |address| {
+            lanes
+                .bus
+                .occupant_birth(address)
+                .expect("births read")
+                .expect("the address proves one birth")
+        };
+        let (expired_birth, successor_birth) = (birth(expired), birth(current));
+        assert_eq!(expired_birth.lane, successor_birth.lane);
+        Self {
+            lanes,
+            expired,
+            current,
+            renewed,
+            expired_birth,
+            successor_birth,
+        }
+    }
+
+    /// Publish one packet from `SENDER` to `addresses` at transcript `offset`.
+    fn publish(
+        &self,
+        offset: u64,
+        addresses: &[OccupantAddress],
+        body: &'static str,
+    ) -> Result<steering::Published, steering::Unpublished> {
+        let packet = steering::Packet {
+            lane: test_uuid(SENDER),
+            author: test_uuid(SENDER + 1),
+            locus: wire::body::TranscriptLocus {
+                source: Some(test_uuid(30)),
+                member: 1,
+                offset,
+                length: 10,
+                event: 0,
+                line: 1,
+                column: 1,
+            },
+            routes: direct(addresses),
+            body,
+            text: 0..body.len(),
+        };
+        let view = self.lanes.bus.task_snapshot().expect("snapshot reads");
+        steering::publish_packet(
+            &self.lanes.bus,
+            self.lanes.epoch,
+            &steer::Config::default(),
+            &packet,
+            &view,
+        )
+    }
+
+    fn interval(&self) -> String {
+        steer::inbox::compact_age(self.expired_birth.at, self.successor_birth.at)
+    }
+}
+
+/// An expired address whose lane now seats a proved successor reaches that
+/// successor: its directive records the named address, nothing is withheld,
+/// the author hears which route moved, and a reread publishes nothing more. A
+/// still-valid address whose lane is vacant queues instead of following any
+/// future occupant.
 #[test]
-fn an_expired_address_names_what_its_lane_seats_now() {
-    let lanes = Lanes::new("msg-renewed");
-    let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
-    lanes.vacate(SECOND);
+fn an_expired_address_reaches_the_proved_successor_its_lane_seats_now() {
+    let fixture = Reseated::new("msg-renewed");
+    let Reseated {
+        lanes,
+        expired,
+        current,
+        renewed,
+        ..
+    } = &fixture;
+    let first = lanes.address(FIRST);
     lanes.vacate(FIRST);
-    let renewed = test_uuid(40);
-    lanes.renew(SECOND, renewed);
-    let current = lanes
-        .bus
-        .task_snapshot()
-        .expect("snapshot reads")
-        .facts()
-        .occupant_address(test_uuid(SECOND), renewed)
-        .expect("the renewed occupant has one birth");
-    assert_ne!(current, second);
+
+    let resolved = fixture.publish(0, &[first, *expired, *current], "renewed");
+    assert_eq!(
+        resolved,
+        Ok(steering::Published::Sent {
+            lanes: vec![test_uuid(SECOND), test_uuid(SECOND)],
+            queued: vec![first],
+            redirected: vec![format!(
+                "{expired} expired; its lane now seats {current}, born {} after it",
+                fixture.interval()
+            )],
+            unreached: Vec::new(),
+            rooms: Vec::new(),
+            operator: false,
+            held_room: false,
+        })
+    );
+    assert!(
+        lanes.withheld().is_empty(),
+        "a redirected route withholds nothing"
+    );
+    let addressed = lanes
+        .messages()
+        .iter()
+        .map(|(_, message)| {
+            assert_eq!(
+                message.occupant, *renewed,
+                "both routes reach the seated successor"
+            );
+            assert_eq!(message.text, "renewed");
+            message.addressed
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(addressed, [Some(*expired), None]);
+
+    let again = fixture.publish(0, &[first, *expired, *current], "renewed");
+    assert_eq!(again, Ok(steering::Published::Already));
+    assert_eq!(lanes.messages().len(), 2, "a reread publishes nothing more");
+    fixture.lanes.finish();
+}
+
+/// The successor's inbox projects the named earlier address with both births
+/// and renders it in the redirected directive's header; a directly addressed
+/// directive on the same lane renders its ordinary header.
+#[test]
+fn a_redirected_message_tells_its_receiver_whom_it_named() {
+    let fixture = Reseated::new("msg-renewed-receiver");
+    let Reseated {
+        lanes,
+        expired,
+        current,
+        ..
+    } = &fixture;
+    fixture
+        .publish(0, &[*expired, *current], "renewed")
+        .expect("both routes deliver");
+
+    let pending = lanes.pending(SECOND);
+    let projected = pending
+        .iter()
+        .map(|directive| directive.addressed)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        projected,
+        [
+            Some(wire::intent::PeerAddressed {
+                address: *expired,
+                born: fixture.expired_birth.at,
+                successor_born: fixture.successor_birth.at,
+            }),
+            None,
+        ],
+        "only the redirected directive names the earlier occupant"
+    );
+    let rendered = steer::inbox::render_pending(
+        &"1kQnrzNZ".parse().expect("fixture seal"),
+        &pending,
+        fixture.successor_birth.at,
+        |_, _| None,
+    );
+    assert!(
+        rendered.contains(&format!(
+            " addressed {expired}] Sent to this lane's earlier occupant {expired}, born {} \
+             before you;",
+            fixture.interval()
+        )),
+        "{rendered}"
+    );
+    assert_eq!(
+        rendered.matches("[PEER sender").count(),
+        2,
+        "the directly addressed route renders its ordinary header: {rendered}"
+    );
+    fixture.lanes.finish();
+}
+
+/// Once the successor departs too, the older address stays expired and names
+/// that successor; only the latest address queues against the vacant lane.
+#[test]
+fn a_successor_departure_does_not_revive_an_older_address() {
+    let fixture = Reseated::new("msg-renewed-departed");
+    let Reseated {
+        lanes,
+        expired,
+        current,
+        ..
+    } = &fixture;
+    lanes.vacate(SECOND);
+
+    let resolved = fixture.publish(11, &[*expired, *current], "departed successor");
+    assert_eq!(
+        resolved,
+        Ok(sent_queued(
+            &[],
+            &[*current],
+            &[&format!(
+                "{expired} address::expired (its lane is vacant after {current})"
+            )]
+        )),
+    );
+    assert!(
+        lanes
+            .queued_messages()
+            .iter()
+            .any(|(_, queued)| queued.recipient == *current),
+        "only the latest address can queue against the vacant lane"
+    );
+    fixture.lanes.finish();
+}
+
+/// An expired address whose lane now seats an occupant the journal proves no
+/// birth for still receives nothing: the redirect follows only a proved
+/// successor, and the author hears the same refusal as before.
+#[test]
+fn an_expired_address_never_follows_an_unproved_successor() {
+    let lanes = Lanes::new("msg-unproved-successor");
+    let second = lanes.address(SECOND);
+    lanes.vacate(SECOND);
+    let unproved = test_uuid(41);
+    lanes.seat_unproved(SECOND, unproved);
     let packet = steering::Packet {
         lane: test_uuid(SENDER),
         author: test_uuid(SENDER + 1),
@@ -187,9 +408,9 @@ fn an_expired_address_names_what_its_lane_seats_now() {
             line: 1,
             column: 1,
         },
-        routes: direct(&[first, second, current]),
-        body: "renewed",
-        text: 0..7,
+        routes: direct(&[second]),
+        body: "to the unproved seat",
+        text: 0..20,
     };
     let view = lanes.bus.task_snapshot().expect("snapshot reads");
     let resolved = steering::publish_packet(
@@ -199,67 +420,16 @@ fn an_expired_address_names_what_its_lane_seats_now() {
         &packet,
         &view,
     );
-
-    assert_eq!(
-        resolved,
-        Ok(sent_queued(
-            &[SECOND],
-            &[first],
-            &[&format!(
-                "{second} address::expired (its lane seats {current})"
-            )]
-        ))
-    );
-    let messages = lanes.messages();
-    assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].1.occupant, renewed,
-        "only the address naming the renewed occupant reaches it"
-    );
-
-    lanes.vacate(SECOND);
-    let after_departure = steering::Packet {
-        lane: test_uuid(SENDER),
-        author: test_uuid(SENDER + 1),
-        locus: wire::body::TranscriptLocus {
-            source: Some(test_uuid(30)),
-            member: 1,
-            offset: 11,
-            length: 19,
-            event: 1,
-            line: 2,
-            column: 1,
-        },
-        routes: direct(&[second, current]),
-        body: "departed successor",
-        text: 0..19,
-    };
-    let view = lanes.bus.task_snapshot().expect("snapshot reads");
-    let resolved = steering::publish_packet(
-        &lanes.bus,
-        lanes.epoch,
-        &steer::Config::default(),
-        &after_departure,
-        &view,
-    );
-    assert_eq!(
-        resolved,
-        Ok(sent_queued(
-            &[],
-            &[current],
-            &[&format!(
-                "{second} address::expired (its lane is vacant after {current})"
-            )]
-        )),
-        "a successor's departure does not revive an older address"
-    );
     assert!(
-        lanes
-            .queued_messages()
-            .iter()
-            .any(|(_, queued)| queued.recipient == current),
-        "only the latest address can queue against the vacant lane"
+        matches!(
+            &resolved,
+            Err(steering::Unpublished::Refused { reason, detail })
+                if reason == "msg::recipient-unavailable"
+                    && detail.contains(&format!("{second} address::expired"))
+        ),
+        "{resolved:?}"
     );
+    assert!(lanes.messages().is_empty());
     lanes.finish();
 }
 

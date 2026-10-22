@@ -25,6 +25,7 @@ fn directive(ordinal: u128, stage: SteeringStage, text: &str) -> PendingDirectiv
         from: None,
         sender: None,
         room: None,
+        addressed: None,
         wakes: true,
         preview: None,
         control: None,

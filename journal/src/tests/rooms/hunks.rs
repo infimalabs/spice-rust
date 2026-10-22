@@ -344,6 +344,7 @@ fn peer_message(head: &TranscriptSourceHead, ordinal: u8, room: &TaskStamp) -> S
             column: 1,
         },
         room: Some(room.clone()),
+        addressed: None,
         expires: "2030-04-12T19:44:09.271Z".parse().expect("fixture expiry"),
     }
 }

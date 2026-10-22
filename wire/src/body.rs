@@ -184,12 +184,14 @@ impl SteerReplied {
 /// An authored MSG packet opened one peer message to one exact recipient.
 ///
 /// The packet's assistant transcript record is the source evidence, and the
-/// resident journals one fact per seated recipient in a single guarded write;
-/// a recipient no occupant seats receives nothing. The directive identity is
-/// derived from the source packet and the recipient, so rereading the same
-/// packet never opens a second message. The opened directive is ordinary peer
-/// steering bound to the recipient lane, which whichever occupant sits there
-/// hears and answers; answering it replies to `from`.
+/// resident journals one fact per admitted recipient in a single guarded
+/// write. The directive identity is derived from the source packet and the
+/// address the route named, so rereading the same packet never opens a second
+/// message. The opened directive is ordinary peer steering bound to the
+/// recipient lane, which whichever occupant sits there hears and answers;
+/// answering it replies to `from`. A route naming an earlier occupant of a
+/// lane the residency now seats with a proved successor delivers to that
+/// successor and keeps the named address as `addressed`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteerMessaged {
@@ -219,6 +221,15 @@ pub struct SteerMessaged {
         deserialize_with = "crate::optional::present"
     )]
     pub room: Option<crate::rooms::RoomAnchor>,
+    /// The earlier address the route named when `occupant` is its proved
+    /// successor on the same lane; absent when the route named `occupant`'s
+    /// own address.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub addressed: Option<OccupantAddress>,
     /// Instant the message expires without a disposition.
     pub expires: Instant,
 }

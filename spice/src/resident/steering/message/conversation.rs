@@ -87,6 +87,10 @@ pub(super) fn publish_conversation(
             .filter(|target| target.occupant.is_none())
             .map(|target| target.recipient)
             .collect(),
+        redirected: targets
+            .iter()
+            .filter_map(|target| target.redirected.as_ref().map(Redirected::note))
+            .collect(),
         unreached,
         rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
         operator: true,
