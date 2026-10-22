@@ -1,8 +1,8 @@
-# Tracked repository policy owned by Rust Spice. Every active entry is admitted
-# through Rust Spice's typed configuration registry and compiled Gate.
+# Tracked repository policy. Every active entry is admitted through Spice's
+# typed configuration registry and compiled Gate.
 
 [wrappers]
-# Agent-authored `spice` commands stay on the repository-local Rust appliance.
+# Agent-authored `spice` commands stay on the repository-local appliance.
 # The runtime resolves this declarative reference beneath the Git-common
 # directory and refuses redirected, escaping, or non-executable installed
 # commands.
@@ -27,7 +27,7 @@ lsp = true
 enabled = true
 
 [policy]
-# The installed Rust hook reaches this source tree's current gate through the
+# The installed hook reaches this source tree's current gate through the
 # exact Git-common appliance and its private dev-Cargo lifecycle rather than
 # ambient Cargo. The configured-command trust boundary keeps this exact argv
 # inert until an operator grants the digest of these tracked bytes.
