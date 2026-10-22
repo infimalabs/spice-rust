@@ -59,6 +59,40 @@ impl TaskText {
     }
 }
 
+/// `description` collapsed to one line: its line count and the resource that
+/// expands exactly it, or `-` when there is none.
+pub(crate) fn collapsed_description(handle: &TaskHandle, description: Option<&str>) -> String {
+    let lines = description
+        .filter(|text| !text.trim().is_empty())
+        .map_or(0, |text| text.lines().count());
+    collapsed("description", lines, "line", handle, TaskText::Description)
+}
+
+/// `acceptance` collapsed to one line under `label` (`questions` for a
+/// Design): its item count and the resource that expands exactly it.
+pub(crate) fn collapsed_acceptance(
+    handle: &TaskHandle,
+    label: &str,
+    acceptance: &[String],
+) -> String {
+    let items = acceptance
+        .iter()
+        .filter(|item| !item.trim().is_empty())
+        .count();
+    collapsed(label, items, "item", handle, TaskText::Acceptance)
+}
+
+fn collapsed(label: &str, count: usize, unit: &str, handle: &TaskHandle, text: TaskText) -> String {
+    match count {
+        0 => format!("{label}: -"),
+        1 => format!("{label}: 1 {unit} spice://task/{handle}/{}", text.name()),
+        count => format!(
+            "{label}: {count} {unit}s spice://task/{handle}/{}",
+            text.name()
+        ),
+    }
+}
+
 /// The acceptance items a written text names, in order.
 ///
 /// A line beginning `- ` (or a lone `-`) opens an item; every other line

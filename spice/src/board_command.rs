@@ -160,7 +160,9 @@ use steering_origin::*;
 mod task_step;
 use task_step::*;
 mod task_text;
-pub(crate) use task_text::{TaskText, current_task, replace_text};
+pub(crate) use task_text::{
+    TaskText, collapsed_acceptance, collapsed_description, current_task, replace_text,
+};
 #[cfg(test)]
 use task_text::{acceptance_items, text_edit};
 mod taste_review;

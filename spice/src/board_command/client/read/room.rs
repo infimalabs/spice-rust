@@ -103,6 +103,7 @@ pub(in crate::board_command) fn claim_room_context(
     room: &TaskStamp,
 ) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {
     let options = TaskShowOptions {
+        full: false,
         context: false,
         history: true,
         limit: None,

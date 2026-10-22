@@ -49,7 +49,7 @@ impl TaskAssignmentNotice {
     fn text(&self) -> String {
         format!(
             "<system-notice>\nTask {} was assigned to this lane in phase {}. Continue \
-             this task now; run `spice task show {}` for its contract before asking \
+             this task now; run `spice task show {} --full` for its contract before asking \
              the allocator for work. This is a private assignment notice; no \
              acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
             self.task, self.phase, self.task,

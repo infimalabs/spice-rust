@@ -266,7 +266,7 @@ fn assignment_notice(
 ) -> Option<String> {
     let claim = (matches!(moment, BriefingMoment::Startup)).then_some(claim)??;
     Some(format!(
-        "# Task already assigned\n\n`{}` is already assigned to this lane in phase `{}`: {}. Continue this task now; run `spice task show {}` for its contract before asking the allocator for work.",
+        "# Task already assigned\n\n`{}` is already assigned to this lane in phase `{}`: {}. Continue this task now; run `spice task show {} --full` for its contract before asking the allocator for work.",
         claim.handle, claim.phase, claim.title, claim.handle,
     ))
 }
@@ -804,6 +804,7 @@ mod tests {
             phase: "todo".to_owned(),
             status: "pending".to_owned(),
             title: "Carry the assigned task".to_owned(),
+            pitch: "The holder resumes its work.".to_owned(),
             lease_expiry: None,
             flow: vec!["todo".to_owned(), "review".to_owned()],
             description: None,

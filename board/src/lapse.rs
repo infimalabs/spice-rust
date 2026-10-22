@@ -369,6 +369,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
             request.epoch,
             intent::ClaimAnswer {
                 task,
+                statement: None,
                 holder: None,
                 expiry: None,
                 warnings: Box::default(),
@@ -591,6 +592,7 @@ mod tests {
                 uuid(22),
                 intent::ClaimAnswer {
                     task: task(),
+                    statement: None,
                     holder: Some(actor),
                     expiry: None,
                     warnings: Box::default(),

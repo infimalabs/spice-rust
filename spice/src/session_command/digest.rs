@@ -4,9 +4,10 @@
 //! Sections are ranked once, here. Each keeps whole rows while they fit and
 //! then names its continuation, so what folds away is always one exact
 //! command from the page. A section that cannot start at all is named in the
-//! closing lines. Text rows are whitespace-collapsed before they arrive, so
-//! every row is one line and the ceiling is a byte count of what the agent
-//! reads.
+//! closing lines. The held claim alone is never cut: its holder works from its
+//! whole statement, so the sections below it fold instead. Text rows are
+//! whitespace-collapsed before they arrive, so every row is one line and the
+//! ceiling is a byte count of what the agent reads.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -86,7 +87,7 @@ pub(super) fn fold(report: &Report, files: &[String]) -> String {
             INBOX,
         ),
     }
-    page.whole("Held claim", held(held_work), "spice task show HANDLE");
+    page.exempt("Held claim", held(held_work));
     page.whole(
         "Unknown",
         unknowns
@@ -202,6 +203,15 @@ impl Page {
         self.section(title, rows, total, more);
     }
 
+    /// Every row whole, past the ceiling: the held claim is what its holder
+    /// works from, so lower sections fold to make room rather than it.
+    fn exempt(&mut self, title: &'static str, rows: Vec<String>) {
+        let _ = write!(self.text, "\n## {title}\n");
+        for row in rows {
+            let _ = writeln!(self.text, "- {row}");
+        }
+    }
+
     /// Rows while they fit, then one line naming what was withheld and the
     /// command that reads it. `total` counts rows a source already withheld.
     fn section(&mut self, title: &'static str, rows: Vec<String>, total: usize, more: &str) {
@@ -311,6 +321,7 @@ fn held(held_work: &HeldWorkView) -> Vec<String> {
         claim.status,
         claim.flow.join(" → ")
     ));
+    rows.push(format!("pitch: {}", claim.pitch));
     if let Some(description) = &claim.description {
         rows.push(format!("description: {description}"));
     }
@@ -503,10 +514,13 @@ mod tests {
                     phase: "todo".to_owned(),
                     status: "pending".to_owned(),
                     title: "held title".to_owned(),
+                    pitch: "held pitch".to_owned(),
                     lease_expiry: None,
                     flow: vec!["todo".to_owned(), "review".to_owned()],
-                    description: Some(text(bytes)),
-                    acceptance: (0..rows).map(|_| text(bytes)).collect(),
+                    description: Some("word ".repeat(bytes / 5)),
+                    acceptance: (0..rows)
+                        .map(|index| format!("criterion {index} {}", "word ".repeat(bytes / 5)))
+                        .collect(),
                 }),
                 own_claim_unread: None,
                 peer_claims: Some(rows),
@@ -586,8 +600,10 @@ mod tests {
     fn an_oversized_briefing_folds_under_its_ceiling_and_names_every_cut() {
         for (rows, bytes) in [(8, 400), (16, 1024), (64, 2000)] {
             let page = fold(&recall(rows, bytes), &["/t/x.jsonl".to_owned()]);
+            // The held claim is exempt; everything else stays under it.
+            let held = section(&page, "Held claim");
             assert!(
-                page.len() <= BRIEFING_BYTES,
+                page.len() - held.len() <= BRIEFING_BYTES,
                 "{rows}x{bytes}: {}",
                 page.len()
             );
@@ -666,6 +682,34 @@ mod tests {
         // Pressure folds the lowest-ranked sections first.
         assert!(!folds(&page).is_empty(), "{page}");
         assert!(!page.contains("## Recently touched paths"));
+    }
+
+    #[test]
+    fn the_held_claim_stays_whole_while_lower_sections_fold() {
+        let page = fold(&recall(64, 2000), &[]);
+        let held = section(&page, "Held claim");
+        let words = "word ".repeat(400);
+        assert!(held.contains("\n- pitch: held pitch\n"), "{held}");
+        assert!(
+            held.contains(&format!("\n- description: {words}\n")),
+            "{held}"
+        );
+        for index in 0..64 {
+            let row = format!("\n- accept {}: criterion {index} {words}\n", index + 1);
+            assert!(held.contains(&row), "{row} is cut: {held}");
+        }
+        assert!(page.contains("folded away"), "{page}");
+    }
+
+    /// One section of `page`, from its heading to the next one.
+    fn section<'page>(page: &'page str, title: &str) -> &'page str {
+        let start = page
+            .find(&format!("\n## {title}\n"))
+            .expect("the section is shown");
+        let end = page[start + 1..]
+            .find("\n## ")
+            .map_or(page.len(), |offset| start + 1 + offset);
+        &page[start..end]
     }
 
     #[test]

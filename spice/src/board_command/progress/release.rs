@@ -187,6 +187,7 @@ pub(in crate::board_command) fn claim_free(
     }
     let answer = wire::intent::ClaimAnswer {
         task: entry.handle().clone(),
+        statement: None,
         holder: None,
         expiry: None,
         warnings: Box::default(),

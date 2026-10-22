@@ -106,7 +106,8 @@ pub(super) fn client_show(
             ],
             dependencies: true,
             claims: false,
-            history: options.context || options.history,
+            // A collapsed show counts the history it does not print.
+            history: !options.full || options.context || options.history,
         },
     ) {
         Outcome::Reply(Reply {
@@ -178,8 +179,12 @@ pub(super) fn client_show(
     }
 }
 
+/// What one `task show` prints beyond the statement head. Without `full`, the
+/// description, acceptance, and unrequested history each collapse to one line
+/// naming its count and the `spice://` resource that expands exactly it.
 #[derive(Clone)]
 pub(in crate::board_command) struct TaskShowOptions {
+    pub(in crate::board_command) full: bool,
     pub(in crate::board_command) context: bool,
     pub(in crate::board_command) history: bool,
     pub(in crate::board_command) limit: Option<usize>,
@@ -190,6 +195,7 @@ pub(in crate::board_command) struct TaskShowOptions {
 
 impl TaskShowOptions {
     fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
+        let full = matches.get_flag("full");
         let context = matches.get_flag("context");
         let history = matches.get_flag("history");
         let limit = numeric_option(matches, "limit", "task::show-limit")?;
@@ -223,6 +229,7 @@ impl TaskShowOptions {
             ));
         }
         Ok(Self {
+            full,
             context,
             history,
             limit,
@@ -378,6 +385,49 @@ impl<'a> TaskShowHistory<'a> {
     }
 }
 
+/// The history `spice task show HANDLE --history` prints, collapsed to one
+/// line: its closure and workflow steps counted, with the resource that
+/// expands exactly it.
+fn collapsed_history(handle: &TaskHandle, history: TaskShowHistory<'_>) -> String {
+    match history.steps.len() + usize::from(history.closure.is_some()) {
+        0 => "history: -".to_owned(),
+        1 => format!("history: 1 step spice://task/{handle}/history"),
+        steps => format!("history: {steps} steps spice://task/{handle}/history"),
+    }
+}
+
+/// The description and acceptance (a Design's questions) whole, each line
+/// indented under its label, as `task show --full` prints them.
+fn push_full_statement(lines: &mut Vec<String>, statement: &wire::intent::BoardStatement) {
+    lines.push("description:".to_owned());
+    match statement
+        .description
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        Some(text) => lines.extend(text.lines().map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("  {line}")
+            }
+        })),
+        None => lines.push("  -".to_owned()),
+    }
+    lines.push(format!("{}:", task_items_label(statement)));
+    if !substantive_acceptance(&statement.acceptance) {
+        lines.push("  -".to_owned());
+    } else {
+        for item in statement
+            .acceptance
+            .iter()
+            .filter(|item| !item.trim().is_empty())
+        {
+            push_bulleted(lines, item);
+        }
+    }
+}
+
 fn task_flow_line(flow: &[wire::Phase]) -> String {
     let phase_bytes = flow.iter().map(|phase| phase.as_str().len()).sum::<usize>();
     let mut line =
@@ -418,6 +468,7 @@ pub(in crate::board_command) fn task_show_with_origin(
         origin_context,
         None,
         &TaskShowOptions {
+            full: true,
             context: true,
             history: true,
             limit: Some(maximum.rows),
@@ -494,31 +545,20 @@ pub(in crate::board_command) fn task_show_bounded(
             "blocked"
         }
     ));
-    lines.push("description:".to_owned());
-    match statement
-        .description
-        .as_deref()
-        .filter(|text| !text.trim().is_empty())
-    {
-        Some(text) => lines.extend(text.lines().map(|line| {
-            if line.is_empty() {
-                String::new()
-            } else {
-                format!("  {line}")
-            }
-        })),
-        None => lines.push("  -".to_owned()),
-    }
-    lines.push(format!("{}:", task_items_label(statement)));
-    if !substantive_acceptance(&statement.acceptance) {
-        lines.push("  -".to_owned());
+    if options.full {
+        push_full_statement(&mut lines, statement);
     } else {
-        for item in statement
-            .acceptance
-            .iter()
-            .filter(|item| !item.trim().is_empty())
-        {
-            push_bulleted(&mut lines, item);
+        lines.push(crate::board_command::collapsed_description(
+            &statement.handle,
+            statement.description.as_deref(),
+        ));
+        lines.push(crate::board_command::collapsed_acceptance(
+            &statement.handle,
+            task_items_label(statement),
+            &statement.acceptance,
+        ));
+        if !options.history {
+            lines.push(collapsed_history(&statement.handle, history));
         }
     }
     lines.push("depends:".to_owned());
@@ -795,6 +835,9 @@ fn task_show_continuation(
     };
     let limits = options.budget().resume();
     let mut arguments = vec!["show".to_owned(), handle.to_string()];
+    if options.full {
+        arguments.push("--full".to_owned());
+    }
     if options.context {
         arguments.push("--context".to_owned());
     }

@@ -108,12 +108,12 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         _ => "",
     };
     let head = format!(
-        "Design request {design} \"{}\" at statement revision {} matched your work on: {}.{cast} \
-         The profile was evaluated at {opportunity}.\nSupporting work: {support}\nPitch: {}\n",
+        "Pitch: {}\nDesign request {design} \"{}\" at statement revision {} matched your work \
+         on: {}.{cast} The profile was evaluated at {opportunity}.\nSupporting work: {support}\n",
+        request.pitch,
         request.title,
         request.statement,
         request.terms.join(", "),
-        request.pitch,
     );
     if !request.asks.is_empty() {
         return format!("{head}{}", item_request(request));

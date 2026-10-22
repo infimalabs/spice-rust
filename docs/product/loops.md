@@ -173,6 +173,18 @@ flowchart LR
   substantive description sentence or else the title, a `task oops` report
   from its title. The appliance never rewrites an existing description. The
   Design request prints the stored pitch.
+- Text surfaces lead with title, then pitch, and prose collapses behind one
+  line per block naming its count and the `spice://` resource that expands
+  exactly it; nothing is cut with an ellipsis. `task show` prints
+  `description: N lines spice://task/HANDLE/description`, `acceptance: N items
+  spice://task/HANDLE/acceptance` (`questions` for a Design), and `history: N
+  steps spice://task/HANDLE/history`; `task show --full` prints every block
+  whole. Where the holder works nothing collapses: the held-claim briefing and a
+  fresh claim's answer carry the whole description and acceptance, and every
+  assignment points at `task show HANDLE --full`. Task list and board rows print
+  title and pitch; a room catch-up names each room's title, pitch, and
+  description count line; a Design request opens with its `Pitch:` line and
+  quotes each matched question whole.
 - `task add --draft` (and `task plan --draft`, `task design --draft`) records a
   typed Draft: prospective work under an admitted public project, distinct from
   Filed work. Default reads show it only to the operator and its origin thread,
