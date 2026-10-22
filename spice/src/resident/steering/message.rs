@@ -541,11 +541,12 @@ type Directed = (OccupantAddress, Option<TaskHandle>);
 /// occupant has departed queues one lane-scoped directive. An expired address
 /// whose lane now seats a later proved occupant delivers to that occupant,
 /// recording the address it named so both ends hear about the change; once
-/// that successor departs too, the older address stays expired. Every `#`
-/// context must name a task the view holds, or the whole packet refuses; each
-/// room a packet names records the packet's exact transcript bytes once. A
-/// packet that can neither deliver nor queue and names no room publishes
-/// nothing.
+/// that successor departs too, the older address stays expired. A route that
+/// resolves onto the author's own lane under any code, or two routes that
+/// resolve onto one seat, refuse the whole packet. Every `#` context must name
+/// a task the view holds, or the whole packet refuses; each room a packet
+/// names records the packet's exact transcript bytes once. A packet that can
+/// neither deliver nor queue and names no room publishes nothing.
 pub(in crate::resident) fn publish_packet(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -587,8 +588,14 @@ fn publish_message(
     let Some(record) = resolve_rooms(bus, packet, view, sender)? else {
         return Ok(Published::Already);
     };
-    let (targets, unreached) =
-        resolve_targets(bus, &residency.body().lanes, view, &directed, &identities)?;
+    let (targets, unreached) = resolve_targets(
+        bus,
+        &residency.body().lanes,
+        view,
+        packet.lane,
+        &directed,
+        &identities,
+    )?;
     if targets.is_empty() && record.rooms.is_empty() {
         return Err(Unpublished::Refused {
             reason: UNAVAILABLE.to_owned(),
@@ -927,11 +934,14 @@ fn resolve_rooms(
 /// removed, or expired address receives nothing. A proved address whose birth
 /// lane is currently vacant opens a lane-scoped queued directive; one whose
 /// birth lane now seats a later proved occupant delivers to that occupant,
-/// keeping the named address beside the route.
+/// keeping the named address beside the route. A route that resolves onto
+/// `author`'s own lane, or two routes that resolve onto one seat, refuse the
+/// whole packet as a self or repeated recipient.
 fn resolve_targets(
     bus: &Bus,
     residency: &[wire::LaneResidency],
     view: &bus::TaskSnapshot,
+    author: CanonicalUuid,
     directed: &[Directed],
     identities: &[CanonicalUuid],
 ) -> Result<(Vec<Target>, Vec<String>), Unpublished> {
@@ -981,7 +991,43 @@ fn resolve_targets(
             unreached.push(unavailable(bus, &lanes, view, *recipient)?);
         }
     }
+    admit_seats(author, &targets)?;
     Ok((targets, unreached))
+}
+
+/// Refuse the packet when a resolved route reaches its author's own lane under
+/// any code, or when two routes reach one seat under different codes, so a
+/// packet never reaches its author and opens at most one directive per seat.
+fn admit_seats(author: CanonicalUuid, targets: &[Target]) -> Result<(), Unpublished> {
+    if let Some(own) = targets.iter().find(|target| target.lane == author) {
+        return Err(Unpublished::Refused {
+            reason: "msg::recipient-self".to_owned(),
+            detail: format!(
+                "{} is an earlier address of the authoring occupant's own lane",
+                own.recipient
+            ),
+        });
+    }
+    let mut seats = BTreeMap::new();
+    for target in targets {
+        let Some(occupant) = target.occupant else {
+            continue;
+        };
+        if let Some(first) = seats.insert((target.lane, occupant), target) {
+            let current = [first, target]
+                .into_iter()
+                .find_map(|named| named.redirected.map(|route| route.successor.address))
+                .unwrap_or(target.recipient);
+            return Err(Unpublished::Refused {
+                reason: "msg::recipient-repeated".to_owned(),
+                detail: format!(
+                    "{} and {} both name the seat {current} holds",
+                    first.recipient, target.recipient
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The proved occupant now seated on an expired address's birth lane, when the

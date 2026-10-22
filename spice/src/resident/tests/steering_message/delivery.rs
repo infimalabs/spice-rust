@@ -257,11 +257,11 @@ fn an_expired_address_reaches_the_proved_successor_its_lane_seats_now() {
     let first = lanes.address(FIRST);
     lanes.vacate(FIRST);
 
-    let resolved = fixture.publish(0, &[first, *expired, *current], "renewed");
+    let resolved = fixture.publish(0, &[first, *expired], "renewed");
     assert_eq!(
         resolved,
         Ok(steering::Published::Sent {
-            lanes: vec![test_uuid(SECOND), test_uuid(SECOND)],
+            lanes: vec![test_uuid(SECOND)],
             queued: vec![first],
             redirected: vec![format!(
                 "{expired} expired; its lane now seats {current}, born {} after it",
@@ -277,24 +277,83 @@ fn an_expired_address_reaches_the_proved_successor_its_lane_seats_now() {
         lanes.withheld().is_empty(),
         "a redirected route withholds nothing"
     );
-    let addressed = lanes
-        .messages()
-        .iter()
-        .map(|(_, message)| {
-            assert_eq!(
-                message.occupant, *renewed,
-                "both routes reach the seated successor"
-            );
-            assert_eq!(message.text, "renewed");
-            message.addressed
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(addressed, [Some(*expired), None]);
+    let [(_, message)] = lanes.messages().try_into().expect("one message delivers");
+    assert_eq!(message.occupant, *renewed);
+    assert_eq!(message.text, "renewed");
+    assert_eq!(message.addressed, Some(*expired));
 
-    let again = fixture.publish(0, &[first, *expired, *current], "renewed");
+    let again = fixture.publish(0, &[first, *expired], "renewed");
     assert_eq!(again, Ok(steering::Published::Already));
-    assert_eq!(lanes.messages().len(), 2, "a reread publishes nothing more");
+    assert_eq!(lanes.messages().len(), 1, "a reread publishes nothing more");
     fixture.lanes.finish();
+}
+
+/// One packet naming an earlier code and the current code of one seat opens
+/// nothing: the two routes repeat one recipient, whatever contexts they carry.
+#[test]
+fn two_codes_for_one_seat_repeat_the_recipient() {
+    let fixture = Reseated::new("msg-renewed-repeated");
+    let Reseated {
+        lanes,
+        expired,
+        current,
+        ..
+    } = &fixture;
+    let resolved = fixture.publish(0, &[*expired, *current], "twice");
+    assert_eq!(
+        resolved,
+        Err(steering::Unpublished::Refused {
+            reason: "msg::recipient-repeated".to_owned(),
+            detail: format!("{expired} and {current} both name the seat {current} holds"),
+        })
+    );
+    assert!(lanes.messages().is_empty());
+    fixture.lanes.finish();
+}
+
+/// A lane's new occupant that names its own lane's earlier code reaches
+/// itself under no code: the packet refuses as a self recipient and no message
+/// from the lane to itself is written.
+#[test]
+fn an_earlier_code_of_the_authors_own_lane_is_a_self_recipient() {
+    let lanes = Lanes::new("msg-self-earlier");
+    let earlier = lanes.address(SENDER);
+    lanes.vacate(SENDER);
+    let renewed = test_uuid(42);
+    lanes.renew(SENDER, renewed);
+    let packet = steering::Packet {
+        lane: test_uuid(SENDER),
+        author: renewed,
+        locus: wire::body::TranscriptLocus {
+            source: Some(test_uuid(30)),
+            member: 1,
+            offset: 0,
+            length: 10,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        routes: direct(&[earlier]),
+        body: "to myself",
+        text: 0..9,
+    };
+    let view = lanes.bus.task_snapshot().expect("snapshot reads");
+    let resolved = steering::publish_packet(
+        &lanes.bus,
+        lanes.epoch,
+        &steer::Config::default(),
+        &packet,
+        &view,
+    );
+    assert_eq!(
+        resolved,
+        Err(steering::Unpublished::Refused {
+            reason: "msg::recipient-self".to_owned(),
+            detail: format!("{earlier} is an earlier address of the authoring occupant's own lane"),
+        })
+    );
+    assert!(lanes.messages().is_empty());
+    lanes.finish();
 }
 
 /// The successor's inbox projects the named earlier address with both births
@@ -310,8 +369,11 @@ fn a_redirected_message_tells_its_receiver_whom_it_named() {
         ..
     } = &fixture;
     fixture
-        .publish(0, &[*expired, *current], "renewed")
-        .expect("both routes deliver");
+        .publish(0, &[*expired], "renewed")
+        .expect("the earlier code redirects");
+    fixture
+        .publish(11, &[*current], "direct")
+        .expect("the current code delivers");
 
     let pending = lanes.pending(SECOND);
     let projected = pending
