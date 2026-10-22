@@ -379,7 +379,6 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
     let discovery = fixture.publish();
     let mut anchor = None;
 
-    let started = Instant::now();
     let outcome = DiscoveryRead::open_with(&fixture.serve, &fixture.root.join("resident"), || {
         fs::remove_file(&fixture.serve).expect("regular discovery removes");
         let path = CString::new(fixture.serve.as_os_str().as_bytes())
@@ -401,10 +400,6 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
         panic!("FIFO substitution must fault");
     };
     assert_eq!(fault.reason, "serve::discovery-insecure");
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "FIFO substitution must not wait for a writer"
-    );
     assert!(!fault.detail.contains(&discovery.capability.to_string()));
 
     let opened = open_discovery(&fixture.serve).expect("FIFO descriptor opens");

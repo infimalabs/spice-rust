@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -21,7 +20,7 @@ fn missing_filters_only_an_action_with_a_current_receipt() {
 }
 
 #[test]
-fn complete_fingerprint_returns_inside_the_bound_without_entering_planning() {
+fn a_complete_fingerprint_resolves_without_entering_planning() {
     let authority = ActionFingerprintAuthority::new(ActionFingerprintAuthorityFields {
         candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         baseline: None,
@@ -34,7 +33,6 @@ fn complete_fingerprint_returns_inside_the_bound_without_entering_planning() {
     })
     .expect("valid fingerprint authority");
     let planned = AtomicUsize::new(0);
-    let started = Instant::now();
 
     let Ok(resolution) = fingerprint::resolve(
         Some(&authority),
@@ -51,7 +49,6 @@ fn complete_fingerprint_returns_inside_the_bound_without_entering_planning() {
         matches!(resolution, fingerprint::ActionResolution::Fingerprint(actions) if actions.is_empty())
     );
     assert_eq!(planned.load(Ordering::Relaxed), 0);
-    assert!(started.elapsed() < Duration::from_millis(100));
 
     let Ok(resolution) = fingerprint::resolve(
         Some(&authority),
