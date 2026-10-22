@@ -414,6 +414,9 @@ enum PreparedExecution {
     Gate {
         arm: Box<spice::gate::PreparedArm<'static>>,
         tools: Vec<gate::ToolEvidence>,
+        /// Home admitted for the staged lock, held so its generation pin
+        /// outlives the arm's Cargo runs.
+        cargo_home: Option<std::sync::Arc<spice::cargo_isolation::PreparedHome>>,
     },
     Cargo(Box<cargo::Execution>),
 }
@@ -723,6 +726,7 @@ fn prepare_action_authorities(
             &gate_set,
             baseline.as_deref(),
             gate_id,
+            writable_root,
         )?);
     }
 
@@ -823,7 +827,12 @@ fn execute(action: PreparedAction, captures: &Path) -> Result<PendingReceipt, Pr
         PreparedExecution::Gate {
             arm,
             tools: expected_tools,
-        } => (tools::execute(*arm, expected_tools, captures)?, None),
+            cargo_home,
+        } => {
+            let result = tools::execute(*arm, expected_tools, captures)?;
+            drop(cargo_home);
+            (result, None)
+        }
         PreparedExecution::Cargo(execution) => cargo::execute(*execution, captures)?,
     };
     let duration_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);

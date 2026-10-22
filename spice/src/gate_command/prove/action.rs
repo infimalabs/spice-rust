@@ -8,8 +8,9 @@ pub(super) fn prepare(
     gate_set: &Digest,
     baseline: Option<&str>,
     gate_id: GateId,
+    writable_root: &Path,
 ) -> Result<PreparedAction, ProveFailure> {
-    let arm = staged
+    let mut arm = staged
         .anchor()
         .derive_reached_arm(staged.selection(), gate_id)
         .map_err(ProveFailure::run)?;
@@ -19,6 +20,18 @@ pub(super) fn prepare(
         .expect("requested actions are classified as reusable");
     let baseline = resolve_baseline(gate_id, reuse, baseline)?;
     let (tools, action_tool_evidence, tool_authority) = tools::prepare(&arm, &context)?;
+    // The app typecheck resolves the staged `Cargo.lock`; the command rim's
+    // home may be a seat pinned to an older generation, so the arm borrows the
+    // home admitted for that exact lock, as the Cargo shards do.
+    let cargo_home = if gate_id == GateId::AppWebTypecheck {
+        let authority = cargo::authority(arm.root(), arm.compiler_environment())?;
+        let (source, _) =
+            cargo::source_authority(writable_root, arm.root(), &authority.execution_environment)?;
+        arm.bind_cargo_home(source.home.home());
+        Some(source.home)
+    } else {
+        None
+    };
     let action_environment = normalized_action_environment(arm.compiler_environment());
     let (environment_names, environment) = environment(&action_environment)?;
     let inventory = inventory(
@@ -80,6 +93,7 @@ pub(super) fn prepare(
         execution: PreparedExecution::Gate {
             arm: Box::new(arm),
             tools: action_tool_evidence,
+            cargo_home,
         },
     })
 }
