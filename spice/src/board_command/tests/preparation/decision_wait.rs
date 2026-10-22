@@ -1,3 +1,4 @@
+use super::super::room::design_standing::{active_holder, refused, win_named};
 use super::withdrawal::withdraw;
 use super::*;
 
@@ -37,6 +38,86 @@ fn an_operator_nudge_readies_only_an_open_design_gathering_its_first_pass() {
         offered(&bus, epoch, &seats[0]),
         Some(design.born().expect("Design stamp"))
     );
+    clean(&root, bus);
+}
+
+/// A named claim on a steeping Design learns the cycle that holds it and the
+/// action that moves it, not the generic eligibility remedy; the nudge still
+/// readies it for the same capture.
+#[test]
+fn capture_and_recovery_of_a_steeping_design_name_its_cycle_and_next_action() {
+    let (root, bus, epoch, seats) = fixture("preparation-design-held-capture", 2);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Steeping design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    stand_design(&bus, epoch, &design);
+    let held = |rule: &str, cycle: wire::rooms::DesignCycle| {
+        let outcome = win_named(&bus, epoch, &seats[1], &design, rule);
+        assert_eq!(
+            refused(&outcome),
+            "claim::design-held",
+            "{rule}: {outcome:?}"
+        );
+        let Outcome::Refusal(refusal) = &outcome else {
+            unreachable!()
+        };
+        let detail = refusal.explanation().to_owned();
+        assert!(
+            detail.contains(&design.to_string()) && detail.contains(cycle.label()),
+            "{rule} names the Design and its cycle: {detail}"
+        );
+        detail
+    };
+
+    let gathering = held("capture", wire::rooms::DesignCycle::GatheringInput);
+    assert_eq!(
+        held("recover", wire::rooms::DesignCycle::GatheringInput),
+        gathering
+    );
+    assert!(
+        gathering.contains(&format!("spice preparation nudge {design}")),
+        "{gathering}"
+    );
+    assert_eq!(active_holder(&bus, epoch, &design), None);
+
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_committed(nudge_design(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &current,
+        &design,
+    ));
+    assert_committed(win_named(&bus, epoch, &seats[1], &design, "capture"));
+    assert_eq!(
+        active_holder(&bus, epoch, &design),
+        Some(Actor::Lane(seats[1].lane))
+    );
+
+    // Proposing ends the pass and releases the claim; the undecided proposal
+    // then holds the Design for the operator.
+    let output = add_plan_output(&bus, epoch, &design, "Selected output");
+    let (candidate, _) = retain_candidate_version(
+        &bus,
+        epoch,
+        &seats[1],
+        &design,
+        &[&output],
+        1_760_000_000_000_001,
+    );
+    assert_eq!(active_holder(&bus, epoch, &design), None);
+    let awaiting = held("capture", wire::rooms::DesignCycle::AwaitingDecision);
+    assert!(awaiting.contains("spice preparation decide"), "{awaiting}");
+
+    // Selecting the output and running it leaves the Design waiting on it.
+    select_candidate_outputs(&bus, epoch, &design, candidate, &[&output], 1);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &output);
+    let waiting = held("capture", wire::rooms::DesignCycle::WaitingOnSelectedWork);
+    assert!(waiting.contains("finish the work decision"), "{waiting}");
     clean(&root, bus);
 }
 

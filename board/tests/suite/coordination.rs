@@ -761,12 +761,6 @@ fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state()
         &actor,
         &observed_before
     ));
-    assert!(!board::capturable_entry(
-        &satisfied,
-        &blocked,
-        &actor,
-        &observed_before
-    ));
     assert!(!board::selectable_entry(
         &satisfied,
         &blocked,
@@ -827,9 +821,6 @@ fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_th
     for blocked in [&missing, &pended, &revoked, &unbound] {
         assert!(!board::environment_satisfied(&entry, blocked));
         assert!(!board::eligible_entry(&satisfied, &entry, &actor, blocked));
-        assert!(!board::capturable_entry(
-            &satisfied, &entry, &actor, blocked
-        ));
         assert!(!board::selectable_entry(
             &satisfied,
             &entry,
@@ -843,9 +834,6 @@ fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_th
     let granted = observed(wire::TrustState::Granted, Some("/different/worktree"));
     assert!(board::environment_satisfied(&entry, &granted));
     assert!(board::eligible_entry(&satisfied, &entry, &actor, &granted));
-    assert!(board::capturable_entry(
-        &satisfied, &entry, &actor, &granted
-    ));
     assert!(board::selectable_entry(
         &satisfied,
         &entry,

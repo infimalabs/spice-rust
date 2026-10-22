@@ -11,7 +11,7 @@ use wire::rooms::{
 };
 
 mod conversation;
-mod design_standing;
+pub(super) mod design_standing;
 
 fn room_projects() -> ProjectPolicy {
     ProjectPolicy::new(

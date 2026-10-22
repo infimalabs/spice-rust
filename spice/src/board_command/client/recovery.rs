@@ -184,6 +184,7 @@ fn capture_recovery_preflight(
     let eligible = if stealing {
         board::stealable_entry(&satisfied, entry, &board.principal, &board.environment())
     } else {
+        super::super::mutation::refuse_held_design(entry, &satisfied)?;
         board::eligible_entry(&satisfied, entry, &board.principal, &board.environment())
     };
     if !eligible {
