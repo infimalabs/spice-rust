@@ -146,18 +146,31 @@ pub(super) fn task_done(
         Ok(published) => published,
         Err(outcome) => return rollback_release(parked, outcome),
     };
-    let next = projected_done_next_action(&snapshot, entry, &transition, projects);
+    let carried = carries_claim(
+        transition.kind(),
+        &transition.next().flow,
+        published.as_ref(),
+        parked.is_some(),
+    );
+    let next = if carried {
+        Some(claim_activation_next_action(entry))
+    } else {
+        projected_done_next_action(&snapshot, entry, &transition, projects)
+    };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let answer = match append_done(
         &mut write,
+        command,
         done,
         entry,
         &transition,
+        at,
         published,
         source,
         next,
         parked.as_ref().map(|release| release.parked()),
+        carried,
     ) {
         Ok(answer) => answer,
         Err(outcome) => return rollback_release(parked, outcome),
@@ -202,7 +215,9 @@ fn done_entry<'a>(
 /// The committed reply for a completion this actor already landed.
 ///
 /// The snapshot indexes every landed terminal by task and operation, so a
-/// retry finds its committed position without walking the history.
+/// retry finds its committed position without walking the history. The phase
+/// fact the completion caused and the claim that phase fact caused, when the
+/// completion carried its claim, extend the committed range and the answer.
 fn replay_task_completion(
     facts: &bus::TaskFacts,
     command: &wire::AdmittedCommand,
@@ -220,14 +235,26 @@ fn replay_task_completion(
     {
         return None;
     }
-    let last = facts
-        .after(Some(first))
-        .next()
-        .and_then(|following| {
-            let phased = following.fact.read::<body::TaskPhased>()?;
-            (following.cause == Some(first) && phased.task == *entry.born())
-                .then_some(following.seq)
+    let mut following = facts.after(Some(first));
+    let phased = following.next().and_then(|following| {
+        let phased = following.fact.read::<body::TaskPhased>()?;
+        (following.cause == Some(first) && phased.task == *entry.born())
+            .then_some((following.seq, phased.phase))
+    });
+    let carried = phased.as_ref().and_then(|(phased, phase)| {
+        let following = following.next()?;
+        let won = following.fact.read::<body::ClaimWon>()?;
+        (following.cause == Some(*phased) && won.task == *entry.born()).then(|| {
+            (
+                following.seq,
+                carried_claim_answer(entry, &won.actor, phase, won.until),
+            )
         })
+    });
+    let last = carried
+        .as_ref()
+        .map(|(seq, _)| *seq)
+        .or_else(|| phased.as_ref().map(|(seq, _)| *seq))
         .unwrap_or(first);
     Some(Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
@@ -235,7 +262,7 @@ fn replay_task_completion(
             task: entry.handle().clone(),
             status: terminal.status.to_string(),
             completion: None,
-            claim: None,
+            claim: carried.map(|(_, claim)| Box::new(claim)),
             closed: Vec::new(),
             next: terminal.next,
         }),
@@ -497,15 +524,45 @@ fn admit_disposition(
     }
 }
 
+/// Whether a completion carries its claim into the phase it enters rather than
+/// freeing it: nothing published or parked, and another declared phase after
+/// the one entered. A review phase is never carried, because the lane that
+/// completed the work cannot be seated as its reviewer.
+pub(super) fn carries_claim(
+    kind: &board::TransitionKind,
+    flow: &[wire::Phase],
+    published: Option<&body::GitBoundary>,
+    parks: bool,
+) -> bool {
+    let board::TransitionKind::Advance { to, .. } = kind else {
+        return false;
+    };
+    if parks || published.is_some_and(|boundary| boundary.local_commits > 0) {
+        return false;
+    }
+    to.as_str() != "review"
+        && flow
+            .iter()
+            .position(|phase| phase == to)
+            .is_some_and(|index| index + 1 < flow.len())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one completion, its workflow change, and the claim it frees or carries share one write"
+)]
 fn append_done(
     write: &mut JournalWrite,
+    command: &wire::AdmittedCommand,
     done: &TaskDone,
     entry: &Entry,
     transition: &board::Transition,
+    at: Instant,
     published: Option<body::GitBoundary>,
     source: body::SourceBoundary,
     next: Option<Box<str>>,
     parked: Option<&body::TaskParkedCommits>,
+    carried: bool,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let status = transition.next().status.as_str().to_owned();
     let terminal_status = if transition.next().status.is_pending() {
@@ -525,8 +582,8 @@ fn append_done(
                     status: terminal_status,
                     next: next.clone(),
                 }),
-                git: published,
-                source,
+                git: published.clone(),
+                source: source.clone(),
                 disposition: done.disposition.clone(),
             },
             FactCause::Root,
@@ -546,6 +603,44 @@ fn append_done(
     };
     let workflow = transition.next().clone();
     write.workflow_head(entry.born().clone(), workflow_fact, move |_| workflow);
+    let claim = if carried {
+        let until = carry_claim(
+            write,
+            command,
+            entry,
+            transition.next(),
+            workflow_fact,
+            at,
+            published,
+            source,
+        )?;
+        Some(Box::new(carried_claim_answer(
+            entry,
+            command.actor(),
+            &transition.next().phase,
+            until,
+        )))
+    } else {
+        free_claim(write, entry, completed, parked)?;
+        None
+    };
+    Ok(wire::intent::TaskAnswer {
+        task: entry.handle().clone(),
+        status,
+        completion: None,
+        claim,
+        closed: Vec::new(),
+        next,
+    })
+}
+
+/// Free the completing claim, parking commits when the completion released any.
+fn free_claim(
+    write: &mut JournalWrite,
+    entry: &Entry,
+    completed: PendingFact,
+    parked: Option<&body::TaskParkedCommits>,
+) -> Result<(), Outcome<CommandAnswer>> {
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
@@ -569,14 +664,83 @@ fn append_done(
         fact,
         ..claim
     });
-    Ok(wire::intent::TaskAnswer {
-        task: entry.handle().clone(),
-        status,
-        completion: None,
-        claim: None,
-        closed: Vec::new(),
-        next,
+    Ok(())
+}
+
+/// Mint the completing lane's claim on the phase just entered, in place of the
+/// claim it held, with the ordinary lease and the boundaries the completion
+/// recorded, as a consequence of the phase fact; answers the lease expiry.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one claim fact and its two heads share one boundary"
+)]
+fn carry_claim(
+    write: &mut JournalWrite,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    workflow: &wire::WorkflowHead,
+    phased: PendingFact,
+    at: Instant,
+    git: Option<body::GitBoundary>,
+    source: body::SourceBoundary,
+) -> Result<Instant, Outcome<CommandAnswer>> {
+    let held = entry.claim().expect("Active proof requires a claim head");
+    let (expiry, maximum) = claim_lease(at)?;
+    board::allocate::mint(
+        write,
+        board::allocate::Mint {
+            task: entry.born(),
+            actor: command.actor(),
+            workflow,
+            project: entry.project().as_str(),
+            lane: held.lane,
+            occupant: held.occupant,
+            epoch: command.epoch(),
+            at,
+            expiry,
+            maximum,
+            git,
+            recovery: None,
+            source,
+            cause: Some(phased),
+        },
+    )
+    .map(|_| expiry)
+    .map_err(|error| match error {
+        board::allocate::MintError::Assignment(error) => {
+            store_fault("review::assignment-build", &error.to_string())
+        }
+        board::allocate::MintError::Claim(error) => {
+            store_fault("claim::win-build", &error.to_string())
+        }
     })
+}
+
+/// The carried claim said where the lane reads the completion: the phase it
+/// now holds and that phase's deliverable, with the statement it already works
+/// from omitted.
+fn carried_claim_answer(
+    entry: &Entry,
+    actor: &Actor,
+    phase: &wire::Phase,
+    until: Instant,
+) -> wire::intent::ClaimAnswer {
+    wire::intent::ClaimAnswer {
+        task: entry.handle().clone(),
+        statement: None,
+        holder: Some(actor.clone()),
+        expiry: Some(Box::new(until)),
+        warnings: Box::default(),
+        creation_context: None,
+        origin_context: None,
+        room_context: None,
+        next: Some(claim_activation_next_action(entry)),
+        phase: Some(wire::intent::ClaimPhase {
+            name: phase.clone(),
+            deliverable: board::phase::deliverable(phase).map(Box::from),
+        }),
+        transplant: None,
+    }
 }
 
 fn projected_done_next_action(

@@ -769,6 +769,7 @@ fn seed_claim(
             git: None,
             recovery: None,
             source: body::SourceBoundary::Proven { heads: Vec::new() },
+            cause: None,
         },
     )
     .map_err(|error| build_failure(error.into_build()))?;

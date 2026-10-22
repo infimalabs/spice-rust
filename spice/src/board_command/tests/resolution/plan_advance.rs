@@ -164,7 +164,7 @@ fn design_claim_refuses_repository_capture() {
 }
 
 #[test]
-fn plan_advance_prefers_its_todo_continuation_over_competing_work() {
+fn plan_advance_carries_its_claim_into_todo_over_competing_work() {
     let (root, bus, epoch, seats) = fixture("plan-advance-ownership", 1);
     let lane = Actor::Lane(seats[0].lane);
     let plan = add_raw_task(
@@ -180,22 +180,25 @@ fn plan_advance_prefers_its_todo_continuation_over_competing_work() {
     // The operator edited the held plan, so the holder acknowledges it first.
     reclaim_held(&bus, epoch, &lane, &seats[0], &plan);
     let (done, answer) = complete_plan_phase(&bus, epoch, &seats[0], &lane, &plan);
+    let carried = answer
+        .claim
+        .as_ref()
+        .expect("a plan advancing into todo carries its claim");
+    assert_eq!(carried.task, plan);
+    assert_eq!(carried.holder.as_ref(), Some(&lane));
+    assert_eq!(
+        carried.phase.as_ref().map(|phase| phase.name.as_str()),
+        Some("todo")
+    );
     let released =
-        assert_plan_release_and_replay(&bus, epoch, &seats[0], &lane, &plan, &done, &answer);
-    let CommandAnswer::Claim(claimed) = assert_committed(issue(
-        &bus,
-        epoch,
-        lane,
-        CommandKind::ClaimWin,
-        claim_expected(&released, &plan, &seats[0]),
-        &ClaimWin {
-            rule: "next".parse().expect("allocator rule"),
-            recovery: None,
-        },
-    )) else {
-        panic!("task next did not return a claim answer")
+        assert_plan_carry_and_replay(&bus, epoch, &seats[0], &lane, &plan, &done, &answer);
+    let Some(NextWorkState::Active { task: active }) = next_board(&bus, epoch, lane).next else {
+        panic!("the carrying lane's task next retains the carried claim")
     };
-    assert_eq!(claimed.task, plan);
+    assert_eq!(
+        active.statement.body.born,
+        at(&released, &plan).statement.body.born
+    );
     clean(&root, bus);
 }
 
@@ -328,11 +331,14 @@ fn complete_plan_phase(
         panic!("plan completion did not return a task answer")
     };
     assert_eq!(answer.status, "pending");
-    assert_eq!(answer.next.as_deref(), Some("spice task next"));
+    assert_eq!(
+        answer.next,
+        answer.claim.as_ref().and_then(|claim| claim.next.clone())
+    );
     (done, answer)
 }
 
-fn assert_plan_release_and_replay(
+fn assert_plan_carry_and_replay(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -343,15 +349,13 @@ fn assert_plan_release_and_replay(
 ) -> BoardAnswer {
     let released = board(bus, epoch, lane.clone());
     assert_workflow(&released, plan, "todo", &["plan", "todo", "review"]);
-    assert_eq!(
-        at(&released, plan)
-            .claim
-            .as_ref()
-            .expect("advanced plan retains its claim head")
-            .body
-            .disposition,
-        ClaimDisposition::Freed
-    );
+    let claim = &at(&released, plan)
+        .claim
+        .as_ref()
+        .expect("advanced plan carries its claim head")
+        .body;
+    assert_eq!(claim.disposition, ClaimDisposition::Active);
+    assert_eq!(&claim.actor, lane);
     let CommandAnswer::Task(replayed) = assert_committed(issue(
         bus,
         epoch,

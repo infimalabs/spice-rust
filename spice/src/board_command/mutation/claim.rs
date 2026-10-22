@@ -505,7 +505,7 @@ pub(in crate::board_command) fn commit_claim(
 ///
 /// A task held for taste review is held on its statement, so the admitted
 /// next action is the rewording rather than another read.
-fn claim_activation_next_action(selected: &Entry) -> Box<str> {
+pub(in crate::board_command) fn claim_activation_next_action(selected: &Entry) -> Box<str> {
     if selected.statement().taste.is_some() {
         return format!("spice task modify {} --title \"...\"", selected.handle()).into_boxed_str();
     }
@@ -797,9 +797,16 @@ fn claim_residency(
 
 fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
     let at = current_instant()?;
-    let expiry = instant_after(at, 60 * 60)?;
-    let maximum = instant_after(at, 2 * 60 * 60)?;
+    let (expiry, maximum) = claim_lease(at)?;
     Ok((at, expiry, maximum))
+}
+
+/// The ordinary claim lease granted at `at`: its first expiry and the maximum
+/// instant renewal may reach.
+pub(in crate::board_command) fn claim_lease(
+    at: Instant,
+) -> Result<(Instant, Instant), Outcome<CommandAnswer>> {
+    Ok((instant_after(at, 60 * 60)?, instant_after(at, 2 * 60 * 60)?))
 }
 
 pub(in crate::board_command) struct ClaimGit {
@@ -1066,6 +1073,7 @@ fn append_claim_heads(
             git,
             recovery,
             source,
+            cause: None,
         },
     )
     .map(|_| ())

@@ -317,6 +317,7 @@ fn mint_claim(
             git: Some(git),
             recovery: None,
             source,
+            cause: None,
         },
     )
     .map(|_| ())

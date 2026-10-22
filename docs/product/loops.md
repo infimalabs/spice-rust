@@ -310,7 +310,10 @@ flowchart TD
   the wake from that row's own READY transition, not the newest row on the
   board. A Drain team with no occupied member settles its first wake even for a
   lone row. A selected phase handoff wakes at once; a handoff that reserves the
-  lane's only candidate for another actor re-arms the wake at its deadline.
+  lane's only candidate for another actor re-arms the wake at its deadline. A
+  completion that enters a continuing phase without publishing never reaches
+  this wake: it carries its claim, so the completing occupant already holds the
+  new phase when `task done` answers, and the row is not READY for anyone else.
 - Proving a new occupant's session does not hold the resident writer, so
   unrelated controls continue while proof is pending. Going dark first settles
   every pending proof, because a successor generation adopts only committed

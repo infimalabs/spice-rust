@@ -3,12 +3,12 @@ use super::*;
 /// Project the current allocation hold from durable transition evidence.
 ///
 /// A Design nudged since its current phase began is held for the lane its
-/// nudge messaged for [`board::NUDGE_HOLD_SECONDS`]. Otherwise published
-/// repository work asks for independent ownership, and a transition with
-/// another declared phase still ahead stays with its prior claimant. Task
-/// birth, an unrecorded transition into the final declared phase, and an edit
-/// that withdrew a taste hold's plan phase carry no inferred handoff
-/// preference.
+/// nudge messaged for [`board::NUDGE_HOLD_SECONDS`]. Otherwise a completion
+/// that published repository work asks for independent ownership of the phase
+/// it entered. A completion that carried its claim into the next phase needs
+/// no hold: the claim itself is the assignment. Task birth, an unrecorded
+/// transition into the final declared phase, and an edit that withdrew a taste
+/// hold's plan phase carry no inferred handoff preference.
 pub(crate) fn phase_handoff(
     facts: &bus::TaskFacts,
     heads: &journal::TaskHeads,
@@ -66,17 +66,11 @@ fn transition_handoff(
             "a task phase head has no prior claimant",
         )
     })?;
-    let current = heads.workflow().body();
-    let continues = current
-        .flow
-        .iter()
-        .position(|phase| phase == &current.phase)
-        .is_some_and(|index| index + 1 < current.flow.len());
-    let Some(kind) = handoff_kind(&done, continues) else {
+    if !publishes(&done) {
         return Ok(None);
-    };
+    }
     Ok(Some(board::PhaseHandoff::new(
-        kind,
+        board::PhaseHandoffKind::Independent,
         claim.body().actor.clone(),
         hold_until(workflow.at, board::HANDOFF_SECONDS)?,
     )))
@@ -91,62 +85,10 @@ fn hold_until(at: Instant, seconds: i64) -> Result<Instant, Outcome<CommandAnswe
         .map_err(|error| environment_fault("board::phase-handoff-invalid", &error.to_string()))
 }
 
-fn handoff_kind(done: &body::TaskDone, continues: bool) -> Option<board::PhaseHandoffKind> {
-    if done
-        .git
+/// Whether a completion published repository history, which asks the phase it
+/// entered to go to a peer.
+fn publishes(done: &body::TaskDone) -> bool {
+    done.git
         .as_ref()
         .is_some_and(|boundary| boundary.local_commits > 0)
-    {
-        Some(board::PhaseHandoffKind::Independent)
-    } else {
-        continues.then_some(board::PhaseHandoffKind::Continue)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn completed(git: Option<body::GitBoundary>) -> body::TaskDone {
-        body::TaskDone {
-            task: "1kRKw9Qj".parse().expect("fixture task stamp"),
-            validation: "fixture validation".to_owned(),
-            disposition: None,
-            terminal: None,
-            git,
-            source: body::SourceBoundary::Proven { heads: Vec::new() },
-        }
-    }
-
-    #[test]
-    fn published_work_requests_independence_without_consulting_a_phase_name() {
-        let published = completed(Some(body::GitBoundary {
-            head: "lane-head".to_owned(),
-            integrated: "integrated-head".to_owned(),
-            upstream: None,
-            upstream_head: None,
-            local_commits: 1,
-        }));
-        assert_eq!(
-            handoff_kind(&published, false),
-            Some(board::PhaseHandoffKind::Independent)
-        );
-        assert_eq!(
-            handoff_kind(&completed(None), true),
-            Some(board::PhaseHandoffKind::Continue)
-        );
-        assert_eq!(handoff_kind(&completed(None), false), None);
-        let unchanged = completed(Some(body::GitBoundary {
-            head: "same-head".to_owned(),
-            integrated: "same-head".to_owned(),
-            upstream: None,
-            upstream_head: None,
-            local_commits: 0,
-        }));
-        assert_eq!(
-            handoff_kind(&unchanged, true),
-            Some(board::PhaseHandoffKind::Continue)
-        );
-        assert_eq!(handoff_kind(&unchanged, false), None);
-    }
 }

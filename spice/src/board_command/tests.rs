@@ -1138,6 +1138,9 @@ use dependencies::{dependency_witnesses, todo_task};
 mod drain_readout;
 mod task_creation_flow;
 mod wake_claim;
+// A completion that enters a continuing phase without publishing mints the
+// next phase's claim for the completing seat inside the same write.
+mod carried_claim;
 
 // Withdrawal, its refusals, and what a withdrawn row releases are one
 // bounded scenario seam, kept beside the correction seam for the same

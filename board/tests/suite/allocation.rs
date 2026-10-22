@@ -223,6 +223,7 @@ fn minted(
             git,
             recovery,
             source,
+            cause: None,
         },
     )
     .expect("the claim mints");
