@@ -148,6 +148,7 @@ fn unfiled_list(tasks: Vec<&BoardTask>, open: &Callback<TaskStamp>) -> Html {
                         <button type="button" class="app-compact-control" data-unfiled-task={task.statement.body.handle.to_string()} {onclick}>
                             <code>{task.statement.body.handle.to_string()}</code>
                             <span>{task.presentation_title.clone()}</span>
+                            <small class="work-task-pitch">{task.statement.body.pitch.clone()}</small>
                         </button>
                     </li>
                 }

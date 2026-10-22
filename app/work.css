@@ -114,7 +114,10 @@
   min-width: 0;
 }
 .work-blocker-task > header > :not(.work-blocker-task-open) { grid-column: 1; }
-.work-blocker-task-open { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.work-blocker-task-open { grid-column: 2; grid-row: 1 / span 4; align-self: center; }
+/* The pitch is the one line that says why, under every title it follows. */
+.work-task-pitch { margin: 0; color: var(--ink); font-size: var(--app-type-detail); line-height: 1.35; overflow-wrap: anywhere; }
+.work-task-header .work-task-pitch { margin-top: 6px; }
 .work-blocker-holds { margin: 0; color: var(--muted); font-size: var(--app-type-label); overflow-wrap: anywhere; }
 .work-blocker-task h3 { margin: 2px 0 3px; font-size: var(--app-type-item-title); line-height: 1.3; }
 .work-blocker-task code { color: var(--muted); font-size: var(--app-type-meta); overflow-wrap: anywhere; }
@@ -886,8 +889,8 @@
 /* A Design's Standing shares one row with a column of Maturity over the
    task's provenance facts, so the lifecycle, how near the Design is to
    steeping, and its record read together and the lane list leaves no idle
-   column beside it: Provenance takes the height Maturity leaves and reads as
-   label-value rows. The same framed Provenance follows the loading notice
+   column beside it: the closed History block takes the height Maturity leaves
+   and reads as label-value rows once opened. The same framed History follows the loading notice
    while the room is not yet readable. */
 .room-design-pair, .room-design-aside { display: grid; gap: 8px; }
 .room-design-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1076,6 +1079,20 @@
 .room-decision-reason input { width: 100%; box-sizing: border-box; }
 .room-decision-reason + .room-decision-reason { margin-top: 6px; }
 .room-decision-preview { display: grid; gap: 6px; }
+/* A proposal leads with the Design's pitch after the recommendation; each
+   output line is handle, pitch, kind, standing and its verdict control; the
+   references and the authored justification disclose beneath. */
+.room-approval-head { margin: 0; font-size: var(--app-type-copy); }
+.room-approval-facts { margin: 2px 0 0; color: var(--muted); font-size: var(--app-type-detail); }
+.room-approval-output-pitch { flex: 1 1 14rem; min-width: 0; }
+.room-approval-inputs > strong { display: block; }
+.room-approval-references > summary,
+.room-approval-justification > summary { cursor: pointer; font-weight: 600; }
+.room-approval-references > summary .app-count-badge { margin-inline-start: 6px; }
+.room-approval-references, .room-approval-justification { margin-top: 6px; }
+.room-approval-justification { font-size: var(--app-type-detail); }
+.room-approval-justification > p { margin: 4px 0 0; white-space: pre-wrap; }
+.room-proposal .room-approval-references { margin: 4px 0 0; font-size: var(--app-type-detail); }
 
 /* Room standing: each reason kind keeps its own rail so invitation, activity,
    work, requests, owed duties and responsibility never read alike. */
@@ -1402,26 +1419,28 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 .app-sheet-section .draft-list > li + li { margin-top: 0; }
 
 .draft-list button {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;
-  gap: 6px;
+  gap: 0 6px;
   width: 100%;
   min-width: 0;
   text-align: start;
 }
 
 .draft-list button code {
-  flex: none;
   white-space: nowrap;
 }
 
 .draft-list button span {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The pitch line follows the title in the title's column. */
+.draft-list button .work-task-pitch { grid-column: 2; }
 
 @media (max-width: 560px) {
   .draft-form label,

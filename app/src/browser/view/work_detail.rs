@@ -250,6 +250,7 @@ fn render_header(
                 </h3>
                 {standing_pill(row)}
             </div>
+            <p class="work-task-pitch" data-task-header="pitch">{statement.pitch.clone()}</p>
             <p class="work-task-header-facts">
                 <span data-task-header="phase" title={format!("Phase {phase} of flow {flow}")}>
                     if !workflow.flow.contains(phase) {
@@ -351,41 +352,44 @@ fn render_available(
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == statement.born);
-    // A Design's facts fill the column its Maturity leaves short beside the
-    // room's lane list; any other task closes its sheet with them.
+    // A Design's history fills the column its Maturity leaves short beside the
+    // room's lane list; any other task closes its sheet with it.
     let in_room = render.runtime.is_some() && row.design_standing().is_some();
-    let facts = render_facts(render, answer);
+    let facts = facts(render, answer);
+    let [description, acceptance, history] =
+        crate::task_sheet::sheet_blocks(statement, facts.len());
+    let facts = html! { <dl class="app-fact-grid">{for facts}</dl> };
+    let history = sheet_block(
+        &history,
+        if in_room {
+            "room-provenance"
+        } else {
+            "app-sheet-section"
+        },
+        facts,
+    );
     let (aside, closing) = if in_room {
-        let aside = html! {
-            <section class="room-provenance" aria-label="Task provenance">
-                <header><h4>{"Provenance"}</h4></header>
-                {facts}
-            </section>
-        };
-        (aside, Html::default())
+        (history, Html::default())
     } else {
-        let closing = html! {
-            <section class="app-sheet-section">
-                <h3>{"Provenance"}</h3>
-                {facts}
-            </section>
-        };
-        (Html::default(), closing)
+        (Html::default(), history)
     };
+    let resolves = |task: &TaskStamp| selection_has(render.selection, task);
     html! {
         <div class="app-sheet-body">
-            if statement.description.is_none() && statement.acceptance.is_empty() {
-                {empty_section("No contract text was recorded.")}
-            } else {
-                <section class="app-sheet-section">
-                    <h3>{"Contract"}</h3>
-                    {task_detail::render_contract(
-                        statement,
-                        |task| selection_has(render.selection, task),
-                        &item_standings(render.runtime, statement),
-                    )}
-                </section>
-            }
+            {sheet_block(
+                &description,
+                "app-sheet-section",
+                task_detail::render_description(statement, resolves),
+            )}
+            {sheet_block(
+                &acceptance,
+                "app-sheet-section",
+                task_detail::render_acceptance(
+                    statement,
+                    resolves,
+                    &item_standings(render.runtime, statement),
+                ),
+            )}
             {super::super::drafts::render_editor(
                 render.runtime,
                 render.draft_controls,
@@ -404,35 +408,82 @@ fn render_available(
     }
 }
 
-/// Every remaining scalar fact about the task in one grid: state, lease,
-/// origin, claim context, and repository boundary.
-fn render_facts(
-    render: &WorkDetailRender<'_, '_>,
-    answer: &wire::intent::TaskDetailAnswer,
-) -> Html {
+/// One native disclosure, closed on every render so no open state persists:
+/// its summary carries the block's label and count, and an empty block
+/// reads its absence instead of `body`.
+fn sheet_block(block: &crate::task_sheet::SheetBlock, class: &'static str, body: Html) -> Html {
+    let key = block.label.to_ascii_lowercase();
+    html! {
+        <details class={classes!(class, "app-sheet-block")} data-sheet-block={key}>
+            <summary>
+                {block.label}
+                <span class="app-count-badge">{block.count}</span>
+            </summary>
+            if block.count == 0 {
+                <p class="muted">{block.empty}</p>
+            } else {
+                {body}
+            }
+        </details>
+    }
+}
+
+/// Every remaining scalar fact about the task, one `<div>` each: state,
+/// lease, origin, claim context, and repository boundary.
+fn facts(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDetailAnswer) -> Vec<Html> {
     let row = &answer.task;
     let statement = &row.statement.body;
     let workflow = &row.workflow.body;
     let completion = workflow.status.completion();
-    html! {
-        <dl class="app-fact-grid">
-            {project_fact(render, &statement.project)}
-            {fact("Status", workflow.status.as_str().to_owned())}
-            {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
-            {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
-            {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref()))}
-            {instant_fact("Completion", completion.as_ref())}
-            {possession_facts(row)}
-            {origin_fact(render, &statement.provenance, answer.origin_request.as_ref())}
-            {fact("Origin thread", row.origin_thread.clone())}
-            {creator_team_fact(row.creator_team, render)}
-            {fact("Queue fact", statement.queue_origin.to_string())}
-            {fact("Statement revision", statement.revision.to_string())}
-            {fact("Workflow fact", row.workflow.position.to_string())}
-            {claim_context_facts(row, render)}
-            {git_context_facts(row)}
-        </dl>
-    }
+    let lease = row.lease.as_ref();
+    let mut facts = vec![
+        project_fact(render, &statement.project),
+        fact("Status", workflow.status.as_str().to_owned()),
+    ];
+    facts.extend(
+        statement
+            .priority
+            .map(|priority| fact("Priority", priority.to_string())),
+    );
+    facts.extend(
+        statement
+            .taste
+            .as_ref()
+            .map(|hold| fact("Taste review", taste_review_text(hold))),
+    );
+    facts.extend([
+        super::super::deferral::fact(
+            render.runtime,
+            render.sender,
+            row,
+            deadline_value(workflow.deferral.as_ref()),
+        ),
+        instant_fact("Completion", completion.as_ref()),
+        fact(
+            "Claim fact",
+            row.claim
+                .as_ref()
+                .map_or_else(|| ABSENT.to_owned(), |claim| claim.position.to_string()),
+        ),
+        instant_fact("Lease start", lease.map(|lease| &lease.body.start)),
+        html_fact(
+            "Lease expiry",
+            deadline_value(lease.map(|lease| &lease.body.expiry)),
+        ),
+        origin_fact(
+            render,
+            &statement.provenance,
+            answer.origin_request.as_ref(),
+        ),
+        fact("Origin thread", row.origin_thread.clone()),
+        creator_team_fact(row.creator_team, render),
+        fact("Queue fact", statement.queue_origin.to_string()),
+        fact("Statement revision", statement.revision.to_string()),
+        fact("Workflow fact", row.workflow.position.to_string()),
+    ]);
+    claim_context_facts(&mut facts, row, render);
+    git_context_facts(&mut facts, row);
+    facts
 }
 
 /// A Design's current question items with their standings, once the room
@@ -683,18 +734,6 @@ fn actor_name(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> String 
     )
 }
 
-/// The claim's journal fact and lease; the header names the claimant.
-fn possession_facts(row: &wire::intent::BoardTask) -> Html {
-    let lease = row.lease.as_ref();
-    html! {
-        <>
-            {fact("Claim fact", row.claim.as_ref().map_or_else(|| ABSENT.to_owned(), |claim| claim.position.to_string()))}
-            {instant_fact("Lease start", lease.map(|lease| &lease.body.start))}
-            {html_fact("Lease expiry", deadline_value(lease.map(|lease| &lease.body.expiry)))}
-        </>
-    }
-}
-
 /// What activating a relation does: focus a task already in the selection, or
 /// replace the selection with one outside it.
 struct RelationTargets<'a> {
@@ -782,9 +821,13 @@ fn render_task_link(
 
 /// Where the claim was won: its fact, its lane by name, that lane's occupant
 /// and resident generation relative to the current ones, and its transcript.
-fn claim_context_facts(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_, '_>) -> Html {
+fn claim_context_facts(
+    facts: &mut Vec<Html>,
+    row: &wire::intent::BoardTask,
+    render: &WorkDetailRender<'_, '_>,
+) {
     let Some(context) = &row.claim_context else {
-        return Html::default();
+        return;
     };
     let recovery = match &context.recovery {
         wire::intent::TaskTranscriptRecovery::Transcript { session } => {
@@ -809,29 +852,38 @@ fn claim_context_facts(row: &wire::intent::BoardTask, render: &WorkDetailRender<
         Some(false) => "An earlier resident".to_owned(),
         None => format!("Resident {}", crate::watchband::short(context.epoch)),
     };
-    html! {
-        <>
-            {fact("Claimed fact", context.claimed.to_string())}
-            {html_fact("Claim lane", actor_link(&lane, render))}
-            {html_fact("Occupant", html! { <span title={context.occupant.to_string()}>{occupant}</span> })}
-            {html_fact("Resident epoch", html! { <span title={context.epoch.to_string()}>{epoch}</span> })}
-            {fact("Recovery", recovery)}
-        </>
-    }
+    facts.extend([
+        fact("Claimed fact", context.claimed.to_string()),
+        html_fact("Claim lane", actor_link(&lane, render)),
+        html_fact(
+            "Occupant",
+            html! { <span title={context.occupant.to_string()}>{occupant}</span> },
+        ),
+        html_fact(
+            "Resident epoch",
+            html! { <span title={context.epoch.to_string()}>{epoch}</span> },
+        ),
+        fact("Recovery", recovery),
+    ]);
 }
 
-fn git_context_facts(row: &wire::intent::BoardTask) -> Html {
+fn git_context_facts(facts: &mut Vec<Html>, row: &wire::intent::BoardTask) {
     let Some(context) = &row.git_context else {
-        return Html::default();
+        return;
     };
-    html! {
-        <>
-            {fact("Repository lifecycle", context.kind.as_str().to_owned())}
-            {fact("Repository fact", context.fact.to_string())}
-            {fact("Head", context.boundary.head.clone())}
-            {fact("Integrated", context.boundary.integrated.clone())}
-            {fact("Upstream", context.boundary.upstream.clone().unwrap_or_else(|| ABSENT.to_owned()))}
-            {fact("Local commits", context.boundary.local_commits.to_string())}
-        </>
-    }
+    facts.extend([
+        fact("Repository lifecycle", context.kind.as_str().to_owned()),
+        fact("Repository fact", context.fact.to_string()),
+        fact("Head", context.boundary.head.clone()),
+        fact("Integrated", context.boundary.integrated.clone()),
+        fact(
+            "Upstream",
+            context
+                .boundary
+                .upstream
+                .clone()
+                .unwrap_or_else(|| ABSENT.to_owned()),
+        ),
+        fact("Local commits", context.boundary.local_commits.to_string()),
+    ]);
 }

@@ -109,19 +109,26 @@ own separate stacked slots there, so either may replace or dismiss its own
 message without covering or clearing the other at desktop or narrow widths.
 
 Every selected task owns a full detail section below the graph. It opens with
-a header strip: the handle, the title, an intent or standing pill, the phase
-and flow, the claimant linked to its lane, the review assignment, and the
-task's relative age. Its contract, room, and relationships follow, and one
-closing **Provenance** section gathers every remaining scalar fact (state,
-lease, origin, claim context, and repository boundary) in a single fact grid
-with no sub-headings. There an instant reads as a relative age with its full
-local time on hover, a lane, occupant, team, or resident generation reads by
-name rather than identity, and an absent value reads as a dash. Evidence,
-blockers, relationships, provenance, the task's room, and its closure appear
-together rather than behind tabs or pagination. A section with nothing to show
-(no contract text, no relationships, no room publications) collapses to one
-muted line without a heading. Sections head with the sheet's h3 and their
-parts with h4, and every sheet action is a compact control or a fact link, so
+a header strip: the handle, the title, an intent or standing pill, then the
+pitch on its own line, then the phase and flow, the claimant linked to its
+lane, the review assignment, and the task's relative age. Every task row the
+app lists (a blocker row, an unfiled Draft row) likewise shows the title line
+and the pitch line and nothing else of the statement. Beneath the strip the
+sheet leads with title and pitch and collapses the rest: **Description**,
+**Acceptance** (**Questions** for a Design), and **History** are native
+`details` blocks closed on every open with no remembered open state, each
+summary carrying its count (`Acceptance 5`), so the weight shows before the
+prose. History gathers every remaining scalar fact (state, lease, origin,
+claim context, and repository boundary) in a single fact grid with no
+sub-headings. There an instant reads as a relative age with its full local
+time on hover, a lane, occupant, team, or resident generation reads by name
+rather than identity, and an absent value reads as a dash. Evidence, blockers,
+relationships, history, the task's room, and its closure appear together
+rather than behind tabs or pagination. A section with nothing to show (no
+relationships, no room publications) collapses to one muted line without a
+heading; an empty block says so when opened. Sections head with the sheet's h3
+or a block's summary and their parts with h4, and every sheet action is a
+compact control or a fact link, so
 the sheet reads as one page. Activating a
 selected graph node scrolls and focuses its detail section. Every identity the
 sheet names navigates: a relationship inside the selection focuses its

@@ -224,56 +224,49 @@ pub(super) fn render_task_title(
     }
 }
 
-/// A task's authored contract: its description and every acceptance criterion
-/// or open Design question, each question beside its standing in `items` when
-/// the room projection knows it.
-pub(super) fn render_contract(
+/// A task's authored description as task text.
+pub(super) fn render_description(
+    statement: &wire::intent::BoardStatement,
+    resolves: impl Fn(&TaskStamp) -> bool + Copy,
+) -> Html {
+    statement
+        .description
+        .as_deref()
+        .map_or_else(Html::default, |description| {
+            render_task_text(description, "work-detail-description", resolves)
+        })
+}
+
+/// Every acceptance criterion or open Design question, each question beside
+/// its standing in `items` when the room projection knows it.
+pub(super) fn render_acceptance(
     statement: &wire::intent::BoardStatement,
     resolves: impl Fn(&TaskStamp) -> bool + Copy,
     items: &[wire::rooms::DesignItemStanding],
 ) -> Html {
-    let design = statement.intent == Some(wire::TaskIntent::Design);
     html! {
-        <>
-            if let Some(description) = statement.description.as_deref() {
-                {render_task_text(description, "work-detail-description", resolves)}
-            } else {
-                <p class="muted">{"No description was recorded."}</p>
-            }
-            if statement.acceptance.is_empty() {
-                <p class="muted">{
-                    if design {
-                        "No open questions were recorded."
-                    } else {
-                        "No acceptance criteria were recorded."
-                    }
-                }</p>
-            } else {
-                <h4>{if design { "Questions" } else { "Acceptance" }}</h4>
-                <ul data-task-contract={statement.born.to_string()}>
-                    {for statement.acceptance.iter().enumerate().map(|(index, criterion)| {
-                        let standing = items.get(index);
-                        html! {
-                            <li
-                                data-contract-question={(index + 1).to_string()}
-                                data-item-state={standing.map(|item| item.state.label())}
-                                tabindex="-1"
-                            >
-                                {render_task_text(criterion, "work-detail-criterion", resolves)}
-                                if let Some(item) = standing {
-                                    <span class="work-detail-item-standing">{format!(
-                                        "{} · {} votes · {} lanes",
-                                        item.state.label(),
-                                        item.charges,
-                                        item.lanes,
-                                    )}</span>
-                                }
-                            </li>
+        <ul data-task-contract={statement.born.to_string()}>
+            {for statement.acceptance.iter().enumerate().map(|(index, criterion)| {
+                let standing = items.get(index);
+                html! {
+                    <li
+                        data-contract-question={(index + 1).to_string()}
+                        data-item-state={standing.map(|item| item.state.label())}
+                        tabindex="-1"
+                    >
+                        {render_task_text(criterion, "work-detail-criterion", resolves)}
+                        if let Some(item) = standing {
+                            <span class="work-detail-item-standing">{format!(
+                                "{} · {} votes · {} lanes",
+                                item.state.label(),
+                                item.charges,
+                                item.lanes,
+                            )}</span>
                         }
-                    })}
-                </ul>
-            }
-        </>
+                    </li>
+                }
+            })}
+        </ul>
     }
 }
 
