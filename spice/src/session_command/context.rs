@@ -625,7 +625,7 @@ mod tests {
             refused
                 .diagnostic()
                 .and_then(wire::RefusalDiagnostic::observed),
-            Some("SPICE_RS_SESSION names the requested session")
+            Some("SPICE_SESSION names the requested session")
         );
 
         let dashless = LIVE_SESSION.replace('-', "").to_ascii_uppercase();

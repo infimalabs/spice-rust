@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installed by Rust Spice; do not edit.
+# Installed by Spice; do not edit.
 #
 # BASH_ENV is sourced before a noninteractive command. Reenter the exact
 # wrapper while Bash still exposes that complete command, then remove both
@@ -8,7 +8,7 @@
 if [ -n "${BASH_EXECUTION_STRING-}" ]; then
   _spice_shell_bin=${BASH:-bash}
   if ! _spice_shell_bin=$(command -v "$_spice_shell_bin"); then
-    printf '%s\n' 'rust spice shell hook: cannot resolve bash' >&2
+    printf '%s\n' 'spice shell hook: cannot resolve bash' >&2
     exit 127
   fi
   if shopt -q login_shell; then
@@ -17,12 +17,12 @@ if [ -n "${BASH_EXECUTION_STRING-}" ]; then
     _spice_shell_mode=-c
   fi
   unset ZDOTDIR BASH_ENV
-  SPICE_RS_NATIVE_SHELL=$_spice_shell_bin
-  export SPICE_RS_NATIVE_SHELL
-  exec "${SPICE_RS_WRAPPER_SPICE:?rust spice executable}" run -- \
-    "${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh" \
+  SPICE_NATIVE_SHELL=$_spice_shell_bin
+  export SPICE_NATIVE_SHELL
+  exec "${SPICE_WRAPPER_SPICE:?spice executable}" run -- \
+    "${SPICE_HOOKS:?spice hooks directory}/static/stage.sh" \
     "$_spice_shell_mode" "$BASH_EXECUTION_STRING"
-  printf '%s\n' 'rust spice shell hook: failed to exec wrapper' >&2
+  printf '%s\n' 'spice shell hook: failed to exec wrapper' >&2
   exit 127
 fi
 
@@ -30,7 +30,7 @@ case $- in
   *i*) unset ZDOTDIR BASH_ENV ;;
   *)
     printf '%s\n' \
-      'rust spice shell hook: cannot wrap noninteractive bash without an execution string' >&2
+      'spice shell hook: cannot wrap noninteractive bash without an execution string' >&2
     exit 127
     ;;
 esac

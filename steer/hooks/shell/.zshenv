@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Installed by Rust Spice; do not edit.
+# Installed by Spice; do not edit.
 #
 # Agent tools do not consistently honor SHELL, but zsh always reads .zshenv.
 # Reenter the exact wrapper once while the complete execution string still
@@ -8,7 +8,7 @@
 if [ -n "${ZSH_EXECUTION_STRING-}" ]; then
   _spice_shell_bin=${ZSH_NAME:-zsh}
   if ! _spice_shell_bin=$(command -v "$_spice_shell_bin"); then
-    printf '%s\n' 'rust spice shell hook: cannot resolve zsh' >&2
+    printf '%s\n' 'spice shell hook: cannot resolve zsh' >&2
     exit 127
   fi
   if [[ -o login ]]; then
@@ -17,12 +17,12 @@ if [ -n "${ZSH_EXECUTION_STRING-}" ]; then
     _spice_shell_mode=-c
   fi
   unset ZDOTDIR BASH_ENV
-  SPICE_RS_NATIVE_SHELL=$_spice_shell_bin
-  export SPICE_RS_NATIVE_SHELL
-  exec "${SPICE_RS_WRAPPER_SPICE:?rust spice executable}" run -- \
-    "${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh" \
+  SPICE_NATIVE_SHELL=$_spice_shell_bin
+  export SPICE_NATIVE_SHELL
+  exec "${SPICE_WRAPPER_SPICE:?spice executable}" run -- \
+    "${SPICE_HOOKS:?spice hooks directory}/static/stage.sh" \
     "$_spice_shell_mode" "$ZSH_EXECUTION_STRING"
-  printf '%s\n' 'rust spice shell hook: failed to exec wrapper' >&2
+  printf '%s\n' 'spice shell hook: failed to exec wrapper' >&2
   exit 127
 fi
 

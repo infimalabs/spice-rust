@@ -36,13 +36,13 @@ pub use windows_msvc::{
 mod tests;
 
 /// Child authority naming the original Cargo home used to seed immutable data.
-pub const BOOTSTRAP_HOME_VARIABLE: &str = "SPICE_RS_BOOTSTRAP_CARGO_HOME"; // env-policy: allow
+pub const BOOTSTRAP_HOME_VARIABLE: &str = wire::SpiceVariable::BootstrapCargoHome.as_str();
 /// Child authority naming the native Cargo executable resolved before isolation.
-pub const NATIVE_CARGO_VARIABLE: &str = "SPICE_RS_NATIVE_CARGO"; // env-policy: allow
+pub const NATIVE_CARGO_VARIABLE: &str = wire::SpiceVariable::NativeCargo.as_str();
 /// Child authority naming the native rustc executable paired with Cargo.
-pub const NATIVE_RUSTC_VARIABLE: &str = "SPICE_RS_NATIVE_RUSTC"; // env-policy: allow
+pub const NATIVE_RUSTC_VARIABLE: &str = wire::SpiceVariable::NativeRustc.as_str();
 /// Child authority naming the native rustdoc executable paired with Cargo.
-pub const NATIVE_RUSTDOC_VARIABLE: &str = "SPICE_RS_NATIVE_RUSTDOC"; // env-policy: allow
+pub const NATIVE_RUSTDOC_VARIABLE: &str = wire::SpiceVariable::NativeRustdoc.as_str();
 /// Cargo's supported home override.
 pub const CARGO_HOME_VARIABLE: &str = "CARGO_HOME";
 /// Cargo's supported compiler override.
@@ -104,7 +104,7 @@ impl Host {
             .ok_or_else(|| {
                 IsolationError::new(
                     "cargo-isolation::bootstrap-home-unavailable",
-                    "neither SPICE_RS_BOOTSTRAP_CARGO_HOME, CARGO_HOME, nor HOME names the native Cargo home",
+                    "neither SPICE_BOOTSTRAP_CARGO_HOME, CARGO_HOME, nor HOME names the native Cargo home",
                 )
             })?;
         let toolchain = resolve_native_toolchain(repository, &bootstrap, &entries)?;
@@ -489,7 +489,7 @@ fn resolve_native_toolchain(
         _ => {
             return Err(IsolationError::new(
                 "cargo-isolation::native-toolchain-incomplete",
-                "SPICE_RS_NATIVE_CARGO, SPICE_RS_NATIVE_RUSTC, and SPICE_RS_NATIVE_RUSTDOC must be supplied together",
+                "SPICE_NATIVE_CARGO, SPICE_NATIVE_RUSTC, and SPICE_NATIVE_RUSTDOC must be supplied together",
             ));
         }
     };

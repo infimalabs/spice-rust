@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use sill::Environment;
-use spice::agent_launch::{ComposeError, Inputs, SPICE_RS_LANE, compose};
+use spice::agent_launch::{ComposeError, Inputs, SPICE_LANE, compose};
 use spice::config::Root;
 use vendor::{Effort, Resume, SessionId};
 use wire::{CanonicalUuid, Name};
@@ -91,7 +91,7 @@ effort = "max"
         "the raw lane uuid is not the announced key"
     );
     assert_eq!(
-        environment_value(plan.environment(), SPICE_RS_LANE),
+        environment_value(plan.environment(), SPICE_LANE),
         Some(LANE)
     );
     assert_eq!(launch.bootstrap, spice::install::skill_bootstrap());
@@ -222,9 +222,9 @@ fn composition_refuses_unsupported_vendor_and_reserved_lane_environment() {
         );
     }
 
-    let reserved = Environment::new([(OsString::from(SPICE_RS_LANE), OsString::from(LANE))])
+    let reserved = Environment::new([(OsString::from(SPICE_LANE), OsString::from(LANE))])
         .expect("reserved fixture environment itself admits");
     let error = compose(&Root::default(), inputs("omp", reserved, Resume::Fresh))
         .expect_err("caller-supplied lane identity refuses");
-    assert_eq!(error, ComposeError::ReservedEnvironment(SPICE_RS_LANE));
+    assert_eq!(error, ComposeError::ReservedEnvironment(SPICE_LANE));
 }

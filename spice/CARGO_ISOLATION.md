@@ -8,15 +8,15 @@ when to use them.
 
 ## Homes and toolchain
 
-The bootstrap Cargo home is `SPICE_RS_BOOTSTRAP_CARGO_HOME`, else `CARGO_HOME`,
-else `HOME/.cargo`, and descendants inherit it as
-`SPICE_RS_BOOTSTRAP_CARGO_HOME` while their private home is `CARGO_HOME`.
-Cargo, rustc, and rustdoc are admitted as one native toolchain before
-`CARGO_HOME` changes: either a complete `SPICE_RS_NATIVE_CARGO`,
-`SPICE_RS_NATIVE_RUSTC`, `SPICE_RS_NATIVE_RUSTDOC` trio, or the channel
-`rust-toolchain.toml` declares, resolved by the bootstrap home's own `rustup`.
-A partial trio, a missing executable, or tools from different toolchain
-directories refuse before Cargo starts; `PATH` never selects the compiler.
+The bootstrap Cargo home is `SPICE_BOOTSTRAP_CARGO_HOME`, else `CARGO_HOME`,
+else `HOME/.cargo`, and descendants inherit it as `SPICE_BOOTSTRAP_CARGO_HOME`
+while their private home is `CARGO_HOME`. Cargo, rustc, and rustdoc are
+admitted as one native toolchain before `CARGO_HOME` changes: either a complete
+`SPICE_NATIVE_CARGO`, `SPICE_NATIVE_RUSTC`, `SPICE_NATIVE_RUSTDOC` trio, or the
+channel `rust-toolchain.toml` declares, resolved by the bootstrap home's own
+`rustup`. A partial trio, a missing executable, or tools from different
+toolchain directories refuse before Cargo starts; `PATH` never selects the
+compiler.
 
 Package trees are sealed after atomic publication, except that regular source
 files keep owner-write permission: build scripts that copy inputs into
