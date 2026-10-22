@@ -427,6 +427,7 @@ fn claim_with_legacy_automatic_lease(
             git: None,
             recovery: None,
             source: body::SourceBoundary::Proven { heads: Vec::new() },
+            cause: None,
         },
     )
     .expect("legacy automatic claim mints");

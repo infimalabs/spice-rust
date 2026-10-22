@@ -54,6 +54,10 @@ pub struct Mint<'a> {
     /// Read by the caller rather than here, because this writer is handed an
     /// already-open transaction and never holds a journal read of its own.
     pub source: body::SourceBoundary,
+    /// Fact of the same transaction this claim descends from, when the claim
+    /// is a consequence of it rather than a chain root of its own; a review
+    /// assignment written ahead of the claim takes its place.
+    pub cause: Option<PendingFact>,
 }
 
 /// Which of a claim's facts failed to build.
@@ -102,7 +106,7 @@ impl Error for MintError {
 /// commit together or not at all.
 fn assignment_cause(write: &mut JournalWrite, request: &Mint<'_>) -> Result<FactCause, MintError> {
     if request.workflow.phase.as_str() != "review" {
-        return Ok(FactCause::Root);
+        return Ok(request.cause.map_or(FactCause::Root, FactCause::Pending));
     }
     let assigned = write
         .fact(

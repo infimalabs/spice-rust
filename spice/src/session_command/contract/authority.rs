@@ -549,6 +549,7 @@ fn mint_claim(
             git: None,
             recovery: None,
             source: body::SourceBoundary::Proven { heads: Vec::new() },
+            cause: None,
         },
     )
     .expect("claim mints");

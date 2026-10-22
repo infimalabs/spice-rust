@@ -140,6 +140,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
             git: None,
             recovery: None,
             source,
+            cause: None,
         },
     )
     .expect("the claim mints");

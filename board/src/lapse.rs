@@ -573,6 +573,7 @@ mod tests {
                 git: None,
                 recovery: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
+                cause: None,
             },
         )
         .expect("the claim mints");

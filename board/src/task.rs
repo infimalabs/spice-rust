@@ -397,11 +397,13 @@ pub struct Dependency {
     pub after: TaskStamp,
 }
 
-/// Ownership preference carried by a phase transition while its handoff window
-/// is open.
+/// Ownership preference carried by a phase transition or a Design nudge while
+/// its handoff window is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PhaseHandoffKind {
-    /// The prior phase's claimant should continue the same task.
+    /// The named lane should take the row: the recipient of a Design nudge.
+    /// A completion that continues its own task carries its claim instead and
+    /// opens no window.
     Continue,
     /// Another eligible lane should take the next phase when one is available.
     Independent,
