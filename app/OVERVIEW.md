@@ -428,6 +428,13 @@ that age, so swapping two teams, or opening, closing, or reordering consoles in
 one browser, changes none; only a team forming or an older one ending moves a
 colour.
 
+Team consoles follow the composer model: the first team in arrangement order
+holds the right edge beside the app's controls and each later team, including
+one newly formed, stacks to the left of its predecessor; a fleet wider than the
+window shows that right edge first. Opened working groups follow the teams in
+the same flow. Inside every console the toolbar, composers, and messages read
+left to right.
+
 Pick up a team from its pip matrix: dropping on the middle of another team
 swaps the two teams' positions; dropping on either outer edge joins the source
 into that team, which keeps its identity, primary composer, and member order and

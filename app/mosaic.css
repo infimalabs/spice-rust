@@ -410,17 +410,15 @@ path.image-annotation-hit { fill: none; }
 
 .mosaic-workspace { display: flex; min-height: 0; }
 
+/* Teams follow the composer model: the first team in arrangement order holds
+   the control-adjacent right edge, later teams and opened working groups stack
+   to its left, and RTL overflow keeps that edge visible. Surfaces stay LTR. */
 .team-fleet {
   --team-surface-min-inline: 20em;
-  display: flex;
-  flex-flow: row nowrap;
-  align-items: stretch;
-  flex: 1 1 auto;
-  width: 100%;
-  min-height: 0;
-  min-width: 0;
-  overflow: auto hidden;
-  overscroll-behavior-inline: contain;
+  display: flex; flex-flow: row nowrap; align-items: stretch; flex: 1 1 auto;
+  width: 100%; min-height: 0; min-width: 0;
+  overflow: auto hidden; overscroll-behavior-inline: contain;
+  direction: rtl;
 }
 /* The fleet meets the viewport edges, so its focus ring paints inside it. */
 .team-fleet:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: -2px; }
@@ -443,6 +441,7 @@ path.image-annotation-hit { fill: none; }
      share per member, up to the six-member visual contract, while the fleet
      can carry any number of sibling team surfaces. */
   position: relative;
+  direction: ltr;
   display: flex;
   flex: var(--team-weight, 4) 1 0;
   flex-direction: column;
