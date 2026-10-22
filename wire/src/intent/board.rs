@@ -302,6 +302,8 @@ pub struct BoardStatement {
     pub born: crate::TaskStamp,
     /// Fact that first placed this task in the queue.
     pub queue_origin: crate::Seq,
+    /// One plain sentence saying why the task matters.
+    pub pitch: String,
     /// Longer authored context.
     #[serde(
         default,
@@ -386,6 +388,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             ),
             born: statement.born.clone(),
             queue_origin: statement.queue_origin,
+            pitch: statement.pitch.clone(),
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
             requirements: statement.requirements.clone(),
@@ -429,6 +432,7 @@ impl BoardStatement {
             born: self.born.clone(),
             queue_origin: self.queue_origin,
             title: title.to_owned(),
+            pitch: self.pitch.clone(),
             description: self.description.clone(),
             acceptance: self.acceptance.clone(),
             requirements: self.requirements.clone(),

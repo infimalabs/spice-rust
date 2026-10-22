@@ -718,6 +718,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 handle: handle("SPICE-1kKRRsDP"),
                 born: "1kKRRsDP".parse().expect("a task stamp"),
                 queue_origin: seq(2),
+                pitch: "Readers see why a row binds.".to_owned(),
                 description: Some(
                     "One task spelled through every field the shape carries.".to_owned(),
                 ),

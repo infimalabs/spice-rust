@@ -1359,7 +1359,7 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
   font-size: var(--app-type-fact);
 }
 
-.draft-form-create :is(.draft-field-title, .draft-actions) { grid-column: 1 / -1; }
+.draft-form-create :is(.draft-field-title, .draft-field-pitch, .draft-actions) { grid-column: 1 / -1; }
 
 .draft-form input,
 .draft-form select,
@@ -1428,7 +1428,7 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
   .draft-form-create {
     grid-template-columns: minmax(0, 1fr);
   }
-  .draft-form-create :is(.draft-field-title, .draft-actions) { grid-column: 1; }
+  .draft-form-create :is(.draft-field-title, .draft-field-pitch, .draft-actions) { grid-column: 1; }
   .draft-create-summary small { display: none; }
 }
 

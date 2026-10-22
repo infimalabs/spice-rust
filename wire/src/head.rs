@@ -85,6 +85,9 @@ pub const OOPS_DESIGN_TITLE: &str = "OOPS";
 /// Stable context of every opportunistic OOPS Design generation.
 pub const OOPS_DESIGN_DESCRIPTION: &str =
     "Repository-owned opportunistic Design for unexpected-behavior line items.";
+/// Fixed pitch of every opportunistic OOPS Design generation.
+pub const OOPS_DESIGN_PITCH: &str =
+    "Unexpected behavior gets one place to land so friction is never lost.";
 
 impl std::fmt::Display for TaskIntent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -320,6 +323,8 @@ pub enum StatementField {
     Description,
     /// One acceptance criterion.
     Acceptance,
+    /// The one-sentence pitch.
+    Pitch,
 }
 
 impl StatementField {
@@ -328,6 +333,7 @@ impl StatementField {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Title => "title",
+            Self::Pitch => "pitch",
             Self::Description => "description",
             Self::Acceptance => "acceptance",
         }
@@ -357,6 +363,8 @@ pub struct TaskHead {
     pub queue_origin: Seq,
     /// Authored title.
     pub title: String,
+    /// One plain sentence saying why the task matters.
+    pub pitch: String,
     /// Longer authored context.
     #[serde(
         default,

@@ -5,6 +5,7 @@ fn dependent_add(dependencies: Vec<TaskHandle>, flow: Option<&str>) -> TaskAdd {
         preparation: None,
         intent: None,
         title: "Dependent work".to_owned(),
+        pitch: "This work keeps the fixture honest.".to_owned(),
         project: Some("task.workflow".to_owned()),
         description: None,
         acceptance: Vec::new(),
@@ -146,6 +147,7 @@ fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() 
         preparation: None,
         intent: None,
         title: "Board and hold this work".to_owned(),
+        pitch: "This work keeps the fixture honest.".to_owned(),
         project: Some("task.workflow".to_owned()),
         description: None,
         acceptance: Vec::new(),
@@ -438,6 +440,7 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
     let declare = TaskEdit {
         task: child.clone(),
         title: None,
+        pitch: None,
         description: None,
         acceptance: Vec::new(),
         requirements: None,

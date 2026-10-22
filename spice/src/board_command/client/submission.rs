@@ -66,6 +66,10 @@ pub(super) fn client_add(
         preparation,
         intent,
         title,
+        pitch: matches
+            .get_one::<String>("pitch")
+            .cloned()
+            .unwrap_or_default(),
         project,
         description,
         acceptance,
@@ -265,12 +269,20 @@ fn capture_new_task(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let description = matches.get_one::<String>("description").cloned();
+    // A capture names work that already exists, so an unwritten pitch derives
+    // from the title and description rather than refusing the capture.
+    let pitch = matches
+        .get_one::<String>("pitch")
+        .cloned()
+        .unwrap_or_else(|| wire::pitch::derive(&title, description.as_deref()));
     let body = TaskAdd {
         preparation: None,
         intent: None,
         title,
+        pitch,
         project: Some(project),
-        description: matches.get_one::<String>("description").cloned(),
+        description,
         acceptance: matches
             .get_many::<String>("acceptance")
             .into_iter()

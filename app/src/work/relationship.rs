@@ -673,6 +673,7 @@ mod tests {
                     handle: wire::TaskHandle::for_project("canvas.work", &born),
                     born: born.clone(),
                     queue_origin: seq(value.unsigned_abs() + 1),
+                    pitch: "This work keeps the fixture honest.".to_owned(),
                     description: None,
                     acceptance: Vec::new(),
                     requirements: EnvironmentRequirements::EMPTY,

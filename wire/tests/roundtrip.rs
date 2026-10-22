@@ -907,6 +907,7 @@ fn a_task_fact_without_creation_context_refuses() {
             r#"{{
         "task":"1kKRRsDP",
         "title":"Task",
+        "pitch":"A fixture needs a reason.",
         "project":"task.fixture",
         "depends":[],
         "flow":["todo"],

@@ -36,6 +36,7 @@ fn add_planning_with(
         &TaskAdd {
             preparation: None,
             title: name.to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
@@ -147,6 +148,7 @@ fn declared_planning_defaults_give_each_purpose_its_flow() {
             &TaskAdd {
                 preparation: None,
                 title: format!("Design flow {flow}"),
+                pitch: "This work keeps the fixture honest.".to_owned(),
                 project: Some("board.test".to_owned()),
                 description: None,
                 acceptance: vec!["The design is supported".to_owned()],
@@ -200,6 +202,7 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
         &TaskAdd {
             preparation: Some(design.clone()),
             title: "Premature Design output".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: vec!["The output is executable".to_owned()],
@@ -428,6 +431,7 @@ fn finding_review_intake_enters_design_with_its_correction_recorded() {
                 add: TaskAdd {
                     preparation: None,
                     title: "Correct the Design statement".to_owned(),
+                    pitch: "This work keeps the fixture honest.".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,
                     acceptance: vec!["The failure boundary is explicit".to_owned()],
@@ -554,6 +558,7 @@ fn atomic_recovery_cannot_create_a_declared_planning_task() {
         &TaskAdd {
             preparation: None,
             title: "Recovered implementation".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: vec!["The recovered behavior is implemented".to_owned()],
@@ -977,6 +982,7 @@ fn add_associated(
         preparation: parent.cloned(),
         intent,
         title: name.to_owned(),
+        pitch: "This work keeps the fixture honest.".to_owned(),
         project: Some("board.test".to_owned()),
         description: None,
         acceptance: vec!["The executable contract supports the requested behavior".to_owned()],
@@ -1175,6 +1181,7 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
                     preparation: None,
                     intent: None,
                     title: "Construct missing output".to_owned(),
+                    pitch: "This work keeps the fixture honest.".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,
                     acceptance: Vec::new(),
@@ -1296,6 +1303,7 @@ fn a_correction_outlives_its_settled_plan_without_the_construction_duty() {
                     preparation: None,
                     intent: None,
                     title: "Repair the plan".to_owned(),
+                    pitch: "This work keeps the fixture honest.".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,
                     acceptance: Vec::new(),

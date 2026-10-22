@@ -30,6 +30,7 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
         preparation: None,
         intent: None,
         title: String::new(),
+        pitch: String::new(),
         project: None,
         description: None,
         acceptance: Vec::new(),
@@ -85,6 +86,9 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
     if add.title.trim().is_empty() {
         return Err(format!("follow-up {spec:?} carries no title=..."));
     }
+    // A review follow-up has no author to ask for a pitch, so it derives one
+    // once from the first description sentence, as a friction report does.
+    add.pitch = wire::pitch::derive(&add.title, add.description.as_deref());
     Ok(add)
 }
 
@@ -444,6 +448,7 @@ fn prepare_followup_policy(
         context.snapshot,
         context.command.actor(),
         &add.title,
+        &add.pitch,
         add.description.as_deref(),
         &add.acceptance,
     )?;
@@ -503,6 +508,7 @@ fn create_followup(
         born: followup.task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: followup.add.title.clone(),
+        pitch: followup.add.pitch.clone(),
         description: followup.add.description.clone(),
         acceptance: followup.add.acceptance.clone(),
         requirements: followup.add.requirements.clone(),
@@ -544,6 +550,7 @@ fn create_followup(
                 intent: statement.intent,
                 task: followup.task.clone(),
                 title: statement.title.clone(),
+                pitch: statement.pitch.clone(),
                 description: statement.description.clone(),
                 acceptance: statement.acceptance.clone(),
                 requirements: statement.requirements.clone(),

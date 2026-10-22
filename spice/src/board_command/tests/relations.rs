@@ -47,6 +47,7 @@ fn related_task(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, name: &str
             preparation: None,
             intent: None,
             title: "Project typed task relationships".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.relations".to_owned()),
             description: None,
             acceptance: Vec::new(),

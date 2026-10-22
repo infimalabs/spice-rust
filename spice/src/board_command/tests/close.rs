@@ -101,6 +101,7 @@ fn an_operator_closure_completes_from_any_phase_and_releases_its_dependents() {
             preparation: None,
             intent: None,
             title: "Work waiting on the verified task".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: Vec::new(),

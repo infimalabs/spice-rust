@@ -308,6 +308,7 @@ fn append_design(
     let added = wire::body::TaskAdded {
         task: design.clone(),
         title: wire::OOPS_DESIGN_TITLE.to_owned(),
+        pitch: wire::OOPS_DESIGN_PITCH.to_owned(),
         description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
@@ -388,6 +389,7 @@ fn append_design_heads(
         born: design.clone(),
         queue_origin: sequence,
         title: wire::OOPS_DESIGN_TITLE.to_owned(),
+        pitch: wire::OOPS_DESIGN_PITCH.to_owned(),
         description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),

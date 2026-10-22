@@ -143,6 +143,7 @@ fn draft_filing(
     }
     planning::admit_design_flow(statement.intent, &workflow.flow)?;
     validate_acceptance(&statement.acceptance)?;
+    validate_pitch(&statement.pitch)?;
     let mut dependency_witnesses = Vec::with_capacity(statement.dependencies.len());
     for born in &statement.dependencies {
         let Some(heads) = snapshot
@@ -175,6 +176,7 @@ fn draft_filing(
         snapshot,
         command.actor(),
         &statement.title,
+        &statement.pitch,
         statement.description.as_deref(),
         &statement.acceptance,
     )?;

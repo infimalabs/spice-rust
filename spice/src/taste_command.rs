@@ -431,6 +431,7 @@ pub(crate) fn add(
             preparation: None,
             intent: None,
             title,
+            pitch: "A correction that keeps recurring deserves a tracked taste.".to_owned(),
             project: Some(PROJECT.to_owned()),
             description: Some(description),
             acceptance: vec![
@@ -550,6 +551,7 @@ pub(crate) fn drop(
             preparation: None,
             intent: None,
             title: format!("Propose tracked taste retirement: {}", row.name),
+            pitch: "A taste that no longer earns its corrections should retire.".to_owned(),
             project: Some(PROJECT.to_owned()),
             description: Some(description),
             acceptance: vec![

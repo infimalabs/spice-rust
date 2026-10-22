@@ -674,6 +674,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
             preparation: None,
             intent: None,
             title: "Carry native bootstrap context".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("task.cli".to_owned()),
             description: Some("The agent needs the complete handoff".to_owned()),
             acceptance: vec![

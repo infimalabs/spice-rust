@@ -176,6 +176,7 @@ fn statement() -> TaskHead {
         born,
         queue_origin: seq(1),
         title: "Run full verification".to_owned(),
+        pitch: "This work keeps the fixture honest.".to_owned(),
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),

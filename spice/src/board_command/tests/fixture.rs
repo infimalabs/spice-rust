@@ -575,6 +575,7 @@ pub(super) fn add_project_with_acceptance(
             preparation: None,
             intent: None,
             title: title.to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some(project.to_owned()),
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),

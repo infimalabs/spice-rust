@@ -7,6 +7,7 @@
 //! revision, and a refused Save keeps every typed field for the retry.
 
 use wire::intent::{BoardTask, TaskEdit};
+use wire::pitch::{PITCH_CHARS, PitchRefusal};
 use wire::{TaskIntent, TaskIntentEdit, Witness};
 
 use crate::client_action::DraftRequest;
@@ -15,6 +16,8 @@ use crate::client_action::DraftRequest;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DraftField {
     Title,
+    /// One plain sentence saying why the work matters.
+    Pitch,
     Project,
     /// The Kind control: empty for ordinary work, else the intent's name.
     Intent,
@@ -26,8 +29,9 @@ pub(crate) enum DraftField {
 }
 
 impl DraftField {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Title,
+        Self::Pitch,
         Self::Project,
         Self::Intent,
         Self::Flow,
@@ -40,6 +44,7 @@ impl DraftField {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DraftFields {
     title: String,
+    pitch: String,
     project: String,
     intent: String,
     flow: String,
@@ -52,6 +57,7 @@ impl DraftFields {
         let statement = &row.statement.body;
         Self {
             title: row.presentation_title.clone(),
+            pitch: statement.pitch.clone(),
             project: statement.project.clone(),
             intent: statement
                 .intent
@@ -65,6 +71,7 @@ impl DraftFields {
     pub(crate) fn get(&self, field: DraftField) -> &str {
         match field {
             DraftField::Title => &self.title,
+            DraftField::Pitch => &self.pitch,
             DraftField::Project => &self.project,
             DraftField::Intent => &self.intent,
             DraftField::Flow => &self.flow,
@@ -76,6 +83,7 @@ impl DraftFields {
     fn slot(&mut self, field: DraftField) -> &mut String {
         match field {
             DraftField::Title => &mut self.title,
+            DraftField::Pitch => &mut self.pitch,
             DraftField::Project => &mut self.project,
             DraftField::Intent => &mut self.intent,
             DraftField::Flow => &mut self.flow,
@@ -166,9 +174,11 @@ impl DraftForm {
         };
         let acceptance = criteria(&self.fields.acceptance);
         let intent = self.fields.intent()?;
+        let pitch = admitted_pitch(&self.fields.pitch)?;
         let request = TaskEdit {
             task: statement.handle.clone(),
             title: moved(DraftField::Title, &self.basis.presentation_title),
+            pitch: (pitch != statement.pitch).then_some(pitch),
             description: moved(
                 DraftField::Description,
                 statement.description.as_deref().unwrap_or_default(),
@@ -188,6 +198,7 @@ impl DraftForm {
             flow: moved(DraftField::Flow, &flow(&self.basis)),
         };
         if request.title.is_none()
+            && request.pitch.is_none()
             && request.description.is_none()
             && request.acceptance.is_empty()
             && request.intent.is_none()
@@ -213,6 +224,21 @@ pub(crate) fn criteria(text: &str) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+/// The trimmed pitch, or the sentence the editor shows instead of sending a
+/// pitch the appliance would refuse.
+pub(crate) fn admitted_pitch(text: &str) -> Result<String, String> {
+    match wire::pitch::admit(text) {
+        Ok(()) => Ok(text.trim().to_owned()),
+        Err(PitchRefusal::Empty) => {
+            Err("A Draft needs one plain sentence saying why it matters.".to_owned())
+        }
+        Err(PitchRefusal::Multiline) => Err("A pitch stays on one line.".to_owned()),
+        Err(PitchRefusal::TooLong { chars }) => Err(format!(
+            "A pitch stays within {PITCH_CHARS} characters; this one has {chars}."
+        )),
+    }
 }
 
 fn flow(row: &BoardTask) -> String {

@@ -203,6 +203,7 @@ fn assert_anchor_resolution_and_group_end(
         &TaskEdit {
             task: first.clone(),
             title: None,
+            pitch: None,
             description: None,
             acceptance: Vec::new(),
             requirements: None,
@@ -365,6 +366,7 @@ fn add_design_room(bus: &Bus, epoch: CanonicalUuid, born: TaskStamp, title: &str
             preparation: None,
             intent: Some(wire::TaskIntent::Design),
             title: title.to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
             project: Some("board.identity".to_owned()),
             description: None,
             acceptance: vec!["The design records its disposition".to_owned()],

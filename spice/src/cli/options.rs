@@ -50,13 +50,38 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ("lane add", "effort", "Launch with this reasoning effort"),
     (
         "task add",
+        "pitch",
+        "One plain sentence saying why this task matters, at most 160 characters",
+    ),
+    (
+        "task add",
         "description",
-        "Open with one plain unlabeled sentence saying why this task matters, then the detail",
+        "The detail behind the pitch: what changes and how",
+    ),
+    (
+        "task plan",
+        "pitch",
+        "One plain sentence saying why this task matters, at most 160 characters",
+    ),
+    (
+        "task design",
+        "pitch",
+        "One plain sentence saying why this task matters, at most 160 characters",
+    ),
+    (
+        "task capture",
+        "pitch",
+        "One plain sentence saying why this task matters; derived from the title when absent",
+    ),
+    (
+        "task modify",
+        "pitch",
+        "One plain sentence saying why this task matters, at most 160 characters",
     ),
     (
         "task modify",
         "description",
-        "Open with one plain unlabeled sentence saying why this task matters, then the detail",
+        "The detail behind the pitch: what changes and how",
     ),
     (
         "preparation propose",

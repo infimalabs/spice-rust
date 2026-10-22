@@ -32,6 +32,7 @@ fn entries() -> Vec<board::Entry> {
                 born: born.clone(),
                 queue_origin: Seq::new(1).expect("sequence"),
                 title: format!("Graph node {index}"),
+                pitch: "A graph needs nodes to draw.".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
                 requirements: Default::default(),

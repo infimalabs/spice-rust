@@ -16,6 +16,10 @@ use crate::witness::{Name, Phase, TaskHandle, TaskStamp};
 pub struct TaskAdd {
     /// One-line statement of the work.
     pub title: String,
+    /// One plain sentence saying why the task matters; the write refuses an
+    /// absent or empty pitch.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pitch: String,
     /// One resolved public project, or absent for private work.
     #[serde(
         default,
@@ -151,6 +155,13 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub title: Option<String>,
+    /// Replacement pitch, when the pitch moves.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub pitch: Option<String>,
     /// Replacement description, when the description moves; empty clears it.
     #[serde(
         default,

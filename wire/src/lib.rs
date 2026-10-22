@@ -60,6 +60,7 @@ pub mod media;
 mod optional;
 pub mod output;
 pub mod packed;
+pub mod pitch;
 mod position_spelling;
 pub mod principal;
 mod provenance;
@@ -101,10 +102,10 @@ pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead,
-    OOPS_DESIGN_DESCRIPTION, OOPS_DESIGN_PROJECT, OOPS_DESIGN_TITLE, OopsGenerationHead,
-    RenewalIdentity, ResidencyHead, ResidentState, SeatRefusal, StatementField, SteeringHead,
-    TapeLocus, TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation, TaskPriority,
-    TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal, TeamSubscription,
+    OOPS_DESIGN_DESCRIPTION, OOPS_DESIGN_PITCH, OOPS_DESIGN_PROJECT, OOPS_DESIGN_TITLE,
+    OopsGenerationHead, RenewalIdentity, ResidencyHead, ResidentState, SeatRefusal, StatementField,
+    SteeringHead, TapeLocus, TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation,
+    TaskPriority, TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal, TeamSubscription,
     TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
     WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview,
     WorkflowStatus, WorkflowStatusKind,

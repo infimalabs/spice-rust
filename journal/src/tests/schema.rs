@@ -13,6 +13,7 @@ mod creation_contexts;
 mod designs;
 mod formations;
 mod leave_receipts;
+mod pitch;
 mod preparation_edges;
 mod principals;
 mod probe;

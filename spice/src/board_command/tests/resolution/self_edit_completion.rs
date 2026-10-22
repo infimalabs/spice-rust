@@ -279,6 +279,7 @@ fn edit(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &TaskHandle, title:
             intent: None,
             task: task.clone(),
             title: Some(title.to_owned()),
+            pitch: None,
             description: None,
             acceptance: Vec::new(),
             requirements: None,

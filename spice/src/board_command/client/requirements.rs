@@ -134,6 +134,7 @@ pub(super) fn client_require(
                 intent: None,
                 task,
                 title: None,
+                pitch: None,
                 description: None,
                 acceptance: Vec::new(),
                 requirements: Some(requirements),

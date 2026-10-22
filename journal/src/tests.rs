@@ -626,6 +626,7 @@ fn populate_authority(journal: Journal) -> Journal {
             json!({
                 "task": "1kKRRsDP",
                 "title": "Journal fixture",
+                "pitch": "A fixture needs one task to read.",
                 "project": "journal",
                 "depends": [],
                 "flow": ["todo", "review"],
@@ -864,6 +865,7 @@ fn task_head() -> TaskHead {
         born: "1kKRRsDP".parse().expect("task stamp"),
         queue_origin: Seq::new(1).expect("queue origin"),
         title: "Lay journal baseline".to_owned(),
+        pitch: "A baseline makes every later read comparable.".to_owned(),
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),

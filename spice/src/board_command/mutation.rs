@@ -266,7 +266,9 @@ fn create_task<B: serde::Serialize>(
         Ok(creation) => creation,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = validate_acceptance(&add.acceptance) {
+    if let Err(outcome) =
+        validate_acceptance(&add.acceptance).and_then(|()| validate_pitch(&add.pitch))
+    {
         return outcome;
     }
     let (flow, dependency_witnesses) = match task_flow_for_dependencies(command, add, &snapshot) {
@@ -279,23 +281,16 @@ fn create_task<B: serde::Serialize>(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
-    // A Draft asserts nothing yet: taste and preparation bind when it is filed.
-    let taste_review = if filing.is_draft() {
-        None
-    } else {
-        match task_taste_review(
-            repository,
-            &snapshot,
-            command.actor(),
-            &prepared.statement.title,
-            prepared.statement.description.as_deref(),
-            &prepared.statement.acceptance,
-        ) {
-            Ok(review) => review,
-            Err(outcome) => return outcome,
-        }
+    let taste_review = match prepared_taste_review(
+        repository,
+        &snapshot,
+        command.actor(),
+        &prepared.statement,
+        filing,
+    ) {
+        Ok(review) => review.filter(TasteReview::required),
+        Err(outcome) => return outcome,
     };
-    let taste_review = taste_review.filter(TasteReview::required);
     if let Some(review) = &taste_review
         && captures_implementation(command)
     {
@@ -334,6 +329,29 @@ fn create_task<B: serde::Serialize>(
         dependency_witnesses,
         |_| {},
         added_claim,
+    )
+}
+
+/// The taste review of a prepared statement. A Draft asserts nothing yet:
+/// taste and preparation bind when it is filed.
+fn prepared_taste_review(
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    actor: &wire::Actor,
+    statement: &wire::TaskHead,
+    filing: wire::TaskFiling,
+) -> Result<Option<TasteReview>, Outcome<CommandAnswer>> {
+    if filing.is_draft() {
+        return Ok(None);
+    }
+    task_taste_review(
+        repository,
+        snapshot,
+        actor,
+        &statement.title,
+        &statement.pitch,
+        statement.description.as_deref(),
+        &statement.acceptance,
     )
 }
 
@@ -497,6 +515,7 @@ fn append_prepared_task(
                 intent: prepared.statement.intent,
                 task: prepared.born.clone(),
                 title: add.title.clone(),
+                pitch: add.pitch.trim().to_owned(),
                 description: add.description.clone(),
                 acceptance: add.acceptance.clone(),
                 requirements: add.requirements.clone(),
@@ -603,6 +622,7 @@ fn prepare_task_for(
         born: born.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
         title: add.title.clone(),
+        pitch: add.pitch.trim().to_owned(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
         requirements: add.requirements.clone(),

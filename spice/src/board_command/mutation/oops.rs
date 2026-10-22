@@ -205,6 +205,7 @@ fn prepare_oops_rows(
         preparation: None,
         intent: Some(wire::TaskIntent::OpportunisticDesign),
         title: wire::OOPS_DESIGN_TITLE.to_owned(),
+        pitch: wire::OOPS_DESIGN_PITCH.to_owned(),
         project: Some(wire::OOPS_DESIGN_PROJECT.to_owned()),
         description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
         acceptance: Vec::new(),
@@ -219,6 +220,9 @@ fn prepare_oops_rows(
         preparation: None,
         intent: Some(wire::TaskIntent::Plan),
         title: add.title.clone(),
+        // A friction report must not be refused, so its pitch derives once
+        // from the report text instead of being asked for.
+        pitch: wire::pitch::derive(&add.title, None),
         project: Some(project.as_str().to_owned()),
         description: None,
         acceptance: Vec::new(),
@@ -306,6 +310,7 @@ fn commit_oops_intake(
         preparation: None,
         intent: Some(wire::TaskIntent::Plan),
         title: request_body.title.clone(),
+        pitch: wire::pitch::derive(&request_body.title, None),
         project: Some(report.project.clone()),
         description: None,
         acceptance: Vec::new(),
@@ -326,6 +331,7 @@ fn commit_oops_intake(
                 preparation: None,
                 intent: Some(wire::TaskIntent::OpportunisticDesign),
                 title: wire::OOPS_DESIGN_TITLE.to_owned(),
+                pitch: wire::OOPS_DESIGN_PITCH.to_owned(),
                 project: Some(wire::OOPS_DESIGN_PROJECT.to_owned()),
                 description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
                 acceptance: Vec::new(),

@@ -77,6 +77,7 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
         born: stamp("BOARD-r1"),
         queue_origin: seq(1),
         title: "Review the lapsed assignment".to_owned(),
+        pitch: "A lapsed assignment still needs its review.".to_owned(),
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),

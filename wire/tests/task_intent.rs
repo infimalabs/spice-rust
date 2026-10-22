@@ -10,6 +10,7 @@ const HEAD: &str = r#"{
   "born": "1kKRRsDP",
   "queue_origin": 9,
   "title": "Plan the rooms",
+  "pitch": "Rooms need a plan.",
   "project": "wire",
   "dependencies": [],
   "provenance": "parentless",
@@ -80,6 +81,7 @@ fn intent_edits_bind_their_statement_witness_to_the_edited_task() {
     let edit = wire::intent::TaskEdit {
         task,
         title: None,
+        pitch: None,
         description: None,
         acceptance: Vec::new(),
         requirements: None,

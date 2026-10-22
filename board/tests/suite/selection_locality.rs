@@ -67,6 +67,7 @@ fn statement(name: &str) -> TaskHead {
         born: stamp(name),
         queue_origin: seq(1),
         title: format!("Implement {name}"),
+        pitch: "Selection must stay local.".to_owned(),
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),

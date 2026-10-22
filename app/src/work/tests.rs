@@ -36,6 +36,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
                 handle: wire::TaskHandle::for_project(project, &born),
                 born: born.clone(),
                 queue_origin: seq(value.unsigned_abs() + 1),
+                pitch: "This work keeps the fixture honest.".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::EMPTY,

@@ -357,6 +357,7 @@ fn cover_task_heads() {
                 born: task.clone(),
                 queue_origin: seq(9),
                 title: "Build the gate".to_owned(),
+                pitch: "The gate must exist before anything crosses.".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
                 requirements: EnvironmentRequirements::default(),
@@ -379,6 +380,7 @@ fn cover_task_heads() {
                 born: task.clone(),
                 queue_origin: seq(9),
                 title: "Review the gate".to_owned(),
+                pitch: "A built gate deserves a second look.".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
                 acceptance: vec!["The gate passes".to_owned()],
                 requirements: EnvironmentRequirements::one(

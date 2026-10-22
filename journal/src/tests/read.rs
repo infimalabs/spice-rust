@@ -109,6 +109,7 @@ fn retained_history() -> Journal {
                 json!({
                     "task": "1kKRRsDP",
                     "title": "unrelated retained authority",
+                    "pitch": "Unrelated authority must stay readable.",
                     "project": "journal",
                     "depends": [],
                     "flow": ["todo", "review"],
@@ -455,6 +456,7 @@ fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
             json!({
                 "task": "2kKRRsDP",
                 "title": "x".repeat(MAX_DURABLE_FACT_ENVELOPE_BYTES + 1),
+                "pitch": "An oversized title must refuse.",
                 "project": "journal",
                 "depends": [],
                 "flow": ["todo", "review"],

@@ -71,6 +71,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         preparation: None,
         intent: None,
         title: add.title.clone(),
+        pitch: wire::pitch::derive(&add.title, Some(&add.description)),
         project: None,
         description: Some(add.description.clone()),
         acceptance: add.acceptance.clone(),

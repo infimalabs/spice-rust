@@ -68,6 +68,9 @@ fn prepare_correction(
     projects: &ProjectPolicy,
 ) -> Result<(TaskHead, CorrectionPublication), Outcome<CommandAnswer>> {
     validate_acceptance(&edit.acceptance)?;
+    if let Some(pitch) = &edit.pitch {
+        validate_pitch(pitch)?;
+    }
     let (mut statement, flow) = corrected_statement(entry, edit, projects)?;
     // A Draft asserts nothing yet; taste policy binds when it is filed.
     let released = if entry.is_draft() {
@@ -156,6 +159,7 @@ fn review_taste(
         snapshot,
         command.actor(),
         &statement.title,
+        &statement.pitch,
         statement.description.as_deref(),
         &statement.acceptance,
     )?;
@@ -199,6 +203,7 @@ fn corrected_statement(
     projects: &ProjectPolicy,
 ) -> Result<(TaskHead, Option<Vec<wire::Phase>>), Outcome<CommandAnswer>> {
     if edit.title.is_none()
+        && edit.pitch.is_none()
         && edit.description.is_none()
         && edit.acceptance.is_empty()
         && edit.requirements.is_none()
@@ -221,6 +226,9 @@ fn corrected_statement(
     let mut statement = entry.statement().clone();
     if let Some(title) = &edit.title {
         statement.title = title.clone();
+    }
+    if let Some(pitch) = &edit.pitch {
+        statement.pitch = pitch.trim().to_owned();
     }
     if let Some(description) = &edit.description {
         statement.description = (!description.is_empty()).then(|| description.clone());

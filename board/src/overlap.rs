@@ -158,6 +158,7 @@ mod tests {
             born: born.clone(),
             queue_origin: seq(1),
             title: title.to_owned(),
+            pitch: "Overlapping work must be noticed.".to_owned(),
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
             requirements: wire::EnvironmentRequirements::default(),

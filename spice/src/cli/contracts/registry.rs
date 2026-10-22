@@ -782,7 +782,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "add"],
-        "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
+        "task add TITLE [--pitch TEXT] [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
          [--origin ORIGIN] [--claim] [--draft]",
@@ -796,7 +796,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "plan"],
-        "task plan TITLE [--project PROJECT] [--description DESCRIPTION] \
+        "task plan TITLE [--pitch TEXT] [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
          [--origin ORIGIN] [--claim] [--draft]",
@@ -810,7 +810,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "design"],
-        "task design TITLE [--project PROJECT] [--description DESCRIPTION] \
+        "task design TITLE [--pitch TEXT] [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
          [--origin ORIGIN] [--claim] [--draft]",
@@ -824,7 +824,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "capture"],
-        "task capture [HANDLE] [--title TITLE] [--project PROJECT] \
+        "task capture [HANDLE] [--title TITLE] [--pitch TEXT] [--project PROJECT] \
          [--origin ORIGIN] [--description DESCRIPTION] [--acceptance ACCEPTANCE...] \
          [--steal] [--restore]",
         OperatorOrLane,
@@ -935,7 +935,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "modify"],
-        "task modify HANDLE [--title TITLE] [--description DESCRIPTION] \
+        "task modify HANDLE [--title TITLE] [--pitch TEXT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--priority PRIORITY] [--project PROJECT] \
          [--intent INTENT] [--clear-intent] [--flow PHASES]",
         OperatorOrLane,

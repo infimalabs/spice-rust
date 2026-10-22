@@ -776,6 +776,7 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
             intent: None,
             task: reverse.clone(),
             title: None,
+            pitch: None,
             description: None,
             acceptance: vec!["the revised reverse behavior is verified".to_owned()],
             requirements: None,
