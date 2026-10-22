@@ -1,4 +1,4 @@
-//! Schema 94: every retained task statement carries a pitch.
+//! Schema 96: every retained task statement carries a pitch.
 //!
 //! Statements written before the pitch field derive theirs once here from the
 //! stored title and description, the same rule a friction report uses at
