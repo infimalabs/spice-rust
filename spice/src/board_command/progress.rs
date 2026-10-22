@@ -53,6 +53,7 @@ pub(super) fn claim_reclaim_with_clock(
     }
     let answer = wire::intent::ClaimAnswer {
         task: entry.handle().clone(),
+        statement: None,
         holder: Some(command.actor().clone()),
         expiry: Some(Box::new(until)),
         warnings: Box::default(),

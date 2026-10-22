@@ -339,7 +339,7 @@ fn render_task_list_row(task: &BoardTask, title: &str) -> String {
             format!(" P:{}", board::priority_label(priority))
         });
     format!(
-        "{} [{state}]{priority} {} {title}",
-        task.statement.body.handle, task.statement.body.project,
+        "{} [{state}]{priority} {} {title}\n  {}",
+        task.statement.body.handle, task.statement.body.project, task.statement.body.pitch,
     )
 }

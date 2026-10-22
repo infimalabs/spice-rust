@@ -366,6 +366,12 @@ fn claim_answer(
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task: selected.handle().clone(),
+        statement: Some(Box::new(wire::intent::ClaimStatement {
+            title: selected.statement().title.clone(),
+            pitch: selected.statement().pitch.clone(),
+            description: selected.statement().description.clone(),
+            acceptance: selected.statement().acceptance.clone(),
+        })),
         holder: Some(command.actor().clone()),
         expiry: None,
         warnings: board::claim_overlaps(selected, entries)
@@ -501,7 +507,7 @@ fn claim_activation_next_action(selected: &Entry) -> Box<str> {
     if selected.statement().taste.is_some() {
         return format!("spice task modify {} --title \"...\"", selected.handle()).into_boxed_str();
     }
-    format!("spice task show {}", selected.handle()).into_boxed_str()
+    format!("spice task show {} --full", selected.handle()).into_boxed_str()
 }
 
 /// The phase a lane just won, said where the lane reads the assignment.

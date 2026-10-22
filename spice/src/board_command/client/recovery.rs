@@ -563,6 +563,7 @@ fn reconcile_client_recovery(
                 .unwrap_or_else(|| {
                     let claim = wire::intent::ClaimAnswer {
                         task: task.clone(),
+                        statement: None,
                         holder: Some(sealed.actor),
                         expiry: None,
                         warnings: Box::default(),

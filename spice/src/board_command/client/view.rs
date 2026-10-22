@@ -111,6 +111,9 @@ pub(crate) struct BoardRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) lane: Option<CanonicalUuid>,
     pub(crate) title: ClippedText,
+    /// One plain sentence saying why the task matters, whole: an admitted
+    /// pitch is one bounded line.
+    pub(crate) pitch: String,
 }
 
 impl std::fmt::Display for BoardRow {
@@ -125,7 +128,11 @@ impl std::fmt::Display for BoardRow {
         if let Some(cycle) = self.cycle {
             write!(formatter, " ({})", cycle.label())?;
         }
-        write!(formatter, "  {}  {}", self.project, self.title)
+        write!(
+            formatter,
+            "  {}  {}\n  {}",
+            self.project, self.title, self.pitch
+        )
     }
 }
 
@@ -456,11 +463,10 @@ fn row(
     standing: Standing,
     budget: &wire::output::Budget,
 ) -> BoardRow {
-    let title = board
+    let task = board
         .tasks
         .iter()
-        .find(|task| &task.statement.body.born == entry.born())
-        .map_or("", |task| task.presentation_title.as_str());
+        .find(|task| &task.statement.body.born == entry.born());
     BoardRow {
         handle: entry.handle().clone(),
         standing,
@@ -471,7 +477,8 @@ fn row(
             .claim()
             .filter(|claim| claim.disposition == ClaimDisposition::Active)
             .map(|claim| claim.lane),
-        title: budget.clip(title),
+        title: budget.clip(task.map_or("", |task| task.presentation_title.as_str())),
+        pitch: entry.statement().pitch.clone(),
     }
 }
 

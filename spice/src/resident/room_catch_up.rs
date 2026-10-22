@@ -56,8 +56,9 @@ pub(in crate::resident) struct Changes {
     pub(in crate::resident) rooms: BTreeSet<TaskStamp>,
 }
 
-/// Why `lane` listens to one room and, while it owes the Design request there
-/// (`owed`), how it declines it, as one notice block.
+/// One room as a catch-up names it: its title, pitch, and description
+/// collapsed to its count line, then why `lane` listens and, while it owes the
+/// Design request there (`owed`), how it declines it, as one notice block.
 fn listening(
     handle: &TaskHandle,
     row: Option<&spice::rooms::RoomLaneAttention>,
@@ -100,7 +101,25 @@ fn listening(
     } else {
         String::new()
     };
-    format!("\nlistening {handle}: {}{leave}\n", named.join(", "))
+    let statement = entries
+        .iter()
+        .find(|entry| entry.handle() == handle)
+        .map_or_else(String::new, |entry| {
+            let statement = entry.statement();
+            format!(
+                "\nroom {handle}: {}\npitch: {}\n{}",
+                statement.title,
+                statement.pitch,
+                crate::board_command::collapsed_description(
+                    handle,
+                    statement.description.as_deref()
+                ),
+            )
+        });
+    format!(
+        "{statement}\nlistening {handle}: {}{leave}\n",
+        named.join(", ")
+    )
 }
 
 /// Publish the current bounded delivery for every occupied lane, then notify

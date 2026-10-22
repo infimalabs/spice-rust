@@ -59,6 +59,7 @@ fn task_show_separates_current_context_and_bounded_history() {
         None,
         None,
         &TaskShowOptions {
+            full: false,
             context: false,
             history: false,
             limit: None,
@@ -73,12 +74,13 @@ fn task_show_separates_current_context_and_bounded_history() {
         "title Bound one task read",
         "project ",
         "priority -",
-        "description:\n  -",
+        "description: -",
         "phase ",
         "status ",
         "claim ",
         "requirements:",
-        "acceptance:",
+        "acceptance: -",
+        "history: -",
         "depends:",
         "artifacts:",
         "next: ",
@@ -118,6 +120,7 @@ fn task_show_separates_current_context_and_bounded_history() {
         None,
         None,
         &TaskShowOptions {
+            full: false,
             context: false,
             history: true,
             limit: None,
@@ -130,6 +133,7 @@ fn task_show_separates_current_context_and_bounded_history() {
     assert_eq!(history.matches("    evidence-").count(), 20, "{history}");
     assert!(history.contains("continue: spice task show"), "{history}");
     assert!(history.contains("--after"), "{history}");
+    assert!(!history.contains("history: "), "{history}");
 
     let oversized = "x".repeat(5_000);
     let context = task_show_bounded(
@@ -140,6 +144,7 @@ fn task_show_separates_current_context_and_bounded_history() {
         Some(&oversized),
         None,
         &TaskShowOptions {
+            full: false,
             context: true,
             history: false,
             limit: None,
@@ -156,6 +161,63 @@ fn task_show_separates_current_context_and_bounded_history() {
 }
 
 #[test]
+fn task_show_counts_the_history_it_collapses() {
+    let (root, bus, epoch, _) = fixture("task-show-collapsed-history", 0);
+    let task = add_born(
+        &bus,
+        epoch,
+        stamp("task-show-collapsed-history"),
+        "Count one task's history",
+    );
+    let answer = board(&bus, epoch, Actor::Operator);
+    let row = at(&answer, &task);
+    let steps = (1..=3)
+        .map(|index| wire::intent::TaskDetailStep {
+            position: Seq::new(1_000 + index).expect("fixture position"),
+            at: "2026-10-02T00:00:00.000Z".parse().expect("fixture instant"),
+            author: Actor::Operator,
+            step: wire::intent::TaskStep::Done {
+                phase: "todo".parse().expect("fixture phase"),
+                validation: format!("evidence-{index}"),
+                disposition: None,
+            },
+        })
+        .collect::<Vec<_>>();
+    let show = |full: bool| {
+        task_show_bounded(
+            &answer,
+            row,
+            &[],
+            TaskShowHistory {
+                steps: &steps,
+                ..TaskShowHistory::default()
+            },
+            None,
+            None,
+            &TaskShowOptions {
+                full,
+                context: false,
+                history: false,
+                limit: None,
+                max_bytes: None,
+                max_text: None,
+                after: None,
+            },
+        )
+        .expect("unpaged detail has no cursor")
+    };
+    let collapsed = show(false);
+    assert!(
+        collapsed.contains(&format!("\nhistory: 3 steps spice://task/{task}/history\n")),
+        "{collapsed}"
+    );
+    assert!(!collapsed.contains("evidence-"), "{collapsed}");
+    let full = show(true);
+    assert!(!full.contains("history: "), "{full}");
+    clean(&root, bus);
+}
+
+#[test]
 fn task_show_labels_design_items_as_questions() {
     let (root, bus, epoch, _) = fixture("task-show-design-questions", 0);
     let task = add_born(
@@ -168,35 +230,52 @@ fn task_show_labels_design_items_as_questions() {
     let mut design = at(&answer, &task).clone();
     design.statement.body.intent = Some(wire::TaskIntent::Design);
     design.statement.body.acceptance = vec!["Which boundary remains open?".to_owned()];
-    let text = task_show_bounded(
-        &answer,
-        &design,
-        &[],
-        TaskShowHistory::default(),
-        None,
-        None,
-        &TaskShowOptions {
-            context: false,
-            history: false,
-            limit: None,
-            max_bytes: None,
-            max_text: None,
-            after: None,
-        },
-    )
-    .expect("Design detail has no cursor");
+    let show = |full: bool| {
+        task_show_bounded(
+            &answer,
+            &design,
+            &[],
+            TaskShowHistory::default(),
+            None,
+            None,
+            &TaskShowOptions {
+                full,
+                context: false,
+                history: false,
+                limit: None,
+                max_bytes: None,
+                max_text: None,
+                after: None,
+            },
+        )
+        .expect("Design detail has no cursor")
+    };
+    let handle = &design.statement.body.handle;
+    let collapsed = show(false);
     assert!(
-        text.contains("questions:\n  - Which boundary remains open?"),
-        "{text}"
+        collapsed.contains(&format!(
+            "\nquestions: 1 item spice://task/{handle}/acceptance\n"
+        )),
+        "{collapsed}"
     );
-    assert!(!text.contains("acceptance:"), "{text}");
+    assert!(!collapsed.contains("Which boundary"), "{collapsed}");
+    let full = show(true);
+    assert!(
+        full.contains("questions:\n  - Which boundary remains open?"),
+        "{full}"
+    );
+    for text in [collapsed, full] {
+        assert!(!text.contains("acceptance:"), "{text}");
+    }
     clean(&root, bus);
 }
 
-/// The bare view prints the authored statement whole: a description past the
-/// text limit keeps every line, and context does not repeat statement fields.
+/// Without `--full` the statement's prose collapses to its count lines, each
+/// naming the resource that expands exactly it; `--full` prints it whole: a
+/// description past the text limit keeps every line, and context does not
+/// repeat statement fields.
 #[test]
-fn task_show_prints_the_authored_statement_whole() {
+fn task_show_collapses_prose_and_full_prints_it_whole() {
     let (root, bus, epoch, _) = fixture("task-show-authored-statement", 0);
     let task = add_born(
         &bus,
@@ -212,7 +291,8 @@ fn task_show_prints_the_authored_statement_whole() {
     );
     row.statement.body.description = Some(description);
     row.statement.body.priority = Some(wire::TaskPriority::High);
-    let show = |context: bool| {
+    row.statement.body.acceptance = vec!["One".to_owned(), "Two".to_owned()];
+    let show = |full: bool, context: bool| {
         task_show_bounded(
             &answer,
             &row,
@@ -221,6 +301,7 @@ fn task_show_prints_the_authored_statement_whole() {
             None,
             None,
             &TaskShowOptions {
+                full,
                 context,
                 history: false,
                 limit: None,
@@ -231,17 +312,31 @@ fn task_show_prints_the_authored_statement_whole() {
         )
         .expect("task detail has no cursor")
     };
+    let handle = &row.statement.body.handle;
+    let collapsed = show(false, false);
+    assert!(
+        collapsed.contains(&format!(
+            "\ndescription: 3 lines spice://task/{handle}/description\n\
+             acceptance: 2 items spice://task/{handle}/acceptance\n\
+             history: -\n"
+        )),
+        "{collapsed}"
+    );
+    assert!(!collapsed.contains("First paragraph"), "{collapsed}");
     let indented = format!(
         "  First paragraph {}\n\n    indented second paragraph",
         "x".repeat(300)
     );
-    let current = show(false);
+    let current = show(true, false);
     assert!(current.contains("priority high"), "{current}");
     assert!(
-        current.contains(&format!("description:\n{indented}\nacceptance:")),
+        current.contains(&format!(
+            "description:\n{indented}\nacceptance:\n  - One\n  - Two\ndepends:"
+        )),
         "{current}"
     );
-    let context = show(true);
+    assert!(!current.contains("history: "), "{current}");
+    let context = show(true, true);
     assert_eq!(
         context.matches("indented second paragraph").count(),
         1,
@@ -268,6 +363,7 @@ fn task_show_context_uses_aggregate_detail_budget_and_exact_continuation() {
         None,
         None,
         &TaskShowOptions {
+            full: false,
             context: true,
             history: false,
             limit: None,

@@ -750,7 +750,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "show"],
-        "task show HANDLE [--context] [--history] [--limit N] [--max-bytes N] \
+        "task show HANDLE [--full] [--context] [--history] [--limit N] [--max-bytes N] \
          [--max-text N] [--after POSITION]",
         OperatorOrLane,
         Read,

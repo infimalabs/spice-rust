@@ -79,6 +79,7 @@ fn page(
         None,
         Some(shown),
         &TaskShowOptions {
+            full: false,
             context: false,
             history: true,
             limit: Some(2),

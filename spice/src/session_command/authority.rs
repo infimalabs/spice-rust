@@ -501,6 +501,7 @@ fn held_claim(entry: &Entry) -> HeldClaimView {
         phase: entry.workflow().phase.to_string(),
         status: entry.workflow().status.as_str().to_owned(),
         title: statement.title.clone(),
+        pitch: statement.pitch.clone(),
         lease_expiry: entry.lease().map(|lease| lease.expiry.to_string()),
         flow: entry
             .workflow()
@@ -511,19 +512,14 @@ fn held_claim(entry: &Entry) -> HeldClaimView {
         description: statement
             .description
             .as_deref()
-            .map(|text| crate::read_page::clip(text, HELD_DESCRIPTION_BYTES)),
+            .map(crate::read_page::collapse),
         acceptance: statement
             .acceptance
             .iter()
-            .map(|row| crate::read_page::clip(row, HELD_ACCEPTANCE_BYTES))
+            .map(|row| crate::read_page::collapse(row))
             .collect(),
     }
 }
-
-/// Bytes of the held task's description a briefing carries.
-const HELD_DESCRIPTION_BYTES: usize = 1200;
-/// Bytes of one held acceptance criterion a briefing carries.
-const HELD_ACCEPTANCE_BYTES: usize = 400;
 
 fn lane_for_thread<'a>(
     residency: &'a ResidencyHead,

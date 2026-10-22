@@ -165,7 +165,7 @@ fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
     let CommandAnswer::Claim(claim) = answer else {
         panic!("claim win returned another answer shape");
     };
-    let expected_next = format!("spice task show {task}");
+    let expected_next = format!("spice task show {task} --full");
     assert_eq!(
         claim.next.as_deref(),
         Some(expected_next.as_str()),
@@ -179,6 +179,63 @@ fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
         )),
         "the detail packet exposes the phase-specific command after activation"
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn a_won_claim_carries_its_whole_statement() {
+    let (root, bus, epoch, seats) = fixture("claim-whole-statement", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let born = wire::TaskStamp::for_micros(8_002).expect("fixture task stamp");
+    let task = TaskHandle::for_project("task.cli", &born);
+    let statement = wire::intent::ClaimStatement {
+        title: "Hand the holder its contract".to_owned(),
+        pitch: "The holder works from the whole statement.".to_owned(),
+        description: Some(format!("Why it matters.\n\n{}", "context ".repeat(400))),
+        acceptance: vec![
+            "First criterion".to_owned(),
+            "Second criterion\n  continued".to_owned(),
+        ],
+    };
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            preparation: None,
+            intent: None,
+            title: statement.title.clone(),
+            pitch: statement.pitch.clone(),
+            project: Some("task.cli".to_owned()),
+            description: statement.description.clone(),
+            acceptance: statement.acceptance.clone(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some(fixture_origin()),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+            draft: false,
+        },
+    ));
+    let available = board(&bus, epoch, lane.clone());
+    let answer = assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::ClaimWin,
+        claim_expected(&available, &task, &seats[0]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let CommandAnswer::Claim(claim) = answer else {
+        panic!("claim win returned another answer shape");
+    };
+    assert_eq!(claim.task, task);
+    assert_eq!(claim.statement.as_deref(), Some(&statement));
     clean(&root, bus);
 }
 

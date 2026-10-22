@@ -373,10 +373,12 @@ pub(crate) fn request(matches: &ArgMatches, family: &str) -> Result<Request, Ref
 
 /// Collapse whitespace runs and keep at most `max_bytes` of the result.
 pub(crate) fn clip(text: &str, max_bytes: usize) -> ClippedText {
-    output::clip(
-        &text.split_whitespace().collect::<Vec<_>>().join(" "),
-        max_bytes,
-    )
+    output::clip(&collapse(text), max_bytes)
+}
+
+/// `text` as one line: every whitespace run collapsed to one space.
+pub(crate) fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The caller's invocation, less the words a continuation restates.

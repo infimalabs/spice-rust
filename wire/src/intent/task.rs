@@ -524,6 +524,14 @@ pub enum TaskCompletionState {
 pub struct ClaimAnswer {
     /// Task whose possession moved.
     pub task: TaskHandle,
+    /// The won task's statement on fresh assignment, whole, because its
+    /// holder works from it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub statement: Option<Box<ClaimStatement>>,
     /// Actor holding it after the transaction, absent when possession was released.
     #[serde(
         default,
@@ -592,6 +600,27 @@ pub struct ClaimAnswer {
 
 fn claim_warnings_empty(warnings: &[ClaimWarning]) -> bool {
     warnings.is_empty()
+}
+
+/// A won task's statement as its holder works from it: title, pitch, and the
+/// whole description and acceptance (a Design's open questions).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimStatement {
+    /// Authored title.
+    pub title: String,
+    /// One plain sentence saying why the task matters.
+    pub pitch: String,
+    /// Longer authored context.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub description: Option<String>,
+    /// Criteria that decide whether the work is done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acceptance: Vec<String>,
 }
 
 /// The phase one claim answer was assigned in, and what it authorizes.

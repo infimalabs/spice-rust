@@ -352,13 +352,16 @@ pub(crate) struct HeldClaimView {
     pub(crate) phase: String,
     pub(crate) status: String,
     pub(crate) title: String,
+    pub(crate) pitch: String,
     pub(crate) lease_expiry: Option<String>,
     /// The phases the task walks, so the held phase reads in its sequence.
     pub(crate) flow: Vec<String>,
+    /// The whole description, one line: its holder works from it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) description: Option<ClippedText>,
+    pub(crate) description: Option<String>,
+    /// Every acceptance item whole, one line each.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) acceptance: Vec<ClippedText>,
+    pub(crate) acceptance: Vec<String>,
 }
 
 /// One operator direction this lane already retired, newest first: context
