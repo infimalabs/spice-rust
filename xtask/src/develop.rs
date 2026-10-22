@@ -10,6 +10,13 @@
 //! this command adds over those two calls is the rest of the loop — building
 //! the tree, and stopping and restarting the resident on its own endpoint.
 //!
+//! A refresh that fails after publishing rolls back by running the parked
+//! previous executable's own `install` (plan, then apply by digest). Only that
+//! release can publish its complete asset set: the skill, hooks, and wrapper the
+//! in-process installer would write are compiled into this xtask build, not
+//! read from the parked executable, and a resident refuses every lane launch
+//! over a skill that is not its own.
+//!
 //! That loop only exists where Cargo, processes, and the installer do, so it
 //! lives in [`native`] behind the wasm gate. The request, the report, and every
 //! refusal stay published on every target so a caller compiled for wasm sees
@@ -112,7 +119,7 @@ pub enum RefreshError {
         /// Failure that forced the restore.
         cause: String,
         /// Failure the restore itself hit.
-        error: spice::install::InstallError,
+        error: native::RestoreError,
     },
     /// The resident did not stop.
     ResidentStop,

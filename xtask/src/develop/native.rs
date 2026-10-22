@@ -6,6 +6,7 @@
 //! on every target and delegates to [`perform`] only where these exist.
 
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -821,8 +822,8 @@ fn restore_if_changed(
     }
 }
 
-/// Reinstall the parked executable, restart what was running, and report the
-/// failure that forced both.
+/// Reinstall the parked executable through its own installer, restart what
+/// was running, and report the failure that forced both.
 fn restore(
     host: &mut impl Host,
     repository: &Repository,
@@ -835,7 +836,7 @@ fn restore(
         return cause;
     };
     let _ = writeln!(output, "restoring previous executable after: {cause}");
-    match host.install(repository, executable) {
+    match restore_install(host, repository, executable) {
         Ok(digest) => {
             let _ = writeln!(output, "restored plan={digest}");
         }
@@ -849,6 +850,161 @@ fn restore(
     restore_resident(host, repository, rollback, output);
     cause
 }
+
+/// Republish the parked executable's complete asset set through that
+/// executable's own `install`: its preview names the plan digest, and its
+/// apply publishes exactly that plan with itself as the executable.
+///
+/// The in-process installer is never run for a restore. It publishes the
+/// skill, hooks, and wrapper compiled into this xtask build beside whatever
+/// executable it is handed, and a resident over a skill that is not its own
+/// refuses every lane launch. A parked executable that cannot read the record
+/// it refreshes over, or whose install is refused, is reported as it answered.
+fn restore_install(
+    host: &mut impl Host,
+    repository: &Repository,
+    executable: &Path,
+) -> Result<Digest, RestoreError> {
+    let preview: install::InstallPreview =
+        restore_answer(host, repository, executable, RestoreStage::Plan, None)?;
+    let digest = preview.digest().clone();
+    let receipt: install::InstallReceipt = restore_answer(
+        host,
+        repository,
+        executable,
+        RestoreStage::Apply,
+        Some(&digest),
+    )?;
+    Ok(receipt.digest().clone())
+}
+
+/// Run one `--json install` stage of the parked executable and decode the
+/// outcome it answered: a reply on stdout, a refusal or fault on stderr with a
+/// failing status.
+fn restore_answer<T: serde::de::DeserializeOwned>(
+    host: &mut impl Host,
+    repository: &Repository,
+    executable: &Path,
+    stage: RestoreStage,
+    digest: Option<&Digest>,
+) -> Result<T, RestoreError> {
+    let mut command = Command::new(executable);
+    command
+        .current_dir(repository.worktree_root())
+        .args(["--json", "install"]);
+    if let Some(digest) = digest {
+        command.arg(format!("--apply={digest}"));
+    }
+    let answer = host
+        .run(&mut command)
+        .map_err(|source| RestoreError::Launch {
+            executable: executable.to_path_buf(),
+            stage,
+            source,
+        })?;
+    let document = if answer.status.success() {
+        &answer.stdout
+    } else {
+        &answer.stderr
+    };
+    let outcome: wire::Outcome<T> =
+        wire::decode(document).map_err(|source| RestoreError::Unreadable {
+            stage,
+            status: answer.status,
+            source,
+            diagnostics: refusal_text(&answer.stderr),
+        })?;
+    match outcome {
+        wire::Outcome::Reply(reply) => Ok(reply.body),
+        wire::Outcome::Refusal(refusal) => Err(RestoreError::Refused {
+            stage,
+            reason: refusal.reason().to_owned(),
+            detail: refusal.explanation().to_owned(),
+        }),
+        wire::Outcome::Fault(fault) => Err(RestoreError::Refused {
+            stage,
+            reason: fault.reason,
+            detail: fault.detail,
+        }),
+    }
+}
+
+/// The `install` stage of the parked executable a restore was running.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RestoreStage {
+    /// `install`: the preview that names the plan digest.
+    Plan,
+    /// `install --apply <digest>`: publishing that plan.
+    Apply,
+}
+
+impl fmt::Display for RestoreStage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Plan => "install",
+            Self::Apply => "install --apply",
+        })
+    }
+}
+
+/// Why the parked executable did not republish itself.
+#[derive(Debug)]
+pub enum RestoreError {
+    /// The parked executable did not start.
+    Launch {
+        executable: PathBuf,
+        stage: RestoreStage,
+        source: std::io::Error,
+    },
+    /// The parked executable refused or faulted the stage.
+    Refused {
+        stage: RestoreStage,
+        reason: String,
+        detail: String,
+    },
+    /// The parked executable's answer was not the stage's outcome.
+    Unreadable {
+        stage: RestoreStage,
+        status: std::process::ExitStatus,
+        source: serde_json::Error,
+        diagnostics: String,
+    },
+}
+
+impl fmt::Display for RestoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Launch {
+                executable,
+                stage,
+                source,
+            } => write!(
+                formatter,
+                "the parked executable {} did not start `{stage}`: {source}",
+                executable.display()
+            ),
+            Self::Refused {
+                stage,
+                reason,
+                detail,
+            } => write!(
+                formatter,
+                "the parked executable's `{stage}` answered {reason}: {detail}"
+            ),
+            Self::Unreadable {
+                stage,
+                status,
+                source,
+                diagnostics,
+            } => write!(
+                formatter,
+                "the parked executable's `{stage}` answer did not decode ({status}): {source}; {diagnostics}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RestoreError {}
 
 /// Start the restored executable's resident back on the exact bind and access
 /// policy it had.
