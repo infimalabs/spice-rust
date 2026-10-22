@@ -37,7 +37,8 @@ impl OccupantLaunch {
 }
 
 /// What a launch observes beyond its own configuration: the Git working tree
-/// it advances, shadows and briefs from, and the RTK executable it probes.
+/// it advances, shadows and briefs from, the RTK executable it probes, and
+/// the host Cargo toolchain it isolates.
 pub(in crate::resident) trait LaunchProbes {
     /// Advance the worktree to its baseline, naming what happened.
     fn advance(&self, repository: &Repository) -> String;
@@ -52,6 +53,14 @@ pub(in crate::resident) trait LaunchProbes {
         working: &Path,
         environment: &Environment,
     ) -> wire::body::RtkHealth;
+
+    /// The isolated Cargo environment for `lane` in `repository`, whose
+    /// `Cargo.lock` is already a regular file.
+    fn cargo(
+        &self,
+        repository: &Repository,
+        lane: CanonicalUuid,
+    ) -> CommandResult<Vec<(OsString, OsString)>>;
 
     /// The session state a launch briefing reads, rooted at `worktree`.
     fn session(&self, worktree: PathBuf) -> crate::session_command::Environment;
@@ -77,6 +86,25 @@ impl LaunchProbes for HostProbes {
         environment: &Environment,
     ) -> wire::body::RtkHealth {
         spice::rtk::probe_health_in_environment(executable, working, environment)
+    }
+
+    fn cargo(
+        &self,
+        repository: &Repository,
+        lane: CanonicalUuid,
+    ) -> CommandResult<Vec<(OsString, OsString)>> {
+        let unavailable = |error: spice::cargo_isolation::IsolationError| {
+            store_fault("lane::cargo-isolation-unavailable", &error.to_string())
+        };
+        let host = crate::cargo_command::host(repository).map_err(unavailable)?;
+        // The lane-specific home is the resident reader pin: one occupied seat
+        // admits one process group, and a replacement occupant cannot prepare
+        // the same lane home until that seat is vacant. Manual Cargo children
+        // can overlap a home advance, so their preparer additionally holds a
+        // kernel pin for the exact child lifetime.
+        let home =
+            spice::cargo_isolation::prepare_lane(repository, lane, &host).map_err(unavailable)?;
+        Ok(isolated_cargo_environment(&host, home.home()))
     }
 
     fn session(&self, worktree: PathBuf) -> crate::session_command::Environment {
@@ -468,7 +496,7 @@ fn launch_environment(
     )
     .map_err(|error| store_fault("lane::rtk-history-unavailable", &error.to_string()))?;
     let mut values = admitted_ambient(|key| crate::bootstrap_environment(key));
-    values.extend(cargo_environment(repository, lane)?);
+    values.extend(cargo_environment(repository, lane, probes)?);
     values.extend([
         (
             OsString::from("SHELL"),
@@ -518,6 +546,7 @@ fn launch_environment(
 fn cargo_environment(
     repository: &Repository,
     lane: CanonicalUuid,
+    probes: &dyn LaunchProbes,
 ) -> CommandResult<Vec<(OsString, OsString)>> {
     let lock = repository.worktree_root().join("Cargo.lock");
     match fs::symlink_metadata(&lock) {
@@ -536,26 +565,19 @@ fn cargo_environment(
             ));
         }
     }
-    isolated_cargo_environment(repository, lane)
+    probes.cargo(repository, lane)
 }
 
+/// The variables binding an occupant to its private Cargo home and the host's
+/// admitted native toolchain.
 fn isolated_cargo_environment(
-    repository: &Repository,
-    lane: CanonicalUuid,
-) -> CommandResult<Vec<(OsString, OsString)>> {
-    let host = crate::cargo_command::host(repository)
-        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
-    // The lane-specific home is the resident reader pin: one occupied seat
-    // admits one process group, and a replacement occupant cannot prepare the
-    // same lane home until that seat is vacant. Manual Cargo children can
-    // overlap a home advance, so their preparer additionally holds a kernel
-    // pin for the exact child lifetime.
-    let home = spice::cargo_isolation::prepare_lane(repository, lane, &host)
-        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
-    Ok(vec![
+    host: &spice::cargo_isolation::Host,
+    home: &Path,
+) -> Vec<(OsString, OsString)> {
+    vec![
         (
             OsString::from(spice::cargo_isolation::CARGO_HOME_VARIABLE),
-            home.home().as_os_str().to_owned(),
+            home.as_os_str().to_owned(),
         ),
         (
             OsString::from(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE),
@@ -581,7 +603,7 @@ fn isolated_cargo_environment(
             OsString::from(spice::cargo_isolation::RUSTDOC_VARIABLE),
             host.rustdoc().as_os_str().to_owned(),
         ),
-    ])
+    ]
 }
 
 /// Health probes are not agent commands and must never enter lane gain history.
