@@ -354,7 +354,8 @@ pub(super) fn render_media(media: &[wire::Media]) -> Html {
     }
 }
 
-/// Command submits an observation; Shift+Command uses the offered Close action.
+/// Command submits an observation; Shift+Command uses the composer's offered
+/// completion, Close for a task or Conclude for a Design.
 fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
         if !enabled || event.key() != "Enter" || !(event.meta_key() || event.ctrl_key()) {
@@ -374,7 +375,7 @@ fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
                 return;
             }
             let Some(button) = form
-                .query_selector("button[value=\"close\"]:enabled")
+                .query_selector(COMPLETION_SUBMITTERS)
                 .ok()
                 .flatten()
                 .and_then(|button| button.dyn_into::<web_sys::HtmlElement>().ok())
@@ -419,23 +420,37 @@ pub(super) fn creator_context_link(
 }
 
 /// Whether the operator may settle a task from its composer, whose live claim
-/// that settlement takes, and which controlled tasks it closes with it.
+/// that settlement takes, which controlled tasks it closes with it, and the
+/// completion it offers beside Delete.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct TaskClosure {
     holder: Option<wire::Actor>,
     controlled: Vec<wire::TaskHandle>,
-    closable: bool,
+    completion: Option<ComposerSettlement>,
 }
 
 /// The settlement a composer offers for `heads`: none without the capability
-/// or once the task is settled. Designs conclude rather than close, but remain
-/// directly withdrawable.
-pub(super) fn closure(can_close: bool, heads: &wire::intent::BoardTask) -> Option<TaskClosure> {
+/// or once the task is settled. A task closes; an open Design concludes done
+/// instead; either remains directly withdrawable.
+pub(super) fn closure(
+    can_close: bool,
+    can_conclude: bool,
+    heads: &wire::intent::BoardTask,
+) -> Option<TaskClosure> {
     let settled = !heads.workflow.body.status.is_pending();
-    (can_close && !settled).then(|| TaskClosure {
+    if settled || !(can_close || can_conclude) {
+        return None;
+    }
+    let completion = match heads.design_standing() {
+        Some(standing) => {
+            (can_conclude && standing.is_open()).then_some(ComposerSettlement::Conclude)
+        }
+        None => can_close.then_some(ComposerSettlement::Close),
+    };
+    Some(TaskClosure {
         holder: live_holder(heads),
         controlled: heads.controlled.clone(),
-        closable: heads.statement.body.intent != Some(wire::TaskIntent::Design),
+        completion,
     })
 }
 
@@ -531,12 +546,51 @@ fn close_witnesses(heads: &wire::intent::BoardTask) -> Vec<wire::Witness> {
 
 /// Submitter values that settle the task with the composed text.
 const CLOSE_SUBMITTER: &str = "close";
+const CONCLUDE_SUBMITTER: &str = "conclude";
 const DELETE_SUBMITTER: &str = "delete";
+/// The enabled completion button the Shift+Command chord submits with.
+const COMPLETION_SUBMITTERS: &str =
+    "button[value=\"close\"]:enabled, button[value=\"conclude\"]:enabled";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ComposerSettlement {
     Close,
+    Conclude,
     Delete,
+}
+
+impl ComposerSettlement {
+    const fn submitter(self) -> &'static str {
+        match self {
+            Self::Close => CLOSE_SUBMITTER,
+            Self::Conclude => CONCLUDE_SUBMITTER,
+            Self::Delete => DELETE_SUBMITTER,
+        }
+    }
+
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Close => "Close",
+            Self::Conclude => "Conclude",
+            Self::Delete => "Delete",
+        }
+    }
+
+    const fn progress(self) -> &'static str {
+        match self {
+            Self::Close => "Closing…",
+            Self::Conclude => "Concluding…",
+            Self::Delete => "Deleting…",
+        }
+    }
+
+    const fn submission(self) -> NoteSubmission {
+        match self {
+            Self::Close => NoteSubmission::Closing,
+            Self::Conclude => NoteSubmission::Concluding,
+            Self::Delete => NoteSubmission::Deleting,
+        }
+    }
 }
 
 fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
@@ -546,6 +600,7 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
         .as_deref()
     {
         Some(CLOSE_SUBMITTER) => Some(ComposerSettlement::Close),
+        Some(CONCLUDE_SUBMITTER) => Some(ComposerSettlement::Conclude),
         Some(DELETE_SUBMITTER) => Some(ComposerSettlement::Delete),
         _ => None,
     }
@@ -596,8 +651,27 @@ pub(super) fn render_note_composer(
     let busy = composer.submission.busy();
     let locked = busy || !connected;
     let posting = composer.submission == NoteSubmission::Posting;
-    let closing = composer.submission == NoteSubmission::Closing;
-    let deleting = composer.submission == NoteSubmission::Deleting;
+    let settle_button = |settlement: ComposerSettlement| {
+        let title = closure
+            .and_then(|closure| closure.holder.as_ref())
+            .map(|holder| match settlement {
+                ComposerSettlement::Close => format!("Closing takes this task from {holder}"),
+                ComposerSettlement::Conclude => format!(
+                    "{holder} holds this Design; the resident refuses conclusion until it frees"
+                ),
+                ComposerSettlement::Delete => format!("Deleting takes this task from {holder}"),
+            });
+        let label = if composer.submission == settlement.submission() {
+            settlement.progress()
+        } else {
+            settlement.verb()
+        };
+        html! {
+            <button type="submit" class="app-compact-control" value={settlement.submitter()} disabled={locked} {title}>
+                {label}
+            </button>
+        }
+    };
     let task = task.clone();
     let label_id = id.clone();
     html! {
@@ -620,26 +694,10 @@ pub(super) fn render_note_composer(
                     {if posting { "Posting…" } else { "Add" }}
                 </button>
                 if let Some(closure) = closure {
-                    if closure.closable {
-                        <button
-                            type="submit"
-                            class="app-compact-control"
-                            value={CLOSE_SUBMITTER}
-                            disabled={locked}
-                            title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
-                        >
-                            {if closing { "Closing…" } else { "Close" }}
-                        </button>
+                    if let Some(completion) = closure.completion {
+                        {settle_button(completion)}
                     }
-                    <button
-                        type="submit"
-                        class="app-compact-control"
-                        value={DELETE_SUBMITTER}
-                        disabled={locked}
-                        title={closure.holder.as_ref().map(|holder| format!("Deleting takes this task from {holder}"))}
-                    >
-                        {if deleting { "Deleting…" } else { "Delete" }}
-                    </button>
+                    {settle_button(ComposerSettlement::Delete)}
                 }
             </div>
         </form>
@@ -746,8 +804,10 @@ pub(super) fn note_submit_callback(
     })
 }
 
-/// Validate, confirm, and queue one destructive task settlement against the
-/// exact heads and controlled closure set the operator saw.
+/// Validate, confirm, and queue one task settlement against the exact heads
+/// and controlled closure set the operator saw. Close and Delete carry the
+/// draft as validation or reason; a conclusion carries no text and refuses to
+/// discard one.
 #[expect(
     clippy::too_many_arguments,
     reason = "the composer supplies one fully witnessed settlement"
@@ -763,7 +823,11 @@ fn queue_settlement(
     controlled: &[wire::TaskHandle],
     settlement: ComposerSettlement,
 ) {
-    let text = match compose::close(text) {
+    let composed = match settlement {
+        ComposerSettlement::Conclude => compose::conclusion(text).map(|()| String::new()),
+        ComposerSettlement::Close | ComposerSettlement::Delete => compose::close(text),
+    };
+    let text = match composed {
         Ok(text) => text,
         Err(refusal) => {
             notes.update(task, |composer| composer.notice = refusal.into());
@@ -789,16 +853,21 @@ fn queue_settlement(
                 expected,
                 force_claimed,
             },
+            ComposerSettlement::Conclude => ClientAction::Conclude {
+                request: wire::intent::TaskConclude {
+                    task: handle,
+                    conclusion: wire::body::DesignConclusion::Done {},
+                },
+                expected,
+                respond: conclusion_response(notes.clone(), task.clone()),
+            },
         };
         admit_action(sender, action)
     });
     notes.update(task, |composer| {
         composer.notice = Notice::none();
         composer.submission = if queued {
-            match settlement {
-                ComposerSettlement::Close => NoteSubmission::Closing,
-                ComposerSettlement::Delete => NoteSubmission::Deleting,
-            }
+            settlement.submission()
         } else {
             NoteSubmission::Failed(
                 "Settlement could not be queued; the draft was retained.".to_owned(),
@@ -807,17 +876,35 @@ fn queue_settlement(
     });
 }
 
+/// A landed conclusion clears the composer as a close does; a refusal keeps
+/// it with the resident's reason.
+fn conclusion_response(
+    notes: NoteComposers,
+    task: TaskStamp,
+) -> crate::client_action::TaskResponse {
+    Rc::new(
+        move |answer: Result<wire::intent::TaskAnswer, String>| match answer {
+            Ok(_) => notes.update(&task, |composer| *composer = NoteComposer::default()),
+            Err(issue) => notes.update(&task, |composer| {
+                composer.submission = NoteSubmission::Failed(issue);
+            }),
+        },
+    )
+}
+
 fn confirm_settlement(
     settlement: ComposerSettlement,
     handle: &wire::TaskHandle,
     text: &str,
     controlled: &[wire::TaskHandle],
 ) -> bool {
-    let verb = match settlement {
-        ComposerSettlement::Close => "Close",
-        ComposerSettlement::Delete => "Delete",
+    let mut message = match settlement {
+        ComposerSettlement::Conclude => format!("Conclude {handle} done?"),
+        ComposerSettlement::Close | ComposerSettlement::Delete => format!(
+            "{} {handle}?\n\nReason or validation:\n{text}",
+            settlement.verb()
+        ),
     };
-    let mut message = format!("{verb} {handle}?\n\nReason or validation:\n{text}");
     if !controlled.is_empty() {
         message.push_str("\n\nThis also closes these controlled tasks:");
         for task in controlled {
