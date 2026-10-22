@@ -190,6 +190,7 @@ fn a_committed_schema_advance_preserves_the_successor_executable() {
         published: None,
         restart: false,
         binding: RestartBinding::default(),
+        resident: Default::default(),
     };
     let mut host = Scripted::new(unexpected);
     let mut output = Vec::new();
@@ -244,6 +245,7 @@ fn uncertain_schema_recovery_preserves_the_successor_and_names_both_causes() {
             published: None,
             restart: false,
             binding: RestartBinding::default(),
+            resident: Default::default(),
         },
         Some(spice::journal_schema::CURRENT - 1),
         Err(inspection),
@@ -967,6 +969,7 @@ fn an_untouched_install_refusal_restarts_the_resident_it_stopped() {
             published: Some("http://127.0.0.1:8767"),
             restart: true,
             binding: restart_binding(Some("127.0.0.1"), Some(8767)),
+            resident: Default::default(),
         },
         &before,
         &mut output,
@@ -1017,6 +1020,7 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
             published: None,
             restart: false,
             binding: RestartBinding::default(),
+            resident: Default::default(),
         },
         &mut output,
         RefreshError::ResidentUnready,
@@ -1059,6 +1063,7 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
             published: Some(endpoint),
             restart: true,
             binding: restart_binding(Some("127.0.0.1"), Some(8767)),
+            resident: Default::default(),
         },
         &mut output,
         RefreshError::ResidentUnready,

@@ -84,6 +84,12 @@ pub(super) fn perform(
 ) -> Result<RefreshReport, RefreshError> {
     let repository = Repository::discover(Path::new("."))?;
     refuse_seated_lane(&repository, request.lane.as_deref())?;
+    if request.restart {
+        request
+            .resident
+            .host(repository.worktree_root())
+            .map_err(RefreshError::ResidentHost)?;
+    }
     writeln!(output, "building app")?;
     crate::app(environment, output)?;
     let canvas = crate::app::StagedCanvas::read(repository.worktree_root())?;
@@ -193,6 +199,7 @@ fn install_built(
                 published: published.as_deref(),
                 restart: request.restart,
                 binding: binding.clone(),
+                resident: request.resident.clone(),
             };
             restore_resident(host, repository, &unwind, output);
             return Err(error.into());
@@ -206,6 +213,7 @@ fn install_built(
         published: published.as_deref(),
         restart: request.restart,
         binding: binding.clone(),
+        resident: request.resident.clone(),
     };
     let installing = Instant::now();
     let digest = match host.install(repository, &built) {
@@ -789,6 +797,8 @@ struct Rollback<'a> {
     restart: bool,
     /// Exact bind, consent, and one-shot authentication needed for restoration.
     binding: RestartBinding,
+    /// Environment the restored resident launches with.
+    resident: spice::cargo_isolation::ResidentLaunchEnvironment,
 }
 
 /// Return an untouched refusal directly; reinstall only when the receipt or
@@ -860,6 +870,7 @@ fn restore_resident(
     let _ = writeln!(output, "restarting previous resident");
     let request = RefreshRequest {
         restart: true,
+        resident: rollback.resident.clone(),
         ..RefreshRequest::default()
     };
     let executable = rollback.resident_executable.unwrap_or(rollback.installed);
@@ -1254,13 +1265,15 @@ fn restart(
 
 /// Construct the detached launcher command, with explicit forwarded endpoint
 /// options taking precedence over the bind and access state inherited from the
-/// live resident.
+/// live resident. The command's environment is the request's derived resident
+/// environment, never the launching shell's.
 fn restart_command(
     installed: &Path,
     binding: &RestartBinding,
     request: &RefreshRequest,
 ) -> Command {
     let mut command = Command::new(installed);
+    request.resident.apply(&mut command);
     command.args(["--json", "up"]);
     if !forwards_option(&request.up_arguments, "--host")
         && let Some(host) = binding.host.as_deref()
