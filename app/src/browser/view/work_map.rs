@@ -10,7 +10,8 @@ use wire::intent::{
 use yew::prelude::*;
 
 use crate::work::{
-    TaskOverviewSelection, WorkAvailability, WorkProjection, WorkRelationshipDirection, lens,
+    TaskOverviewSelection, WorkAvailability, WorkMark, WorkProjection, WorkRelationshipDirection,
+    lens,
 };
 use crate::{AppRuntime, TaskRelationsKey, TaskRelationsState};
 
@@ -363,6 +364,7 @@ fn map_targets(
                     selected: node.selected,
                     availability: tone.map(|tone| tone.availability),
                     disposition: tone.and_then(|tone| tone.disposition),
+                    mark: tone.and_then(|tone| tone.mark),
                     state: tone.map(|tone| tone.label),
                 })
             })
@@ -374,6 +376,8 @@ fn map_targets(
 struct TaskTone {
     availability: &'static str,
     disposition: Option<&'static str>,
+    /// The tab mark this node carries, so the graph names what the tab marks.
+    mark: Option<&'static str>,
     label: &'static str,
 }
 
@@ -396,6 +400,14 @@ fn task_tone(
         };
     };
     let availability = task.availability();
+    if task.proposal_ready() {
+        return Some(TaskTone {
+            availability: availability.key(),
+            disposition: None,
+            mark: Some(WorkMark::Proposal.key()),
+            label: "Ready for proposal",
+        });
+    }
     let label = match availability {
         WorkAvailability::InFlight => "In flight",
         WorkAvailability::Ready => "Ready",
@@ -416,6 +428,7 @@ fn task_tone(
     Some(TaskTone {
         availability: availability.key(),
         disposition: None,
+        mark: None,
         label,
     })
 }
@@ -431,6 +444,7 @@ fn settled_tone(deleted: bool) -> TaskTone {
     TaskTone {
         availability: WorkAvailability::Terminal.key(),
         disposition,
+        mark: None,
         label,
     }
 }

@@ -55,7 +55,9 @@ yet: it wears the base of the surface containing the map, plum inside a
 Design-flavored overview and the page's green elsewhere, and a dotted outline
 on both the node frame and its state tag sets it apart from in-flight's solid
 frame and deleted work's dashed one. `DONE` remains quiet settled provenance
-with a single neutral frame and rounded tag. The outline and tag shapes keep
+with a single neutral frame and rounded tag. `READY FOR PROPOSAL` names the
+unpossessed Design whose tab wears the proposal mark, in that mark's live tone,
+so the graph shows which node the tab means. The outline and tag shapes keep
 the states distinct without color, including reduced-contrast and forced-color
 presentation; waiting never borrows warning, danger, or operator-attention
 emphasis.

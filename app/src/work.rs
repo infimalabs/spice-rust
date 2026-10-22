@@ -602,6 +602,13 @@ impl<'a> WorkTask<'a> {
         self.awaiting_selection
     }
 
+    /// An unpossessed Design, offered or passive, whose pass cycle is ready
+    /// for a proposal: the state its tab marks.
+    #[must_use]
+    pub const fn proposal_ready(&self) -> bool {
+        self.proposal_ready
+    }
+
     /// This task's position in the resident's offer order: `Some(0)` is the
     /// task offered next, and `None` is work the allocator does not offer.
     #[must_use]
