@@ -265,6 +265,7 @@ fn a_failed_inbox_start_parks_only_the_steering_it_was_woken_for() {
 
     assert_eq!(
         parked
+            .parked
             .iter()
             .map(|parked| parked.directive)
             .collect::<Vec<_>>(),

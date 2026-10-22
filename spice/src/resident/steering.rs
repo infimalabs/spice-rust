@@ -287,6 +287,37 @@ pub(super) struct DeadLetter {
     pub(super) requeue: String,
 }
 
+/// Steering one failed start parked, with the failure that parked it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DeadLettered {
+    pub(super) parked: Vec<DeadLetter>,
+    reason: String,
+    detail: Option<String>,
+}
+
+impl DeadLettered {
+    /// One line per parked directive, each naming the failure exactly as
+    /// recorded, so the log alone explains the loss.
+    pub(super) fn log(
+        &self,
+        diagnostic: &mut dyn std::io::Write,
+        trigger: &str,
+        lane: CanonicalUuid,
+    ) {
+        for directive in &self.parked {
+            let _ = write!(
+                diagnostic,
+                "lifecycle dead-lettered trigger={trigger} lane={lane} key={} directive={} requeue={} reason={}",
+                directive.key, directive.directive, directive.requeue, self.reason,
+            );
+            let _ = match &self.detail {
+                Some(detail) => writeln!(diagnostic, " detail={detail}"),
+                None => writeln!(diagnostic),
+            };
+        }
+    }
+}
+
 /// Pending steering one inbox wake was admitted to deliver.
 pub(super) struct WokenInbox(Vec<journal::JournalHead<wire::SteeringHead>>);
 
@@ -310,7 +341,7 @@ pub(super) fn dead_letter_pending(
     lane: CanonicalUuid,
     woken: &WokenInbox,
     failure: &Outcome<()>,
-) -> CommandResult<Vec<DeadLetter>> {
+) -> CommandResult<DeadLettered> {
     let current = bus
         .read(move |read| crate::steering_read::pending(read, Some(lane)))
         .map_err(|error| store_fault("steer::dead-letter-index-unreadable", &error.to_string()))?;
@@ -331,7 +362,7 @@ pub(super) fn dead_letter_pending(
             .with_detail("reconcile the current pending-inbox arm"),
         )));
     }
-    let reason = lifecycle_failure_reason(failure);
+    let (reason, detail) = lifecycle_failure(failure);
     let mut parked = Vec::with_capacity(heads.len());
     let at = current_instant().map_err(|outcome| match outcome {
         Outcome::Fault(fault) => Outcome::Fault(fault),
@@ -375,13 +406,25 @@ pub(super) fn dead_letter_pending(
     }
     commit(bus, proposal)?;
     notify_inbox(paths, lane);
-    Ok(parked)
+    Ok(DeadLettered {
+        parked,
+        reason,
+        detail,
+    })
 }
 
-fn lifecycle_failure_reason(failure: &Outcome<()>) -> String {
+/// The reason and recorded detail of the failure that ended a start. A
+/// supervisor's start failure carries its `state.json` failure text as detail.
+fn lifecycle_failure(failure: &Outcome<()>) -> (String, Option<String>) {
     match failure {
-        Outcome::Refusal(refusal) => refusal.reason().to_owned(),
-        Outcome::Fault(fault) => fault.reason.clone(),
+        Outcome::Refusal(refusal) => (
+            refusal.reason().to_owned(),
+            refusal
+                .diagnostic()
+                .and_then(|diagnostic| diagnostic.detail())
+                .map(ToOwned::to_owned),
+        ),
+        Outcome::Fault(fault) => (fault.reason.clone(), Some(fault.detail.clone())),
         Outcome::Reply(_) => unreachable!("a successful lifecycle start was not dead-lettered"),
     }
 }

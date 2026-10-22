@@ -78,19 +78,9 @@ impl Runtime {
                 );
                 Ok(Some(pending.lane))
             }
-            Ok(Attempted::DeadLettered(parked)) => {
+            Ok(Attempted::DeadLettered(dead)) => {
                 self.backoff.release(pending.lane);
-                for directive in parked {
-                    let _ = writeln!(
-                        diagnostic,
-                        "lifecycle dead-lettered trigger={} lane={} key={} directive={} requeue={}",
-                        pending.trigger.as_str(),
-                        pending.lane,
-                        directive.key,
-                        directive.directive,
-                        directive.requeue,
-                    );
-                }
+                dead.log(diagnostic, pending.trigger.as_str(), pending.lane);
                 Ok(None)
             }
             Ok(Attempted::Launching(_)) => {

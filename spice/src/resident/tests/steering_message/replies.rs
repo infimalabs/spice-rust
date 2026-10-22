@@ -304,7 +304,12 @@ fn a_removed_lane_parks_its_msg_and_a_replacement_lane_inherits_nothing() {
     lanes.remove(FIRST);
     lanes.seat(THIRD);
     let before = lanes.cursor();
-    lanes.dead_letter_removed_lanes();
+    // No launch was attempted for a removed lane, so its one line names the
+    // directive and the removal itself as the reason.
+    let log = lanes.dead_letter_removed_lanes();
+    assert_eq!(log.lines().count(), 1, "{log}");
+    assert!(log.contains(&message.key.to_string()), "{log}");
+    assert!(log.contains(steering::LANE_REMOVED), "{log}");
     let head = lanes
         .bus
         .read(move |read| read.steering_head(message.directive))
@@ -327,7 +332,11 @@ fn a_removed_lane_parks_its_msg_and_a_replacement_lane_inherits_nothing() {
     );
     let parked = lanes.cursor();
     assert!(parked > before);
-    lanes.dead_letter_removed_lanes();
+    assert_eq!(
+        lanes.dead_letter_removed_lanes(),
+        "",
+        "a parked MSG parks once"
+    );
     assert_eq!(lanes.cursor(), parked, "a parked MSG parks once");
     assert!(
         lanes.pending(THIRD).is_empty(),
