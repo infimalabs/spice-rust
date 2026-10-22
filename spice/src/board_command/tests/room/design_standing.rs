@@ -15,8 +15,9 @@ pub(super) fn born(task: &TaskHandle) -> TaskStamp {
 }
 
 /// Win `task` for `seat` under the named `rule`, as `spice task capture` and
-/// `spice task steal` submit it.
-pub(super) fn win_named(
+/// `spice task steal` submit it; a recovery rule carries a well-formed
+/// transaction so the claim reaches selection.
+pub(in super::super) fn win_named(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -40,13 +41,13 @@ pub(super) fn win_named(
             residency(&available, seat),
         ],
         &ClaimWin {
+            recovery: rule.as_str().starts_with("recover").then(|| "0".repeat(40)),
             rule,
-            recovery: None,
         },
     )
 }
 
-pub(super) fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
+pub(in super::super) fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
     match outcome {
         Outcome::Refusal(refusal) => refusal.reason(),
         other => panic!("expected a refusal, got {other:?}"),
@@ -60,7 +61,11 @@ pub(super) fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<Ta
     }
 }
 
-pub(super) fn active_holder(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Actor> {
+pub(in super::super) fn active_holder(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &TaskHandle,
+) -> Option<Actor> {
     at(&board(bus, epoch, Actor::Operator), task)
         .claim
         .as_ref()

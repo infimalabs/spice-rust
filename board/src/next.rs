@@ -150,6 +150,20 @@ pub fn design_held(entry: &Entry, resolved: &ResolvedTasks) -> bool {
     design_cycle(entry, resolved).is_some_and(|cycle| cycle != DesignCycle::ReadyForProposal)
 }
 
+/// Why an open Design's cycle holds it from a named claim: the cycle it is
+/// in and the exact action that moves it, when that cycle is not ready for
+/// proposal.
+#[must_use]
+pub fn design_hold(entry: &Entry, resolved: &ResolvedTasks) -> Option<(DesignCycle, String)> {
+    let cycle = design_cycle(entry, resolved)?;
+    (cycle != DesignCycle::ReadyForProposal).then(|| {
+        (
+            cycle,
+            cycle.next_action(entry.handle(), entry.design().cycle),
+        )
+    })
+}
+
 /// Why one open task's allocation gate is closed.
 ///
 /// Possession, deferral, environmental holds, passive Designs, hidden filing,
@@ -1007,22 +1021,12 @@ pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> 
 }
 
 /// Whether one named entry satisfies the same eligibility law as allocation.
+///
+/// Exact capture and recovery admit through this one predicate too; the
+/// entry's own lifecycle and workflow guards still decide whether work can
+/// advance.
 #[must_use]
 pub fn eligible_entry(
-    satisfied: &ResolvedTasks,
-    entry: &Entry,
-    actor: &Actor,
-    environment: &wire::Environment,
-) -> bool {
-    workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
-}
-
-/// Whether one exact task may be captured.
-///
-/// Unlike allocator selection, exact capture may address an internal row; its
-/// own lifecycle and workflow guards still decide whether work can advance.
-#[must_use]
-pub fn capturable_entry(
     satisfied: &ResolvedTasks,
     entry: &Entry,
     actor: &Actor,

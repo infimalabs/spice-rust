@@ -203,8 +203,10 @@ pub(super) fn prepare_capture_claim(
     }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
     refuse_passive_design(selected)?;
-    if !board::capturable_entry(
-        &board::resolved_tasks(&snapshot.entries),
+    let satisfied = board::resolved_tasks(&snapshot.entries);
+    refuse_held_design(selected, &satisfied)?;
+    if !board::eligible_entry(
+        &satisfied,
         selected,
         command.actor(),
         &snapshot.answer.environment(),
@@ -704,16 +706,14 @@ fn named_claim_selection<'a>(
             "claim::steal-ineligible",
             "capture --steal only a ready, pending task held by another actor",
         ),
-        Possession::Recover => (
-            board::eligible_entry(&satisfied, entry, command.actor(), &environment),
-            "claim::capture-ineligible",
-            "capture only an unclaimed, ready, pending task",
-        ),
-        Possession::Capture => (
-            board::capturable_entry(&satisfied, entry, command.actor(), &environment),
-            "claim::capture-ineligible",
-            "capture only an unclaimed, ready, pending task",
-        ),
+        Possession::Recover | Possession::Capture => {
+            refuse_held_design(entry, &satisfied)?;
+            (
+                board::eligible_entry(&satisfied, entry, command.actor(), &environment),
+                "claim::capture-ineligible",
+                "capture only an unclaimed, ready, pending task",
+            )
+        }
         Possession::Next => unreachable!("allocator possession returned above"),
     };
     if admitted {
@@ -732,6 +732,23 @@ pub(in crate::board_command) fn refuse_passive_design(
             "claim::design-passive",
             Some(entry.handle().to_string()),
             "a Design outside every working group is passive; move it into a working group to make it claimable",
+        ));
+    }
+    Ok(())
+}
+
+/// An active Design whose pass cycle is not ready for a proposal is steeping:
+/// capture and recovery name the cycle and its next action, and the operator's
+/// nudge remains the escape hatch.
+pub(in crate::board_command) fn refuse_held_design(
+    entry: &Entry,
+    satisfied: &board::ResolvedTasks,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if let Some((cycle, next_action)) = board::design_hold(entry, satisfied) {
+        return Err(refusal(
+            "claim::design-held",
+            Some(entry.handle().to_string()),
+            &format!("{} is {}; {next_action}", entry.handle(), cycle.label()),
         ));
     }
     Ok(())

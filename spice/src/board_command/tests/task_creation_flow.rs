@@ -428,7 +428,7 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
             .expect("the output is on the board");
         assert_eq!(
             (
-                board::capturable_entry(&satisfied, output, &worker, &environment),
+                board::eligible_entry(&satisfied, output, &worker, &environment),
                 board::stealable_entry(&satisfied, output, &worker, &environment),
             ),
             (eligible, eligible),
