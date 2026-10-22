@@ -1211,9 +1211,9 @@ pub(super) fn recursion_refusal<T>(source: &OsStr) -> Outcome<T> {
         RefusalDiagnostic::new(
             "gate::pre-commit-recursion",
             Some("one non-recursive configured pre-commit dispatch".to_owned()),
-            Some("SPICE_RS_PRE_COMMIT_SOURCE absent at the command rim".to_owned()),
+            Some("SPICE_PRE_COMMIT_SOURCE absent at the command rim".to_owned()),
             Some(format!(
-                "SPICE_RS_PRE_COMMIT_SOURCE={}",
+                "SPICE_PRE_COMMIT_SOURCE={}",
                 json(&source.to_string_lossy()),
             )),
         )

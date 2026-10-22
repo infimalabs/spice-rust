@@ -9,5 +9,5 @@
 # the environment the installer wrote, and direction arrives as a file that was
 # rendered ahead of time.
 
-exec "${SPICE_RS_WRAPPER_SPICE:?rust spice executable}" run -- \
-  "${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh" "$@"
+exec "${SPICE_WRAPPER_SPICE:?spice executable}" run -- \
+  "${SPICE_HOOKS:?spice hooks directory}/static/stage.sh" "$@"

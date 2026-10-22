@@ -19,60 +19,60 @@ pub enum SpiceVariable {
     /// Source identity of the browser app generation the build stamped.
     #[serde(rename = "SPICE_APP_SOURCE_IDENTITY")] // env-policy: allow
     AppSourceIdentity,
+    /// Original Cargo home used to seed the immutable source store.
+    #[serde(rename = "SPICE_BOOTSTRAP_CARGO_HOME")] // env-policy: allow
+    BootstrapCargoHome,
+    /// Launch channel a detached `spice up` granted its resident child.
+    #[serde(rename = "SPICE_DAEMON_HANDOFF")] // env-policy: allow
+    DaemonHandoff,
+    /// Installed shell-hook directory.
+    #[serde(rename = "SPICE_HOOKS")] // env-policy: allow
+    Hooks,
     /// Debug install fixture executable override.
     #[serde(rename = "SPICE_INSTALL_TEST_EXECUTABLE")] // env-policy: allow
     InstallTestExecutable,
+    /// Lane bound to an intercepted shell.
+    #[serde(rename = "SPICE_LANE")] // env-policy: allow
+    Lane,
     /// Current mutation attempt number.
     #[serde(rename = "SPICE_MUTATION_ATTEMPT")] // env-policy: allow
     MutationAttempt,
     /// Seed repeated into the mutation process.
     #[serde(rename = "SPICE_MUTATION_SEED")] // env-policy: allow
     MutationSeed,
+    /// Native Cargo executable resolved before the private home is installed.
+    #[serde(rename = "SPICE_NATIVE_CARGO")] // env-policy: allow
+    NativeCargo,
     /// Pin document sealed into the native proof runner as it is built.
     #[serde(rename = "SPICE_NATIVE_PINS")] // env-policy: allow
     NativePins,
-    /// Original Cargo home used to seed the immutable source store.
-    #[serde(rename = "SPICE_RS_BOOTSTRAP_CARGO_HOME")] // env-policy: allow
-    BootstrapCargoHome,
-    /// Launch channel a detached `spice up` granted its resident child.
-    #[serde(rename = "SPICE_RS_DAEMON_HANDOFF")] // env-policy: allow
-    DaemonHandoff,
-    /// Installed Rust shell-hook directory.
-    #[serde(rename = "SPICE_RS_HOOKS")] // env-policy: allow
-    Hooks,
-    /// Rust lane bound to an intercepted shell.
-    #[serde(rename = "SPICE_RS_LANE")] // env-policy: allow
-    Lane,
-    /// Native Cargo executable resolved before the private home is installed.
-    #[serde(rename = "SPICE_RS_NATIVE_CARGO")] // env-policy: allow
-    NativeCargo,
     /// Native rustc executable paired with the isolated Cargo authority.
-    #[serde(rename = "SPICE_RS_NATIVE_RUSTC")] // env-policy: allow
+    #[serde(rename = "SPICE_NATIVE_RUSTC")] // env-policy: allow
     NativeRustc,
     /// Native rustdoc executable paired with the isolated Cargo authority.
-    #[serde(rename = "SPICE_RS_NATIVE_RUSTDOC")] // env-policy: allow
+    #[serde(rename = "SPICE_NATIVE_RUSTDOC")] // env-policy: allow
     NativeRustdoc,
-    /// User shell restored behind the Rust structural command wrapper.
-    #[serde(rename = "SPICE_RS_NATIVE_SHELL")] // env-policy: allow
+    /// User shell restored behind the structural command wrapper.
+    #[serde(rename = "SPICE_NATIVE_SHELL")] // env-policy: allow
     NativeShell,
     /// Canonical JSON array of staged paths supplied to one configured pre-commit step.
-    #[serde(rename = "SPICE_RS_PRE_COMMIT_PATHS")] // env-policy: allow
+    #[serde(rename = "SPICE_PRE_COMMIT_PATHS")] // env-policy: allow
     PreCommitPaths,
     /// Immutable staged-source digest supplied to every configured pre-commit step.
-    #[serde(rename = "SPICE_RS_PRE_COMMIT_SOURCE")] // env-policy: allow
+    #[serde(rename = "SPICE_PRE_COMMIT_SOURCE")] // env-policy: allow
     PreCommitSource,
     /// Exact RTK executable selected for supervised shell rewriting.
-    #[serde(rename = "SPICE_RS_RTK_EXECUTABLE")] // env-policy: allow
+    #[serde(rename = "SPICE_RTK_EXECUTABLE")] // env-policy: allow
     RtkExecutable,
     /// Session identity a lane pinned for a vendor that exports none of its own.
-    #[serde(rename = "SPICE_RS_SESSION")] // env-policy: allow
+    #[serde(rename = "SPICE_SESSION")] // env-policy: allow
     Session,
-    /// Exact installed Spice executable selected by the agent-shell wrapper route.
-    #[serde(rename = "SPICE_RS_WRAPPER_SPICE")] // env-policy: allow
-    WrapperSpice,
     /// Source clock with first-parent timestamp ties ordered, sealed into the appliance version.
     #[serde(rename = "SPICE_SOURCE_STAMP")] // env-policy: allow
     SourceStamp,
+    /// Exact installed Spice executable selected by the agent-shell wrapper route.
+    #[serde(rename = "SPICE_WRAPPER_SPICE")] // env-policy: allow
+    WrapperSpice,
 }
 
 impl SpiceVariable {
@@ -83,15 +83,15 @@ impl SpiceVariable {
     pub const ALL: &[Self] = &[
         Self::AgentVendor,
         Self::AppSourceIdentity,
-        Self::InstallTestExecutable,
-        Self::MutationAttempt,
-        Self::MutationSeed,
-        Self::NativePins,
         Self::BootstrapCargoHome,
         Self::DaemonHandoff,
         Self::Hooks,
+        Self::InstallTestExecutable,
         Self::Lane,
+        Self::MutationAttempt,
+        Self::MutationSeed,
         Self::NativeCargo,
+        Self::NativePins,
         Self::NativeRustc,
         Self::NativeRustdoc,
         Self::NativeShell,
@@ -99,8 +99,8 @@ impl SpiceVariable {
         Self::PreCommitSource,
         Self::RtkExecutable,
         Self::Session,
-        Self::WrapperSpice,
         Self::SourceStamp,
+        Self::WrapperSpice,
     ];
 
     /// Exact process-environment spelling.
@@ -109,26 +109,26 @@ impl SpiceVariable {
         match self {
             Self::AgentVendor => "SPICE_AGENT_VENDOR", // env-policy: allow
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
-            Self::BootstrapCargoHome => "SPICE_RS_BOOTSTRAP_CARGO_HOME", // env-policy: allow
-            Self::DaemonHandoff => "SPICE_RS_DAEMON_HANDOFF", // env-policy: allow
-            Self::Hooks => "SPICE_RS_HOOKS",           // env-policy: allow
+            Self::BootstrapCargoHome => "SPICE_BOOTSTRAP_CARGO_HOME", // env-policy: allow
+            Self::DaemonHandoff => "SPICE_DAEMON_HANDOFF", // env-policy: allow
+            Self::Hooks => "SPICE_HOOKS",              // env-policy: allow
             Self::InstallTestExecutable => {
                 "SPICE_INSTALL_TEST_EXECUTABLE" // env-policy: allow
             }
-            Self::Lane => "SPICE_RS_LANE", // env-policy: allow
+            Self::Lane => "SPICE_LANE", // env-policy: allow
             Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow
             Self::MutationSeed => "SPICE_MUTATION_SEED", // env-policy: allow
+            Self::NativeCargo => "SPICE_NATIVE_CARGO", // env-policy: allow
             Self::NativePins => "SPICE_NATIVE_PINS", // env-policy: allow
-            Self::NativeCargo => "SPICE_RS_NATIVE_CARGO", // env-policy: allow
-            Self::NativeRustc => "SPICE_RS_NATIVE_RUSTC", // env-policy: allow
-            Self::NativeRustdoc => "SPICE_RS_NATIVE_RUSTDOC", // env-policy: allow
-            Self::NativeShell => "SPICE_RS_NATIVE_SHELL", // env-policy: allow
-            Self::PreCommitPaths => "SPICE_RS_PRE_COMMIT_PATHS", // env-policy: allow
-            Self::PreCommitSource => "SPICE_RS_PRE_COMMIT_SOURCE", // env-policy: allow
-            Self::RtkExecutable => "SPICE_RS_RTK_EXECUTABLE", // env-policy: allow
-            Self::Session => "SPICE_RS_SESSION", // env-policy: allow
-            Self::WrapperSpice => "SPICE_RS_WRAPPER_SPICE", // env-policy: allow
+            Self::NativeRustc => "SPICE_NATIVE_RUSTC", // env-policy: allow
+            Self::NativeRustdoc => "SPICE_NATIVE_RUSTDOC", // env-policy: allow
+            Self::NativeShell => "SPICE_NATIVE_SHELL", // env-policy: allow
+            Self::PreCommitPaths => "SPICE_PRE_COMMIT_PATHS", // env-policy: allow
+            Self::PreCommitSource => "SPICE_PRE_COMMIT_SOURCE", // env-policy: allow
+            Self::RtkExecutable => "SPICE_RTK_EXECUTABLE", // env-policy: allow
+            Self::Session => "SPICE_SESSION", // env-policy: allow
             Self::SourceStamp => "SPICE_SOURCE_STAMP", // env-policy: allow
+            Self::WrapperSpice => "SPICE_WRAPPER_SPICE", // env-policy: allow
         }
     }
 }
@@ -707,7 +707,7 @@ mod tests {
             r#","tracked_configuration":"/repo/spice-rust.toml""#,
             r#","worktree_configuration":"/repo/.git/.spice-rs/worktree.toml""#,
             r#","local_configuration":"/repo/.git/.spice-rs/config.toml"}"#,
-            r#","environment":[{"variable":"SPICE_RS_HOOKS""#, // env-policy: allow
+            r#","environment":[{"variable":"SPICE_HOOKS""#, // env-policy: allow
             r#","observation":{"status":"ready"}}]"#,
             r#","subsystems":[{"subsystem":"journal""#,
             r#","observation":{"status":"ready"}}]"#,
