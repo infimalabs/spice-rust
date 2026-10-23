@@ -255,7 +255,9 @@ pub(crate) fn move_working_group(
 }
 
 /// The move fact and change status `request` makes of `current`, refusing a
-/// non-Design, an unchanged standing, or a full group.
+/// non-Design, a Design joining a group while neither open nor completed, an
+/// unchanged standing, or a full group. A completed Design may join: a group's
+/// only authority is the active standing of the open Designs it holds.
 fn moved_fact(
     current: &WorkingGroupPartition,
     task: &wire::TaskHead,
@@ -264,7 +266,9 @@ fn moved_fact(
     revision: u64,
 ) -> Result<(WorkingGroupMoved, WorkingGroupChangeStatus), Outcome<CommandAnswer>> {
     let admitted = task.intent.is_some_and(wire::TaskIntent::is_design)
-        && (request.to.is_none() || wire::intent::is_open_design(task.intent, workflow));
+        && (request.to.is_none()
+            || workflow.status.is_completed()
+            || wire::intent::is_open_design(task.intent, workflow));
     let kind = DesignKind {
         admitted: admitted.then_some(&request.design),
     };
@@ -279,7 +283,7 @@ fn moved_fact(
             return Err(refusal(
                 "group::design-only",
                 Some(TaskHandle::for_project(&task.project, &task.born).to_string()),
-                "a working group admits only a Design in its open design phase",
+                "a working group admits only a Design that is open or completed",
             ));
         }
         Err(GroupingError::Unchanged) => {
