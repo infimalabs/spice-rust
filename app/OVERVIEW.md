@@ -7,8 +7,8 @@ backdrop, header, Close, scroll, sheet-local overlay slot, Escape, inert/ARIA
 wiring, and focus return. Exactly one content type occupies it. Opening another
 swaps in place without replaying the transition; Escape, backdrop, or Close
 dismisses it and returns focus to a surviving launcher. A local overlay takes
-Escape first while the sheet stays mounted and inert. Reduced motion removes
-the transition.
+Escape first while the sheet stays mounted and inert. It scrolls without
+painting a scrollbar. Reduced motion removes the transition.
 
 ## Task overview
 
