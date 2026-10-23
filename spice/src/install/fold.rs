@@ -5,7 +5,9 @@ use std::fmt;
 
 use wire::Digest;
 
-use super::{Asset, GeneratedImage, InstallError, InstallPlan, Location, SymbolProvenance};
+use super::{
+    Asset, GeneratedImage, InstallError, InstallPlan, Location, PreparedInstall, SymbolProvenance,
+};
 
 /// Kind of durable action represented by one ordered public stage.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -194,7 +196,8 @@ impl HookActivationSummary {
         &self.worktrees
     }
 
-    /// Number of exact Git configuration mutations in the private plan.
+    /// Number of Git configuration mutations in the private plan that write a
+    /// value other than the one in place.
     #[must_use]
     pub const fn mutation_count(&self) -> usize {
         self.mutation_count
@@ -260,7 +263,11 @@ impl InstallPlanSummary {
                         .iter()
                         .map(|observation| observation.worktree().to_owned())
                         .collect(),
-                    mutation_count: activation.mutations().len(),
+                    mutation_count: activation
+                        .mutations()
+                        .iter()
+                        .filter(|mutation| mutation.changes())
+                        .count(),
                 });
         Self {
             version: plan.version,
@@ -307,6 +314,22 @@ impl InstallPlanSummary {
     pub const fn symbols(&self) -> Option<&SymbolProvenance> {
         self.symbols.as_ref()
     }
+
+    /// Restate a complete install as the plan apply would execute over it:
+    /// every file already holds what it would publish, nothing remains to
+    /// retire, and no hook setting remains to write.
+    fn settle(&mut self) {
+        for operation in &mut self.operations {
+            operation.superseded = Some(operation.generated.clone());
+        }
+        for retirement in &mut self.retirements {
+            retirement.observed = None;
+            retirement.superseded = None;
+        }
+        if let Some(activation) = &mut self.hook_activation {
+            activation.mutation_count = 0;
+        }
+    }
 }
 
 /// One side-effect-free install preview and the exact identity admitted by apply.
@@ -318,11 +341,18 @@ pub struct InstallPreview {
 }
 
 impl InstallPreview {
-    /// Bind a validated canonical plan to its dedicated-domain identity.
-    pub fn from_plan(plan: InstallPlan) -> Result<Self, InstallError> {
+    /// Preview the plan apply would execute now, bound to the identity apply
+    /// admits. Over a complete install of this same build apply publishes
+    /// nothing, so its stages read as already in place.
+    pub fn from_prepared(prepared: PreparedInstall) -> Result<Self, InstallError> {
+        let converged = prepared.converged();
+        let plan = prepared.into_plan();
         plan.validate()?;
         let digest = plan.digest()?;
-        let plan = InstallPlanSummary::from_plan(&plan);
+        let mut plan = InstallPlanSummary::from_plan(&plan);
+        if converged {
+            plan.settle();
+        }
         Ok(Self { digest, plan })
     }
 

@@ -87,6 +87,13 @@ impl HookConfigurationMutation {
         &self.generated
     }
 
+    /// Whether activation writes a value other than the one it expects in
+    /// place, which a refresh over the same hooks path does not.
+    #[must_use]
+    pub fn changes(&self) -> bool {
+        self.superseded.as_deref().unwrap_or(&self.previous) != self.generated
+    }
+
     fn expects_in_place(&self, observed: &[String]) -> bool {
         self.superseded.as_deref().unwrap_or(&self.previous) == observed
     }

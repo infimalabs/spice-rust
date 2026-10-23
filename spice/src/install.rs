@@ -408,12 +408,12 @@ pub fn capture_generation(repository: &Repository) -> Result<Option<Digest>, Ins
     Ok(read_record_for_refresh(repository)?.map(|refresh| refresh.receipt_digest().clone()))
 }
 
-/// Inspect one repository and derive the exact Spice installation plan.
-pub fn plan(
+/// Inspect one repository and preview the exact plan apply would execute.
+pub fn preview(
     repository: &Repository,
     spice_binary: Option<&Path>,
-) -> Result<InstallPlan, InstallError> {
-    progress::prepare(repository, spice_binary).map(PreparedInstall::into_plan)
+) -> Result<InstallPreview, InstallError> {
+    progress::prepare(repository, spice_binary).and_then(InstallPreview::from_prepared)
 }
 
 /// Derive the exact plan [`apply_prepared`] would execute, keeping it for this

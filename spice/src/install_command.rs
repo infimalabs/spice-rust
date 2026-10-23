@@ -102,8 +102,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
                 Err(outcome) => return Answer::Plan(outcome),
             };
             Answer::Plan(result(
-                spice::install::plan(&repository, Some(&executable))
-                    .and_then(InstallPreview::from_plan)
+                spice::install::preview(&repository, Some(&executable))
                     .map(|preview| PlanPreview::source(preview, &invoked_program())),
             ))
         }

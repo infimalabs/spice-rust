@@ -270,3 +270,50 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     assert_eq!(fs::read(&target).expect("prior bytes read"), prior);
     assert_eq!(mode_of(&target), prior_mode);
 }
+
+/// The changes a person-facing preview lists, each indented under its header.
+fn previewed_changes(repository: &Repository, binary: &Path) -> Vec<String> {
+    struct Text(InstallPreview);
+    impl std::fmt::Display for Text {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.0.write_text(formatter, &"APPLY")
+        }
+    }
+    let prepared = prepare(repository, Some(binary)).expect("install prepares");
+    let text = Text(InstallPreview::from_prepared(prepared).expect("plan previews")).to_string();
+    assert!(text.ends_with("APPLY"), "{text}");
+    text.lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn a_preview_over_a_complete_install_of_the_same_build_changes_nothing() {
+    let (_scratch, repository) = repository("converged-preview");
+    let builds = Scratch(std::env::temp_dir().join(format!(
+        "spice-install-builds-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    )));
+    let build = |name: &str| {
+        let path = builds.0.join(name);
+        let generation = wire::Digest::compute(wire::Domain::DistArtifact, name.as_bytes());
+        write_mode(&path, &super::super::canvas::linked(&generation), 0o755);
+        path
+    };
+    let (first, second) = (build("first-spice"), build("second-spice"));
+    let prepared = prepare(&repository, Some(&first)).expect("install prepares");
+    apply_prepared_record(&repository, Some(&first), prepared).expect("install applies");
+
+    assert_eq!(
+        previewed_changes(&repository, &first),
+        Vec::<String>::new(),
+        "a complete install of the same build has nothing left to publish"
+    );
+    assert_eq!(
+        previewed_changes(&repository, &second),
+        ["update .spice-install/bin/spice"],
+        "another build updates exactly the installed binary, its hooks path already set"
+    );
+}
