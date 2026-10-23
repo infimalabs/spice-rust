@@ -28,6 +28,19 @@ Replace the trailing example argument vector with the exact Cargo or xtask
 operation required; retain the ambient `spice` command and `dev ... --`
 boundary.
 
+Every `dev cargo` run is pinned to the current `Cargo.lock` and offline. To
+add or bump a dependency, edit the manifest and rewrite the lock through the
+same surface with one of Cargo's lock-writing subcommands (`update`,
+`generate-lockfile`, `add`, `remove`), which run under the bootstrap Cargo
+home with registry access; the next `dev cargo` run seeds its generation from
+the rewritten lock. `update --workspace` admits new crates without moving the
+rest of the lock:
+
+```sh
+spice dev cargo -- update --workspace
+spice dev cargo -- build --locked -p spice
+```
+
 The exact appliance behind the wrapper owns repository development surfaces
 such as `dev cargo` and `dev xtask`; its existence does not establish harness
 authority. A missing, symbolic, non-regular, or non-executable asset is a hard
