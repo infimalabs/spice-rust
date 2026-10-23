@@ -101,7 +101,7 @@ pub(in crate::resident) fn configure(
     let configured_fast = subscription.fast_mode;
     if request.fast_mode == Some(true) {
         for row in next.lanes.iter_mut().filter(|row| row.team == request.team) {
-            super::retune::forget_fast_refusal(row);
+            row.forget_fast_refusal();
         }
     }
     let levels = match super::super::settings_surface::FastLevels::read(bus) {

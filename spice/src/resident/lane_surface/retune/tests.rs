@@ -193,20 +193,20 @@ fn a_seat_keeps_its_fast_mode_refusal_across_launches_until_fast_or_the_model_ch
     let mut row = refused();
     seat_session(&mut row, session("mockgw/gpt-5.4", false, None));
     assert!(
-        refuses_fast_mode(&row),
+        row.refuses_fast_mode(),
         "the next launch of the same model inherits the refusal"
     );
     seat_session(&mut row, session("openai/gpt-5.5", false, None));
     assert!(
-        !refuses_fast_mode(&row),
+        !row.refuses_fast_mode(),
         "a launch of another model starts without it"
     );
 
     let mut row = refused();
     Selection::Fast(&off).replace_seat(&mut row);
-    assert!(refuses_fast_mode(&row), "turning fast mode off keeps it");
+    assert!(row.refuses_fast_mode(), "turning fast mode off keeps it");
     Selection::Fast(&on).replace_seat(&mut row);
-    assert!(!refuses_fast_mode(&row), "turning fast mode on forgets it");
+    assert!(!row.refuses_fast_mode(), "turning fast mode on forgets it");
 
     let mut row = refused();
     Selection::Model(&LaneRetune {
@@ -215,5 +215,5 @@ fn a_seat_keeps_its_fast_mode_refusal_across_launches_until_fast_or_the_model_ch
         model: Some("openai/gpt-5.5".to_owned()),
     })
     .replace_seat(&mut row);
-    assert!(!refuses_fast_mode(&row), "selecting a model forgets it");
+    assert!(!row.refuses_fast_mode(), "selecting a model forgets it");
 }

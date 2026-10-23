@@ -72,7 +72,7 @@ impl Selection<'_> {
     fn replace_seat(self, row: &mut wire::LaneResidency) -> SeatFact {
         match self {
             Self::Model(request) => {
-                forget_fast_refusal(row);
+                row.forget_fast_refusal();
                 SeatFact::Model(wire::body::LaneRetuned {
                     lane: request.lane,
                     from: std::mem::replace(&mut row.model, request.model.clone()),
@@ -86,7 +86,7 @@ impl Selection<'_> {
             }),
             Self::Fast(request) => {
                 if request.fast_mode {
-                    forget_fast_refusal(row);
+                    row.forget_fast_refusal();
                 }
                 SeatFact::Fast(wire::body::LaneFastRetuned {
                     lane: request.lane,
@@ -449,21 +449,6 @@ fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune, refusal: Opti
         }
     }
     true
-}
-
-/// Whether this seat's vendor refused fast mode for the model it runs, so its
-/// next launch runs without it.
-pub(in crate::resident) fn refuses_fast_mode(row: &wire::LaneResidency) -> bool {
-    row.session
-        .as_ref()
-        .is_some_and(|session| session.launch.fast_refusal.is_some())
-}
-
-/// Forget this seat's fast-mode refusal so its next launch tries fast mode.
-pub(in crate::resident) fn forget_fast_refusal(row: &mut wire::LaneResidency) {
-    if let Some(session) = row.session.as_mut() {
-        session.launch.fast_refusal = None;
-    }
 }
 
 /// Install `session` as this seat's running session. A refusal outlives the

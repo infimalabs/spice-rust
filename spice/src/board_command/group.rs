@@ -347,7 +347,9 @@ pub(super) fn arrange_working_groups(
 }
 
 /// Turn one standing group's fast-mode flag on or off: the whole partition
-/// restated with only that flag changed.
+/// restated with only that flag changed. Turning it on also forgets the
+/// fast-mode refusals of the lanes it runs fast in the same transaction, so
+/// each next launch tries fast mode.
 pub(super) fn set_working_group_fast(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -357,9 +359,10 @@ pub(super) fn set_working_group_fast(
         Ok(found) => found,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = standing_group(&current, &request.group) {
-        return outcome;
-    }
+    let designs = match standing_group(&current, &request.group) {
+        Ok(group) => group.anchors.iter().cloned().collect(),
+        Err(outcome) => return outcome,
+    };
     let mut partition = current.clone();
     partition.revision = revision;
     if !partition.set_fast(&request.group, request.fast_mode) {
@@ -369,15 +372,44 @@ pub(super) fn set_working_group_fast(
             "the group's fast mode already stands there",
         );
     }
+    let forgotten = if request.fast_mode {
+        match bus.read(move |read| {
+            let Some(observed) = read.residency_head()? else {
+                return Ok(None);
+            };
+            let lanes = design_claimants(read, &designs)?;
+            Ok(observed
+                .body()
+                .forget_fast_refusals(|row| lanes.contains(&row.lane))
+                .map(|next| (observed, next)))
+        }) {
+            Ok(forgotten) => forgotten,
+            Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
+        }
+    } else {
+        None
+    };
     let fact = WorkingGroupsArranged {
         from: current,
         partition,
     };
-    restate(
+    change_partition(
         bus,
         command,
+        working_group_origin(),
+        revision,
         WorkingGroupChangeStatus::Retuned,
-        fact,
+        Vec::new(),
+        |write, _| {
+            let arranged = write
+                .fact(fact, FactCause::Root)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))?;
+            if let Some((observed, next)) = forgotten {
+                crate::resident::guard_residency(write, &observed);
+                write.residency_head(arranged, move |_| next);
+            }
+            Ok(())
+        },
         request.clone(),
     )
 }
@@ -638,23 +670,25 @@ pub(crate) fn group_fast_lanes(
     read: &JournalRead<'_>,
 ) -> Result<std::collections::BTreeSet<wire::CanonicalUuid>, GuardError> {
     let partition = current_partition(read)?;
-    let mut designs = std::collections::BTreeSet::new();
-    for group in &partition.groups {
-        if !partition.is_fast(&group.group) {
-            continue;
-        }
-        designs.extend(group.anchors.iter().cloned());
-    }
-    if designs.is_empty() {
-        return Ok(std::collections::BTreeSet::new());
-    }
+    let designs = partition
+        .groups
+        .iter()
+        .filter(|group| partition.is_fast(&group.group))
+        .flat_map(|group| group.anchors.iter().cloned())
+        .collect();
+    design_claimants(read, &designs)
+}
 
+/// Lanes holding an active claim on a task associated with one of `designs`.
+fn design_claimants(
+    read: &JournalRead<'_>,
+    designs: &std::collections::BTreeSet<wire::TaskStamp>,
+) -> Result<std::collections::BTreeSet<wire::CanonicalUuid>, GuardError> {
     let mut lanes = std::collections::BTreeSet::new();
-    let active_lanes = read
-        .actively_claimed_lanes()?
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    for lane in active_lanes {
+    if designs.is_empty() {
+        return Ok(lanes);
+    }
+    for lane in read.actively_claimed_lanes()? {
         let Some(active) = read.active_claim_for_actor(&wire::Actor::Lane(lane))? else {
             continue;
         };
