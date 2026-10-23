@@ -54,7 +54,7 @@ impl DurableReporter {
 impl CaptureReporter for DurableReporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
         self.driving.store(true, Ordering::Relaxed);
-        let asked = self
+        let raised = self
             .driver
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -84,13 +84,19 @@ impl CaptureReporter for DurableReporter {
                 length: record.locus.length,
             },
         });
-        if let Some(ask) = asked {
-            self.send(&Notice::Asked {
+        match raised {
+            Some(command::Raised::Ask(ask)) => self.send(&Notice::Asked {
                 lane: record.lane,
                 occupant: record.occupant,
                 request: ask.request,
                 operation: ask.operation,
-            });
+            }),
+            Some(command::Raised::FastRefused(refusal)) => self.send(&Notice::FastRefused {
+                lane: record.lane,
+                occupant: record.occupant,
+                refusal,
+            }),
+            None => {}
         }
         Ok(())
     }

@@ -441,6 +441,7 @@ fn lane_response_with_renewals(
                 effort: bound.then(|| "high".to_owned()),
                 seat_effort: None,
                 fast_mode: false,
+                fast_refusal: None,
                 seat_fast_mode: false,
                 git: bound.then(|| "current".to_owned()),
                 rtk: None,

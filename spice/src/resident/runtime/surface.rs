@@ -858,7 +858,7 @@ fn message_notice_identity(
         Notice::Record { lane, occupant, .. }
         | Notice::Exited { lane, occupant }
         | Notice::Failed { lane, occupant, .. } => Some((*lane, *occupant)),
-        Notice::Asked { .. } => None,
+        Notice::Asked { .. } | Notice::FastRefused { .. } => None,
     }
 }
 
@@ -943,6 +943,15 @@ fn accept_supervisor_report<P: message_surface::AgentMessagePublisher>(
         return super::reap::account_failure(
             bus, epoch, seats, lifecycle, lane, occupant, &failure, diagnostic,
         );
+    }
+    if let super::supervisor::Notice::FastRefused {
+        lane,
+        occupant,
+        refusal,
+    } = notice
+    {
+        lane_surface::record_fast_refusal(bus, epoch, lane, occupant, &refusal);
+        return Ok(());
     }
     let residency = current_residency(bus, epoch)?;
     let Some(record) = accept_ask(command_surface, residency.body(), notice, diagnostic)? else {

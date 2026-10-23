@@ -129,3 +129,63 @@ fn fast_mode_requests_name_the_disposition_and_a_failed_response_refuses() {
     assert_eq!(answer.request, "live-fast");
     assert!(matches!(answer.result, RetuneReplyResult::Refused { .. }));
 }
+
+#[test]
+fn a_vendor_refusing_fast_mode_continues_the_turn_without_it_once_until_fast_returns() {
+    const REFUSED: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"error","sessionSettled":true,"error":{"message":"400 'priority' is not supported for 'service_tier' on this model (type=invalid_request_error param=validation_error)","provider":"openai","model":"gpt-5.4","httpStatus":400,"retryable":false}}"#;
+    let open = |driver: &Driver<Sink>| {
+        driver
+            .stdin
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    };
+    let sink = Sink::default();
+    let driver = driver(&sink);
+
+    let raised = driver.observe(&decoded(REFUSED));
+    assert!(
+        matches!(&raised, Some(Raised::FastRefused(refusal)) if refusal.contains("'service_tier'")),
+        "the vendor's words reach the resident"
+    );
+    let frames = sink.answered(2);
+    assert_eq!(
+        frames[0],
+        serde_json::json!({"id": FAST_REFUSED_REQUEST_ID, "type": "set_fast_mode", "enabled": false}),
+    );
+    assert_eq!(
+        frames[1]["type"], "prompt",
+        "the same session resumes the turn"
+    );
+    assert!(open(&driver), "the occupant keeps running");
+
+    // The operator turning fast mode back on lets one more refusal recover.
+    driver.retune(
+        "live-fast".to_owned(),
+        LiveRetune::Fast { enabled: true },
+        door_directory().join("spice-fast-refusal-unanswered.sock"),
+    );
+    assert!(matches!(
+        driver.observe(&decoded(REFUSED)),
+        Some(Raised::FastRefused(_))
+    ));
+    assert!(open(&driver));
+
+    // Refused again without fast mode back on: an ordinary vendor error.
+    assert!(driver.observe(&decoded(REFUSED)).is_none());
+    assert!(!open(&driver), "the turn ends as any vendor failure does");
+
+    let other = Sink::default();
+    let filtered = self::driver(&other);
+    assert!(
+        filtered
+            .observe(&decoded(
+                br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"error","sessionSettled":true,"error":{"message":"Refusal: blocked by content filtering policy.","provider":"anthropic","model":"claude-opus-4-6","httpStatus":400,"retryable":false}}"#,
+            ))
+            .is_none()
+    );
+    assert!(
+        !open(&filtered),
+        "any other vendor error still ends the turn"
+    );
+}

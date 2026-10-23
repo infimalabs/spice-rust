@@ -115,6 +115,10 @@ pub struct LaneRuntimeRetuned {
     /// Effective fast mode after the response, present for a fast-mode retune.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_mode: Option<bool>,
+    /// The vendor's words refusing fast mode, present when that refusal and
+    /// not the operator turned it off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_refusal: Option<String>,
 }
 
 /// One app team adopted a task-allocation lifetime.
@@ -304,12 +308,13 @@ impl RtkHealth {
     }
 }
 
-/// Model and effort currently effective for one vendor session, plus immutable
-/// launch mode and observable outcomes.
+/// Model, effort, and fast mode currently effective for one vendor session,
+/// plus observable launch outcomes.
 ///
-/// A declaration initializes every field. Confirmed live retunes update model
-/// or effort only in the residency projection; the declaration fact remains
-/// launch evidence.
+/// A declaration initializes every field but a fast-mode refusal, which only
+/// the running session meets. Confirmed live retunes and that refusal update
+/// model, effort, or fast mode only in the residency projection; the
+/// declaration fact remains launch evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneLaunchIdentity {
@@ -317,9 +322,17 @@ pub struct LaneLaunchIdentity {
     pub model: String,
     /// Reasoning effort currently selected in the vendor session.
     pub effort: String,
-    /// Whether this occupant was launched in the vendor's fast mode.
+    /// Whether this occupant runs in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_mode: bool,
+    /// The vendor's words refusing fast mode when that refusal turned it off
+    /// on this running occupant.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_refusal: Option<String>,
     /// GIT-04 outcome observed before this launch read repository configuration.
     #[serde(
         default,
@@ -343,6 +356,7 @@ impl LaneLaunchIdentity {
             model: model.into(),
             effort: effort.into(),
             fast_mode: false,
+            fast_refusal: None,
             git: None,
             rtk: None,
         }
@@ -379,6 +393,7 @@ impl LaneLaunchIdentity {
             model,
             effort,
             fast_mode,
+            fast_refusal: None,
             git,
             rtk,
         }

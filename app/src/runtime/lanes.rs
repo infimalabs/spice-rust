@@ -106,6 +106,9 @@ pub struct LaneMember {
     pub seat_effort: Option<String>,
     /// Whether the running occupant runs in fast mode.
     pub fast_mode: bool,
+    /// The vendor's words refusing fast mode when that refusal turned it off
+    /// on the running occupant, which continues without it.
+    pub fast_refusal: Option<String>,
     /// Whether this member's own flag enables fast mode. Its next launch runs
     /// fast when this, its team's flag, or the global setting is on.
     pub seat_fast_mode: bool,
@@ -288,6 +291,7 @@ impl From<&LaneAnswer> for LaneView {
                 effort: lane.effort.clone(),
                 seat_effort: lane.seat_effort.clone(),
                 fast_mode: lane.fast_mode,
+                fast_refusal: lane.fast_refusal.clone(),
                 seat_fast_mode: lane.seat_fast_mode,
                 occupant: lane.occupant,
                 session: lane.session.clone(),
@@ -428,6 +432,7 @@ mod tests {
             effort: None,
             seat_effort: None,
             fast_mode: false,
+            fast_refusal: None,
             seat_fast_mode: false,
             occupant: None,
             session: None,

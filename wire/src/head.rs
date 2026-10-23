@@ -895,6 +895,12 @@ struct LaneSessionWire {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
+    fast_refusal: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     git: Option<String>,
     #[serde(
         default,
@@ -912,18 +918,20 @@ impl TryFrom<LaneSessionWire> for LaneSession {
     type Error = &'static str;
 
     fn try_from(wire: LaneSessionWire) -> Result<Self, Self::Error> {
+        let mut launch = LaneLaunchIdentity::from_parts(
+            wire.model,
+            wire.effort,
+            wire.fast_mode,
+            wire.git,
+            wire.rtk,
+        );
+        launch.fast_refusal = wire.fast_refusal;
         Ok(Self {
             lane: wire.lane,
             occupant: wire.occupant,
             worktree: wire.worktree,
             vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(
-                wire.model,
-                wire.effort,
-                wire.fast_mode,
-                wire.git,
-                wire.rtk,
-            ),
+            launch,
             epoch: wire.epoch,
             stream: wire.stream,
             identity: wire.identity,
@@ -933,7 +941,8 @@ impl TryFrom<LaneSessionWire> for LaneSession {
 }
 
 impl From<LaneSession> for LaneSessionWire {
-    fn from(session: LaneSession) -> Self {
+    fn from(mut session: LaneSession) -> Self {
+        let fast_refusal = session.launch.fast_refusal.take();
         let (model, effort, fast_mode, git, rtk) = LaneLaunchIdentity::into_parts(session.launch);
         Self {
             lane: session.lane,
@@ -943,6 +952,7 @@ impl From<LaneSession> for LaneSessionWire {
             model,
             effort,
             fast_mode,
+            fast_refusal,
             git,
             rtk,
             epoch: session.epoch,

@@ -654,6 +654,8 @@ fn cover_residency_heads() {
     let recorded_session = occupied.session.clone().expect("occupied session");
     let mut distinct_session = recorded_session.clone();
     distinct_session.launch = wire::body::LaneLaunchIdentity::new("opus", "max");
+    distinct_session.launch.fast_refusal =
+        Some("'priority' is not supported for 'service_tier' on this model".to_owned());
     law("LaneSession", &[recorded_session, distinct_session]);
     law("LaneResidency", &[occupied.clone(), empty.clone()]);
     let drive = TeamSubscription {

@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use listen::{Decoded, Dialog, Event, ProseRole};
@@ -40,6 +40,11 @@ pub(in crate::resident) const KICK_BYTES: usize = 1024;
 const ROOM_CATCH_UP_PURPOSE: &str = "room-catch-up";
 const CALLBACK_REPLY_BYTES: usize = 4096;
 const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Correlates the driver's own fast-mode release after a vendor refused it;
+/// no live retune waits on its response.
+const FAST_REFUSED_REQUEST_ID: &str = "spice-fast-refused";
+/// What the occupant is told when its refused turn resumes without fast mode.
+const FAST_REFUSED_CONTINUE: &str = "The provider refused fast mode, so Spice turned it off for this session. Continue where you left off.";
 
 /// One child's command stream and what has already been said on it.
 type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
@@ -118,6 +123,10 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     uris: uri::Uris,
     /// Correlated live retunes awaiting an OMP response.
     retunes: Mutex<HashMap<String, PendingRetune>>,
+    /// Set once this occupant's vendor refused fast mode and the driver turned
+    /// it off to continue; another refusal ends the turn like any vendor
+    /// error. The operator turning fast mode back on re-arms it.
+    fast_refused: AtomicBool,
     registration: registration::Registration,
 }
 
@@ -140,6 +149,14 @@ impl ActiveCall {
             blocking_wait: matches!(work, Work::Job(call) if call.op == JobOp::Wait),
         }
     }
+}
+
+/// What one observed record raises to the resident.
+pub(in crate::resident) enum Raised {
+    Ask(Ask),
+    /// The vendor refused fast mode in these words; the occupant continues
+    /// without it.
+    FastRefused(String),
 }
 
 /// A confirm dialog stated as the consent request the resident decides.
@@ -319,6 +336,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             waits: Mutex::new(HashMap::new()),
             uris: uri::Uris::new(uri_server),
             retunes: Mutex::new(HashMap::new()),
+            fast_refused: AtomicBool::new(false),
             registration: registration::Registration::default(),
         })
     }
@@ -328,6 +346,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// a provider refusal.
     fn retune(&self, request: String, retune: LiveRetune, reply: PathBuf) {
         let command = retune.command();
+        if retune == (LiveRetune::Fast { enabled: true }) {
+            self.fast_refused.store(false, Ordering::Relaxed);
+        }
         self.retunes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -603,8 +624,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         Ok(())
     }
 
-    /// Let one decoded record shape delivery, and state the consent request a
-    /// confirm dialog raises.
+    /// Let one decoded record shape delivery, and state what it raises to the
+    /// resident: the consent request a confirm dialog asks for, or the
+    /// vendor's refusal of fast mode.
     ///
     /// A confirm holds the turn until consent answers it through
     /// [`Self::answer`]; a call on the lane's shell holds it until the
@@ -613,8 +635,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// call ends its command. A compaction discards what the agent was told,
     /// so the standing inbox is interjected again; the end of the agent's
     /// turn ends its input, so the child drains and exits rather than idling
-    /// for a prompt nobody sends.
-    pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Ask> {
+    /// for a prompt nobody sends. A turn the vendor failed only because it
+    /// refused fast mode instead continues on the same session without it.
+    pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Raised> {
         self.observe_retune(decoded);
         self.observe_uri_registration(decoded);
         // A telling seen on the transcript is now held verbatim. Ordinary
@@ -727,9 +750,39 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .is_some_and(|outcome| outcome.session_settled)
         });
         if settled {
+            if let Some(refusal) = self.continue_without_fast(decoded) {
+                return Some(Raised::FastRefused(refusal));
+            }
             self.close();
         }
-        asked
+        asked.map(Raised::Ask)
+    }
+
+    /// Turn fast mode off and resume a turn whose vendor failure refused it,
+    /// once until the operator turns it back on, answering the vendor's words.
+    fn continue_without_fast(&self, decoded: &Decoded) -> Option<String> {
+        let failed = decoded
+            .context()
+            .and_then(|context| context.prompt_outcome.as_ref())
+            .is_some_and(|outcome| outcome.status == listen::PromptStatus::Error);
+        let refusal = decoded.events().iter().find_map(|event| match event {
+            Event::Failure(failure)
+                if failed && vendor::omp::refuses_fast_mode(&failure.message) =>
+            {
+                Some(failure.message.clone())
+            }
+            _ => None,
+        })?;
+        if self.fast_refused.swap(true, Ordering::Relaxed) {
+            return None;
+        }
+        self.write(&vendor::omp::set_fast_mode_request(
+            FAST_REFUSED_REQUEST_ID,
+            false,
+        ))
+        .and_then(|()| self.steer(FAST_REFUSED_CONTINUE))
+        .ok()?;
+        Some(refusal)
     }
 
     /// Answer the confirm dialog one consent request stands for.
