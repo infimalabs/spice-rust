@@ -35,7 +35,7 @@ pairing on a named remote integrates through that remote's tracking ref; a
 pairing on `.` integrates into this repository's own branch with nothing
 fetched; a lane that declares no remote takes `origin`, and one that declares no
 merge branch takes its remote's HEAD. A declared remote the repository does not
-define is a fault, not a silent fall-back to `origin`.
+define is a fault; `origin` never stands in for it.
 
 ## Landing refusals
 
