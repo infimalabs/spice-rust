@@ -147,6 +147,7 @@ fn transcript_for(
     crate::session_command::vendor_thread_transcript(
         &session.identity,
         &session.vendor,
+        std::path::Path::new(&session.worktree),
         &crate::session_environment(),
     )
     .ok()

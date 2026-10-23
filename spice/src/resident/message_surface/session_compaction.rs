@@ -246,6 +246,7 @@ impl SessionCompactions {
         match crate::session_command::vendor_thread_transcript(
             &session.identity,
             &session.vendor,
+            std::path::Path::new(&session.worktree),
             &self.environment,
         ) {
             Ok((path, dialect)) => {
