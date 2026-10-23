@@ -130,9 +130,7 @@ pub(super) fn client_capture_recovery(
         return task_git_outcome(error);
     }
     let transaction = recovery.transaction().to_owned();
-    let rule = if stealing { "recover-steal" } else { "recover" }
-        .parse::<Name>()
-        .expect("recovery possession rules are wire names");
+    let rule = recovery_rule(stealing);
     let outcome = crate::command_client::execute_typed(
         repository,
         contract,
@@ -203,9 +201,7 @@ fn capture_recovery_preflight(
         ));
     }
     let (lane, occupant) = actor_seat(board)?;
-    let rule = if stealing { "recover-steal" } else { "recover" }
-        .parse::<Name>()
-        .expect("recovery possession rules are wire names");
+    let rule = recovery_rule(stealing);
     let expected = vec![
         statement_witness(heads),
         workflow_witness(heads),
@@ -225,6 +221,16 @@ fn capture_recovery_preflight(
         epoch: board.residency.body.epoch,
         expected,
     })
+}
+
+fn recovery_rule(stealing: bool) -> Name {
+    if stealing {
+        RECOVER_STEAL_RULE
+    } else {
+        "recover"
+    }
+    .parse()
+    .expect("recovery possession rules are wire names")
 }
 
 pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {

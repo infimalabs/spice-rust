@@ -570,21 +570,21 @@ fn possession_rule(win: &ClaimWin) -> Result<Possession, Outcome<CommandAnswer>>
         ("next", None) => Ok(Possession::Next),
         ("capture", None) => Ok(Possession::Capture),
         ("steal", None) => Ok(Possession::Steal),
-        (rule @ ("recover" | "recover-steal"), Some(transaction))
+        (rule @ ("recover" | RECOVER_STEAL_RULE), Some(transaction))
             if spice::task_git::Recovery::is_transaction(transaction) =>
         {
-            Ok(if rule == "recover-steal" {
+            Ok(if rule == RECOVER_STEAL_RULE {
                 Possession::RecoverSteal
             } else {
                 Possession::Recover
             })
         }
-        ("recover" | "recover-steal", None) => Err(refusal(
+        ("recover" | RECOVER_STEAL_RULE, None) => Err(refusal(
             "git::recovery-transaction-missing",
             None,
             "start sealed adoption through `spice task capture HANDLE`",
         )),
-        ("recover" | "recover-steal", Some(transaction)) => Err(refusal(
+        ("recover" | RECOVER_STEAL_RULE, Some(transaction)) => Err(refusal(
             "git::recovery-transaction-invalid",
             Some(transaction.to_owned()),
             "use the content-addressed transaction sealed by task capture",

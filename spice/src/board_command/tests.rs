@@ -573,34 +573,36 @@ fn recovery_identity_is_admitted_only_by_the_recover_rule() {
         ),
         "ordinary next admitted a recovery identity: {refused:?}",
     );
-    let recover: Name = "recover".parse().expect("recovery rule");
-    for (identity, reason) in [
-        (None, "git::recovery-transaction-missing"),
-        (Some("a".repeat(39)), "git::recovery-transaction-invalid"),
-    ] {
-        let refused = issue(
-            &bus,
-            epoch,
-            lane.clone(),
-            CommandKind::ClaimWin,
-            vec![
-                statement_witness(heads),
-                workflow_witness(heads),
-                claim_witness(heads),
-                Witness::Eligibility {
+    for recover in ["recover", RECOVER_STEAL_RULE] {
+        let recover: Name = recover.parse().expect("recovery rule");
+        for (identity, reason) in [
+            (None, "git::recovery-transaction-missing"),
+            (Some("a".repeat(39)), "git::recovery-transaction-invalid"),
+        ] {
+            let refused = issue(
+                &bus,
+                epoch,
+                lane.clone(),
+                CommandKind::ClaimWin,
+                vec![
+                    statement_witness(heads),
+                    workflow_witness(heads),
+                    claim_witness(heads),
+                    Witness::Eligibility {
+                        rule: recover.clone(),
+                    },
+                    residency(&available, &seats[0]),
+                ],
+                &ClaimWin {
                     rule: recover.clone(),
+                    recovery: identity,
                 },
-                residency(&available, &seats[0]),
-            ],
-            &ClaimWin {
-                rule: recover.clone(),
-                recovery: identity,
-            },
-        );
-        assert!(
-            matches!(refused, Outcome::Refusal(ref refusal) if refusal.reason() == reason),
-            "invalid recovery identity did not refuse as {reason}: {refused:?}",
-        );
+            );
+            assert!(
+                matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == reason),
+                "invalid {recover:?} identity did not refuse as {reason}: {refused:?}",
+            );
+        }
     }
     assert!(
         at(&board(&bus, epoch, Actor::Lane(seats[0].lane)), &task)
