@@ -61,8 +61,8 @@ use reply::{
 };
 pub(super) use restart_claim::append_startup_claims;
 pub(super) use retune::{
-    LiveChange, LiveChanges, owe_global_fast_flips, record_fast_refusal, retune, retune_effort,
-    retune_fast,
+    LiveChange, LiveChanges, owe_global_fast_flips, record_fast_refusal, refuses_fast_mode, retune,
+    retune_effort, retune_fast, seat_session,
 };
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
