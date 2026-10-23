@@ -10,8 +10,8 @@ use wire::rooms::{
 };
 
 use super::preparation::{
-    add_controller, add_plan_output, authorize_test_output, record_test_coverage,
-    retain_test_candidate,
+    add_controller, add_plan_output, authorize_test_output, conclude, done_conclusion,
+    record_test_coverage, retain_test_candidate,
 };
 use crate::board_command::group_fast_lanes;
 
@@ -422,6 +422,32 @@ fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
         "group::design-only",
     ));
     assert_eq!(read_partition(&bus, epoch), full);
+    clean(&root, bus);
+}
+
+#[test]
+fn a_completed_design_joins_a_group_while_a_deleted_one_stays_out() {
+    let (root, bus, epoch, _) = fixture("group-completed-design", 0);
+    let completed = add_design_room(&bus, epoch, stamp("completed-design"), "Completed");
+    let deleted = add_design_room(&bus, epoch, stamp("deleted-design"), "Deleted");
+    assert_committed(conclude(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &completed,
+        done_conclusion(),
+    ));
+    delete_task(&bus, epoch, &deleted);
+    let completed = completed.born().expect("completed identity");
+    let deleted = deleted.born().expect("deleted identity");
+
+    let group = group_stamp(555);
+    assert_committed(move_design(&bus, epoch, &completed, Some(&group)));
+    assert!(refused_as(
+        move_design(&bus, epoch, &deleted, Some(&group)),
+        "group::design-only",
+    ));
+    assert_eq!(standing(&bus, epoch), vec![(group, vec![completed])]);
     clean(&root, bus);
 }
 

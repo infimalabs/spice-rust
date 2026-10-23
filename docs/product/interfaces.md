@@ -158,7 +158,7 @@ handle.
 | Bound | Value | Refusal and repair |
 | --- | --- | --- |
 | Designs per working group | 6, as lanes per team | `group::design-limit`: move one out or choose another group |
-| Group membership | Open Design tasks only | `group::design-only`: choose a Design whose current phase is `design`, or finish its admitted intake first |
+| Group membership | Design tasks that are open or completed; a completed Design grants its group no standing | `group::design-only`: choose a Design whose current phase is `design` or one already completed, or finish its admitted intake first |
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Group stance | Passive, Explore, or Converge on one standing group at the partition revision read; Passive on a group already Passive while one of its held Designs still owes shelving | `group::missing`, `group::stance-unchanged`, or `group::partition-moved`: read the groups and retry only if authority changed; `group::shelving-owed`: owed shelving did not commit, so set the group Passive again |
 | Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a committed disband can name ungrouped Designs still owed shelving, each repaired by moving it into a Passive group, such as `spice group move DESIGN --new` |
