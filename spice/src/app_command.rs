@@ -25,8 +25,22 @@ use wire::{
 use crate::command_client::{open_app_result_with, system_browser};
 use crate::resident;
 
-/// The window's title; the console names the repository inside.
-const TITLE: &str = "Spice";
+/// The window's title: the product, then the repository it serves, so the
+/// Window menu and Mission Control tell several repositories apart.
+fn title(common: &Path) -> String {
+    let named = if common.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        common.parent()
+    } else {
+        Some(common)
+    };
+    match named.and_then(Path::file_name) {
+        Some(name) => {
+            let name = name.to_string_lossy();
+            format!("Spice: {}", name.strip_suffix(".git").unwrap_or(&name))
+        }
+        None => "Spice".to_owned(),
+    }
+}
 /// The hidden entry the window process runs under.
 const WINDOW_ENTRY: &str = "__app-window";
 
@@ -44,7 +58,13 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
         Ok(access) => access.token,
         Err(outcome) => return typed(outcome),
     };
-    let session = match join_or_start(&current, leaf) {
+    let repository = match spice::repository::Repository::discover(&current) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
+        }
+    };
+    let session = match join_or_start(&repository, leaf) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
@@ -52,7 +72,7 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
         || session.opened.endpoint.clone(),
         |token| format!("{}#{token}", session.opened.endpoint),
     );
-    let shown = show_window(&url);
+    let shown = show_window(&url, repository.common_dir());
     let resident = if session.started {
         match drain(&current) {
             Ok(()) => AppResident::Drained,
@@ -74,7 +94,8 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
     })
 }
 
-/// Draw the window for the URL one line of stdin names; the hidden entry
+/// Draw the window for the URL one line of stdin names, titled and keyed by
+/// the Git common directory its one argument names; the hidden entry
 /// `show_window` spawns.
 pub(crate) fn window_entry(arguments: impl Iterator<Item = OsString>) -> Option<i32> {
     use std::io::Read;
@@ -83,10 +104,13 @@ pub(crate) fn window_entry(arguments: impl Iterator<Item = OsString>) -> Option<
     if arguments.next()? != WINDOW_ENTRY {
         return None;
     }
-    if arguments.next().is_some() {
-        eprintln!("the window entry takes no arguments; its URL arrives on stdin");
+    let (Some(common), None) = (arguments.next(), arguments.next()) else {
+        eprintln!(
+            "the window entry takes one argument, the Git common directory; its URL arrives on stdin"
+        );
         return Some(2);
-    }
+    };
+    let common = std::path::PathBuf::from(common);
     let mut url = String::new();
     match std::io::stdin().read_line(&mut url) {
         Ok(_) if !url.trim().is_empty() => {}
@@ -105,13 +129,16 @@ pub(crate) fn window_entry(arguments: impl Iterator<Item = OsString>) -> Option<
         let _ = std::io::stdin().read_to_end(&mut Vec::new());
         std::process::exit(0);
     });
-    Some(match desktop::show(TITLE, url.trim(), external_link) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("{error}");
-            1
-        }
-    })
+    let key = common.to_string_lossy();
+    Some(
+        match desktop::show(&title(&common), &key, url.trim(), external_link) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        },
+    )
 }
 
 fn external_link(link: &str) {
@@ -121,7 +148,7 @@ fn external_link(link: &str) {
 /// Show the window from a process carrying a bundle identity and wait for
 /// it to close.
 #[cfg(target_os = "macos")]
-fn show_window(url: &str) -> Result<(), desktop::WindowError> {
+fn show_window(url: &str, common: &Path) -> Result<(), desktop::WindowError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -131,6 +158,7 @@ fn show_window(url: &str) -> Result<(), desktop::WindowError> {
     let bundled = desktop::bundled_executable(&executable)?;
     let mut child = Command::new(bundled)
         .arg(WINDOW_ENTRY)
+        .arg(common)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -162,8 +190,13 @@ fn show_window(url: &str) -> Result<(), desktop::WindowError> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_window(url: &str) -> Result<(), desktop::WindowError> {
-    desktop::show(TITLE, url, external_link)
+fn show_window(url: &str, common: &Path) -> Result<(), desktop::WindowError> {
+    desktop::show(
+        &title(common),
+        &common.to_string_lossy(),
+        url,
+        external_link,
+    )
 }
 
 /// The admitted endpoint the window shows and whether this command owns the
@@ -173,12 +206,12 @@ struct Session {
     started: bool,
 }
 
-/// Join the resident already serving `current`, or start one without a
+/// Join the resident already serving `repository`, or start one without a
 /// browser launch when none is live.
-fn join_or_start(current: &Path, leaf: &ArgMatches) -> Result<Session, Outcome<AppClosed>> {
-    let repository = spice::repository::Repository::discover(current).map_err(|error| {
-        environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
-    })?;
+fn join_or_start(
+    repository: &spice::repository::Repository,
+    leaf: &ArgMatches,
+) -> Result<Session, Outcome<AppClosed>> {
     let serve = repository
         .admit_resident_client()
         .map_err(|error| crate::state_failure(&error).outcome())?;

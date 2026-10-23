@@ -19,6 +19,8 @@
 //! [`crate::bundle`]), or macOS dictation never attaches to its fields; the
 //! Edit menu's Start Dictation item sends the ordinary responder action.
 
+mod surface;
+
 use std::ptr::null_mut;
 
 use block2::Block;
@@ -26,8 +28,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, NSObject, ProtocolObject, Sel};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSWindow,
+    NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSApplication,
+    NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSWindow,
 };
 use objc2_foundation::{MainThreadMarker, NSArray, NSObjectProtocol, NSString, NSURL};
 use objc2_web_kit::{
@@ -49,6 +51,7 @@ const INITIAL_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 860.0);
 
 pub(crate) fn show(
     title: &str,
+    key: &str,
     url: &str,
     external: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<(), WindowError> {
@@ -79,8 +82,14 @@ pub(crate) fn show(
     // keeps the menu target's reference valid for exactly that span.
     let ns_window = unsafe { Retained::retain(window.ns_window().cast::<NSWindow>()) }
         .ok_or_else(|| WindowError::Platform("the window has no NSWindow".into()))?;
-    let menu_target = MenuTarget::new(main_thread, ns_window);
+    let menu_target = MenuTarget::new(main_thread, ns_window.clone());
     install_main_menu(main_thread, &menu_target);
+    let surface = surface::Surface::attach(
+        main_thread,
+        ns_window,
+        Retained::into_super(webview.webview()),
+        key,
+    );
     event_loop.run_return(|event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         if let Event::WindowEvent {
@@ -91,6 +100,7 @@ pub(crate) fn show(
             *control_flow = ControlFlow::Exit;
         }
     });
+    drop(surface);
     drop(delegate);
     NSApplication::sharedApplication(main_thread).setMainMenu(None);
     drop(menu_target);
@@ -258,12 +268,15 @@ define_class!(
         #[unsafe(method(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:))]
         fn alert(
             &self,
-            _webview: &WKWebView,
+            webview: &WKWebView,
             message: &NSString,
             _frame: &WKFrameInfo,
             handler: &Block<dyn Fn()>,
         ) {
             let alert = NSAlert::new(self.mtm());
+            alert
+                .window()
+                .setAppearance(window_appearance(webview).as_deref());
             alert.setMessageText(message);
             alert.addButtonWithTitle(&NSString::from_str("OK"));
             alert.runModal();
@@ -273,12 +286,15 @@ define_class!(
         #[unsafe(method(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
         fn confirm(
             &self,
-            _webview: &WKWebView,
+            webview: &WKWebView,
             message: &NSString,
             _frame: &WKFrameInfo,
             handler: &Block<dyn Fn(Bool)>,
         ) {
             let alert = NSAlert::new(self.mtm());
+            alert
+                .window()
+                .setAppearance(window_appearance(webview).as_deref());
             alert.setMessageText(message);
             alert.addButtonWithTitle(&NSString::from_str("OK"));
             alert.addButtonWithTitle(&NSString::from_str("Cancel"));
@@ -289,12 +305,13 @@ define_class!(
         #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
         fn open_panel(
             &self,
-            _webview: &WKWebView,
+            webview: &WKWebView,
             parameters: &WKOpenPanelParameters,
             _frame: &WKFrameInfo,
             handler: &Block<dyn Fn(*const NSArray<NSURL>)>,
         ) {
             let panel = NSOpenPanel::openPanel(self.mtm());
+            panel.setAppearance(window_appearance(webview).as_deref());
             panel.setCanChooseFiles(true);
             // SAFETY: plain property reads on a live panel-parameters object
             // WebKit handed to this call.
@@ -342,4 +359,11 @@ impl ShellDelegate {
         // ivars are set.
         unsafe { msg_send![super(delegate), init] }
     }
+}
+
+/// The appearance the console's theme gave the shell window, for the alerts
+/// and panels the shell opens on its behalf; they are separate windows and
+/// would otherwise take the system's.
+fn window_appearance(webview: &WKWebView) -> Option<Retained<NSAppearance>> {
+    webview.window()?.appearance()
 }
