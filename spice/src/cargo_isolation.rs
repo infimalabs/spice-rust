@@ -3,7 +3,12 @@
 //! One immutable directory-source store holds external package payloads. Each
 //! worktree or durable lane receives only a private Cargo home containing its
 //! own Cargo locks, last-use database, ownership record, and generated source
-//! replacement configuration.
+//! replacement configuration. A generation is keyed by the exact `Cargo.lock`
+//! and seeded with `cargo vendor --locked` under the bootstrap Cargo home, so
+//! a lock naming a new package is admitted by seeding; writing that lock is
+//! the development launcher's lock-writing route, which runs Cargo's
+//! `update`, `generate-lockfile`, `add`, and `remove` under the bootstrap home
+//! instead of a generation.
 
 use std::error::Error as StdError;
 use std::ffi::{OsStr, OsString};

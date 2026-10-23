@@ -110,7 +110,41 @@ impl Invocation {
     }
 }
 
-/// Prepare the exact current lock generation and run native Cargo within it.
+/// Cargo subcommands whose product is a rewritten `Cargo.lock`.
+const LOCK_WRITING_SUBCOMMANDS: [&str; 5] = ["update", "generate-lockfile", "add", "remove", "rm"];
+
+/// Global Cargo options that take their value as the following argument.
+const VALUED_GLOBAL_OPTIONS: [&str; 4] = ["--config", "--color", "-Z", "-C"];
+
+/// Whether `arguments` name a subcommand that rewrites `Cargo.lock`.
+///
+/// The subcommand is the first argument that is neither a `+toolchain`
+/// selector nor a global option; a valued global option written as two
+/// arguments skips its value. `--locked` and `--frozen` do not change the
+/// answer: Cargo itself refuses the rewrite under them.
+fn writes_lock(arguments: &[OsString]) -> bool {
+    let mut arguments = arguments.iter().map(|argument| argument.to_string_lossy());
+    while let Some(argument) = arguments.next() {
+        if argument.starts_with('+') {
+            continue;
+        }
+        if argument.starts_with('-') {
+            if VALUED_GLOBAL_OPTIONS.contains(&argument.as_ref()) {
+                arguments.next();
+            }
+            continue;
+        }
+        return LOCK_WRITING_SUBCOMMANDS.contains(&argument.as_ref());
+    }
+    false
+}
+
+/// Run native Cargo for the arguments after `--`.
+///
+/// A lock-writing subcommand runs under the bootstrap Cargo home, which may
+/// consult the registry and rewrite `Cargo.lock`; the next invocation seeds
+/// its generation from that lock. Every other subcommand prepares the exact
+/// current lock generation and runs offline within it.
 pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
     run_invocation(cargo_invocation(matches))
 }
@@ -268,24 +302,36 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
         )
     })?;
     let host = host(&repository).map_err(isolation_rejection)?;
-    let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
-    let mut command = native_command(
-        prepared.cargo(),
-        prepared.home(),
-        &host,
-        &working,
-        &invocation.arguments,
-    );
-    spice::cargo_isolation::bind_windows_msvc(
-        repository.worktree_root(),
-        host.bootstrap_home(),
-        &invocation.arguments,
-        &mut command,
-    )
-    .map_err(isolation_rejection)?;
-    prepared
-        .retain_pin_for_child(&mut command)
+    let (mut command, _prepared) = if writes_lock(&invocation.arguments) {
+        let command = native_command(
+            host.cargo(),
+            host.bootstrap_home(),
+            &host,
+            &working,
+            &invocation.arguments,
+        );
+        (command, None)
+    } else {
+        let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
+        let mut command = native_command(
+            prepared.cargo(),
+            prepared.home(),
+            &host,
+            &working,
+            &invocation.arguments,
+        );
+        spice::cargo_isolation::bind_windows_msvc(
+            repository.worktree_root(),
+            host.bootstrap_home(),
+            &invocation.arguments,
+            &mut command,
+        )
         .map_err(isolation_rejection)?;
+        prepared
+            .retain_pin_for_child(&mut command)
+            .map_err(isolation_rejection)?;
+        (command, Some(prepared))
+    };
     if supervised_by_pre_commit() {
         return run_verbatim(&mut command);
     }
