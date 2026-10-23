@@ -86,9 +86,14 @@ It joins the resident already serving the repository, or starts one exactly as
 joined keeps running until `spice down`. Cmd+Q and Cmd+W close the window the
 same way as its close button, so the resident is settled either way; the
 window's Edit menu carries the standard copy, paste, cut, undo, and select-all
-shortcuts. The window admits its endpoint through the same discovery check as
-`--open` and carries the token only in the URL fragment the window loads.
-Links the console opens in a new window go to the system browser. The window
+shortcuts and Start Dictation. The window admits its endpoint through the same
+discovery check as `--open` and carries the token only in the URL fragment the
+window loads. Links the console opens in a new window go to the system
+browser. The window itself is drawn by a child process running the same
+appliance from `~/Library/Caches/dev.spice.app/Spice.app`, a minimal bundle
+`spice app` writes and verifies on each launch, because macOS dictation only
+attaches to a client with a bundle identity; the command that started or
+joined the resident stays in charge of it. The window
 is macOS-only (WebKit); elsewhere `spice app` refuses and `spice up --open`
 remains the route. Under WebKit, the console reads `app_bg.wasm` from the
 resident twice per load, because WebKit doesn't reuse its integrity-checked

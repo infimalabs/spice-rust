@@ -167,6 +167,9 @@ fn bootstrap_invocation() -> (cli::MountRegistry, clap::ArgMatches, bool) {
     if let Some(code) = resident::supervisor::entry(std::env::args_os()) {
         terminate_code(code);
     }
+    if let Some(code) = app_command::window_entry(std::env::args_os()) {
+        terminate_code(code);
+    }
     if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
         terminate_code(code);
     }
