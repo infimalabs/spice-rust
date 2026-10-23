@@ -14,7 +14,7 @@
 
 .shell {
   /* SPICE and the composer's TURBO button share one round-control diameter. */
-  --app-round-control-size: 34px;
+  --app-round-control-size: 32px;
   --app-header-control: var(--app-round-control-size);
   --app-team-control-inline-size: 80px;
   --app-shell-edge-inline: 10px;
@@ -92,21 +92,20 @@ body:has(.shell),
 .app-global-work-tabs { justify-self: start; direction: ltr; }
 .app-design-work-tabs { justify-self: end; direction: rtl; }
 /* Each global rail is one strip. Its DOM-leading aggregate sits at the
-   anchored outside edge; named stems continue inward. */
+   anchored outside edge; named stems continue inward. Interior corners stay
+   square; the strip's two outside corners keep the tab radius, and the
+   shared bottom rail runs unbroken across it. */
 :is(.app-global-work-tabs, .app-design-work-tabs) { gap: 0; }
 :is(.app-global-work-tabs, .app-design-work-tabs) > .app-horn-tab {
-  border-inline-width: 0;
   border-radius: 0;
   direction: ltr;
 }
 .app-global-work-tabs > .app-horn-tab:first-child,
 .app-design-work-tabs > .app-horn-tab:last-child {
-  border-inline-start-width: var(--message-rail);
   border-end-start-radius: var(--app-radius-card);
 }
 .app-global-work-tabs > .app-horn-tab:last-child,
 .app-design-work-tabs > .app-horn-tab:first-child {
-  border-inline-end-width: var(--message-rail);
   border-end-end-radius: var(--app-radius-card);
 }
 :is(.app-global-work-tabs, .app-design-work-tabs):empty { display: none; }

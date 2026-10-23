@@ -327,7 +327,7 @@ fn render_team_total(
     html! {
         <span
             key="team-total"
-            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
             data-work-scope="team"
             data-work-mark={view::chrome::work_mark(counts)}
         >
