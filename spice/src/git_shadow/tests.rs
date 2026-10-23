@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use sill::Environment;
 
-use super::{GitAnswer, compose};
+use super::{GitAnswer, Pairing, compose, declare};
 
 const SYSTEM_CONFIG: &str = "/fixture/system.gitconfig";
 
@@ -206,4 +206,51 @@ fn a_second_publication_rewrites_nothing() {
         second.modified().expect("modification time"),
         "the second run republished identical bytes"
     );
+}
+
+/// The pairing `lane` reads when its configuration holds `remote` and `merge`.
+fn declared(remote: Option<&str>, merge: Option<&str>) -> Result<Option<Pairing>, super::Error> {
+    declare("lane", |arguments| {
+        Ok(match arguments {
+            ["config", "--get", "branch.lane.remote"] => remote.map(str::to_owned),
+            ["config", "--get", "branch.lane.merge"] => merge.map(str::to_owned),
+            other => panic!("unexpected Git query {other:?}"),
+        })
+    })
+}
+
+#[test]
+fn a_dot_pairing_protects_the_local_branch_it_integrates_into() {
+    let pairing = declared(Some("."), Some("refs/heads/main"))
+        .expect("a whole pairing reads")
+        .expect("the pairing is declared");
+
+    assert!(pairing.is_local());
+    assert_eq!(pairing.branch, "main");
+    assert_eq!(pairing.reference(), "refs/heads/main");
+}
+
+#[test]
+fn a_remote_pairing_names_its_remote_tracking_branch() {
+    let pairing = declared(Some("upstream"), Some("refs/heads/trunk"))
+        .expect("a whole pairing reads")
+        .expect("the pairing is declared");
+
+    assert!(!pairing.is_local());
+    assert_eq!(pairing.reference(), "refs/remotes/upstream/trunk");
+}
+
+#[test]
+fn only_a_branch_declaring_neither_half_is_untracked() {
+    assert_eq!(declared(None, None).expect("nothing declared reads"), None);
+    for (remote, merge) in [
+        (Some("origin"), None),
+        (None, Some("refs/heads/main")),
+        (Some("origin"), Some("main")),
+    ] {
+        assert!(
+            declared(remote, merge).is_err(),
+            "remote {remote:?} with merge {merge:?} passed for a pairing"
+        );
+    }
 }

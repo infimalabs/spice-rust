@@ -24,6 +24,8 @@ const GIT_CONFIG_KEY_PREFIX: &str = "GIT_CONFIG_KEY_"; // env-policy: allow
 const GIT_CONFIG_SYSTEM: &str = "GIT_CONFIG_SYSTEM"; // env-policy: allow
 const GIT_CONFIG_VALUE_PREFIX: &str = "GIT_CONFIG_VALUE_"; // env-policy: allow
 const GIT_EDITOR: &str = "GIT_EDITOR"; // env-policy: allow
+const LOCAL_BRANCH_PREFIX: &str = "refs/heads/";
+const SELF_REMOTE: &str = ".";
 
 /// Add the lane's Git shadow to one already admitted child environment.
 ///
@@ -98,13 +100,98 @@ fn native_environment(environment: &Environment) -> BTreeMap<OsString, OsString>
 
 /// Whether `key` is one the lane's Git shadow sets: the system-scope file and
 /// the command-scope merge and remote pairs.
-pub(crate) fn is_shadow_variable(key: &OsStr) -> bool {
+fn is_shadow_variable(key: &OsStr) -> bool {
     if key == GIT_CONFIG_SYSTEM || key == GIT_CONFIG_COUNT {
         return true;
     }
     key.to_str().is_some_and(|key| {
         key.starts_with(GIT_CONFIG_KEY_PREFIX) || key.starts_with(GIT_CONFIG_VALUE_PREFIX)
     })
+}
+
+/// The integration branch a branch's own configuration declares: the pair
+/// `branch.<name>.remote` and `branch.<name>.merge`.
+///
+/// The reference guard protects [`Pairing::reference`] and task completion
+/// integrates into the same pairing, so the history one refuses to abandon is
+/// the history the other publishes to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pairing {
+    /// The declared remote; `.` names this repository.
+    pub remote: String,
+    /// The branch on that remote.
+    pub branch: String,
+}
+
+impl Pairing {
+    /// Whether the pairing names a branch of this repository, which nothing fetches.
+    #[must_use]
+    pub fn is_local(&self) -> bool {
+        self.remote == SELF_REMOTE
+    }
+
+    /// The reference holding the declared history: the branch itself for a
+    /// `.` remote, otherwise the remote-tracking copy of the remote's branch.
+    #[must_use]
+    pub fn reference(&self) -> String {
+        if self.is_local() {
+            format!("{LOCAL_BRANCH_PREFIX}{}", self.branch)
+        } else {
+            format!("refs/remotes/{}/{}", self.remote, self.branch)
+        }
+    }
+}
+
+/// Read the pairing `branch` declares, or `None` when it declares neither half.
+///
+/// Git answers at every scope, so includeIf and global pairings count, but with
+/// this module's shadow removed: the shadow aims the lane's upstream back at
+/// the lane, and reading through it would make every local commit look
+/// published. `@{upstream}` is never consulted for the same reason.
+///
+/// # Errors
+///
+/// Returns an error when Git cannot launch or answers with non-text, or when
+/// the pairing declares only one half or a merge that names no branch: Git
+/// resolves no upstream from either, and neither may pass for untracked.
+pub fn declared_pairing(root: &Path, branch: &str) -> Result<Option<Pairing>, Error> {
+    let native = std::env::vars_os()
+        .filter(|(key, _)| !is_shadow_variable(key))
+        .collect();
+    declare(branch, |arguments| git_read(root, arguments, &native))
+}
+
+fn declare<G>(branch: &str, mut git: G) -> Result<Option<Pairing>, Error>
+where
+    G: FnMut(&[&str]) -> GitAnswer,
+{
+    let remote = git(&["config", "--get", &format!("branch.{branch}.remote")])?;
+    let merge = git(&["config", "--get", &format!("branch.{branch}.merge")])?;
+    let (remote, merge) = match (remote, merge) {
+        (None, None) => return Ok(None),
+        (Some(remote), Some(merge)) => (remote, merge),
+        (remote, _) => {
+            let (present, missing) = if remote.is_some() {
+                ("remote", "merge")
+            } else {
+                ("merge", "remote")
+            };
+            return Err(Error::new(
+                "read branch pairing",
+                format!("branch {branch} declares a {present} but no {missing}"),
+            ));
+        }
+    };
+    let Some(merged) = merge.strip_prefix(LOCAL_BRANCH_PREFIX) else {
+        return Err(Error::new(
+            "read branch pairing",
+            format!("branch.{branch}.merge is {merge}, which names no branch"),
+        ));
+    };
+    Ok(Some(Pairing {
+        remote,
+        branch: merged.to_owned(),
+    }))
 }
 
 fn true_branch_merge<G>(

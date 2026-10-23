@@ -28,14 +28,15 @@ responsibility to synchronize with an upstream. Typed footprint and admission
 refusals remain distinct from raw synchronization failures.
 
 The baseline is the branch the lane's own pairing declares in the repository's
-configuration, `branch.<lane>.remote` and `branch.<lane>.merge`, read beneath
-the lane's process-local Git shadow; the shadow points an occupant's bare
-`git push` and `git pull` at the lane itself and never chooses the baseline. A
-pairing on a named remote integrates through that remote's tracking ref; a
-pairing on `.` integrates into this repository's own branch with nothing
-fetched; a lane that declares no remote takes `origin`, and one that declares no
-merge branch takes its remote's HEAD. A declared remote the repository does not
-define is a fault; `origin` never stands in for it.
+configuration, `branch.<lane>.remote` and `branch.<lane>.merge`, read at every
+scope beneath the lane's process-local Git shadow; the shadow points an
+occupant's bare `git push` and `git pull` at the lane itself and never chooses
+the baseline. A pairing on a named remote integrates through that remote's
+tracking ref; a pairing on `.` integrates into this repository's own branch with
+nothing fetched. A pairing is whole or absent: one half alone, or a merge that
+names no branch, is a fault. A lane that declares no pairing integrates into
+`origin`'s HEAD branch. A declared remote the repository does not define is a
+fault; `origin` never stands in for it.
 
 ## Landing refusals
 
@@ -68,12 +69,13 @@ A checked-out branch reference update cannot abandon commits already merged
 upstream. The guard reads the current tip from the ref itself, not the caller's
 declared old value.
 
-The upstream is the branch's own local pairing, never an alias, including as a
-fallback: process-local configuration can shadow an alias. No named pairing is
-different from a named pairing that cannot resolve. Appends give up no history
-and pass either way. A non-appending update with an unresolvable named upstream
-refuses as unknown rather than clear. Refusal names the commits at risk and
-requires forward work rather than amendment or reset backwards.
+The upstream is the reference the baseline's pairing names, read the same way,
+never an alias, including as a fallback: process-local configuration can shadow
+an alias. A `.` pairing protects the local branch it integrates into. No named
+pairing is different from a named pairing that cannot resolve. Appends give up
+no history and pass either way. A non-appending update with an unresolvable
+named upstream refuses as unknown rather than clear. Refusal names the commits
+at risk and requires forward work rather than amendment or reset backwards.
 
 ## Configuration layering
 
