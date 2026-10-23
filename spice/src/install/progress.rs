@@ -32,6 +32,12 @@ impl PreparedInstall {
     pub(super) fn into_plan(self) -> InstallPlan {
         self.record.plan
     }
+
+    /// Whether apply would find this plan already complete and publish
+    /// nothing: a complete install of this same build and hook topology.
+    pub(super) fn converged(&self) -> bool {
+        !self.fresh && self.record.status == InstallStatus::Complete
+    }
 }
 
 pub(super) fn apply_expected(

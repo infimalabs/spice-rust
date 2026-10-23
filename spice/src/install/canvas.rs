@@ -63,35 +63,37 @@ pub(super) fn package_layout(binary: &Path) -> Option<(&Path, &Path)> {
         .then_some((root, target))
 }
 
+/// A minimal executable whose linked canvas archive names `generation`.
+#[cfg(test)]
+pub(super) fn linked(generation: &Digest) -> Vec<u8> {
+    let declaration = wire::manifest::renderer::encode(&[]).expect("empty declaration encodes");
+    let files = serve::APP
+        .assets()
+        .iter()
+        .map(|asset| {
+            let bytes = if asset.path() == "/" {
+                format!(
+                    "<main data-app-generation=\"{generation}\" {}=\"{declaration}\"></main>",
+                    wire::manifest::renderer::ATTRIBUTE,
+                )
+            } else {
+                format!("fixture {}", asset.file())
+            };
+            (asset.file().to_owned(), bytes.into_bytes())
+        })
+        .collect::<Vec<_>>();
+    let archive = serve::canvas::CanvasArchive::write(
+        files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )
+    .expect("fixture archive writes");
+    dist::canvas_object(&archive, dist::ObjectTarget::LinuxX86_64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn linked(generation: &Digest) -> Vec<u8> {
-        let declaration = wire::manifest::renderer::encode(&[]).expect("empty declaration encodes");
-        let files = serve::APP
-            .assets()
-            .iter()
-            .map(|asset| {
-                let bytes = if asset.path() == "/" {
-                    format!(
-                        "<main data-app-generation=\"{generation}\" {}=\"{declaration}\"></main>",
-                        wire::manifest::renderer::ATTRIBUTE,
-                    )
-                } else {
-                    format!("fixture {}", asset.file())
-                };
-                (asset.file().to_owned(), bytes.into_bytes())
-            })
-            .collect::<Vec<_>>();
-        let archive = serve::canvas::CanvasArchive::write(
-            files
-                .iter()
-                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
-        )
-        .expect("fixture archive writes");
-        dist::canvas_object(&archive, dist::ObjectTarget::LinuxX86_64)
-    }
 
     #[test]
     fn an_executable_names_the_generation_its_linked_archive_carries() {
