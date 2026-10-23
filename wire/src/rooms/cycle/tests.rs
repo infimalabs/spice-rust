@@ -180,6 +180,25 @@ fn authorized(sequence: u64, micros: i64, outputs: &[i64]) -> AnyFact {
     })
 }
 
+/// Lane 1 wins `subject` in `phase`.
+fn won(subject: i64, phase: &str) -> AnyFact {
+    any(ClaimWon {
+        task: task(subject),
+        actor: Actor::Lane(lane(1)),
+        lane: lane(1),
+        occupant: lane(3),
+        epoch: lane(4),
+        cell: crate::ClaimCell {
+            project: "spice.rooms".to_owned(),
+            phase: phase.parse().expect("fixture phase"),
+        },
+        until: instant(),
+        git: None,
+        recovery: None,
+        source: crate::body::SourceBoundary::Proven { heads: Vec::new() },
+    })
+}
+
 fn freed(subject: i64) -> AnyFact {
     any(ClaimFreed {
         task: task(subject),
@@ -262,9 +281,11 @@ impl Journal {
         self.facts().cycle(working)
     }
 
-    /// One completed pass: proposal, release, and a decision.
+    /// One completed pass: a design-phase claim, proposal, release, and a
+    /// decision.
     fn passed(&mut self, outcome: DecisionOutcome, outputs: Vec<TaskStamp>) -> &mut Self {
-        self.lane(&proposed(10, outputs))
+        self.lane(&won(DESIGN, "design"))
+            .lane(&proposed(10, outputs))
             .lane(&freed(DESIGN))
             .operator(&decided(1, outcome))
     }
@@ -391,6 +412,7 @@ fn only_counted_input_after_the_horizon_refills_a_design() {
 fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
     let mut journal = Journal::new();
     steeping(&mut journal, 3);
+    journal.lane(&won(DESIGN, "design"));
     journal.lane(&proposed(10, vec![task(OUTPUT)]));
     journal.lane(&freed(DESIGN));
     journal.lane(&contributed(DESIGN, 2, RoomContributionKind::charge(0)));
@@ -556,7 +578,7 @@ fn a_clean_final_review_settles_released_work() {
 fn abandonment_moves_the_horizon_and_settlement_drops_the_fold() {
     let mut journal = Journal::new();
     steeping(&mut journal, 3);
-    journal.lane(&freed(DESIGN));
+    journal.lane(&won(DESIGN, "design")).lane(&freed(DESIGN));
     let facts = journal.facts();
     assert_eq!(facts.end, Some(DesignPassEnd::Abandoned));
     assert_eq!(
@@ -564,6 +586,7 @@ fn abandonment_moves_the_horizon_and_settlement_drops_the_fold() {
         DesignCycle::GatheringInput,
         "maturity reached before an abandoned pass is spent by it"
     );
+    journal.lane(&won(DESIGN, "design"));
     journal.by(
         &Actor::Spice,
         &any(ClaimLapsed {
@@ -580,6 +603,39 @@ fn abandonment_moves_the_horizon_and_settlement_drops_the_fold() {
     }));
     assert_eq!(journal.facts(), DesignCycleFacts::default());
     assert!(journal.cycles.designs.is_empty());
+}
+
+/// An intake claim, released directly or after the phase advance into
+/// design, ends no pass: the first pass still waits on maturity or a nudge.
+/// A claim carried into design does open one.
+#[test]
+fn only_a_claim_won_in_the_design_phase_ends_a_pass() {
+    for intake in ["plan", "review"] {
+        for advanced_first in [false, true] {
+            let mut journal = Journal::new();
+            journal.lane(&won(DESIGN, intake));
+            if advanced_first {
+                journal.lane(&done(DESIGN, TaskCompletionStatus::Pending));
+            }
+            journal.lane(&freed(DESIGN));
+            steeping(&mut journal, 1);
+            let facts = journal.facts();
+            assert_eq!(
+                (facts.horizon, facts.end, journal.cycle(false)),
+                (None, None, DesignCycle::GatheringInput),
+                "{intake} claim released, advanced first: {advanced_first}"
+            );
+        }
+    }
+
+    let mut carried = Journal::new();
+    carried
+        .lane(&won(DESIGN, "plan"))
+        .lane(&done(DESIGN, TaskCompletionStatus::Pending))
+        .lane(&won(DESIGN, "design"))
+        .lane(&freed(DESIGN));
+    assert_eq!(carried.facts().end, Some(DesignPassEnd::Abandoned));
+    assert_eq!(carried.facts().horizon, Seq::new(4));
 }
 
 #[test]
