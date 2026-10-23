@@ -10,19 +10,27 @@ use super::{BINARY_PATH, InstallError, InstallPlan, Repository, installed_git_ho
 
 const HOOK_KEY: &str = "core.hooksPath";
 
-/// The system Git activation runs, never one found on `PATH`.
+/// The system Git activation runs, never one found on `PATH`, inside
+/// `worktree`.
 #[cfg(not(windows))]
-fn git_command(_operation: &'static str) -> Result<Command, InstallError> {
-    Ok(Command::new("/usr/bin/git"))
+fn git_command(_operation: &'static str, worktree: &Path) -> Result<Command, InstallError> {
+    let mut command = Command::new("/usr/bin/git");
+    command.current_dir(worktree);
+    Ok(command)
 }
 
 /// Git for Windows' command entry in the system Program Files folder, never
-/// one found on `PATH`.
+/// one found on `PATH`, inside `worktree`.
 #[cfg(windows)]
-fn git_command(operation: &'static str) -> Result<Command, InstallError> {
-    let program_files =
-        sill::program_files().map_err(|source| InstallError::GitLaunch { operation, source })?;
-    Ok(Command::new(program_files.join(r"Git\cmd\git.exe")))
+fn git_command(operation: &'static str, worktree: &Path) -> Result<Command, InstallError> {
+    let program_files = sill::program_files().map_err(|source| InstallError::GitLaunch {
+        operation,
+        worktree: worktree.to_path_buf(),
+        source,
+    })?;
+    let mut command = Command::new(program_files.join(r"Git\cmd\git.exe"));
+    command.current_dir(worktree);
+    Ok(command)
 }
 
 /// Git configuration scope changed by one activation mutation.
@@ -135,6 +143,11 @@ pub struct HookActivationPlan {
     hooks_path: String,
     observations: Vec<HookWorktreeObservation>,
     mutations: Vec<HookConfigurationMutation>,
+    /// Registered worktrees whose directory is gone, skipped by preflight:
+    /// Git applies no hook configuration where there is no directory. This is
+    /// preview evidence, never part of the recorded plan or its digest.
+    #[serde(skip)]
+    skipped: Vec<String>,
 }
 
 impl HookActivationPlan {
@@ -154,6 +167,13 @@ impl HookActivationPlan {
     #[must_use]
     pub fn mutations(&self) -> &[HookConfigurationMutation] {
         &self.mutations
+    }
+
+    /// Registered worktrees whose directory is gone, which `git worktree
+    /// prune` clears; preflight leaves them out.
+    #[must_use]
+    pub fn skipped(&self) -> &[String] {
+        &self.skipped
     }
 
     pub(super) fn validate(&self, historical: bool) -> Result<(), InstallError> {
@@ -269,6 +289,7 @@ impl HookActivationPlan {
             .map(|observation| observation.worktree.clone())
             .collect::<BTreeSet<_>>();
         let current = list_worktrees(repository)?
+            .live
             .iter()
             .map(|worktree| worktree_string(worktree))
             .collect::<Result<BTreeSet<_>, _>>()?;
@@ -310,9 +331,16 @@ pub(super) fn plan(
         reason: "contains a line separator",
     })?;
 
-    let mut worktrees = list_worktrees(repository)?;
+    let Worktrees {
+        live: mut worktrees,
+        prunable,
+    } = list_worktrees(repository)?;
     worktrees.sort();
     worktrees.dedup();
+    let skipped = prunable
+        .iter()
+        .map(|worktree| worktree_string(worktree))
+        .collect::<Result<Vec<_>, _>>()?;
     let prior = installed.and_then(InstallPlan::hook_activation);
     let mut observations = Vec::with_capacity(worktrees.len());
     let mut mutations = Vec::new();
@@ -384,6 +412,7 @@ pub(super) fn plan(
         hooks_path,
         observations,
         mutations,
+        skipped,
     };
     activation.validate(false)?;
     Ok(activation)
@@ -598,26 +627,47 @@ fn mutation_values(mutation: &HookConfigurationMutation) -> Result<Vec<String>, 
     config_values(Path::new(&mutation.worktree), Some(mutation.scope))
 }
 
-fn list_worktrees(repository: &Repository) -> Result<Vec<PathBuf>, InstallError> {
+/// Registered worktrees, split by whether their directory still exists.
+struct Worktrees {
+    live: Vec<PathBuf>,
+    /// Rows Git marks `prunable`: the directory they name is gone.
+    prunable: Vec<PathBuf>,
+}
+
+fn list_worktrees(repository: &Repository) -> Result<Worktrees, InstallError> {
     let output = git(
         repository.worktree_root(),
         ["worktree", "list", "--porcelain", "-z"],
         "list Git worktrees",
     )?;
-    let mut worktrees = Vec::new();
-    for field in output.stdout.split(|byte| *byte == 0) {
+    parse_worktrees(&output.stdout)
+}
+
+/// Parse `git worktree list --porcelain -z`: NUL-terminated attributes, each
+/// row opened by its `worktree` attribute.
+fn parse_worktrees(stdout: &[u8]) -> Result<Worktrees, InstallError> {
+    let mut rows: Vec<(PathBuf, bool)> = Vec::new();
+    for field in stdout.split(|byte| *byte == 0) {
         if let Some(path) = field.strip_prefix(b"worktree ") {
             let path = std::str::from_utf8(path)
                 .map_err(|_| InstallError::GitNonUtf8("list Git worktrees"))?;
-            worktrees.push(PathBuf::from(path));
+            rows.push((PathBuf::from(path), false));
+        } else if (field == b"prunable" || field.starts_with(b"prunable "))
+            && let Some((_, prunable)) = rows.last_mut()
+        {
+            *prunable = true;
         }
     }
-    if worktrees.is_empty() {
+    let (prunable, live): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, prunable)| *prunable);
+    if live.is_empty() {
         return Err(InstallError::InvalidRecord(
             "Git returned no worktrees for hook activation".to_owned(),
         ));
     }
-    Ok(worktrees)
+    Ok(Worktrees {
+        live: live.into_iter().map(|(path, _)| path).collect(),
+        prunable: prunable.into_iter().map(|(path, _)| path).collect(),
+    })
 }
 
 fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
@@ -641,12 +691,12 @@ fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
 }
 
 fn worktree_config_enabled(worktree: &Path) -> Result<bool, InstallError> {
-    let output = git_command("read Git worktree configuration mode")?
+    let output = git_command("read Git worktree configuration mode", worktree)?
         .args(["config", "--local", "--get", "extensions.worktreeConfig"])
-        .current_dir(worktree)
         .output()
         .map_err(|source| InstallError::GitLaunch {
             operation: "read Git worktree configuration mode",
+            worktree: worktree.to_path_buf(),
             source,
         })?;
     if output.status.success() {
@@ -668,17 +718,17 @@ fn config_values(
     worktree: &Path,
     scope: Option<HookConfigurationScope>,
 ) -> Result<Vec<String>, InstallError> {
-    let mut command = git_command("read Git hook selection")?;
+    let mut command = git_command("read Git hook selection", worktree)?;
     command.arg("config");
     if let Some(scope) = scope {
         command.arg(scope.option());
     }
     let output = command
         .args(["--get-all", HOOK_KEY])
-        .current_dir(worktree)
         .output()
         .map_err(|source| InstallError::GitLaunch {
             operation: "read Git hook selection",
+            worktree: worktree.to_path_buf(),
             source,
         })?;
     if output.status.success() {
@@ -752,11 +802,14 @@ fn git<const N: usize>(
     arguments: [&str; N],
     operation: &'static str,
 ) -> Result<Output, InstallError> {
-    let output = git_command(operation)?
+    let output = git_command(operation, root)?
         .args(arguments)
-        .current_dir(root)
         .output()
-        .map_err(|source| InstallError::GitLaunch { operation, source })?;
+        .map_err(|source| InstallError::GitLaunch {
+            operation,
+            worktree: root.to_path_buf(),
+            source,
+        })?;
     if output.status.success() {
         Ok(output)
     } else {
@@ -765,5 +818,32 @@ fn git<const N: usize>(
             code: output.status.code(),
             diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_worktree_whose_directory_is_gone_leaves_the_hook_walk() {
+        let porcelain = concat!(
+            "worktree /repo\0HEAD 1111\0branch refs/heads/main\0\0",
+            "worktree /gone\0HEAD 1111\0branch refs/heads/gone\0",
+            "prunable gitdir file points to non-existent location\0\0",
+            "worktree /kept\0HEAD 1111\0detached\0locked prunable\nreason\0\0",
+            "worktree /bare-reason\0HEAD 1111\0detached\0prunable\0\0",
+        );
+
+        let worktrees = parse_worktrees(porcelain.as_bytes()).expect("porcelain parses");
+
+        assert_eq!(
+            worktrees.live,
+            [PathBuf::from("/repo"), PathBuf::from("/kept")]
+        );
+        assert_eq!(
+            worktrees.prunable,
+            [PathBuf::from("/gone"), PathBuf::from("/bare-reason")]
+        );
     }
 }
