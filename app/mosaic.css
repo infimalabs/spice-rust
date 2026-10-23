@@ -1059,6 +1059,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
 }
 .lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
 .lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
+/* The track and measurement rack hold only absolutely positioned cards; WebKit
+   sizes such a grid's fr tracks without its gaps yet places them with the gaps,
+   pushing cards past the plane. Each column is a twelfth of what gaps leave. */
+.lane-mosaic-track, .lane-mosaic-measurements { grid-template-columns: repeat(12, calc((100% - 11 * var(--mosaic-gap)) / 12)); column-gap: var(--mosaic-gap); }
 .lane-mosaic-track {
   position: relative; display: grid; min-width: 0;
   width: calc(100% - var(--mosaic-edge-gutter) - var(--mosaic-edge-gutter));
@@ -1068,16 +1072,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
       + var(--mosaic-edge-gutter)
       + var(--mosaic-edge-gutter)
   );
-  margin-inline: var(--mosaic-edge-gutter);
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  column-gap: var(--mosaic-gap); row-gap: var(--mosaic-gap);
+  margin-inline: var(--mosaic-edge-gutter); row-gap: var(--mosaic-gap);
 }
 .lane-mosaic-measurements {
   position: absolute; top: 0; left: 0; right: 0; height: 0;
-  display: grid; min-width: 0;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  column-gap: var(--mosaic-gap);
-  contain: layout;
+  display: grid; min-width: 0; contain: layout;
   visibility: hidden; pointer-events: none;
 }
 .lane-mosaic-plane[data-measurement-phase="base"] {
