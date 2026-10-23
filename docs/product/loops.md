@@ -513,7 +513,9 @@ distinctive quality.
   environment-held work, or an unclaimed, undeferred Design awaiting the
   operator's decision, also carries an out-of-flow alert dot on its count
   badge's top inline-end corner, and its title and accessible name lead with
-  that actionable count. A stem badge is content-sized, so a digit-width change
+  that actionable count. One holding only deferred work carries the same dot
+  in the warning tone, so a set-aside project reads as deferred rather than
+  attention-free. A stem badge is content-sized, so a digit-width change
   may resize its tab; the total tabs reserve one minimum badge footprint.
 - **Presentation changes do not touch card identity or style.** Recolouring and
   attribution toggles force no re-measure. A member-count change that alters the

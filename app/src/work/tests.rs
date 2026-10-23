@@ -576,25 +576,31 @@ fn human_owners_read_as_their_short_name_alone() {
 
 #[test]
 fn a_tab_marks_only_its_partitions_most_actionable_state() {
-    let counts = |blocked, held, selection, proposal_ready| WorkCounts {
+    let counts = |blocked, held, selection, proposal_ready, deferred| WorkCounts {
         blocked,
         held,
         selection,
         proposal_ready,
+        deferred,
         ..WorkCounts::default()
     };
     assert_eq!(
-        counts(1, 1, 3, 4).mark(),
+        counts(1, 1, 3, 4, 5).mark(),
         Some((WorkMark::Blocked, 2)),
-        "work only the operator can unblock outranks a decision and a ready pass"
+        "work only the operator can unblock outranks a decision, a ready pass, and deferral"
     );
     assert_eq!(
-        counts(0, 0, 3, 4).mark(),
+        counts(0, 0, 3, 4, 5).mark(),
         Some((WorkMark::Decision, 3)),
         "a proposal awaiting decision outranks a pass ready to propose"
     );
-    assert_eq!(counts(0, 0, 0, 4).mark(), Some((WorkMark::Proposal, 4)));
-    assert_eq!(counts(0, 0, 0, 0).mark(), None);
+    assert_eq!(
+        counts(0, 0, 0, 4, 5).mark(),
+        Some((WorkMark::Proposal, 4)),
+        "a pass ready to propose outranks deferred work"
+    );
+    assert_eq!(counts(0, 0, 0, 0, 5).mark(), Some((WorkMark::Deferred, 5)));
+    assert_eq!(counts(0, 0, 0, 0, 0).mark(), None);
 }
 
 #[test]
@@ -666,12 +672,12 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
         marks(&WorkScope::AllOpen),
         BTreeMap::from([
             ("alpha".to_owned(), None),
-            ("beta".to_owned(), None),
+            ("beta".to_owned(), Some((WorkMark::Deferred, 1))),
             ("delta".to_owned(), Some((WorkMark::Blocked, 1))),
             ("gamma".to_owned(), Some((WorkMark::Blocked, 1))),
         ]),
-        "in-flight, stale, review, ready, neutral waiting, and work intentionally set aside \
-         need nothing now; only a blocked wall and an environment hold mark their own stem"
+        "in-flight, stale, review, ready, and neutral waiting need nothing now; a blocked \
+         wall, an environment hold, and work intentionally set aside mark their own stem"
     );
     assert_eq!(
         projection.scope_counts(&WorkScope::AllOpen).mark(),

@@ -256,8 +256,8 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
    corner, as the renewal dot sits on a lane menu's corner, coloured by the most
    actionable state its partition holds: danger for work only the operator can
    unblock, warning for a proposal awaiting decision, live for a Design ready
-   for a new proposal. Out of flow, it never changes the tab's box, badge,
-   label, or focus ring. */
+   for a new proposal, warning again for work the operator deferred. Out of
+   flow, it never changes the tab's box, badge, label, or focus ring. */
 .app-horn-tab[data-work-mark] .app-count-badge { position: relative; }
 .app-horn-tab[data-work-mark] .app-count-badge::after {
   position: absolute;
@@ -274,6 +274,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-horn-tab[data-work-mark="blocked"] { --work-mark-color: var(--danger); }
 .app-horn-tab[data-work-mark="decision"] { --work-mark-color: var(--warning); }
 .app-horn-tab[data-work-mark="proposal"] { --work-mark-color: var(--app-semantic-live); }
+.app-horn-tab[data-work-mark="deferred"] { --work-mark-color: var(--warning); }
 @media (forced-colors: active) {
   .app-horn-tab[data-work-mark] .app-count-badge::after { forced-color-adjust: none; background: CanvasText; box-shadow: none; }
 }

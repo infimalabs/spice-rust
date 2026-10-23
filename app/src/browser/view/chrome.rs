@@ -263,6 +263,7 @@ pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> S
             format!("{count} awaiting your decision; {title}")
         }
         Some((WorkMark::Proposal, count)) => format!("{count} ready for proposal; {title}"),
+        Some((WorkMark::Deferred, count)) => format!("{count} deferred; {title}"),
     }
 }
 

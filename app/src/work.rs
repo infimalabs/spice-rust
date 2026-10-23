@@ -361,6 +361,8 @@ pub enum WorkMark {
     Decision,
     /// A steeped or nudged Design no lane holds, ready for a new proposal.
     Proposal,
+    /// Work the operator set aside until a time; nothing offers it until woken.
+    Deferred,
 }
 
 impl WorkMark {
@@ -370,6 +372,7 @@ impl WorkMark {
             Self::Blocked => "blocked",
             Self::Decision => "decision",
             Self::Proposal => "proposal",
+            Self::Deferred => "deferred",
         }
     }
 }
@@ -473,9 +476,10 @@ impl WorkCounts {
 
     /// The partition's tab mark and how many tasks carry it: work only the
     /// operator can unblock, then a Design awaiting the operator's decision,
-    /// then an unpossessed Design ready for a proposal. Deferral is an
-    /// intentional set-aside; neutral workflow waiting, parked work, and a
-    /// passive Design with no ready pass need nothing and mark nothing.
+    /// then an unpossessed Design ready for a proposal, then work the operator
+    /// deferred, which the mark keeps visible as an intentional set-aside.
+    /// Neutral workflow waiting, parked work, and a passive Design with no
+    /// ready pass need nothing and mark nothing.
     #[must_use]
     pub const fn mark(self) -> Option<(WorkMark, usize)> {
         let blocked = self.blocked + self.held;
@@ -485,6 +489,8 @@ impl WorkCounts {
             Some((WorkMark::Decision, self.selection))
         } else if self.proposal_ready > 0 {
             Some((WorkMark::Proposal, self.proposal_ready))
+        } else if self.deferred > 0 {
+            Some((WorkMark::Deferred, self.deferred))
         } else {
             None
         }
