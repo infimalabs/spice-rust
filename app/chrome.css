@@ -186,14 +186,19 @@ body:has(.shell),
     color-mix(in srgb, var(--ink) 6%, var(--page)) 1px 3px
   );
 }
+/* Color emoji fonts optically enlarge glyphs below about 24px, and engines
+   apply that at CSS size (WebKit) or device size (Blink), so a 15px pepper
+   drew 19px off-center in the native app. Drawing at twice the size, where
+   ink matches the em, then halving it renders one centered glyph everywhere. */
 .app-spice-pepper {
-  --app-pepper-halo: drop-shadow(0 0 1px var(--page)) drop-shadow(0 0 1px var(--page));
+  --app-pepper-halo: drop-shadow(0 0 2px var(--page)) drop-shadow(0 0 2px var(--page));
   grid-area: 1 / 1;
   position: relative;
   z-index: 1;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji;
-  font-size: var(--app-type-menu-icon);
+  font-size: calc(2 * var(--app-type-menu-icon));
   line-height: 1;
+  scale: .5;
   filter: var(--app-pepper-halo);
 }
 .app-spice-quota-well { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
