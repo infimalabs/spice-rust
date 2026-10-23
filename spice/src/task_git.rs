@@ -885,37 +885,37 @@ fn boundary(
     }
 }
 
-/// The branch the lane's work integrates into, as the repository's own
-/// configuration declares it: `branch.<lane>.remote` and `branch.<lane>.merge`
-/// read beneath the lane's Git shadow, which points the lane at itself. A
-/// remote of `.` names a branch of this repository, so that branch is the
-/// baseline and nothing is fetched. A lane that declares no remote tracks
-/// `origin`, and one that declares no merge branch takes its remote's HEAD;
-/// a repository with no `origin` and no declared remote has no target.
+/// The branch the lane's work integrates into: the pairing the lane's own
+/// configuration declares, read by [`crate::git_shadow::declared_pairing`] as
+/// the reference guard reads it. A remote of `.` names a branch of this
+/// repository, so that branch is the baseline and nothing is fetched. A lane
+/// that declares no pairing integrates into `origin`'s HEAD branch; a
+/// repository with no `origin` then has no target.
 fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
     let lane = required_read(
         root,
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         "resolve current branch",
     )?;
-    let declared = try_read_native(root, &["config", "--get", &format!("branch.{lane}.remote")])?;
-    let merge = try_read_native(root, &["config", "--get", &format!("branch.{lane}.merge")])?
-        .and_then(|value| value.strip_prefix("refs/heads/").map(str::to_owned));
-    let remote = declared.clone().unwrap_or_else(|| "origin".to_owned());
-    if remote == "." {
-        return Ok(merge.map(|branch| Target {
-            baseline: format!("refs/heads/{branch}"),
-            remote,
-            branch,
+    let declared = crate::git_shadow::declared_pairing(root, &lane)
+        .map_err(|error| Error::fault("git::pairing-invalid", error.to_string()))?;
+    if let Some(pairing) = declared.as_ref().filter(|pairing| pairing.is_local()) {
+        return Ok(Some(Target {
+            baseline: pairing.reference(),
+            remote: pairing.remote.clone(),
+            branch: pairing.branch.clone(),
         }));
     }
+    let remote = declared
+        .as_ref()
+        .map_or_else(|| "origin".to_owned(), |pairing| pairing.remote.clone());
     let remotes = required_read(root, &["remote"], "list Git remotes")?;
     if !remotes.lines().any(|candidate| candidate == remote) {
         return match declared {
-            Some(declared) => Err(Error::fault(
+            Some(_) => Err(Error::fault(
                 "git::remote-invalid",
                 format!(
-                    "branch {lane} tracks remote {declared}, which this repository does not define"
+                    "branch {lane} tracks remote {remote}, which this repository does not define"
                 ),
             )),
             None => Ok(None),
@@ -928,8 +928,8 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
             url.detail(&format!("resolve {remote} remote")),
         ));
     }
-    let branch = match merge {
-        Some(branch) => branch,
+    let branch = match declared {
+        Some(pairing) => pairing.branch,
         None => {
             let head = format!("refs/remotes/{remote}/HEAD");
             let symbolic = required_read(

@@ -98,9 +98,7 @@ const USAGE: &str =
 const PREPARED: &str = "prepared";
 const PROTECTED_COMMIT_LIMIT: usize = 5;
 const ASCII_ZERO: u8 = 0x30;
-const REMOTE_PREFIX: &str = "refs/remotes/";
 const LOCAL_PREFIX: &str = "refs/heads/";
-const SELF_REMOTE: &str = ".";
 const OPERATIONAL_RECOVERY: &str = concat!(
     ". This error aborts the reference transaction, so HEAD is not moved, but ",
     "this hook runs after the command's tree operations: the index and worktree ",
@@ -350,12 +348,13 @@ enum Publication {
 
 /// Resolve what the branch's pairing establishes about published history.
 ///
-/// This mirrors the predecessor's `_declared_upstream_ref` in
-/// `spice/hooks/refguard.py`: the branch's own pairing names the reference, and
-/// a pairing that names none leaves the guard inert. Nothing else is consulted,
-/// and no second resolution stands behind the first. Two guards enforcing the
-/// same policy have to answer the same reference, and a backstop reached only
-/// here would be a policy this side invented.
+/// The branch's own pairing names the reference, read by
+/// [`spice::git_shadow::declared_pairing`], the same read task completion
+/// integrates through: the history this guard refuses to abandon is the
+/// history `task done` publishes to, a `.` pairing's local branch included. A
+/// branch that declares no pairing leaves the guard inert; no second
+/// resolution stands behind the first, because a backstop reached only here
+/// would be a policy this side invented.
 ///
 /// A reference the pairing names but that resolves to no commit is a third
 /// answer rather than a second way of saying the first, which is why this
@@ -374,71 +373,19 @@ fn publication(
     repository: &Path,
     current_ref: &str,
 ) -> Result<Publication, ReferenceTransactionError> {
-    let Some(reference) = declared_upstream_reference(repository, current_ref)? else {
+    let branch = current_ref
+        .strip_prefix(LOCAL_PREFIX)
+        .unwrap_or(current_ref);
+    let Some(pairing) = spice::git_shadow::declared_pairing(repository, branch)
+        .map_err(|source| ReferenceTransactionError::Pairing { source })?
+    else {
         return Ok(Publication::Untracked);
     };
+    let reference = pairing.reference();
     let Some(commit) = commit_oid(repository, &reference)? else {
         return Ok(Publication::Unjudgeable { reference });
     };
     Ok(Publication::Published(Baseline { reference, commit }))
-}
-
-/// The remote-tracking reference this branch's own pairing names, if it names one.
-///
-/// Read from local scope and from nowhere else, which is the whole of the rule
-/// rather than a precaution. A lane runs under a per-process git shadow that
-/// redefines the current branch's upstream across two scopes at once: a
-/// *system*-scope `branch.<lane>.merge` pointing at `refs/heads/<lane>`, and a
-/// *command*-scope `branch.<lane>.remote` of `.`. Together those aim
-/// `@{upstream}` back at this very branch, so every local commit reads as
-/// already published and every ordinary amend is refused. Asking for the
-/// effective value walks into the same trap by a different door: measured in a
-/// lane worktree, `git config --get branch.<lane>.remote` answers `.` while
-/// `git config --local --get branch.<lane>.remote` answers `origin`. So
-/// `@{upstream}` is never consulted here, and neither is any effective-scope
-/// read -- not even as a fallback, because a fallback is exactly where that
-/// shadow comes back in.
-///
-/// Which remote and which branch are whatever the pairing names; `origin` and
-/// `main` are not assumed. Only the naming is answered here. Whether the named
-/// reference exists is a separate question, and conflating the two would let a
-/// pairing nobody can resolve read exactly like a branch that tracks nothing.
-fn declared_upstream_reference(
-    repository: &Path,
-    current_ref: &str,
-) -> Result<Option<String>, ReferenceTransactionError> {
-    let branch = current_ref
-        .strip_prefix(LOCAL_PREFIX)
-        .unwrap_or(current_ref);
-    let Some(remote) = git_read(
-        repository,
-        &[
-            "config",
-            "--local",
-            "--get",
-            &format!("branch.{branch}.remote"),
-        ],
-    )?
-    else {
-        return Ok(None);
-    };
-    let Some(merge) = git_read(
-        repository,
-        &[
-            "config",
-            "--local",
-            "--get",
-            &format!("branch.{branch}.merge"),
-        ],
-    )?
-    else {
-        return Ok(None);
-    };
-    if remote == SELF_REMOTE {
-        return Ok(None);
-    }
-    let name = merge.strip_prefix(LOCAL_PREFIX).unwrap_or(merge.as_str());
-    Ok(Some(format!("{REMOTE_PREFIX}{remote}/{name}")))
 }
 
 /// One line of the hook's queue.
@@ -851,6 +798,9 @@ pub enum ReferenceTransactionError {
         reason: String,
         detail: String,
     },
+    Pairing {
+        source: spice::git_shadow::Error,
+    },
     ProtectedHistory {
         reference: String,
         commits: String,
@@ -890,6 +840,13 @@ impl fmt::Display for ReferenceTransactionError {
                     formatter,
                     "reference-transaction git output was not UTF-8: git {}",
                     arguments.join(" ")
+                )?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
+            }
+            Self::Pairing { source } => {
+                write!(
+                    formatter,
+                    "reference-transaction could not read the branch's declared pairing: {source}"
                 )?;
                 formatter.write_str(OPERATIONAL_RECOVERY)
             }
@@ -985,6 +942,7 @@ impl Error for ReferenceTransactionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::GitLaunch { source, .. } => Some(source),
+            Self::Pairing { source } => Some(source),
             Self::MalformedInput { .. }
             | Self::NonUtf8Output { .. }
             | Self::Evidence { .. }
