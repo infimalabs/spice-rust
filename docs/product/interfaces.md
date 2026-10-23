@@ -407,8 +407,10 @@ spread roster agents across published macOS premium voices first: Safari's
 suffix, served locally. The pool keeps the default premium voice's language,
 or the browser's language when none is default; within it the pool is the
 premium voices, else the enhanced voices (`com.apple.voice.enhanced.` or
-` (Enhanced)`), else every voice the browser serves locally in that language,
-and the browser default speaks only when the language has no published voice.
+` (Enhanced)`), else every speaking voice the browser serves locally in that
+language, never a macOS novelty voice (`com.apple.speech.synthesis.voice.`:
+Bells, Bubbles, Zarvox, ...), and the browser default speaks only when the
+language has no such voice.
 An agent keeps the voice its lane hashes to unless a teammate already holds
 it, so teammates sound different until a team outnumbers the voices, and
 agents on different teams may share. The first time a Macintosh page steps

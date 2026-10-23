@@ -6,9 +6,10 @@
 //! the roster and the device's voice list, so every desktop page with the
 //! same roster and voices hears the same agent in the same voice. The pool
 //! prefers voices carrying macOS premium evidence in the chosen language;
-//! without one it takes the enhanced voices of that language, then any voice
-//! the device serves in it, and only when the language has no published voice
-//! at all does the device default speak. Every step down from premium carries
+//! without one it takes the enhanced voices of that language, then any
+//! speaking voice the device serves in it (never a macOS novelty voice), and
+//! only when the language has no such voice does the device default speak.
+//! Every step down from premium carries
 //! a notice naming the gap, shown once per page. Teams and their members are
 //! visited in identity order, so reordering a team or the roster changes
 //! nothing. Teammates are what must sound different: within one team no voice
@@ -24,7 +25,7 @@ use wire::CanonicalUuid;
 
 mod premium;
 
-pub use premium::{is_enhanced, is_premium};
+pub use premium::{is_enhanced, is_premium, is_speaking};
 
 /// How many premium languages a notice names before eliding the rest.
 const MAX_NAMED_LANGUAGES: usize = 8;
@@ -191,7 +192,8 @@ pub struct Spread {
 ///
 /// The language is that of the default premium voice, or `device_language`
 /// when no premium voice is marked default. Within it the pool is the premium
-/// voices, else the enhanced voices, else every voice the device serves; a
+/// voices, else the enhanced voices, else every speaking voice the device
+/// serves (a macOS novelty voice never speaks for an agent); a
 /// name published twice enters once. With no language known, or no voice in
 /// the language, the device default speaks. A pool below premium carries the
 /// gap only when `premium_expected`: a platform without a premium tier has
@@ -225,10 +227,7 @@ pub fn pool(
     let tiers = [
         (Tier::Premium, in_language(offered, &language, is_premium)),
         (Tier::Enhanced, in_language(offered, &language, is_enhanced)),
-        (
-            Tier::Local,
-            in_language(offered, &language, |voice| voice.local),
-        ),
+        (Tier::Local, in_language(offered, &language, is_speaking)),
     ];
     let (tier, mut pool) = tiers
         .into_iter()
@@ -625,9 +624,40 @@ mod tests {
             }
         );
 
+        let elsewhere = [
+            chromium("Kyoko (Premium)", "ja-JP", false),
+            chromium("Thomas (Premium)", "fr-FR", false),
+        ];
+        assert_eq!(
+            pool(&elsewhere, Some("en-US"), true),
+            Spread {
+                pool: Vec::new(),
+                tier: Tier::DeviceDefault,
+                gap: Some(gap(2, Tier::DeviceDefault)),
+            }
+        );
+    }
+
+    #[test]
+    fn the_local_tier_spreads_webkits_compact_voices_and_never_a_novelty_voice() {
+        let gap = |offered: usize, substitute: Tier| PremiumGap::NoPremium {
+            language: "en".to_owned(),
+            offered,
+            premium_languages: vec!["fr".to_owned(), "ja".to_owned()],
+            substitute,
+        };
         // WebKit publishes only built-in system voices, every one marked
-        // default: compact, novelty, and remote entries, never a tier.
-        let system = [
+        // default: compact, super-compact, eloquence, novelty, and remote
+        // entries, never a tier. The novelty voices outnumber the compact ones
+        // and are not speaking voices.
+        let novelty = |name: &'static str, uri: &'static str| OfferedVoice {
+            name,
+            uri,
+            lang: "en-US",
+            local: true,
+            default: true,
+        };
+        let mut system = vec![
             chromium("Kyoko (Premium)", "ja-JP", false),
             chromium("Thomas (Premium)", "fr-FR", false),
             safari(
@@ -643,11 +673,12 @@ mod tests {
                 true,
             ),
             safari(
-                "Bubbles",
-                "com.apple.speech.synthesis.voice.Bubbles",
-                "en-US",
+                "Karen",
+                "com.apple.voice.super-compact.en-AU.Karen",
+                "en-AU",
                 true,
             ),
+            safari("Eddy", "com.apple.eloquence.en-US.Eddy", "en-US", true),
             OfferedVoice {
                 name: "Google US English",
                 uri: "Google US English",
@@ -656,25 +687,54 @@ mod tests {
                 default: true,
             },
         ];
+        let speaking = system.len();
+        system.extend(
+            [
+                ("Albert", "com.apple.speech.synthesis.voice.Albert"),
+                ("Bad News", "com.apple.speech.synthesis.voice.BadNews"),
+                ("Bahh", "com.apple.speech.synthesis.voice.Bahh"),
+                ("Bells", "com.apple.speech.synthesis.voice.Bells"),
+                ("Boing", "com.apple.speech.synthesis.voice.Boing"),
+                ("Bubbles", "com.apple.speech.synthesis.voice.Bubbles"),
+                ("Cellos", "com.apple.speech.synthesis.voice.Cellos"),
+                ("Wobble", "com.apple.speech.synthesis.voice.Deranged"),
+                ("Fred", "com.apple.speech.synthesis.voice.Fred"),
+                ("Good News", "com.apple.speech.synthesis.voice.GoodNews"),
+                ("Jester", "com.apple.speech.synthesis.voice.Hysterical"),
+                ("Junior", "com.apple.speech.synthesis.voice.Junior"),
+                ("Kathy", "com.apple.speech.synthesis.voice.Kathy"),
+                ("Organ", "com.apple.speech.synthesis.voice.Organ"),
+                ("Superstar", "com.apple.speech.synthesis.voice.Princess"),
+                ("Ralph", "com.apple.speech.synthesis.voice.Ralph"),
+                ("Trinoids", "com.apple.speech.synthesis.voice.Trinoids"),
+                ("Whisper", "com.apple.speech.synthesis.voice.Whisper"),
+                ("Zarvox", "com.apple.speech.synthesis.voice.Zarvox"),
+            ]
+            .map(|(name, uri)| novelty(name, uri)),
+        );
+        assert_eq!(system.len(), speaking + 19);
         assert_eq!(
             pool(&system, Some("en-US"), true),
             Spread {
-                pool: vec![4, 3, 2],
+                pool: vec![3, 5, 4, 2],
                 tier: Tier::Local,
-                gap: Some(gap(6, Tier::Local)),
-            }
+                gap: Some(gap(26, Tier::Local)),
+            },
+            "Daniel, Eddy, Karen, Samantha by name; no novelty voice"
         );
 
-        let elsewhere = [
-            chromium("Kyoko (Premium)", "ja-JP", false),
+        // A language whose only local voices are novelty voices is unspoken.
+        let only_novelty = [
+            novelty("Zarvox", "com.apple.speech.synthesis.voice.Zarvox"),
             chromium("Thomas (Premium)", "fr-FR", false),
+            chromium("Kyoko (Premium)", "ja-JP", false),
         ];
         assert_eq!(
-            pool(&elsewhere, Some("en-US"), true),
+            pool(&only_novelty, Some("en-US"), true),
             Spread {
                 pool: Vec::new(),
                 tier: Tier::DeviceDefault,
-                gap: Some(gap(2, Tier::DeviceDefault)),
+                gap: Some(gap(3, Tier::DeviceDefault)),
             }
         );
     }
