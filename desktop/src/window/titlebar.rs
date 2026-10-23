@@ -1,15 +1,12 @@
 //! The console's header is the window's title bar.
 //!
 //! The window paints the console under a transparent, titleless title bar, and
-//! its traffic lights stand centred in the header's leading edge. The shell
-//! publishes the width they occupy as `--app-titlebar-inset` on the document
-//! root; the header reserves that much leading space, so the browser, which
-//! never sets it, renders exactly as before. Full screen hides the traffic
-//! lights, so the shell withdraws the inset there.
-//!
-//! AppKit lays the lights out again whenever the window resizes, and tao's
-//! own inset only reapplies while its content view draws, which the webview
-//! covering it never prompts; the shell places them itself after each resize.
+//! its traffic lights keep AppKit's standard placement in the window's top
+//! leading corner, where Firefox's and iTerm's stand. The shell publishes the
+//! width they occupy as `--app-titlebar-inset` on the document root; the header
+//! reserves that much leading space, so the browser, which never sets it,
+//! renders exactly as before. Full screen hides the traffic lights, so the
+//! shell withdraws the inset there.
 //!
 //! WKWebView takes every click over the page, so the window's own title-bar
 //! drag never sees one. The page's initialization script reports a primary
@@ -18,15 +15,9 @@
 //! the system's title-bar double-click action for the second press.
 
 use objc2_app_kit::{NSWindow, NSWindowButton};
-use objc2_foundation::{NSPoint, NSString, NSUserDefaults};
+use objc2_foundation::{NSString, NSUserDefaults};
 use tao::window::Window;
 use wry::WebView;
-
-/// The close light's leading edge, from the window's leading edge.
-const LEADING: f64 = 20.0;
-/// The lights' vertical centre, from the window's top: the centre of the
-/// console's 60px command bar (`app/chrome.css`).
-const CENTRE: f64 = 30.0;
 
 /// The page's side: report the header's empty-area presses and ask for the
 /// inset once the document exists, including after every reload.
@@ -91,15 +82,13 @@ impl Titlebar {
         }
     }
 
-    /// Keep the traffic lights in the header, and publish the inset when full
-    /// screen hid or restored them.
+    /// Publish the inset when full screen hid or restored the traffic lights.
     pub(super) fn follow(&mut self, window: &Window, ns_window: &NSWindow, webview: &WebView) {
         let lights = window.fullscreen().is_none();
-        let reserve = lights.then(|| place(ns_window)).flatten();
         if self.published == Some(lights) {
             return;
         }
-        let script = match reserve {
+        let script = match lights.then(|| reserve(ns_window)).flatten() {
             Some(width) => format!(
                 "document.documentElement.style.setProperty('--app-titlebar-inset', '{width}px')"
             ),
@@ -111,33 +100,16 @@ impl Titlebar {
     }
 }
 
-/// Centre the traffic lights in the header's leading edge, and answer the
-/// leading width they take: their inset on both sides of their span.
-fn place(window: &NSWindow) -> Option<f64> {
-    let [Some(close), Some(minimize), Some(zoom)] = [
-        NSWindowButton::CloseButton,
-        NSWindowButton::MiniaturizeButton,
-        NSWindowButton::ZoomButton,
-    ]
-    .map(|button| window.standardWindowButton(button)) else {
-        return None;
-    };
-    // SAFETY: the lights live in the title-bar view inside the title-bar
-    // container, both owned by the window for its whole life.
-    let container = unsafe { close.superview()?.superview()? };
-    // The container hangs from the window's top and lays the lights out from
-    // its own bottom edge.
-    let light = close.frame();
-    let mut frame = container.frame();
-    frame.size.height = CENTRE + light.origin.y + light.size.height / 2.0;
-    frame.origin.y = window.frame().size.height - frame.size.height;
-    container.setFrame(frame);
-    let spacing = minimize.frame().origin.x - light.origin.x;
-    for (index, button) in [&close, &minimize, &zoom].into_iter().enumerate() {
-        let origin = NSPoint::new(LEADING + index as f64 * spacing, button.frame().origin.y);
-        button.setFrameOrigin(origin);
-    }
-    Some((2.0 * (LEADING + spacing) + zoom.frame().size.width).ceil())
+/// The leading width the traffic lights take: the close light's leading inset
+/// on both sides of their span.
+fn reserve(window: &NSWindow) -> Option<f64> {
+    let close = window
+        .standardWindowButton(NSWindowButton::CloseButton)?
+        .frame();
+    let zoom = window
+        .standardWindowButton(NSWindowButton::ZoomButton)?
+        .frame();
+    Some((close.origin.x + zoom.origin.x + zoom.size.width).ceil())
 }
 
 /// The user's choice for a title-bar double-click: minimize, nothing, or zoom,
