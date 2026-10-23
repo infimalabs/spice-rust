@@ -36,6 +36,8 @@ impl std::error::Error for WindowError {}
 #[cfg(target_os = "macos")]
 mod bundle;
 #[cfg(target_os = "macos")]
+mod icon;
+#[cfg(target_os = "macos")]
 mod window;
 
 #[cfg(target_os = "macos")]

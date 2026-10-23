@@ -93,14 +93,16 @@ browser. The window itself is drawn by a child process running the same
 appliance from `~/Library/Caches/dev.spice.app/Spice.app`, a minimal bundle
 `spice app` writes and verifies on each launch, because macOS dictation only
 attaches to a client with a bundle identity; the command that started or
-joined the resident stays in charge of it. The window
-is macOS-only (WebKit); elsewhere `spice app` refuses and `spice up --open`
-remains the route. Under WebKit, the console reads `app_bg.wasm` from the
-resident twice per load, because WebKit doesn't reuse its integrity-checked
-preload. Over loopback that is one extra local read, so the preload stays for
-Chromium. A reload with a task graph open also logs an access-control error
-for the diagram renderer document. The reloaded graph still renders, so
-nothing changes for it.
+joined the resident stays in charge of it. That bundle is also what names the
+app Spice in the menu bar, the Dock, and the application switcher and gives
+it the console's pepper mark as its icon, drawn by the appliance at every
+size macOS asks for. The window is macOS-only (WebKit); elsewhere `spice app`
+refuses and `spice up --open` remains the route. Under WebKit, the console
+reads `app_bg.wasm` from the resident twice per load, because WebKit doesn't
+reuse its integrity-checked preload. Over loopback that is one extra local
+read, so the preload stays for Chromium. A reload with a task graph open also
+logs an access-control error for the diagram renderer document. The reloaded
+graph still renders, so nothing changes for it.
 
 Supervised shells may route commands through an optional configured
 [RTK](https://github.com/rtk-ai/rtk) executable. An unusable rewrite reports
