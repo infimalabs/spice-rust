@@ -56,8 +56,8 @@ pub use submission::{SubmissionAuthority, SubmissionTarget};
 pub use task_links::{reported_tasks, task_mentions};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub use trace::{
-    Occupancy, TRACE_STEP_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind, TraceOff, TraceSpan,
-    drawn_spans, off_intervals, trace,
+    Occupancy, TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceCurve, TraceMarker,
+    TraceMarkerKind, TraceOff, TraceSpan, drawn_spans, off_intervals, trace,
 };
 
 /// Accent slots the band cycles through.

@@ -428,6 +428,13 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .activity-trace [data-trace-marker="compaction"] { stroke-dasharray: 1 1; }
 .activity-trace [data-trace-marker="failure"] { fill: var(--danger); stroke: none; }
 .activity-trace [data-trace-marker="direction"] { fill: var(--ink); stroke: none; }
+/* Each frame slides left at the window's own rate until the next replaces it;
+   the trace sets the span and duration from the drawn width and its window. */
+@keyframes trace-flow { to { translate: var(--trace-flow-span) 0; } }
+.activity-trace .trace-flow { animation: trace-flow var(--trace-flow-duration) linear forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .activity-trace .trace-flow { animation: none; }
+}
 
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);

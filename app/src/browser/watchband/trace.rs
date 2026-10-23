@@ -12,8 +12,8 @@ use yew::prelude::*;
 
 use super::super::clock::now_millis;
 use crate::watchband::{
-    Occupancy, TRACE_STEP_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind, TraceOff, TraceSpan,
-    drawn_spans, off_intervals, trace,
+    Occupancy, TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceCurve, TraceMarker,
+    TraceMarkerKind, TraceOff, TraceSpan, drawn_spans, off_intervals, trace,
 };
 
 #[derive(Properties, PartialEq)]
@@ -108,9 +108,24 @@ fn samples(width: f64) -> usize {
     (columns.div_ceil(2) + 1).max(5)
 }
 
+/// The pane's width across which the window's time runs, start to now.
+fn span(width: f64) -> f64 {
+    width - DOT_ROOM
+}
+
+/// How far one trace step carries the drawing, in pane pixels: the distance a
+/// frame slides before the next replaces it, and so how far past now its
+/// curves must reach.
+#[allow(clippy::cast_precision_loss)]
+fn step(width: f64) -> f64 {
+    span(width) * f64::from(TRACE_STEP_MILLIS) / TRACE_WINDOW_MILLIS as f64
+}
+
 /// Redraws on new activity and, while anything is shown, once per trace step,
-/// so the window keeps sliding with time and old activity leaves without a new
-/// frame; the pane's size is measured after each draw.
+/// so old activity leaves without a new frame; the pane's size is measured
+/// after each draw. Between redraws the compositor slides each frame left at
+/// the window's own rate, the true picture of a frame `now` ago, so the next
+/// frame lands where its predecessor had slid instead of jumping a step.
 #[function_component(ActivityTrace)]
 pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     let tick = use_state(|| 0_u64);
@@ -121,7 +136,16 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
         let pane = pane.clone();
         let size = size.clone();
         use_effect(move || {
-            if let Some(pane) = pane.cast::<web_sys::Element>() {
+            if let Some(pane) = pane.cast::<web_sys::HtmlElement>() {
+                let style = pane.style();
+                // The slide this frame was drawn for; a remeasured size
+                // redraws, and that frame sets its own.
+                style
+                    .set_property("--trace-flow-span", &format!("{:.3}px", -span(size.0)))
+                    .expect("the trace writes its CSP-safe slide span");
+                style
+                    .set_property("--trace-flow-duration", &format!("{TRACE_WINDOW_MILLIS}ms"))
+                    .expect("the trace writes its CSP-safe slide duration");
                 let rect = pane.get_bounding_client_rect();
                 size.set((rect.width(), rect.height()));
             }
@@ -149,6 +173,7 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     let gradient = |key: &str| format!("trace-{}-{key}", props.id);
     let whole = matches!(spans.as_slice(), [only] if only.from <= 0.0 && only.to >= 1.0);
     let clip = (!whole).then(|| format!("trace-{}-on", props.id));
+    let pane_clip = format!("trace-{}-pane", props.id);
     html! {
         <span ref={pane} class="activity-trace" aria-hidden="true">
             if drawn {
@@ -175,31 +200,66 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
                                 })}
                             </@>
                         }
+                        // The pane's own bleed, cut at its right edge: the
+                        // overscan past now stays hidden until the slide brings
+                        // it in.
+                        <@{"clipPath"} id={pane_clip.clone()}>
+                            <rect
+                                x={format!("{:.2}", -CLIP_BLEED)}
+                                y={format!("{:.2}", -CLIP_BLEED)}
+                                width={format!("{:.2}", width + CLIP_BLEED)}
+                                height={format!("{:.2}", height + 2.0 * CLIP_BLEED)}
+                            />
+                        </@>
                     </defs>
-                    <g clip-path={clip.as_ref().map(|clip| format!("url(#{clip})"))}>
-                    {for placed.curves.iter().map(|curve| {
-                        let points = points(&curve.levels, width, height);
-                        let line = smooth(&points, height);
-                        let (x, y) = points[points.len() - 1];
-                        html! {
-                            <g data-trace-kind={curve.kind.key()}>
-                                <path
-                                    class="trace-fill"
-                                    d={format!("{line} L{x:.2},{height:.2} L0,{height:.2} Z")}
-                                    fill={format!("url(#{})", gradient(curve.kind.key()))}
-                                />
-                                <g class="trace-lit">
-                                    <path class="trace-line" d={line} />
-                                    <circle class="trace-now" cx={format!("{x:.2}")} cy={format!("{y:.2}")} r="1.1" />
-                                </g>
+                    <g clip-path={format!("url(#{pane_clip})")}>
+                        // Keyed by its instant, so each frame mounts afresh and
+                        // starts its slide from where it was computed.
+                        <g key={now.to_string()} class="trace-flow">
+                            <g clip-path={clip.as_ref().map(|clip| format!("url(#{clip})"))}>
+                                {for placed.curves.iter().map(|curve| render_curve(curve, &gradient(curve.kind.key()), width, height))}
                             </g>
-                        }
-                    })}
+                            {for placed.markers.iter().map(|marker| render_marker(*marker, width, height))}
+                        </g>
                     </g>
-                    {for placed.markers.iter().map(|marker| render_marker(*marker, width, height))}
+                    // The now-dots mark the instant itself and hold the right
+                    // edge while the curves slide beneath them.
+                    <g clip-path={clip.as_ref().map(|clip| format!("url(#{clip})"))}>
+                        {for placed.curves.iter().map(|curve| render_now(curve, width, height))}
+                    </g>
                 </svg>
             }
         </span>
+    }
+}
+
+/// One curve's fill and line, run on through the overscan past now.
+fn render_curve(curve: &TraceCurve, fill: &str, width: f64, height: f64) -> Html {
+    let line = smooth(&points(&curve.levels, width, height), height);
+    let end = width + step(width);
+    html! {
+        <g data-trace-kind={curve.kind.key()}>
+            <path
+                class="trace-fill"
+                d={format!("{line} L{end:.2},{height:.2} L0,{height:.2} Z")}
+                fill={format!("url(#{fill})")}
+            />
+            <path class="trace-line trace-lit" d={line} />
+        </g>
+    }
+}
+
+/// One curve's dot at now, its last sample.
+fn render_now(curve: &TraceCurve, width: f64, height: f64) -> Html {
+    let (x, y) = point(&curve.levels, curve.levels.len() - 1, width, height);
+    html! {
+        <circle
+            data-trace-kind={curve.kind.key()}
+            class="trace-now trace-lit"
+            cx={format!("{x:.2}")}
+            cy={format!("{y:.2}")}
+            r="1.1"
+        />
     }
 }
 
@@ -208,41 +268,43 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
 const CLIP_BLEED: f64 = 3.0;
 
 /// The drawn spans as rectangles in pane pixels: time maps to x as the curve
-/// points map it, and the span reaching now keeps the now-dot's room.
+/// points map it, and the span reaching now runs on through the overscan.
 fn on_rects(spans: &[TraceSpan], width: f64, height: f64) -> Vec<(f64, f64, f64, f64)> {
-    let span = width - DOT_ROOM;
     spans
         .iter()
         .map(|&TraceSpan { from, to }| {
             let left = if from <= 0.0 {
                 -CLIP_BLEED
             } else {
-                from * span
+                from * span(width)
             };
             let right = if to >= 1.0 {
-                width + CLIP_BLEED
+                width + step(width) + CLIP_BLEED
             } else {
-                to * span
+                to * span(width)
             };
             (left, -CLIP_BLEED, right - left, height + 2.0 * CLIP_BLEED)
         })
         .collect()
 }
 
-/// Curve points in pane pixels: time runs across to the now-dot's room, level
-/// rises from the floor.
-fn points(levels: &[f64], width: f64, height: f64) -> Vec<(f64, f64)> {
+/// Sample `index` of `levels` in pane pixels: time runs across to the
+/// now-dot's room, level rises from the floor.
+fn point(levels: &[f64], index: usize, width: f64, height: f64) -> (f64, f64) {
     #[allow(clippy::cast_precision_loss)]
-    let last = (levels.len() - 1) as f64;
-    levels
-        .iter()
-        .enumerate()
-        .map(|(index, level)| {
-            #[allow(clippy::cast_precision_loss)]
-            let x = index as f64 * (width - DOT_ROOM) / last;
-            (x, height - 0.5 - level * (height - DOT_ROOM))
-        })
-        .collect()
+    let x = index as f64 * span(width) / (levels.len() - 1) as f64;
+    (x, height - 0.5 - levels[index] * (height - DOT_ROOM))
+}
+
+/// The curve's points in pane pixels, held level one step past now so the
+/// slide never uncovers a bare edge before the next frame.
+fn points(levels: &[f64], width: f64, height: f64) -> Vec<(f64, f64)> {
+    let mut points = (0..levels.len())
+        .map(|index| point(levels, index, width, height))
+        .collect::<Vec<_>>();
+    let (x, y) = points[points.len() - 1];
+    points.push((x + step(width) + DOT_ROOM, y));
+    points
 }
 
 /// A Catmull-Rom curve through the points as cubic segments, its control
