@@ -396,7 +396,7 @@ pub(crate) fn up(
         Err(outcome) => return outcome,
     };
     let handoff_token = child.as_ref().and_then(|child| child.token.clone());
-    let access = match requested_access_with(leaf, listen, handoff_token) {
+    let access = match requested_access(leaf, listen, handoff_token) {
         Ok(access) => access,
         Err(outcome) => return outcome,
     };
@@ -445,14 +445,9 @@ pub(crate) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketA
     Ok(SocketAddr::new(host, port))
 }
 
+/// The access a resident serves, from argv and, for a detached child, the
+/// token its launcher handed over privately; both at once is a launcher bug.
 pub(crate) fn requested_access(
-    leaf: &clap::ArgMatches,
-    listen: SocketAddr,
-) -> CommandResult<AppAccess> {
-    requested_access_with(leaf, listen, None)
-}
-
-fn requested_access_with(
     leaf: &clap::ArgMatches,
     listen: SocketAddr,
     handoff_token: Option<String>,

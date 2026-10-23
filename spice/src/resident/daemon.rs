@@ -1,4 +1,4 @@
-//! The detached `spice up` launcher and its one-shot child handoff.
+//! The detached `spice up` and `spice app` launcher and its one-shot child handoff.
 
 use super::*;
 
@@ -141,8 +141,18 @@ impl ChildStatus {
         drop(self.stream.lock().expect("daemon status mutex").take());
     }
 
+    /// Tell the launcher the window is up over the admitted endpoint, then
+    /// close the channel; the launcher answers with this receipt.
+    pub(crate) fn opened(self, opened: &wire::AppOpen) {
+        let outcome = Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: opened,
+        });
+        self.failed(&outcome);
+    }
+
     /// Return an exact typed startup outcome when publication never happened.
-    pub(crate) fn failed(self, outcome: &Outcome<()>) {
+    pub(crate) fn failed<B: Serialize>(self, outcome: &Outcome<B>) {
         if let Some(mut stream) = self.stream.lock().expect("daemon status mutex").take() {
             if let Ok(bytes) = wire::encode(outcome) {
                 let _ = write_framed(&mut stream, &bytes);
@@ -154,11 +164,50 @@ impl ChildStatus {
 }
 
 /// Start this exact executable as a detached resident and prove it is ready.
-/// `open` asks that resident to dial the system browser once it announces.
-pub(crate) fn launch(leaf: &clap::ArgMatches, open: bool) -> Outcome<wire::AppOpen> {
-    match PreparedLaunch::admit(leaf).and_then(|launch| launch.spawn(leaf, open)) {
+/// `handoff_token` is the bearer token a launcher handed this process
+/// privately, forwarded the same way; `open` asks that resident to dial the
+/// system browser once it announces.
+pub(crate) fn launch(
+    leaf: &clap::ArgMatches,
+    handoff_token: Option<String>,
+    open: bool,
+) -> Outcome<wire::AppOpen> {
+    let spawned = PreparedLaunch::admit(leaf, handoff_token)
+        .and_then(|launch| launch.spawn(leaf, ChildRole::Resident { open }));
+    match spawned {
         Ok(launch) => launch.wait(),
         Err(outcome) => map_failure(outcome),
+    }
+}
+
+/// Start this exact executable as a detached `spice app --foreground` and
+/// answer once it reports the window up over the endpoint it admitted. The
+/// child owns the window and any resident it starts; its terminal receipt
+/// lands in the resident log, never on this terminal.
+pub(crate) fn launch_window(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
+    let spawned =
+        PreparedLaunch::admit(leaf, None).and_then(|launch| launch.spawn(leaf, ChildRole::Window));
+    match spawned {
+        Ok(launch) => launch.wait_opened(),
+        Err(outcome) => map_failure(outcome),
+    }
+}
+
+/// What the detached child runs as.
+#[derive(Clone, Copy)]
+enum ChildRole {
+    /// `up --foreground`, dialing the browser when `open`.
+    Resident { open: bool },
+    /// `app --foreground`.
+    Window,
+}
+
+impl ChildRole {
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Resident { .. } => "up",
+            Self::Window => "app",
+        }
     }
 }
 
@@ -176,9 +225,9 @@ struct PreparedLaunch {
 }
 
 impl PreparedLaunch {
-    fn admit(leaf: &clap::ArgMatches) -> Result<Self, Outcome<()>> {
+    fn admit(leaf: &clap::ArgMatches, handoff_token: Option<String>) -> Result<Self, Outcome<()>> {
         let listen = requested_listen(leaf)?;
-        let token = requested_access(leaf, listen)?.token;
+        let token = requested_access(leaf, listen, handoff_token)?.token;
         let current = std::env::current_dir()
             .map_err(|error| daemon_fault("resident::cwd-unavailable", error))?;
         let repository = Repository::discover(&current)
@@ -213,7 +262,7 @@ impl PreparedLaunch {
         })
     }
 
-    fn spawn(self, leaf: &clap::ArgMatches, open: bool) -> Result<SpawnedLaunch, Outcome<()>> {
+    fn spawn(self, leaf: &clap::ArgMatches, role: ChildRole) -> Result<SpawnedLaunch, Outcome<()>> {
         let Self {
             listen,
             token,
@@ -234,7 +283,7 @@ impl PreparedLaunch {
         command
             .args([
                 "--json",
-                "up",
+                role.verb(),
                 "--foreground",
                 "--host",
                 &listen.ip().to_string(),
@@ -248,7 +297,7 @@ impl PreparedLaunch {
         if leaf.get_flag("allow-insecure-bind") {
             command.arg("--allow-insecure-bind");
         }
-        if open {
+        if let ChildRole::Resident { open: true } = role {
             command.arg("--open");
         }
         handoff.grant(&mut command);
@@ -325,6 +374,47 @@ impl SpawnedLaunch {
                 )
             }
         }
+    }
+
+    /// Answer with the window child's own report: the receipt it sends once
+    /// the window is up, or the failure it ends with. A child gone without a
+    /// word is diagnosed from the resident log.
+    fn wait_opened(mut self) -> Outcome<wire::AppOpen> {
+        match self.window_report() {
+            Ok(outcome) => outcome,
+            Err(outcome) => {
+                terminate_group(&mut self.child);
+                map_failure(outcome)
+            }
+        }
+    }
+
+    fn window_report(&mut self) -> Result<Outcome<wire::AppOpen>, Outcome<()>> {
+        #[cfg(unix)]
+        self.parent_handoff
+            .set_read_timeout(Some(ARRIVAL_HORIZON))
+            .map_err(|error| daemon_fault("resident::daemon-handoff-unavailable", error))?;
+        let bytes = read_status(&mut self.parent_handoff).map_err(|error| {
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) {
+                environment_fault(
+                    "resident::daemon-readiness-elapsed",
+                    &format!("the window did not open within {ARRIVAL_HORIZON:?}"),
+                )
+            } else {
+                daemon_fault("resident::daemon-handoff-unavailable", error)
+            }
+        })?;
+        if bytes.is_empty() {
+            return Err(environment_fault(
+                "resident::daemon-child-exited",
+                &child_diagnostic(self.state.resident_log(), self.log_offset),
+            ));
+        }
+        wire::decode::<Outcome<wire::AppOpen>>(&bytes)
+            .map_err(|error| daemon_fault("resident::daemon-outcome-invalid", error))
     }
 }
 

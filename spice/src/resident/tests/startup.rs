@@ -23,7 +23,7 @@ fn access_for(argv: &[&str]) -> CommandResult<()> {
         .expect("declared up operands parse");
     let leaf = spice::cli::selected_matches(&matches);
     let listen = requested_listen(leaf)?;
-    requested_access(leaf, listen).map(|_| ())
+    requested_access(leaf, listen, None).map(|_| ())
 }
 
 fn access_refusal(argv: &[&str]) -> Refusal {

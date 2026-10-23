@@ -80,20 +80,26 @@ replies; `--open` places it in the URL fragment, outside the HTTP origin.
 spice app
 ```
 
-It joins the resident already serving the repository, or starts one exactly as
+Like `spice up`, it returns the terminal at once: a detached process attends
+the window and the command answers with the endpoint once the window is up;
+`spice app --foreground` attends from this terminal instead, blocking until
+the window closes and reporting whether the resident was drained. Either way
+it joins the resident already serving the repository, or starts one exactly as
 `spice up` would (the same `--host`, `--port`, `--allow-insecure-bind`, and
 `--auth-token` apply) and drains it when the window closes; a resident it
 joined keeps running until `spice down`. Cmd+Q and Cmd+W close the window the
 same way as its close button, so the resident is settled either way; the
 window's Edit menu carries the standard copy, paste, cut, undo, and select-all
 shortcuts and Start Dictation. The window admits its endpoint through the same
-discovery check as `--open` and carries the token only in the URL fragment the
-window loads. Links the console opens in a new window go to the system
-browser. The window itself is drawn by a child process running the same
-appliance from `~/Library/Caches/dev.spice.app/Spice.app`, a minimal bundle
-`spice app` writes and verifies on each launch, because macOS dictation only
-attaches to a client with a bundle identity; the command that started or
-joined the resident stays in charge of it. That bundle is also what names the
+discovery check as `--open` and carries the token only over the private
+descriptor `spice up` uses and in the URL fragment the window loads; the
+detached attendant's own receipt goes to the resident log. Links the console
+opens in a new window go to the system browser. The window itself is drawn by
+a child process running the same appliance from
+`~/Library/Caches/dev.spice.app/Spice.app`, a minimal bundle `spice app`
+writes and verifies on each launch, because macOS dictation only attaches to
+a client with a bundle identity; the command that started or joined the
+resident stays in charge of it. That bundle is also what names the
 app Spice in the menu bar, the Dock, and the application switcher and gives
 it the console's pepper mark as its icon, drawn by the appliance at every
 size macOS asks for. The window is titled `Spice: <repository>` and reopens at

@@ -25,6 +25,11 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ("up", "open", "Open the app in the default browser"),
     (
         "app",
+        "foreground",
+        "Attend the window from this terminal until it closes",
+    ),
+    (
+        "app",
         "host",
         "Listen on this IP address when starting the resident",
     ),
