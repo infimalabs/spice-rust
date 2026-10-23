@@ -406,7 +406,7 @@ fn render_aggregate_pill(
     html! {
         <button
             key={focus_key}
-            class="app-horn-tab app-horn-tab--down app-horn-tab--wide"
+            class="app-horn-tab app-horn-tab--down"
             type="button"
             title={title.clone()}
             aria-label={title}

@@ -63,12 +63,15 @@
   --app-motion-highlight: 2.8s;
   --app-motion-pulse: 5s;
   --app-status-line-band: 32px;
-  --app-horn-tab-block-size: 21px;
+  /* A work tab is a 28px tab plus one message rail on the edge it attaches
+     by: the bottom of a tab hanging from the command bar, the top of one
+     rising from a team rail. Tabs carry no inline rails. */
+  --app-horn-tab-block-size: 32px;
   --app-horn-tab-inset: 10px;
   /* Global and team totals keep one badge and tab footprint for every count:
      a wider count takes room from the badge's inline padding. */
   --app-total-badge-inline-size: 16px;
-  --app-total-tab-inline-size: calc(2 * var(--message-rail) + 2 * var(--app-horn-tab-inset) + var(--app-total-badge-inline-size));
+  --app-total-tab-inline-size: calc(2 * var(--app-horn-tab-inset) + var(--app-total-badge-inline-size));
   --app-presence-pip-size: 8px;
   --app-presence-member-border-width: 5px;
   --app-provider-emblem-size: 22px;
@@ -238,20 +241,19 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
+  box-sizing: border-box;
   min-height: var(--app-horn-tab-block-size);
   padding: 0 var(--app-horn-tab-inset);
   overflow: clip;
-  border: 0;
-  border-inline: var(--quote-rail) solid var(--app-base-line);
+  border: 0 solid var(--app-base-line);
   background: var(--app-base-control);
   color: var(--app-base-muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
 }
 a.app-horn-tab { text-decoration: none; cursor: pointer; }
-.app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
-.app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
-.app-horn-tab--wide { border-inline-width: var(--message-rail); }
+.app-horn-tab--down { border-block-end-width: var(--message-rail); border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
+.app-horn-tab--up { border-block-start-width: var(--message-rail); border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 /* A tab's mark is a small dot seated on its count badge's top inline-end
    corner, as the renewal dot sits on a lane menu's corner, coloured by the most
    actionable state its partition holds: danger for work only the operator can
@@ -304,21 +306,12 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-horn-tab:is([data-work-scope="team"], [data-work-scope="group"]) > button { flex: 1 1 auto; justify-content: center; padding-inline: 0; }
 /* Local task and worker tabs fuse to their fixed total as one strip. The
    reversed scroller puts its last child at the physical left edge; every
-   interior edge stays borderless while that child and the total retain the
-   two outside rails and corners. Only widths change here, so the shared horn
-   rail color and its hover step still paint the outside ends. */
-.team-task-rail > .team-tasks > .app-horn-tab {
-  border-inline-width: 0;
-  border-radius: 0;
-}
-.team-task-rail > .team-tasks > .app-horn-tab:last-child {
-  border-inline-start-width: var(--message-rail);
-  border-start-start-radius: var(--app-radius-card);
-}
-.team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) {
-  border-inline-start: 0;
-  border-start-start-radius: 0;
-}
+   interior corner stays square while that child and the total keep the two
+   outside corners. Only radii change here, so the shared top rail and its
+   hover step run unbroken across the strip. */
+.team-task-rail > .team-tasks > .app-horn-tab { border-radius: 0; }
+.team-task-rail > .team-tasks > .app-horn-tab:last-child { border-start-start-radius: var(--app-radius-card); }
+.team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) { border-start-start-radius: 0; }
 :is([data-work-scope="all"], [data-work-scope="design"], [data-work-scope="team"], [data-work-scope="group"]) .app-count-badge {
   display: inline-block;
   box-sizing: border-box;
@@ -333,7 +326,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button):hover {
   background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--app-base-control));
 }
-/* Hover strengthens every horn tab's rails within the object's base flavor. */
+/* Hover strengthens every horn tab's rail within the object's base flavor. */
 .app-horn-tab:hover { border-color: color-mix(in srgb, var(--app-base-muted) 35%, var(--app-base-line)); }
 .app-horn-tab__handle.dormant {
   color: color-mix(in srgb, var(--app-base-muted) 62%, transparent);
@@ -519,7 +512,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-setting-toggle:disabled { cursor: wait; opacity: .58; }
 .app-setting-toggle--fast {
   width: auto;
-  min-height: 34px;
+  min-height: 32px;
   gap: 14px;
   padding-inline: 11px;
 }
@@ -535,7 +528,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 34px;
+  min-height: 32px;
   gap: 14px;
   padding-inline: 11px;
   border: var(--app-control-edge);
@@ -1259,7 +1252,7 @@ tbody tr:last-child td { border-bottom: 0; }
   container-type: inline-size;
   display: flex;
   min-width: 0;
-  min-height: 34px;
+  min-height: 32px;
   align-items: center;
   justify-content: center;
   flex-direction: column;

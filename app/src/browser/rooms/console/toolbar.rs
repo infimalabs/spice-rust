@@ -93,7 +93,7 @@ fn render_total(
     html! {
         <span
             key="group-total"
-            class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
+            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
             data-work-scope="group"
             data-work-mark={view::chrome::work_mark(counts)}
         >
