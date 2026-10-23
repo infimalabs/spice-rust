@@ -54,13 +54,13 @@ loopback port the kernel picks unless `--host IP` or `--port PORT` names one; a
 named port keeps the URL stable across restarts.
 
 Lanes run the oh-my-pi agent, so `omp` must be on `PATH`. Seat a first lane
-with `spice lane add [WORKTREE] --life Drain`. A lane wakes and draws work
-under its team's policy: `--life` seeds only the policy of the agent's own
-initial team, the one `lane add` forms when no `--team` is given, and a lane
-added with `--team ID` takes that team's policy instead. A Drain team starts
-its vacant lanes as assignable work appears, a Drive team as work its own
-members filed appears; a Steer team's lane is started by hand with
-`spice lane wake ID`.
+with `spice lane add [WORKTREE]`. A lane wakes and draws work under its
+team's policy, Drive unless `lane.life` or `--life` says otherwise: a Drive
+team starts its vacant lanes as work its own members filed appears, a Drain
+team as any assignable work appears, and a Steer team's lane is started by
+hand with `spice lane wake ID`. `--life` seeds only the policy of the agent's
+own initial team, the one `lane add` forms when no `--team` is given; a lane
+added with `--team ID` takes that team's policy instead.
 
 A non-loopback listener requires `--allow-insecure-bind`. Add a URL-safe bearer
 token unless the surrounding network is the intended access boundary:

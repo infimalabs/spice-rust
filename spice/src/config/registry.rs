@@ -588,7 +588,7 @@ configuration_registry! {
     }
     fixed "lane.life" {
         kind: Life,
-        builtin: Some(Builtin::String("Steer")),
+        builtin: Some(Builtin::String("Drive")),
         layers: TRACKED_FLAG,
         class: Policy,
         flag: Some(FlagMapping::new(&["lane", "add"], "--life")),

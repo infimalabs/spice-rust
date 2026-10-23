@@ -225,16 +225,9 @@ pub struct AppOpen {
 impl fmt::Display for AppOpen {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(formatter, "Spice is running at {}", self.endpoint)?;
-        writeln!(
-            formatter,
-            "Seat an agent lane with `spice lane add [WORKTREE] --life Drain`."
-        )?;
         write!(
             formatter,
-            "A lane follows its team's policy: `--life` seeds only the agent's own initial \
-             team, and `--team ID` joins that team under its policy instead. A Drain or Drive \
-             team starts its lanes as work appears; start a Steer team's lane with \
-             `spice lane wake ID`."
+            "Seat an agent lane with `spice lane add [WORKTREE]`."
         )
     }
 }
