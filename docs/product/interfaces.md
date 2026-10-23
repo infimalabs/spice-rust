@@ -400,19 +400,25 @@ listed name it publishes, and the agent keeps that voice for the page. With an
 empty list, an Apple mobile browser—iPhone, iPad, iPod, or iPadOS presenting
 its desktop-mode Macintosh user agent, recognized by a `Mobile/` token or by
 `navigator.maxTouchPoints` above one, which a Mac reports as zero—uses the
-device default voice because its published voices do not carry macOS premium
+device default voice because its published voices do not carry macOS tier
 metadata. Other browsers
-spread roster agents across published macOS premium voices only: Safari's
+spread roster agents across published macOS premium voices first: Safari's
 `com.apple.voice.premium.` identifier or Chromium's exact ` (Premium)` name
-suffix, served locally. Enhanced, standard, novelty, remote, and unmarked
-voices never enter that desktop pool. Among the premium voices the pool keeps
-the default premium voice's language, or the browser's language when none is
-default: an agent keeps the voice its lane hashes to unless a teammate already
-holds it, so teammates sound different until a team outnumbers the voices,
-and agents on different teams may share. A desktop published list without a
-premium voice in that language refuses, naming the language and the premium
-languages it does offer; it never falls back to another tier or the browser
-default. A speaker outside the roster with no list uses the browser default. A
-browser that has not yet published voices is waited for under a bound when
-configured or desktop spreading needs the list; a published list holding none
-of the configured names refuses, naming the voices the browser offers.
+suffix, served locally. The pool keeps the default premium voice's language,
+or the browser's language when none is default; within it the pool is the
+premium voices, else the enhanced voices (`com.apple.voice.enhanced.` or
+` (Enhanced)`), else every voice the browser serves locally in that language,
+and the browser default speaks only when the language has no published voice.
+An agent keeps the voice its lane hashes to unless a teammate already holds
+it, so teammates sound different until a team outnumbers the voices, and
+agents on different teams may share. The first time a Macintosh page steps
+below premium, one toast names the language, how many voices the browser
+publishes, the languages its premium voices do speak, what speaks instead,
+and the remedy: download a premium voice or set `say.voices`. The WKWebView
+under `spice app` publishes only the built-in system voices, so it always
+takes that step. Other platforms have no premium tier to miss and run the
+same descent silently. A speaker outside the roster with no list uses the browser
+default. A browser that has not yet published voices is waited for under a
+bound when configured or desktop spreading needs the list; a browser that
+never publishes any voice refuses, and a published list holding none of the
+configured names refuses, naming the voices the browser offers.
