@@ -592,7 +592,6 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "say.voices",
             "say.words_per_minute",
             "proof.container",
-            "proof.runner",
         ]
     );
 

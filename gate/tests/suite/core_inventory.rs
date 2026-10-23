@@ -63,7 +63,7 @@ fn configuration_key_admission_names_a_known_key_forbidden_in_the_active_layer()
         CoreFinding::new(
             "forbidden-layer",
             None::<String>,
-            "tracked layer key proof.runner is packaged for the local and worktree layers, not tracked",
+            "tracked layer key proof.runner is packaged for the worktree layer, not tracked",
         )
         .expect("layer-policy evidence"),
     ]);

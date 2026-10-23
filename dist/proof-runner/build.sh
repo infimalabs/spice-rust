@@ -81,4 +81,14 @@ challenge=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n') # env-policy: allow
     cargo --version # env-policy: allow
 
 printf '%s\n' "$pins" > "$bundle/pins.toml" # env-policy: allow
-printf 'runner %s\nidentity %s\n' "$runner" "$identity" # env-policy: allow
+
+# The runner is sealed for this worktree's HEAD and vendor tree, so it is bound
+# here and nowhere else: `proof.runner` admits only the worktree layer, and the
+# binding goes through the ordinary previewed, digest-applied config mutation.
+plan=$(spice config proof.runner "$runner" | sed -n 's/^digest = "\([0-9a-f]*\)"$/\1/p') # env-policy: allow
+if [ -z "$plan" ]; then # env-policy: allow
+    printf 'the sealed runner could not be previewed into proof.runner\n' >&2
+    exit 65
+fi
+spice config proof.runner "$runner" --apply="$plan" > /dev/null # env-policy: allow
+printf 'runner %s\nidentity %s\nbound proof.runner (worktree)\n' "$runner" "$identity" # env-policy: allow

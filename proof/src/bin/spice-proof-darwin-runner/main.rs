@@ -321,7 +321,8 @@ fn validate_source(workspace: &Path, pins: &Pins) -> Result<(), String> {
     )?;
     if commit != pins.source_commit {
         return Err(format!(
-            "source commit changed: expected {}, observed {}",
+            "this runner is sealed for source commit {} but the worktree HEAD is {}; \
+             reseal and rebind it for this worktree with dist/proof-runner/build.sh",
             pins.source_commit, commit
         ));
     }

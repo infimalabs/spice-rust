@@ -161,6 +161,20 @@ stapled ticket, so its recipient's first assessment is online. This is not a
 release operation: signing changes the executable digest, the release pipeline
 never invokes this command, and its result is not admitted as a sealed artifact.
 
+**Invariant —** A native Darwin proof runner is sealed for exactly one
+worktree: `dist/proof-runner/build.sh` bakes that worktree's HEAD commit and
+vendor tree into the runner and binds it through `proof.runner`, which admits
+only the worktree configuration layer. A Git-common default would hand every
+other worktree a seal for a different commit, so one is reported as a policy
+issue, never applied. A runner whose sealed commit differs from HEAD refuses
+by naming both commits and the reseal, and the staging preflight names the
+bound runner it asked. `spice dev xtask -- seal-darwin [--output DIR]` is the
+one-command point-in-time build: it seals and binds this worktree's runner,
+stages the Darwin target, and places the executable under `DIR`, writing only
+this worktree's `target/`, `dist/stage/`, Git-directory configuration, and
+`DIR`; the installed appliance, the resident, and other worktrees are
+untouched.
+
 **Invariant —** Proof replays the complete current battery against the
 candidate checkout: Linux mounts it read-only in the pinned OCI environment,
 Darwin passes it to the attested native runner, and Windows dispatches the

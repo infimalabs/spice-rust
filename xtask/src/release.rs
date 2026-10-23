@@ -78,6 +78,8 @@ pub struct TargetBuild {
     pub target: ReleaseTarget,
     pub source: Digest,
     pub staged: StagedTarget,
+    /// The final linked, stripped executable the staged payload names.
+    pub executable: PathBuf,
     pub symbols: Option<MacSymbols>,
     /// Uncompressed app files the payload no longer carries beside the
     /// executable, which links them as the canvas archive instead.
@@ -386,6 +388,10 @@ fn stage_with_roots<E: Executor>(
         &mut publisher,
     )?;
     let symbols = builder.symbols.take();
+    let executable = builder
+        .executable
+        .take()
+        .expect("a staged target built its executable");
     let app_tree = builder
         .canvas
         .as_ref()
@@ -395,6 +401,7 @@ fn stage_with_roots<E: Executor>(
         target,
         source: source.digest,
         staged,
+        executable,
         app_tree,
         symbols,
         commands: executor.records(),

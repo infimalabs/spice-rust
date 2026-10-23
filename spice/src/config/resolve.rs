@@ -503,7 +503,11 @@ fn sanitize(
             let layers = entry.layers();
             let leaf = entry.template().as_str();
             let root = wire::STATE_DIRECTORY;
-            let message = if layers.contains(&ConfigSource::Worktree) {
+            let message = if layers == [ConfigSource::Worktree] {
+                format!(
+                    "{leaf} binds this worktree's own build, never a Git-common default; set it only in this worktree's Git-directory {root}/worktree.toml"
+                )
+            } else if layers.contains(&ConfigSource::Worktree) {
                 format!(
                     "{leaf} is a per-worktree preference, never tracked; set it in Git-common {root}/config.toml or in this worktree's Git-directory {root}/worktree.toml"
                 )

@@ -85,8 +85,9 @@ worktree intent live in Git-directory state, never in the checkout:
 `<git-common>/.spice/config.toml` and each worktree's own
 `<git-dir>/.spice/worktree.toml`. Tracked `spice.toml` carries
 repository policy only; machine-local settings live only in local config, and
-per-worktree preferences (model, effort, voices, proof runner) in local or
-worktree config. Command flags apply at the command boundary, not as
+per-worktree preferences (model, effort, voices) in local or worktree config.
+A binding to one worktree's own build, the sealed proof runner, lives only in
+that worktree's config. Command flags apply at the command boundary, not as
 repository-configuration provenance.
 
 [Provenance](../invariants/session.md#extension-every-effective-configuration-value-carries-its-source-provenance)
