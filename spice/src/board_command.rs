@@ -89,6 +89,7 @@ pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 #[cfg(test)]
 pub(crate) use read_guard::read_next_work;
 const CAPTURE_WORK_RULE: &str = "capturework";
+const RECOVER_STEAL_RULE: &str = "recoversteal";
 fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {
     let command = wire::SpiceCommand::new("task", ["status"])
         .expect("task status is a structural Spice recovery command");
