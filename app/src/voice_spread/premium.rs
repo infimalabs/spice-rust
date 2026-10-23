@@ -1,11 +1,13 @@
-//! macOS premium voice evidence, the only tier automatic spreading admits.
+//! macOS voice tier evidence: premium, the tier automatic spreading prefers,
+//! and enhanced, the tier it accepts next.
 //!
 //! Safari publishes the provider's canonical identifier as the voice URI,
-//! `com.apple.voice.premium.<language>.<name>`. Chromium hides that
+//! `com.apple.voice.premium.<language>.<name>` or
+//! `com.apple.voice.enhanced.<language>.<name>`. Chromium hides that
 //! identifier, publishing the display name as the URI instead, and marks the
-//! tier with the exact macOS display-name suffix ` (Premium)`. Either piece of
-//! evidence admits a voice the device serves locally; enhanced, compact,
-//! novelty, remote, and unmarked voices never do.
+//! tier with the exact macOS display-name suffix ` (Premium)` or
+//! ` (Enhanced)`. Either piece of evidence admits a voice the device serves
+//! locally; compact, novelty, remote, and unmarked voices carry neither tier.
 
 use super::OfferedVoice;
 
@@ -13,23 +15,35 @@ use super::OfferedVoice;
 const PREMIUM_URI_PREFIX: &str = "com.apple.voice.premium.";
 /// The exact macOS display-name marker for premium voices.
 const PREMIUM_NAME_MARKER: &str = " (Premium)";
+/// The provider's canonical identifier prefix for enhanced voices.
+const ENHANCED_URI_PREFIX: &str = "com.apple.voice.enhanced.";
+/// The exact macOS display-name marker for enhanced voices.
+const ENHANCED_NAME_MARKER: &str = " (Enhanced)";
 
 /// Whether `voice` carries macOS premium evidence.
 #[must_use]
 pub fn is_premium(voice: &OfferedVoice<'_>) -> bool {
-    voice.local && (premium_uri(voice.uri) || premium_name(voice.name))
+    voice.local
+        && (tier_uri(voice.uri, PREMIUM_URI_PREFIX) || tier_name(voice.name, PREMIUM_NAME_MARKER))
 }
 
-/// `com.apple.voice.premium.<language>.<name>` with both parts present.
-fn premium_uri(uri: &str) -> bool {
-    uri.strip_prefix(PREMIUM_URI_PREFIX)
+/// Whether `voice` carries macOS enhanced evidence.
+#[must_use]
+pub fn is_enhanced(voice: &OfferedVoice<'_>) -> bool {
+    voice.local
+        && (tier_uri(voice.uri, ENHANCED_URI_PREFIX) || tier_name(voice.name, ENHANCED_NAME_MARKER))
+}
+
+/// `<prefix><language>.<name>` with both parts present.
+fn tier_uri(uri: &str, prefix: &str) -> bool {
+    uri.strip_prefix(prefix)
         .and_then(|rest| rest.split_once('.'))
         .is_some_and(|(language, name)| !language.is_empty() && !name.is_empty())
 }
 
-/// A non-empty name followed by exactly ` (Premium)`.
-fn premium_name(name: &str) -> bool {
-    name.strip_suffix(PREMIUM_NAME_MARKER)
+/// A non-empty name followed by exactly `marker`.
+fn tier_name(name: &str, marker: &str) -> bool {
+    name.strip_suffix(marker)
         .is_some_and(|base| !base.trim().is_empty())
 }
 

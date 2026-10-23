@@ -36,6 +36,9 @@ const VOICE_PUBLICATION_DEADLINE_MILLIS: u32 = 5_000;
 pub(super) enum SpeechStatus {
     #[default]
     Idle,
+    /// Speech started, and the automatic spread stepped down from premium
+    /// voices; the notice names the gap and its remedy, once per page.
+    Noticed(String),
     Failed(String),
 }
 
@@ -148,9 +151,10 @@ impl SpeechRuntime {
             ) {
                 VoicePolicy::Listed => VoiceRequest::Listed(&voices),
                 VoicePolicy::DeviceDefault => VoiceRequest::Default,
-                VoicePolicy::PremiumSpread => VoiceRequest::Spread {
+                VoicePolicy::Spread { premium_expected } => VoiceRequest::Spread {
                     teams: &roster.teams,
-                    member: member.expect("premium spreading requires a roster member"),
+                    member: member.expect("spreading requires a roster member"),
+                    premium_expected,
                 },
             };
             self.controller.borrow_mut().start_system(
@@ -179,7 +183,10 @@ impl SpeechRuntime {
             )
         };
         match result {
-            Ok(SystemStart::Speaking) => {}
+            Ok(SystemStart::Speaking { notice: None }) => {}
+            Ok(SystemStart::Speaking {
+                notice: Some(notice),
+            }) => self.status.set(SpeechStatus::Noticed(notice)),
             // The browser has published no voices yet. This entry stays the
             // loading queue head until `voiceschanged` resumes it, so the
             // first utterance of a page load speaks instead of refusing a
@@ -288,10 +295,11 @@ impl SpeechRuntime {
 #[hook]
 pub(super) fn use_speech_failure_toast(speech_status: &UseStateHandle<SpeechStatus>) {
     let toaster = toast::use_toaster();
-    use_effect_with((**speech_status).clone(), move |status| {
-        if let SpeechStatus::Failed(issue) = status {
+    use_effect_with((**speech_status).clone(), move |status| match status {
+        SpeechStatus::Failed(issue) | SpeechStatus::Noticed(issue) => {
             toaster.settled(issue.clone());
         }
+        SpeechStatus::Idle => {}
     });
 }
 

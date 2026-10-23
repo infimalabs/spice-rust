@@ -17,8 +17,9 @@ const MAX_OFFERED_VOICES: usize = 8;
 
 /// What the browser did with one system-speech request.
 pub enum SystemStart {
-    /// The utterance is with the browser.
-    Speaking,
+    /// The utterance is with the browser. `notice` is the premium gap an
+    /// automatic spread stepped down from, carried once per page.
+    Speaking { notice: Option<String> },
     /// The browser has published no voices yet, so no candidate can be
     /// matched and no utterance was started. The installed `voiceschanged`
     /// observer calls the caller's resume once the browser publishes its list.
@@ -40,10 +41,12 @@ pub struct SystemObservers<Voices, Ended, Failed> {
 pub enum VoiceRequest<'a> {
     /// Configured voice names in preference order.
     Listed(&'a [String]),
-    /// No names are configured: this roster member's spread voice.
+    /// No names are configured: this roster member's spread voice. A Mac is
+    /// expected to publish premium voices and is told when none applies.
     Spread {
         teams: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
         member: CanonicalUuid,
+        premium_expected: bool,
     },
     /// No names are configured and the speaker is not on the roster.
     Default,
@@ -60,6 +63,8 @@ pub struct Controller {
     on_voices: Option<Closure<dyn FnMut(Event)>>,
     /// The voice each agent settled on; its search runs once per page.
     chosen: HashMap<String, SpeechSynthesisVoice>,
+    /// Whether the premium gap of an automatic spread was already surfaced.
+    gap_noticed: bool,
 }
 
 impl Controller {
@@ -110,8 +115,9 @@ impl Controller {
     /// A [`VoiceRequest::Listed`] request speaks with the first candidate this
     /// browser publishes, which stays the agent's voice for the rest of the
     /// page. A [`VoiceRequest::Spread`] request speaks with the member's slot
-    /// among the published macOS premium voices sharing the chosen language,
-    /// so desktop teammates sound different. Apple mobile callers and
+    /// among the published voices sharing the chosen language, premium first,
+    /// so desktop teammates sound different; the first step down from premium
+    /// on a page is reported as the start's notice. Apple mobile callers and
     /// [`VoiceRequest::Default`] speak with the device's default voice.
     ///
     /// A browser publishes its voice list asynchronously: on a fresh page
@@ -119,8 +125,7 @@ impl Controller {
     /// installed voices and fired `voiceschanged`. An empty list is therefore
     /// no verdict on the candidates; it installs the observer that resumes this
     /// request and reports [`SystemStart::AwaitingVoices`]. Only a published
-    /// list carrying no listed candidate, or a desktop automatic list carrying
-    /// no premium voice to spread, is refused.
+    /// list carrying no listed candidate is refused.
     pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
@@ -147,6 +152,7 @@ impl Controller {
             .ok_or_else(|| "browser window is unavailable".to_owned())?
             .speech_synthesis()
             .map_err(|_| "system speech is unavailable".to_owned())?;
+        let mut notice = None;
         let voice = match request {
             VoiceRequest::Default => None,
             VoiceRequest::Listed(voices) => match self.chosen.get(agent) {
@@ -163,11 +169,20 @@ impl Controller {
                     Some(voice.clone())
                 }
             },
-            VoiceRequest::Spread { teams, member } => {
+            VoiceRequest::Spread {
+                teams,
+                member,
+                premium_expected,
+            } => {
                 let Some(offered) = self.published(&synthesis, on_voices) else {
                     return Ok(SystemStart::AwaitingVoices);
                 };
-                Some(spread_voice(&offered, teams, member)?)
+                let (voice, gap) = spread_voice(&offered, teams, member, premium_expected);
+                if let Some(gap) = gap.filter(|_| !self.gap_noticed) {
+                    self.gap_noticed = true;
+                    notice = Some(gap);
+                }
+                voice
             }
         };
         let utterance = SpeechSynthesisUtterance::new_with_text(text)
@@ -187,7 +202,7 @@ impl Controller {
         self.on_end = Some(ended);
         self.on_error = Some(failed);
         self.on_voices = None;
-        Ok(SystemStart::Speaking)
+        Ok(SystemStart::Speaking { notice })
     }
 
     /// The voices this browser publishes, or `None` once the observer that
@@ -220,14 +235,15 @@ impl Drop for Controller {
     }
 }
 
-/// The member's slot among the published desktop premium voices sharing the
-/// chosen language. A list without one refuses, naming the violated
-/// assumption; it never speaks through another tier or the device default.
+/// The member's slot among the published voices sharing the chosen language,
+/// premium first, with the gap when the pool sits below premium. A language
+/// with no published voice yields `None`: the device default speaks.
 fn spread_voice(
     offered: &[SpeechSynthesisVoice],
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     member: CanonicalUuid,
-) -> Result<SpeechSynthesisVoice, String> {
+    premium_expected: bool,
+) -> (Option<SpeechSynthesisVoice>, Option<String>) {
     let traits: Vec<(String, String, String, bool, bool)> = offered
         .iter()
         .map(|voice| {
@@ -251,11 +267,10 @@ fn spread_voice(
         })
         .collect();
     let language = web_sys::window().and_then(|window| window.navigator().language());
-    let pool = voice_spread::pool(&described, language.as_deref())
-        .map_err(|refusal| refusal.to_string())?;
-    let slot = voice_spread::voice_slot(teams, member, pool.len())
-        .expect("a nonempty spread pool always yields a slot");
-    Ok(offered[pool[slot]].clone())
+    let spread = voice_spread::pool(&described, language.as_deref(), premium_expected);
+    let voice = voice_spread::voice_slot(teams, member, spread.pool.len())
+        .map(|slot| offered[spread.pool[slot]].clone());
+    (voice, spread.gap.map(|gap| gap.to_string()))
 }
 
 /// Refuse a voice list this device carries none of, naming what it offers.

@@ -1,19 +1,21 @@
-//! Spread desktop agents across premium voices when no voice list is
+//! Spread desktop agents across the device's voices when no voice list is
 //! configured.
 //!
 //! Apple mobile browsers instead use the device default: iOS and iPadOS do not
-//! publish the macOS premium metadata this pool requires. The assignment reads
-//! only the roster and the device's voice list, so every desktop page with the
-//! same roster and voices hears the same agent in the same voice. Only voices
-//! carrying macOS premium evidence enter the desktop pool; a desktop device
-//! without one in the chosen language refuses rather than speaking through
-//! another tier. Teams and their members are visited in identity order, so
-//! reordering a team or the roster changes nothing. Teammates are what must
-//! sound different: within one team no voice repeats until the team outnumbers
-//! the pool. An agent keeps the voice its identity hashes to unless a teammate
-//! holds it, even when another team holds it too; only an agent a teammate
-//! displaced prefers, among the voices its team leaves free, one no other team
-//! holds.
+//! publish the macOS tier metadata this pool reads. The assignment reads only
+//! the roster and the device's voice list, so every desktop page with the
+//! same roster and voices hears the same agent in the same voice. The pool
+//! prefers voices carrying macOS premium evidence in the chosen language;
+//! without one it takes the enhanced voices of that language, then any voice
+//! the device serves in it, and only when the language has no published voice
+//! at all does the device default speak. Every step down from premium carries
+//! a notice naming the gap, shown once per page. Teams and their members are
+//! visited in identity order, so reordering a team or the roster changes
+//! nothing. Teammates are what must sound different: within one team no voice
+//! repeats until the team outnumbers the pool. An agent keeps the voice its
+//! identity hashes to unless a teammate holds it, even when another team holds
+//! it too; only an agent a teammate displaced prefers, among the voices its
+//! team leaves free, one no other team holds.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -22,9 +24,9 @@ use wire::CanonicalUuid;
 
 mod premium;
 
-pub use premium::is_premium;
+pub use premium::{is_enhanced, is_premium};
 
-/// How many premium languages a refusal names before eliding the rest.
+/// How many premium languages a notice names before eliding the rest.
 const MAX_NAMED_LANGUAGES: usize = 8;
 
 /// One published voice as the pool reads it.
@@ -48,17 +50,21 @@ pub enum VoicePolicy {
     Listed,
     /// Let the browser select its device default voice.
     DeviceDefault,
-    /// Spread a roster member over the desktop premium pool.
-    PremiumSpread,
+    /// Spread a roster member over the device's voices, premium first. On a
+    /// Mac a pool below premium carries a notice; elsewhere no premium tier
+    /// exists to miss, so the same descent runs silently.
+    Spread { premium_expected: bool },
 }
 
 /// Choose the voice policy before inspecting the browser's published voices.
 ///
 /// Explicit configuration always wins. An unconfigured speaker outside the
-/// roster uses the device default everywhere. A roster member spreads only on
-/// desktop; Apple mobile browsers use their device default because their voice
-/// records do not carry macOS premium markers. Desktop-mode iPadOS presents a
+/// roster uses the device default everywhere. A roster member spreads over
+/// the device's voices except on Apple mobile browsers, which use their
+/// device default because their voice records carry no tier evidence and
+/// their engines offer one voice per language. Desktop-mode iPadOS presents a
 /// Macintosh user agent, so its touch capability distinguishes it from a Mac.
+/// Only a Mac is expected to publish premium voices.
 #[must_use]
 pub fn policy(
     configured: bool,
@@ -71,7 +77,9 @@ pub fn policy(
     } else if !roster_member || apple_mobile(user_agent, max_touch_points) {
         VoicePolicy::DeviceDefault
     } else {
-        VoicePolicy::PremiumSpread
+        VoicePolicy::Spread {
+            premium_expected: user_agent.contains("Macintosh"),
+        }
     }
 }
 
@@ -84,9 +92,34 @@ fn apple_mobile(user_agent: &str, max_touch_points: i32) -> bool {
             && (user_agent.contains("Mobile/") || max_touch_points > 1))
 }
 
-/// Why a published voice list offers no voice to spread.
+/// The voice tier a spread landed on, best first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tier {
+    /// macOS premium voices of the chosen language.
+    Premium,
+    /// macOS enhanced voices of the chosen language.
+    Enhanced,
+    /// Any voice the device serves in the chosen language.
+    Local,
+    /// The language has no published voice; the device default speaks.
+    DeviceDefault,
+}
+
+impl Tier {
+    /// What speaks in premium's place, as the gap notice names it.
+    const fn substitute(self) -> &'static str {
+        match self {
+            Self::Premium => "premium voices",
+            Self::Enhanced => "its enhanced voices",
+            Self::Local => "its other voices",
+            Self::DeviceDefault => "the device default voice",
+        }
+    }
+}
+
+/// Why the spread landed below premium, and what speaks instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SpreadRefusal {
+pub enum PremiumGap {
     /// No premium voice is marked default and the device names no language.
     NoLanguage { offered: usize, premium: usize },
     /// No premium voice speaks `language`; `premium_languages` lists the
@@ -95,26 +128,29 @@ pub enum SpreadRefusal {
         language: String,
         offered: usize,
         premium_languages: Vec<String>,
+        substitute: Tier,
     },
 }
 
-impl fmt::Display for SpreadRefusal {
+impl fmt::Display for PremiumGap {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoLanguage { offered, premium } => write!(
                 formatter,
-                "automatic voices assume a macOS premium voice in the device language, but \
+                "automatic voices prefer a macOS premium voice in the device language, but \
                  no language is known; this browser publishes {offered} voices, {premium} \
-                 premium. Set say.voices to name voices explicitly"
+                 premium, so the device default voice speaks. Set say.voices to name voices \
+                 explicitly"
             ),
             Self::NoPremium {
                 language,
                 offered,
                 premium_languages,
+                substitute,
             } => {
                 write!(
                     formatter,
-                    "automatic voices assume a macOS premium voice for language {language:?}, \
+                    "automatic voices prefer a macOS premium voice for language {language:?}, \
                      but none of the {offered} voices this browser publishes is one"
                 )?;
                 if !premium_languages.is_empty() {
@@ -132,24 +168,40 @@ impl fmt::Display for SpreadRefusal {
                 }
                 write!(
                     formatter,
-                    ". Download a premium {language} voice in System Settings > Accessibility > \
-                     Spoken Content, or set say.voices"
+                    ", so {} speak instead. Download a premium {language} voice in System \
+                     Settings > Accessibility > Spoken Content, or set say.voices",
+                    substitute.substitute()
                 )
             }
         }
     }
 }
 
-/// Indices into `offered` forming the spread pool, ordered by name.
+/// The spread's pool: indices into the offered voices, ordered by name, the
+/// tier they came from, and the premium gap when the tier is below premium.
+/// An empty pool speaks the device default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spread {
+    pub pool: Vec<usize>,
+    pub tier: Tier,
+    pub gap: Option<PremiumGap>,
+}
+
+/// The spread pool over `offered`.
 ///
-/// Only premium voices enter. Among them the pool keeps voices sharing the
-/// language of the default premium voice, or of `device_language` when no
-/// premium voice is marked default. A name published twice enters once. An
-/// empty pool refuses, naming the assumption it violated.
+/// The language is that of the default premium voice, or `device_language`
+/// when no premium voice is marked default. Within it the pool is the premium
+/// voices, else the enhanced voices, else every voice the device serves; a
+/// name published twice enters once. With no language known, or no voice in
+/// the language, the device default speaks. A pool below premium carries the
+/// gap only when `premium_expected`: a platform without a premium tier has
+/// nothing to download.
+#[must_use]
 pub fn pool(
     offered: &[OfferedVoice<'_>],
     device_language: Option<&str>,
-) -> Result<Vec<usize>, SpreadRefusal> {
+    premium_expected: bool,
+) -> Spread {
     let premium: Vec<usize> = (0..offered.len())
         .filter(|&index| is_premium(&offered[index]))
         .collect();
@@ -161,32 +213,54 @@ pub fn pool(
         .or(device_language)
         .map(primary_language)
     else {
-        return Err(SpreadRefusal::NoLanguage {
-            offered: offered.len(),
-            premium: premium.len(),
-        });
+        return Spread {
+            pool: Vec::new(),
+            tier: Tier::DeviceDefault,
+            gap: premium_expected.then_some(PremiumGap::NoLanguage {
+                offered: offered.len(),
+                premium: premium.len(),
+            }),
+        };
     };
-    let mut pool: Vec<usize> = premium
-        .iter()
-        .copied()
-        .filter(|&index| primary_language(offered[index].lang) == language)
-        .collect();
-    if pool.is_empty() {
-        let premium_languages = premium
+    let tiers = [
+        (Tier::Premium, in_language(offered, &language, is_premium)),
+        (Tier::Enhanced, in_language(offered, &language, is_enhanced)),
+        (
+            Tier::Local,
+            in_language(offered, &language, |voice| voice.local),
+        ),
+    ];
+    let (tier, mut pool) = tiers
+        .into_iter()
+        .find(|(_, pool)| !pool.is_empty())
+        .unwrap_or((Tier::DeviceDefault, Vec::new()));
+    pool.sort_by(|&left, &right| offered[left].name.cmp(offered[right].name));
+    pool.dedup_by(|right, left| offered[*left].name == offered[*right].name);
+    let gap = (premium_expected && tier != Tier::Premium).then(|| PremiumGap::NoPremium {
+        language,
+        offered: offered.len(),
+        premium_languages: premium
             .iter()
             .map(|&index| primary_language(offered[index].lang))
             .collect::<BTreeSet<_>>()
             .into_iter()
-            .collect();
-        return Err(SpreadRefusal::NoPremium {
-            language,
-            offered: offered.len(),
-            premium_languages,
-        });
-    }
-    pool.sort_by(|&left, &right| offered[left].name.cmp(offered[right].name));
-    pool.dedup_by(|right, left| offered[*left].name == offered[*right].name);
-    Ok(pool)
+            .collect(),
+        substitute: tier,
+    });
+    Spread { pool, tier, gap }
+}
+
+/// Indices of the voices `admits` accepts that speak `language`.
+fn in_language(
+    offered: &[OfferedVoice<'_>],
+    language: &str,
+    admits: impl Fn(&OfferedVoice<'_>) -> bool,
+) -> Vec<usize> {
+    (0..offered.len())
+        .filter(|&index| {
+            admits(&offered[index]) && primary_language(offered[index].lang) == language
+        })
+        .collect()
 }
 
 /// The primary language subtag, so `en-GB`, `en_US`, and `EN` all read `en`.
@@ -254,7 +328,8 @@ fn preferred_slot(member: CanonicalUuid, size: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        OfferedVoice, SpreadRefusal, VoicePolicy, policy, pool, preferred_slot, voice_slot,
+        OfferedVoice, PremiumGap, Spread, Tier, VoicePolicy, policy, pool, preferred_slot,
+        voice_slot,
     };
     use wire::CanonicalUuid;
 
@@ -324,18 +399,30 @@ mod tests {
              (KHTML, like Gecko) Version/16.0 Safari/605.1.15";
         assert_eq!(
             policy(false, true, macintosh, 0),
-            VoicePolicy::PremiumSpread
+            VoicePolicy::Spread {
+                premium_expected: true
+            }
         );
         assert_eq!(policy(true, true, macintosh, 0), VoicePolicy::Listed);
-        assert_eq!(
-            policy(
-                false,
-                false,
-                "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
-                0
-            ),
-            VoicePolicy::DeviceDefault
-        );
+        let elsewhere = [
+            "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
+            "Mozilla/5.0 (Android 14; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/130.0",
+        ];
+        for user_agent in elsewhere {
+            assert_eq!(
+                policy(false, true, user_agent, 0),
+                VoicePolicy::Spread {
+                    premium_expected: false
+                },
+                "{user_agent}"
+            );
+            assert_eq!(
+                policy(false, false, user_agent, 0),
+                VoicePolicy::DeviceDefault,
+                "{user_agent}"
+            );
+        }
     }
 
     #[test]
@@ -443,8 +530,11 @@ mod tests {
     }
 
     fn names<'a>(offered: &[OfferedVoice<'a>], language: Option<&str>) -> Vec<&'a str> {
-        pool(offered, language)
-            .expect("a premium voice speaks the language")
+        let spread = pool(offered, language, true);
+        assert_eq!(spread.tier, Tier::Premium);
+        assert_eq!(spread.gap, None, "a premium pool carries no gap");
+        spread
+            .pool
             .into_iter()
             .map(|index| offered[index].name)
             .collect()
@@ -494,17 +584,21 @@ mod tests {
         ];
         assert_eq!(names(&offered, Some("fr")), ["Thomas (Premium)"]);
         assert_eq!(
-            pool(&offered, None),
-            Err(SpreadRefusal::NoLanguage {
-                offered: 3,
-                premium: 2
-            })
+            pool(&offered, None, true),
+            Spread {
+                pool: Vec::new(),
+                tier: Tier::DeviceDefault,
+                gap: Some(PremiumGap::NoLanguage {
+                    offered: 3,
+                    premium: 2
+                }),
+            }
         );
     }
 
     #[test]
-    fn no_premium_voice_in_the_language_refuses_instead_of_another_tier() {
-        let offered = [
+    fn without_a_premium_voice_the_pool_descends_one_tier_at_a_time() {
+        let enhanced = [
             chromium("Samantha", "en-US", true),
             chromium("Ava (Enhanced)", "en-US", false),
             safari(
@@ -516,14 +610,136 @@ mod tests {
             chromium("Kyoko (Premium)", "ja-JP", false),
             chromium("Thomas (Premium)", "fr-FR", false),
         ];
+        let gap = |offered: usize, substitute: Tier| PremiumGap::NoPremium {
+            language: "en".to_owned(),
+            offered,
+            premium_languages: vec!["fr".to_owned(), "ja".to_owned()],
+            substitute,
+        };
         assert_eq!(
-            pool(&offered, Some("en-US")),
-            Err(SpreadRefusal::NoPremium {
-                language: "en".to_owned(),
-                offered: 5,
-                premium_languages: vec!["fr".to_owned(), "ja".to_owned()],
-            })
+            pool(&enhanced, Some("en-US"), true),
+            Spread {
+                pool: vec![2, 1],
+                tier: Tier::Enhanced,
+                gap: Some(gap(5, Tier::Enhanced)),
+            }
         );
+
+        // WebKit publishes only built-in system voices, every one marked
+        // default: compact, novelty, and remote entries, never a tier.
+        let system = [
+            chromium("Kyoko (Premium)", "ja-JP", false),
+            chromium("Thomas (Premium)", "fr-FR", false),
+            safari(
+                "Samantha",
+                "com.apple.voice.compact.en-US.Samantha",
+                "en-US",
+                true,
+            ),
+            safari(
+                "Daniel",
+                "com.apple.voice.compact.en-GB.Daniel",
+                "en-GB",
+                true,
+            ),
+            safari(
+                "Bubbles",
+                "com.apple.speech.synthesis.voice.Bubbles",
+                "en-US",
+                true,
+            ),
+            OfferedVoice {
+                name: "Google US English",
+                uri: "Google US English",
+                lang: "en-US",
+                local: false,
+                default: true,
+            },
+        ];
+        assert_eq!(
+            pool(&system, Some("en-US"), true),
+            Spread {
+                pool: vec![4, 3, 2],
+                tier: Tier::Local,
+                gap: Some(gap(6, Tier::Local)),
+            }
+        );
+
+        let elsewhere = [
+            chromium("Kyoko (Premium)", "ja-JP", false),
+            chromium("Thomas (Premium)", "fr-FR", false),
+        ];
+        assert_eq!(
+            pool(&elsewhere, Some("en-US"), true),
+            Spread {
+                pool: Vec::new(),
+                tier: Tier::DeviceDefault,
+                gap: Some(gap(2, Tier::DeviceDefault)),
+            }
+        );
+    }
+
+    #[test]
+    fn a_platform_without_premium_voices_spreads_its_local_voices_silently() {
+        // Firefox on Android publishes the engine's voices under their
+        // engine identifiers; none carries macOS tier evidence.
+        let android = [
+            safari(
+                "English United States",
+                "urn:moz-tts:android:en-us-x-sfg",
+                "en-US",
+                true,
+            ),
+            safari(
+                "English United Kingdom",
+                "urn:moz-tts:android:en-gb-x-gba",
+                "en-GB",
+                false,
+            ),
+            safari("Deutsch", "urn:moz-tts:android:de-de-x-nfh", "de-DE", false),
+            OfferedVoice {
+                name: "English (Cloud)",
+                uri: "urn:moz-tts:android:en-us-cloud",
+                lang: "en-US",
+                local: false,
+                default: false,
+            },
+        ];
+        assert_eq!(
+            pool(&android, Some("en-US"), false),
+            Spread {
+                pool: vec![1, 0],
+                tier: Tier::Local,
+                gap: None,
+            }
+        );
+        assert_eq!(
+            pool(&android, None, false),
+            Spread {
+                pool: Vec::new(),
+                tier: Tier::DeviceDefault,
+                gap: None,
+            }
+        );
+    }
+
+    #[test]
+    fn the_gap_notice_names_the_language_the_substitute_and_the_remedy() {
+        let notice = PremiumGap::NoPremium {
+            language: "en".to_owned(),
+            offered: 68,
+            premium_languages: Vec::new(),
+            substitute: Tier::Local,
+        }
+        .to_string();
+        assert!(notice.contains("language \"en\""), "{notice}");
+        assert!(notice.contains("68 voices"), "{notice}");
+        assert!(
+            notice.contains("its other voices speak instead"),
+            "{notice}"
+        );
+        assert!(notice.contains("say.voices"), "{notice}");
+        assert!(!notice.contains("premium voices speak"), "{notice}");
     }
 
     #[test]
@@ -541,7 +757,7 @@ mod tests {
         let members: Vec<_> = (0..3).map(|n| id(700 + n)).collect();
         let teams = [(id(1), members.clone())];
         let heard = |offered: &[OfferedVoice<'_>]| -> Vec<String> {
-            let pool = pool(offered, Some("en-US")).expect("premium pool");
+            let pool = pool(offered, Some("en-US"), true).pool;
             members
                 .iter()
                 .map(|member| {
