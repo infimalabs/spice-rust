@@ -1,5 +1,5 @@
 //! macOS voice tier evidence: premium, the tier automatic spreading prefers,
-//! and enhanced, the tier it accepts next.
+//! enhanced, the tier it accepts next, and the novelty voices it never speaks.
 //!
 //! Safari publishes the provider's canonical identifier as the voice URI,
 //! `com.apple.voice.premium.<language>.<name>` or
@@ -8,6 +8,9 @@
 //! tier with the exact macOS display-name suffix ` (Premium)` or
 //! ` (Enhanced)`. Either piece of evidence admits a voice the device serves
 //! locally; compact, novelty, remote, and unmarked voices carry neither tier.
+//! The novelty set (Bells, Bubbles, Zarvox, ...) publishes under
+//! `com.apple.speech.synthesis.voice.<Name>` and outnumbers the compact voices
+//! WebKit serves, so the local tier excludes it by that identifier.
 
 use super::OfferedVoice;
 
@@ -19,6 +22,8 @@ const PREMIUM_NAME_MARKER: &str = " (Premium)";
 const ENHANCED_URI_PREFIX: &str = "com.apple.voice.enhanced.";
 /// The exact macOS display-name marker for enhanced voices.
 const ENHANCED_NAME_MARKER: &str = " (Enhanced)";
+/// The provider's canonical identifier prefix for the novelty voices.
+const NOVELTY_URI_PREFIX: &str = "com.apple.speech.synthesis.voice.";
 
 /// Whether `voice` carries macOS premium evidence.
 #[must_use]
@@ -32,6 +37,13 @@ pub fn is_premium(voice: &OfferedVoice<'_>) -> bool {
 pub fn is_enhanced(voice: &OfferedVoice<'_>) -> bool {
     voice.local
         && (tier_uri(voice.uri, ENHANCED_URI_PREFIX) || tier_name(voice.name, ENHANCED_NAME_MARKER))
+}
+
+/// Whether `voice` is a voice the device serves that is meant for speech:
+/// local and not one of the macOS novelty voices.
+#[must_use]
+pub fn is_speaking(voice: &OfferedVoice<'_>) -> bool {
+    voice.local && !voice.uri.starts_with(NOVELTY_URI_PREFIX)
 }
 
 /// `<prefix><language>.<name>` with both parts present.
