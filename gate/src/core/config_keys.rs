@@ -12,6 +12,7 @@ const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
 const LOCAL_WORKTREE: &[ConfigSource] = &[ConfigSource::Local, ConfigSource::Worktree];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
+const WORKTREE: &[ConfigSource] = &[ConfigSource::Worktree];
 
 /// One packaged configuration key and the authored layers that may supply it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,7 +112,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("say.words_per_minute", LOCAL),
     ConfigKeyDeclaration::new("proof.image", TRACKED),
     ConfigKeyDeclaration::new("proof.container", LOCAL),
-    ConfigKeyDeclaration::new("proof.runner", LOCAL_WORKTREE),
+    ConfigKeyDeclaration::new("proof.runner", WORKTREE),
 ];
 
 pub(super) fn config_keys(contract: &ParsedContract) -> Result<CoreObservation, CoreInputError> {

@@ -8,11 +8,12 @@ pub(super) fn render_records(
     render_command_records(output, &build.commands)?;
     writeln!(
         output,
-        "[release] target={} source={} payload={} path={}",
+        "[release] target={} source={} payload={} path={} executable={}",
         build.target,
         build.source,
         build.staged.payload_digest,
-        build.staged.payload_path.display()
+        build.staged.payload_path.display(),
+        build.executable.display()
     )
     .map_err(TargetBuildError::Output)?;
     render_canvas(output, &build.staged.canvas, build.app_tree).map_err(TargetBuildError::Output)

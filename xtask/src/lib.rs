@@ -16,6 +16,8 @@ mod release;
 #[cfg(not(target_arch = "wasm32"))]
 mod report;
 #[cfg(not(target_arch = "wasm32"))]
+mod seal_darwin;
+#[cfg(not(target_arch = "wasm32"))]
 mod share_darwin;
 #[cfg(not(target_arch = "wasm32"))]
 mod test_evidence;
@@ -52,6 +54,8 @@ pub use release::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use report::report;
+#[cfg(not(target_arch = "wasm32"))]
+pub use seal_darwin::{PlacedExecutable, SealDarwinError, place_executable, seal_runner};
 #[cfg(not(target_arch = "wasm32"))]
 pub use share_darwin::{ShareDarwinError, ShareDarwinRequest, share_darwin};
 #[cfg(not(target_arch = "wasm32"))]

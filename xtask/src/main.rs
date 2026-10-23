@@ -21,6 +21,7 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
+    "seal-darwin [--output DIR]|",
     "share-darwin EXECUTABLE --identity IDENTITY --notary-profile PROFILE|",
     "stage-target TARGET|windows-appliance|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
     "windows-guest <provision [--replace]|start|stop|status|reset|",
@@ -86,6 +87,10 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("proof-image") => {
             drop(output);
             return run_proof_image(arguments.collect());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("seal-darwin") => {
+            run_seal_darwin(arguments.collect(), &mut output)
         }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("share-darwin") => {
@@ -244,6 +249,29 @@ fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> Com
         .map_err(Into::into)
 }
 
+/// Seal this worktree's runner at HEAD, bind it here, stage the sealed Darwin
+/// target, and place the executable: one point-in-time build that touches no
+/// other worktree, the installed appliance, or the resident.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_seal_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    let destination = match arguments.as_slice() {
+        [] => None,
+        [flag, directory] if flag == OsStr::new("--output") => Some(PathBuf::from(directory)),
+        _ => {
+            eprintln!("{}", help());
+            return Err(usage_error().into());
+        }
+    };
+    const TARGET: &str = "aarch64-apple-darwin";
+    let root = env::current_dir()?;
+    xtask::seal_runner(&root, output)?;
+    preflight_native_release(TARGET)?;
+    let build = xtask::stage_target(TARGET, release_environment(), output)?;
+    if let Some(directory) = destination {
+        xtask::place_executable(&build.executable, &directory, output)?;
+    }
+    Ok(())
+}
 #[cfg(not(target_arch = "wasm32"))]
 fn run_share_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
     let [executable, identity_flag, identity, profile_flag, profile] = arguments.as_slice() else {
@@ -506,7 +534,11 @@ fn preflight_native_release(target: &str) -> Result<(), Box<dyn std::error::Erro
     let runner = config.root().proof().runner().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            "proof.runner is required before Darwin release staging",
+            concat!(
+                "proof.runner is required before Darwin release staging; ",
+                "seal and bind this worktree's runner with dist/proof-runner/build.sh ",
+                "or run seal-darwin"
+            ),
         )
     })?;
     let deadlines = Deadlines::new(
@@ -516,9 +548,21 @@ fn preflight_native_release(target: &str) -> Result<(), Box<dyn std::error::Erro
     )?;
     let limits = proof::Limits::new(deadlines, Duration::from_secs(5), 1024 * 1024)?;
     let admitted =
-        proof::NativeRunner::attest(runner.as_path(), repository.worktree_root(), limits)?;
-    admitted.preflight()?;
+        proof::NativeRunner::attest(runner.as_path(), repository.worktree_root(), limits)
+            .map_err(|error| runner_refused(runner.as_path(), &error))?;
+    admitted
+        .preflight()
+        .map_err(|error| runner_refused(runner.as_path(), &error))?;
     Ok(())
+}
+
+/// Name the bound runner in its refusal: the runner's own stderr already
+/// names its sealed commit, the observed HEAD, and the reseal command.
+fn runner_refused(runner: &Path, error: &proof::NativeError) -> io::Error {
+    io::Error::other(format!(
+        "proof.runner {} (this worktree's binding) refused: {error}",
+        runner.display()
+    ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

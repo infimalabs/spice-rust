@@ -270,6 +270,9 @@ impl Descriptor {
 const TRACKED: &[ConfigSource] = &[ConfigSource::Tracked];
 const LOCAL_WORKTREE: &[ConfigSource] = &[ConfigSource::Local, ConfigSource::Worktree];
 const LOCAL: &[ConfigSource] = &[ConfigSource::Local];
+/// A binding to one worktree's own build output: a Git-common default would
+/// hand every other worktree a value sealed for a different commit and tree.
+const WORKTREE: &[ConfigSource] = &[ConfigSource::Worktree];
 const TRACKED_FLAG: &[ConfigSource] = &[ConfigSource::Tracked, ConfigSource::Flag];
 
 macro_rules! configuration_registry {
@@ -798,7 +801,7 @@ configuration_registry! {
     fixed "proof.runner" {
         kind: String,
         builtin: Some(Builtin::Absent),
-        layers: LOCAL_WORKTREE,
+        layers: WORKTREE,
         class: WorktreeLocal,
         flag: None,
     }

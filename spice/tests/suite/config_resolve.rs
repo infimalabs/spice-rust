@@ -496,15 +496,14 @@ fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
     let runner = absolute("runner");
 
     for (include_container, include_runner) in [(true, false), (false, true), (true, true)] {
-        let mut local = String::from("[proof]\n");
-        if include_container {
-            local.push_str(&format!("container = \"{container}\"\n"));
-        }
-        if include_runner {
-            local.push_str(&format!("runner = \"{runner}\"\n"));
-        }
-        let resolved =
-            resolve(documents(None, Some(&local))).expect("absolute local paths resolve");
+        let local = include_container
+            .then(|| format!("[proof]\ncontainer = \"{container}\"\n"))
+            .unwrap_or_default();
+        let worktree = include_runner
+            .then(|| format!("[proof]\nrunner = \"{runner}\"\n"))
+            .unwrap_or_default();
+        let resolved = resolve(worktree_documents(None, Some(&worktree), Some(&local)))
+            .expect("absolute local and worktree paths resolve");
 
         assert_eq!(
             resolved.root().proof().container().map(AsRef::as_ref),
@@ -514,14 +513,14 @@ fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
             resolved.root().proof().runner().map(AsRef::as_ref),
             include_runner.then_some(Path::new(&runner))
         );
-        for (path, present) in [
-            ("proof.container", include_container),
-            ("proof.runner", include_runner),
+        for (path, present, source) in [
+            ("proof.container", include_container, ConfigSource::Local),
+            ("proof.runner", include_runner, ConfigSource::Worktree),
         ] {
             assert_eq!(
                 path_source(&resolved, path),
                 if present {
-                    ConfigSource::Local
+                    source
                 } else {
                     ConfigSource::Builtin
                 }
@@ -553,14 +552,13 @@ fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
 }
 
 #[test]
-fn proof_runner_binds_per_worktree_while_the_container_stays_git_common() {
-    let shared = absolute("shared-runner");
+fn proof_runner_binds_only_in_its_worktree_while_the_container_stays_git_common() {
     let sealed = absolute("sealed-runner");
     let container = absolute("container");
     let worktree = format!("[proof]\nrunner = \"{sealed}\"\n");
-    let local = format!("[proof]\ncontainer = \"{container}\"\nrunner = \"{shared}\"\n");
+    let local = format!("[proof]\ncontainer = \"{container}\"\n");
     let resolved = resolve(worktree_documents(None, Some(&worktree), Some(&local)))
-        .expect("a worktree runner overrides the Git-common runner");
+        .expect("a worktree runner resolves beside the Git-common container");
     assert_eq!(
         resolved.root().proof().runner().map(AsRef::as_ref),
         Some(Path::new(&sealed))
@@ -574,6 +572,22 @@ fn proof_runner_binds_per_worktree_while_the_container_stays_git_common() {
         ConfigSource::Local
     );
 
+    // A runner is sealed for one worktree's HEAD and vendor tree, so a
+    // Git-common default would hand every other worktree a stale seal: it is
+    // reported, never applied.
+    let shared = absolute("shared-runner");
+    let stale = format!("[proof]\ncontainer = \"{container}\"\nrunner = \"{shared}\"\n");
+    let error = resolve(worktree_documents(None, Some(&worktree), Some(&stale)))
+        .expect_err("a Git-common runner never binds a worktree");
+    assert_policy_issue(&error, ConfigSource::Local, "proof.runner");
+    assert!(
+        error
+            .issues()
+            .iter()
+            .any(|issue| issue.message().contains("worktree.toml")
+                && issue.message().contains("never a Git-common default"))
+    );
+
     let worktree_container = format!("[proof]\ncontainer = \"{container}\"\n");
     let error = resolve(worktree_documents(None, Some(&worktree_container), None))
         .expect_err("a worktree never selects the Git-common container");
@@ -581,10 +595,7 @@ fn proof_runner_binds_per_worktree_while_the_container_stays_git_common() {
 
     let runner = descriptor(&[PathSegment::Key("proof"), PathSegment::Key("runner")])
         .expect("proof runner descriptor");
-    assert_eq!(
-        runner.layers(),
-        [ConfigSource::Local, ConfigSource::Worktree]
-    );
+    assert_eq!(runner.layers(), [ConfigSource::Worktree]);
     let container = descriptor(&[PathSegment::Key("proof"), PathSegment::Key("container")])
         .expect("proof container descriptor");
     assert_eq!(container.layers(), [ConfigSource::Local]);
@@ -634,7 +645,7 @@ fn proof_executable_paths_refuse_tracked_relative_and_empty_routes() {
             (
                 Some("proof.runner".to_owned()),
                 ConfigSource::Local,
-                IssueKind::Malformed,
+                IssueKind::Policy,
             ),
         ]
     );
@@ -775,29 +786,30 @@ fn authored_documents_can_address_every_registry_descriptor() {
     let local = format!(
         concat!(
             "{}",
-            "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+            "[proof]\ncontainer = \"{}\"\n",
             "[vendor.omp]\nmodel = \"omp-current\"\neffort = \"max\"\n",
         ),
         LOCAL_MACHINE_DOCUMENT,
         absolute("container"),
-        absolute("runner")
     );
-    let resolved = resolve(documents(
+    let worktree = format!("[proof]\nrunner = \"{}\"\n", absolute("runner"));
+    let resolved = resolve(worktree_documents(
         Some(TRACKED_ALL_DESCRIPTOR_DOCUMENT),
+        Some(&worktree),
         Some(&local),
     ))
-    .expect("tracked and local descriptors resolve together");
+    .expect("tracked, local, and worktree descriptors resolve together");
 
     for row in resolved.provenance() {
         let segments = row.path().segments().collect::<Vec<_>>();
-        let tracked = spice::config::descriptors()
+        let layers = spice::config::descriptors()
             .iter()
             .find(|entry| entry.template().matches(&segments))
-            .is_some_and(|entry| entry.layers().contains(&ConfigSource::Tracked));
-        let expected = if tracked {
-            ConfigSource::Tracked
-        } else {
-            ConfigSource::Local
+            .map(|entry| entry.layers());
+        let expected = match layers {
+            Some(layers) if layers.contains(&ConfigSource::Tracked) => ConfigSource::Tracked,
+            Some([ConfigSource::Worktree]) => ConfigSource::Worktree,
+            _ => ConfigSource::Local,
         };
         assert_eq!(row.source(), expected, "{}", row.path());
     }

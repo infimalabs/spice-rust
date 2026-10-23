@@ -179,16 +179,18 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
     let runner = absolute("runner");
     write(
         worktree_path(&root.join(".git")),
-        b"[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n",
+        format!(
+            "[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n[proof]\nrunner = \"{runner}\"\n"
+        ),
     );
     write(
         local_path(&root),
         format!(
             concat!(
                 "[listen]\nwindow = \"3m\"\n[lock.alpha]\ndirectory = 'locks/alpha'\nshards = 2\n",
-                "[proof]\ncontainer = \"{}\"\nrunner = \"{}\"\n",
+                "[proof]\ncontainer = \"{}\"\n",
             ),
-            container, runner
+            container
         ),
     );
 
@@ -259,7 +261,10 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
         path_source(&resolved, "proof.container"),
         ConfigSource::Local
     );
-    assert_eq!(path_source(&resolved, "proof.runner"), ConfigSource::Local);
+    assert_eq!(
+        path_source(&resolved, "proof.runner"),
+        ConfigSource::Worktree
+    );
 }
 
 #[test]
