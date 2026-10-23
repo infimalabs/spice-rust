@@ -12,14 +12,19 @@ const STORED_FOLDER_LIMIT: usize = 4_096;
 const STORED_ENTRY_LIMIT: usize = 65_536;
 
 /// The transcripts omp keeps for `thread` beneath the folder named by
-/// the working directory this process was asked from, when any are there.
+/// the working directory this process was asked from, or failing that by
+/// the nearest ancestor of that directory whose folder holds one.
 ///
 /// Resolving one's own live thread is by far the most common lookup, and
-/// the process asking is, unless it changed directory afterward, still
-/// sitting in the exact directory that named the folder -- so this needs no
-/// search at all, only that one folder checked under the same regular-file
-/// rule the walk admits by. A miss is silent: the caller walks the sessions
-/// root exactly as if this were never tried.
+/// the process asking is usually sitting in the directory that named the
+/// folder, or in a subdirectory of it (`target/`, a crate, a scratch dir),
+/// so this needs no search at all, only the folders named by the directory
+/// and its ancestors checked nearest first under the same regular-file rule
+/// the walk admits by. Nearest wins, so a nested project with its own
+/// session folder is never shadowed by its parent's; the ancestor count is
+/// the path depth, so no bound is needed. A miss is silent: the caller tries
+/// sibling worktrees and then walks the sessions root exactly as if this
+/// were never tried.
 pub(super) fn working_directory_transcripts(
     sessions: &Path,
     thread: &str,
@@ -28,10 +33,14 @@ pub(super) fn working_directory_transcripts(
     let Some(cwd) = environment.cwd.as_deref() else {
         return Vec::new();
     };
-    let Some(folder) = omp_session_folder(cwd, environment) else {
+    let Ok(cwd) = fs::canonicalize(cwd) else {
         return Vec::new();
     };
-    transcripts_in(&sessions.join(folder), thread)
+    cwd.ancestors()
+        .filter_map(|directory| omp_session_folder(directory, environment))
+        .map(|folder| transcripts_in(&sessions.join(folder), thread))
+        .find(|transcripts| !transcripts.is_empty())
+        .unwrap_or_default()
 }
 
 /// OMP folders implied by sibling working directories that share the current
@@ -214,7 +223,9 @@ mod tests {
     use std::fs;
 
     use super::super::tests::{Scratch, omp_environment};
-    use super::{omp_session_folder, related_working_directory_transcripts};
+    use super::{
+        omp_session_folder, related_working_directory_transcripts, working_directory_transcripts,
+    };
 
     const THREAD: &str = "01234567-89ab-cdef-0123-456789abcdef";
 
@@ -258,6 +269,44 @@ mod tests {
                 cwd.display()
             );
         }
+    }
+
+    #[test]
+    fn a_subdirectory_resolves_through_the_nearest_ancestor_folder_holding_the_thread() {
+        let scratch = Scratch::new("omp-ancestor-folder");
+        let home = scratch.path().join("home");
+        let project = home.join("devel").join("project");
+        let cwd = project.join("target").join("review").join("cards");
+        fs::create_dir_all(&cwd).expect("nested working directory exists");
+        let sessions = scratch.path().join("sessions");
+        let filed = |folder: &str| {
+            let folder = sessions.join(folder);
+            fs::create_dir_all(&folder).expect("OMP folder exists");
+            let transcript = folder.join(format!("2026-10-02T00-00-00-000Z_{THREAD}.jsonl"));
+            fs::write(&transcript, b"\n").expect("transcript exists");
+            transcript
+        };
+        let environment = omp_environment(scratch.path(), &cwd, &home, None);
+
+        assert_eq!(
+            working_directory_transcripts(&sessions, THREAD, &environment),
+            Vec::<std::path::PathBuf>::new(),
+            "no ancestor's folder holds the thread yet"
+        );
+
+        let under_project = filed("-devel-project");
+        assert_eq!(
+            working_directory_transcripts(&sessions, THREAD, &environment),
+            vec![under_project.clone()],
+            "the worktree root's folder is found from three directories down"
+        );
+
+        let under_target = filed("-devel-project-target");
+        assert_eq!(
+            working_directory_transcripts(&sessions, THREAD, &environment),
+            vec![under_target],
+            "the nearer ancestor's folder wins over the root's"
+        );
     }
 
     #[test]
