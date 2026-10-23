@@ -12,52 +12,49 @@ const STORED_FOLDER_LIMIT: usize = 4_096;
 const STORED_ENTRY_LIMIT: usize = 65_536;
 
 /// The transcripts omp keeps for `thread` beneath the folder named by
-/// the working directory this process was asked from, or failing that by
-/// the nearest ancestor of that directory whose folder holds one.
+/// `directory`, or failing that by the nearest ancestor of it whose folder
+/// holds one.
 ///
-/// Resolving one's own live thread is by far the most common lookup, and
-/// the process asking is usually sitting in the directory that named the
-/// folder, or in a subdirectory of it (`target/`, a crate, a scratch dir),
-/// so this needs no search at all, only the folders named by the directory
-/// and its ancestors checked nearest first under the same regular-file rule
-/// the walk admits by. Nearest wins, so a nested project with its own
-/// session folder is never shadowed by its parent's; the ancestor count is
-/// the path depth, so no bound is needed. A miss is silent: the caller tries
-/// sibling worktrees and then walks the sessions root exactly as if this
-/// were never tried.
+/// `directory` is the session's launch directory when the caller holds it
+/// (a lane's recorded worktree), so the first folder checked is the one omp
+/// wrote. For its own live thread a caller passes its working directory,
+/// which is usually the directory that named the folder or a subdirectory of
+/// it (`target/`, a crate, a scratch dir). Either way this needs no search,
+/// only the folders named by the directory and its ancestors checked nearest
+/// first under the same regular-file rule the walk admits by. Nearest wins,
+/// so a nested project with its own session folder is never shadowed by its
+/// parent's; the ancestor count is the path depth, so no bound is needed. A
+/// miss is silent: the caller tries sibling worktrees and then walks the
+/// sessions root exactly as if this were never tried.
 pub(super) fn working_directory_transcripts(
     sessions: &Path,
     thread: &str,
+    directory: Option<&Path>,
     environment: &Environment,
 ) -> Vec<PathBuf> {
-    let Some(cwd) = environment.cwd.as_deref() else {
+    let Some(Ok(directory)) = directory.map(fs::canonicalize) else {
         return Vec::new();
     };
-    let Ok(cwd) = fs::canonicalize(cwd) else {
-        return Vec::new();
-    };
-    cwd.ancestors()
+    directory
+        .ancestors()
         .filter_map(|directory| omp_session_folder(directory, environment))
         .map(|folder| transcripts_in(&sessions.join(folder), thread))
         .find(|transcripts| !transcripts.is_empty())
         .unwrap_or_default()
 }
 
-/// OMP folders implied by sibling working directories that share the current
-/// directory's stem. Git worktrees commonly differ only in a final lane
+/// OMP folders implied by sibling working directories that share
+/// `directory`'s stem. Git worktrees commonly differ only in a final lane
 /// suffix (`project-a`, `project-b`, ...), so this resolves handoffs without
 /// inspecting unrelated stored sessions.
 pub(super) fn related_working_directory_transcripts(
     sessions: &Path,
     thread: &str,
+    directory: Option<&Path>,
     environment: &Environment,
 ) -> Vec<PathBuf> {
-    let Some(cwd) = environment.cwd.as_deref() else {
+    let Some(Ok(cwd)) = directory.map(fs::canonicalize) else {
         return Vec::new();
-    };
-    let cwd = match fs::canonicalize(cwd) {
-        Ok(cwd) => cwd,
-        Err(_) => return Vec::new(),
     };
     let Some(parent) = cwd.parent() else {
         return Vec::new();
@@ -289,21 +286,36 @@ mod tests {
         let environment = omp_environment(scratch.path(), &cwd, &home, None);
 
         assert_eq!(
-            working_directory_transcripts(&sessions, THREAD, &environment),
+            working_directory_transcripts(
+                &sessions,
+                THREAD,
+                environment.cwd.as_deref(),
+                &environment
+            ),
             Vec::<std::path::PathBuf>::new(),
             "no ancestor's folder holds the thread yet"
         );
 
         let under_project = filed("-devel-project");
         assert_eq!(
-            working_directory_transcripts(&sessions, THREAD, &environment),
+            working_directory_transcripts(
+                &sessions,
+                THREAD,
+                environment.cwd.as_deref(),
+                &environment
+            ),
             vec![under_project.clone()],
             "the worktree root's folder is found from three directories down"
         );
 
         let under_target = filed("-devel-project-target");
         assert_eq!(
-            working_directory_transcripts(&sessions, THREAD, &environment),
+            working_directory_transcripts(
+                &sessions,
+                THREAD,
+                environment.cwd.as_deref(),
+                &environment
+            ),
             vec![under_target],
             "the nearer ancestor's folder wins over the root's"
         );
@@ -325,7 +337,12 @@ mod tests {
         let environment = omp_environment(scratch.path(), &cwd, &home, None);
 
         assert_eq!(
-            related_working_directory_transcripts(&sessions, THREAD, &environment),
+            related_working_directory_transcripts(
+                &sessions,
+                THREAD,
+                environment.cwd.as_deref(),
+                &environment
+            ),
             vec![transcript]
         );
     }

@@ -69,7 +69,7 @@ fn resolve_thread_from_registry(
     vendors.sort_by_key(|vendor| vendor.name() != preferred.name());
     let mut failures = Vec::new();
     for vendor in vendors {
-        match find_thread(&thread, vendor, environment) {
+        match find_thread(&thread, vendor, environment.cwd.as_deref(), environment) {
             Ok(paths) => {
                 let admitted = paths
                     .into_iter()
@@ -101,14 +101,19 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
                     "repair the live vendor thread identity or pass an explicit transcript path",
                 )
             })?;
-            let paths =
-                find_thread(&thread, vendor_environment.vendor, environment).map_err(|detail| {
-                    refusal(
-                        "session::ambient-transcript-unresolved",
-                        Some(thread.clone()),
-                        &format!("pass the transcript path explicitly; {detail}"),
-                    )
-                })?;
+            let paths = find_thread(
+                &thread,
+                vendor_environment.vendor,
+                environment.cwd.as_deref(),
+                environment,
+            )
+            .map_err(|detail| {
+                refusal(
+                    "session::ambient-transcript-unresolved",
+                    Some(thread.clone()),
+                    &format!("pass the transcript path explicitly; {detail}"),
+                )
+            })?;
             let admitted = paths
                 .into_iter()
                 .map(|path| admit(path, Some(vendor_environment.vendor), Some(thread.clone())))
@@ -280,11 +285,13 @@ fn preferred_vendor(
 }
 
 /// Every transcript `vendor` keeps for the canonical dashed `thread`: folders
-/// implied by the working directory first, then vendor-specific storage
+/// implied by `directory` (the session's launch directory, or the caller's
+/// working directory for its own thread) first, then vendor-specific storage
 /// structure, then the generic bounded walk of its sessions root.
 pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
+    directory: Option<&Path>,
     environment: &Environment,
 ) -> Result<Vec<PathBuf>, String> {
     let lookup = thread.replace('-', "");
@@ -300,13 +307,17 @@ pub(super) fn find_thread(
         layout.default_home,
     )?;
     let sessions = root.join(layout.sessions_directory);
-    let direct = folders::working_directory_transcripts(&sessions, thread, environment);
+    let direct = folders::working_directory_transcripts(&sessions, thread, directory, environment);
     if !direct.is_empty() {
         return Ok(direct);
     }
     if vendor == &spice::extension::OMP {
-        let related =
-            folders::related_working_directory_transcripts(&sessions, thread, environment);
+        let related = folders::related_working_directory_transcripts(
+            &sessions,
+            thread,
+            directory,
+            environment,
+        );
         if !related.is_empty() {
             return Ok(related);
         }
@@ -811,6 +822,7 @@ mod tests {
         let found = find_thread(
             THREAD_DASHED,
             &spice::extension::OMP,
+            None,
             &walk_environment(&scratch),
         )
         .expect("OMP's shallow storage layout resolves before the generic walk");
@@ -832,7 +844,12 @@ mod tests {
         fs::set_permissions(&denied, blocked).expect("deny fixture branch reads");
 
         let read_result = fs::read_dir(&denied);
-        let lookup = find_thread(THREAD, &spice::extension::OMP, &walk_environment(&scratch));
+        let lookup = find_thread(
+            THREAD,
+            &spice::extension::OMP,
+            None,
+            &walk_environment(&scratch),
+        );
         fs::set_permissions(&denied, original).expect("restore fixture permissions");
         let read_error = read_result
             .expect_err("fixture must force a real read_dir failure")
@@ -853,8 +870,13 @@ mod tests {
         fs::write(directory.join(format!("thread-{THREAD}.jsonl")), b"\n")
             .expect("deep transcript exists");
 
-        let error = find_thread(THREAD, &spice::extension::OMP, &walk_environment(&scratch))
-            .expect_err("a bounded-out hit cannot become absence");
+        let error = find_thread(
+            THREAD,
+            &spice::extension::OMP,
+            None,
+            &walk_environment(&scratch),
+        )
+        .expect_err("a bounded-out hit cannot become absence");
 
         assert!(error.contains(&directory.display().to_string()), "{error}");
     }
@@ -869,8 +891,13 @@ mod tests {
         let registry = spice::extension::registry().expect("compiled registry is coherent");
         let environment = omp_environment(scratch.path(), &cwd, &home, None);
 
-        let found = find_thread(THREAD_DASHED, &spice::extension::OMP, &environment)
-            .expect("the named folder holds the thread");
+        let found = find_thread(
+            THREAD_DASHED,
+            &spice::extension::OMP,
+            environment.cwd.as_deref(),
+            &environment,
+        )
+        .expect("the named folder holds the thread");
         assert_eq!(found, vec![transcript.clone()]);
         for spelling in [THREAD, THREAD_DASHED] {
             let resolved = resolve_thread_from_registry(spelling, &environment, &registry)
@@ -899,6 +926,51 @@ mod tests {
         );
     }
 
+    /// A caller holding a session's recorded launch directory reaches its
+    /// transcript from anywhere through that directory's folder alone: an
+    /// unreadable decoy folder fails any walk of the store, and the caller's
+    /// own working directory decides nothing.
+    #[cfg(unix)]
+    #[test]
+    fn an_omp_thread_resolves_through_its_launch_directory_from_an_unrelated_caller() {
+        let scratch = Scratch::new("omp-launch");
+        let home = scratch.path().join("home");
+        let worktree = home.join("devel").join("worktree");
+        let caller = home.join("devel").join("resident");
+        fs::create_dir_all(&worktree).expect("launch worktree exists");
+        fs::create_dir_all(&caller).expect("caller directory exists");
+        let transcript = overflowing_omp_sessions(scratch.path(), "-devel-worktree");
+        let denied = scratch.path().join("sessions").join("-denied");
+        fs::create_dir_all(&denied).expect("denied folder exists");
+        let original = fs::metadata(&denied)
+            .expect("denied folder metadata")
+            .permissions();
+        let mut blocked = original.clone();
+        blocked.set_mode(0o0);
+        fs::set_permissions(&denied, blocked).expect("deny fixture folder reads");
+        let environment = omp_environment(scratch.path(), &caller, &home, None);
+
+        let launched = find_thread(
+            THREAD_DASHED,
+            &spice::extension::OMP,
+            Some(&worktree),
+            &environment,
+        );
+        let ambient = find_thread(
+            THREAD_DASHED,
+            &spice::extension::OMP,
+            environment.cwd.as_deref(),
+            &environment,
+        );
+        fs::set_permissions(&denied, original).expect("restore fixture permissions");
+        assert_eq!(
+            launched.expect("the launch directory's folder holds the thread"),
+            vec![transcript]
+        );
+        let error = ambient.expect_err("the caller's directory leaves only the failing walk");
+        assert!(error.contains(&denied.display().to_string()), "{error}");
+    }
+
     #[test]
     fn an_omp_thread_outside_the_home_resolves_through_the_absolute_folder() {
         let scratch = Scratch::new("omp-absolute");
@@ -920,8 +992,13 @@ mod tests {
         let transcript = overflowing_omp_sessions(scratch.path(), &folder);
         let environment = omp_environment(scratch.path(), &cwd, &home, None);
 
-        let found = find_thread(THREAD_DASHED, &spice::extension::OMP, &environment)
-            .expect("the absolute folder holds the thread");
+        let found = find_thread(
+            THREAD_DASHED,
+            &spice::extension::OMP,
+            environment.cwd.as_deref(),
+            &environment,
+        )
+        .expect("the absolute folder holds the thread");
         assert_eq!(found, vec![transcript]);
     }
 

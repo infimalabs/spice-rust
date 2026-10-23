@@ -6,7 +6,7 @@
 //! wire compatibility data only; current task commands never produce it.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use wire::{Outcome, Refusal, Reply, ReplyPosition};
@@ -22,15 +22,19 @@ mod source;
 
 pub(crate) use model::Report;
 
-/// Resolve one known vendor thread to its preserved transcript.
+/// Resolve one known vendor thread, launched in `worktree`, to its preserved
+/// transcript.
 ///
 /// The resident uses this same path law to recover structured events that the
 /// vendor's selected stdout stream does not carry. Keeping resolution here
 /// prevents the app from growing a second interpretation of vendor homes,
-/// state indexes, or transcript search precedence.
+/// state indexes, or transcript search precedence. The lookup keys on the
+/// session's recorded launch directory, never the caller's own, so a lane's
+/// transcript resolves from any process without searching the store.
 pub(crate) fn vendor_thread_transcript(
     thread: &str,
     vendor_name: &wire::Name,
+    worktree: &Path,
     environment: &Environment,
 ) -> Result<(PathBuf, listen::Dialect), String> {
     let registry = spice::extension::registry()
@@ -40,7 +44,7 @@ pub(crate) fn vendor_thread_transcript(
         .ok_or_else(|| format!("vendor {} is not registered", vendor_name.as_str()))?;
     let canonical = source::canonical_thread(thread)
         .ok_or_else(|| format!("thread {thread:?} is not a canonical UUID"))?;
-    let path = source::find_thread(&canonical, vendor, environment)?
+    let path = source::find_thread(&canonical, vendor, Some(worktree), environment)?
         .into_iter()
         .next_back()
         .ok_or_else(|| format!("vendor {} resolved no transcript paths", vendor.name()))?;
@@ -300,14 +304,16 @@ fn lane_recall(
             .posture
             .as_ref()
             .and_then(|posture| posture.lane.as_ref())
-            .map(|lane| lane.vendor.clone()),
+            .map(|lane| (lane.vendor.clone(), lane.worktree.clone())),
     );
     let mut files = Vec::new();
-    if let Some((thread, vendor)) = seat {
+    if let Some((thread, (vendor, worktree))) = seat {
         let resolved = vendor
             .parse::<wire::Name>()
             .map_err(|error| error.to_string())
-            .and_then(|vendor| vendor_thread_transcript(&thread, &vendor, environment));
+            .and_then(|vendor| {
+                vendor_thread_transcript(&thread, &vendor, Path::new(&worktree), environment)
+            });
         match resolved {
             Ok((path, _)) => files.push(path.display().to_string()),
             Err(detail) => authorities.unknowns.push(model::AuthorityUnknown {

@@ -372,6 +372,7 @@ impl DurableHistory {
                     crate::session_command::vendor_thread_transcript(
                         &session.identity,
                         &session.vendor,
+                        std::path::Path::new(&session.worktree),
                         &environment,
                     )
                     .ok()
@@ -815,6 +816,7 @@ fn restore_lane(
             crate::session_command::vendor_thread_transcript(
                 &session.identity,
                 &session.vendor,
+                std::path::Path::new(&session.worktree),
                 &crate::session_environment(),
             )
             .ok()
