@@ -61,7 +61,7 @@ authorizes deleting a test; removal needs a reviewed purpose.
   console: [`app/CONSOLE.md`](app/CONSOLE.md); rooms, working groups, and the
   operator inbox: [`app/ROOMS.md`](app/ROOMS.md); Design rooms:
   [`app/DESIGNS.md`](app/DESIGNS.md); the task overview:
-  [`app/OVERVIEW.md`](app/OVERVIEW.md).
+  [`app/OVERVIEW.md`](app/OVERVIEW.md); menus: [`app/MENU.md`](app/MENU.md).
 - Firefox latency profiling: [`app/PROFILE.md`](app/PROFILE.md).
 - The frozen report study: [`xtask/REPORT.md`](xtask/REPORT.md).
 

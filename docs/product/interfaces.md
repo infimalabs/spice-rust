@@ -390,8 +390,11 @@ digest-bound `attachment:` markers, which display projections expand from the
 same record and which are never fetch authority. A send whose prose duplicates
 an attachment's data URL refuses before journal mutation.
 
-Speech is the viewing browser's own system synthesis; nothing renders audio on
-the resident. One global queue speaks sequentially and never overlaps
+Speech is the viewing device's own system synthesis: the browser's
+`speechSynthesis`, or under `spice app` the desktop shell's synthesizer, which
+offers the downloaded voices the embedded web view withholds (see
+[the console's speech surface](../../app/CONSOLE.md#speech)); nothing renders
+audio on the resident. One global queue speaks sequentially and never overlaps
 utterances. An utterance settles on the browser's end or error, and a failure
 is a nonblocking notice that never blocks the visible stream — the transcript
 remains the record. `say.voices` is an ordered list of voice names, scoped to

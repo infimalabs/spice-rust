@@ -1,14 +1,21 @@
-//! Browser system synthesis for each queued entry's admitted worktree voices.
+//! System synthesis for each queued entry's admitted worktree voices.
+//!
+//! A page in the desktop shell speaks through the shell's own synthesizer (see
+//! [`shell`]), which offers the voices WebKit withholds from
+//! `speechSynthesis`; every other page speaks through the browser's.
+
+mod shell;
 
 use std::collections::HashMap;
 
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{Event, SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
+use web_sys::{SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
 
 use crate::speech_owner::PlaybackOwnership;
 use crate::speech_rate::system_rate;
 use crate::voice_spread::{self, OfferedVoice};
+use shell::ShellSpeech;
 use wire::CanonicalUuid;
 
 /// How many offered voice names a refusal names before eliding the rest, so
@@ -49,17 +56,113 @@ pub enum VoiceRequest<'a> {
     Default,
 }
 
-/// One browser playback owner. Replacements always stop the prior utterance first.
+/// The synthesizer a page speaks through.
+#[derive(Clone)]
+enum Engine {
+    Browser(SpeechSynthesis),
+    Shell(ShellSpeech),
+}
+
+impl Engine {
+    /// The desktop shell's synthesizer when it installed one, else the
+    /// browser's.
+    fn current() -> Result<Self, String> {
+        let window = web_sys::window().ok_or_else(|| "browser window is unavailable".to_owned())?;
+        if let Some(shell) = ShellSpeech::installed(&window) {
+            return Ok(Self::Shell(shell));
+        }
+        window
+            .speech_synthesis()
+            .map(Self::Browser)
+            .map_err(|_| "system speech is unavailable".to_owned())
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        match self {
+            Self::Browser(synthesis) => synthesis
+                .get_voices()
+                .iter()
+                .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
+                .map(Voice::browser)
+                .collect(),
+            Self::Shell(shell) => shell.voices().into_iter().map(Voice::shell).collect(),
+        }
+    }
+
+    fn observe_voices(&self, observer: Option<&js_sys::Function>) {
+        match self {
+            Self::Browser(synthesis) => synthesis.set_onvoiceschanged(observer),
+            Self::Shell(shell) => shell.observe_voices(observer),
+        }
+    }
+
+    fn cancel(&self) {
+        match self {
+            Self::Browser(synthesis) => synthesis.cancel(),
+            Self::Shell(shell) => shell.cancel(),
+        }
+    }
+}
+
+/// One published voice, whichever synthesizer published it.
+#[derive(Clone)]
+struct Voice {
+    name: String,
+    /// The voice URI, or the shell's voice identifier.
+    uri: String,
+    lang: String,
+    local: bool,
+    default: bool,
+    /// The browser's own record, which a browser utterance must be given.
+    browser: Option<SpeechSynthesisVoice>,
+}
+
+impl Voice {
+    fn browser(voice: SpeechSynthesisVoice) -> Self {
+        Self {
+            name: voice.name(),
+            uri: voice.voice_uri(),
+            lang: voice.lang(),
+            local: voice.local_service(),
+            default: voice.default(),
+            browser: Some(voice),
+        }
+    }
+
+    /// The shell's synthesizer serves every voice it lists on the device.
+    fn shell(voice: shell::ShellVoice) -> Self {
+        Self {
+            name: voice.name,
+            uri: voice.identifier,
+            lang: voice.language,
+            local: true,
+            default: voice.default,
+            browser: None,
+        }
+    }
+
+    const fn offered(&self) -> OfferedVoice<'_> {
+        OfferedVoice {
+            name: self.name.as_str(),
+            uri: self.uri.as_str(),
+            lang: self.lang.as_str(),
+            local: self.local,
+            default: self.default,
+        }
+    }
+}
+
+/// One playback owner. Replacements always stop the prior utterance first.
 #[derive(Default)]
 pub struct Controller {
     ownership: PlaybackOwnership,
-    synthesis: Option<SpeechSynthesis>,
+    engine: Option<Engine>,
     utterance: Option<SpeechSynthesisUtterance>,
-    on_end: Option<Closure<dyn FnMut(Event)>>,
-    on_error: Option<Closure<dyn FnMut(Event)>>,
-    on_voices: Option<Closure<dyn FnMut(Event)>>,
+    on_end: Option<Closure<dyn FnMut(JsValue)>>,
+    on_error: Option<Closure<dyn FnMut(JsValue)>>,
+    on_voices: Option<Closure<dyn FnMut(JsValue)>>,
     /// The voice each agent settled on; its search runs once per page.
-    chosen: HashMap<String, SpeechSynthesisVoice>,
+    chosen: HashMap<String, Voice>,
 }
 
 impl Controller {
@@ -88,39 +191,39 @@ impl Controller {
         self.release_media();
     }
 
-    /// Release browser resources without changing playback ownership.
+    /// Release synthesizer resources without changing playback ownership.
     fn release_media(&mut self) {
         if let Some(utterance) = &self.utterance {
             utterance.set_onend(None);
             utterance.set_onerror(None);
         }
-        if let Some(synthesis) = &self.synthesis {
-            synthesis.set_onvoiceschanged(None);
-            synthesis.cancel();
+        if let Some(engine) = &self.engine {
+            engine.observe_voices(None);
+            engine.cancel();
         }
-        self.synthesis = None;
+        self.engine = None;
         self.utterance = None;
         self.on_end = None;
         self.on_error = None;
         self.on_voices = None;
     }
 
-    /// Speak `text` for `agent` through the browser's system synthesis.
+    /// Speak `text` for `agent` through the page's system synthesis.
     ///
     /// A [`VoiceRequest::Listed`] request speaks with the first candidate this
-    /// browser publishes, which stays the agent's voice for the rest of the
+    /// page publishes, which stays the agent's voice for the rest of the
     /// page. A [`VoiceRequest::Spread`] request speaks with the member's slot
     /// among the published macOS premium voices sharing the chosen language,
     /// so desktop teammates sound different. Apple mobile callers and
     /// [`VoiceRequest::Default`] speak with the device's default voice.
     ///
-    /// A browser publishes its voice list asynchronously: on a fresh page
-    /// `get_voices` answers an empty list until the engine has enumerated the
-    /// installed voices and fired `voiceschanged`. An empty list is therefore
-    /// no verdict on the candidates; it installs the observer that resumes this
-    /// request and reports [`SystemStart::AwaitingVoices`]. Only a published
-    /// list carrying no listed candidate, or a desktop automatic list carrying
-    /// no premium voice to spread, is refused.
+    /// A synthesizer publishes its voice list asynchronously: on a fresh page
+    /// the list is empty until the engine has enumerated the installed voices
+    /// and fired `voiceschanged`. An empty list is therefore no verdict on the
+    /// candidates; it installs the observer that resumes this request and
+    /// reports [`SystemStart::AwaitingVoices`]. Only a published list carrying
+    /// no listed candidate, or a desktop automatic list carrying no premium
+    /// voice to spread, is refused.
     pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
@@ -143,72 +246,75 @@ impl Controller {
         if !self.is_current(generation) {
             return Err("speech request was superseded".to_owned());
         }
-        let synthesis = web_sys::window()
-            .ok_or_else(|| "browser window is unavailable".to_owned())?
-            .speech_synthesis()
-            .map_err(|_| "system speech is unavailable".to_owned())?;
+        let engine = Engine::current()?;
         let voice = match request {
             VoiceRequest::Default => None,
             VoiceRequest::Listed(voices) => match self.chosen.get(agent) {
-                Some(voice) if voices.contains(&voice.name()) => Some(voice.clone()),
+                Some(voice) if voices.contains(&voice.name) => Some(voice.clone()),
                 _ => {
-                    let Some(offered) = self.published(&synthesis, on_voices) else {
+                    let Some(offered) = self.published(&engine, on_voices) else {
                         return Ok(SystemStart::AwaitingVoices);
                     };
                     let voice = voices
                         .iter()
-                        .find_map(|name| offered.iter().find(|voice| voice.name() == *name))
+                        .find_map(|name| offered.iter().find(|voice| voice.name == *name))
                         .ok_or_else(|| unavailable_voices(voices, &offered))?;
                     self.chosen.insert(agent.to_owned(), voice.clone());
                     Some(voice.clone())
                 }
             },
             VoiceRequest::Spread { teams, member } => {
-                let Some(offered) = self.published(&synthesis, on_voices) else {
+                let Some(offered) = self.published(&engine, on_voices) else {
                     return Ok(SystemStart::AwaitingVoices);
                 };
                 Some(spread_voice(&offered, teams, member)?)
             }
         };
-        let utterance = SpeechSynthesisUtterance::new_with_text(text)
-            .map_err(|_| "system speech utterance could not be created".to_owned())?;
-        utterance.set_voice(voice.as_ref());
-        utterance.set_rate(system_rate(words_per_minute));
-        let ended = Closure::wrap(Box::new(move |_event: Event| on_end()) as Box<dyn FnMut(_)>);
+        let rate = system_rate(words_per_minute);
+        let ended = Closure::wrap(Box::new(move |_event: JsValue| on_end()) as Box<dyn FnMut(_)>);
         let failed = Closure::wrap(
-            Box::new(move |event: Event| on_error(system_failure(&event))) as Box<dyn FnMut(_)>,
+            Box::new(move |event: JsValue| on_error(system_failure(&event))) as Box<dyn FnMut(_)>,
         );
-        utterance.set_onend(Some(ended.as_ref().unchecked_ref()));
-        utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
-        synthesis.set_onvoiceschanged(None);
-        synthesis.speak(&utterance);
-        self.synthesis = Some(synthesis);
-        self.utterance = Some(utterance);
+        engine.observe_voices(None);
+        match &engine {
+            Engine::Browser(synthesis) => {
+                let utterance = SpeechSynthesisUtterance::new_with_text(text)
+                    .map_err(|_| "system speech utterance could not be created".to_owned())?;
+                utterance.set_voice(voice.as_ref().and_then(|voice| voice.browser.as_ref()));
+                utterance.set_rate(rate);
+                utterance.set_onend(Some(ended.as_ref().unchecked_ref()));
+                utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
+                synthesis.speak(&utterance);
+                self.utterance = Some(utterance);
+            }
+            Engine::Shell(shell) => {
+                let handlers = js_sys::Object::new();
+                for (name, handler) in [("onend", &ended), ("onerror", &failed)] {
+                    js_sys::Reflect::set(&handlers, &JsValue::from_str(name), handler.as_ref())
+                        .map_err(|_| "shell speech handlers could not be attached".to_owned())?;
+                }
+                let identifier = voice.as_ref().map_or("", |voice| voice.uri.as_str());
+                shell.speak(text, identifier, rate, &handlers);
+            }
+        }
+        self.engine = Some(engine);
         self.on_end = Some(ended);
         self.on_error = Some(failed);
         self.on_voices = None;
         Ok(SystemStart::Speaking)
     }
 
-    /// The voices this browser publishes, or `None` once the observer that
+    /// The voices `engine` publishes, or `None` once the observer that
     /// resumes the request on `voiceschanged` is installed.
-    fn published(
-        &mut self,
-        synthesis: &SpeechSynthesis,
-        on_voices: impl Fn() + 'static,
-    ) -> Option<Vec<SpeechSynthesisVoice>> {
-        let offered: Vec<SpeechSynthesisVoice> = synthesis
-            .get_voices()
-            .iter()
-            .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
-            .collect();
+    fn published(&mut self, engine: &Engine, on_voices: impl Fn() + 'static) -> Option<Vec<Voice>> {
+        let offered = engine.voices();
         if !offered.is_empty() {
             return Some(offered);
         }
         let observed =
-            Closure::wrap(Box::new(move |_event: Event| on_voices()) as Box<dyn FnMut(_)>);
-        synthesis.set_onvoiceschanged(Some(observed.as_ref().unchecked_ref()));
-        self.synthesis = Some(synthesis.clone());
+            Closure::wrap(Box::new(move |_event: JsValue| on_voices()) as Box<dyn FnMut(_)>);
+        engine.observe_voices(Some(observed.as_ref().unchecked_ref()));
+        self.engine = Some(engine.clone());
         self.on_voices = Some(observed);
         None
     }
@@ -224,32 +330,11 @@ impl Drop for Controller {
 /// chosen language. A list without one refuses, naming the violated
 /// assumption; it never speaks through another tier or the device default.
 fn spread_voice(
-    offered: &[SpeechSynthesisVoice],
+    offered: &[Voice],
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     member: CanonicalUuid,
-) -> Result<SpeechSynthesisVoice, String> {
-    let traits: Vec<(String, String, String, bool, bool)> = offered
-        .iter()
-        .map(|voice| {
-            (
-                voice.name(),
-                voice.voice_uri(),
-                voice.lang(),
-                voice.local_service(),
-                voice.default(),
-            )
-        })
-        .collect();
-    let described: Vec<OfferedVoice<'_>> = traits
-        .iter()
-        .map(|(name, uri, lang, local, default)| OfferedVoice {
-            name,
-            uri,
-            lang,
-            local: *local,
-            default: *default,
-        })
-        .collect();
+) -> Result<Voice, String> {
+    let described: Vec<OfferedVoice<'_>> = offered.iter().map(Voice::offered).collect();
     let language = web_sys::window().and_then(|window| window.navigator().language());
     let pool = voice_spread::pool(&described, language.as_deref())
         .map_err(|refusal| refusal.to_string())?;
@@ -263,11 +348,11 @@ fn spread_voice(
 /// Naming the published voices is what makes a mismatch fixable: the next
 /// `say.voices` entry is one of these names. The list is bounded because a
 /// browser can offer hundreds of voices and this sentence is shown whole.
-fn unavailable_voices(voices: &[String], offered: &[SpeechSynthesisVoice]) -> String {
+fn unavailable_voices(voices: &[String], offered: &[Voice]) -> String {
     let mut names: Vec<String> = offered
         .iter()
         .take(MAX_OFFERED_VOICES)
-        .map(SpeechSynthesisVoice::name)
+        .map(|voice| voice.name.clone())
         .collect();
     if let Some(elided) = offered
         .len()
@@ -284,15 +369,15 @@ fn unavailable_voices(voices: &[String], offered: &[SpeechSynthesisVoice]) -> St
     )
 }
 
-/// Report a failed utterance with the browser's own error code.
+/// Report a failed utterance with the synthesizer's own error code.
 ///
-/// `SpeechSynthesisErrorEvent.error` distinguishes a refused start from an
-/// interrupted one and from a voice the engine could not load, which one
-/// generic sentence hides. The member is read as a string rather than through
-/// the typed `SpeechSynthesisErrorCode`: an engine reporting a code outside
-/// the enumerated set panics that conversion, and an unenumerated code is
-/// exactly the one worth showing.
-fn system_failure(event: &Event) -> String {
+/// `SpeechSynthesisErrorEvent.error`, and the shell's `error` member alike,
+/// distinguish a refused start from an interrupted one and from a voice the
+/// engine could not load, which one generic sentence hides. The member is read
+/// as a string rather than through the typed `SpeechSynthesisErrorCode`: an
+/// engine reporting a code outside the enumerated set panics that conversion,
+/// and an unenumerated code is exactly the one worth showing.
+fn system_failure(event: &JsValue) -> String {
     let Some(code) = js_sys::Reflect::get(event, &JsValue::from_str("error"))
         .ok()
         .and_then(|code| code.as_string())

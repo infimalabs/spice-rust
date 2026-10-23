@@ -48,7 +48,7 @@ reveals the team before focusing that lane's Chat composer.
 
 The Spice sidebar's working-group catalog is the design-side twin of the team
 roster and is drawn by the same roster (see [Resident topology in the global
-menu](OVERVIEW.md#resident-topology-in-the-global-menu)).
+menu](MENU.md#resident-topology-in-the-global-menu)).
 It reads one shared partition: every group in partition order, each holding its
 designs in order and one Passive, Explore, or Converge stance, guarded by one
 revision. A group exists only while designs belong to it: it is never created

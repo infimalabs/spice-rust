@@ -232,6 +232,23 @@ Pointer, keyboard, and touch contact depress SEND without intercepting native
 activation. Held submit modifiers add a command ring outside the recipient rim:
 the focused agent's for a submit, the theme's ink for a broadcast.
 
+## Speech
+
+Under `spice app` the console speaks through the desktop shell's own
+synthesizer, not the web view's `speechSynthesis`: WebKit offers a page only
+the system's built-in voices, so the premium voices an operator downloads
+would never be heard. The shell injects `window.spiceShellSpeech` at document
+start: `getVoices()` lists each voice's identifier, name, language, quality,
+and whether it is the system language's default; `speak(text, identifier,
+rate, handlers)` replaces the current utterance and calls `onstart`, `onend`,
+or `onerror` with `{error}`; `cancel()` silences it, after which its handlers
+never fire. Requests travel over the shell's IPC channel and answers arrive as
+evaluated script, so the surface needs no token and no content-security
+exception. A new document silences whatever the previous one left speaking.
+When the surface is present the speech controller uses it with the same
+queue, ownership, voice spread, and stop-all lifecycle; a browser never has
+it and keeps `speechSynthesis`.
+
 ## Composer and stream
 
 The composer rides in the Chat plane's scroll content, and its measured height
