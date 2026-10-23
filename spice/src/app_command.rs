@@ -18,8 +18,22 @@ use wire::{
 use crate::command_client::{open_app_result_with, system_browser};
 use crate::resident;
 
-/// The window's title; the console names the repository inside.
-const TITLE: &str = "Spice";
+/// The window's title: the product, then the repository it serves, so the
+/// Window menu and Mission Control tell several repositories apart.
+fn title(common: &Path) -> String {
+    let named = if common.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        common.parent()
+    } else {
+        Some(common)
+    };
+    match named.and_then(Path::file_name) {
+        Some(name) => {
+            let name = name.to_string_lossy();
+            format!("Spice: {}", name.strip_suffix(".git").unwrap_or(&name))
+        }
+        None => "Spice".to_owned(),
+    }
+}
 
 /// Show the console in a native window and answer once it closes.
 pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
@@ -35,7 +49,13 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
         Ok(access) => access.token,
         Err(outcome) => return typed(outcome),
     };
-    let session = match join_or_start(&current, leaf) {
+    let repository = match spice::repository::Repository::discover(&current) {
+        Ok(repository) => repository,
+        Err(error) => {
+            return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
+        }
+    };
+    let session = match join_or_start(&repository, leaf) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
@@ -43,7 +63,8 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
         || session.opened.endpoint.clone(),
         |token| format!("{}#{token}", session.opened.endpoint),
     );
-    let shown = desktop::show(TITLE, &url, |link| {
+    let common = repository.common_dir();
+    let shown = desktop::show(&title(common), &common.to_string_lossy(), &url, |link| {
         let _ = system_browser(link);
     });
     let resident = if session.started {
@@ -74,12 +95,12 @@ struct Session {
     started: bool,
 }
 
-/// Join the resident already serving `current`, or start one without a
+/// Join the resident already serving `repository`, or start one without a
 /// browser launch when none is live.
-fn join_or_start(current: &Path, leaf: &ArgMatches) -> Result<Session, Outcome<AppClosed>> {
-    let repository = spice::repository::Repository::discover(current).map_err(|error| {
-        environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
-    })?;
+fn join_or_start(
+    repository: &spice::repository::Repository,
+    leaf: &ArgMatches,
+) -> Result<Session, Outcome<AppClosed>> {
     let serve = repository
         .admit_resident_client()
         .map_err(|error| crate::state_failure(&error).outcome())?;

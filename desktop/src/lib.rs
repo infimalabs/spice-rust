@@ -38,22 +38,27 @@ mod window;
 
 /// Show `url` in one native window titled `title` and block until it closes.
 ///
+/// `key` names the window frame remembered between launches; one repository
+/// keeps one key.
+///
 /// Links the page asks to open in a new window leave through `external`, so
 /// the console's outbound links reach the system browser rather than a second
 /// webview. `external` receives the exact URL the page named.
 #[cfg(target_os = "macos")]
 pub fn show(
     title: &str,
+    key: &str,
     url: &str,
     external: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<(), WindowError> {
-    window::show(title, url, external)
+    window::show(title, key, url, external)
 }
 
 /// Show `url` in one native window titled `title` and block until it closes.
 #[cfg(not(target_os = "macos"))]
 pub fn show(
     _title: &str,
+    _key: &str,
     _url: &str,
     _external: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<(), WindowError> {

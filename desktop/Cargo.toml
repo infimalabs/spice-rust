@@ -13,8 +13,8 @@ publish.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSSavePanel", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSObject", "NSString", "NSURL", "NSURLRequest"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAlert", "NSAppearance", "NSApplication", "NSButton", "NSColor", "NSColorSpace", "NSControl", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSSavePanel", "NSScreen", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSKeyValueCoding", "NSKeyValueObserving", "NSObject", "NSString", "NSURL", "NSURLRequest", "NSUserDefaults", "NSValue"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKFrameInfo", "WKNavigationAction", "WKOpenPanelParameters", "WKUIDelegate", "WKWebView", "WKWebViewConfiguration", "WKWindowFeatures"] }
 tao = { version = "0.34.8", default-features = false, features = ["rwh_06"] }
 wry = { version = "0.53.5", default-features = false }
