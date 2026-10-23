@@ -98,7 +98,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            life: Life::Steer,
+            life: Life::Drive,
             lease: "15m".parse().expect("the compiled lane lease is valid"),
             runtime: "24h".parse().expect("the compiled lane runtime is valid"),
             vendor: "omp"
