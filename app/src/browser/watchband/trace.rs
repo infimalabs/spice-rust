@@ -96,6 +96,9 @@ pub(super) fn render_composer_rail(
 /// Space the now-dot needs inside the pane's right edge, in CSS pixels.
 const DOT_ROOM: f64 = 1.5;
 
+/// Radius of an operator-direction dot, in CSS pixels.
+const DIRECTION_RADIUS: f64 = 1.8;
+
 /// Samples per curve: about one per six pixels, between five and nine, so a
 /// narrow pip still bends and a wide one stays smooth.
 fn samples(width: f64) -> usize {
@@ -281,9 +284,14 @@ fn render_marker(marker: TraceMarker, width: f64, height: f64) -> Html {
     // pixels on a 2x display, and on 1x whenever x snapped to a whole pixel.
     let rule = x + 0.5;
     match marker.kind {
-        TraceMarkerKind::Direction => html! {
-            <circle data-trace-marker={key} cx={format!("{rule:.2}")} cy="2" r="1.8" />
-        },
+        // Held a radius inside either edge, so a direction sent just now or
+        // leaving the window is drawn whole.
+        TraceMarkerKind::Direction => {
+            let cx = rule.min(width - DIRECTION_RADIUS).max(DIRECTION_RADIUS);
+            html! {
+                <circle data-trace-marker={key} cx={format!("{cx:.2}")} cy="2" r={DIRECTION_RADIUS.to_string()} />
+            }
+        }
         TraceMarkerKind::Failure => html! {
             <rect data-trace-marker={key} x={format!("{x:.2}")} y="0" width="1" height={format!("{height:.2}")} />
         },
