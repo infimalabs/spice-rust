@@ -13,8 +13,11 @@
 //! The shell therefore keeps a minimal bundle in the user's cache directory
 //! whose executable is the running appliance, hard-linked where the volume
 //! allows and copied otherwise, and runs the window from there. The bundle is
+//! also the one place the app's name and icon live: `CFBundleName` is what
+//! the menu bar, the Dock, and the application switcher call it, and
+//! `CFBundleIconFile` names the mark [`crate::icon`] draws. The bundle is
 //! verified on every launch: a changed appliance replaces the executable, and
-//! a changed plist is rewritten.
+//! a changed plist or icon is rewritten.
 
 use std::fs;
 use std::io::{self, Read};
@@ -34,6 +37,9 @@ const CHUNK: usize = 1 << 20;
 /// `EXDEV`, the errno a hard link across volumes fails with.
 const EXDEV: i32 = 18;
 
+/// The icon file name inside `Contents/Resources`; `CFBundleIconFile` names it.
+const ICON: &str = "Spice.icns";
+
 /// The property list naming the bundle; one identity for every appliance.
 fn info_plist() -> String {
     format!(
@@ -45,12 +51,14 @@ fn info_plist() -> String {
             "\t<key>CFBundleIdentifier</key>\n\t<string>{identifier}</string>\n",
             "\t<key>CFBundleName</key>\n\t<string>Spice</string>\n",
             "\t<key>CFBundleExecutable</key>\n\t<string>{executable}</string>\n",
+            "\t<key>CFBundleIconFile</key>\n\t<string>{icon}</string>\n",
             "\t<key>CFBundlePackageType</key>\n\t<string>APPL</string>\n",
             "\t<key>NSHighResolutionCapable</key>\n\t<true/>\n",
             "</dict>\n</plist>\n",
         ),
         identifier = IDENTIFIER,
         executable = EXECUTABLE,
+        icon = ICON,
     )
 }
 
@@ -70,7 +78,8 @@ pub fn bundled_executable(executable: &Path) -> Result<PathBuf, WindowError> {
         .join(BUNDLE)
         .join("Contents");
     let bundled = contents.join("MacOS").join(EXECUTABLE);
-    ensure(&contents, executable, &bundled).map_err(|error| {
+    let icon = crate::icon::icns()?;
+    ensure(&contents, executable, &bundled, &icon).map_err(|error| {
         WindowError::Platform(format!(
             "the window bundle at {} could not be prepared: {error}",
             contents.display()
@@ -94,13 +103,26 @@ fn in_bundle(executable: &Path) -> bool {
             .is_some_and(|extension| extension == "app")
 }
 
-/// Bring the bundle under `contents` to the expected plist and executable.
-fn ensure(contents: &Path, executable: &Path, bundled: &Path) -> io::Result<()> {
+/// Bring the bundle under `contents` to the expected plist, icon, and
+/// executable. A changed plist or icon also touches the bundle directory,
+/// which is what tells LaunchServices to drop the identity it cached for it.
+fn ensure(contents: &Path, executable: &Path, bundled: &Path, icon: &[u8]) -> io::Result<()> {
     fs::create_dir_all(contents.join("MacOS"))?;
+    fs::create_dir_all(contents.join("Resources"))?;
     let plist = contents.join("Info.plist");
     let expected = info_plist();
+    let mut changed = false;
     if fs::read(&plist).ok().as_deref() != Some(expected.as_bytes()) {
         replace(&plist, |staged| fs::write(staged, &expected))?;
+        changed = true;
+    }
+    let icon_path = contents.join("Resources").join(ICON);
+    if fs::read(&icon_path).ok().as_deref() != Some(icon) {
+        replace(&icon_path, |staged| fs::write(staged, icon))?;
+        changed = true;
+    }
+    if changed && let Some(bundle) = contents.parent() {
+        fs::File::open(bundle)?.set_modified(std::time::SystemTime::now())?;
     }
     let source = fs::metadata(executable)?;
     if let Ok(present) = fs::metadata(bundled)
