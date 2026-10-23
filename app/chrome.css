@@ -21,7 +21,9 @@
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
-  --app-commandbar-inset-start: var(--app-shell-edge-start);
+  /* The native window's traffic lights stand in the header's leading edge;
+     only its shell publishes their width, so the browser reserves nothing. */
+  --app-commandbar-inset-start: calc(var(--app-shell-edge-start) + var(--app-titlebar-inset, 0px));
   --app-commandbar-inset-end: var(--app-shell-edge-end);
   /* The trigger clears the hanging global tabs and the rising team tabs by
      two message-rail widths each. Centered between them, its clearance is the
