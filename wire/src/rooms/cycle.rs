@@ -1,19 +1,21 @@
 //! Proposal-backed Design pass cycle.
 //!
 //! An open Design alternates between passes and the input those passes need.
-//! A pass ends at its boundary: the claim release that a proposal recorded, or
-//! a proposal-less free or lapse that abandoned it. Before any boundary the
-//! Design is ready only when its maturity is `Steeped` or the operator nudged
-//! it. After a boundary only counted input recorded later refills it: a typed
-//! contribution, an operator-authored room post, a nudge, decision feedback
-//! that returned or rejected work, or the final settlement of released work.
+//! A pass is a claim won in the design phase; releasing an intake claim ends
+//! none. A pass ends at its boundary: the claim release that a proposal
+//! recorded, or a proposal-less free or lapse that abandoned it. Before any
+//! boundary the Design is ready only when its maturity is `Steeped` or the
+//! operator nudged it. After a boundary only counted input recorded later
+//! refills it: a typed contribution, an operator-authored room post, a nudge,
+//! decision feedback that returned or rejected work, or the final settlement
+//! of released work.
 //! Requests, notices, asks, leaves, group membership, and unrelated facts are
 //! inert.
 //!
 //! [`DesignCycles`] folds those authorities in journal order, one fact at a
 //! time, so replay is bounded by the facts it reads and never rescans a room.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +25,7 @@ use super::{
     RoomDestination, RoomPosted, RoomPublicationContent, RoomPublished,
 };
 use crate::body::{
-    ClaimFreed, ClaimLapsed, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
+    ClaimFreed, ClaimLapsed, ClaimWon, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
     TaskDeleted, TaskDone, TaskReviewed,
 };
 use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
@@ -477,14 +479,18 @@ impl DesignCycleFold {
 
 /// Pass-cycle evidence for every Design, folded from journal facts in order.
 ///
-/// Claim releases are folded for every task because a statement's intent is
-/// not known here; a settled task's fold is dropped. Released work maps each
-/// authorized output or Plan-constructed task to its controlling Design so
-/// its settlement reaches that Design.
+/// A pass is a claim held in the design phase: only a release of a claim won
+/// there is a pass boundary, so releasing an intake claim, before or after the
+/// phase change into design, leaves the first pass gated on maturity or a
+/// nudge. A settled task's fold is dropped. Released work maps each authorized
+/// output or Plan-constructed task to its controlling Design so its settlement
+/// reaches that Design.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DesignCycles {
     designs: HashMap<TaskStamp, DesignCycleFold>,
     released_work: HashMap<TaskStamp, TaskStamp>,
+    /// Tasks whose live claim was won in the design phase.
+    passes: HashSet<TaskStamp>,
 }
 
 impl DesignCycles {
@@ -503,6 +509,7 @@ impl DesignCycles {
                 | FactKind::ExecutionAuthorized
                 | FactKind::TaskAdded
                 | FactKind::OutputControlled
+                | FactKind::ClaimWon
                 | FactKind::ClaimFreed
                 | FactKind::ClaimLapsed
                 | FactKind::TaskDone
@@ -572,7 +579,8 @@ impl DesignCycles {
             | FactKind::CandidateWithdrawn
             | FactKind::ExecutionAuthorized => self.observe_proposal(seq, fact),
             FactKind::TaskAdded | FactKind::OutputControlled => self.observe_control(fact),
-            FactKind::ClaimFreed
+            FactKind::ClaimWon
+            | FactKind::ClaimFreed
             | FactKind::ClaimLapsed
             | FactKind::TaskDone
             | FactKind::TaskReviewed
@@ -656,16 +664,29 @@ impl DesignCycles {
         }
     }
 
-    /// A completed `task::done` or `task::reviewed` positively settles its
+    /// A claim won in the design phase opens a pass its release ends; a
+    /// completed `task::done` or `task::reviewed` positively settles its
     /// task; a phase advance or a finding leaves released work pending.
     fn observe_task(&mut self, seq: Seq, fact: &AnyFact) {
-        let settled = if let Some(freed) = fact.as_body::<ClaimFreed>() {
-            self.design(&freed.task).released(seq);
+        let released = if let Some(won) = fact.as_body::<ClaimWon>() {
+            if won.cell.phase.as_str() == "design" {
+                self.passes.insert(won.task.clone());
+            } else {
+                self.passes.remove(&won.task);
+            }
             return;
-        } else if let Some(lapsed) = fact.as_body::<ClaimLapsed>() {
-            self.design(&lapsed.task).released(seq);
+        } else if let Some(freed) = fact.as_body::<ClaimFreed>() {
+            Some(&freed.task)
+        } else {
+            fact.as_body::<ClaimLapsed>().map(|lapsed| &lapsed.task)
+        };
+        if let Some(task) = released {
+            if self.passes.remove(task) {
+                self.design(task).released(seq);
+            }
             return;
-        } else if let Some(done) = fact.as_body::<TaskDone>() {
+        }
+        let settled = if let Some(done) = fact.as_body::<TaskDone>() {
             if !done
                 .terminal
                 .as_ref()
@@ -689,6 +710,7 @@ impl DesignCycles {
             return;
         };
         self.designs.remove(settled);
+        self.passes.remove(settled);
         if let Some(controller) = self.released_work.remove(settled)
             && let Some(design) = self.designs.get_mut(&controller)
         {
