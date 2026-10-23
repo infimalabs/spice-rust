@@ -169,6 +169,8 @@ pub struct HookActivationSummary {
     hooks_path: String,
     worktrees: Vec<String>,
     mutation_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    skipped: Vec<String>,
 }
 
 impl HookActivationSummary {
@@ -201,6 +203,13 @@ impl HookActivationSummary {
     #[must_use]
     pub const fn mutation_count(&self) -> usize {
         self.mutation_count
+    }
+
+    /// Registered worktrees whose directory is gone, left out of activation
+    /// until `git worktree prune` clears them.
+    #[must_use]
+    pub fn skipped(&self) -> &[String] {
+        &self.skipped
     }
 }
 
@@ -268,6 +277,7 @@ impl InstallPlanSummary {
                         .iter()
                         .filter(|mutation| mutation.changes())
                         .count(),
+                    skipped: activation.skipped().to_vec(),
                 });
         Self {
             version: plan.version,
@@ -437,6 +447,17 @@ impl InstallPreview {
                 "  set {hooks} {} to {}",
                 plural(hooks, "Git hook setting", "Git hook settings"),
                 activation.hooks_path(),
+            )?;
+        }
+        for worktree in self
+            .plan
+            .hook_activation
+            .iter()
+            .flat_map(HookActivationSummary::skipped)
+        {
+            writeln!(
+                formatter,
+                "  skip worktree {worktree}: its directory is gone; `git worktree prune` clears it",
             )?;
         }
         write!(formatter, "apply: {apply}")

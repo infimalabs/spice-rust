@@ -56,6 +56,7 @@ pub enum InstallError {
     },
     GitLaunch {
         operation: &'static str,
+        worktree: PathBuf,
         source: io::Error,
     },
     GitExit {
@@ -216,9 +217,15 @@ fn fmt_git_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> fm
             "installed Git hook configuration drifted in {scope:?} scope at {}; observed {observed:?}",
             worktree.display(),
         ),
-        InstallError::GitLaunch { operation, source } => {
-            write!(formatter, "failed to launch Git to {operation}: {source}")
-        }
+        InstallError::GitLaunch {
+            operation,
+            worktree,
+            source,
+        } => write!(
+            formatter,
+            "failed to launch Git to {operation} in {}: {source}",
+            worktree.display(),
+        ),
         InstallError::GitExit {
             operation,
             code,
