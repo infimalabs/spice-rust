@@ -13,7 +13,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     local_direct!(
         ["app"],
-        "app [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN]",
+        "app [--foreground] [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN]",
         [Daemonless, Offline],
         Reply,
         "spice::app"

@@ -4,8 +4,14 @@
 //! resident already serving this repository, or starts one exactly as `spice
 //! up` does and drains it when the window closes; the endpoint it shows has
 //! passed the same discovery admission a browser launch applies, and the
-//! bearer token, when one is required, travels only in the URL fragment the
-//! webview loads, never in argv, environment, or any log.
+//! bearer token, when one is required, travels only over the launcher's
+//! private handoff and in the URL fragment the webview loads, never in argv,
+//! environment, or any log.
+//!
+//! Like `spice up`, the command returns the terminal by default: it detaches
+//! this same executable as `spice app --foreground`, which attends the window
+//! for its whole life and reports back once the window is up. `--foreground`
+//! run directly blocks until the window closes and answers the receipt.
 //!
 //! On macOS the window itself is drawn by a child running this same
 //! appliance from the shell's app bundle, because dictation attaches only to
@@ -44,8 +50,36 @@ fn title(common: &Path) -> String {
 /// The hidden entry the window process runs under.
 const WINDOW_ENTRY: &str = "__app-window";
 
-/// Show the console in a native window and answer once it closes.
+/// Open the console in a window a detached process attends, and answer with
+/// the endpoint once that window is up.
+pub(crate) fn open(leaf: &ArgMatches) -> Outcome<wire::AppOpen> {
+    if !cfg!(target_os = "macos") {
+        return window_failure(&desktop::WindowError::Unsupported);
+    }
+    resident::launch_window(leaf)
+}
+
+/// Show the console in a native window and answer once it closes. Under a
+/// launcher's handoff this is the detached attendant: it takes the token
+/// privately and reports the window up before settling in.
 pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
+    let launch = match resident::ChildLaunch::capture() {
+        Ok(launch) => launch,
+        Err(outcome) => return typed(outcome),
+    };
+    let status = launch.as_ref().map(|launch| launch.status.clone());
+    let outcome = attend(leaf, launch.and_then(|launch| launch.token), status.clone());
+    if let Some(status) = status {
+        status.failed(&outcome);
+    }
+    outcome
+}
+
+fn attend(
+    leaf: &ArgMatches,
+    handoff_token: Option<String>,
+    status: Option<resident::ChildStatus>,
+) -> Outcome<AppClosed> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
@@ -54,7 +88,7 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
         Ok(listen) => listen,
         Err(outcome) => return typed(outcome),
     };
-    let token = match resident::requested_access(leaf, listen) {
+    let token = match resident::requested_access(leaf, listen, handoff_token.clone()) {
         Ok(access) => access.token,
         Err(outcome) => return typed(outcome),
     };
@@ -64,7 +98,7 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
             return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
-    let session = match join_or_start(&repository, leaf) {
+    let session = match join_or_start(&repository, leaf, handoff_token) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
@@ -72,7 +106,11 @@ pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
         || session.opened.endpoint.clone(),
         |token| format!("{}#{token}", session.opened.endpoint),
     );
-    let shown = show_window(&url, repository.common_dir());
+    let shown = show_window(&url, repository.common_dir(), || {
+        if let Some(status) = status {
+            status.opened(&session.opened);
+        }
+    });
     let resident = if session.started {
         match drain(&current) {
             Ok(()) => AppResident::Drained,
@@ -146,9 +184,9 @@ fn external_link(link: &str) {
 }
 
 /// Show the window from a process carrying a bundle identity and wait for
-/// it to close.
+/// it to close; `shown` runs once the window process holds its URL.
 #[cfg(target_os = "macos")]
-fn show_window(url: &str, common: &Path) -> Result<(), desktop::WindowError> {
+fn show_window(url: &str, common: &Path, shown: impl FnOnce()) -> Result<(), desktop::WindowError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -173,6 +211,7 @@ fn show_window(url: &str, common: &Path) -> Result<(), desktop::WindowError> {
         let _ = child.wait();
         return Err(platform(format!("the window process took no URL: {error}")));
     }
+    shown();
     let output = child
         .wait_with_output()
         .map_err(|error| platform(format!("the window process could not be awaited: {error}")))?;
@@ -190,7 +229,8 @@ fn show_window(url: &str, common: &Path) -> Result<(), desktop::WindowError> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_window(url: &str, common: &Path) -> Result<(), desktop::WindowError> {
+fn show_window(url: &str, common: &Path, shown: impl FnOnce()) -> Result<(), desktop::WindowError> {
+    let _ = shown;
     desktop::show(
         &title(common),
         &common.to_string_lossy(),
@@ -207,10 +247,12 @@ struct Session {
 }
 
 /// Join the resident already serving `repository`, or start one without a
-/// browser launch when none is live.
+/// browser launch when none is live, forwarding the launcher's private
+/// `handoff_token` the way it arrived.
 fn join_or_start(
     repository: &spice::repository::Repository,
     leaf: &ArgMatches,
+    handoff_token: Option<String>,
 ) -> Result<Session, Outcome<AppClosed>> {
     let serve = repository
         .admit_resident_client()
@@ -221,7 +263,7 @@ fn join_or_start(
             started: false,
         });
     }
-    match resident::launch(leaf, false) {
+    match resident::launch(leaf, handoff_token, false) {
         Outcome::Reply(reply) => Ok(Session {
             opened: reply.body,
             started: true,
@@ -241,7 +283,7 @@ fn drain(current: &Path) -> Result<(), Outcome<AppClosed>> {
     }
 }
 
-fn typed(outcome: Outcome<()>) -> Outcome<AppClosed> {
+fn typed<B>(outcome: Outcome<()>) -> Outcome<B> {
     match outcome {
         Outcome::Reply(_) => unreachable!("unit command failures never carry replies"),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
@@ -251,7 +293,7 @@ fn typed(outcome: Outcome<()>) -> Outcome<AppClosed> {
 
 /// An unsupported target is a refusal naming the browser route; a window
 /// system that would not start is an environment fault.
-fn window_failure(error: &desktop::WindowError) -> Outcome<AppClosed> {
+fn window_failure<B>(error: &desktop::WindowError) -> Outcome<B> {
     match error {
         desktop::WindowError::Unsupported => Outcome::Refusal(Refusal::bare(
             RefusalDiagnostic::new(
@@ -268,7 +310,7 @@ fn window_failure(error: &desktop::WindowError) -> Outcome<AppClosed> {
     }
 }
 
-fn environment_fault(reason: &str, detail: &str) -> Outcome<AppClosed> {
+fn environment_fault<B>(reason: &str, detail: &str) -> Outcome<B> {
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
         reason: reason.to_owned(),
