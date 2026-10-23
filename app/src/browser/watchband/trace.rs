@@ -4,7 +4,6 @@
 //! pixels, which the app's `style-src 'self'` policy admits where inline styles
 //! are refused; colours and glow stay in the stylesheet.
 
-use std::fmt::Write as _;
 use std::rc::Rc;
 
 use gloo_timers::callback::Timeout;
@@ -12,8 +11,9 @@ use yew::prelude::*;
 
 use super::super::clock::now_millis;
 use crate::watchband::{
-    Occupancy, TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceCurve, TraceMarker,
-    TraceMarkerKind, TraceOff, TraceSpan, drawn_spans, off_intervals, trace,
+    Occupancy, Stroke, TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceCurve,
+    TraceMarker, TraceMarkerKind, TraceOff, TraceSpan, curve_path, drawn_spans, off_intervals,
+    trace,
 };
 
 #[derive(Properties, PartialEq)]
@@ -233,15 +233,19 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     }
 }
 
-/// One curve's fill and line, run on through the overscan past now.
+/// One curve's fill and line, run on through the overscan past now. The fill
+/// outlines the whole curve; the line draws only where the curve leaves the
+/// floor, so an idle stretch shows nothing at the composer's foot.
 fn render_curve(curve: &TraceCurve, fill: &str, width: f64, height: f64) -> Html {
-    let line = smooth(&points(&curve.levels, width, height), height);
+    let points = points(&curve.levels, width, height);
+    let outline = curve_path(&points, height, Stroke::Whole);
+    let line = curve_path(&points, height, Stroke::Risen);
     let end = width + step(width);
     html! {
         <g data-trace-kind={curve.kind.key()}>
             <path
                 class="trace-fill"
-                d={format!("{line} L{end:.2},{height:.2} L0,{height:.2} Z")}
+                d={format!("{outline} L{end:.2},{height:.2} L0,{height:.2} Z")}
                 fill={format!("url(#{fill})")}
             />
             <path class="trace-line trace-lit" d={line} />
@@ -305,33 +309,6 @@ fn points(levels: &[f64], width: f64, height: f64) -> Vec<(f64, f64)> {
     let (x, y) = points[points.len() - 1];
     points.push((x + step(width) + DOT_ROOM, y));
     points
-}
-
-/// A Catmull-Rom curve through the points as cubic segments, its control
-/// points held inside the pane so a sharp rise cannot overshoot the edge.
-fn smooth(points: &[(f64, f64)], height: f64) -> String {
-    let clamp = |y: f64| y.clamp(0.25, height - 0.25);
-    let mut d = format!("M{:.2},{:.2}", points[0].0, points[0].1);
-    for index in 0..points.len() - 1 {
-        let p0 = points[index.saturating_sub(1)];
-        let p1 = points[index];
-        let p2 = points[index + 1];
-        let p3 = points[(index + 2).min(points.len() - 1)];
-        let c1 = (
-            p1.0 + (p2.0 - p0.0) / 6.0,
-            clamp(p1.1 + (p2.1 - p0.1) / 6.0),
-        );
-        let c2 = (
-            p2.0 - (p3.0 - p1.0) / 6.0,
-            clamp(p2.1 - (p3.1 - p1.1) / 6.0),
-        );
-        let _ = write!(
-            d,
-            " C{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
-            c1.0, c1.1, c2.0, c2.1, p2.0, p2.1
-        );
-    }
-    d
 }
 
 /// Snap to the half pixel, a whole device pixel on a 2x display.

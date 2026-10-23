@@ -7,9 +7,10 @@
 //! recent rate on one fixed scale; lifecycle activity becomes markers. The
 //! curves are sampled at evenly spaced instants through a kernel that slides
 //! with time, so a redraw moves them smoothly instead of jumping between
-//! buckets. Positions and levels are fractions; the browser owns every pixel.
-//! Intervals the lane was off become gaps in its rail once they last at least
-//! the spacing between two samples.
+//! buckets. Positions and levels are fractions; the browser owns every pixel
+//! except the curve's path command, built here from its pixel points so its
+//! floor rule is checked natively. Intervals the lane was off become gaps in
+//! its rail once they last at least the spacing between two samples.
 
 use wire::AgentActivityKind;
 
@@ -336,6 +337,59 @@ pub fn drawn_spans(off: &[TraceOff], now: i64, samples: usize) -> Vec<TraceSpan>
     spans
 }
 
+/// Which segments of a curve a path strokes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stroke {
+    /// Every segment, floor included: the fill's outline.
+    Whole,
+    /// Only segments with an end above the floor, each run its own subpath.
+    /// An idle lane's stroke along the floor would read as the composer's
+    /// focus underline, drawn at the same edge.
+    Risen,
+}
+
+/// A Catmull-Rom curve through `points` in pane pixels as cubic segments, its
+/// control points held inside the pane of `height` so a sharp rise cannot
+/// overshoot the edge. The floor is half a pixel above the pane's bottom.
+#[must_use]
+pub fn curve_path(points: &[(f64, f64)], height: f64, stroke: Stroke) -> String {
+    use std::fmt::Write as _;
+
+    let clamp = |y: f64| y.clamp(0.25, height - 0.25);
+    let floor = height - 0.5;
+    let on_floor = |(_, y): (f64, f64)| y >= floor - 1e-6;
+    let mut d = String::new();
+    let mut pen_down = false;
+    for index in 0..points.len().saturating_sub(1) {
+        let p0 = points[index.saturating_sub(1)];
+        let p1 = points[index];
+        let p2 = points[index + 1];
+        let p3 = points[(index + 2).min(points.len() - 1)];
+        if stroke == Stroke::Risen && on_floor(p1) && on_floor(p2) {
+            pen_down = false;
+            continue;
+        }
+        if !pen_down {
+            let _ = write!(d, "M{:.2},{:.2}", p1.0, p1.1);
+            pen_down = true;
+        }
+        let c1 = (
+            p1.0 + (p2.0 - p0.0) / 6.0,
+            clamp(p1.1 + (p2.1 - p0.1) / 6.0),
+        );
+        let c2 = (
+            p2.0 - (p3.0 - p1.0) / 6.0,
+            clamp(p2.1 - (p3.1 - p1.1) / 6.0),
+        );
+        let _ = write!(
+            d,
+            " C{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+            c1.0, c1.1, c2.0, c2.1, p2.0, p2.1
+        );
+    }
+    d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,6 +412,56 @@ mod tests {
             .find(|curve| curve.kind == kind)
             .expect("the kind is drawn")
             .levels
+    }
+
+    const HEIGHT: f64 = 32.0;
+
+    /// Points as the browser places them: 20px apart, level 0 on the floor.
+    fn pixels(levels: &[f64]) -> Vec<(f64, f64)> {
+        levels
+            .iter()
+            .enumerate()
+            .map(|(index, level)| (index as f64 * 20.0, HEIGHT - 0.5 - level * (HEIGHT - 4.0)))
+            .collect()
+    }
+
+    fn subpaths(d: &str) -> Vec<&str> {
+        d.split('M').filter(|part| !part.is_empty()).collect()
+    }
+
+    #[test]
+    fn the_risen_stroke_lifts_over_the_floor_and_lands_back_on_it() {
+        let points = pixels(&[
+            0.0, 0.0, 0.0, 0.6, 1.0, 0.3, 0.0, 0.0, 0.0, 0.0, 0.8, 0.0, 0.0,
+        ]);
+        let floor = format!("{:.2}", HEIGHT - 0.5);
+        let risen = curve_path(&points, HEIGHT, Stroke::Risen);
+        let runs = subpaths(&risen);
+        assert_eq!(runs.len(), 2, "{risen}");
+        for run in &runs {
+            let (start, rest) = run.split_once(" C").expect("a run has segments");
+            let end = rest.rsplit(' ').next().expect("a segment ends on a point");
+            assert!(start.ends_with(&format!(",{floor}")), "{run}");
+            assert!(end.ends_with(&format!(",{floor}")), "{run}");
+        }
+        // The second run rises from sample 9 and lands on sample 11, not 12.
+        assert!(runs[1].starts_with("180.00,"), "{}", runs[1]);
+        assert!(
+            runs[1].ends_with(&format!(" 220.00,{floor}")),
+            "{}",
+            runs[1]
+        );
+
+        let whole = curve_path(&points, HEIGHT, Stroke::Whole);
+        assert_eq!(subpaths(&whole).len(), 1, "{whole}");
+        assert_eq!(whole.matches(" C").count(), points.len() - 1);
+    }
+
+    #[test]
+    fn an_idle_curve_strokes_nothing_but_still_outlines_its_fill() {
+        let points = pixels(&[0.0; 8]);
+        assert_eq!(curve_path(&points, HEIGHT, Stroke::Risen), "");
+        assert!(curve_path(&points, HEIGHT, Stroke::Whole).starts_with("M0.00,31.50 C"));
     }
 
     #[test]
