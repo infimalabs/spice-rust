@@ -18,8 +18,11 @@
 //! The process showing the window must carry a bundle identity (see
 //! [`crate::bundle`]), or macOS dictation never attaches to its fields; the
 //! Edit menu's Start Dictation item sends the ordinary responder action.
+//!
+//! The console's header is the window's title bar (see [`titlebar`]).
 
 mod surface;
+mod titlebar;
 
 use std::ptr::null_mut;
 
@@ -38,8 +41,8 @@ use objc2_web_kit::{
 };
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoop};
-use tao::platform::macos::WindowExtMacOS;
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::platform::macos::{WindowBuilderExtMacOS, WindowExtMacOS};
 use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::window::WindowBuilder;
 use wry::{WebViewBuilder, WebViewExtMacOS};
@@ -55,14 +58,24 @@ pub(crate) fn show(
     url: &str,
     external: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<(), WindowError> {
-    let mut event_loop = EventLoop::new();
+    let mut event_loop = EventLoopBuilder::<titlebar::Request>::with_user_event().build();
     let window = WindowBuilder::new()
         .with_title(title)
         .with_inner_size(INITIAL_SIZE)
+        .with_titlebar_transparent(true)
+        .with_title_hidden(true)
+        .with_fullsize_content_view(true)
         .build(&event_loop)
         .map_err(|error| WindowError::Platform(error.to_string()))?;
+    let proxy = event_loop.create_proxy();
     let webview = WebViewBuilder::new()
         .with_url(url)
+        .with_initialization_script(titlebar::SCRIPT)
+        .with_ipc_handler(move |request| {
+            if let Some(request) = titlebar::Request::parse(request.body()) {
+                let _ = proxy.send_event(request);
+            }
+        })
         .build(&window)
         .map_err(|error| WindowError::Platform(error.to_string()))?;
     let main_thread = MainThreadMarker::new()
@@ -86,18 +99,25 @@ pub(crate) fn show(
     install_main_menu(main_thread, &menu_target);
     let surface = surface::Surface::attach(
         main_thread,
-        ns_window,
+        ns_window.clone(),
         Retained::into_super(webview.webview()),
         key,
     );
+    let mut titlebar = titlebar::Titlebar::default();
+    titlebar.follow(&window, &ns_window, &webview);
     event_loop.run_return(|event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-        if let Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } = event
-        {
-            *control_flow = ControlFlow::Exit;
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                ..
+            } => titlebar.follow(&window, &ns_window, &webview),
+            Event::UserEvent(request) => titlebar.answer(request, &window, &ns_window, &webview),
+            _ => {}
         }
     });
     drop(surface);

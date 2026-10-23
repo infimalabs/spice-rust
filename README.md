@@ -98,9 +98,12 @@ joined the resident stays in charge of it. The window is titled
 that repository, centred instead when that frame is mostly off every connected
 screen. It takes the console's own surface colour and its dark or light theme,
 including in the alerts and file picker it opens, while the console's system
-theme keeps following macOS. The window is macOS-only (WebKit); elsewhere
-`spice app` refuses and `spice up --open` remains the route. Under WebKit, the
-console reads `app_bg.wasm` from the
+theme keeps following macOS. It has no separate title bar: the traffic lights
+sit in the console's header, whose empty area drags the window and answers a
+double-click with the system's choice of zoom, minimize or nothing; the
+browser console's header is unchanged. The window is macOS-only (WebKit);
+elsewhere `spice app` refuses and `spice up --open` remains the route. Under
+WebKit, the console reads `app_bg.wasm` from the
 resident twice per load, because WebKit doesn't reuse its integrity-checked
 preload. Over loopback that is one extra local read, so the preload stays for
 Chromium. A reload with a task graph open also logs an access-control error
