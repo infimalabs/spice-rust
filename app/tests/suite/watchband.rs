@@ -162,6 +162,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         effort: Some("high".to_owned()),
         seat_effort: None,
         fast_mode: false,
+        fast_refusal: None,
         seat_fast_mode: false,
         occupant: Some(uuid(OCCUPANT)),
         session: Some("session-fixture".to_owned()),

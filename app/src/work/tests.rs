@@ -483,6 +483,7 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
         effort: None,
         seat_effort: None,
         fast_mode: false,
+        fast_refusal: None,
         seat_fast_mode: false,
         occupant: None,
         session: None,

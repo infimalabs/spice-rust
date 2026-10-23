@@ -297,8 +297,29 @@ impl LiveChange {
             self.lane,
             self.occupant,
             &self.live,
+            None,
         );
     }
+}
+
+/// Journal that a running occupant's vendor refused fast mode in these words
+/// and the occupant turned it off to continue without it.
+pub(in crate::resident) fn record_fast_refusal(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    refusal: &str,
+) {
+    record_runtime(
+        bus,
+        epoch,
+        &wire::Actor::Spice,
+        lane,
+        occupant,
+        &LiveRetune::Fast { enabled: false },
+        Some(refusal),
+    );
 }
 
 /// Asks running occupants for owed live changes on one worker outside the
@@ -387,8 +408,9 @@ impl Drop for LiveChanges {
 }
 
 /// Apply one confirmed live change to the running launch identity, saying
-/// whether it changed anything.
-fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune) -> bool {
+/// whether it changed anything. A fast-mode change keeps the vendor's refusal
+/// when that turned it off, and clears any earlier one.
+fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune, refusal: Option<&str>) -> bool {
     let launch = &mut row
         .session
         .as_mut()
@@ -413,6 +435,7 @@ fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune) -> bool {
                 return false;
             }
             launch.fast_mode = *enabled;
+            launch.fast_refusal = refusal.map(str::to_owned);
         }
     }
     true
@@ -422,6 +445,7 @@ fn runtime_fact(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     live: &LiveRetune,
+    refusal: Option<&str>,
 ) -> wire::body::LaneRuntimeRetuned {
     let mut fact = wire::body::LaneRuntimeRetuned {
         lane,
@@ -429,6 +453,7 @@ fn runtime_fact(
         model: None,
         effort: None,
         fast_mode: None,
+        fast_refusal: refusal.map(str::to_owned),
     };
     match live {
         LiveRetune::Model { provider, model } => fact.model = Some(format!("{provider}/{model}")),
@@ -620,6 +645,7 @@ fn record_runtime(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     live: &LiveRetune,
+    refusal: Option<&str>,
 ) {
     for _ in 0..RUNTIME_RECORD_ATTEMPTS {
         let Ok(observed) = current_residency(bus, epoch) else {
@@ -633,7 +659,7 @@ fn record_runtime(
         if row.occupant != Some(occupant) || !launched {
             return;
         }
-        if !apply_runtime(row, live) {
+        if !apply_runtime(row, live, refusal) {
             return;
         }
         let Ok(mut write) = write(actor.clone(), epoch, Producer::ResidentRecognition) else {
@@ -641,7 +667,7 @@ fn record_runtime(
         };
         guard_residency(&mut write, &observed);
         let Ok(fact) = write.fact(
-            runtime_fact(lane, occupant, live),
+            runtime_fact(lane, occupant, live, refusal),
             FactCause::Existing(observed.position()),
         ) else {
             return;

@@ -92,6 +92,10 @@ fn answer_at(
                     .session
                     .as_ref()
                     .is_some_and(|session| session.launch.fast_mode),
+                fast_refusal: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.fast_refusal.clone()),
                 seat_fast_mode: row.fast_mode,
                 git: row
                     .session

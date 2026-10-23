@@ -1158,6 +1158,14 @@ pub struct LaneAnswerRow {
     /// Whether the declared occupant runs in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_mode: bool,
+    /// The vendor's words refusing fast mode when that refusal turned it off
+    /// on the declared occupant, which continues without it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fast_refusal: Option<String>,
     /// Whether this lane's own flag enables fast mode.
     ///
     /// `fast_mode` reports the running process; the next launch runs fast

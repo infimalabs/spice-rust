@@ -689,6 +689,20 @@ pub fn set_fast_mode_request(id: &str, enabled: bool) -> Vec<u8> {
     }))
 }
 
+/// Whether a provider failure refused the priority service tier fast mode
+/// asks for. omp recovers on its own only from Anthropic's refusal of its
+/// `speed` field; a model or gateway that refuses `service_tier: priority`
+/// fails the turn instead, and every later request the same way.
+#[must_use]
+pub fn refuses_fast_mode(failure: &str) -> bool {
+    let words: String = failure
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|character| character.to_ascii_lowercase())
+        .collect();
+    words.contains("servicetier") && words.contains("priority")
+}
+
 /// Replace or cancel a background notice through the extension's SDK bridge.
 /// RPC has no aside command; the extension coalesces by purpose and calls
 /// `sendUserMessage(..., { deliverAs: "aside" })` at the next step boundary.

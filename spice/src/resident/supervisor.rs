@@ -90,6 +90,13 @@ pub(super) enum Notice {
         request: CanonicalUuid,
         operation: String,
     },
+    /// The vendor refused the occupant's fast mode in these words; the
+    /// occupant turned it off and continues.
+    FastRefused {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        refusal: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]

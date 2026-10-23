@@ -8,7 +8,8 @@
 //! names the member or team it concerns, the toast's live region announces it,
 //! and a request's outcome replaces its progress. A request that disappears
 //! while still in flight reports how it ended, so no progress message outlives
-//! its request.
+//! its request. A vendor refusing a member's fast mode reports here too, once
+//! as it lands, since that member keeps working without it.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -26,6 +27,7 @@ enum Subject {
     Member(CanonicalUuid),
     Team(CanonicalUuid),
     Consent(CanonicalUuid),
+    FastRefusal(CanonicalUuid),
 }
 
 /// Who a notice is attributed to.
@@ -82,6 +84,19 @@ impl Notices {
                     watchband::agent_message_label(&member.worktree, member.name.as_deref())
                         .to_owned(),
                 );
+                if let Some(refusal) = &member.fast_refusal {
+                    self.notices.insert(
+                        Subject::FastRefusal(member.lane),
+                        Notice {
+                            owner: Owner::Member(member.lane),
+                            text: format!(
+                                "the provider refused fast mode, so this lane continues without it: {refusal}"
+                            ),
+                            generation: 0,
+                            ended: None,
+                        },
+                    );
+                }
             }
         }
         for (lane, state) in runtime.member_controls() {

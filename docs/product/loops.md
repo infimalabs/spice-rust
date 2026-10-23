@@ -373,7 +373,12 @@ flowchart LR
   Its running value changes only when the provider confirms; a bare model, a
   clear, an unsupported occupant, a refusal, or an interrupted request leaves it
   unchanged. A launch applies the seat's effort before the first turn, and a
-  refused opening effort fails the launch.
+  refused opening effort fails the launch. A running OMP turn the provider fails
+  only because it refuses fast mode's priority service tier is not a vendor
+  failure: the occupant turns fast mode off, resumes the same session, and the
+  lane row carries the provider's words, which the console toasts once. A
+  second such refusal before fast mode is turned back on ends the turn as any
+  vendor failure does. Seat flags stay as set, so the next launch tries again.
 - A lane names exactly one worktree. A team holds one or many lanes; the
   singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage,
