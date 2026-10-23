@@ -583,6 +583,71 @@ fn set_fast(
     )
 }
 
+/// Record that every seat's vendor refused fast mode for the model it runs.
+fn refuse_fast(bus: &Bus, epoch: CanonicalUuid) {
+    let observed = bus
+        .task_snapshot()
+        .expect("fixture residency snapshot reads")
+        .residency()
+        .expect("fixture residency exists")
+        .clone();
+    let mut refused = observed.body().clone();
+    for row in &mut refused.lanes {
+        let occupant = row.occupant.expect("fixture seat is occupied");
+        let mut launch = wire::body::LaneLaunchIdentity::new("mockgw/gpt-5.4", "high");
+        launch.fast_refusal = Some("priority refused".to_owned());
+        row.session = Some(wire::LaneSession {
+            lane: row.lane,
+            occupant,
+            worktree: row.worktree.clone(),
+            vendor: row.vendor.clone(),
+            launch,
+            epoch,
+            stream: "stdout".to_owned(),
+            identity: format!("session-{}", row.lane),
+            locus: wire::TapeLocus {
+                member: 1,
+                offset: 0,
+                length: 1,
+            },
+        });
+    }
+    let first = &refused.lanes[0];
+    let retuned = wire::body::LaneRuntimeRetuned {
+        lane: first.lane,
+        occupant: first.occupant.expect("fixture seat is occupied"),
+        model: None,
+        effort: None,
+        fast_mode: Some(false),
+        fast_refusal: Some("priority refused".to_owned()),
+    };
+    let origin = format!("resident:{epoch}")
+        .parse()
+        .expect("resident origin");
+    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    let retuned = write
+        .fact(retuned, FactCause::Existing(observed.position()))
+        .expect("fixture refusal builds");
+    write.residency_head(retuned, move |_| refused);
+    assert!(matches!(
+        bus.commit(write).expect("fixture refusal reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn refusing(bus: &Bus) -> std::collections::BTreeSet<CanonicalUuid> {
+    bus.residency_head()
+        .expect("residency reads")
+        .expect("residency exists")
+        .body()
+        .lanes
+        .iter()
+        .filter(|row| row.refuses_fast_mode())
+        .map(|row| row.lane)
+        .collect()
+}
+
 #[test]
 fn a_fast_flagged_group_runs_claimants_of_its_design_associated_work() {
     let (root, bus, epoch, seats) = fixture("group-fast", 4);
@@ -634,14 +699,27 @@ fn a_fast_flagged_group_runs_claimants_of_its_design_associated_work() {
         "the flagged Design and its selected Plan run fast while another group's claimant and an idle lane do not"
     );
 
+    refuse_fast(&bus, epoch);
     assert_committed(set_fast(&bus, epoch, &fast, false));
     assert!(
         fast_lanes().is_empty(),
         "lowering the flag releases its claimant"
     );
+    let every = seats.iter().map(|seat| seat.lane).collect();
+    assert_eq!(
+        refusing(&bus),
+        every,
+        "lowering the flag keeps every refusal"
+    );
     assert!(refused_as(
         set_fast(&bus, epoch, &fast, false),
         "group::fast-unchanged"
     ));
+    assert_committed(set_fast(&bus, epoch, &fast, true));
+    assert_eq!(
+        refusing(&bus),
+        [seats[1].lane, seats[3].lane].into(),
+        "raising the flag retries fast mode on its claimants alone"
+    );
     clean(&root, bus);
 }

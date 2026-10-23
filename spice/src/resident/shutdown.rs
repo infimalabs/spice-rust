@@ -127,7 +127,7 @@ fn lane_authority(head: &ResidencyHead, lane: CanonicalUuid) -> LaneAuthority<'_
     (&head.state, row, subscription, renewals)
 }
 
-pub(super) fn guard_residency(
+pub(crate) fn guard_residency(
     write: &mut JournalWrite,
     observed: &journal::JournalHead<ResidencyHead>,
 ) {

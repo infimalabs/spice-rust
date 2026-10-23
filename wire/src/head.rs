@@ -1190,6 +1190,39 @@ impl ResidencyHead {
                 .iter()
                 .any(|subscription| subscription.team == row.team && subscription.fast_mode)
     }
+
+    /// This head with the fast-mode refusals of every `covered` lane
+    /// forgotten, so their next launches try fast mode again; absent when
+    /// none of them held one.
+    #[must_use]
+    pub fn forget_fast_refusals(&self, covered: impl Fn(&LaneResidency) -> bool) -> Option<Self> {
+        let mut next = self.clone();
+        let mut forgot = false;
+        for row in next.lanes.iter_mut().filter(|row| covered(row)) {
+            forgot |= row.forget_fast_refusal();
+        }
+        forgot.then_some(next)
+    }
+}
+
+impl LaneResidency {
+    /// Whether this seat's vendor refused fast mode for the model it runs, so
+    /// its next launch runs without it.
+    #[must_use]
+    pub fn refuses_fast_mode(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.launch.fast_refusal.is_some())
+    }
+
+    /// Forget this seat's fast-mode refusal so its next launch tries fast
+    /// mode, saying whether one stood.
+    pub fn forget_fast_refusal(&mut self) -> bool {
+        self.session
+            .as_mut()
+            .and_then(|session| session.launch.fast_refusal.take())
+            .is_some()
+    }
 }
 
 /// Current journal and wake positions.

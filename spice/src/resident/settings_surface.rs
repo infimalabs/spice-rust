@@ -13,7 +13,7 @@ use wire::intent::{CommandAnswer, GlobalSettingsAnswer, GlobalSettingsSet};
 use wire::principal::{PrincipalDirectory, PrincipalProfile, PrincipalRoles};
 use wire::{Command, Outcome, Producer, Reply, ReplyPosition, SeqRange};
 
-use super::shutdown::current_residency;
+use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandEffects, CommandResult, commit, seq, store_fault, typed_outcome, typed_store_fault,
     write,
@@ -138,7 +138,7 @@ pub(super) fn lane_fast_mode(
     head: &wire::ResidencyHead,
     row: &wire::LaneResidency,
 ) -> CommandResult<bool> {
-    Ok(FastLevels::read(bus)?.lane(head, row) && !super::lane_surface::refuses_fast_mode(row))
+    Ok(FastLevels::read(bus)?.lane(head, row) && !row.refuses_fast_mode())
 }
 
 /// Read the current global settings at one immutable journal horizon.
@@ -170,7 +170,8 @@ pub(super) fn read(bus: &Bus) -> Outcome<CommandAnswer> {
 
 /// Commit one global settings replacement and its replayable command receipt,
 /// then owe each running member whose effective fast mode it flips a live
-/// change.
+/// change. Turning the setting on also forgets every seat's fast-mode
+/// refusal in the same transaction, so each next launch tries fast mode.
 pub(super) fn set(
     bus: &Bus,
     epoch: wire::CanonicalUuid,
@@ -182,21 +183,31 @@ pub(super) fn set(
         Ok(roles) => answer(request.fast_mode, &roles),
         Err(outcome) => return typed_outcome(outcome),
     };
-    let (levels, residency) = match FastLevels::read(bus).and_then(|levels| {
-        current_residency(bus, epoch).map(|residency| (levels, residency.into_body()))
-    }) {
+    let (levels, observed) = match FastLevels::read(bus)
+        .and_then(|levels| current_residency(bus, epoch).map(|observed| (levels, observed)))
+    {
         Ok(current) => current,
         Err(outcome) => return typed_outcome(outcome),
+    };
+    let forgotten = if answer.fast_mode && !levels.global() {
+        observed.body().forget_fast_refusals(|_| true)
+    } else {
+        None
     };
     let mut proposal = match write(command.actor().clone(), epoch, Producer::CommandDoor) {
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
     };
-    if let Err(error) = proposal.fact(
+    let changed = match proposal.fact(
         wire::body::GlobalSettingsChanged::new(answer.fast_mode),
         FactCause::Root,
     ) {
-        return typed_store_fault("settings::fact-invalid", &error.to_string());
+        Ok(changed) => changed,
+        Err(error) => return typed_store_fault("settings::fact-invalid", &error.to_string()),
+    };
+    if let Some(next) = forgotten {
+        guard_residency(&mut proposal, &observed);
+        proposal.residency_head(changed, move |_| next);
     }
     if let Err(error) = proposal.command_result(
         Command {
@@ -217,7 +228,7 @@ pub(super) fn set(
             super::lane_surface::owe_global_fast_flips(
                 effects,
                 command,
-                &residency,
+                observed.body(),
                 &levels,
                 answer.fast_mode,
             );
@@ -262,5 +273,156 @@ mod tests {
         assert_eq!(normalize(Some(" \t ")), None);
         assert!(malformed(Some("C\nA")));
         assert!(!malformed(Some("C A")));
+    }
+
+    fn uuid(last: u8) -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131164{last:02}")
+            .parse()
+            .expect("fixture UUID")
+    }
+
+    /// Seat two lanes whose vendor refused fast mode for the model they run.
+    fn seat_refusals(bus: &Bus, epoch: wire::CanonicalUuid) {
+        let lanes = [1, 2]
+            .map(|index| {
+                let (lane, occupant) = (uuid(index), uuid(index + 10));
+                let mut launch = wire::body::LaneLaunchIdentity::new("mockgw/gpt-5.4", "high");
+                launch.fast_refusal = Some("priority refused".to_owned());
+                wire::LaneResidency {
+                    lane,
+                    team: lane,
+                    name: None,
+                    worktree: "/fleet".to_owned(),
+                    life: "drive".to_owned(),
+                    vendor: "omp".parse().expect("fixture vendor"),
+                    model: None,
+                    effort: None,
+                    fast_mode: false,
+                    occupant: Some(occupant),
+                    lineage: vec![occupant],
+                    capabilities: vec![uuid(index + 20)],
+                    session: Some(wire::LaneSession {
+                        lane,
+                        occupant,
+                        worktree: "/fleet".to_owned(),
+                        vendor: "omp".parse().expect("fixture vendor"),
+                        launch,
+                        epoch,
+                        stream: "stdout".to_owned(),
+                        identity: format!("session-{index}"),
+                        locus: wire::TapeLocus {
+                            member: 1,
+                            offset: 0,
+                            length: 1,
+                        },
+                    }),
+                    disposition: "occupied".to_owned(),
+                }
+            })
+            .to_vec();
+        let origin = format!("resident:{epoch}")
+            .parse()
+            .expect("resident origin");
+        let at = wire::Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+        let mut write =
+            journal::JournalWrite::new(wire::Actor::Spice, origin, at, Producer::CommandDoor);
+        let seated = write
+            .fact(wire::body::UpSeated { epoch }, FactCause::Root)
+            .expect("seating fact builds");
+        write.residency_head(seated, move |_| wire::ResidencyHead {
+            epoch,
+            state: wire::ResidentState::Seated,
+            topology_revision: 0,
+            lanes,
+            subscriptions: Vec::new(),
+            renewals: Vec::new(),
+        });
+        commit(bus, write).expect("seating commits");
+    }
+
+    fn set_global(bus: &Bus, epoch: wire::CanonicalUuid, id: u8, fast_mode: bool) {
+        let request = GlobalSettingsSet { fast_mode };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: uuid(id),
+            epoch,
+            kind: wire::CommandKind::GlobalSettingsSet,
+            expected: Vec::new(),
+            body: serde_json::to_value(&request).expect("settings intent encodes"),
+        }
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: wire::Actor::Operator,
+                epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &PrincipalRoles::default(),
+        )
+        .expect("operator settings intent admits");
+        let outcome = set(
+            bus,
+            epoch,
+            &command,
+            &request,
+            &mut CommandEffects::default(),
+        );
+        assert!(
+            matches!(
+                outcome,
+                Outcome::Reply(Reply {
+                    position: ReplyPosition::Committed(_),
+                    ..
+                })
+            ),
+            "settings write commits: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn turning_global_fast_mode_on_forgets_every_seat_refusal() {
+        let epoch = uuid(99);
+        let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        // Seats that still refuse, and seats whose next launch runs fast.
+        let seats = || {
+            let head = bus
+                .residency_head()
+                .expect("residency reads")
+                .expect("residency exists");
+            let head = head.body();
+            let refusing = head.lanes.iter().filter(|row| row.refuses_fast_mode());
+            let fast = head
+                .lanes
+                .iter()
+                .filter(|row| lane_fast_mode(&bus, head, row).expect("fast mode resolves"));
+            (refusing.count(), fast.count())
+        };
+        seat_refusals(&bus, epoch);
+
+        set_global(&bus, epoch, 50, false);
+        assert_eq!(
+            seats(),
+            (2, 0),
+            "keeping the setting off keeps every refusal"
+        );
+        set_global(&bus, epoch, 51, true);
+        assert_eq!(
+            seats(),
+            (0, 2),
+            "turning it on retries fast mode on every seat"
+        );
+
+        seat_refusals(&bus, epoch);
+        set_global(&bus, epoch, 52, true);
+        assert_eq!(
+            seats(),
+            (2, 0),
+            "writing on over on keeps refusals met since"
+        );
+        set_global(&bus, epoch, 53, false);
+        assert_eq!(seats(), (2, 0), "turning it off keeps them");
+        set_global(&bus, epoch, 54, true);
+        assert_eq!(seats(), (0, 2), "turning it on again retries them");
     }
 }

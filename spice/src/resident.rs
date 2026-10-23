@@ -221,6 +221,7 @@ mod read_materializations;
 mod room_catch_up;
 mod settings_surface;
 mod shutdown;
+pub(crate) use shutdown::guard_residency;
 mod steering;
 pub(crate) use steering::{OperatorDirective, append_operator_directive, steering_envelope_admits};
 pub(crate) mod supervisor;
