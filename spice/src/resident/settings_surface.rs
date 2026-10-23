@@ -132,13 +132,13 @@ impl FastLevels {
 }
 
 /// Resolve one seat's fast mode for its next occupant launch across every
-/// level.
+/// level, off while its vendor's refusal of fast mode stands.
 pub(super) fn lane_fast_mode(
     bus: &Bus,
     head: &wire::ResidencyHead,
     row: &wire::LaneResidency,
 ) -> CommandResult<bool> {
-    Ok(FastLevels::read(bus)?.lane(head, row))
+    Ok(FastLevels::read(bus)?.lane(head, row) && !super::lane_surface::refuses_fast_mode(row))
 }
 
 /// Read the current global settings at one immutable journal horizon.

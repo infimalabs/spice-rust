@@ -334,7 +334,7 @@ fn propose_import(
     row.worktree.clone_from(&context.worktree);
     row.occupant = Some(proven.occupant);
     row.lineage.push(proven.occupant);
-    row.session = Some(proven.session.clone());
+    super::lane_surface::seat_session(row, proven.session.clone());
     row.disposition = OCCUPIED.into();
     let mut proposal = write(
         command.actor().clone(),

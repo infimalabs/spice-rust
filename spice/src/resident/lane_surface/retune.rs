@@ -71,21 +71,29 @@ impl Selection<'_> {
 
     fn replace_seat(self, row: &mut wire::LaneResidency) -> SeatFact {
         match self {
-            Self::Model(request) => SeatFact::Model(wire::body::LaneRetuned {
-                lane: request.lane,
-                from: std::mem::replace(&mut row.model, request.model.clone()),
-                model: request.model.clone(),
-            }),
+            Self::Model(request) => {
+                forget_fast_refusal(row);
+                SeatFact::Model(wire::body::LaneRetuned {
+                    lane: request.lane,
+                    from: std::mem::replace(&mut row.model, request.model.clone()),
+                    model: request.model.clone(),
+                })
+            }
             Self::Effort(request) => SeatFact::Effort(wire::body::LaneEffortRetuned {
                 lane: request.lane,
                 from: std::mem::replace(&mut row.effort, request.effort.clone()),
                 effort: request.effort.clone(),
             }),
-            Self::Fast(request) => SeatFact::Fast(wire::body::LaneFastRetuned {
-                lane: request.lane,
-                from: std::mem::replace(&mut row.fast_mode, request.fast_mode),
-                fast_mode: request.fast_mode,
-            }),
+            Self::Fast(request) => {
+                if request.fast_mode {
+                    forget_fast_refusal(row);
+                }
+                SeatFact::Fast(wire::body::LaneFastRetuned {
+                    lane: request.lane,
+                    from: std::mem::replace(&mut row.fast_mode, request.fast_mode),
+                    fast_mode: request.fast_mode,
+                })
+            }
         }
     }
 
@@ -409,7 +417,8 @@ impl Drop for LiveChanges {
 
 /// Apply one confirmed live change to the running launch identity, saying
 /// whether it changed anything. A fast-mode change keeps the vendor's refusal
-/// when that turned it off, and clears any earlier one.
+/// when that turned it off and clears any earlier one; a model change clears
+/// it, since the refusal was the old model's.
 fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune, refusal: Option<&str>) -> bool {
     let launch = &mut row
         .session
@@ -423,6 +432,7 @@ fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune, refusal: Opti
                 return false;
             }
             launch.model = model;
+            launch.fast_refusal = None;
         }
         LiveRetune::Effort { effort } => {
             if launch.effort == *effort {
@@ -439,6 +449,37 @@ fn apply_runtime(row: &mut wire::LaneResidency, live: &LiveRetune, refusal: Opti
         }
     }
     true
+}
+
+/// Whether this seat's vendor refused fast mode for the model it runs, so its
+/// next launch runs without it.
+pub(in crate::resident) fn refuses_fast_mode(row: &wire::LaneResidency) -> bool {
+    row.session
+        .as_ref()
+        .is_some_and(|session| session.launch.fast_refusal.is_some())
+}
+
+/// Forget this seat's fast-mode refusal so its next launch tries fast mode.
+pub(in crate::resident) fn forget_fast_refusal(row: &mut wire::LaneResidency) {
+    if let Some(session) = row.session.as_mut() {
+        session.launch.fast_refusal = None;
+    }
+}
+
+/// Install `session` as this seat's running session. A refusal outlives the
+/// occupant that met it: a launch of the same model without fast mode
+/// inherits it, so later turns neither meet nor announce it again.
+pub(in crate::resident) fn seat_session(
+    row: &mut wire::LaneResidency,
+    mut session: wire::LaneSession,
+) {
+    if let Some(prior) = row.session.take()
+        && !session.launch.fast_mode
+        && prior.launch.model == session.launch.model
+    {
+        session.launch.fast_refusal = prior.launch.fast_refusal;
+    }
+    row.session = Some(session);
 }
 
 fn runtime_fact(

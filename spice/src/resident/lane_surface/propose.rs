@@ -153,7 +153,7 @@ pub(super) fn propose_wake(
         .expect("observed lane remains in its cloned head");
     row.occupant = Some(occupant);
     row.lineage.push(occupant);
-    row.session = Some(session.clone());
+    super::retune::seat_session(row, session.clone());
     row.disposition = OCCUPIED.to_owned();
     let mut write = write(
         command.actor().clone(),

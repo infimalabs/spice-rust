@@ -378,7 +378,10 @@ flowchart LR
   failure: the occupant turns fast mode off, resumes the same session, and the
   lane row carries the provider's words, which the console toasts once. A
   second such refusal before fast mode is turned back on ends the turn as any
-  vendor failure does. Seat flags stay as set, so the next launch tries again.
+  vendor failure does. Seat flags stay as set, but the seat remembers the
+  refusal: its later launches of the same model run without fast mode until the
+  operator turns the lane's or its team's fast mode on, a live fast-on is
+  confirmed, or the model changes.
 - A lane names exactly one worktree. A team holds one or many lanes; the
   singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage,

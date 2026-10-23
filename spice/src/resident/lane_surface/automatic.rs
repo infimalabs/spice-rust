@@ -799,7 +799,7 @@ fn prepare_wake_commit(
         .expect("observed automatic lane remains in its cloned head");
     next_row.occupant = Some(proven.occupant);
     next_row.lineage.push(proven.occupant);
-    next_row.session = Some(proven.session.clone());
+    super::retune::seat_session(next_row, proven.session.clone());
     next_row.disposition = OCCUPIED.to_owned();
     let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
     guard_residency(&mut write, observed);

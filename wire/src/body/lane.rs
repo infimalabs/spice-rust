@@ -312,9 +312,10 @@ impl RtkHealth {
 /// plus observable launch outcomes.
 ///
 /// A declaration initializes every field but a fast-mode refusal, which only
-/// the running session meets. Confirmed live retunes and that refusal update
-/// model, effort, or fast mode only in the residency projection; the
-/// declaration fact remains launch evidence.
+/// a running session meets and the seat's later launches of the same model
+/// inherit. Confirmed live retunes and that refusal update model, effort, or
+/// fast mode only in the residency projection; the declaration fact remains
+/// launch evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneLaunchIdentity {
@@ -325,8 +326,8 @@ pub struct LaneLaunchIdentity {
     /// Whether this occupant runs in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_mode: bool,
-    /// The vendor's words refusing fast mode when that refusal turned it off
-    /// on this running occupant.
+    /// The vendor's words refusing fast mode for this model, which keep the
+    /// seat's launches of it off fast mode until the operator turns it back on.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

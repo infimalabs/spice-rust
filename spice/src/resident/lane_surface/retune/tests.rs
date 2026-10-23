@@ -155,3 +155,65 @@ fn team_turbo_off_owes_nothing_to_a_lane_its_group_runs_fast() {
         vec![fast(2, false)]
     );
 }
+
+fn session(model: &str, fast: bool, refusal: Option<&str>) -> wire::LaneSession {
+    let mut launch = wire::body::LaneLaunchIdentity::new(model, "high").with_fast_mode(fast);
+    launch.fast_refusal = refusal.map(str::to_owned);
+    wire::LaneSession {
+        lane: uuid(1),
+        occupant: uuid(101),
+        worktree: "/fleet/main-1".to_owned(),
+        vendor: "omp".parse().expect("fixture vendor"),
+        launch,
+        epoch: uuid(99),
+        stream: "stdout".to_owned(),
+        identity: "private-session".to_owned(),
+        locus: wire::TapeLocus {
+            member: 1,
+            offset: 2,
+            length: 3,
+        },
+    }
+}
+
+#[test]
+fn a_seat_keeps_its_fast_mode_refusal_across_launches_until_fast_or_the_model_changes() {
+    const REFUSED: &str = "400 'priority' is not supported for 'service_tier' on this model";
+    let refused = || {
+        let mut row = member(1, 1, true);
+        row.session = Some(session("mockgw/gpt-5.4", false, Some(REFUSED)));
+        row
+    };
+    let [off, on] = [false, true].map(|fast_mode| LaneFastRetune {
+        topology_revision: 0,
+        lane: uuid(1),
+        fast_mode,
+    });
+
+    let mut row = refused();
+    seat_session(&mut row, session("mockgw/gpt-5.4", false, None));
+    assert!(
+        refuses_fast_mode(&row),
+        "the next launch of the same model inherits the refusal"
+    );
+    seat_session(&mut row, session("openai/gpt-5.5", false, None));
+    assert!(
+        !refuses_fast_mode(&row),
+        "a launch of another model starts without it"
+    );
+
+    let mut row = refused();
+    Selection::Fast(&off).replace_seat(&mut row);
+    assert!(refuses_fast_mode(&row), "turning fast mode off keeps it");
+    Selection::Fast(&on).replace_seat(&mut row);
+    assert!(!refuses_fast_mode(&row), "turning fast mode on forgets it");
+
+    let mut row = refused();
+    Selection::Model(&LaneRetune {
+        topology_revision: 0,
+        lane: uuid(1),
+        model: Some("openai/gpt-5.5".to_owned()),
+    })
+    .replace_seat(&mut row);
+    assert!(!refuses_fast_mode(&row), "selecting a model forgets it");
+}

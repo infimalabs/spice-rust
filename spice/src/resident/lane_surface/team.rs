@@ -99,6 +99,11 @@ pub(in crate::resident) fn configure(
     }
     let configured_life = subscription.policy;
     let configured_fast = subscription.fast_mode;
+    if request.fast_mode == Some(true) {
+        for row in next.lanes.iter_mut().filter(|row| row.team == request.team) {
+            super::retune::forget_fast_refusal(row);
+        }
+    }
     let levels = match super::super::settings_surface::FastLevels::read(bus) {
         Ok(levels) => levels,
         Err(outcome) => return typed_outcome(outcome),
