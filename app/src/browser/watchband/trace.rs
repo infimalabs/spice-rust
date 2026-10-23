@@ -277,11 +277,12 @@ fn snap(value: f64) -> f64 {
 fn render_marker(marker: TraceMarker, width: f64, height: f64) -> Html {
     let key = marker.kind.key();
     let x = snap(marker.x * (width - DOT_ROOM));
-    // A half-pixel rule centred inside its device pixel.
-    let rule = x + 0.25;
+    // A one-pixel rule covering the device pixels from its snapped x: whole
+    // pixels on a 2x display, and on 1x whenever x snapped to a whole pixel.
+    let rule = x + 0.5;
     match marker.kind {
         TraceMarkerKind::Direction => html! {
-            <circle data-trace-marker={key} cx={format!("{x:.2}")} cy="1.25" r=".9" />
+            <circle data-trace-marker={key} cx={format!("{rule:.2}")} cy="2" r="1.8" />
         },
         TraceMarkerKind::Failure => html! {
             <rect data-trace-marker={key} x={format!("{x:.2}")} y="0" width="1" height={format!("{height:.2}")} />
@@ -289,14 +290,14 @@ fn render_marker(marker: TraceMarker, width: f64, height: f64) -> Html {
         // A fresh session ticks forward from its rule; a sign-out ticks back.
         TraceMarkerKind::Session | TraceMarkerKind::SignOut => {
             let tick = if marker.kind == TraceMarkerKind::Session {
-                1.5
+                2.5
             } else {
-                -1.5
+                -2.5
             };
             html! {
                 <path
                     data-trace-marker={key}
-                    d={format!("M{rule:.2},{height:.2} V0.25 H{:.2}", rule + tick)}
+                    d={format!("M{rule:.2},{height:.2} V0.5 H{:.2}", rule + tick)}
                 />
             }
         }

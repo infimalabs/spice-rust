@@ -423,7 +423,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 :root[data-app-effective-theme="dark"] .activity-trace .trace-lit {
   filter: drop-shadow(0 0 1px color-mix(in srgb, var(--accent-slot) 70%, transparent));
 }
-.activity-trace [data-trace-marker] { fill: none; stroke: color-mix(in srgb, var(--ink) 40%, transparent); stroke-width: .5px; }
+.activity-trace [data-trace-marker] { fill: none; stroke: color-mix(in srgb, var(--ink) 40%, transparent); stroke-width: 1px; }
 .activity-trace [data-trace-marker="turn"] { stroke: color-mix(in srgb, var(--ink) 22%, transparent); }
 .activity-trace [data-trace-marker="compaction"] { stroke-dasharray: 1 1; }
 .activity-trace [data-trace-marker="failure"] { fill: var(--danger); stroke: none; }
