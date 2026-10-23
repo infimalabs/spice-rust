@@ -658,6 +658,8 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   overflow: auto;
   overscroll-behavior: contain;
 }
+/* The Spice menu scrolls without a scrollbar, as the lane planes do. */
+.app-sidebar-frame:has(> .app-spice-sidebar-content) { scrollbar-width: none; }
 @media (prefers-reduced-motion: no-preference) {
   .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface, .app-spice-sidebar-readouts) { opacity: 0; }
 }
