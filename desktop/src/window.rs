@@ -19,8 +19,10 @@
 //! [`crate::bundle`]), or macOS dictation never attaches to its fields; the
 //! Edit menu's Start Dictation item sends the ordinary responder action.
 //!
-//! The console's header is the window's title bar (see [`titlebar`]).
+//! The console's header is the window's title bar (see [`titlebar`]), and the
+//! console speaks through the shell's own synthesizer (see [`speech`]).
 
+mod speech;
 mod surface;
 mod titlebar;
 
@@ -52,13 +54,19 @@ use crate::WindowError;
 /// The window's opening size; the operator resizes from there.
 const INITIAL_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 860.0);
 
+/// What reaches the window's event loop from the page and the synthesizer.
+enum ShellEvent {
+    Titlebar(titlebar::Request),
+    Speech(speech::Event),
+}
+
 pub(crate) fn show(
     title: &str,
     key: &str,
     url: &str,
     external: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<(), WindowError> {
-    let mut event_loop = EventLoopBuilder::<titlebar::Request>::with_user_event().build();
+    let mut event_loop = EventLoopBuilder::<ShellEvent>::with_user_event().build();
     let window = WindowBuilder::new()
         .with_title(title)
         .with_inner_size(INITIAL_SIZE)
@@ -71,9 +79,14 @@ pub(crate) fn show(
     let webview = WebViewBuilder::new()
         .with_url(url)
         .with_initialization_script(titlebar::SCRIPT)
+        .with_initialization_script(speech::SCRIPT)
         .with_ipc_handler(move |request| {
-            if let Some(request) = titlebar::Request::parse(request.body()) {
-                let _ = proxy.send_event(request);
+            let body = request.body();
+            let event = titlebar::Request::parse(body)
+                .map(ShellEvent::Titlebar)
+                .or_else(|| speech::Event::parse(body).map(ShellEvent::Speech));
+            if let Some(event) = event {
+                let _ = proxy.send_event(event);
             }
         })
         .build(&window)
@@ -103,6 +116,10 @@ pub(crate) fn show(
         Retained::into_super(webview.webview()),
         key,
     );
+    let reporter = event_loop.create_proxy();
+    let mut speech = speech::Speech::new(move |event| {
+        let _ = reporter.send_event(ShellEvent::Speech(event));
+    });
     let mut titlebar = titlebar::Titlebar::default();
     titlebar.follow(&window, &ns_window, &webview);
     event_loop.run_return(|event, _, control_flow| {
@@ -116,10 +133,14 @@ pub(crate) fn show(
                 event: WindowEvent::Resized(_),
                 ..
             } => titlebar.follow(&window, &ns_window, &webview),
-            Event::UserEvent(request) => titlebar.answer(request, &window, &ns_window, &webview),
+            Event::UserEvent(ShellEvent::Titlebar(request)) => {
+                titlebar.answer(request, &window, &ns_window, &webview);
+            }
+            Event::UserEvent(ShellEvent::Speech(event)) => speech.answer(event, &webview),
             _ => {}
         }
     });
+    drop(speech);
     drop(surface);
     drop(delegate);
     NSApplication::sharedApplication(main_thread).setMainMenu(None);

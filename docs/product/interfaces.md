@@ -390,8 +390,11 @@ digest-bound `attachment:` markers, which display projections expand from the
 same record and which are never fetch authority. A send whose prose duplicates
 an attachment's data URL refuses before journal mutation.
 
-Speech is the viewing browser's own system synthesis; nothing renders audio on
-the resident. One global queue speaks sequentially and never overlaps
+Speech is the viewing device's own system synthesis: the browser's
+`speechSynthesis`, or under `spice app` the desktop shell's synthesizer, which
+offers the downloaded voices the embedded web view withholds (see
+[the console's speech surface](../../app/CONSOLE.md#speech)); nothing renders
+audio on the resident. One global queue speaks sequentially and never overlaps
 utterances. An utterance settles on the browser's end or error, and a failure
 is a nonblocking notice that never blocks the visible stream — the transcript
 remains the record. `say.voices` is an ordered list of voice names, scoped to
@@ -416,11 +419,10 @@ it, so teammates sound different until a team outnumbers the voices, and
 agents on different teams may share. The first time a Macintosh page steps
 below premium, one toast names the language, how many voices the browser
 publishes, the languages its premium voices do speak, what speaks instead,
-and the remedy: download a premium voice or set `say.voices`. The WKWebView
-under `spice app` publishes only the built-in system voices, so it always
-takes that step. Other platforms have no premium tier to miss and run the
-same descent silently. A speaker outside the roster with no list uses the browser
-default. A browser that has not yet published voices is waited for under a
-bound when configured or desktop spreading needs the list; a browser that
+and the remedy: download a premium voice or set `say.voices`. Other platforms
+have no premium tier to miss and run the same descent silently. A speaker
+outside the roster with no list uses the browser default. A browser that has
+not yet published voices is waited for under a bound when configured or
+desktop spreading needs the list; a browser that
 never publishes any voice refuses, and a published list holding none of the
 configured names refuses, naming the voices the browser offers.
