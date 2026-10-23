@@ -230,15 +230,19 @@ of work with activity in the window, reasoning, tool, and prose, draws one
 smoothed curve over a fill fading toward the floor, ending in a dot at now; in
 the dark theme the curves glow. Turn, operator direction, provider failure,
 compaction, fresh session, and sign-out draw as markers over the curves. Quiet
-is not off: a running lane with no activity still draws its low line. The rail
+is not off: a running lane with no activity still draws its low line. Between
+redraws the curves, gaps, and markers slide left at the window's own rate, so
+they glide rather than step however wide the composer stretches, while the
+now-dots hold the right edge; reduced motion keeps the step. The rail
 takes no pointer input, drains to gray while the lane's seat is empty, and fades out
 once the draft holds text. Quote shards carry no rail. The lane's provider
 emblem is its menu button's glyph, and that button's hover title names the
 provider standing the emblem names.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so the
-rail is SVG geometry in the pane's measured CSS pixels and every
-colour and glow comes from the stylesheet. A Playwright check of it must
+rail is SVG geometry in the pane's measured CSS pixels, every colour and glow
+comes from the stylesheet, and the slide's span and duration reach it as
+custom properties written through CSSOM. A Playwright check of it must
 keep that policy enforced: a context with `bypassCSP` would hide a drawing that
 draws nothing in production.
 
