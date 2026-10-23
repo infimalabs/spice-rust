@@ -134,6 +134,10 @@ body:has(.shell),
   min-height: var(--app-header-control);
   max-height: var(--app-header-control);
   padding: 0;
+  /* One cell exactly the content box: the doubled pepper is wider than it
+     wherever the emoji font advances past 1em (Noto Color Emoji on Android),
+     and an auto track would widen with it and carry the well past the rim. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   border: var(--app-focus-ring-width) solid var(--app-spice-border);
   border-radius: var(--app-radius-circle);
