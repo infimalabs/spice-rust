@@ -34,7 +34,12 @@ impl fmt::Display for WindowError {
 impl std::error::Error for WindowError {}
 
 #[cfg(target_os = "macos")]
+mod bundle;
+#[cfg(target_os = "macos")]
 mod window;
+
+#[cfg(target_os = "macos")]
+pub use bundle::bundled_executable;
 
 /// Show `url` in one native window titled `title` and block until it closes.
 ///

@@ -14,6 +14,10 @@
 //! actions, which the webview answers for its focused field; Quit and Close
 //! ask the window to close, so they end the event loop exactly as its close
 //! button does and the command still settles the resident afterwards.
+//!
+//! The process showing the window must carry a bundle identity (see
+//! [`crate::bundle`]), or macOS dictation never attaches to its fields; the
+//! Edit menu's Start Dictation item sends the ordinary responder action.
 
 use std::ptr::null_mut;
 
@@ -130,6 +134,15 @@ fn install_main_menu(main_thread: MainThreadMarker, target: &MenuTarget) {
     ] {
         edit.addItem(&menu_item(main_thread, title, action, key, None));
     }
+    edit.addItem(&NSMenuItem::separatorItem(main_thread));
+    // The system annotates this item with the dictation shortcut it owns.
+    edit.addItem(&menu_item(
+        main_thread,
+        "Start Dictation\u{2026}",
+        sel!(startDictation:),
+        "",
+        None,
+    ));
     menu.addItem(&submenu_item(main_thread, "Edit", &edit));
 
     let window = NSMenu::initWithTitle(NSMenu::alloc(main_thread), &NSString::from_str("Window"));
