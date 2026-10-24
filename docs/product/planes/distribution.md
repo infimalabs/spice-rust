@@ -95,13 +95,13 @@ Windows release builds, and `spice dev xtask -- install` on supported macOS,
 Linux, and x86-64 Windows hosts, assemble it through one path and admit it as G,
 so the same staged generation and tracked sources link the same bytes. Worktree
 dSYMs exist only on macOS, so elsewhere that command publishes without them.
-Each links it as one retained read-only section: `__TEXT,__spicerack` on Mach-O,
-`spicerack` on ELF, and `spicerac` on PE32+. The Mach-O section follows Apple's
+Each links it as one retained read-only section: `__TEXT,__spicezip` on Mach-O
+and `spicezip` on ELF and PE32+. The Mach-O section follows Apple's
 two-underscore convention, ELF remains undotted because the System V gABI
-reserves dot-prefixed names for the system, and PE truncates the name to its
-eight-byte section-name limit.
+reserves dot-prefixed names for the system, and the one word exactly fills
+PE's eight-byte section-name limit.
 
-Every target's relocatable object defines `spicerack` and `spicerack_len`; the
+Every target's relocatable object defines `spicezip` and `spicezip_len`; the
 final-image readers locate exactly one rack section and recover the rack bytes
 from it. The Windows target inventory names `bin/spice.exe`
 and the matching `symbols/spice.pdb`; both are package members, while

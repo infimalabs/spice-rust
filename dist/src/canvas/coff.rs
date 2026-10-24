@@ -2,9 +2,9 @@
 
 use super::{ARCHIVE_SYMBOL, CanvasError, LENGTH_SYMBOL};
 
-/// Rack section in a PE image. PE32+ section names hold eight bytes, so this
-/// is the eight-byte prefix a PE linker truncates `spicerack` to.
-const SECTION: &[u8; 8] = b"spicerac";
+/// Rack section in a PE image: the one word every target shares, exactly the
+/// eight bytes a PE32+ section name holds.
+const SECTION: &[u8; 8] = b"spicezip";
 
 const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 const IMAGE_NT_OPTIONAL_HDR64_MAGIC: u16 = 0x20b;

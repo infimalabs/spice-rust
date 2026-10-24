@@ -15,14 +15,15 @@ use wire::{Digest, Domain};
 const MACHO_SEGMENT: &[u8] = b"__TEXT";
 /// Rack section on Mach-O: lowercase after two underscores, as Apple's
 /// Mach-O File Format Reference names sections.
-const MACHO_SECTION: &[u8] = b"__spicerack";
+const MACHO_SECTION: &[u8] = b"__spicezip";
 /// Rack section on ELF: undotted, since the System V gABI reserves
-/// dot-prefixed section names for the system.
-const ELF_SECTION: &[u8] = b"spicerack";
+/// dot-prefixed section names for the system. The same word names the PE32+
+/// section, exactly filling its eight-byte limit.
+const ELF_SECTION: &[u8] = b"spicezip";
 /// First rack byte, as the `canvas` crate declares it.
-const ARCHIVE_SYMBOL: &[u8] = b"spicerack";
+const ARCHIVE_SYMBOL: &[u8] = b"spicezip";
 /// The rack length as a little-endian `u64`, as the `canvas` crate declares it.
-const LENGTH_SYMBOL: &[u8] = b"spicerack_len";
+const LENGTH_SYMBOL: &[u8] = b"spicezip_len";
 
 const MACHO_MAGIC_64: u32 = 0xfeed_facf;
 const MACHO_HEADER_BYTES: usize = 32;
@@ -173,7 +174,7 @@ fn macho_object(archive: &[u8], cpu: u32, subtype: u32, minos: u32) -> Vec<u8> {
 fn elf_object(archive: &[u8], machine: u16) -> Vec<u8> {
     let (section_names, section_offsets) = string_table(&[
         ELF_SECTION,
-        b".rodata.spicerack_len",
+        b".rodata.spicezip_len",
         b".note.GNU-stack",
         b".symtab",
         b".strtab",
@@ -682,7 +683,7 @@ mod tests {
             let segment_bytes = length_at + 8;
             let symbols = data + segment_bytes;
             let strings_at = symbols + 2 * 16;
-            let string_table = b"\0_spicerack\0_spicerack_len\0";
+            let string_table = b"\0_spicezip\0_spicezip_len\0";
             let string_bytes = string_table.len().next_multiple_of(8);
 
             assert_eq!(u32_at(&object, 0), MACHO_MAGIC_64);
@@ -754,8 +755,8 @@ mod tests {
     #[test]
     fn elf_objects_expose_exact_sections_symbols_and_target_identity() {
         let section_names =
-            b"\0spicerack\0.rodata.spicerack_len\0.note.GNU-stack\0.symtab\0.strtab\0.shstrtab\0";
-        let symbol_names = b"\0spicerack\0spicerack_len\0";
+            b"\0spicezip\0.rodata.spicezip_len\0.note.GNU-stack\0.symtab\0.strtab\0.shstrtab\0";
+        let symbol_names = b"\0spicezip\0spicezip_len\0";
         for (target, machine) in [
             (ObjectTarget::LinuxAarch64, 183),
             (ObjectTarget::LinuxX86_64, 62),
@@ -782,7 +783,13 @@ mod tests {
             assert_eq!(u64_at(&object, length_at), ARCHIVE.len() as u64);
             assert_eq!(&object[symbols..symbols + 24], &[0; 24]);
             assert_elf_symbol(&object, symbols + 24, 1, 1, ARCHIVE.len() as u64);
-            assert_elf_symbol(&object, symbols + 48, 11, 2, 8);
+            assert_elf_symbol(
+                &object,
+                symbols + 48,
+                section_name(symbol_names, LENGTH_SYMBOL),
+                2,
+                8,
+            );
             assert_eq!(
                 &object[symbol_names_at..symbol_names_at + symbol_names.len()],
                 symbol_names
@@ -796,7 +803,7 @@ mod tests {
             assert_eq!(
                 ElfSectionHeader::read(&object, archive),
                 ElfSectionHeader {
-                    name_offset: section_name(section_names, b"spicerack"),
+                    name_offset: section_name(section_names, b"spicezip"),
                     kind: SHT_PROGBITS,
                     flags: SHF_ALLOC,
                     data_offset: 64,
@@ -811,7 +818,7 @@ mod tests {
             assert_eq!(
                 ElfSectionHeader::read(&object, length),
                 ElfSectionHeader {
-                    name_offset: section_name(section_names, b".rodata.spicerack_len"),
+                    name_offset: section_name(section_names, b".rodata.spicezip_len"),
                     kind: SHT_PROGBITS,
                     flags: SHF_ALLOC,
                     data_offset: length_at as u64,
