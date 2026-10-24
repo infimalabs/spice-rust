@@ -188,7 +188,8 @@ pub struct RtkGainReport {
     pub output: String,
 }
 
-/// Runtime residue retired for lanes the resident no longer seats.
+/// Runtime residue retired for lanes the resident no longer seats, and rack
+/// extractions of generations other than the purging executable's own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LanePurgeReport {
@@ -196,6 +197,9 @@ pub struct LanePurgeReport {
     pub seated: u64,
     /// Lanes no longer seated whose residue was retired, in lane order.
     pub purged: Vec<LanePurge>,
+    /// Retired rack extraction directories relative to the runtime root, one
+    /// per generation the purging executable does not link, in path order.
+    pub rack: Vec<String>,
 }
 
 /// One unseated lane and the runtime paths retired for it.

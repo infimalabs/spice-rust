@@ -516,6 +516,11 @@ impl NativeInvocation<'_> {
                 form,
                 session_command::Report::text,
             ),
+            ["resource", "read"] => {
+                deliver_with_reply_text(&resource::read_command(leaf, ambient), form, |answer| {
+                    Some(&answer.text)
+                })
+            }
             _ => false,
         }
     }

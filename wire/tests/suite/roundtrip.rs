@@ -226,10 +226,11 @@ fn board_history_filters_have_exact_optional_wire_shapes() {
 
 #[test]
 fn lane_purge_report_names_every_retired_path_by_lane() {
-    let document = r#"{"seated":4,"purged":[{"lane":"019fe52f-10ad-7c83-9df4-511323d1b7fb","paths":["tape/019fe52f-10ad-7c83-9df4-511323d1b7fb","rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb"]}]}"#;
+    let document = r#"{"seated":4,"purged":[{"lane":"019fe52f-10ad-7c83-9df4-511323d1b7fb","paths":["tape/019fe52f-10ad-7c83-9df4-511323d1b7fb","rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb"]}],"rack":["rack/old"]}"#;
     let report: LanePurgeReport = round_trip(document);
     assert_eq!(report.seated, 4);
     assert_eq!(report.purged[0].paths.len(), 2);
+    assert_eq!(report.rack, ["rack/old"]);
 
     for malformed in [
         document.replace("\"seated\":4,", ""),
@@ -238,7 +239,8 @@ fn lane_purge_report_names_every_retired_path_by_lane() {
             "\"lane\":\"019fe52f-10ad-7c83-9df4-511323d1b7fb\"",
             "\"lane\":\"019FE52F\"",
         ),
-        document.replace("}]}", "}],\"unknown\":true}"),
+        document.replace(",\"rack\":[\"rack/old\"]", ""),
+        document.replace("\"rack\":", "\"unknown\":true,\"rack\":"),
     ] {
         assert!(
             wire::decode::<LanePurgeReport>(malformed.as_bytes()).is_err(),

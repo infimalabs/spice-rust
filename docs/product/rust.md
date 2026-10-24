@@ -185,7 +185,13 @@ rack from its tracked source list.
 A resident reads rack members as `spice://NS/PATH` with the line selectors the
 other resources take; `spice://SKILL.md` is `spice://skill/SKILL.md`, and a
 namespace or directory read lists its members. A URL never names a generation
-by digest or UUID.
+by digest or UUID. A member's media type is the one its path extension
+declares, never sniffed from its bytes. A text member answers inline; any
+other member answers one line naming its media type, size, digest, and a file
+under `.spice/rack/G/` named by that digest, extracted once on the first read
+and never rewritten. A member above the 16 MiB extraction bound is refused.
+`spice lane purge` retires the directories of every generation but the linked
+one. `spice resource read URL` prints exactly what a lane's host frame carries.
 
 The `canvas` crate declares the two symbols a relocatable object defines:
 `spicerack` at the rack's first byte and `spicerack_len` at its length. Every

@@ -4,17 +4,13 @@
 
 use std::collections::HashSet;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-
-use spice::ambient::Ambient;
-use wire::CanonicalUuid;
 
 use super::Driver;
 use crate::resource::Access;
 
 /// Answers one `spice://` read or write with its result, or the refusal.
-pub(super) type UriServer = Box<dyn Fn(&str, Access<'_>) -> Result<String, String> + Send + Sync>;
+pub(super) type UriServer = crate::resource::Server;
 
 /// The `spice://` server and the requests it is answering now. A withdrawn
 /// request leaves the pending set, and only a request still in it is answered.
@@ -30,54 +26,6 @@ impl Uris {
             pending: Mutex::new(HashSet::new()),
         }
     }
-}
-
-/// Serve `spice://` URLs as `lane`, whose checkout is `worktree` and whose
-/// occupant's environment is `ambient`, resolving quote targets, CLI reads,
-/// and task text writes through the resident. A human-authored quote names
-/// its author from the principal index of the journal at `journal`.
-pub(super) fn resident_server(
-    discovery: PathBuf,
-    journal: PathBuf,
-    lane: CanonicalUuid,
-    worktree: PathBuf,
-    ambient: Ambient,
-) -> UriServer {
-    let seat = crate::resource::Seat {
-        worktree,
-        lane,
-        environment: crate::session_environment(&ambient),
-        ambient,
-        graphs: Default::default(),
-    };
-    Box::new(move |url, access| {
-        seat.serve(
-            url,
-            access,
-            |target| match crate::command_client::read_lane_quote(
-                &discovery,
-                lane,
-                target,
-                &seat.ambient,
-            ) {
-                Ok(resolution) => {
-                    let principals = spice::quote::author_names(&journal, &resolution)?;
-                    spice::quote::render(&resolution, principals.as_ref())
-                }
-                Err(wire::Outcome::Refusal(refusal)) => Err(format!(
-                    "spice refused the quote read: {}",
-                    refusal.reason()
-                )),
-                Err(wire::Outcome::Fault(fault)) => Err(format!(
-                    "spice could not read the quote: {}: {}",
-                    fault.reason, fault.detail
-                )),
-                Err(wire::Outcome::Reply(_)) => {
-                    Err("spice answered the quote read with no resolution".to_owned())
-                }
-            },
-        )
-    })
 }
 
 impl<W: Write + Send + 'static> Driver<W> {

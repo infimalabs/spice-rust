@@ -1,4 +1,5 @@
-//! Retire the runtime residue of lanes the resident no longer seats.
+//! Retire the runtime residue of lanes the resident no longer seats, and the
+//! rack extractions of every generation but the one this executable links.
 //!
 //! Removing a lane keeps its tape, supervisor records, RTK history, and media
 //! projections because they are forensic. Purge is the operator's explicit
@@ -42,16 +43,55 @@ pub(crate) fn run(ambient: &Ambient) -> Outcome<LanePurgeReport> {
         .iter()
         .map(|row| row.lane)
         .collect::<BTreeSet<_>>();
-    match retire(&state, &seated) {
-        Ok(purged) => Outcome::Reply(Reply {
+    let linked = match spice::version::canvas() {
+        Some(Ok(linked)) => Some(linked.rack().generation().clone()),
+        Some(Err(_)) | None => None,
+    };
+    let retired = retire(&state, &seated)
+        .and_then(|purged| Ok((purged, retire_rack(&state, linked.as_ref())?)));
+    match retired {
+        Ok((purged, rack)) => Outcome::Reply(Reply {
             position: lanes.position,
             body: LanePurgeReport {
                 seated: seated.len() as u64,
                 purged,
+                rack,
             },
         }),
         Err(fault) => Outcome::Fault(fault),
     }
+}
+
+/// Retire every rack extraction directory but `linked`'s. Without a linked
+/// rack nothing is known to be stale, so nothing is retired.
+fn retire_rack(state: &StatePaths, linked: Option<&wire::Digest>) -> Result<Vec<String>, Fault> {
+    let Some(linked) = linked else {
+        return Ok(Vec::new());
+    };
+    let root = state.rack();
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(store_fault(root, &error)),
+    };
+    let mut retired = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| store_fault(root, &error))?;
+        if entry.file_name().to_str() == Some(linked.as_str()) {
+            continue;
+        }
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| store_fault(&path, &error))?;
+        if !kind.is_dir() {
+            continue;
+        }
+        fs::remove_dir_all(&path).map_err(|error| store_fault(&path, &error))?;
+        retired.push(relative(state, &path));
+    }
+    retired.sort();
+    Ok(retired)
 }
 
 /// Retire the residue of every lane outside `seated`, one read per family.
@@ -122,7 +162,7 @@ mod tests {
     use spice::repository::{Repository, StatePaths};
     use wire::CanonicalUuid;
 
-    use super::retire;
+    use super::{retire, retire_rack};
 
     const SEATED: &str = "11111111-1111-4111-8111-111111111111";
     const GONE: &str = "22222222-2222-4222-8222-222222222222";
@@ -191,6 +231,36 @@ mod tests {
         let (root, state) = state();
         let purged = retire(&state, &BTreeSet::new()).expect("absent families retire nothing");
         assert!(purged.is_empty());
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn purge_retires_every_rack_generation_but_the_linked_one() {
+        let (root, state) = state();
+        let linked = wire::Digest::compute(wire::Domain::DistArtifact, b"linked");
+        let old = wire::Digest::compute(wire::Domain::DistArtifact, b"old");
+        for generation in [&linked, &old] {
+            let directory = state.rack().join(generation.as_str());
+            fs::create_dir_all(&directory).expect("generation plants");
+            let file = directory.join("member.png");
+            fs::write(&file, b"bytes").expect("extraction plants");
+        }
+
+        assert_eq!(
+            retire_rack(&state, None).expect("no linked rack retires nothing"),
+            Vec::<String>::new()
+        );
+        let retired = retire_rack(&state, Some(&linked)).expect("stale generations retire");
+
+        assert_eq!(retired, [format!("rack/{old}")]);
+        assert!(
+            state
+                .rack()
+                .join(linked.as_str())
+                .join("member.png")
+                .exists()
+        );
+        assert!(!state.rack().join(old.as_str()).exists());
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 }

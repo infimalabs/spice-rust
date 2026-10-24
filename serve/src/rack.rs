@@ -86,6 +86,39 @@ impl Namespace {
     }
 }
 
+/// The media type a member path declares by its extension, which assembly
+/// takes from the tracked source's name. Bytes are never sniffed: an unknown
+/// extension declares opaque bytes.
+#[must_use]
+pub fn media_type(path: &str) -> &'static str {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let extension = file.rsplit_once('.').map_or("", |(_, extension)| extension);
+    match extension.to_ascii_lowercase().as_str() {
+        "md" => "text/markdown",
+        "txt" => "text/plain",
+        "html" => "text/html",
+        "css" => "text/css",
+        "js" | "mjs" => "text/javascript",
+        "json" => "application/json",
+        "toml" => "application/toml",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Whether a member of `media_type` is read inline as text rather than
+/// handed off as bytes.
+#[must_use]
+pub fn is_text(media_type: &str) -> bool {
+    media_type.starts_with("text/") || matches!(media_type, "application/json" | "application/toml")
+}
+
 const LOCAL_SIGNATURE: u32 = 0x0403_4b50;
 const CENTRAL_SIGNATURE: u32 = 0x0201_4b50;
 const END_SIGNATURE: u32 = 0x0605_4b50;
