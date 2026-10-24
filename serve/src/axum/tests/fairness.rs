@@ -15,15 +15,18 @@ impl super::super::socket::Inbound for ReadyInbound {
     }
 }
 
-/// Every external source a session can serve, each one ready before any is read.
-fn every_source_ready() -> (
+/// The bus and each external source a session serves, with their receivers.
+type ReadySources = (
     bus::Bus,
     tokio::sync::broadcast::Sender<wire::TranscriptGeneration>,
     tokio::sync::broadcast::Sender<Arc<wire::QuotaGeneration>>,
     Option<bus::BroadcastSubscriber>,
     Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
     Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>>,
-) {
+);
+
+/// Every external source a session can serve, each one ready before any is read.
+fn every_source_ready() -> ReadySources {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     let broadcasts = bus.reader().subscribe();

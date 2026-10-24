@@ -31,9 +31,7 @@ pub(in super::super) fn campaign(p: &Publication, public: &Path, name: &str) -> 
     )
 }
 
-fn campaign_positions<'a>(
-    p: &'a Publication,
-) -> Result<std::collections::BTreeMap<&'a str, (f64, f64)>> {
+fn campaign_positions(p: &Publication) -> Result<std::collections::BTreeMap<&str, (f64, f64)>> {
     let nodes = &p.campaign.nodes;
     let mut depths = std::collections::BTreeMap::new();
     depths.insert(p.campaign.root.as_str(), 0_usize);

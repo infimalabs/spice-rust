@@ -216,7 +216,7 @@ fn publish_record(
                                 &Packet {
                                     lane: record.lane,
                                     author: record.author,
-                                    locus: locus.clone(),
+                                    locus,
                                     routes: publication.routes.clone(),
                                     body: &text[publication.body.clone()],
                                     text: publication.body.clone(),
@@ -800,7 +800,7 @@ impl Sending<'_, '_> {
                         from: self.packet.lane,
                         sender: self.packet.author,
                         text: self.packet.body.to_owned(),
-                        locus: self.packet.locus.clone(),
+                        locus: self.packet.locus,
                         room: target.room.clone(),
                         addressed: target.redirected.map(|route| route.addressed.address),
                         expires: self.expires,
@@ -823,7 +823,7 @@ impl Sending<'_, '_> {
                         from: self.packet.lane,
                         sender: self.packet.author,
                         text: self.packet.body.to_owned(),
-                        locus: self.packet.locus.clone(),
+                        locus: self.packet.locus,
                         room: target.room.clone(),
                         expires: self.expires,
                     };
@@ -1149,7 +1149,7 @@ fn packet_hunk(bus: &Bus, packet: &Packet<'_>) -> Result<TranscriptHunk, Unpubli
         .into_iter()
         .map(journal::JournalHead::into_body)
         .find(|head| {
-            let end = u64::from(locus.offset) + u64::from(locus.length);
+            let end = locus.offset + locus.length;
             head.source == source
                 && (locus.member < head.next.member
                     || (locus.member == head.next.member && end <= head.next.offset))

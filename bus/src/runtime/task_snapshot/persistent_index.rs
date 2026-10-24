@@ -2,11 +2,14 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
 
+/// One level's batch, absent while the counter's bit is clear.
+type Level<K, V> = Option<Arc<HashMap<K, V>>>;
+
 /// Immutable logarithmic map: each occupied level owns a successively older
 /// batch, and inserting carries through occupied levels like a binary counter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PersistentIndex<K: Eq + Hash, V> {
-    levels: Arc<[Option<Arc<HashMap<K, V>>>]>,
+    levels: Arc<[Level<K, V>]>,
 }
 
 impl<K: Eq + Hash, V> Default for PersistentIndex<K, V> {

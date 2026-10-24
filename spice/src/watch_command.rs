@@ -120,21 +120,28 @@ pub(crate) fn run(
             position: ReplyPosition::Direct {},
             body: report,
         }),
-        Err(outcome) => outcome,
+        Err(Failure::Refusal(refusal)) => Outcome::Refusal(refusal),
+        Err(Failure::Fault(fault)) => Outcome::Fault(fault),
     }
+}
+
+/// Why a watch stopped before it had a report.
+enum Failure {
+    Refusal(Refusal),
+    Fault(Fault),
 }
 
 fn run_inner(
     matches: &ArgMatches,
     dialects: Vec<(&'static str, listen::Dialect)>,
-) -> Result<WatchReport, Outcome<WatchReport>> {
+) -> Result<WatchReport, Failure> {
     let root = matches
         .get_one::<String>("ROOT")
         .map_or_else(|| PathBuf::from("."), PathBuf::from);
     let follow = matches.get_flag("follow");
-    let deadline = deadline(matches, follow).map_err(Outcome::Refusal)?;
+    let deadline = deadline(matches, follow).map_err(Failure::Refusal)?;
     if follow && !real_directory(&root) {
-        return Err(Outcome::Refusal(refusal(
+        return Err(Failure::Refusal(refusal(
             "watch::root-invalid",
             Some(root.display().to_string()),
             "--follow requires an existing real directory",
@@ -146,7 +153,7 @@ fn run_inner(
         text: count(matches, "max-text")?,
     };
     let budget = INTERACTIVE.budget(request).map_err(|error| {
-        Outcome::Refusal(refusal(
+        Failure::Refusal(refusal(
             "watch::bound-exceeded",
             Some(error.to_string()),
             "pass row, byte, and text bounds within the interactive maximum",
@@ -156,7 +163,7 @@ fn run_inner(
         .get_one::<String>("after")
         .map(|encoded| decode_cursor(encoded))
         .transpose()
-        .map_err(Outcome::Refusal)?;
+        .map_err(Failure::Refusal)?;
     let mut watch = cursor.map_or_else(
         || Watch::new(&root, dialects.clone()),
         |cursor| Watch::resume(&root, dialects.clone(), cursor),
@@ -212,7 +219,7 @@ fn follow_events(
     admission: &mut Admission<WatchBatch>,
     budget: wire::output::Budget,
     state: &mut FollowState,
-) -> Result<WatchEnd, Outcome<WatchReport>> {
+) -> Result<WatchEnd, Failure> {
     use notify::{RecursiveMode, Watcher};
 
     // One slot: a burst of native events collapses into a single pending wake,
@@ -262,7 +269,7 @@ fn follow_events(
 fn await_wake(
     receiver: &mpsc::Receiver<notify::Result<notify::Event>>,
     state: &mut FollowState,
-) -> Result<Result<(), WatchEnd>, Outcome<WatchReport>> {
+) -> Result<Result<(), WatchEnd>, Failure> {
     let remaining = match state.remaining(Instant::now()) {
         Ok(remaining) => remaining,
         Err(end) => return Ok(Err(end)),
@@ -273,7 +280,7 @@ fn await_wake(
         }
         Err(mpsc::RecvTimeoutError::Timeout) => return Ok(Err(WatchEnd::Deadline)),
         Err(mpsc::RecvTimeoutError::Disconnected) => {
-            return Err(Outcome::Fault(Fault {
+            return Err(Failure::Fault(Fault {
                 class: FaultClass::Environment,
                 reason: "watch::notification".to_owned(),
                 detail: "filesystem notification channel disconnected".to_owned(),
@@ -301,8 +308,8 @@ fn follow_events(
     _admission: &mut Admission<WatchBatch>,
     _budget: wire::output::Budget,
     _state: &mut FollowState,
-) -> Result<WatchEnd, Outcome<WatchReport>> {
-    Err(Outcome::Fault(Fault {
+) -> Result<WatchEnd, Failure> {
+    Err(Failure::Fault(Fault {
         class: FaultClass::Environment,
         reason: "watch::unavailable".to_owned(),
         detail: "filesystem notifications are unavailable on wasm32".to_owned(),
@@ -326,7 +333,7 @@ fn admit_delta(
     delta: WatchDelta,
     budget: wire::output::Budget,
     root: &Path,
-) -> Result<bool, Outcome<WatchReport>> {
+) -> Result<bool, Failure> {
     let WatchDelta { rows, cursor } = delta;
     let mut rows = rows.into_iter();
     while let Some(row) = rows.next() {
@@ -428,12 +435,12 @@ fn deadline(matches: &ArgMatches, follow: bool) -> Result<Option<Duration>, Refu
     Ok(Some(duration))
 }
 
-fn count(matches: &ArgMatches, name: &str) -> Result<Option<usize>, Outcome<WatchReport>> {
+fn count(matches: &ArgMatches, name: &str) -> Result<Option<usize>, Failure> {
     matches
         .get_one::<String>(name)
         .map(|written| {
             written.parse::<usize>().map_err(|_| {
-                Outcome::Refusal(refusal(
+                Failure::Refusal(refusal(
                     "watch::bound-invalid",
                     Some(format!("--{name}={written}")),
                     "pass a nonnegative decimal integer bound",
@@ -528,16 +535,16 @@ fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
     )
 }
 
-fn surface_failure(error: listen::SurfaceError) -> Outcome<WatchReport> {
-    Outcome::Fault(Fault {
+fn surface_failure(error: listen::SurfaceError) -> Failure {
+    Failure::Fault(Fault {
         class: FaultClass::Environment,
         reason: "listen::surface".to_owned(),
         detail: error.to_string(),
     })
 }
 
-fn protocol_failure(error: serde_json::Error) -> Outcome<WatchReport> {
-    Outcome::Fault(Fault {
+fn protocol_failure(error: serde_json::Error) -> Failure {
+    Failure::Fault(Fault {
         class: FaultClass::Protocol,
         reason: "watch::cursor-unencodable".to_owned(),
         detail: error.to_string(),
@@ -545,8 +552,8 @@ fn protocol_failure(error: serde_json::Error) -> Outcome<WatchReport> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn watch_failure(operation: &str, error: notify::Error) -> Outcome<WatchReport> {
-    Outcome::Fault(Fault {
+fn watch_failure(operation: &str, error: notify::Error) -> Failure {
+    Failure::Fault(Fault {
         class: FaultClass::Environment,
         reason: "watch::notification".to_owned(),
         detail: format!("failed to {operation}: {error}"),

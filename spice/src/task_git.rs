@@ -897,7 +897,9 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         "resolve current branch",
     )?;
-    let declared = crate::git_shadow::declared_pairing(root, &lane)
+    let environment = ambient_environment()
+        .map_err(|error| Error::fault("git::environment-invalid", error.to_string()))?;
+    let declared = crate::git_shadow::declared_pairing(root, &lane, &environment)
         .map_err(|error| Error::fault("git::pairing-invalid", error.to_string()))?;
     if let Some(pairing) = declared.as_ref().filter(|pairing| pairing.is_local()) {
         return Ok(Some(Target {

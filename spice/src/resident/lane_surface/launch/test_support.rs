@@ -167,7 +167,7 @@ pub(in crate::resident) fn stand_in_stream(spec: &Spec) -> Vec<u8> {
         .windows(2)
         .filter(|pair| pair[0] == "--resume")
         .filter_map(|pair| pair[1].to_str())
-        .last()
+        .next_back()
         .unwrap_or(SESSION);
     format!(
         concat!(

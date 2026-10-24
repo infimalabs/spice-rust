@@ -95,10 +95,10 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError
                 publication_positions.insert(wire::SequenceCode::new(seq).to_string());
             }
         }
-        if matches!(decoded.row.kind.as_str(), "room::closed" | "room::timedout") {
-            if let Some(result) = fact.get("result").and_then(serde_json::Value::as_str) {
-                results.insert(result.to_owned());
-            }
+        if matches!(decoded.row.kind.as_str(), "room::closed" | "room::timedout")
+            && let Some(result) = fact.get("result").and_then(serde_json::Value::as_str)
+        {
+            results.insert(result.to_owned());
         }
     }
 
@@ -388,7 +388,7 @@ fn retained_fact_error(seq: i64, detail: String) -> OpenError {
         seq,
         kind: "retired room question authority",
         release: RELEASE,
-        detail: detail.into(),
+        detail,
     }
     .into()
 }

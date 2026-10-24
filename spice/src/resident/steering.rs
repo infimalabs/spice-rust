@@ -738,7 +738,7 @@ pub(super) fn quote(
     .resolve(&request.target, 0);
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
-        body: CommandAnswer::Quote(resolution),
+        body: CommandAnswer::Quote(Box::new(resolution)),
     })
 }
 

@@ -37,23 +37,12 @@ pub(super) fn pin_extension(runtime: &Path) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct State {
     pub(crate) generation: u64,
     pub(crate) refreshing: bool,
     pub(crate) last_good: Option<Arc<Snapshot>>,
     pub(crate) latest_attempt: Option<Attempt>,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            generation: 0,
-            refreshing: false,
-            last_good: None,
-            latest_attempt: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -238,6 +227,10 @@ struct Settings {
 }
 
 impl Settings {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the quota probe's production rim captures the resident environment once"
+    )]
     fn production(binary: impl Into<OsString>, extension: PathBuf) -> Self {
         Self {
             binary: binary.into(),

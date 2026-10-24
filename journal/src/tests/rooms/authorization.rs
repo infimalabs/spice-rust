@@ -825,8 +825,8 @@ fn retained_proposals_with_and_without_claim_witnesses_cross_together() {
         &journal,
         &applied,
         &proposal,
-        &[preparation.input.clone()],
-        &[preparation.output.clone()],
+        std::slice::from_ref(&preparation.input),
+        std::slice::from_ref(&preparation.output),
         "018f82d4-6f59-7d06-92e3-bce913116310",
         true,
     );
@@ -837,8 +837,8 @@ fn retained_proposals_with_and_without_claim_witnesses_cross_together() {
         &journal,
         &historical_applied,
         &historical_proposal,
-        &[preparation.input.clone()],
-        &[preparation.output.clone()],
+        std::slice::from_ref(&preparation.input),
+        std::slice::from_ref(&preparation.output),
         "018f82d4-6f59-7d06-92e3-bce913116312",
         false,
     );
@@ -932,8 +932,8 @@ fn collapse_decision_crosses_to_an_outputless_accepted_proposal() {
         &journal,
         &applied,
         &proposal,
-        &[preparation.input.clone()],
-        &[preparation.output.clone()],
+        std::slice::from_ref(&preparation.input),
+        std::slice::from_ref(&preparation.output),
         "018f82d4-6f59-7d06-92e3-bce913116311",
         true,
     );

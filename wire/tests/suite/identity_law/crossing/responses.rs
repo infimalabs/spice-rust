@@ -162,7 +162,7 @@ fn cover_journal_reply_frames() {
                 facts: 19,
                 entries: wire::output::Bounded {
                     rows: Vec::new(),
-                    omission: Some(wire::output::Omission {
+                    omission: Some(Box::new(wire::output::Omission {
                         population: 19,
                         shown: 0,
                         withheld: 19,
@@ -176,7 +176,7 @@ fn cover_journal_reply_frames() {
                         },
                         continuation: wire::SpiceCommand::new("journal", ["--after", "19"])
                             .expect("fixture command is valid"),
-                    }),
+                    })),
                 },
             },
         ],

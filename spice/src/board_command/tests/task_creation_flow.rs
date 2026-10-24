@@ -574,7 +574,7 @@ fn every_ambient_planning_child_waits_on_its_parent_plan() {
     for (born, child) in children {
         assert_eq!(
             at(&current, &child).statement.body.dependencies,
-            [parent.clone()]
+            std::slice::from_ref(&parent)
         );
         assert!(!current.offer.contains(&born));
     }

@@ -822,8 +822,12 @@ fn delivered(lanes: &Lanes, lane: u8) -> wire::intent::PendingDirective {
     );
     assert_eq!(message.room, None, "a direct route freezes no room");
     let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
-    let rendered =
-        steer::inbox::render_pending(&seal, &[message.clone()], message.authored, |_, _| None);
+    let rendered = steer::inbox::render_pending(
+        &seal,
+        std::slice::from_ref(&message),
+        message.authored,
+        |_, _| None,
+    );
     for part in [
         message.key.as_str(),
         message.text.as_str(),

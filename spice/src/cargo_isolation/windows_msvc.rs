@@ -312,13 +312,14 @@ fn package_manifest(cache: &Path, expected: &str) -> Result<PathBuf, IsolationEr
                 )
             })?
             .path();
-        if path.extension() == Some(OsStr::new("vsman")) && sha256_file(&path)? == expected {
-            if matched.replace(path).is_some() {
-                return Err(IsolationError::new(
-                    "cargo-isolation::windows-msvc-manifest-mismatch",
-                    "more than one package manifest has the pinned identity",
-                ));
-            }
+        if path.extension() == Some(OsStr::new("vsman"))
+            && sha256_file(&path)? == expected
+            && matched.replace(path).is_some()
+        {
+            return Err(IsolationError::new(
+                "cargo-isolation::windows-msvc-manifest-mismatch",
+                "more than one package manifest has the pinned identity",
+            ));
         }
     }
     matched.ok_or_else(|| {
@@ -387,7 +388,9 @@ fn shell_path(path: &Path) -> Result<String, IsolationError> {
     })
 }
 
-/// Bind the verified toolchain only when Cargo selects the Windows MSVC target.
+/// Bind the verified toolchain only when Cargo selects the Windows MSVC target,
+/// by its arguments or the caller's `CARGO_BUILD_TARGET`, prepending the bound
+/// tools to the caller's `PATH`.
 ///
 /// # Errors
 ///
@@ -396,13 +399,14 @@ pub fn bind_if_selected(
     repository: &Path,
     bootstrap_home: &Path,
     arguments: &[OsString],
+    build_target: Option<&OsStr>,
+    path: OsString,
     command: &mut Command,
 ) -> Result<(), IsolationError> {
-    if !selects_windows_target(arguments, std::env::var_os("CARGO_BUILD_TARGET").as_deref()) {
+    if !selects_windows_target(arguments, build_target) {
         return Ok(());
     }
     let bin = admitted_bin(repository, bootstrap_home)?;
-    let path = std::env::var_os("PATH").unwrap_or_default();
     let bindings = toolchain_bindings(&bin, path)?;
     command.envs(bindings);
     Ok(())

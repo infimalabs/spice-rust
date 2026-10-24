@@ -165,7 +165,7 @@ pub(crate) fn window_entry(arguments: impl Iterator<Item = OsString>) -> Option<
     // the signal that nothing is left to drain the resident for this window.
     std::thread::spawn(|| {
         let _ = std::io::stdin().read_to_end(&mut Vec::new());
-        std::process::exit(0);
+        crate::terminate_code(0);
     });
     let key = common.to_string_lossy();
     Some(
@@ -193,7 +193,10 @@ fn show_window(url: &str, common: &Path, shown: impl FnOnce()) -> Result<(), des
     let platform = |detail: String| desktop::WindowError::Platform(detail);
     let executable = std::env::current_exe()
         .map_err(|error| platform(format!("the running executable is unresolved: {error}")))?;
-    let bundled = desktop::bundled_executable(&executable)?;
+    let home = crate::bootstrap_environment("HOME")
+        .filter(|home| !home.is_empty())
+        .ok_or_else(|| platform("HOME names no cache directory".into()))?;
+    let bundled = desktop::bundled_executable(&executable, Path::new(&home))?;
     let mut child = Command::new(bundled)
         .arg(WINDOW_ENTRY)
         .arg(common)

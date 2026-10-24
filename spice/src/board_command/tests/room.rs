@@ -198,12 +198,7 @@ fn publish_message(
     };
     let origin = format!("lane:{lane}").parse().expect("fixture lane origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
-    let mut ingest = JournalWrite::new(
-        Actor::Spice,
-        origin,
-        at.clone(),
-        Producer::ResidentRecognition,
-    );
+    let mut ingest = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
     let fact = ingest
         .fact(
             wire::body::JournalIngested {

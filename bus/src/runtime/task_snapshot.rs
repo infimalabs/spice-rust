@@ -193,6 +193,15 @@ impl TerminalIndex {
     }
 }
 
+/// Each continuing session's asked Design items, keyed by lane and session.
+type NoticedAsks = HashMap<
+    (
+        journal::crossing::CanonicalUuid,
+        journal::crossing::rooms::DesignSession,
+    ),
+    Arc<HashSet<(journal::crossing::TaskStamp, Option<RoomQuestionItem>)>>,
+>;
+
 /// Answers derived from the whole history, advanced once per commit so no
 /// later read walks the history for them. Each index that grows with history
 /// is shared through `Arc` and copied only by the commit that changes it
@@ -217,15 +226,7 @@ struct Indexes {
     >,
     /// Each continuing session's asked Design items; `None` is a whole-Design
     /// ask.
-    noticed_asks: Arc<
-        HashMap<
-            (
-                journal::crossing::CanonicalUuid,
-                journal::crossing::rooms::DesignSession,
-            ),
-            Arc<HashSet<(journal::crossing::TaskStamp, Option<RoomQuestionItem>)>>,
-        >,
-    >,
+    noticed_asks: Arc<NoticedAsks>,
     room_publication_positions: Arc<
         HashMap<(journal::crossing::Actor, journal::crossing::TaskStamp), journal::crossing::Seq>,
     >,
@@ -1007,7 +1008,7 @@ impl TaskFacts {
     /// Current task identities the working-group partition holds.
     pub fn room_anchor_tasks(
         &self,
-    ) -> impl Iterator<Item = &journal::crossing::TaskStamp> + ExactSizeIterator {
+    ) -> impl ExactSizeIterator<Item = &journal::crossing::TaskStamp> {
         self.indexes.design_stances.keys()
     }
 

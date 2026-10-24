@@ -199,7 +199,6 @@ fn a_quoted_directive_presents_its_packet_or_stays_literal() {
     let resolver = spice::quote::Resolver::from_tape(&lanes.paths.tape, &reader);
     let message = resolver.present(&directive("ship"));
     let literal = resolver.present(&directive("forged"));
-    drop(resolver);
     drop(reader);
 
     let [

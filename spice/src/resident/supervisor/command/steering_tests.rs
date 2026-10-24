@@ -183,7 +183,7 @@ impl Seat {
                 (notice["purpose"] == purpose)
                     .then(|| notice["message"].as_str().map(str::to_owned))?
             })
-            .last()
+            .next_back()
             .unwrap_or_default()
     }
 }

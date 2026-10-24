@@ -61,6 +61,9 @@ fn found(field: wire::StatementField, line: usize, taste: &str, trigger: &str) -
     }
 }
 
+/// One audit note: its position, its cause, and the matches its read found.
+type Audit<'a> = (u64, u64, &'a [wire::TasteMatch]);
+
 /// Append the audit note a retired policy read caused, spelled as its writer
 /// spelled it.
 fn audit(journal: &Journal, seq: u64, cause: u64, matches: &[wire::TasteMatch]) {
@@ -255,7 +258,7 @@ fn writable_crossing_lifts_audit_evidence_into_plan_only_holds_once() {
 #[test]
 fn holds_without_their_audit_evidence_roll_back_the_entire_crossing() {
     let held = found(wire::StatementField::Title, 1, "scope", "while");
-    let cases: [(&str, &[(u64, u64, &[wire::TasteMatch])]); 3] = [
+    let cases: [(&str, &[Audit<'_>]); 3] = [
         ("no audit", &[]),
         (
             "latest read clear",

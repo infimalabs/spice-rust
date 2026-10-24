@@ -172,7 +172,7 @@ pub(super) fn task_list_page(
     };
     let mut admission = wire::output::Admission::new(budget);
     for task in tasks {
-        let title = budget.clip(&task.presentation_title()).to_string();
+        let title = budget.clip(task.presentation_title()).to_string();
         admission
             .offer(TaskListRow {
                 handle: task.statement.body.handle.clone(),

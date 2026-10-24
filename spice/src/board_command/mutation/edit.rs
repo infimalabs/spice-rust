@@ -398,5 +398,5 @@ fn publish_correction(
     ) {
         return store_fault("task::edit-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }

@@ -376,7 +376,9 @@ fn publication(
     let branch = current_ref
         .strip_prefix(LOCAL_PREFIX)
         .unwrap_or(current_ref);
-    let Some(pairing) = spice::git_shadow::declared_pairing(repository, branch)
+    let environment = super::pre_commit::ambient_environment()
+        .map_err(|source| ReferenceTransactionError::Environment { source })?;
+    let Some(pairing) = spice::git_shadow::declared_pairing(repository, branch, &environment)
         .map_err(|source| ReferenceTransactionError::Pairing { source })?
     else {
         return Ok(Publication::Untracked);
@@ -798,6 +800,9 @@ pub enum ReferenceTransactionError {
         reason: String,
         detail: String,
     },
+    Environment {
+        source: sill::SpecError,
+    },
     Pairing {
         source: spice::git_shadow::Error,
     },
@@ -840,6 +845,13 @@ impl fmt::Display for ReferenceTransactionError {
                     formatter,
                     "reference-transaction git output was not UTF-8: git {}",
                     arguments.join(" ")
+                )?;
+                formatter.write_str(OPERATIONAL_RECOVERY)
+            }
+            Self::Environment { source } => {
+                write!(
+                    formatter,
+                    "reference-transaction could not capture its environment: {source}"
                 )?;
                 formatter.write_str(OPERATIONAL_RECOVERY)
             }
@@ -942,6 +954,7 @@ impl Error for ReferenceTransactionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::GitLaunch { source, .. } => Some(source),
+            Self::Environment { source } => Some(source),
             Self::Pairing { source } => Some(source),
             Self::MalformedInput { .. }
             | Self::NonUtf8Output { .. }

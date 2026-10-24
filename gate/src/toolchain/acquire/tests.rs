@@ -156,7 +156,7 @@ fn an_identified_program_carries_its_resolved_bytes_and_exact_printed_version() 
         },
     );
 
-    assert_eq!(*asked.borrow(), [resolved.clone()]);
+    assert_eq!(*asked.borrow(), std::slice::from_ref(&resolved));
     assert_eq!(
         evidence,
         ToolEvidence::Identified {

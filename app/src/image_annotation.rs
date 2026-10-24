@@ -451,14 +451,14 @@ mod tests {
         assert!(editor.can_undo());
         assert!(editor.differs_from(&baseline));
         editor.undo();
-        assert_eq!(editor.shapes, [rectangle.clone()]);
+        assert_eq!(editor.shapes, std::slice::from_ref(&rectangle));
         assert!(!editor.differs_from(&baseline));
         editor.redo();
         assert_eq!(editor.shapes, [rectangle.clone(), arrow.clone()]);
         assert!(editor.differs_from(&baseline));
         editor.selected = Some(0);
         editor.delete();
-        assert_eq!(editor.shapes, [arrow.clone()]);
+        assert_eq!(editor.shapes, std::slice::from_ref(&arrow));
         editor.undo();
         assert_eq!(editor.shapes, [rectangle.clone(), arrow.clone()]);
         let before = editor.shapes.clone();

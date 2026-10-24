@@ -35,7 +35,7 @@ struct Presented {
 }
 
 enum Item {
-    Publication(crate::room_command::Publication),
+    Publication(Box<crate::room_command::Publication>),
     /// The rendered Design request owed to this lane.
     Invitation(String),
 }
@@ -589,7 +589,7 @@ fn append_room(
             Presented {
                 room: room.clone(),
                 handle: entry.handle().clone(),
-                item: Item::Publication(publication),
+                item: Item::Publication(Box::new(publication)),
             },
         );
     }
@@ -823,7 +823,7 @@ fn delivery_hunk(
         .into_iter()
         .map(journal::JournalHead::into_body)
         .find(|head| {
-            let end = u64::from(locus.offset) + u64::from(locus.length);
+            let end = locus.offset + locus.length;
             head.source == source
                 && (locus.member < head.next.member
                     || (locus.member == head.next.member && end <= head.next.offset))

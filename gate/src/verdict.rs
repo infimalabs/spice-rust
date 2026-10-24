@@ -470,6 +470,10 @@ impl LongLineBaselines<'_> {
     }
 }
 
+/// A run's progress sink: the path being measured, and how many of the total
+/// are done.
+type AdjudicationProgress<'a> = dyn FnMut(Option<&str>, usize, usize) + 'a;
+
 impl Run {
     /// Walk a foreign repository, measure it, and judge it against a ratchet.
     ///
@@ -492,7 +496,7 @@ impl Run {
         root: &Path,
         ratchet: &Ratchet,
         bounds: &Bounds,
-        progress: &mut dyn FnMut(Option<&str>, usize, usize),
+        progress: &mut AdjudicationProgress<'_>,
     ) -> Result<Self, RunError> {
         Self::adjudicate_with_inputs(
             policy,
@@ -530,7 +534,7 @@ impl Run {
         bounds: &Bounds,
         snapshot_integrity: SnapshotIntegrity,
         long_line_baselines: LongLineBaselines<'_>,
-        mut progress: Option<&mut dyn FnMut(Option<&str>, usize, usize)>,
+        mut progress: Option<&mut AdjudicationProgress<'_>>,
     ) -> Result<Self, RunError> {
         if snapshot_integrity == SnapshotIntegrity::Unsupported {
             return Err(RunError::SnapshotIntegrityUnsupported);

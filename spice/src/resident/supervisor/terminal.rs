@@ -94,7 +94,7 @@ pub(in crate::resident) enum Run {
     Ended(Report),
     /// The call was answered with what the command said so far; the job
     /// keeps running and its ending is still to be delivered.
-    Backgrounded(Report, Job),
+    Backgrounded(Report, Box<Job>),
 }
 
 impl Terminal {
@@ -241,10 +241,13 @@ impl Terminal {
                 wall: None,
             }),
             Ok(Observed::Interrupted) => {
-                return Run::Backgrounded(prefixed(kept(&job, Some(STEERED)), diagnostic), job);
+                return Run::Backgrounded(
+                    prefixed(kept(&job, Some(STEERED)), diagnostic),
+                    Box::new(job),
+                );
             }
             Ok(Observed::Elapsed) => {
-                return Run::Backgrounded(prefixed(kept(&job, None), diagnostic), job);
+                return Run::Backgrounded(prefixed(kept(&job, None), diagnostic), Box::new(job));
             }
             Err(error) => Ended {
                 ending: Ending::Failed {

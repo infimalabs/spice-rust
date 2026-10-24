@@ -111,13 +111,16 @@ pub(crate) fn record_return(bus: &Bus, owed: &ReturnOwed) -> Result<(), Outcome<
     }
 }
 
+/// A decision carrying holder input, with its position, the authority stamp
+/// it answered, and the input.
+type Feedback = (Seq, PreparationDecision, RoomAuthorityStamp, String);
+
 /// `design`'s newest decision carrying holder input and its position, read
 /// newest-first so the work stops there instead of walking all history.
 fn newest_feedback(
     bus: &Bus,
     design: &TaskStamp,
-) -> Result<Option<(Seq, PreparationDecision, RoomAuthorityStamp, String)>, Outcome<CommandAnswer>>
-{
+) -> Result<Option<Feedback>, Outcome<CommandAnswer>> {
     let design = design.clone();
     bus.read(move |read| {
         let mut before = None;

@@ -20,17 +20,16 @@ pub(super) fn validate(publication: &Publication, study: &Study) -> Result<()> {
                 .actor
                 .as_str()
                 .and_then(|actor| actor.strip_prefix("lane:"))
+                && encoded.contains(actor)
             {
-                if encoded.contains(actor) {
-                    return Err("publication contains an original lane identity".into());
-                }
+                return Err("publication contains an original lane identity".into());
             }
             if let Some(git) = &observation.git {
                 for name in ["head", "integrated", "upstream_head"] {
-                    if let Some(id) = git.get(name).and_then(serde_json::Value::as_str) {
-                        if encoded.contains(id) {
-                            return Err("publication contains an original Git identity".into());
-                        }
+                    if let Some(id) = git.get(name).and_then(serde_json::Value::as_str)
+                        && encoded.contains(id)
+                    {
+                        return Err("publication contains an original Git identity".into());
                     }
                 }
             }

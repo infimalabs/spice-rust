@@ -64,7 +64,12 @@ fn git_spec(
     arguments.push(root.as_os_str().to_owned());
     arguments.extend(args.iter().map(OsString::from));
 
-    let mut inherited = std::env::vars_os().collect::<BTreeMap<_, _>>();
+    let mut inherited = super::admission::ambient_environment()
+        .map_err(invalid_spec)?
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<BTreeMap<_, _>>();
     inherited.insert(OsString::from("GIT_TERMINAL_PROMPT"), OsString::from("0"));
     inherited.insert(
         OsString::from("GIT_SSH_COMMAND"),

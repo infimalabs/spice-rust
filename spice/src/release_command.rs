@@ -44,7 +44,7 @@ impl AdmittedRelease {
     pub(crate) fn fact(&self) -> ReleasePublished {
         ReleasePublished {
             manifest: self.published.digest.clone(),
-            notes: self.notes.clone().into(),
+            notes: self.notes.clone(),
             targets: self.targets.clone(),
         }
     }

@@ -271,7 +271,7 @@ impl AutomaticLaunch {
 }
 
 pub(in crate::resident) struct PendingAutomaticWake {
-    admitted: WakeAdmission,
+    admitted: Box<WakeAdmission>,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     fresh_session: bool,
@@ -333,7 +333,7 @@ pub(in crate::resident) fn begin_automatic_wake(
     Ok(BeginAutomaticWake::Launch(AutomaticLaunch {
         launch,
         pending: PendingAutomaticWake {
-            admitted,
+            admitted: Box::new(admitted),
             lane,
             occupant,
             fresh_session,

@@ -97,7 +97,7 @@ pub(super) fn scanned_capture_record(
         locus: record.locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context,
+            context: Box::new(context),
             events: events.into_iter().map(|sourced| sourced.event).collect(),
         },
     })

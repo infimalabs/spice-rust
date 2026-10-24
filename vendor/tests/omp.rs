@@ -325,7 +325,7 @@ fn a_history_call_admits_limits_within_its_surface_and_refuses_the_rest() {
             op: omp::JobOp::History { budget },
             ..
         }) => Ok(budget.limits()),
-        other => Err(other),
+        other => Err(format!("{other:?}")),
     };
     let (default, maximum) = (
         omp::JOB_HISTORY.default_limits(),

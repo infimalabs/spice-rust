@@ -157,11 +157,11 @@ pub(in super::super) fn review_braid(p: &Publication, public: &Path, name: &str)
         let center = destination_top + thickness / 2.0;
         if category > 0 {
             let rounds = if category <= 2 { 1 } else { category - 1 };
-            for round in 0..rounds {
+            for (round, x) in round_x.iter().take(rounds).enumerate() {
                 let clean = category == 1 || (category >= 3 && round + 1 == rounds);
                 svg.push_str(&format!(
                     "<circle cx=\"{}\" cy=\"{center:.3}\" r=\"4.5\" fill=\"{}\" stroke=\"#faf7ef\" stroke-width=\"1.5\"><title>{}</title></circle>",
-                    round_x[round],
+                    x,
                     if clean { "#2a78d6" } else { "#c05629" },
                     if clean { "clean" } else { "finding" }
                 ));

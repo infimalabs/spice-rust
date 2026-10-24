@@ -232,18 +232,10 @@ impl Reader {
     }
 }
 
+#[derive(Default)]
 struct Replies {
     waiting: HashMap<u64, SyncSender<Result<String, String>>>,
     failure: Option<String>,
-}
-
-impl Default for Replies {
-    fn default() -> Self {
-        Self {
-            waiting: HashMap::new(),
-            failure: None,
-        }
-    }
 }
 
 /// One running current-release helper and its correlated requests.

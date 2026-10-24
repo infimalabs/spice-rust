@@ -34,7 +34,7 @@ pub(super) fn project_targets<'a>(
         }
         let pending_inbox = projection.has_operator_steering(row.lane);
         let (held_claim, held_parked) =
-            held_claim(entries, &satisfied, ready_at, row, &environment, now)?;
+            held_claim(entries, satisfied, ready_at, row, &environment, now)?;
         let subscription = subscription(projected_residency, row)?;
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"

@@ -1071,7 +1071,7 @@ fn worker_spec_at_with_cancellation(
     clippy::disallowed_methods,
     reason = "the canonical commit-gate process rim captures the caller environment once"
 )]
-fn ambient_environment() -> Result<Environment, sill::SpecError> {
+pub(super) fn ambient_environment() -> Result<Environment, sill::SpecError> {
     Environment::new(env::vars_os())
 }
 

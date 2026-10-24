@@ -610,10 +610,10 @@ impl<'a> Surface<'a> {
     ) -> Outcome<CommandAnswer> {
         match completion {
             super::CommandLaunchCompletion::Wake(pending) => lane_surface::finish_wake(
-                self.bus, self.paths, self.epoch, seats, command, pending, launched,
+                self.bus, self.paths, self.epoch, seats, command, *pending, launched,
             ),
             super::CommandLaunchCompletion::Import(pending) => lane_recovery::finish_import(
-                self.bus, self.paths, self.epoch, seats, command, pending, launched,
+                self.bus, self.paths, self.epoch, seats, command, *pending, launched,
             ),
         }
     }

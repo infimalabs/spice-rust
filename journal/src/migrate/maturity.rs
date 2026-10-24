@@ -103,7 +103,7 @@ fn refusal(seq: i64, detail: &str) -> OpenError {
 
 /// One retained fact the maturity projection folds.
 enum Folded {
-    Request(DesignNoticed),
+    Request(Box<DesignNoticed>),
     Contribution(RoomContributed),
     Leave(RoomLeft),
 }
@@ -111,7 +111,7 @@ enum Folded {
 impl Folded {
     fn read(fact: &AnyFact) -> Option<Self> {
         fact.read::<DesignNoticed>()
-            .map(Self::Request)
+            .map(|notice| Self::Request(Box::new(notice)))
             .or_else(|| fact.read::<RoomContributed>().map(Self::Contribution))
             .or_else(|| fact.read::<RoomLeft>().map(Self::Leave))
     }

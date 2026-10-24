@@ -583,14 +583,14 @@ fn reconcile_client_recovery(
                         transplant: None,
                     };
                     let body = if task_reply {
-                        CommandAnswer::Task(wire::intent::TaskAnswer {
+                        CommandAnswer::Task(Box::new(wire::intent::TaskAnswer {
                             task: task.clone(),
                             status: "pending".to_owned(),
                             completion: None,
                             claim: Some(Box::new(claim)),
                             closed: Vec::new(),
                             next: None,
-                        })
+                        }))
                     } else {
                         CommandAnswer::Claim(Box::new(claim))
                     };

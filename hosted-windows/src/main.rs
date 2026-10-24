@@ -1,9 +1,9 @@
 //! Repository-owned Windows guest for one provider-authenticated execution.
 
 #[cfg(not(windows))]
-fn main() {
+fn main() -> std::process::ExitCode {
     eprintln!("spice hosted Windows runner requires x86-64 Windows");
-    std::process::exit(70);
+    std::process::ExitCode::from(70)
 }
 
 #[cfg(windows)]

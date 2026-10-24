@@ -63,7 +63,7 @@ pub(crate) enum RoomControlRequest {
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum PreparationRequest {
     Decide {
-        request: wire::rooms::PreparationDecide,
+        request: Box<wire::rooms::PreparationDecide>,
         expected: Vec<wire::Witness>,
     },
     Nudge {

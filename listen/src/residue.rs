@@ -154,7 +154,7 @@ pub enum Decoded {
     /// Zero or more typed moments supplied by a recognized record.
     Events {
         /// Context shared by the decoded moments.
-        context: RecordContext,
+        context: Box<RecordContext>,
         /// Typed moments in vendor order.
         events: Vec<Event>,
     },

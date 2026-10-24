@@ -614,12 +614,15 @@ mod tests {
         }
     }
 
+    /// The condition `until` awaits over the sink's text.
+    type Reached<'a> = &'a dyn Fn(&str) -> bool;
+
     /// A progress writer whose sink `shared` reads and whose writes `until`
     /// awaits.
     fn announcing(
         label: &'static str,
         interval: Duration,
-    ) -> (Progress, Shared, impl Fn(&dyn Fn(&str) -> bool)) {
+    ) -> (Progress, Shared, impl Fn(Reached<'_>)) {
         let shared = Shared::default();
         let (written, writes) = std::sync::mpsc::channel();
         let progress = Progress::new(

@@ -322,7 +322,11 @@ fn a_quoted_direct_direction_names_the_same_two_ends_as_its_card() {
             &sources,
         )
         .html;
-        assert_eq!(signoff_ends(&card), [expected.clone()], "{card}");
+        assert_eq!(
+            signoff_ends(&card),
+            std::slice::from_ref(&expected),
+            "{card}"
+        );
 
         let quote_agents = referenced_quote_agents(&quotes, &[], &[], &roster);
         let quoting =

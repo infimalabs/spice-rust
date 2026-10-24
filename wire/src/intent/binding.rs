@@ -321,15 +321,15 @@ pub enum CommandAnswer {
     /// [`AnswerShape::RoomLeave`]
     RoomLeave(RoomLeaveAnswer),
     /// [`AnswerShape::RoomContribute`]
-    RoomContribute(RoomContributeAnswer),
+    RoomContribute(Box<RoomContributeAnswer>),
     /// [`AnswerShape::RoomContributionRead`]
-    RoomContributionRead(RoomContributionReadAnswer),
+    RoomContributionRead(Box<RoomContributionReadAnswer>),
     /// [`AnswerShape::RoomControl`]
-    RoomControl(RoomControlAnswer),
+    RoomControl(Box<RoomControlAnswer>),
     /// [`AnswerShape::RoomConversationText`]
-    RoomConversationText(RoomConversationTextAnswer),
+    RoomConversationText(Box<RoomConversationTextAnswer>),
     /// [`AnswerShape::Task`]
-    Task(TaskAnswer),
+    Task(Box<TaskAnswer>),
     /// [`AnswerShape::Claim`]
     Claim(Box<ClaimAnswer>),
     /// [`AnswerShape::Doc`]
@@ -371,13 +371,13 @@ pub enum CommandAnswer {
     /// [`AnswerShape::Recognition`]
     Recognition(RecognitionAnswer),
     /// [`AnswerShape::Quote`]
-    Quote(QuoteResolution),
+    Quote(Box<QuoteResolution>),
     /// [`AnswerShape::PrincipalDirectory`]
     PrincipalDirectory(PrincipalDirectoryAnswer),
     /// [`AnswerShape::Principals`]
     Principals(PrincipalsAnswer),
     /// [`AnswerShape::Principal`]
-    Principal(PrincipalStanding),
+    Principal(Box<PrincipalStanding>),
 }
 
 impl CommandAnswer {

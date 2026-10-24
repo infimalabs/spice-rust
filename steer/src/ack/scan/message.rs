@@ -278,10 +278,7 @@ fn marker_starts_line(prose: &str, marker_start: usize) -> bool {
     let lead = prefix.trim_start_matches([' ', '\t']);
     let rest = lead.trim_start_matches(|character: char| character.is_ascii_digit());
     framing(prefix)
-        || (rest.len() < lead.len()
-            && rest
-                .strip_prefix(['.', ')'])
-                .is_some_and(|after| framing(after)))
+        || (rest.len() < lead.len() && rest.strip_prefix(['.', ')']).is_some_and(framing))
 }
 
 /// One selector's lead range and, when qualified, its context range.

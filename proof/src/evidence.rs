@@ -122,8 +122,8 @@ pub fn verify_stored(
         return Err(EvidenceError::Environment {
             target: payload.target,
             payload_pin: payload.pins.proof_container.clone(),
-            receipt: value.environment.clone(),
-            replay: value.environment.clone(),
+            receipt: Box::new(value.environment.clone()),
+            replay: Box::new(value.environment.clone()),
         });
     }
     if value.battery != *Battery::current().digest() {
@@ -195,8 +195,8 @@ pub(crate) fn verify_admitted(
         return Err(EvidenceError::Environment {
             target: payload.target,
             payload_pin: payload.pins.proof_container.clone(),
-            receipt: receipt.environment.clone(),
-            replay: replay.environment().clone(),
+            receipt: Box::new(receipt.environment.clone()),
+            replay: Box::new(replay.environment().clone()),
         });
     }
     if receipt.battery != *replay.battery_digest()
@@ -282,8 +282,8 @@ pub enum EvidenceError {
     Environment {
         target: ReleaseTarget,
         payload_pin: String,
-        receipt: ProofEnvironment,
-        replay: ProofEnvironment,
+        receipt: Box<ProofEnvironment>,
+        replay: Box<ProofEnvironment>,
     },
     BatteryDigest,
     ReplayDigest,

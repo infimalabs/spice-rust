@@ -27,7 +27,7 @@ fn each_recipient_answer_retires_its_own_msg_and_replies_once_to_the_sending_lan
     assert!(lanes.pending(FIRST).is_empty());
     assert_eq!(
         lanes.pending(SECOND),
-        [to_second.clone()],
+        std::slice::from_ref(&to_second),
         "a sibling recipient's key stays live"
     );
     let [ack] = lanes
@@ -160,13 +160,12 @@ fn an_msg_follows_its_lane_to_a_renewed_occupant_with_one_key_and_deadline() {
         ),
         "a quote names the occupant that wrote the MSG"
     );
-    drop(resolver);
     drop(resolver_source);
 
     lanes.vacate(FIRST);
     assert_eq!(
         lanes.pending(FIRST),
-        [message.clone()],
+        std::slice::from_ref(&message),
         "a vacant lane keeps its MSG"
     );
     let successor = test_uuid(41);
@@ -182,7 +181,7 @@ fn an_msg_follows_its_lane_to_a_renewed_occupant_with_one_key_and_deadline() {
     lanes.restart();
     assert_eq!(
         lanes.pending(FIRST),
-        [message.clone()],
+        std::slice::from_ref(&message),
         "the successor inherits the same key, body, and deadline through every replay"
     );
     assert_eq!(lanes.messages().len(), 1, "replay publishes nothing again");
@@ -264,7 +263,7 @@ fn an_unreadable_predecessor_transcript_settles_nothing_at_exit() {
 
     assert_eq!(
         lanes.pending(FIRST),
-        [message.clone()],
+        std::slice::from_ref(&message),
         "an unreadable predecessor settles nothing"
     );
     assert!(lanes.pending(SENDER).is_empty(), "no reply is owed yet");

@@ -333,14 +333,14 @@ fn file_unfiled(
         command.epoch(),
         answer.clone(),
     ) {
-        if let Some(prepared) = prepared_claim_git {
-            if let Err(rollback) = prepared.rollback() {
-                return task_git_outcome(rollback);
-            }
+        if let Some(prepared) = prepared_claim_git
+            && let Err(rollback) = prepared.rollback()
+        {
+            return task_git_outcome(rollback);
         }
         return store_fault("task::filing-receipt", &error.to_string());
     }
-    let body = CommandAnswer::Task(answer);
+    let body = CommandAnswer::Task(Box::new(answer));
     if let Some(prepared) = prepared_claim_git {
         committed_with_task_git(bus, write, body, PreparedTaskGit::Claim(prepared))
     } else {
@@ -521,7 +521,7 @@ fn finish_deferral<B: serde::Serialize>(
         }
         return outcome;
     }
-    let body = CommandAnswer::Task(answer);
+    let body = CommandAnswer::Task(Box::new(answer));
     if let Some(parked) = parked {
         committed_with_task_git(bus, write, body, PreparedTaskGit::Release(parked))
     } else if let Some(prepared) = prepared_claim {
@@ -566,7 +566,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         bus,
         command,
         repository,
-        &snapshot,
+        snapshot,
         selected,
         claim_requested,
     ) {
@@ -577,13 +577,13 @@ fn change_deferral<B: serde::Serialize + Clone>(
     let next = claim_answer
         .as_ref()
         .and_then(|claim| claim.next.clone())
-        .or_else(|| post.as_ref().and_then(|post| next_action(&snapshot, post)));
-    let mut write = match prepare_mutation_write(command, entry, &snapshot, atomic_claim.as_ref()) {
+        .or_else(|| post.as_ref().and_then(|post| next_action(snapshot, post)));
+    let mut write = match prepare_mutation_write(command, entry, snapshot, atomic_claim.as_ref()) {
         Ok(write) => write,
         Err(outcome) => return outcome,
     };
     let parked =
-        match prepare_deferral_release(&snapshot, command, entry, repository, releases_claim) {
+        match prepare_deferral_release(snapshot, command, entry, repository, releases_claim) {
             Ok(parked) => parked,
             Err(outcome) => return outcome,
         };

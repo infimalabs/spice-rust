@@ -605,7 +605,7 @@ pub(crate) fn require_deliveries<'a>(
             RoomDestination::Lane { lane } => Some((lane, route.context.clone())),
             _ => None,
         });
-        let expected = lanes.map(|(lane, room)| (lane, room)).collect::<Vec<_>>();
+        let expected = lanes.collect::<Vec<_>>();
         if directed.len() != expected.len() {
             return unsound(format!(
                 "room publication {stamp} names other lane deliveries than its routes need"

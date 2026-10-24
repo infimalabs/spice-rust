@@ -347,10 +347,10 @@ impl PreparedClaim {
             recovery,
             grant.source,
         ) {
-            if let Some(prepared) = prepared_git {
-                if let Err(error) = prepared.rollback() {
-                    return Err(task_git_outcome(error));
-                }
+            if let Some(prepared) = prepared_git
+                && let Err(error) = prepared.rollback()
+            {
+                return Err(task_git_outcome(error));
             }
             return Err(outcome);
         }
@@ -455,20 +455,20 @@ pub(in crate::board_command) fn commit_claim(
         win.recovery.clone(),
         source,
     ) {
-        if let Some(prepared) = prepared_git {
-            if let Err(error) = prepared.rollback() {
-                return task_git_outcome(error);
-            }
+        if let Some(prepared) = prepared_git
+            && let Err(error) = prepared.rollback()
+        {
+            return task_git_outcome(error);
         }
         return outcome;
     }
     let origin_context = match task_steering_origin_output(bus, &snapshot.facts, &selected) {
         Ok(context) => context,
         Err(outcome) => {
-            if let Some(prepared) = prepared_git {
-                if let Err(error) = prepared.rollback() {
-                    return task_git_outcome(error);
-                }
+            if let Some(prepared) = prepared_git
+                && let Err(error) = prepared.rollback()
+            {
+                return task_git_outcome(error);
             }
             return outcome;
         }
@@ -493,10 +493,10 @@ pub(in crate::board_command) fn commit_claim(
         command.epoch(),
         answer.clone(),
     ) {
-        if let Some(prepared) = prepared_git {
-            if let Err(rollback) = prepared.rollback() {
-                return task_git_outcome(rollback);
-            }
+        if let Some(prepared) = prepared_git
+            && let Err(rollback) = prepared.rollback()
+        {
+            return task_git_outcome(rollback);
         }
         return store_fault("claim::win-receipt", &error.to_string());
     }
@@ -858,9 +858,7 @@ pub(in crate::board_command) fn claim_git_boundary(
         Possession::Capture if parked.is_none() => {
             match spice::task_git::prepare_task_claim(&lane, None) {
                 Err(error) if error.reason() == "git::claim-loose-commits" => {
-                    if let Err(outcome) = planning::admit_capture(selected) {
-                        return Err(outcome);
-                    }
+                    planning::admit_capture(selected)?;
                     return Err(task_git_outcome(error));
                 }
                 result => result.map(|prepared| ClaimGit {

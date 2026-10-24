@@ -271,7 +271,6 @@ fn durable_source_loci_resolve_each_session_author_after_lane_renewal() {
             }
         ));
     }
-    drop(resolver);
     drop(reader);
     fixture.finish();
 }

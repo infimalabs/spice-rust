@@ -1143,7 +1143,7 @@ fn submit(
         };
         let action = ClientAction::Preparation {
             request: PreparationRequest::Decide {
-                request: submission.request.clone(),
+                request: Box::new(submission.request.clone()),
                 expected: submission.expected.clone(),
             },
             respond: Rc::new(settle.clone()),

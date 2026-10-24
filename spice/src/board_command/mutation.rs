@@ -429,7 +429,6 @@ pub(super) fn task_review_roots(review: &TaskReview) -> Vec<wire::TaskStamp> {
 }
 
 #[allow(clippy::too_many_arguments)]
-
 fn commit_prepared_task<B, F>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -501,7 +500,7 @@ where
     ) {
         return store_fault("task::add-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
 fn append_prepared_task(
@@ -852,7 +851,7 @@ pub(super) fn task_note(
     ) {
         return store_fault("task::note-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
 pub(super) fn task_depends(
@@ -1081,7 +1080,7 @@ fn commit_dependency_edit(
     ) {
         return store_fault("task::depends-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
 fn dependency_statement(

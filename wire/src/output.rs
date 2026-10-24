@@ -409,7 +409,7 @@ impl<T: Serialize> Admission<T> {
                 } else {
                     Resume::Export(&stop.record)
                 };
-            Omission {
+            Box::new(Omission {
                 population: self.population,
                 shown,
                 withheld: self.population - shown,
@@ -418,7 +418,7 @@ impl<T: Serialize> Admission<T> {
                 next_bytes: stop.bytes,
                 limits: self.budget.limits,
                 continuation: continuation(resume),
-            }
+            })
         });
         Bounded {
             rows: self.rows,
@@ -445,7 +445,7 @@ pub struct Bounded<T, C = SpiceCommand> {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub omission: Option<Omission<C>>,
+    pub omission: Option<Box<Omission<C>>>,
 }
 
 /// Every fact about the records a bounded answer withheld.

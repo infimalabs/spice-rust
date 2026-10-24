@@ -715,7 +715,7 @@ fn find_program(path: &OsStr, name: &'static str) -> Result<PathBuf, TargetBuild
     #[cfg(not(windows))]
     let file_name = name;
     for directory in env::split_paths(path) {
-        let candidate = directory.join(&file_name);
+        let candidate = directory.join(file_name);
         if executable(&candidate) {
             let directory = if directory.as_os_str().is_empty() {
                 Path::new(".")
@@ -723,7 +723,7 @@ fn find_program(path: &OsStr, name: &'static str) -> Result<PathBuf, TargetBuild
                 &directory
             };
             return fs::canonicalize(directory)
-                .map(|directory| directory.join(&file_name))
+                .map(|directory| directory.join(file_name))
                 .map_err(|source| TargetBuildError::Io {
                     path: directory.to_path_buf(),
                     source,

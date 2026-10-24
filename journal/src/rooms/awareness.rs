@@ -182,7 +182,7 @@ fn notice(
     terms_and_ask(body)?;
     authority.change(super::Change::MaturityNotice {
         seq: seq.get(),
-        notice: body.clone(),
+        notice: Box::new(body.clone()),
     })
 }
 

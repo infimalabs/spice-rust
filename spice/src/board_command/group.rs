@@ -21,7 +21,7 @@ pub(super) fn read_working_groups(
 ) -> Outcome<CommandAnswer> {
     // Collapse reasons come from the task snapshot taken after the journal
     // read, so every conclusion that read observed carries its reason.
-    let page = bus.read(|read| group_page(read));
+    let page = bus.read(group_page);
     let snapshot = match bus.task_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
@@ -739,7 +739,7 @@ fn advancing_partition(
     command: &wire::AdmittedCommand,
 ) -> Result<(WorkingGroupPartition, u64), Outcome<CommandAnswer>> {
     let current = bus
-        .read(|read| current_partition(read))
+        .read(current_partition)
         .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))?;
     let revision = next_revision(command, current.revision)?;
     Ok((current, revision))
