@@ -292,7 +292,7 @@ fn pe(archive: &[u8]) -> Vec<u8> {
     let optional = coff + 20;
     image[optional..optional + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
     image[optional + 108..optional + 112].copy_from_slice(&16_u32.to_le_bytes());
-    image[TABLE..TABLE + 8].copy_from_slice(b"spicerac");
+    image[TABLE..TABLE + 8].copy_from_slice(b"spicezip");
     image[TABLE + 8..TABLE + 12].copy_from_slice(&(archive.len() as u32).to_le_bytes());
     image[TABLE + 16..TABLE + 20].copy_from_slice(&(archive.len() as u32).to_le_bytes());
     image[TABLE + 20..TABLE + 24].copy_from_slice(&(RAW as u32).to_le_bytes());

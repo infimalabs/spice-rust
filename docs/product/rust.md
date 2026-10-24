@@ -202,14 +202,14 @@ the linked one. `spice resource read URL` prints exactly what a lane's host
 frame carries.
 
 The `canvas` crate declares the two symbols a relocatable object defines:
-`spicerack` at the rack's first byte and `spicerack_len` at its length. Every
+`spicezip` at the rack's first byte and `spicezip_len` at its length. Every
 current appliance target resolves the first to a mapped address, so the process
 reads its rack as a direct static slice without storing a file offset or
 parsing its own image.
 
 At the object-format boundary, `dist` locates that rack in final Mach-O, ELF,
-and PE32+ images: `__spicerack` on Mach-O, `spicerack` on ELF, and `spicerac`,
-the name truncated to PE's eight-byte section-name limit, on PE32+. The Windows
+and PE32+ images: `__spicezip` on Mach-O and `spicezip` on ELF and PE32+, one
+word that exactly fills PE's eight-byte section-name limit. The Windows
 development build enables the same ordinary `spice` binary and modules as macOS
 and Linux; only the filesystem, process, and local-IPC adapters vary by target.
 
