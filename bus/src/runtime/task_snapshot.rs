@@ -8,14 +8,17 @@ use journal::crossing::rooms::RoomQuestionItem;
 mod allocation;
 mod disposition;
 mod persistent_index;
+mod review_authors;
 mod selection;
 mod store;
 
+pub use review_authors::{AuthorshipFault, ClaimAuthor, FindingAuthors};
 pub(super) use store::{
     TaskHeadStore, TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot,
 };
 
 use allocation::{advance as advance_allocation_index, rebuild as rebuild_allocation_index};
+use review_authors::ReviewAuthors;
 use selection::CandidateSelection;
 
 use super::*;
@@ -319,6 +322,9 @@ struct Indexes {
     /// Pass-cycle evidence for every Design, shared until a commit records a
     /// fact the cycle reads.
     design_cycles: Arc<journal::crossing::rooms::DesignCycles>,
+    /// Phase authors of every finding review, advanced by claim, completion,
+    /// and review facts.
+    review_authors: ReviewAuthors,
 }
 
 impl Indexes {
@@ -388,6 +394,10 @@ impl Indexes {
             | FactKind::TaskConcluded
             | FactKind::ClaimWon
             | FactKind::ClaimFreed => self.observe_task_authority(row),
+            FactKind::ClaimCarried
+            | FactKind::ClaimRebound
+            | FactKind::ClaimLapsed
+            | FactKind::TaskReviewed => self.observe_review_authors(row),
             FactKind::LaneCompacted => {
                 self.observe_compaction(row);
                 if let Some(opened) = context_opening(&row.fact) {
@@ -540,6 +550,7 @@ impl Indexes {
         row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
     ) {
         if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
+            self.review_authors.complete(&row.actor, &done.task);
             self.observe_done(row, done);
         } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
             self.retire_task(&deleted.task);
@@ -553,8 +564,11 @@ impl Indexes {
                 Arc::make_mut(&mut self.collapse_reasons).insert(concluded.task, reason);
             }
         } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
+            self.review_authors
+                .claim(won.task.clone(), won.lane, won.occupant);
             self.claims.insert(won.actor, (row.seq, won.cell));
         } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {
+            self.review_authors.release(&freed.task);
             Arc::make_mut(&mut self.explicit_releases).insert(freed.task, row.seq);
         }
     }

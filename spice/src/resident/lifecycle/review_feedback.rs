@@ -6,28 +6,15 @@
 //! lane is between seats the finding is held and judged again on the next
 //! reconcile; a renewal that starts another session never receives it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
+use bus::{AuthorshipFault, ClaimAuthor, FindingAuthors};
 use journal::FactCause;
 use wire::rooms::DesignSession;
-use wire::{Actor, CanonicalUuid, Instant, LaneResidency, Seq, TaskStamp};
+use wire::{CanonicalUuid, Instant, LaneResidency, Seq, TaskStamp};
 
 use super::*;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ClaimAuthor {
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-}
-
-/// Who completed the phase one finding judged, and who judged it. Fixed once
-/// the finding is recorded, because history is append-only.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct PhaseAuthors {
-    author: ClaimAuthor,
-    reviewer: ClaimAuthor,
-}
 
 struct Feedback {
     reviewed: Seq,
@@ -53,17 +40,16 @@ enum Judgment {
 pub(super) struct FindingWindow<'a> {
     /// Lifecycle projection cursor; every finding after it is new.
     pub(super) cursor: Option<Seq>,
-    /// Findings still waiting for a seat, with the authors folded when they
-    /// were first judged; replaced by those that still wait.
-    pub(super) held: &'a mut BTreeMap<Seq, PhaseAuthors>,
+    /// Findings still waiting for a seat; replaced by those that still wait.
+    pub(super) held: &'a mut BTreeSet<Seq>,
     pub(super) now: Instant,
     pub(super) lifetime: Duration,
 }
 
 /// Deliver every finding after the window's cursor or held for a seat whose
 /// author session is seated, and leave held exactly the findings still
-/// waiting for a seat. Held findings are judged from their held authors; only
-/// findings after the cursor that are not held fold task history.
+/// waiting for a seat. Each finding's authors come from the snapshot's
+/// authorship index, so no reconcile walks task history.
 pub(super) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -81,24 +67,25 @@ pub(super) fn reconcile(
     let mut changed = false;
     loop {
         let observed = refreshed.as_ref().unwrap_or(snapshot);
-        let mut findings = pending_findings(observed.facts(), cursor, held)?;
-        findings.extend(held.iter().map(|(seq, authors)| (*seq, *authors)));
-        let mut waiting = BTreeMap::new();
+        let mut findings = new_findings(observed.facts(), cursor)?;
+        findings.extend(held.iter().copied());
+        let mut waiting = BTreeSet::new();
         let mut appended = false;
-        for (seq, authors) in &findings {
+        for seq in &findings {
             let envelope = observed.facts().at(*seq).ok_or_else(|| {
                 store_fault(
                     "review-feedback::finding-missing",
-                    "a folded finding has no fact in the snapshot it was folded from",
+                    "a finding has no fact in the snapshot it was judged from",
                 )
             })?;
             let Some(reviewed) = envelope.fact.read::<wire::body::TaskReviewed>() else {
                 continue;
             };
+            let authors = finding_authors(observed.facts(), *seq)?;
             let feedback = match judge(observed, envelope, &reviewed, authors, now, lifetime)? {
                 Judgment::Deliver(feedback) => feedback,
                 Judgment::Hold => {
-                    waiting.insert(*seq, *authors);
+                    waiting.insert(*seq);
                     continue;
                 }
                 Judgment::Drop => continue,
@@ -151,7 +138,7 @@ fn judge(
     snapshot: &bus::TaskSnapshot,
     envelope: &wire::Envelope<wire::AnyFact>,
     reviewed: &wire::body::TaskReviewed,
-    authors: &PhaseAuthors,
+    authors: FindingAuthors,
     now: Instant,
     lifetime: Duration,
 ) -> CommandResult<Judgment> {
@@ -165,7 +152,7 @@ fn judge(
                 "a finding review carries no final disposition",
             )
         })?;
-    let PhaseAuthors { author, reviewer } = *authors;
+    let FindingAuthors { author, reviewer } = authors;
     let author_session = snapshot.facts().lane_session(author.lane, author.occupant);
     if same_session(snapshot, author, author_session, reviewer) {
         return Ok(Judgment::Drop);
@@ -264,24 +251,10 @@ fn outlived(at: Instant, now: Instant, lifetime: Duration) -> bool {
     age.is_positive() && age.unsigned_abs() >= lifetime
 }
 
-/// Every finding after the cursor that is not already held, with the claim
-/// authors it judged.
-///
-/// Authorship is folded once, forward across the task history, rather than
-/// once per finding: a resident that starts against years of reviews would
-/// otherwise decode the whole history again for each of them. A reconcile
-/// whose only candidates are held findings folds nothing.
-fn pending_findings(
-    facts: &bus::TaskFacts,
-    cursor: Option<Seq>,
-    held: &BTreeMap<Seq, PhaseAuthors>,
-) -> CommandResult<BTreeMap<Seq, PhaseAuthors>> {
-    let mut wanted = BTreeMap::new();
-    let mut candidates = BTreeSet::new();
+/// Every finding review after the cursor.
+fn new_findings(facts: &bus::TaskFacts, cursor: Option<Seq>) -> CommandResult<BTreeSet<Seq>> {
+    let mut findings = BTreeSet::new();
     for envelope in facts.after(cursor) {
-        if held.contains_key(&envelope.seq) {
-            continue;
-        }
         let Some(reviewed) = envelope.fact.read::<wire::body::TaskReviewed>() else {
             continue;
         };
@@ -292,109 +265,38 @@ fn pending_findings(
             ));
         }
         if reviewed.verdict == wire::body::Verdict::Finding {
-            candidates.insert(envelope.seq);
-            let newest = wanted.entry(reviewed.task).or_insert(envelope.seq);
-            *newest = (*newest).max(envelope.seq);
-        }
-    }
-    let Some(newest) = wanted.values().max().copied() else {
-        return Ok(BTreeMap::new());
-    };
-    let mut active = BTreeMap::new();
-    let mut completed = BTreeMap::new();
-    let mut findings = BTreeMap::new();
-    for envelope in facts.iter().take_while(|envelope| envelope.seq <= newest) {
-        let Some((task, step)) = phase_step(envelope) else {
-            continue;
-        };
-        if !wanted.get(&task).is_some_and(|last| envelope.seq <= *last) {
-            continue;
-        }
-        match step {
-            PhaseStep::Claimed(author) => {
-                active.insert(task, author);
-            }
-            PhaseStep::Released => {
-                active.remove(&task);
-            }
-            PhaseStep::Done => {
-                let author = active.remove(&task).ok_or_else(|| {
-                    store_fault(
-                        "review-feedback::author-missing",
-                        "task completion has no preceding active claim author",
-                    )
-                })?;
-                if envelope.actor != Actor::Lane(author.lane) {
-                    return Err(store_fault(
-                        "review-feedback::author-mismatched",
-                        "task completion actor disagrees with its active claim lane",
-                    ));
-                }
-                completed.insert(task, author);
-            }
-            PhaseStep::Reviewed(finding) => {
-                let reviewer = active.remove(&task);
-                if !finding || !candidates.contains(&envelope.seq) {
-                    continue;
-                }
-                let author = completed.get(&task).copied().ok_or_else(|| {
-                    store_fault(
-                        "review-feedback::author-missing",
-                        "review has no preceding completed phase author",
-                    )
-                })?;
-                let reviewer = reviewer.ok_or_else(|| {
-                    store_fault(
-                        "review-feedback::reviewer-missing",
-                        "review has no preceding active reviewer claim",
-                    )
-                })?;
-                findings.insert(envelope.seq, PhaseAuthors { author, reviewer });
-            }
+            findings.insert(envelope.seq);
         }
     }
     Ok(findings)
 }
 
-/// What one fact does to a task's phase authorship.
-enum PhaseStep {
-    Claimed(ClaimAuthor),
-    Released,
-    Done,
-    Reviewed(bool),
-}
-
-fn phase_step(envelope: &wire::Envelope<wire::AnyFact>) -> Option<(TaskStamp, PhaseStep)> {
-    let fact = &envelope.fact;
-    if let Some(won) = fact.read::<wire::body::ClaimWon>() {
-        let author = ClaimAuthor {
-            lane: won.lane,
-            occupant: won.occupant,
-        };
-        Some((won.task, PhaseStep::Claimed(author)))
-    } else if let Some(carried) = fact.read::<wire::body::ClaimCarried>() {
-        let author = ClaimAuthor {
-            lane: carried.lane,
-            occupant: carried.occupant,
-        };
-        Some((carried.task, PhaseStep::Claimed(author)))
-    } else if let Some(rebound) = fact.read::<wire::body::ClaimRebound>() {
-        let author = ClaimAuthor {
-            lane: rebound.lane,
-            occupant: rebound.occupant,
-        };
-        Some((rebound.task, PhaseStep::Claimed(author)))
-    } else if let Some(freed) = fact.read::<wire::body::ClaimFreed>() {
-        Some((freed.task, PhaseStep::Released))
-    } else if let Some(lapsed) = fact.read::<wire::body::ClaimLapsed>() {
-        Some((lapsed.task, PhaseStep::Released))
-    } else if let Some(done) = fact.read::<wire::body::TaskDone>() {
-        Some((done.task, PhaseStep::Done))
-    } else {
-        let reviewed = fact.read::<wire::body::TaskReviewed>()?;
-        let finding = reviewed.verdict == wire::body::Verdict::Finding;
-        Some((reviewed.task, PhaseStep::Reviewed(finding)))
-    }
+/// The authors the snapshot recorded for the finding review at `review`.
+fn finding_authors(facts: &bus::TaskFacts, review: Seq) -> CommandResult<FindingAuthors> {
+    let fault = match facts.finding_authors(review) {
+        Some(Ok(authors)) => return Ok(authors),
+        None => (
+            "review-feedback::authors-missing",
+            "a finding review has no recorded phase authors",
+        ),
+        Some(Err(AuthorshipFault::CompletionUnclaimed)) => (
+            "review-feedback::author-missing",
+            "task completion has no preceding active claim author",
+        ),
+        Some(Err(AuthorshipFault::CompletionMismatched)) => (
+            "review-feedback::author-mismatched",
+            "task completion actor disagrees with its active claim lane",
+        ),
+        Some(Err(AuthorshipFault::ReviewUncompleted)) => (
+            "review-feedback::author-missing",
+            "review has no preceding completed phase author",
+        ),
+        Some(Err(AuthorshipFault::ReviewUnclaimed)) => (
+            "review-feedback::reviewer-missing",
+            "review has no preceding active reviewer claim",
+        ),
+    };
+    Err(store_fault(fault.0, fault.1))
 }
 
 fn feedback_text(handle: &wire::TaskHandle, finding: &str) -> String {

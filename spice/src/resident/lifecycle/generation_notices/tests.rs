@@ -66,7 +66,7 @@ fn trailing_generations_project_private_claimant_notices_without_steering() {
             &snapshot,
             super::super::review_feedback::FindingWindow {
                 cursor: bus.cursor().expect("cursor reads"),
-                held: &mut BTreeMap::new(),
+                held: &mut BTreeSet::new(),
                 now: current_instant().expect("clock reads"),
                 lifetime: Duration::from_secs(3_600),
             },
