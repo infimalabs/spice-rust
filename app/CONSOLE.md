@@ -128,7 +128,8 @@ bare `new turn` label. An empty fleet reserves no pips and invents no status.
 ## Task strips
 
 The command bar has two mirrored global strips, execution at the left and
-Design at the right, at equal small edge insets including the safe area; each
+Design at the right, each total flush and square against the window edge, a
+native window's traffic lights and the safe area still cleared; each
 team and open working group has one local strip. Every strip uses the
 horned-tab construction and leads with a badge-only total of one fixed
 footprint. The Design total opens Design-owned work: each Design past plan or

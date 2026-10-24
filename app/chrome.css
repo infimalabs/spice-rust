@@ -92,20 +92,24 @@ body:has(.shell),
 .app-global-work-tabs { justify-self: start; direction: ltr; }
 .app-design-work-tabs { justify-self: end; direction: rtl; }
 /* Each global rail is one strip. Its DOM-leading aggregate sits at the
-   anchored outside edge; named stems continue inward. Interior corners stay
-   square; the strip's two outside corners keep the tab radius, and the
-   shared bottom rail runs unbroken across it. */
-:is(.app-global-work-tabs, .app-design-work-tabs) { gap: 0; }
+   anchored outside edge, flush and square against the window edge like the
+   team and group totals; named stems continue inward. Interior corners stay
+   square, the strip's inner end keeps the tab radius, and the shared bottom
+   rail runs unbroken across it. Each rail reaches out through the shell's edge
+   inset only: a native window's traffic lights and a device's safe area keep
+   their clearance. The design rail is rtl, so its inline start is the right. */
+:is(.app-global-work-tabs, .app-design-work-tabs) {
+  gap: 0;
+  margin-inline-start: calc(-1 * var(--app-shell-edge-inline));
+}
 :is(.app-global-work-tabs, .app-design-work-tabs) > .app-horn-tab {
   border-radius: 0;
   direction: ltr;
 }
-.app-global-work-tabs > .app-horn-tab:first-child,
 .app-design-work-tabs > .app-horn-tab:last-child {
   border-end-start-radius: var(--app-radius-card);
 }
-.app-global-work-tabs > .app-horn-tab:last-child,
-.app-design-work-tabs > .app-horn-tab:first-child {
+.app-global-work-tabs > .app-horn-tab:last-child {
   border-end-end-radius: var(--app-radius-card);
 }
 :is(.app-global-work-tabs, .app-design-work-tabs):empty { display: none; }
