@@ -85,9 +85,9 @@ pub(crate) use spice::claim_lease::{
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 
-pub(crate) use read_guard::next_work::OccupantProfiles;
 #[cfg(test)]
 pub(crate) use read_guard::next_work::read_next_work;
+pub(crate) use read_guard::next_work::{OccupantMatch, OccupantProfiles};
 const CAPTURE_WORK_RULE: &str = "capturework";
 const RECOVER_STEAL_RULE: &str = "recoversteal";
 fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {
@@ -116,7 +116,7 @@ pub(crate) use design_return::{ReturnOwed, owed_returns, record_return};
 mod followup;
 use followup::*;
 mod handoff;
-pub(crate) use handoff::phase_handoff;
+pub(crate) use handoff::{phase_handoff, queued_at};
 mod next_action;
 use next_action::*;
 mod automatic_lifecycle;

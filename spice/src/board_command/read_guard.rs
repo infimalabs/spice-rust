@@ -239,7 +239,8 @@ impl TaskProjection<'_> {
         .with_phase_handoff(phase_handoff)
         .with_grouped(grouped)
         .with_design(design)
-        .with_preparation_decision(preparation_decision.clone());
+        .with_preparation_decision(preparation_decision.clone())
+        .with_queued_at(queued_at(self.facts, &statement.body));
         let visibility = entry.project().visibility().clone();
         let origin_thread = self
             .origin_threads

@@ -25,8 +25,11 @@ pub(in crate::board_command) fn claim_win(
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
 ) -> Outcome<CommandAnswer> {
-    let plan = match claim_plan(bus, command, win, repository, projects, allocation) {
+    let plan = match claim_plan(
+        bus, command, win, repository, projects, allocation, profiles,
+    ) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
@@ -44,6 +47,7 @@ pub(in crate::board_command) fn claim_plan<'a>(
     repository: Option<Host<'a>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
 ) -> Result<ClaimPlan<'a>, Outcome<CommandAnswer>> {
     let possession = possession_rule(win)?;
     // A named claim decides against its exact witnessed task even when that
@@ -63,7 +67,7 @@ pub(in crate::board_command) fn claim_plan<'a>(
         projects,
         allocation,
     )?;
-    let selected = claim_selection(&snapshot, command, possession)?.clone();
+    let selected = claim_selection(&snapshot, command, possession, allocation, profiles)?.clone();
     // Named capture may possess a planning deliverable, but a recovery-bound
     // capture adopts implementation, so it refuses planning before Git work.
     if matches!(possession, Possession::Recover | Possession::RecoverSteal) {
@@ -640,28 +644,44 @@ fn claim_selection<'a>(
     snapshot: &'a ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     possession: Possession,
+    allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     if possession.named() {
         named_claim_selection(snapshot, command, possession)
     } else {
-        allocator_claim_selection(snapshot, command)
+        allocator_claim_selection(snapshot, command, allocation, profiles)
     }
 }
 
+/// The allocator's choice at claim time, ranked exactly as the `task next`
+/// read ranked it: same policy and the same occupant match, so a witness the
+/// read handed out is refused only when the board itself moved.
 fn allocator_claim_selection<'a>(
     snapshot: &'a ValidatedSnapshot,
     command: &wire::AdmittedCommand,
+    allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    let subscription = allocation_subscription(&snapshot.answer.residency.body, command.actor())?;
+    let residency = &snapshot.answer.residency.body;
+    let subscription = allocation_subscription(residency, command.actor())?;
     let environment = snapshot.answer.environment();
     let now = current_instant()?;
-    let selected = board::select_at(
+    let matcher = OccupantMatch::open(profiles, residency, command.actor(), &snapshot.entries)?;
+    let match_score = |entry: &Entry| matcher.as_ref().map_or(0.0, |matcher| matcher.score(entry));
+    let selected = board::select_with_satisfied_at(
         &snapshot.entries,
-        command.actor(),
-        &subscription,
-        snapshot.answer.allocation_band,
-        snapshot.answer.recent_cell.as_ref(),
-        &environment,
+        board::Claimant {
+            actor: command.actor(),
+            subscription: &subscription,
+            recent_cell: snapshot.answer.recent_cell.as_ref(),
+            environment: &environment,
+            match_score: matcher
+                .as_ref()
+                .map(|_| &match_score as &dyn Fn(&Entry) -> f64),
+        },
+        *allocation,
+        &board::resolved_tasks(&snapshot.entries),
         now,
     )
     .map(|selected| selected.entry())

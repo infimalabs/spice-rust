@@ -1461,9 +1461,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskDepends(depends) => {
             task_depends(bus, command, depends, projects, allocation)
         }
-        wire::intent::Intent::ClaimWin(win) => {
-            claim_win(bus, command, win, repository, projects, allocation)
-        }
+        wire::intent::Intent::ClaimWin(win) => claim_win(
+            bus, command, win, repository, projects, allocation, profiles,
+        ),
         wire::intent::Intent::ClaimRenew(renew) if command.kind() == CommandKind::ClaimRenew => {
             claim_reclaim(bus, command, renew, projects, allocation)
         }

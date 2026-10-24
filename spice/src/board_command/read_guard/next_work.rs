@@ -1,11 +1,12 @@
 use super::*;
 use crate::resident::message_surface;
-use occupant_match::OccupantMatch;
+pub(crate) use occupant_match::OccupantMatch;
+use occupant_match::running_occupant;
 
 mod occupant_match;
 
 /// The resident's retained session profiles, when message startup restored
-/// them: what a running lane's `task next` ranks in-band ties by.
+/// them: what a running lane's `task next` ranks candidates by.
 pub(crate) type OccupantProfiles<'a> = Option<&'a std::sync::Mutex<message_surface::MessageState>>;
 
 /// Project and decide `task next` from the snapshot's live allocation frontier.
@@ -51,20 +52,11 @@ pub(crate) fn read_next_work(
     };
     // Only a selection asks for scores: a held claim or an owed Design request
     // answers without fitting the frequency profile or taking the profile lock.
-    let selecting = held.is_none() && design_request.is_none();
-    let running = running_occupant(residency.body(), &principal).filter(|_| selecting);
-    let mut occupant_profiles = match (profiles, running) {
-        (Some(profiles), Some((lane, occupant))) => Some((
-            message_surface::lock_state(profiles)
-                .map_err(crate::resident::design_awareness::command_answer_outcome)?,
-            lane,
-            occupant,
-        )),
-        _ => None,
+    let matcher = if held.is_none() && design_request.is_none() {
+        OccupantMatch::open(profiles, residency.body(), &principal, &entries)?
+    } else {
+        None
     };
-    let matcher = occupant_profiles.as_mut().map(|(state, lane, occupant)| {
-        OccupantMatch::new(&mut state.profiles, &entries, *lane, *occupant)
-    });
     let match_score = |entry: &Entry| matcher.as_ref().map_or(0.0, |matcher| matcher.score(entry));
     let state = if let Some(index) = held {
         NextWorkState::Active {
@@ -83,7 +75,7 @@ pub(crate) fn read_next_work(
                 .as_ref()
                 .map(|_| &match_score as &dyn Fn(&Entry) -> f64),
         },
-        allocation.band(),
+        *allocation,
         &satisfied,
         now,
     ) {
@@ -209,22 +201,6 @@ fn project_design_request(
         .map(Option::flatten)
 }
 
-/// The lane and occupant seated for `principal`, when it is an occupied lane.
-fn running_occupant(
-    residency: &wire::ResidencyHead,
-    principal: &wire::Actor,
-) -> Option<(wire::CanonicalUuid, wire::CanonicalUuid)> {
-    let wire::Actor::Lane(lane) = principal else {
-        return None;
-    };
-    residency
-        .lanes
-        .iter()
-        .find(|row| row.lane == *lane && row.disposition == "occupied")
-        .and_then(|row| row.occupant)
-        .map(|occupant| (*lane, occupant))
-}
-
 type FrontierProjection<'a> = (
     Vec<Entry>,
     board::ResolvedTasks,
@@ -344,7 +320,8 @@ pub(in crate::board_command) fn project_frontier<'a>(
         .with_phase_handoff(phase_handoff)
         .with_grouped(observed.facts().grouped(&statement.born))
         .with_design(observed.facts().design(statement))
-        .with_preparation_decision(preparation_decision.cloned());
+        .with_preparation_decision(preparation_decision.cloned())
+        .with_queued_at(queued_at(observed.facts(), statement));
         origin_threads.push(task_origin_thread(
             observed,
             &statement.born,

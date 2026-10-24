@@ -31,6 +31,7 @@ skip = ["src/**", "fixtures/"]
 
 [board.next]
 band = 3
+horizon = "90m"
 
 [lane]
 life = "Steer"
@@ -102,6 +103,10 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert!(!skips[0].matches("docs/src/lib.rs", Shape::File));
 
     assert_eq!(decoded.board().next().band(), 3);
+    assert_eq!(
+        decoded.board().next().horizon(),
+        std::time::Duration::from_secs(90 * 60)
+    );
     assert_eq!(decoded.lane().life(), Life::Steer);
     assert_eq!(decoded.lane().lease().to_string(), "90s");
     assert_eq!(decoded.lane().runtime().to_string(), "6h");
@@ -363,6 +368,13 @@ fn a_fractional_tie_band_refuses_loudly() {
     let band = decode("[board.next]\nband = 2.5\n")
         .expect_err("an integer urgency scalar needs an integer tie band");
     assert!(band.contains("board.next.band"), "{band}");
+}
+
+#[test]
+fn a_malformed_horizon_refuses_by_its_key() {
+    let horizon = decode("[board.next]\nhorizon = \"2 hours\"\n")
+        .expect_err("an overdue horizon is a duration word");
+    assert!(horizon.contains("board.next.horizon"), "{horizon}");
 }
 
 #[test]

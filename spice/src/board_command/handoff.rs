@@ -1,5 +1,14 @@
 use super::*;
 
+/// The commit instant of the fact that first queued `statement`'s task:
+/// what the allocator's overdue tier measures a row's wait from.
+pub(crate) fn queued_at(
+    facts: &bus::TaskFacts,
+    statement: &wire::TaskHead,
+) -> Option<wire::Instant> {
+    facts.at(statement.queue_origin).map(|envelope| envelope.at)
+}
+
 /// Project the current allocation hold from durable transition evidence.
 ///
 /// A Design nudged since its current phase began is held for the lane its

@@ -99,7 +99,7 @@ fn prepare_claim<'a>(
     )?;
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
-    let selected = select_task(&snapshot, &actor, &subscription)?;
+    let selected = select_task(&snapshot, &actor, &subscription, policy.allocation)?;
     let task = selected.handle().clone();
     let born = selected.born().clone();
     let (at, expiry, maximum) = claim_deadlines()?;
@@ -228,6 +228,7 @@ fn select_task(
     snapshot: &ValidatedSnapshot,
     actor: &Actor,
     subscription: &wire::TeamSubscription,
+    allocation: &board::NextConfig,
 ) -> Result<Entry, Outcome<CommandAnswer>> {
     let environment = snapshot.answer.environment();
     let now = current_instant()?;
@@ -235,7 +236,7 @@ fn select_task(
         &snapshot.entries,
         actor,
         subscription,
-        snapshot.answer.allocation_band,
+        *allocation,
         snapshot.answer.recent_cell.as_ref(),
         &environment,
         now,
