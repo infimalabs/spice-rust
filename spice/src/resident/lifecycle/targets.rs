@@ -194,6 +194,10 @@ impl Default for Work<'_> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one lane's availability reads the snapshot, index, readiness, residency, team, allocation, environment, and clock"
+)]
 fn work_availability<'a>(
     snapshot: &bus::TaskSnapshot,
     entries: &'a [Entry],

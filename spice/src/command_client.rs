@@ -508,6 +508,10 @@ fn acquire_session_with(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "session acquisition binds its discovery paths, repository route, deadline, and retry observer"
+)]
 fn acquire_session_until(
     contract: &Contract,
     operator_discovery: &Path,

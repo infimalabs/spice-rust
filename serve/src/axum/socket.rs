@@ -462,6 +462,10 @@ impl<'session> SessionSignals<'session> {
 /// at six iterations rather than at one source falling quiet. No source is ever
 /// disabled to make room, because a disabled broadcast receiver stops draining
 /// its channel and converts a scheduling question into a lag question.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fair wait owns each of its seven independent work sources"
+)]
 pub(super) async fn next_event(
     lead: &mut Lead,
     socket: &mut impl Inbound,

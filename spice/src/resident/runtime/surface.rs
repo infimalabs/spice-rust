@@ -1453,6 +1453,10 @@ fn reconcile_lifecycle(
     super::deferral::defer_store_fault(swept, diagnostic, "lifecycle reconciliation")
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "wake reconciliation borrows each resident runtime it advances"
+)]
 fn reconcile_wakes(
     bus: &Bus,
     command_surface: &command_surface::Surface<'_>,

@@ -882,6 +882,10 @@ fn hunk_text(
         .ok_or(wire::rooms::RoomSourceUnavailable::Changed {})
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one tape quote binds its source locus, dialect, lane occupancy, reader, and presenter"
+)]
 fn resolve_tape(
     root: &Path,
     source: CanonicalUuid,

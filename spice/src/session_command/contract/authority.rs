@@ -77,6 +77,10 @@ fn workflow(name: &str) -> WorkflowHead {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one fixture task spells each statement field the contract journal records"
+)]
 fn task_added(
     write: &mut JournalWrite,
     task: TaskStamp,

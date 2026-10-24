@@ -779,6 +779,10 @@ fn append_binary_operation(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one install operation binds its asset, destination, inheritance, and three image generations"
+)]
 fn operation(
     virtual_directories: &mut BTreeSet<(Location, String)>,
     asset: Asset,

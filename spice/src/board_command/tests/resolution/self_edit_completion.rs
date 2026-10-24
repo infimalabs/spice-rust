@@ -166,6 +166,10 @@ fn complete_through_client(
     (outcome, bus)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fixture server binds every serve capability beside the task edit it replays"
+)]
 fn spawn_completion_server(
     bus: Bus,
     epoch: CanonicalUuid,

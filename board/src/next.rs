@@ -465,6 +465,10 @@ pub fn select_with_satisfied<'a>(
 
 /// [`select_with_satisfied`] at an explicit allocation instant.
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "allocation reads the actor, team, band, recent claim, environment, and evidence independently"
+)]
 pub fn select_with_satisfied_at<'a>(
     entries: &'a [Entry],
     actor: &Actor,
@@ -490,6 +494,10 @@ pub fn select_with_satisfied_at<'a>(
 /// [`select_with_satisfied_at`] using graph evidence already derived for this
 /// exact entry generation.
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "allocation reads the actor, team, band, recent claim, environment, and index independently"
+)]
 pub fn select_with_index_at<'a>(
     entries: &'a [Entry],
     actor: &Actor,
@@ -610,6 +618,10 @@ fn candidates<'a>(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "candidate ranking reads the actor, team, recent claim, environment, and scores independently"
+)]
 fn indexed_candidates<'a>(
     entries: &'a [Entry],
     actor: &Actor,
