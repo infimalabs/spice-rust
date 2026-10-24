@@ -40,7 +40,7 @@ pub(super) fn selected_ready<'e>(
             environment,
             match_score: None,
         },
-        allocation.band(),
+        *allocation,
         selection,
         now,
     );

@@ -73,6 +73,7 @@ fn environment_movement_refuses_planned_claim(rule: &str, expected: &str) {
         None,
         &guard_projects(),
         &board::NextConfig::default(),
+        None,
     )
     .expect("the granted task is claimable");
 

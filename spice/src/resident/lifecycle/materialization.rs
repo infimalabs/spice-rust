@@ -326,7 +326,11 @@ impl Projection {
                 .with_explicit_release(explicit_release)
                 .with_phase_handoff(phase_handoff)
                 .with_grouped(snapshot.facts().grouped(task))
-                .with_design(snapshot.facts().design(heads.statement().body()));
+                .with_design(snapshot.facts().design(heads.statement().body()))
+                .with_queued_at(crate::board_command::queued_at(
+                    snapshot.facts(),
+                    heads.statement().body(),
+                ));
             entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)

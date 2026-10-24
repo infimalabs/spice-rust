@@ -41,7 +41,7 @@ const MATCH_SCORE_PARTS: f64 = 3.0;
 
 /// Candidate-owned relevance floor for one Design's effective stance.
 #[must_use]
-pub(in crate::resident) fn match_score_floor(stance: WorkingGroupStance) -> f64 {
+pub(crate) fn match_score_floor(stance: WorkingGroupStance) -> f64 {
     let parts = match stance {
         WorkingGroupStance::Passive => 3.0,
         WorkingGroupStance::Explore => 2.0,

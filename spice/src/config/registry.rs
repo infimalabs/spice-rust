@@ -586,6 +586,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "board.next.horizon" {
+        kind: Duration,
+        builtin: Some(Builtin::String("2h")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "lane.life" {
         kind: Life,
         builtin: Some(Builtin::String("Drive")),

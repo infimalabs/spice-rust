@@ -323,6 +323,7 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
         None,
         &guard_projects(),
         &board::NextConfig::default(),
+        None,
     ) else {
         panic!("an exhausted allocator must return its typed refusal");
     };
@@ -390,6 +391,7 @@ fn plan_claim(bus: &Bus, command: &wire::AdmittedCommand) -> ClaimPlan<'static> 
         None,
         &guard_projects(),
         &board::NextConfig::default(),
+        None,
     ) {
         Ok(plan) => plan,
         Err(outcome) => panic!("the claim plan did not decide: {outcome:?}"),

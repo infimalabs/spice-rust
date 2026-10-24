@@ -461,6 +461,7 @@ pub struct Entry {
     design: wire::rooms::DesignFacts,
     preparation_decision: Option<wire::rooms::DecisionRef>,
     phase_handoff: Option<PhaseHandoff>,
+    queued_at: Option<wire::Instant>,
     project: Project,
     family: Family,
 }
@@ -525,6 +526,7 @@ impl Entry {
             design: wire::rooms::DesignFacts::default(),
             preparation_decision: None,
             phase_handoff: None,
+            queued_at: None,
             project,
             family,
         })
@@ -610,6 +612,20 @@ impl Entry {
     #[must_use]
     pub const fn phase_handoff(&self) -> Option<&PhaseHandoff> {
         self.phase_handoff.as_ref()
+    }
+
+    /// Attach the commit instant of the fact that first queued this task.
+    #[must_use]
+    pub const fn with_queued_at(mut self, queued_at: Option<wire::Instant>) -> Self {
+        self.queued_at = queued_at;
+        self
+    }
+
+    /// The commit instant of the queue-origin fact, when the caller supplied
+    /// it; a row without one is never overdue.
+    #[must_use]
+    pub const fn queued_at(&self) -> Option<wire::Instant> {
+        self.queued_at
     }
 
     /// Whether the current freed claim came from an explicit release command.

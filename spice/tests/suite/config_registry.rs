@@ -421,6 +421,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "consent.rule[].budget",
     "gate.walk.skip",
     "board.next.band",
+    "board.next.horizon",
     "lane.life",
     "lane.lease",
     "lane.runtime",

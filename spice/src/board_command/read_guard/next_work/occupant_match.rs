@@ -1,50 +1,66 @@
-//! How well a running occupant's session matches each in-band candidate:
-//! the `task next` supplier of [`board::Claimant::match_score`].
+//! How well a running occupant's session matches each candidate: the
+//! supplier of [`board::Claimant::match_score`] for `task next`'s read and
+//! for the claim that follows it, so both rank the same board the same way.
 //!
 //! The score is [`spice::rooms::standing::standing`] with the running occupant,
 //! the one ranker Design nudges and the best-match wake order share. The fit
-//! and each candidate's vector come from the shared [`MatchCache`]; a
-//! candidate is weighed only when the ladder asks for its score, which the
-//! board does only for rows tied on every key above the handle. A cold or
-//! absent profile scores zero for every row, leaving the handle order exactly.
+//! and each candidate's vector come from the shared [`MatchCache`]; the board
+//! asks for every row in the winning priority and weight group. A score below
+//! the lowest Design invitation floor counts as zero, so incidental vocabulary
+//! overlap never outranks age; a cold or absent profile scores zero for every
+//! row, leaving the ladder exactly as it stands without a score.
 
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 
 use board::Entry;
 use board::similarity::{FrequencyProfile, MatchCache};
-use spice::rooms::profile::SessionProfiles;
 use spice::rooms::standing::standing;
 use wire::CanonicalUuid;
+use wire::rooms::WorkingGroupStance;
 
-pub(super) struct OccupantMatch<'a> {
-    profiles: RefCell<&'a mut SessionProfiles>,
+use super::OccupantProfiles;
+use crate::resident::design_awareness::{command_answer_outcome, match_score_floor};
+use crate::resident::message_surface::{self, MessageState};
+
+/// The running occupant's matcher, holding the profile lock while it scores.
+pub(crate) struct OccupantMatch<'a> {
+    state: RefCell<MutexGuard<'a, MessageState>>,
     frequency: Arc<FrequencyProfile>,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 }
 
 impl<'a> OccupantMatch<'a> {
-    pub(super) fn new(
-        profiles: &'a mut SessionProfiles,
+    /// The matcher for `principal` over `entries`: none when the resident
+    /// retains no profiles or the principal is not a seated, occupied lane.
+    pub(crate) fn open(
+        profiles: OccupantProfiles<'a>,
+        residency: &wire::ResidencyHead,
+        principal: &wire::Actor,
         entries: &[Entry],
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-    ) -> Self {
-        Self {
-            profiles: RefCell::new(profiles),
+    ) -> Result<Option<Self>, wire::Outcome<wire::intent::CommandAnswer>> {
+        let (Some(profiles), Some((lane, occupant))) =
+            (profiles, running_occupant(residency, principal))
+        else {
+            return Ok(None);
+        };
+        let state = message_surface::lock_state(profiles).map_err(command_answer_outcome)?;
+        Ok(Some(Self {
+            state: RefCell::new(state),
             frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement)),
             lane,
             occupant,
-        }
+        }))
     }
 
-    /// The occupant's standing for `entry`; zero when nothing scores.
-    pub(super) fn score(&self, entry: &Entry) -> f64 {
+    /// The occupant's standing for `entry` at or above the Explore floor;
+    /// zero below it or when nothing scores.
+    pub(crate) fn score(&self, entry: &Entry) -> f64 {
         let statement = MatchCache::shared().prepare(&self.frequency, entry.statement());
-        let mut profiles = self.profiles.borrow_mut();
+        let mut state = self.state.borrow_mut();
         standing(
-            &mut profiles,
+            &mut state.profiles,
             &self.frequency,
             statement.as_deref(),
             entry.born(),
@@ -54,6 +70,23 @@ impl<'a> OccupantMatch<'a> {
         // The statement was prepared under this same frequency generation.
         .ok()
         .and_then(|standing| standing.score)
+        .filter(|score| *score >= match_score_floor(WorkingGroupStance::Explore))
         .unwrap_or(0.0)
     }
+}
+
+/// The lane and occupant seated for `principal`, when it is an occupied lane.
+pub(super) fn running_occupant(
+    residency: &wire::ResidencyHead,
+    principal: &wire::Actor,
+) -> Option<(CanonicalUuid, CanonicalUuid)> {
+    let wire::Actor::Lane(lane) = principal else {
+        return None;
+    };
+    residency
+        .lanes
+        .iter()
+        .find(|row| row.lane == *lane && row.disposition == "occupied")
+        .and_then(|row| row.occupant)
+        .map(|occupant| (*lane, occupant))
 }
