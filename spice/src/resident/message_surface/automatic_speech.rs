@@ -157,7 +157,8 @@ struct Segment {
 
 /// Visible paragraphs in reading order, each list item its own segment.
 /// Fenced code is shown to be read, never heard: a fence ends the paragraph
-/// around it and its contents are skipped.
+/// around it and its contents are skipped. A quoted line is another speaker's
+/// words and is skipped the same way.
 fn speech_segments(raw: &str) -> Vec<Segment> {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let mut segments = Vec::new();
@@ -170,7 +171,7 @@ fn speech_segments(raw: &str) -> Vec<Segment> {
             push_segment(&mut segments, &mut lines, false);
         } else if fenced {
             continue;
-        } else if trimmed.is_empty() {
+        } else if trimmed.is_empty() || trimmed.starts_with('>') {
             push_segment(&mut segments, &mut lines, false);
         } else if AutomaticSpeech::list_item(trimmed).is_some() {
             push_segment(&mut segments, &mut lines, false);
@@ -570,7 +571,7 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_is_never_spoken() {
+    fn fenced_code_and_quoted_lines_are_never_spoken() {
         assert_eq!(
             prepared_all("Applied the patch.\n```sh\nrm -rf target\n```\nDone."),
             Some("Applied the patch. Done.".to_owned()),
@@ -582,6 +583,16 @@ mod tests {
         assert_eq!(
             prepared_all("Started.\n```\nunterminated code"),
             Some("Started.".to_owned())
+        );
+        // A quote is another speaker's words: it ends the paragraph around it,
+        // as the browser's narration segments do.
+        assert_eq!(
+            prepared_all("Replied.\n> the operator's words\nDone."),
+            Some("Replied. Done.".to_owned()),
+        );
+        assert_eq!(
+            prepared_edges("Opened the change.\n\n> quoted last words"),
+            Some("Opened the change.".to_owned()),
         );
     }
 
