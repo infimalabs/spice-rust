@@ -8,11 +8,12 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 #[cfg(unix)]
-use std::sync::Arc;
-#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+#[cfg(unix)]
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     Command as HostedCommand, Completion, GITHUB_PROVIDER, ImagePin, Limits, MAX_OUTPUT_BYTES,
@@ -24,7 +25,6 @@ use wire::{Digest, Domain};
 const POLICY: &str = ::std::include_str!("../../dist/windows-hosted.toml");
 const REMOTE: &str = "origin";
 const WORKFLOW_PATH: &str = ".github/workflows/windows-hosted.yml";
-const WATCH_POLL: Duration = Duration::from_millis(250);
 
 /// Complete observed outcome of one provider-authenticated command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -697,6 +697,10 @@ fn watch_run(
     run_id: u64,
     cancellation: &Cancellation,
 ) -> Result<(), WindowsHostedError> {
+    let launch = |source| WindowsHostedError::Launch {
+        program: "gh".to_owned(),
+        source,
+    };
     let mut child = provider_command(root, "gh")
         .args([
             OsString::from("run"),
@@ -710,17 +714,18 @@ fn watch_run(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|source| WindowsHostedError::Launch {
-            program: "gh".to_owned(),
-            source,
-        })?;
+        .map_err(launch)?;
+    let (events, receiver) = mpsc::channel();
+    cancellation.wake(events.clone());
+    let exit = sill::ProcessExitObserver::or_ended(child.id()).map_err(launch)?;
+    thread::spawn(move || {
+        let _ = events.send(match exit.wait() {
+            Ok(()) => WatchEvent::Exited,
+            Err(error) => WatchEvent::ObserverFailed(error),
+        });
+    });
     loop {
-        let observation = match child
-            .try_wait()
-            .map_err(|source| WindowsHostedError::Launch {
-                program: "gh".to_owned(),
-                source,
-            })? {
+        let observation = match child.try_wait().map_err(launch)? {
             None => WatchObservation::Running,
             Some(status) => WatchObservation::Exited {
                 success: status.success(),
@@ -730,7 +735,17 @@ fn watch_run(
         // Read after observing the watcher, so a signal racing its exit still
         // cancels the run.
         match watch_action(cancellation.requested(), observation) {
-            WatchAction::Wait => thread::sleep(WATCH_POLL),
+            WatchAction::Wait => match receiver.recv() {
+                Ok(WatchEvent::Exited) => {}
+                #[cfg(unix)]
+                Ok(WatchEvent::Cancel) => {}
+                Ok(WatchEvent::ObserverFailed(source)) => return Err(launch(source)),
+                Err(mpsc::RecvError) => {
+                    return Err(launch(io::Error::other(
+                        "the watcher's exit observer ended without a wake",
+                    )));
+                }
+            },
             WatchAction::Complete => return Ok(()),
             WatchAction::Cancel => {
                 stop_watch(&mut child)?;
@@ -831,36 +846,53 @@ fn cancel_run(root: &Path, repository: &str, run_id: u64) -> Result<(), WindowsH
     }
 }
 
+/// What ends one wait inside a hosted run.
+enum WatchEvent {
+    Exited,
+    #[cfg(unix)]
+    Cancel,
+    ObserverFailed(io::Error),
+}
+
 struct Cancellation {
     #[cfg(unix)]
     requested: Arc<AtomicBool>,
     #[cfg(unix)]
-    registrations: Vec<signal_hook::SigId>,
+    wakers: Arc<Mutex<Vec<mpsc::Sender<WatchEvent>>>>,
+    #[cfg(unix)]
+    signals: signal_hook::iterator::Handle,
 }
 
 impl Cancellation {
     fn install() -> Result<Self, WindowsHostedError> {
         #[cfg(unix)]
         {
+            use signal_hook::consts::signal::{SIGINT, SIGTERM};
+
             let requested = Arc::new(AtomicBool::new(false));
-            let interrupt = signal_hook::flag::register(
-                signal_hook::consts::signal::SIGINT,
-                Arc::clone(&requested),
-            )
-            .map_err(WindowsHostedError::Signal)?;
-            let terminate = match signal_hook::flag::register(
-                signal_hook::consts::signal::SIGTERM,
-                Arc::clone(&requested),
-            ) {
-                Ok(registration) => registration,
-                Err(source) => {
-                    signal_hook::low_level::unregister(interrupt);
-                    return Err(WindowsHostedError::Signal(source));
-                }
-            };
+            let wakers = Arc::new(Mutex::new(Vec::<mpsc::Sender<WatchEvent>>::new()));
+            let mut signals = signal_hook::iterator::Signals::new([SIGINT, SIGTERM])
+                .map_err(WindowsHostedError::Signal)?;
+            let handle = signals.handle();
+            let flag = Arc::clone(&requested);
+            let waking = Arc::clone(&wakers);
+            thread::Builder::new()
+                .name("hosted-cancellation".to_owned())
+                .spawn(move || {
+                    for _signal in signals.forever() {
+                        flag.store(true, Ordering::Release);
+                        if let Ok(wakers) = waking.lock() {
+                            for waker in wakers.iter() {
+                                let _ = waker.send(WatchEvent::Cancel);
+                            }
+                        }
+                    }
+                })
+                .map_err(WindowsHostedError::Signal)?;
             Ok(Self {
                 requested,
-                registrations: vec![interrupt, terminate],
+                wakers,
+                signals: handle,
             })
         }
         #[cfg(not(unix))]
@@ -872,21 +904,37 @@ impl Cancellation {
     fn requested(&self) -> bool {
         #[cfg(unix)]
         {
-            self.requested.load(Ordering::Relaxed)
+            self.requested.load(Ordering::Acquire)
         }
         #[cfg(not(unix))]
         {
             false
         }
     }
+
+    /// Send `WatchEvent::Cancel` to `events` on every request from now on,
+    /// at once when one was already made.
+    fn wake(&self, events: mpsc::Sender<WatchEvent>) {
+        #[cfg(unix)]
+        {
+            if let Ok(mut wakers) = self.wakers.lock() {
+                wakers.push(events.clone());
+            }
+            if self.requested() {
+                let _ = events.send(WatchEvent::Cancel);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            drop(events);
+        }
+    }
 }
 
+#[cfg(unix)]
 impl Drop for Cancellation {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        for registration in self.registrations.drain(..) {
-            signal_hook::low_level::unregister(registration);
-        }
+        self.signals.close();
     }
 }
 

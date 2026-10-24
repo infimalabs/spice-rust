@@ -3,12 +3,13 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sill::authority;
-use sill::{Acquisition, LockFile, LockName};
+use sill::{LockFile, LockName};
 use wire::CanonicalUuid;
 
 use super::{Host, IsolationError, PreparedHome, SourceGenerationAuthority};
@@ -20,7 +21,6 @@ const CONFIG: &str = "config.toml";
 const MANIFEST: &str = "generation.json";
 const TEMPORARY_PREFIX: &str = ".spice-tmp-";
 const LOCK_WAIT: Duration = Duration::from_secs(25 * 60);
-const LOCK_POLL: Duration = Duration::from_millis(25);
 const RECLAIM_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Clone, Debug)]
@@ -748,25 +748,42 @@ fn create_private_directory(path: &Path) -> Result<(), IsolationError> {
     }
 }
 
+/// Possess the store lock `name`, blocking in the kernel until it is granted
+/// or `LOCK_WAIT` elapses. A grant that lands after the deadline is released
+/// by the waiter thread when nobody receives it.
 fn acquire_lock(layout: &Layout, name: &str) -> Result<sill::Possession, IsolationError> {
     let name = LockName::new(name)
         .map_err(|error| IsolationError::new("cargo-isolation::lock-invalid", error.to_string()))?;
     let path = layout.locks.join(format!("{}.lock", name.as_str()));
     let lock = LockFile::new(name, path);
-    let started = std::time::Instant::now();
-    loop {
-        match lock.try_acquire().map_err(|error| {
+    let (granted, grants) = mpsc::sync_channel(1);
+    let waiter = lock.clone();
+    thread::Builder::new()
+        .name("spice-store-lock".to_owned())
+        .spawn(move || {
+            let _ = granted.send(waiter.acquire());
+        })
+        .map_err(|error| {
             IsolationError::io("cargo-isolation::lock-unavailable", lock.path(), error)
-        })? {
-            Acquisition::Acquired(possession) => return Ok(possession),
-            Acquisition::Contended if started.elapsed() < LOCK_WAIT => thread::sleep(LOCK_POLL),
-            Acquisition::Contended => {
-                return Err(IsolationError::new(
-                    "cargo-isolation::lock-deadline-elapsed",
-                    format!("timed out waiting for {}", lock.name().as_str()),
-                ));
-            }
-        }
+        })?;
+    match grants.recv_timeout(LOCK_WAIT) {
+        Ok(Ok(possession)) => Ok(possession),
+        Ok(Err(error)) => Err(IsolationError::io(
+            "cargo-isolation::lock-unavailable",
+            lock.path(),
+            error,
+        )),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(IsolationError::new(
+            "cargo-isolation::lock-deadline-elapsed",
+            format!("timed out waiting for {}", lock.name().as_str()),
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(IsolationError::new(
+            "cargo-isolation::lock-unavailable",
+            format!(
+                "the waiter for {} ended without reporting possession",
+                lock.name().as_str()
+            ),
+        )),
     }
 }
 

@@ -1,8 +1,6 @@
 use super::{
-    CapturedOutput, Completion, PendingAction, ProcessUsage, WaitError, WaitOutcome, WaitStep,
-    pending_action,
+    CapturedOutput, Completion, PendingAction, WaitError, WaitOutcome, WaitStep, pending_action,
 };
-use crate::authority::ProtectedSecurity;
 use crate::group::GroupSignal;
 use crate::observe::{
     Observation, ObservationFailure, ObservationStall, ObservedRecord, OutputStream,
@@ -12,32 +10,25 @@ use crate::spec::{ProcessGroup, Spec, StdinPolicy, StreamPolicy};
 use std::fmt;
 use std::io::{self, Read, Write as _};
 use std::ops::{Deref, DerefMut};
-use std::os::windows::io::AsRawHandle as _;
+use std::os::windows::io::AsHandle as _;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_ALL, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-};
+use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
-use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
-    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
-};
-use windows_sys::Win32::System::SystemServices::{JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE};
 use windows_sys::Win32::System::Threading::{
     CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
 };
 
-const POLL: Duration = Duration::from_millis(10);
-const TERMINATED_EXIT: u32 = 1;
+use self::job::{Job, Wake, watch_exit, watch_job};
+
+mod job;
+
 const READ_BYTES: usize = 8 * 1024;
 
 pub struct Running {
@@ -74,7 +65,7 @@ struct InputHandle {
 }
 
 impl InputHandle {
-    fn start(mut input: ChildStdin, bytes: Vec<u8>) -> Self {
+    fn start(mut input: ChildStdin, bytes: Vec<u8>, wake: Arc<Wake>) -> Self {
         let result = Arc::new(Mutex::new(None));
         let worker_result = Arc::clone(&result);
         let worker = thread::spawn(move || {
@@ -83,6 +74,7 @@ impl InputHandle {
             if let Ok(mut result) = worker_result.lock() {
                 *result = Some(written);
             }
+            wake.notify();
         });
         Self {
             result,
@@ -115,6 +107,7 @@ struct FailureState {
     observation: Mutex<Option<ObservationFailure>>,
     cleanup: Mutex<Option<io::Error>>,
     failed: AtomicBool,
+    wake: Arc<Wake>,
 }
 
 impl FailureState {
@@ -138,142 +131,14 @@ impl FailureState {
         let _reported = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             observer.failed(&failure);
         }));
-    }
-}
-
-#[derive(Debug)]
-struct Job(HANDLE);
-
-// SAFETY: a Job Object handle is a kernel reference whose documented query,
-// assignment and termination operations are thread-safe. This owner closes it
-// exactly once after the final Arc is dropped.
-unsafe impl Send for Job {}
-// SAFETY: see the Send justification; shared operations do not mutate Rust data.
-unsafe impl Sync for Job {}
-
-impl Job {
-    /// A kill-on-close Job Object. The job of a new process group is named
-    /// for the group, so a process holding only the group's id can open it;
-    /// the name grants access to this user alone, and an object already
-    /// holding the name is refused rather than joined.
-    fn create(group: Option<u32>) -> io::Result<Self> {
-        let mut security = group
-            .map(|_| ProtectedSecurity::object(GENERIC_ALL))
-            .transpose()?;
-        let attributes = security.as_mut().map(ProtectedSecurity::attributes);
-        let name = group.map(group_job_name);
-        // SAFETY: both pointers are null or address values that outlive the
-        // call: `attributes` points into `security`, and `name` is
-        // NUL-terminated.
-        let handle = unsafe {
-            CreateJobObjectW(
-                attributes
-                    .as_ref()
-                    .map_or(std::ptr::null(), std::ptr::from_ref),
-                name.as_ref().map_or(std::ptr::null(), |name| name.as_ptr()),
-            )
-        };
-        if handle.is_null() {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: reads the calling thread's last error, which the successful
-        // `CreateJobObjectW` above set to say whether the name was taken.
-        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
-        let job = Self(handle);
-        if existed {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "another Job Object already holds this process group's name",
-            ));
-        }
-        let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        // SAFETY: `information` is a fully initialized limit structure of the
-        // size passed, and `job` holds a live Job Object handle.
-        if unsafe {
-            SetInformationJobObject(
-                job.0,
-                JobObjectExtendedLimitInformation,
-                std::ptr::from_ref(&information).cast(),
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(job)
+        self.wake.notify();
     }
 
-    /// The job a new process group's spawn named for `group`.
-    fn open(group: u32) -> io::Result<Self> {
-        let name = group_job_name(group);
-        // SAFETY: `name` is NUL-terminated and outlives the call.
-        let handle =
-            unsafe { OpenJobObjectW(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, 0, name.as_ptr()) };
-        if handle.is_null() {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Self(handle))
+    fn fail_cleanup(&self, error: io::Error) {
+        if let Ok(mut cleanup) = self.cleanup.lock() {
+            *cleanup = Some(error);
         }
-    }
-
-    fn assign(&self, child: &Child) -> io::Result<()> {
-        let process = child.as_raw_handle() as HANDLE;
-        if unsafe { AssignProcessToJobObject(self.0, process) } == 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
-    fn terminate(&self) -> io::Result<()> {
-        if self.active_processes()? == 0 {
-            return Ok(());
-        }
-        if unsafe { TerminateJobObject(self.0, TERMINATED_EXIT) } == 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
-    fn accounting(&self) -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
-        let mut information = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
-        if unsafe {
-            QueryInformationJobObject(
-                self.0,
-                JobObjectBasicAccountingInformation,
-                std::ptr::from_mut(&mut information).cast(),
-                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
-                std::ptr::null_mut(),
-            )
-        } == 0
-        {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(information)
-        }
-    }
-
-    fn active_processes(&self) -> io::Result<u32> {
-        self.accounting()
-            .map(|information| information.ActiveProcesses)
-    }
-
-    fn usage(&self) -> io::Result<ProcessUsage> {
-        let information = self.accounting()?;
-        Ok(ProcessUsage::new(
-            duration_from_windows_ticks(information.TotalUserTime),
-            duration_from_windows_ticks(information.TotalKernelTime),
-        ))
-    }
-}
-
-impl Drop for Job {
-    fn drop(&mut self) {
-        unsafe {
-            CloseHandle(self.0);
-        }
+        self.wake.notify();
     }
 }
 
@@ -328,6 +193,16 @@ impl Drop for OwnedChild {
 }
 
 pub(super) fn spawn_command(command: &mut Command, group: ProcessGroup) -> io::Result<OwnedChild> {
+    spawn_command_with(command, group, false)
+}
+
+/// Spawn `command` suspended, place it in a fresh job, and resume it; with
+/// `notices`, the job reports its process messages through a completion port.
+fn spawn_command_with(
+    command: &mut Command,
+    group: ProcessGroup,
+    notices: bool,
+) -> io::Result<OwnedChild> {
     use std::os::windows::process::CommandExt as _;
 
     let creation_group = if group == ProcessGroup::New {
@@ -340,7 +215,7 @@ pub(super) fn spawn_command(command: &mut Command, group: ProcessGroup) -> io::R
     let pid = child.id();
     // The child stays suspended until it is in the job, so nothing it starts
     // escapes; a new group's job takes its name from the root's id.
-    let job = match Job::create((group == ProcessGroup::New).then_some(pid)) {
+    let job = match Job::create((group == ProcessGroup::New).then_some(pid), notices) {
         Ok(job) => Arc::new(job),
         Err(error) => {
             let _killed = child.kill();
@@ -388,22 +263,25 @@ pub(crate) fn signal_group(group: u32, signal: GroupSignal) -> io::Result<()> {
     }
 }
 
-/// The session-local name of the job rooting process group `group`.
-fn group_job_name(group: u32) -> Vec<u16> {
-    format!(r"Local\sill-process-group-{group}")
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect()
-}
-
 pub(super) fn spawn(spec: Spec, observation: Option<Observation>) -> io::Result<Running> {
     validate_observation(&spec, observation.as_ref())?;
     let mut command = command(&spec);
-    let owned = spawn_command(&mut command, spec.group)?;
+    let owned = spawn_command_with(&mut command, spec.group, true)?;
     let (mut child, job) = owned.into_parts();
     let pid = child.id();
     let started = Instant::now();
     let failure = Arc::new(FailureState::default());
+    let process = child.as_handle().try_clone_to_owned();
+    let process = match process {
+        Ok(process) => process,
+        Err(error) => {
+            let _terminated = job.terminate();
+            let _reaped = child.wait();
+            return Err(error);
+        }
+    };
+    watch_exit(process, Arc::clone(&failure.wake));
+    watch_job(Arc::clone(&job), Arc::clone(&failure.wake));
     let exit_observer = observation.as_ref().map(Observation::observer);
     let selected = observation.as_ref().map(Observation::stream);
     let (stdout_observation, stderr_observation) = match observation {
@@ -538,7 +416,11 @@ impl Running {
             .as_mut()
             .and_then(|child| child.stdin.take())
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "child stdin is not piped"))?;
-        self.stdin = Some(InputHandle::start(input, bytes.to_vec()));
+        self.stdin = Some(InputHandle::start(
+            input,
+            bytes.to_vec(),
+            Arc::clone(&self.failure.wake),
+        ));
         Ok(())
     }
 
@@ -558,6 +440,7 @@ impl Running {
     pub fn wait_for(mut self, duration: Duration) -> Result<WaitStep, WaitError> {
         let started = Instant::now();
         loop {
+            let seen = self.failure.wake.observe();
             self.drain_failures()?;
             if let Some(status) = self.take_execution_exit()? {
                 return self
@@ -568,7 +451,7 @@ impl Running {
             if elapsed >= duration {
                 return Ok(WaitStep::Running(Box::new(self)));
             }
-            thread::sleep(POLL.min(duration.saturating_sub(elapsed)));
+            self.block_past(seen, duration.saturating_sub(elapsed))?;
         }
     }
 
@@ -584,7 +467,14 @@ impl Running {
     }
 
     pub fn wait(mut self) -> Result<WaitOutcome, WaitError> {
+        let wake = Arc::clone(&self.failure.wake);
+        let _cancellation_registration = self
+            .spec
+            .wait
+            .cancellation()
+            .register_waker(Arc::new(move || wake.notify()));
         loop {
+            let seen = self.failure.wake.observe();
             self.drain_failures()?;
             if let Some(status) = self.take_execution_exit()? {
                 return self.finish(Completion::Exited(status));
@@ -603,7 +493,7 @@ impl Running {
                 }
                 PendingAction::Wait => {}
             }
-            thread::sleep(POLL.min(self.runtime_remaining()));
+            self.block_past(seen, self.runtime_remaining())?;
         }
     }
 
@@ -642,6 +532,7 @@ impl Running {
     fn await_execution_for(&mut self, duration: Duration) -> Result<Option<ExitStatus>, WaitError> {
         let started = Instant::now();
         loop {
+            let seen = self.failure.wake.observe();
             if let Some(status) = self.take_execution_exit()? {
                 return Ok(Some(status));
             }
@@ -649,7 +540,7 @@ impl Running {
             if elapsed >= duration {
                 return Ok(None);
             }
-            thread::sleep(POLL.min(duration.saturating_sub(elapsed)));
+            self.block_past(seen, duration.saturating_sub(elapsed))?;
         }
     }
 
@@ -689,22 +580,22 @@ impl Running {
 
     fn finish(mut self, completion: Completion) -> Result<WaitOutcome, WaitError> {
         let started = Instant::now();
+        // Completion is checked before the deadline so a drain that finished
+        // exactly as the bound arrived is reported as the completion it was.
         let outputs_drained = loop {
+            let seen = self.failure.wake.observe();
             self.drain_failures()?;
             if self.outputs_complete() {
                 break true;
             }
-            if started.elapsed() >= self.spec.deadlines.output_drain() {
+            let elapsed = started.elapsed();
+            if elapsed >= self.spec.deadlines.output_drain() {
                 break false;
             }
-            thread::sleep(
-                POLL.min(
-                    self.spec
-                        .deadlines
-                        .output_drain()
-                        .saturating_sub(started.elapsed()),
-                ),
-            );
+            self.block_past(
+                seen,
+                self.spec.deadlines.output_drain().saturating_sub(elapsed),
+            )?;
         };
         let stdout = self
             .stdout
@@ -798,10 +689,20 @@ impl Running {
             source,
         }
     }
+
+    /// Block until an event source moves the wake past `seen` or `duration`
+    /// elapses.
+    fn block_past(&self, seen: u64, duration: Duration) -> Result<(), WaitError> {
+        self.failure
+            .wake
+            .wait_past(seen, duration)
+            .map_err(|source| self.io_error("waiting for the child", source))
+    }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
+        self.job.stop_notices();
         let _terminated = self.job.terminate();
         if let Some(child) = &mut self.child {
             let _reaped = child.wait();
@@ -909,6 +810,7 @@ fn start_capture<R: Read + Send + 'static>(
                     if let Ok(mut state) = worker_state.lock() {
                         state.output.complete = true;
                     }
+                    worker_failure.wake.notify();
                     return;
                 }
                 Ok(read) => {
@@ -920,11 +822,10 @@ fn start_capture<R: Read + Send + 'static>(
                         abort_on_limit,
                     );
                     if overflow {
-                        if let Err(error) = worker_job.terminate()
-                            && let Ok(mut cleanup) = worker_failure.cleanup.lock()
-                        {
-                            *cleanup = Some(error);
+                        if let Err(error) = worker_job.terminate() {
+                            worker_failure.fail_cleanup(error);
                         }
+                        worker_failure.wake.notify();
                         return;
                     }
                     if let Some(framer) = &mut framer
@@ -939,6 +840,7 @@ fn start_capture<R: Read + Send + 'static>(
                     if let Ok(mut state) = worker_state.lock() {
                         state.failure = Some(error);
                     }
+                    worker_failure.wake.notify();
                     if let Some(observer) = &failure_observer {
                         worker_failure.fail_observation(
                             &worker_job,
@@ -1252,6 +1154,7 @@ fn start_observer_worker(receiver: mpsc::Receiver<Frame>, worker: ObserverWorker
         if let Ok(mut state) = state.lock() {
             state.observer_complete = true;
         }
+        failure.wake.notify();
     });
 }
 
@@ -1319,12 +1222,6 @@ fn take_stderr(child: &mut Child, policy: StreamPolicy) -> io::Result<Option<Chi
         .take()
         .map(Some)
         .ok_or_else(|| io::Error::other("captured stderr pipe is absent"))
-}
-
-fn duration_from_windows_ticks(ticks: i64) -> Duration {
-    u64::try_from(ticks)
-        .map(|ticks| Duration::from_nanos(ticks.saturating_mul(100)))
-        .unwrap_or_default()
 }
 
 fn clone_io(error: &io::Error) -> io::Error {

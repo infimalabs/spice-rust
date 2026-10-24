@@ -238,7 +238,7 @@ impl Cancellation {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn register_waker(
         &self,
         waker: Arc<dyn Fn() + Send + Sync>,

@@ -291,8 +291,30 @@ fn await_wake(
     let delay = state.rate_delay(now);
     if !delay.is_zero() {
         match state.remaining(now) {
-            Ok(remaining) if delay < remaining => std::thread::sleep(delay),
+            Ok(remaining) if delay < remaining => {}
             Ok(_) | Err(_) => return Ok(Err(WatchEnd::Deadline)),
+        }
+    }
+    // Every notification delivered before the rate admits the wake folds
+    // into it; the hold ends on the rate, not on a quiet channel.
+    let admitted = now + delay;
+    loop {
+        let hold = admitted.saturating_duration_since(Instant::now());
+        if hold.is_zero() {
+            break;
+        }
+        match receiver.recv_timeout(hold) {
+            Ok(event) => {
+                event.map_err(|error| watch_failure("receive filesystem notification", error))?;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(Failure::Fault(Fault {
+                    class: FaultClass::Environment,
+                    reason: "watch::notification".to_owned(),
+                    detail: "filesystem notification channel disconnected".to_owned(),
+                }));
+            }
         }
     }
     while let Ok(event) = receiver.try_recv() {
