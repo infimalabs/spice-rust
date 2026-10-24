@@ -66,12 +66,12 @@
   color: var(--muted);
   font-weight: 600;
 }
-/* The fixed-width weekly percentage stands centered above the Spice button,
+/* The fixed-width weekly percentage stands centered under the Spice button,
    outside the anchor's box, so the button never moves as quota state loads or
-   becomes unavailable. */
+   becomes unavailable; the header's bottom inset leaves it room. */
 .app-spice-capacity {
   position: absolute;
-  bottom: calc(100% + 3px);
+  top: calc(100% + var(--app-spice-capacity-gap));
   inset-inline-end: calc((var(--app-header-control) - 4ch) / 2);
   width: 4ch;
   color: var(--ink);

@@ -683,7 +683,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface, .app-spice-sidebar-readouts) { opacity: 0; }
 }
 /* Global TURBO stands beside the Spice button, starting where the theme
-   selector below it starts; the weekly percentage stacks above the button
+   selector below it starts; the weekly percentage hangs under the button
    outside this box. */
 .app-spice-sidebar-anchor {
   position: absolute;
@@ -701,8 +701,31 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   place-items: center;
   transition: var(--app-side-view-fade);
 }
+/* With the Spice controls anchored in the header, it keeps to one row level
+   with them: kicker and title share a line centered on the round controls, and
+   the header ends just past the weekly percentage under the Spice button. */
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
+  padding-block: var(--app-spice-anchor-inset-block) calc(var(--app-spice-capacity-gap) + var(--app-type-control) + 6px);
   padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-spice-anchor-inline-size) + 20px);
+}
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  min-height: var(--app-header-control);
+  align-content: center;
+  flex-wrap: wrap;
+}
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--app-type-detail);
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;

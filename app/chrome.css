@@ -34,6 +34,8 @@
   /* The trigger centers over the composer-control column, level with the
      command bar's one content row. */
   --app-spice-anchor-inset-block: var(--app-commandbar-block-pad);
+  /* The weekly percentage hangs this far under the open view's Spice button. */
+  --app-spice-capacity-gap: 2px;
   /* The launcher stands this far from the window edge, and as far from the
      Design total before it. */
   --app-spice-side-gap: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2);
