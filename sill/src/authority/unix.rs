@@ -48,30 +48,26 @@ pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+#[cfg(target_os = "macos")]
 pub(super) fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
     let source = c_path(source)?;
     let destination = c_path(destination)?;
     // SAFETY: both arguments are NUL-terminated paths that outlive the call.
-    #[cfg(target_os = "macos")]
     let result =
         unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
-    // SAFETY: both arguments are NUL-terminated paths that outlive the call,
-    // and `AT_FDCWD` resolves them as `rename` would.
-    #[cfg(target_os = "linux")]
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
     if result == 0 {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+/// Issues the `renameat2` system call directly: the musl libc bundled for
+/// static Linux builds exports no `renameat2` symbol to link against.
+#[cfg(target_os = "linux")]
+pub(super) fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    renameat_with(CWD, source, CWD, destination, RenameFlags::NOREPLACE).map_err(io::Error::from)
 }
 
 pub(super) fn directory_link_form(target: &Path) -> io::Result<PathBuf> {
@@ -306,6 +302,7 @@ fn c_name(name: &OsStr) -> io::Result<CString> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))
 }
 
+#[cfg(target_os = "macos")]
 fn c_path(path: &Path) -> io::Result<CString> {
     c_name(path.as_os_str())
 }
