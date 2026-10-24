@@ -6,6 +6,7 @@ pub(super) fn project_targets<'a>(
     now: Instant,
     holds: &Holds,
     allocation: &board::NextConfig,
+    profiles: Option<&std::sync::Mutex<super::super::message_surface::MessageState>>,
 ) -> CommandResult<Vec<Target<'a>>> {
     let Some(residency) = snapshot.residency() else {
         return Ok(Vec::new());
@@ -34,6 +35,7 @@ pub(super) fn project_targets<'a>(
         environment: &environment,
         now,
     };
+    let matcher = RetainedMatch::open(profiles, projection.entries())?;
     let mut targets = Vec::new();
     for row in &projected_residency.lanes {
         if row.occupant.is_some() || row.disposition == "occupied" || !holds.seats(row.lane) {
@@ -52,10 +54,23 @@ pub(super) fn project_targets<'a>(
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
         });
+        let score = |entry: &Entry| {
+            matcher
+                .as_ref()
+                .and_then(|matcher| matcher.score(row.lane, entry))
+                .unwrap_or(0.0)
+        };
+        let match_score = matcher.as_ref().map(|_| &score as &dyn Fn(&Entry) -> f64);
         let work = if held_parked {
             Work::default()
         } else {
-            work_availability(&view, row, subscription.as_ref(), first_drain_member)?
+            work_availability(
+                &view,
+                row,
+                subscription.as_ref(),
+                first_drain_member,
+                match_score,
+            )?
         };
         targets.push(Target {
             lane: row.lane,
@@ -69,7 +84,11 @@ pub(super) fn project_targets<'a>(
             available: work.available,
             last_resort: work.last_resort,
             task: work.task,
-            matched: None,
+            matched: work.task.and_then(|task| {
+                matcher
+                    .as_ref()
+                    .and_then(|matcher| matcher.score(row.lane, task))
+            }),
         });
     }
     Ok(targets)
@@ -201,6 +220,7 @@ fn work_availability<'e>(
     row: &wire::LaneResidency,
     subscription: Option<&wire::TeamSubscription>,
     first_drain_member: bool,
+    match_score: Option<&dyn Fn(&Entry) -> f64>,
 ) -> CommandResult<Work<'e>> {
     let Some(subscription) = subscription.filter(|subscription| {
         matches!(
@@ -210,7 +230,7 @@ fn work_availability<'e>(
     }) else {
         return Ok(Work::default());
     };
-    let (selected, task) = selected_ready(view, &Actor::Lane(row.lane), subscription)?;
+    let (selected, task) = selected_ready(view, &Actor::Lane(row.lane), subscription, match_score)?;
     let last_resort = selected.is_some_and(|selected| selected.last_resort);
     let (drain_queue, available) = if subscription.policy == wire::intent::TeamLife::Drain {
         (

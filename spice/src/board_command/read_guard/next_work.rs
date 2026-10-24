@@ -1,7 +1,7 @@
 use super::*;
 use crate::resident::message_surface;
-pub(crate) use occupant_match::OccupantMatch;
 use occupant_match::running_occupant;
+pub(crate) use occupant_match::{OccupantMatch, floored_standing};
 
 mod occupant_match;
 

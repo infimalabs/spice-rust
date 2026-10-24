@@ -1,50 +1,49 @@
-use board::similarity::MatchCache;
-use spice::rooms::standing::standing;
+use std::cell::RefCell;
+use std::sync::{Arc, MutexGuard};
+
+use board::similarity::{FrequencyProfile, MatchCache};
 
 use super::super::message_surface;
 use super::*;
 
-/// Score each vacant lane's retained work against the task the allocator
-/// selected for it, through the ranker Design nudges share, under the shared
-/// [`MatchCache`] fit; a lane's own cards of
-/// its task never count. Scores order lanes only against one another, so
-/// fewer than two selected targets leave every target unscored.
-pub(super) fn match_targets(
-    targets: &mut [Target<'_>],
-    entries: &[Entry],
-    profiles: &std::sync::Mutex<message_surface::MessageState>,
-) -> CommandResult<()> {
-    if targets
-        .iter()
-        .filter(|target| target.task.is_some())
-        .count()
-        < 2
-    {
-        return Ok(());
-    }
-    let matcher = MatchCache::shared();
-    let frequency = matcher.fit(entries.iter().map(Entry::statement));
-    let mut state = message_surface::lock_state(profiles)?;
-    for target in targets {
-        let Some(task) = target.task else {
-            continue;
+/// Every vacant lane's retained work scored against the board, through the
+/// ranker Design nudges and `task next` share, under the shared
+/// [`MatchCache`] fit. One reconciliation pass takes the profile lock once
+/// and fits once; each lane then selects the candidate its own best retained
+/// session matches, and its wake rank is that selected task's score. A lane's
+/// own cards of a task never count.
+pub(super) struct RetainedMatch<'a> {
+    state: RefCell<MutexGuard<'a, message_surface::MessageState>>,
+    frequency: Arc<FrequencyProfile>,
+}
+
+impl<'a> RetainedMatch<'a> {
+    /// The pass's matcher; none before message startup restored profiles,
+    /// which leaves every lane selecting the unscored ladder exactly.
+    pub(super) fn open(
+        profiles: Option<&'a std::sync::Mutex<message_surface::MessageState>>,
+        entries: &[Entry],
+    ) -> CommandResult<Option<Self>> {
+        let Some(profiles) = profiles else {
+            return Ok(None);
         };
-        let statement = matcher.prepare(&frequency, task.statement());
-        target.matched = standing(
+        let state = message_surface::lock_state(profiles)?;
+        Ok(Some(Self {
+            state: RefCell::new(state),
+            frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement)),
+        }))
+    }
+
+    /// `lane`'s best retained standing for `entry` at or above the Explore
+    /// floor; absent below it or when nothing scores.
+    pub(super) fn score(&self, lane: CanonicalUuid, entry: &Entry) -> Option<f64> {
+        let mut state = self.state.borrow_mut();
+        crate::board_command::floored_standing(
             &mut state.profiles,
-            &frequency,
-            statement.as_deref(),
-            task.born(),
-            target.lane,
+            &self.frequency,
+            entry,
+            lane,
             None,
         )
-        .map_err(|error| {
-            store_fault(
-                "lifecycle::wake-profile-generation-mismatch",
-                &error.to_string(),
-            )
-        })?
-        .score;
     }
-    Ok(())
 }

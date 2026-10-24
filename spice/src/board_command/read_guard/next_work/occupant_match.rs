@@ -15,6 +15,7 @@ use std::sync::{Arc, MutexGuard};
 
 use board::Entry;
 use board::similarity::{FrequencyProfile, MatchCache};
+use spice::rooms::profile::SessionProfiles;
 use spice::rooms::standing::standing;
 use wire::CanonicalUuid;
 use wire::rooms::WorkingGroupStance;
@@ -57,22 +58,43 @@ impl<'a> OccupantMatch<'a> {
     /// The occupant's standing for `entry` at or above the Explore floor;
     /// zero below it or when nothing scores.
     pub(crate) fn score(&self, entry: &Entry) -> f64 {
-        let statement = MatchCache::shared().prepare(&self.frequency, entry.statement());
         let mut state = self.state.borrow_mut();
-        standing(
+        floored_standing(
             &mut state.profiles,
             &self.frequency,
-            statement.as_deref(),
-            entry.born(),
+            entry,
             self.lane,
             Some(self.occupant),
         )
-        // The statement was prepared under this same frequency generation.
-        .ok()
-        .and_then(|standing| standing.score)
-        .filter(|score| *score >= match_score_floor(WorkingGroupStance::Explore))
         .unwrap_or(0.0)
     }
+}
+
+/// One lane's standing for `entry` under `frequency`: the running occupant's
+/// session when `occupant` is given, else the lane's best retained session.
+/// Absent when nothing scores or the score sits below the Explore floor, the
+/// lowest Design invitation floor, so incidental vocabulary overlap never
+/// counts as a match.
+pub(crate) fn floored_standing(
+    profiles: &mut SessionProfiles,
+    frequency: &Arc<FrequencyProfile>,
+    entry: &Entry,
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+) -> Option<f64> {
+    let statement = MatchCache::shared().prepare(frequency, entry.statement());
+    standing(
+        profiles,
+        frequency,
+        statement.as_deref(),
+        entry.born(),
+        lane,
+        occupant,
+    )
+    // The statement was prepared under this same frequency generation.
+    .ok()
+    .and_then(|standing| standing.score)
+    .filter(|score| *score >= match_score_floor(WorkingGroupStance::Explore))
 }
 
 /// The lane and occupant seated for `principal`, when it is an occupied lane.

@@ -143,6 +143,7 @@ fn a_key_the_final_transcript_does_not_answer_stays_pending_and_still_wakes_a_su
         instant(50),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("vacant lane targets project");
     assert!(targets[0].pending_inbox);

@@ -115,6 +115,7 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
             instant(50),
             &holds,
             &board::NextConfig::default(),
+            None,
         )
         .expect("lifecycle targets project")
         .is_empty(),
