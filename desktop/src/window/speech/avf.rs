@@ -103,10 +103,16 @@ impl AVSpeechSynthesizer {
     );
 }
 
-// The synthesizer's progress callbacks. Every method is optional; the shell's
-// delegate class declares the ones it answers with the protocol's exact
-// selectors and signatures, which is the whole safety contract.
 extern_protocol!(
-    #[allow(clippy::missing_safety_doc)]
+    /// The synthesizer's progress callbacks. Every method is optional.
+    ///
+    /// # Safety
+    ///
+    /// An implementing class declares the methods it answers with the
+    /// protocol's exact selectors and signatures.
+    #[expect(
+        clippy::missing_safety_doc,
+        reason = "objc2's extern_protocol! re-emits these docs from expansion-spanned attributes, which clippy's doc lints skip, so the # Safety section above is invisible to it"
+    )]
     pub(super) unsafe trait AVSpeechSynthesizerDelegate: NSObjectProtocol {}
 );

@@ -103,7 +103,6 @@ const DIRECTION_RADIUS: f64 = 1.8;
 /// narrow pip still bends and a wide one stays smooth.
 fn samples(width: f64) -> usize {
     // Truncation is the intent: whole three-pixel columns.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let columns = ((width / 3.0).floor() as usize).clamp(6, 16);
     (columns.div_ceil(2) + 1).max(5)
 }
@@ -116,7 +115,6 @@ fn span(width: f64) -> f64 {
 /// How far one trace step carries the drawing, in pane pixels: the distance a
 /// frame slides before the next replaces it, and so how far past now its
 /// curves must reach.
-#[allow(clippy::cast_precision_loss)]
 fn step(width: f64) -> f64 {
     span(width) * f64::from(TRACE_STEP_MILLIS) / TRACE_WINDOW_MILLIS as f64
 }
@@ -295,7 +293,6 @@ fn on_rects(spans: &[TraceSpan], width: f64, height: f64) -> Vec<(f64, f64, f64,
 /// Sample `index` of `levels` in pane pixels: time runs across to the
 /// now-dot's room, level rises from the floor to the headroom under the top.
 fn point(levels: &[f64], index: usize, width: f64, height: f64) -> (f64, f64) {
-    #[allow(clippy::cast_precision_loss)]
     let x = index as f64 * span(width) / (levels.len() - 1) as f64;
     (x, level_y(levels[index], height))
 }

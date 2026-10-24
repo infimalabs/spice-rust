@@ -154,7 +154,6 @@ const fn placement(kind: AgentActivityKind) -> Placement {
 /// short the rate is taken from the part inside, so the level at now reports
 /// the current rate rather than half of it.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
     let samples = grid(samples);
     let since = now - TRACE_WINDOW_MILLIS;
@@ -216,7 +215,6 @@ fn inside(at: f64, half: f64) -> f64 {
 /// call still counts, plus a text weight growing with the square root of its
 /// length, so a long reply counts for more without drowning out a run of terse
 /// calls.
-#[allow(clippy::cast_precision_loss)]
 pub(super) fn activity_weight(bytes: usize) -> f64 {
     BASE_WEIGHT + (bytes.min(FULL_WEIGHT_BYTES) as f64 / FULL_WEIGHT_BYTES as f64).sqrt()
 }
@@ -301,7 +299,6 @@ pub fn off_intervals(
 /// curves whole; a longer one is a gap, clipped to the window, and one still
 /// running ends the curves where the lane went off.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn drawn_spans(off: &[TraceOff], now: i64, samples: usize) -> Vec<TraceSpan> {
     let since = now - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;

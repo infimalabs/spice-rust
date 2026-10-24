@@ -33,6 +33,7 @@ pub mod manifest;
 pub mod measure;
 pub mod message;
 pub mod metrics;
+mod permissions;
 pub mod policy;
 pub mod ratchet;
 pub mod report;
