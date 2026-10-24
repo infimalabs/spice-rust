@@ -129,7 +129,6 @@ fn analyze_units(
     let mut elapsed = Duration::ZERO;
     let mut observed_units = 0_u64;
     let mut refusal = None;
-    let mut cargo_artifacts = Vec::new();
     for unit in units {
         match analyze_unit(
             declaration,
@@ -143,10 +142,6 @@ fn analyze_units(
             Ok(success) => {
                 observed_units = observed_units.saturating_add(1);
                 elapsed = elapsed.saturating_add(success.elapsed());
-                cargo_artifacts.extend(success.into_stdout());
-                if cargo_artifacts.last().is_some_and(|byte| *byte != b'\n') {
-                    cargo_artifacts.push(b'\n');
-                }
             }
             Err(failure) => {
                 let (analysis, duration) = failure.into_parts();
@@ -169,11 +164,7 @@ fn analyze_units(
     if observed_units == 0 {
         return analysis;
     }
-    let mut analysis = analysis.timed(timing(elapsed, bounds, observed_units));
-    if analysis.outcome == ArmOutcome::Passed {
-        analysis.cargo_artifacts = cargo_artifacts;
-    }
-    analysis
+    analysis.timed(timing(elapsed, bounds, observed_units))
 }
 
 fn analyze_unit(
@@ -264,7 +255,7 @@ pub(in crate::toolchain) const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-s
 
 impl RustWorkspace {
     fn create(selected: &Path, repository: &Path) -> Result<Self, String> {
-        let workspace = rust_analysis_workspace(repository, Vec::new())?;
+        let workspace = rust_analysis_workspace(repository)?;
         Self::create_at(selected, workspace.source(), workspace.cargo_target())
     }
 
@@ -344,7 +335,6 @@ impl RustWorkspace {
 
 pub(in crate::toolchain) fn rust_analysis_workspace(
     repository: &Path,
-    cargo_artifacts: Vec<u8>,
 ) -> Result<RustAnalysisWorkspace, String> {
     let (worktree_git, _) = crate::tree::git_directories(repository).map_err(|error| {
         format!(
@@ -359,7 +349,6 @@ pub(in crate::toolchain) fn rust_analysis_workspace(
         source,
         cargo_target,
         cargo_build,
-        cargo_artifacts,
     })
 }
 

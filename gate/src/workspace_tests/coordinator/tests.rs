@@ -1,5 +1,6 @@
 use std::os::unix::process::ExitStatusExt as _;
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Condvar, Mutex};
 
 use super::*;

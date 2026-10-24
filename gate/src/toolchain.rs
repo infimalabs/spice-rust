@@ -249,7 +249,6 @@ pub struct RustAnalysisWorkspace {
     source: PathBuf,
     cargo_target: PathBuf,
     cargo_build: PathBuf,
-    cargo_artifacts: Vec<u8>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -271,12 +270,6 @@ impl RustAnalysisWorkspace {
     pub fn cargo_build(&self) -> &Path {
         &self.cargo_build
     }
-
-    /// Cargo JSON artifact records emitted by the successful native analysis.
-    #[must_use]
-    pub fn cargo_artifacts(&self) -> &[u8] {
-        &self.cargo_artifacts
-    }
 }
 
 /// Recover the stable paths whose source and outputs a successful native arm completed.
@@ -286,9 +279,8 @@ impl RustAnalysisWorkspace {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn completed_rust_analysis_workspace(
     repository: &Path,
-    cargo_artifacts: Vec<u8>,
 ) -> Result<RustAnalysisWorkspace, String> {
-    analyze::rust_analysis_workspace(repository, cargo_artifacts)
+    analyze::rust_analysis_workspace(repository)
 }
 
 /// Extensions selected by the compiled prose scanner, without their leading dot.

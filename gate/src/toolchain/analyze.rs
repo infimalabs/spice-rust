@@ -73,7 +73,6 @@ pub(super) struct Analysis {
     pub(super) findings: Vec<ArmFinding>,
     pub(super) exit_code: Option<i32>,
     pub(super) timing: Option<ArmTiming>,
-    pub(super) cargo_artifacts: Vec<u8>,
 }
 
 /// Resolved compiler programs and the admitted environment they must inherit.
@@ -129,7 +128,6 @@ impl Analysis {
             findings: Vec::new(),
             exit_code: None,
             timing: None,
-            cargo_artifacts: Vec::new(),
         }
     }
 
@@ -141,7 +139,6 @@ impl Analysis {
             findings: Vec::new(),
             exit_code: Some(code),
             timing: None,
-            cargo_artifacts: Vec::new(),
         }
     }
 
@@ -166,7 +163,6 @@ impl Analysis {
             findings,
             exit_code: None,
             timing: None,
-            cargo_artifacts: Vec::new(),
         }
     }
 
@@ -663,14 +659,14 @@ mod javascript;
 pub(in crate::toolchain) use javascript::*;
 
 fn complete_output(name: &str, captured: &Captured<'_>) -> Result<String, String> {
-    complete_compiler_output(name, captured, false).map(|(printed, _)| printed)
+    complete_compiler_output(name, captured, false)
 }
 
 fn complete_compiler_output(
     name: &str,
     captured: &Captured<'_>,
     retain_tail: bool,
-) -> Result<(String, Vec<u8>), String> {
+) -> Result<String, String> {
     if let Some(failure) = captured.observation_failure {
         return Err(format!("{name} output observation failed: {failure}"));
     }
@@ -704,7 +700,7 @@ fn complete_compiler_output(
         printed.push('\n');
     }
     printed.push_str(&String::from_utf8_lossy(stderr.bytes));
-    Ok((printed, stdout.to_vec()))
+    Ok(printed)
 }
 
 #[derive(serde::Deserialize)]
