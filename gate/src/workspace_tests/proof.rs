@@ -6,9 +6,17 @@ mod input_provenance;
 
 use input_provenance::selected_package_input_paths;
 
-const PROOF_CARGO_JOBS: usize = 1;
-const PROOF_TEST_THREADS: usize = 1;
 const DIGEST_HEX_LENGTH: usize = 64;
+const RUST_TEST_THREADS: &str = "RUST_TEST_THREADS";
+/// Ordinary gate lanes that share one host. Each proof shard schedules its
+/// Cargo jobs and harness threads within one lane's share of the host.
+const PROOF_HOST_LANES: usize = 4;
+
+/// One lane's share of host parallelism. A scheduling input, never proof
+/// content: it reaches the shard only through its execution environment.
+fn proof_host_share() -> usize {
+    (thread::available_parallelism().map_or(1, usize::from) / PROOF_HOST_LANES).max(1)
+}
 
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 const WINDOWS_TOOLCHAIN_PIN: &str = "dist/windows-msvc.toml";
@@ -438,13 +446,14 @@ fn test_shard(
     source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<CargoGateShard, WorkspaceTestError> {
+    // Parallelism is scheduling, not proof content: the canonical argv names
+    // no job or thread count, and execution binds one lane's host share
+    // through the environment, so neither enters the receipt digest.
     let mut argv = vec![
         "test".to_owned(),
         "--locked".to_owned(),
         "--package".to_owned(),
         package.name.clone(),
-        "--jobs".to_owned(),
-        PROOF_CARGO_JOBS.to_string(),
     ];
     let mut targets = Vec::new();
     for target in &package.targets {
@@ -463,10 +472,6 @@ fn test_shard(
     })) {
         argv.extend(["--features".to_owned(), features]);
     }
-    argv.extend([
-        "--".to_owned(),
-        format!("--test-threads={PROOF_TEST_THREADS}"),
-    ]);
     let identity = targets.join(",");
     let provenance = targets
         .iter()
@@ -754,6 +759,9 @@ pub fn run_cargo_gate_shard_at(
     );
     entries.insert(OsString::from(RUSTC_WRAPPER), OsString::new());
     entries.insert(OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new());
+    let share = proof_host_share().to_string();
+    entries.insert(OsString::from(CARGO_BUILD_JOBS), OsString::from(&share));
+    entries.insert(OsString::from(RUST_TEST_THREADS), OsString::from(share));
     let environment =
         Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))?;
     if shard.kind == CargoGateShardKind::Test {
