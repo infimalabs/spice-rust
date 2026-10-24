@@ -61,15 +61,16 @@ allow_attributes_without_reason = "deny"
 # installed development appliance remains stripped because every hook
 # authenticates and copies its complete bytes; release assembly selects its
 # independently optimized profile with `--release`. Test builds keep every
-# workspace crate unoptimized, wire included, because each package's test
-# shard resolves its own dependency features and so recompiles shared crates;
-# only the small third-party hashing hotspots stay optimized in that profile.
+# workspace crate unoptimized, wire included; third-party code keeps the light
+# optimization below, and the small hashing hotspots stay fully optimized.
 [profile.dev]
 debug = 1
 
 # Third-party code is lightly optimized so the unoptimized `spice` binary's
 # `__eh_frame` stays under the 16 MiB offset range ld's compact unwind table
 # encodes; past it, ld warns on every link. Edits rebuild only workspace crates.
+# Linking with `-no_compact_unwind` instead silences the warning but breaks
+# panic unwinding: arm64 objects describe most frames only in that table.
 [profile.dev.package."*"]
 opt-level = 1
 
