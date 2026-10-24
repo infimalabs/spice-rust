@@ -139,7 +139,9 @@ a team strip tabs each task its lanes actively claim, Design work included, in
 that lane's accent; a group strip tabs each lane claiming work associated with
 its Designs. A local total selects exactly what its tabs stand for, and local
 strips have no stem roll-ups; each global stem tab opens its complete
-visibility-qualified stem. Tabs past a total scroll under edge fades. Local tabs
+visibility-qualified stem. A team or group total spans the pip column flush
+to the console's right edge, so its badge centres over the pips and the team
+menu below them. Tabs past a total scroll under edge fades. Local tabs
 meet each other and the total without gap, border, or interior rounding; only
 the strip's outside ends keep the thick rail and corner.
 
