@@ -15,14 +15,16 @@ use wire::{Actor, CanonicalUuid, Instant, LaneResidency, Seq, TaskStamp};
 
 use super::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ClaimAuthor {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 }
 
-/// Who completed the phase one finding judged, and who judged it.
-struct PhaseAuthors {
+/// Who completed the phase one finding judged, and who judged it. Fixed once
+/// the finding is recorded, because history is append-only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PhaseAuthors {
     author: ClaimAuthor,
     reviewer: ClaimAuthor,
 }
@@ -51,15 +53,17 @@ enum Judgment {
 pub(super) struct FindingWindow<'a> {
     /// Lifecycle projection cursor; every finding after it is new.
     pub(super) cursor: Option<Seq>,
-    /// Findings still waiting for a seat, replaced by those that still wait.
-    pub(super) held: &'a mut BTreeSet<Seq>,
+    /// Findings still waiting for a seat, with the authors folded when they
+    /// were first judged; replaced by those that still wait.
+    pub(super) held: &'a mut BTreeMap<Seq, PhaseAuthors>,
     pub(super) now: Instant,
     pub(super) lifetime: Duration,
 }
 
 /// Deliver every finding after the window's cursor or held for a seat whose
 /// author session is seated, and leave held exactly the findings still
-/// waiting for a seat.
+/// waiting for a seat. Held findings are judged from their held authors; only
+/// findings after the cursor that are not held fold task history.
 pub(super) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -77,8 +81,9 @@ pub(super) fn reconcile(
     let mut changed = false;
     loop {
         let observed = refreshed.as_ref().unwrap_or(snapshot);
-        let findings = pending_findings(observed.facts(), cursor, held)?;
-        let mut waiting = BTreeSet::new();
+        let mut findings = pending_findings(observed.facts(), cursor, held)?;
+        findings.extend(held.iter().map(|(seq, authors)| (*seq, *authors)));
+        let mut waiting = BTreeMap::new();
         let mut appended = false;
         for (seq, authors) in &findings {
             let envelope = observed.facts().at(*seq).ok_or_else(|| {
@@ -93,7 +98,7 @@ pub(super) fn reconcile(
             let feedback = match judge(observed, envelope, &reviewed, authors, now, lifetime)? {
                 Judgment::Deliver(feedback) => feedback,
                 Judgment::Hold => {
-                    waiting.insert(*seq);
+                    waiting.insert(*seq, *authors);
                     continue;
                 }
                 Judgment::Drop => continue,
@@ -259,24 +264,24 @@ fn outlived(at: Instant, now: Instant, lifetime: Duration) -> bool {
     age.is_positive() && age.unsigned_abs() >= lifetime
 }
 
-/// Every finding after the cursor or held for a seat, with the claim authors
-/// it judged.
+/// Every finding after the cursor that is not already held, with the claim
+/// authors it judged.
 ///
 /// Authorship is folded once, forward across the task history, rather than
 /// once per finding: a resident that starts against years of reviews would
-/// otherwise decode the whole history again for each of them.
+/// otherwise decode the whole history again for each of them. A reconcile
+/// whose only candidates are held findings folds nothing.
 fn pending_findings(
     facts: &bus::TaskFacts,
     cursor: Option<Seq>,
-    held: &BTreeSet<Seq>,
+    held: &BTreeMap<Seq, PhaseAuthors>,
 ) -> CommandResult<BTreeMap<Seq, PhaseAuthors>> {
     let mut wanted = BTreeMap::new();
     let mut candidates = BTreeSet::new();
-    let held_rows = held
-        .iter()
-        .filter(|seq| cursor.is_some_and(|cursor| **seq <= cursor))
-        .filter_map(|seq| facts.at(*seq));
-    for envelope in held_rows.chain(facts.after(cursor)) {
+    for envelope in facts.after(cursor) {
+        if held.contains_key(&envelope.seq) {
+            continue;
+        }
         let Some(reviewed) = envelope.fact.read::<wire::body::TaskReviewed>() else {
             continue;
         };
