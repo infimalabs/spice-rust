@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{
-    Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CargoSelection, CompileCapture, CompileFailure, CompileInvocation, CompileSuccess,
-    CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
+    Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_INCREMENTAL, CARGO_TARGET_DIRECTORY,
+    COMPILED_HOME_DIRECTORY, CargoSelection, CompileCapture, CompileFailure, CompileInvocation,
+    CompileSuccess, CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
     run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
@@ -564,6 +564,7 @@ fn rust_environment(
     );
     entries.insert(RUSTC_WRAPPER.into(), std::ffi::OsString::new());
     entries.insert(RUSTC_WORKSPACE_WRAPPER.into(), std::ffi::OsString::new());
+    entries.insert(CARGO_INCREMENTAL.into(), "0".into());
     Environment::new(entries)
         .map_err(|error| format!("native typecheck tool environment was refused: {error}"))
 }
@@ -590,6 +591,10 @@ mod tests {
                 std::ffi::OsString::from("CARGO_BUILD_JOBS"),
                 std::ffi::OsString::from("2"),
             ),
+            (
+                std::ffi::OsString::from(CARGO_INCREMENTAL),
+                std::ffi::OsString::from("1"),
+            ),
         ];
 
         let environment = rust_environment("/toolchain/bin/cargo", &workspace, &inherited)
@@ -610,6 +615,11 @@ mod tests {
         assert_eq!(
             entries.get(std::ffi::OsStr::new(CARGO_TARGET_DIRECTORY)),
             Some(&std::ffi::OsString::from("/outputs/target"))
+        );
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new(CARGO_INCREMENTAL)),
+            Some(&std::ffi::OsString::from("0")),
+            "an ambient incremental setting never reaches a gate compile"
         );
     }
 

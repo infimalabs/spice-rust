@@ -307,6 +307,11 @@ const RUSTC_WRAPPER: &str = concat!("RUSTC_", "WRAPPER");
 /// A workspace compiler wrapper is the same uncontained execution path.
 const RUSTC_WORKSPACE_WRAPPER: &str = concat!("RUSTC_", "WORKSPACE_WRAPPER");
 
+/// Cargo's incremental-compilation switch under the same ownership rule. A
+/// gate compiles each selected tree once, so incremental state only doubles
+/// the output it keeps warm.
+const CARGO_INCREMENTAL: &str = concat!("CARGO_", "INCREMENTAL");
+
 /// Trunk's external distribution directory under the same rule.
 const TRUNK_DISTRIBUTION_DIRECTORY: &str = concat!("TRUNK_", "BUILD_DIST");
 
