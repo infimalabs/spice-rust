@@ -48,12 +48,6 @@ unfulfilled_lint_expectations = "deny"
 # rust-analyzer sets `rust_analyzer` while analysing the host target; App
 # browser gates admit it so the Wasm-only modules stay navigable.
 unexpected_cfgs = { level = "deny", check-cfg = ["cfg(rust_analyzer)"] }
-# The unoptimized `spice` binary carries over 16 MiB of `__eh_frame`, past the
-# offset range ld's compact unwind table encodes, so ld warns on every
-# development link that panics there unwind through DWARF instead. Correctness
-# is unaffected and the release binary stays far under the cap; the lint can be
-# neither promoted nor failed, so it is only noise.
-linker_messages = "allow"
 
 [workspace.lints.clippy]
 all = "deny"
@@ -72,6 +66,12 @@ allow_attributes_without_reason = "deny"
 # only the small third-party hashing hotspots stay optimized in that profile.
 [profile.dev]
 debug = 1
+
+# Third-party code is lightly optimized so the unoptimized `spice` binary's
+# `__eh_frame` stays under the 16 MiB offset range ld's compact unwind table
+# encodes; past it, ld warns on every link. Edits rebuild only workspace crates.
+[profile.dev.package."*"]
+opt-level = 1
 
 [profile.dev.package.blake3]
 opt-level = 3
