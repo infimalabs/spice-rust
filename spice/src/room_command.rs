@@ -876,14 +876,14 @@ pub(crate) fn conversation_text(
     };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
-        body: wire::intent::CommandAnswer::RoomConversationText(
+        body: wire::intent::CommandAnswer::RoomConversationText(Box::new(
             wire::intent::RoomConversationTextAnswer {
                 publication: request.publication.clone(),
                 content,
                 direction,
                 recipient,
             },
-        ),
+        )),
     })
 }
 
@@ -944,7 +944,7 @@ pub(crate) fn contribution_read(
     let mut sources = RoomSources::new(Some(owners), &request.room);
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
-        body: wire::intent::CommandAnswer::RoomContributionRead(
+        body: wire::intent::CommandAnswer::RoomContributionRead(Box::new(
             wire::intent::RoomContributionReadAnswer {
                 publication: request.publication.clone(),
                 sources: contributed
@@ -955,7 +955,7 @@ pub(crate) fn contribution_read(
                 facts,
                 question,
             },
-        ),
+        )),
     })
 }
 

@@ -58,18 +58,17 @@ fn oops_snapshot(
             })
         })
         .transpose()?;
-    if let Some(heads) = design {
-        if heads.statement().body().intent != Some(wire::TaskIntent::OpportunisticDesign)
+    if let Some(heads) = design
+        && (heads.statement().body().intent != Some(wire::TaskIntent::OpportunisticDesign)
             || !wire::intent::is_open_design(
                 heads.statement().body().intent,
                 heads.workflow().body(),
-            )
-        {
-            return Err(protocol_fault(
-                "task::oops-generation-invalid",
-                "the witnessed OOPS generation does not name one open opportunistic Design",
-            ));
-        }
+            ))
+    {
+        return Err(protocol_fault(
+            "task::oops-generation-invalid",
+            "the witnessed OOPS generation does not name one open opportunistic Design",
+        ));
     }
     let snapshot = validated_working_snapshot_for_tasks(
         bus,
@@ -385,5 +384,5 @@ fn commit_oops_intake(
     ) {
         return store_fault("task::oops-add-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }

@@ -468,7 +468,7 @@ pub(crate) fn read_lane_quote(
         Outcome::Reply(Reply {
             body: CommandAnswer::Quote(resolution),
             ..
-        }) => Ok(resolution),
+        }) => Ok(*resolution),
         Outcome::Reply(_) => Err(protocol_fault(
             "quote::answer-invalid",
             "resident quote reply did not carry a quote resolution",

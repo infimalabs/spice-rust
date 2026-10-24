@@ -99,7 +99,7 @@ pub(super) fn contribute(
 
 pub(super) fn contributed(outcome: Outcome<CommandAnswer>) -> RoomContributeAnswer {
     match assert_committed(outcome) {
-        CommandAnswer::RoomContribute(answer) => answer,
+        CommandAnswer::RoomContribute(answer) => *answer,
         other => panic!("contribution answered {other:?}"),
     }
 }

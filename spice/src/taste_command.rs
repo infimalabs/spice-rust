@@ -997,7 +997,7 @@ fn submit_plan(repository: &Repository, contract: &Contract, plan: TaskAdd) -> O
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Task(answer) => Outcome::Reply(Reply {
                 position: reply.position,
-                body: answer,
+                body: *answer,
             }),
             answer => fault(
                 FaultClass::Protocol,

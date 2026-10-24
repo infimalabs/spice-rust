@@ -335,7 +335,7 @@ fn complete_plan_phase(
         answer.next,
         answer.claim.as_ref().and_then(|claim| claim.next.clone())
     );
-    (done, answer)
+    (done, *answer)
 }
 
 fn assert_plan_carry_and_replay(
@@ -373,7 +373,7 @@ fn assert_plan_carry_and_replay(
     )) else {
         panic!("plan completion replay did not return a task answer")
     };
-    assert_eq!(&replayed, answer);
+    assert_eq!(&*replayed, answer);
     released
 }
 

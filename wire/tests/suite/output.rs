@@ -221,7 +221,7 @@ fn text_and_json_carry_the_same_omission_facts() {
         serde_json::json!(["task", "list", "--after", "r 003"])
     );
     let decoded: wire::output::Omission = serde_json::from_value(json).expect("omission decodes");
-    assert_eq!(decoded, omission);
+    assert_eq!(decoded, *omission);
 }
 
 #[test]

@@ -77,7 +77,9 @@ impl Staged {
         }
         let replay = run().map_err(ProofError::Replay)?;
         if replay.standing() != ProofStanding::Clean {
-            return Err(ProofError::Refused(ReplayRefusal { replay }));
+            return Err(ProofError::Refused(ReplayRefusal {
+                replay: Box::new(replay),
+            }));
         }
         Ok(Proved {
             staged: self,
@@ -114,7 +116,7 @@ impl Proved {
 /// A complete replay that ran but did not establish clean standing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplayRefusal {
-    replay: ReplayVerdict,
+    replay: Box<ReplayVerdict>,
 }
 
 impl ReplayRefusal {

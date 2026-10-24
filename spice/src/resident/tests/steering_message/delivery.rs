@@ -94,12 +94,12 @@ fn a_vacant_lane_inherits_one_unchanged_peer_message_at_each_later_seat() {
 
     let pending = delivered(&lanes, FIRST);
     lanes.restart();
-    assert_eq!(lanes.pending(FIRST), [pending.clone()]);
+    assert_eq!(lanes.pending(FIRST), std::slice::from_ref(&pending));
 
     lanes.renew(FIRST, test_uuid(40));
-    assert_eq!(lanes.pending(FIRST), [pending.clone()]);
+    assert_eq!(lanes.pending(FIRST), std::slice::from_ref(&pending));
     lanes.declare(FIRST);
-    assert_eq!(lanes.pending(FIRST), [pending.clone()]);
+    assert_eq!(lanes.pending(FIRST), std::slice::from_ref(&pending));
 
     lanes.vacate(FIRST);
     lanes.renew(FIRST, test_uuid(41));

@@ -38,7 +38,7 @@ fn graduated_age(millis: i64) -> String {
     };
     match millis {
         ..HOUR => format!("{} minutes old", millis / (5 * MINUTE) * 5),
-        ..DAY => over(millis / HOUR, "hour"),
+        HOUR..DAY => over(millis / HOUR, "hour"),
         _ => over(millis / DAY, "day"),
     }
 }
@@ -53,8 +53,8 @@ pub fn compact_age(earlier: Instant, later: Instant) -> String {
     let seconds = (later.get().as_second() - earlier.get().as_second()).max(0);
     match seconds {
         ..MINUTE => format!("{seconds}s"),
-        ..HOUR => format!("{}m", seconds / MINUTE),
-        ..DAY => format!("{}h{:02}m", seconds / HOUR, seconds % HOUR / MINUTE),
+        MINUTE..HOUR => format!("{}m", seconds / MINUTE),
+        HOUR..DAY => format!("{}h{:02}m", seconds / HOUR, seconds % HOUR / MINUTE),
         _ => format!("{}d{:02}h", seconds / DAY, seconds % DAY / HOUR),
     }
 }
@@ -161,10 +161,6 @@ pub fn render_pending(
 /// with ACK or NAK, whose clause goes back automatically, and send anything
 /// new as an MSG. A reply names the key it answers and says acknowledging it
 /// sends nothing.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one peer header names every attribute the directive carries"
-)]
 fn push_peer(
     rendered: &mut String,
     from: Option<wire::CanonicalUuid>,

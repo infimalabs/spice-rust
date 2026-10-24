@@ -133,7 +133,7 @@ pub(crate) fn room_contribute(
     ) {
         return store_fault("room::contribution-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::RoomContribute(answer))
+    committed(bus, write, CommandAnswer::RoomContribute(Box::new(answer)))
 }
 
 fn malformed(error: RoomContributionError) -> Outcome<CommandAnswer> {

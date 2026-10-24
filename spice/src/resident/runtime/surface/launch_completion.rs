@@ -116,7 +116,7 @@ async fn settle(
             };
             let witness = lifecycle_released
                 .then(|| lifecycle::ReconciliationWitness::new(command, epoch, position));
-            control_dispatch::complete_response(request, outcome).await;
+            control_dispatch::complete_response(*request, outcome).await;
             (position.map(|_| lane), Settled::Command(witness))
         }
         super::super::launch_runtime::Authority::Automatic(pending) => {

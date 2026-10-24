@@ -527,7 +527,8 @@ fn project_policy_admits_only_resolved_hidden_roots() {
             expected,
         );
     }
-    for stem in ["maxim_proposal"] {
+    {
+        let stem = "maxim_proposal";
         assert!(matches!(
             projects.admit_system_creation(&board::SystemTaskRoute::configured(
                 stem,

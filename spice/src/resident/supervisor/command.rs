@@ -854,7 +854,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         let (report, kept) = match work {
             Work::Shell(call) => match terminal.run(call, control) {
                 Run::Ended(report) => (report, None),
-                Run::Backgrounded(report, job) => (report, Some(job)),
+                Run::Backgrounded(report, job) => (report, Some(*job)),
             },
             Work::Job(call) => {
                 let mut progress = |report: &Report| self.report_wait(id, report);

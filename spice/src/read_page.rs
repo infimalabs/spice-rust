@@ -307,7 +307,7 @@ impl Page {
             ));
         }
         let document = wire::encode(&bounded).map_err(|error| self.unencodable(&error))?;
-        spice::export::export(&path, &document).map(Paged::Exported)
+        spice::export::export(path, &document).map(Paged::Exported)
     }
 
     fn continuation(&self, resume: Resume<'_, impl Sized>, key: &str) -> SpiceCommand {

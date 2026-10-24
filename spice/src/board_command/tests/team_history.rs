@@ -72,7 +72,7 @@ fn team_history_keeps_created_and_member_completed_work_across_pages() {
     let metadata = head.history.expect("team history carries page metadata");
     assert_eq!(metadata.total, 3);
     let tail = team_page(&bus, epoch, member.team, metadata.next, PAGE);
-    assert_eq!(page_handles(&tail), [created.clone()]);
+    assert_eq!(page_handles(&tail), std::slice::from_ref(&created));
     assert_eq!(tail.history.expect("tail page metadata").next, None);
 
     let unknown = team_page(

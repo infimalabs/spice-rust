@@ -581,13 +581,13 @@ fn record_test_critique(
         source: source.clone(),
         standing: CritiqueStanding::Clean,
     };
-    let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let current = board(bus, epoch, Actor::Lane(seats[0].lane));
     assert_committed(issue(
-        &bus,
+        bus,
         epoch,
         Actor::Lane(seats[0].lane),
         CommandKind::CandidateCritiqueRecord,
-        transition_witnesses(at(&current, &controller))
+        transition_witnesses(at(&current, controller))
             .into_iter()
             .chain([Witness::Proposal {
                 proposal: ProposalRef::Critique {
@@ -614,13 +614,13 @@ pub(super) fn record_test_coverage(
             candidate: candidate.clone(),
             coverage: wire::SequenceCode::new(index as u64 + 1),
         };
-        let current = board(&bus, epoch, Actor::Lane(seat.lane));
+        let current = board(bus, epoch, Actor::Lane(seat.lane));
         assert_committed(issue(
-            &bus,
+            bus,
             epoch,
             Actor::Lane(seat.lane),
             CommandKind::CandidateCoverageRecord,
-            transition_witnesses(at(&current, &controller))
+            transition_witnesses(at(&current, controller))
                 .into_iter()
                 .chain([Witness::Proposal {
                     proposal: ProposalRef::Coverage {
@@ -828,22 +828,22 @@ pub(super) fn authorize_test_output(
 ) {
     let _decision = select_candidate_outputs(bus, epoch, controller, candidate, &[output], 3);
     let controller_stamp = controller.born().expect("Design stamp");
-    let current = board(&bus, epoch, Actor::Operator);
+    let current = board(bus, epoch, Actor::Operator);
     assert!(
-        !at(&current, &output)
+        !at(&current, output)
             .statement
             .body
             .dependencies
             .contains(&controller_stamp)
     );
     assert!(
-        at(&current, &spare)
+        at(&current, spare)
             .statement
             .body
             .dependencies
             .contains(&controller_stamp)
     );
-    let design = &at(&current, &controller).workflow.body;
+    let design = &at(&current, controller).workflow.body;
     assert!(
         design.status.is_pending(),
         "selection releases outputs and leaves the Design open"

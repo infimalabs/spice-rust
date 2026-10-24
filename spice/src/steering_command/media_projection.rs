@@ -61,6 +61,9 @@ impl Projection {
     }
 }
 
+/// Each directive's published attachments and the records now advertised.
+type Published = (BTreeMap<CanonicalUuid, Vec<Projection>>, Vec<Record>);
+
 /// Publishes every pending attachment into `occupant`'s private tree under
 /// `lane`, naming where each one is readable and the records now advertised.
 ///
@@ -71,7 +74,7 @@ pub(crate) fn publish(
     occupant: CanonicalUuid,
     pending: &[wire::intent::PendingDirective],
     root: &Path,
-) -> Result<(BTreeMap<CanonicalUuid, Vec<Projection>>, Vec<Record>), String> {
+) -> Result<Published, String> {
     let mut desired = Vec::new();
     let mut projected = BTreeMap::new();
     for directive in pending {

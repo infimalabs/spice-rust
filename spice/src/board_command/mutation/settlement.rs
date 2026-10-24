@@ -339,7 +339,7 @@ fn settle(
     if let Err(outcome) = settlement.receipt(&mut write, command, answer.clone()) {
         return outcome;
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
 /// Stage one terminal task and every pending subtree its disposition can no
@@ -354,9 +354,11 @@ fn stage_with_controlled(
     projects: &ProjectPolicy,
     oops_generation: Option<wire::OopsGenerationHead>,
 ) -> Result<(Entry, Vec<TaskHandle>), Outcome<CommandAnswer>> {
-    let controlled = cascades_controlled(entry, settlement)
-        .then(|| board::controlled_pending(&snapshot.entries, entry.born()))
-        .unwrap_or_default();
+    let controlled = if cascades_controlled(entry, settlement) {
+        board::controlled_pending(&snapshot.entries, entry.born())
+    } else {
+        Default::default()
+    };
     require_controlled_unheld(&controlled, settlement)?;
     let (post, settled) = stage(
         write,

@@ -139,7 +139,7 @@ impl MappedCommand {
             &wire::intent::ReleasePublish {
                 key: key.clone(),
                 manifest: release.manifest().clone(),
-                notes: release.notes().clone().into(),
+                notes: release.notes().clone(),
             },
         )
     }

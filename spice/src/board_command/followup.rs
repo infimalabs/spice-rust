@@ -192,8 +192,7 @@ pub(super) fn correction_statement(
         require_correction_witnesses(snapshot, command, handle)?;
         if let Some(required) =
             planning::correction_preparation(task_heads(&snapshot.answer, entry.handle())?)
-        {
-            if correction.statement().intent != entry.statement().intent
+            && (correction.statement().intent != entry.statement().intent
                 || correction
                     .statement()
                     .preparation
@@ -201,14 +200,13 @@ pub(super) fn correction_statement(
                     .is_none_or(|preparation| {
                         preparation.controller != required.controller
                             || preparation.construction != required.construction
-                    })
-            {
-                return Err(refusal(
-                    "review::planning-correction-context",
-                    Some(correction.handle().to_string()),
-                    "use a correction carrying the same construction owner, or create it with --then",
-                ));
-            }
+                    }))
+        {
+            return Err(refusal(
+                "review::planning-correction-context",
+                Some(correction.handle().to_string()),
+                "use a correction carrying the same construction owner, or create it with --then",
+            ));
         }
         let already_related = statement.dependencies.contains(correction.born());
         if correction.workflow().status.is_completed() && !already_related {

@@ -83,9 +83,6 @@ pub(crate) use spice::claim_lease::{
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 
-/// Eligibility rule for atomically creating and claiming a task around the
-/// lane's existing local commits.
-
 #[cfg(test)]
 pub(crate) use read_guard::read_next_work;
 const CAPTURE_WORK_RULE: &str = "capturework";

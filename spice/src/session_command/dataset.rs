@@ -175,7 +175,7 @@ pub(crate) struct PendingTool {
 }
 
 pub(crate) enum DecodedRow {
-    Typed(TypedRecord),
+    Typed(Box<TypedRecord>),
     Residue(Residue),
     Ignored,
 }
@@ -239,7 +239,7 @@ fn decode_row(
     let row = match detected.decoded {
         Decoded::Residue(residue) => decode_residue(source, line, residue.kind),
         Decoded::Events { context, events } => {
-            typed_row(source, line, buffer, observed, context, events)
+            typed_row(source, line, buffer, observed, *context, events)
         }
     };
     Ok((Some(observed), row))
@@ -319,7 +319,7 @@ fn typed_row(
             event,
         })
         .collect();
-    DecodedRow::Typed(TypedRecord {
+    DecodedRow::Typed(Box::new(TypedRecord {
         source: source.path.display().to_string(),
         line,
         vendor: if source.vendor.is_unknown() {
@@ -329,7 +329,7 @@ fn typed_row(
         },
         context,
         events: sourced,
-    })
+    }))
 }
 
 fn transcript_residue(

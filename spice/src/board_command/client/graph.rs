@@ -102,7 +102,7 @@ fn graph_view_in<R: std::borrow::Borrow<Repository>>(
             at,
         };
         crate::command_client::execute_typed(
-            &repository,
+            repository,
             contract,
             CommandKind::BoardHandout,
             Vec::new(),

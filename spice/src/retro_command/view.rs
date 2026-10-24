@@ -137,7 +137,7 @@ impl fmt::Display for RetroPage {
                 TranscriptPageRow::Record { record } => write_record(formatter, record)?,
             }
         }
-        write_omission(formatter, self.rows.omission.as_ref())?;
+        write_omission(formatter, self.rows.omission.as_deref())?;
         if let Some(history) = &self.history {
             writeln!(
                 formatter,
@@ -163,7 +163,7 @@ impl fmt::Display for RetroSessions {
         for session in &self.rows.rows {
             write_session(formatter, session)?;
         }
-        write_omission(formatter, self.rows.omission.as_ref())
+        write_omission(formatter, self.rows.omission.as_deref())
     }
 }
 
@@ -172,7 +172,7 @@ impl fmt::Display for RetroObservations {
         for observation in &self.rows.rows {
             write_observation(formatter, "", observation)?;
         }
-        write_omission(formatter, self.rows.omission.as_ref())?;
+        write_omission(formatter, self.rows.omission.as_deref())?;
         write_clipped(formatter, self.clipped.as_ref())
     }
 }

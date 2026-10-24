@@ -210,7 +210,8 @@ fn admission_spec(root: &Path, argv: &[String]) -> Result<sill::Spec, Error> {
     })
 }
 
-/// The environment the operator's own shell would give this command.
+/// The environment the operator's own shell would give a Git or admission
+/// command.
 ///
 /// The declared command belongs to the repository and names a tool by the
 /// name an operator types, so it must resolve that tool the way their shell
@@ -220,7 +221,7 @@ fn admission_spec(root: &Path, argv: &[String]) -> Result<sill::Spec, Error> {
     clippy::disallowed_methods,
     reason = "the native binary rim captures the exact child environment"
 )]
-fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
+pub(super) fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
     sill::Environment::new(std::env::vars_os())
 }
 

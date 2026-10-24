@@ -648,9 +648,7 @@ fn terminal_prose_card(
         return None;
     }
     // A tool call never ends a turn, so an intent card has no terminal twin.
-    let Some(prose) = decoded.prose() else {
-        return None;
-    };
+    let prose = decoded.prose()?;
     let mut terminal_prose = prose.clone();
     terminal_prose.phase = Some("final_answer".to_owned());
     let mut terminal = published.clone();

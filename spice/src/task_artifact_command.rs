@@ -660,7 +660,7 @@ fn page(
         ];
         SpiceCommand::new("task", arguments).expect("artifact list command is valid")
     });
-    Ok((bounded.rows, bounded.omission))
+    Ok((bounded.rows, bounded.omission.map(|omission| *omission)))
 }
 
 /// Stream the proved payload to `output`, then verify the published file

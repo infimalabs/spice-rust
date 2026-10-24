@@ -209,7 +209,7 @@ fn pe_optional_table(
     Ok(table)
 }
 
-fn archive_section<'a>(image: &'a [u8], header: usize) -> Result<Option<&'a [u8]>, CanvasError> {
+fn archive_section(image: &[u8], header: usize) -> Result<Option<&[u8]>, CanvasError> {
     if field(image, header, SECTION.len(), "PE section name")? != SECTION {
         return Ok(None);
     }
@@ -448,7 +448,7 @@ mod tests {
         );
     }
 
-    fn symbol_name<'a>(image: &'a [u8], symbol: usize, strings: usize) -> &'a [u8] {
+    fn symbol_name(image: &[u8], symbol: usize, strings: usize) -> &[u8] {
         assert_eq!(&image[symbol..symbol + 4], &[0; 4]);
         let offset = read_u32(image, symbol + 4, "symbol name").unwrap() as usize;
         let name = &image[strings + offset..];

@@ -549,7 +549,7 @@ where
                 first: seq(committed.first()),
                 last: seq(committed.last()),
             }),
-            body: CommandAnswer::Principal(standing),
+            body: CommandAnswer::Principal(Box::new(standing)),
         }),
         Err(outcome) => typed_outcome(outcome),
     }

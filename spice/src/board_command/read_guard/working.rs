@@ -68,7 +68,7 @@ pub(in crate::board_command) fn task_ancestry_selection(
     observed: &bus::TaskSnapshot,
     roots: &[wire::TaskStamp],
 ) -> std::collections::BTreeSet<wire::TaskStamp> {
-    expand_task_selection(observed, roots.iter().cloned().collect())
+    expand_task_selection(observed, roots.to_vec())
 }
 
 fn working_task_selection(

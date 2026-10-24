@@ -408,7 +408,12 @@ fn open_room_duties_still_settle_after_the_anchor_settles() {
         "the anchor is settled before its open duties settle"
     );
 
-    committed(&lanes.dispose(62, RoomReceiptDisposition::Ack, &[told.clone()], "seen"));
+    committed(&lanes.dispose(
+        62,
+        RoomReceiptDisposition::Ack,
+        std::slice::from_ref(&told),
+        "seen",
+    ));
     assert!(matches!(
         lanes.item_state(&told),
         RoomReceiptState::Acked { .. }
@@ -441,7 +446,12 @@ fn lapsed_items_refuse_settlement_until_recovered() {
         Ok(Fired::Room)
     );
     assert_eq!(
-        reason(&lanes.dispose(81, RoomReceiptDisposition::Ack, &[item.clone()], "seen")),
+        reason(&lanes.dispose(
+            81,
+            RoomReceiptDisposition::Ack,
+            std::slice::from_ref(&item),
+            "seen"
+        )),
         "room::item-lapsed"
     );
     assert_eq!(
@@ -456,7 +466,12 @@ fn lapsed_items_refuse_settlement_until_recovered() {
     };
     assert!(renewed > expires, "recovery re-arms a later expiry");
     assert_eq!(reason(&recover(83)), "room::item-live");
-    committed(&lanes.dispose(84, RoomReceiptDisposition::Ack, &[item.clone()], "seen"));
+    committed(&lanes.dispose(
+        84,
+        RoomReceiptDisposition::Ack,
+        std::slice::from_ref(&item),
+        "seen",
+    ));
     drop(timers);
     lanes.finish();
 }

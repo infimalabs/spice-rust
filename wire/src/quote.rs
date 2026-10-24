@@ -520,7 +520,7 @@ mod tests {
             format!("spice://other/v1/tape/{lane}/{source}/3/5/8/13/{digest}"),
             format!("spice://quote/v1/steer/not-a-key/{digest}"),
             format!("spice://quote/v1/room/not-a-stamp/dVsYdDj7d/{digest}"),
-            format!("spice://quote/v1/room/dVrD59Y8N/dVsYdDj7d"),
+            "spice://quote/v1/room/dVrD59Y8N/dVsYdDj7d".to_owned(),
         ] {
             assert!(target.parse::<QuoteTarget>().is_err(), "{target}");
         }

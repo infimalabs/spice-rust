@@ -131,7 +131,7 @@ fn assert_concurrent_terminal_retries(bus: &Bus, replay: &CompletionReplay<'_>) 
                         panic!("terminal retry did not replay: {outcome:?}");
                     };
                     assert_eq!(&position, replay.terminal_position);
-                    assert_eq!(&replayed, replay.terminal);
+                    assert_eq!(&*replayed, replay.terminal);
                 })
             })
             .collect::<Vec<_>>();
@@ -176,7 +176,7 @@ fn assert_terminal_replay_after_restart(
         panic!("restart retry did not replay its terminal answer");
     };
     assert_eq!(&position, replay.terminal_position);
-    assert_eq!(&replayed, replay.terminal);
+    assert_eq!(&*replayed, replay.terminal);
     assert_eq!(task_done_fact_count(&reopened, replay.task), 1);
     clean(root, reopened);
 }

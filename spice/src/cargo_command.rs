@@ -324,6 +324,8 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
             repository.worktree_root(),
             host.bootstrap_home(),
             &invocation.arguments,
+            crate::bootstrap_environment("CARGO_BUILD_TARGET").as_deref(),
+            crate::bootstrap_environment("PATH").unwrap_or_default(),
             &mut command,
         )
         .map_err(isolation_rejection)?;

@@ -155,8 +155,8 @@ struct CommandLaunch {
 }
 
 enum CommandLaunchCompletion {
-    Wake(lane_surface::PendingWake),
-    Import(lane_recovery::PendingImport),
+    Wake(Box<lane_surface::PendingWake>),
+    Import(Box<lane_recovery::PendingImport>),
 }
 
 impl CommandDispatch {
@@ -177,7 +177,7 @@ impl CommandDispatch {
         Self::Launch(CommandLaunch {
             lane,
             launch,
-            completion: CommandLaunchCompletion::Wake(pending),
+            completion: CommandLaunchCompletion::Wake(Box::new(pending)),
         })
     }
 
@@ -187,7 +187,7 @@ impl CommandDispatch {
         Self::Launch(CommandLaunch {
             lane,
             launch,
-            completion: CommandLaunchCompletion::Import(pending),
+            completion: CommandLaunchCompletion::Import(Box::new(pending)),
         })
     }
 }

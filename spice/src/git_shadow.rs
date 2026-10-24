@@ -142,7 +142,8 @@ impl Pairing {
     }
 }
 
-/// Read the pairing `branch` declares, or `None` when it declares neither half.
+/// Read the pairing `branch` declares under the caller's `environment`, or
+/// `None` when it declares neither half.
 ///
 /// Git answers at every scope, so includeIf and global pairings count, but with
 /// this module's shadow removed: the shadow aims the lane's upstream back at
@@ -154,10 +155,12 @@ impl Pairing {
 /// Returns an error when Git cannot launch or answers with non-text, or when
 /// the pairing declares only one half or a merge that names no branch: Git
 /// resolves no upstream from either, and neither may pass for untracked.
-pub fn declared_pairing(root: &Path, branch: &str) -> Result<Option<Pairing>, Error> {
-    let native = std::env::vars_os()
-        .filter(|(key, _)| !is_shadow_variable(key))
-        .collect();
+pub fn declared_pairing(
+    root: &Path,
+    branch: &str,
+    environment: &Environment,
+) -> Result<Option<Pairing>, Error> {
+    let native = native_environment(environment);
     declare(branch, |arguments| git_read(root, arguments, &native))
 }
 

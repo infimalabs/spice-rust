@@ -530,7 +530,7 @@ fn source_decoded(decoded: Decoded, spans: &[Span]) -> RecordPayload {
                 .map(|(ordinal, event)| SourcedEvent {
                     ordinal: ordinal as u64,
                     spans: spans.to_vec(),
-                    context: context.clone(),
+                    context: RecordContext::clone(&context),
                     event,
                 })
                 .collect(),

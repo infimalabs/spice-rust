@@ -337,7 +337,7 @@ pub(crate) enum Change {
     Relevance(relevance::Edit),
     MaturityNotice {
         seq: u64,
-        notice: wire::rooms::DesignNoticed,
+        notice: Box<wire::rooms::DesignNoticed>,
     },
     MaturityContribution(wire::rooms::RoomContributed),
     MaturityLeave(RoomLeft),

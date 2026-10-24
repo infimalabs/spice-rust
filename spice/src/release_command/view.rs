@@ -286,26 +286,22 @@ pub(super) fn plan_preview(
     command: &[String],
 ) -> Outcome<PlanPreview> {
     let path = plan_path(common_git, &plan.key);
-    let retained = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .map_err(|error| {
-            super::refusal::<PlanPreview>(
-                "release::plan-unretained",
-                &format!("{}: {error}", path.display()),
-            )
-        })
-        .and_then(|()| {
-            wire::encode(&plan)
-                .map_err(|error| super::refusal::<PlanPreview>("release::plan-unencodable", &error))
-        })
-        .and_then(|bytes| spice::export::export(&path, &bytes).map_err(Outcome::Refusal));
-    match retained {
+    if let Err(error) = path.parent().map_or(Ok(()), std::fs::create_dir_all) {
+        return super::refusal(
+            "release::plan-unretained",
+            &format!("{}: {error}", path.display()),
+        );
+    }
+    let bytes = match wire::encode(&plan) {
+        Ok(bytes) => bytes,
+        Err(error) => return super::refusal("release::plan-unencodable", &error),
+    };
+    match spice::export::export(&path, &bytes) {
         Ok(export) => Outcome::Reply(wire::Reply {
             position: wire::ReplyPosition::Direct {},
             body: PlanPreview::new(&plan, export, command),
         }),
-        Err(outcome) => outcome,
+        Err(refusal) => Outcome::Refusal(refusal),
     }
 }
 

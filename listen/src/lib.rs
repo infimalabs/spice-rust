@@ -253,7 +253,10 @@ fn decode_value(dialect: Dialect, parsed: Result<Value, ResidueKind>, locus: Loc
         Dialect::Omp => omp::decode(&object, locus),
     };
     match decoded {
-        Ok(events) => Decoded::Events { context, events },
+        Ok(events) => Decoded::Events {
+            context: Box::new(context),
+            events,
+        },
         Err(kind) => Decoded::Residue(Residue::new(dialect, locus, kind)),
     }
 }

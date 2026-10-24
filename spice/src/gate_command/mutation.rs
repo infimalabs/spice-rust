@@ -574,7 +574,7 @@ pub(super) fn camp_summary(
                 finding.population,
                 finding.limit
             ),
-            Some(elapsed).filter(|_| shown == 0 && withheld == 0),
+            (shown == 0 && withheld == 0).then_some(elapsed),
         );
         for locus in &finding.loci {
             if shown == limit {
@@ -607,7 +607,7 @@ pub(super) fn camp_summary(
     summary.row(
         "clean",
         &format!("{clean} distributions clear of their limits"),
-        Some(elapsed).filter(|_| report.findings.is_empty()),
+        report.findings.is_empty().then_some(elapsed),
     );
     retained_line(&mut summary, retained);
     summary.closing(

@@ -327,7 +327,9 @@ fn run_stage_target(
     })
 }
 fn run_windows_msvc(output: &mut impl io::Write) -> CommandResult {
-    xtask::windows_msvc(output).map(|_| ()).map_err(Into::into)
+    xtask::windows_msvc(&ambient_environment()?, output)
+        .map(|_| ())
+        .map_err(Into::into)
 }
 
 #[derive(Debug)]

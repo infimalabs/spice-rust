@@ -62,7 +62,7 @@ fn resolve_set(
         .iter()
         .filter(|reference| !reference.is_resolved())
         .count();
-    let observed = media.len().checked_add(unresolved).unwrap_or(usize::MAX);
+    let observed = media.len().saturating_add(unresolved);
     if observed > wire::media::MAX_MEDIA_ITEMS {
         return Err(ResolveError::Invalid {
             digest: external

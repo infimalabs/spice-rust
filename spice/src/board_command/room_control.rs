@@ -201,6 +201,15 @@ fn reply(
     Ok((commit(bus, command, control, write, answer), lane))
 }
 
+/// A repliable item's receipt head, the resident lane the reply returns to,
+/// how the reply cites what it answers, and the source's one room.
+type Repliable = (
+    journal::JournalHead<RoomReceiptHead>,
+    CanonicalUuid,
+    String,
+    Option<RoomAnchor>,
+);
+
 /// The pending lane-opened item `text` may reply to now, with the resident
 /// lane the reply returns to, how the reply cites what it answers, and the
 /// source publication's one unambiguous room, when it names one.
@@ -208,15 +217,7 @@ fn repliable(
     bus: &Bus,
     key: &RoomReceiptRef,
     text: &str,
-) -> Result<
-    (
-        journal::JournalHead<RoomReceiptHead>,
-        CanonicalUuid,
-        String,
-        Option<RoomAnchor>,
-    ),
-    Outcome<CommandAnswer>,
-> {
+) -> Result<Repliable, Outcome<CommandAnswer>> {
     require_text(text, "reply")?;
     let (record, head) = item(bus, key)?;
     let state = head.body().state();
@@ -558,8 +559,12 @@ fn commit<B: serde::Serialize + Clone>(
     ) {
         return store_fault("room::control-receipt", &error.to_string());
     }
-    match committed_preserving_guard_refusal(bus, write, CommandAnswer::RoomControl(answer), MOVED)
-    {
+    match committed_preserving_guard_refusal(
+        bus,
+        write,
+        CommandAnswer::RoomControl(Box::new(answer)),
+        MOVED,
+    ) {
         Outcome::Refusal(refused) if refused.reason() == MOVED => refusal(
             MOVED,
             None,

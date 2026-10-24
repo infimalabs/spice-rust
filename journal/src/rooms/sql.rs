@@ -72,7 +72,7 @@ impl Authority for Stored<'_> {
     }
     fn task_intent(&self, task: &TaskStamp) -> Result<Option<Option<wire::TaskIntent>>, Refusal> {
         if let Some(intent) = self.task_intents.get(task.as_str()) {
-            return Ok(Some(intent.clone()));
+            return Ok(Some(*intent));
         }
         let body = self
             .connection
@@ -503,9 +503,10 @@ fn insert_authorization(
     Ok(())
 }
 
-fn load_maturity(
-    connection: &Connection,
-) -> Result<(BTreeMap<(String, u64), ()>, BTreeMap<String, Vec<u8>>), rusqlite::Error> {
+/// The design notices and maturity rows, keyed as their tables are.
+type MaturityTables = (BTreeMap<(String, u64), ()>, BTreeMap<String, Vec<u8>>);
+
+fn load_maturity(connection: &Connection) -> Result<MaturityTables, rusqlite::Error> {
     let notices = table(
         connection,
         "SELECT design, seq FROM design_notices",
@@ -680,13 +681,13 @@ pub(crate) fn require_open_controllers<'a>(
                     authorization.candidate.controller,
                 ));
             }
-        } else if let Some(contributed) = fact.read::<wire::rooms::RoomContributed>() {
-            if !stored_open_design(connection, &contributed.room)? {
-                return unsound(format!(
-                    "contribution in {} names no open Design",
-                    contributed.room,
-                ));
-            }
+        } else if let Some(contributed) = fact.read::<wire::rooms::RoomContributed>()
+            && !stored_open_design(connection, &contributed.room)?
+        {
+            return unsound(format!(
+                "contribution in {} names no open Design",
+                contributed.room,
+            ));
         }
     }
     Ok(())

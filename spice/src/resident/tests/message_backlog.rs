@@ -712,7 +712,7 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: listen::RecordContext::default(),
+            context: Box::default(),
             events: vec![listen::Event::Tool(listen::Tool {
                 call_id: "call-1".to_owned(),
                 moment: listen::ToolMoment::Call {
@@ -781,10 +781,10 @@ fn mixed_acknowledgement_record(
         locus,
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: listen::RecordContext {
+            context: Box::new(listen::RecordContext {
                 timestamp: Some("2030-04-12T18:46:09.271Z".to_owned()),
                 ..listen::RecordContext::default()
-            },
+            }),
             events: vec![listen::Event::Prose(listen::Prose {
                 role: listen::ProseRole::Assistant,
                 text: concat!(

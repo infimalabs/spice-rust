@@ -24,11 +24,11 @@ fn record(
         locus: listen::Locus::new(7, 120, 64),
         declaration: None,
         decoded: listen::Decoded::Events {
-            context: listen::RecordContext {
+            context: Box::new(listen::RecordContext {
                 timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
                 turn,
                 ..Default::default()
-            },
+            }),
             events,
         },
     }

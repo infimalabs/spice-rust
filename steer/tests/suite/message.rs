@@ -309,7 +309,8 @@ fn mid_clause_message_narration_is_not_a_packet_or_body_boundary() {
         sent(&prose, &message),
         (vec!["6HmS"], &prose["MSG 6HmS: ".len()..])
     );
-    assert_eq!(placed_headers(&prose), [0.."MSG 6HmS:".len()]);
+    let header = 0.."MSG 6HmS:".len();
+    assert_eq!(placed_headers(&prose), [header]);
 }
 
 /// Every recipient-list or body defect refuses the whole packet, decided by the

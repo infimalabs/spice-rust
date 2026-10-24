@@ -496,12 +496,16 @@ fn proof_executable_paths_are_optional_local_values_with_exact_rendering() {
     let runner = absolute("runner");
 
     for (include_container, include_runner) in [(true, false), (false, true), (true, true)] {
-        let local = include_container
-            .then(|| format!("[proof]\ncontainer = \"{container}\"\n"))
-            .unwrap_or_default();
-        let worktree = include_runner
-            .then(|| format!("[proof]\nrunner = \"{runner}\"\n"))
-            .unwrap_or_default();
+        let local = if include_container {
+            format!("[proof]\ncontainer = \"{container}\"\n")
+        } else {
+            Default::default()
+        };
+        let worktree = if include_runner {
+            format!("[proof]\nrunner = \"{runner}\"\n")
+        } else {
+            Default::default()
+        };
         let resolved = resolve(worktree_documents(None, Some(&worktree), Some(&local)))
             .expect("absolute local and worktree paths resolve");
 

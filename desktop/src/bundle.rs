@@ -64,15 +64,12 @@ fn info_plist() -> String {
 
 /// The path to run `executable` from so the process carries a bundle
 /// identity: `executable` itself when it already lives in a bundle, else the
-/// shell's cached bundle holding it.
-pub fn bundled_executable(executable: &Path) -> Result<PathBuf, WindowError> {
+/// shell's cached bundle holding it under `home`'s caches.
+pub fn bundled_executable(executable: &Path, home: &Path) -> Result<PathBuf, WindowError> {
     if in_bundle(executable) {
         return Ok(executable.to_path_buf());
     }
-    let home = std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .ok_or_else(|| WindowError::Platform("HOME names no cache directory".into()))?;
-    let contents = PathBuf::from(home)
+    let contents = home
         .join("Library/Caches")
         .join(IDENTIFIER)
         .join(BUNDLE)

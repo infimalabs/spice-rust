@@ -7,7 +7,7 @@ use super::{CommandLaunch, CommandLaunchCompletion, CommandResult, lifecycle, su
 
 pub(super) enum Authority {
     Command {
-        request: serve::axum::ControlRequest,
+        request: Box<serve::axum::ControlRequest>,
         completion: CommandLaunchCompletion,
         lane: CanonicalUuid,
         lifecycle_released: bool,
@@ -55,7 +55,7 @@ impl Runtime {
         self.start(
             launch.launch,
             Authority::Command {
-                request,
+                request: Box::new(request),
                 completion: launch.completion,
                 lane: launch.lane,
                 lifecycle_released,

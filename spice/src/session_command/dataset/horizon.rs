@@ -348,7 +348,7 @@ fn read_recent_compaction_markers(
             }
             Some(DecodedRow::Residue(_)) | Some(DecodedRow::Ignored) | None => None,
         };
-        let marker = typed.as_ref().and_then(marker_from_record);
+        let marker = typed.as_deref().and_then(marker_from_record);
         if locating_assistant {
             if marker
                 .as_ref()
@@ -356,7 +356,7 @@ fn read_recent_compaction_markers(
             {
                 total = total.saturating_add(1);
             }
-            if let Some(assistant) = typed.as_ref().and_then(last_assistant_from_record) {
+            if let Some(assistant) = typed.as_deref().and_then(last_assistant_from_record) {
                 work.admit_retained_text(text_bytes([assistant.as_str()]), &at)?;
                 assistant_before = assistant;
                 locating_assistant = false;
@@ -380,7 +380,7 @@ fn read_recent_compaction_markers(
             return Ok(true);
         }
         if assistant_before.is_empty()
-            && let Some(assistant) = typed.as_ref().and_then(last_assistant_from_record)
+            && let Some(assistant) = typed.as_deref().and_then(last_assistant_from_record)
         {
             work.admit_retained_text(text_bytes([assistant.as_str()]), &at)?;
             assistant_before = assistant;
@@ -585,7 +585,7 @@ fn start_boundary(
             offset = current;
             context = Some(HORIZON_CONTEXT_LINES);
             if require_assistant {
-                assistant = typed.as_ref().and_then(last_assistant_from_record);
+                assistant = typed.as_deref().and_then(last_assistant_from_record);
             }
         }
         Ok(true)

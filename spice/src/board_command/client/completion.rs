@@ -39,7 +39,7 @@ pub(super) fn client_done(
     let first = match completion_plan(
         &board,
         requested_task.as_ref(),
-        operation.clone(),
+        operation,
         validation.clone(),
         disposition.as_ref(),
     ) {

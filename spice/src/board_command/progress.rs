@@ -190,10 +190,10 @@ pub(super) fn task_done(
         Some(parked) => committed_with_task_git(
             bus,
             write,
-            CommandAnswer::Task(answer),
+            CommandAnswer::Task(Box::new(answer)),
             PreparedTaskGit::Release(parked),
         ),
-        None => committed(bus, write, CommandAnswer::Task(answer)),
+        None => committed(bus, write, CommandAnswer::Task(Box::new(answer))),
     }
 }
 
@@ -259,14 +259,14 @@ fn replay_task_completion(
         .unwrap_or(first);
     Some(Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
-        body: CommandAnswer::Task(wire::intent::TaskAnswer {
+        body: CommandAnswer::Task(Box::new(wire::intent::TaskAnswer {
             task: entry.handle().clone(),
             status: terminal.status.to_string(),
             completion: None,
             claim: carried.map(|(_, claim)| Box::new(claim)),
             closed: Vec::new(),
             next: terminal.next,
-        }),
+        })),
     }))
 }
 
@@ -1143,7 +1143,7 @@ fn commit_review(
     ) {
         return store_fault("review::receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
 fn append_reviewed_fact(

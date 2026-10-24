@@ -480,15 +480,17 @@ fn remap<T, A>(
     continuation: impl FnOnce(&[T], &Omission<A>) -> Continuation,
 ) -> Bounded<T, Continuation> {
     let Bounded { rows, omission } = bounded;
-    let omission = omission.map(|omission| Omission {
-        continuation: continuation(&rows, &omission),
-        population: omission.population,
-        shown: omission.shown,
-        withheld: omission.withheld,
-        shown_bytes: omission.shown_bytes,
-        exhausted: omission.exhausted,
-        next_bytes: omission.next_bytes,
-        limits: omission.limits,
+    let omission = omission.map(|omission| {
+        Box::new(Omission {
+            continuation: continuation(&rows, &omission),
+            population: omission.population,
+            shown: omission.shown,
+            withheld: omission.withheld,
+            shown_bytes: omission.shown_bytes,
+            exhausted: omission.exhausted,
+            next_bytes: omission.next_bytes,
+            limits: omission.limits,
+        })
     });
     Bounded { rows, omission }
 }

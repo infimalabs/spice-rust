@@ -1,6 +1,5 @@
 //! Repository Windows MSVC cross-toolchain materialization.
 
-use std::ffi::OsString;
 use std::fmt;
 use std::io::Write;
 
@@ -41,6 +40,7 @@ impl std::error::Error for WindowsMsvcError {}
 /// authority, altered tools/manifests, xwin failure, publication failure, or
 /// output failure.
 pub fn windows_msvc(
+    environment: &sill::Environment,
     output: &mut impl Write,
 ) -> Result<spice::cargo_isolation::WindowsMsvcReport, WindowsMsvcError> {
     let working = std::env::current_dir().map_err(WindowsMsvcError::CurrentDirectory)?;
@@ -49,7 +49,7 @@ pub fn windows_msvc(
     let state = repository.admit_state().map_err(WindowsMsvcError::State)?;
     let host = spice::cargo_isolation::Host::from_environment(
         repository.worktree_root(),
-        std::env::vars_os().collect::<Vec<(OsString, OsString)>>(),
+        environment.entries().iter().cloned(),
     )
     .map_err(WindowsMsvcError::Isolation)?;
     let report = spice::cargo_isolation::materialize_windows_msvc(

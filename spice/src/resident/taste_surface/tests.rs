@@ -885,10 +885,10 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
         fixture.lane,
         fixture.occupant,
         listen::Decoded::Events {
-            context: listen::RecordContext {
+            context: Box::new(listen::RecordContext {
                 timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
                 ..Default::default()
-            },
+            }),
             events: vec![
                 listen::Event::Reasoning(listen::Reasoning {
                     content: listen::ReasoningContent::Plain(vec!["polling".to_owned()]),
@@ -1156,10 +1156,10 @@ fn prose_events_record(
         lane,
         occupant,
         listen::Decoded::Events {
-            context: listen::RecordContext {
+            context: Box::new(listen::RecordContext {
                 timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
                 ..Default::default()
-            },
+            }),
             events: texts
                 .iter()
                 .enumerate()

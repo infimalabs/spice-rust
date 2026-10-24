@@ -56,40 +56,39 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<QuoteVie
         SelectedCommand::QuoteRead { body: &body },
     ) {
         Outcome::Reply(Reply {
-            body: CommandAnswer::Quote(QuoteResolution::Unavailable { target, reason }),
-            ..
-        }) => {
-            let refusal = spice::quote::render(
-                &QuoteResolution::Unavailable {
-                    target: target.clone(),
-                    reason,
-                },
-                None,
-            )
-            .err()
-            .unwrap_or_default();
-            Outcome::Refusal(Refusal::bare(
-                wire::RefusalDiagnostic::new(
-                    "quote::unavailable".to_owned(),
-                    Some("target".to_owned()),
-                    None,
-                    Some(target),
-                )
-                .with_detail(&refusal),
-            ))
-        }
-        Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Quote(resolution),
-        }) => match spice::quote::author_names(state_paths.journal(), &resolution) {
-            Ok(principals) => Outcome::Reply(Reply {
-                position,
-                body: QuoteView {
-                    resolution,
-                    principals,
-                },
-            }),
-            Err(detail) => fault("quote::principal-names-unreadable", &detail),
+        }) => match *resolution {
+            QuoteResolution::Unavailable { target, reason } => {
+                let refusal = spice::quote::render(
+                    &QuoteResolution::Unavailable {
+                        target: target.clone(),
+                        reason,
+                    },
+                    None,
+                )
+                .err()
+                .unwrap_or_default();
+                Outcome::Refusal(Refusal::bare(
+                    wire::RefusalDiagnostic::new(
+                        "quote::unavailable".to_owned(),
+                        Some("target".to_owned()),
+                        None,
+                        Some(target),
+                    )
+                    .with_detail(&refusal),
+                ))
+            }
+            resolution => match spice::quote::author_names(state_paths.journal(), &resolution) {
+                Ok(principals) => Outcome::Reply(Reply {
+                    position,
+                    body: QuoteView {
+                        resolution,
+                        principals,
+                    },
+                }),
+                Err(detail) => fault("quote::principal-names-unreadable", &detail),
+            },
         },
         Outcome::Reply(_) => Outcome::Fault(Fault {
             class: FaultClass::Protocol,

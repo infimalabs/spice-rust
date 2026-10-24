@@ -32,13 +32,16 @@ use policy::{
 };
 pub use subscription::{LiveDelivery, Subscription};
 
+/// The authoritative presentation of one message's quote links.
+type Present = dyn Fn(&str) -> Vec<wire::QuotePresentation> + Send + Sync;
+
 /// Repository-owned expansion of fixed-label quote links.
 ///
 /// The app invokes this before every message crosses the wire. The resolver
 /// stays in the resident, where tape and journal authority live.
 #[derive(Clone)]
 pub struct QuotePresenter {
-    present: Arc<dyn Fn(&str) -> Vec<wire::QuotePresentation> + Send + Sync>,
+    present: Arc<Present>,
 }
 
 impl QuotePresenter {

@@ -267,7 +267,7 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
             first: position,
             last: position,
         }),
-        body: CommandAnswer::Task(wire::intent::TaskAnswer {
+        body: CommandAnswer::Task(Box::new(wire::intent::TaskAnswer {
             task: entry.handle().clone(),
             status: if completed {
                 "reused-completed"
@@ -279,7 +279,7 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
             claim: None,
             closed: Vec::new(),
             next: next_action(snapshot, entry),
-        }),
+        })),
     })
 }
 

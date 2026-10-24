@@ -22,7 +22,7 @@ use crate::read_page::Page;
 #[serde(untagged)]
 pub(crate) enum TasteView {
     Tastes(TasteReport),
-    Taste(TasteDetail),
+    Taste(Box<TasteDetail>),
 }
 
 /// Bare `spice taste`: the tracked generation and a page of compact rows.
@@ -170,11 +170,11 @@ pub(super) fn project(
             .collect(),
         population,
     )?;
-    Ok(TasteView::Taste(TasteDetail {
+    Ok(TasteView::Taste(Box::new(TasteDetail {
         digest,
         taste,
         history,
-    }))
+    })))
 }
 
 fn summary(row: &TasteRow, text: usize) -> TasteSummary {

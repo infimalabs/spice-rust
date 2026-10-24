@@ -167,7 +167,7 @@ pub(super) async fn send_preparation(
                 pending,
                 CommandKind::PreparationDecide,
                 expected.clone(),
-                request.clone(),
+                (**request).clone(),
             )
             .await
         }
