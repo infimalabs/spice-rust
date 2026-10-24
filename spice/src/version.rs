@@ -3,7 +3,8 @@
 use std::fs::File;
 use std::sync::LazyLock;
 
-use serve::canvas::{CanvasArchiveError, EmbeddedArchive};
+use serve::canvas::EmbeddedArchive;
+use serve::rack::RackError;
 use wire::manifest::ProductVersion;
 use wire::{Digest, Domain, Fault, FaultClass, TaskStamp};
 
@@ -35,14 +36,13 @@ static PRODUCT: LazyLock<ProductVersion> = LazyLock::new(|| {
 
 static RUNNING: LazyLock<Result<Running, Fault>> = LazyLock::new(capture);
 
-static CANVAS: LazyLock<Option<Result<EmbeddedArchive, CanvasArchiveError>>> =
-    LazyLock::new(|| {
-        #[cfg(feature = "canvas")]
-        let linked = Some(::canvas::archive());
-        #[cfg(not(feature = "canvas"))]
-        let linked: Option<&'static [u8]> = None;
-        linked.map(EmbeddedArchive::admit)
-    });
+static CANVAS: LazyLock<Option<Result<EmbeddedArchive, RackError>>> = LazyLock::new(|| {
+    #[cfg(feature = "canvas")]
+    let linked = Some(::canvas::archive());
+    #[cfg(not(feature = "canvas"))]
+    let linked: Option<&'static [u8]> = None;
+    linked.map(EmbeddedArchive::admit)
+});
 
 /// The product version this executable was built as.
 ///
@@ -56,7 +56,7 @@ pub fn product() -> &'static ProductVersion {
 ///
 /// `None` when the build linked no archive: only the release target build and
 /// `spice dev xtask -- install` enable the `canvas` feature and link one.
-pub fn canvas() -> Option<&'static Result<EmbeddedArchive, CanvasArchiveError>> {
+pub fn canvas() -> Option<&'static Result<EmbeddedArchive, RackError>> {
     CANVAS.as_ref()
 }
 

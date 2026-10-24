@@ -122,11 +122,17 @@ static EMBEDDED_ARCHIVE: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new
             } else {
                 format!("embedded {}", asset.file()).repeat(64)
             };
-            (asset.file().to_owned(), bytes.into_bytes())
+            (
+                crate::rack::Namespace::App.member(asset.file()),
+                bytes.into_bytes(),
+            )
         })
         .collect::<Vec<_>>();
-    files.push(("renderer-000.html".to_owned(), renderer_document));
-    crate::canvas::CanvasArchive::write(
+    files.push((
+        crate::rack::Namespace::App.member("renderer-000.html"),
+        renderer_document,
+    ));
+    crate::rack::Rack::write(
         files
             .iter()
             .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
@@ -138,7 +144,7 @@ static EMBEDDED_ARCHIVE: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new
 async fn embedded_archive_serves_its_stored_gzip_slices_and_refuses_what_it_cannot() {
     let held = embedded_generation();
     let archive: &'static [u8] = &EMBEDDED_ARCHIVE;
-    let stored = crate::canvas::CanvasArchive::admit(archive).expect("fixture archive admits");
+    let stored = crate::rack::Rack::admit(archive).expect("fixture archive admits");
     let app = CanvasAssets::EmbeddedArchive(
         crate::canvas::EmbeddedArchive::admit(archive).expect("fixture archive indexes"),
     );
@@ -162,7 +168,10 @@ async fn embedded_archive_serves_its_stored_gzip_slices_and_refuses_what_it_cann
         let headers = accept.map(|accept| ("Accept-Encoding", accept));
         let response = request_with_headers(address, &host, route, headers.as_slice()).await;
         assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"), "{route}");
-        let gzip = stored.member(member).expect("member is archived").gzip();
+        let gzip = stored
+            .member(&crate::rack::Namespace::App.member(member))
+            .expect("member is archived")
+            .gzip();
         assert_eq!(
             response_body(&response),
             gzip,

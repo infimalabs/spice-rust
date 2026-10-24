@@ -1,6 +1,8 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use spice::serve::rack::{Namespace, Rack};
+
 use super::*;
 
 mod artifact_capture;
@@ -32,7 +34,7 @@ impl Fixture {
         let app = generations.join(GENERATION);
         fs::create_dir_all(&app).expect("fixture app generation");
         let shell = format!("<main id=\"app\" data-app-generation=\"{GENERATION}\"></main>");
-        let files = spice::serve::APP
+        let mut files = spice::serve::APP
             .assets()
             .iter()
             .map(|asset| {
@@ -42,17 +44,38 @@ impl Fixture {
                     _ => b"lane-built app asset",
                 };
                 fs::write(app.join(asset.file()), contents).expect("write lane-built app asset");
-                (asset.file(), contents)
+                (Namespace::App.member(asset.file()), contents)
             })
             .collect::<Vec<_>>();
-        let archive = spice::serve::canvas::CanvasArchive::write(files).expect("archive writes");
+        let staged = Rack::write(files.iter().map(|(path, bytes)| (path.as_str(), *bytes)))
+            .expect("app archive writes");
         fs::write(
             generations
                 .join(GENERATION)
                 .with_extension(spice::serve::canvas::ARCHIVE_EXTENSION),
-            &archive,
+            &staged,
         )
-        .expect("write lane canvas archive");
+        .expect("write lane app archive");
+        for (source, member, contents) in [
+            (
+                "spice/agent/SKILL.md",
+                Namespace::Skill.member("SKILL.md"),
+                b"# skill\n",
+            ),
+            (
+                "docs/guide.md",
+                Namespace::Doc.member("guide.md"),
+                b"# guide\n",
+            ),
+        ] {
+            let source = root.join(source);
+            fs::create_dir_all(source.parent().expect("source has a parent"))
+                .expect("create tracked source directory");
+            fs::write(&source, contents).expect("write tracked source");
+            files.push((member, contents));
+        }
+        let archive = Rack::write(files.iter().map(|(path, bytes)| (path.as_str(), *bytes)))
+            .expect("rack writes");
         fs::write(
             root.join(spice::serve::APP_STAGE)
                 .join(spice::serve::APP_STAGE_CURRENT),
@@ -112,17 +135,11 @@ struct FakeExecutor {
 }
 
 impl FakeExecutor {
-    fn new(root: &Path, target: ReleaseTarget) -> Self {
+    fn new(fixture: &Fixture, target: ReleaseTarget) -> Self {
         Self {
-            root: root.to_path_buf(),
+            root: fixture.root.clone(),
             target,
-            archive: fs::read(
-                root.join(spice::serve::APP_STAGE)
-                    .join(spice::serve::APP_STAGE_GENERATIONS)
-                    .join(GENERATION)
-                    .with_extension(spice::serve::canvas::ARCHIVE_EXTENSION),
-            )
-            .expect("fixture archive reads"),
+            archive: fixture.archive.clone(),
             trunk: RefCell::new(PINNED_TRUNK.to_owned()),
             trunk_drift_after_native: Cell::new(false),
             refusing: Cell::new(None),
@@ -275,7 +292,7 @@ fn pe(archive: &[u8]) -> Vec<u8> {
     let optional = coff + 20;
     image[optional..optional + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
     image[optional + 108..optional + 112].copy_from_slice(&16_u32.to_le_bytes());
-    image[TABLE..TABLE + 8].copy_from_slice(b"spiceapp");
+    image[TABLE..TABLE + 8].copy_from_slice(b"spicerac");
     image[TABLE + 8..TABLE + 12].copy_from_slice(&(archive.len() as u32).to_le_bytes());
     image[TABLE + 16..TABLE + 20].copy_from_slice(&(archive.len() as u32).to_le_bytes());
     image[TABLE + 20..TABLE + 24].copy_from_slice(&(RAW as u32).to_le_bytes());
@@ -292,7 +309,7 @@ fn all_targets_use_the_fixed_commands_and_real_artifact_bytes() {
     ] {
         let fixture = Fixture::new();
         let programs = fixture.programs();
-        let executor = FakeExecutor::new(&fixture.root, target);
+        let executor = FakeExecutor::new(&fixture, target);
 
         let build = stage_with(
             &fixture.root,
@@ -397,7 +414,7 @@ fn all_targets_use_the_fixed_commands_and_real_artifact_bytes() {
 fn a_substituted_dsym_member_refuses_before_target_publication() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     executor.moved_symbols_after_uuid.set(true);
     let error = stage_with(
         &fixture.root,
@@ -743,7 +760,7 @@ fn tool_drift_refuses_before_the_first_build_or_publication() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     *executor.trunk.borrow_mut() = "trunk 0.21.13".to_owned();
 
     let error = stage_with(
@@ -770,7 +787,7 @@ fn dirty_source_refuses_before_pin_observation_build_or_publication() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     executor.tracked_dirty.set(true);
 
     let error = stage_with(
@@ -801,7 +818,7 @@ fn a_refusing_source_status_refuses_rather_than_reading_a_clean_checkout() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     executor.refusing.set(Some("source-status"));
 
     let error = stage_with(
@@ -831,7 +848,7 @@ fn a_refusing_source_status_refuses_rather_than_reading_a_clean_checkout() {
 #[test]
 fn only_untracked_release_output_survives_the_source_check() {
     let fixture = Fixture::new();
-    let executor = FakeExecutor::new(&fixture.root, ReleaseTarget::Aarch64AppleDarwin);
+    let executor = FakeExecutor::new(&fixture, ReleaseTarget::Aarch64AppleDarwin);
     let git = fixture.root.join("git");
 
     *executor.untracked.borrow_mut() =
@@ -860,7 +877,7 @@ fn source_movement_after_build_preserves_the_previous_target_pointer() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     executor.moved_after_native.set(true);
     let pointer = fixture.pointer(target);
     fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");
@@ -904,7 +921,7 @@ fn a_refusing_build_command_publishes_no_pointer_over_the_previous_one() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     executor.refusing.set(Some("app-build"));
     let pointer = fixture.pointer(target);
     fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");
@@ -954,7 +971,7 @@ fn assert_macos_failure(expected_last: &'static str, configure: impl FnOnce(&Fak
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     configure(&executor);
     let pointer = fixture.pointer(target);
     fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");
@@ -982,7 +999,7 @@ fn tool_drift_after_build_preserves_the_previous_target_pointer() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let programs = fixture.programs();
-    let executor = FakeExecutor::new(&fixture.root, target);
+    let executor = FakeExecutor::new(&fixture, target);
     executor.trunk_drift_after_native.set(true);
     let pointer = fixture.pointer(target);
     fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");

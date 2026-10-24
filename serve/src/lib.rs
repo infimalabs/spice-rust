@@ -10,6 +10,8 @@ pub mod axum;
 pub mod canvas;
 pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod rack;
+#[cfg(not(target_arch = "wasm32"))]
 mod roles;
 pub mod speech;
 #[cfg(not(target_arch = "wasm32"))]

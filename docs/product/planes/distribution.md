@@ -81,26 +81,29 @@ artifact digest, and a plan-keyed executable copy of it must succeed at
 **Invariant —** A release has exactly three target payloads, in canonical
 order: `aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, and
 `x86_64-pc-windows-msvc`. Each receipt-free payload binds its target, source
-identity, app generation G, the digest of the app ZIP its executable links,
+identity, app generation G, the digest of the spice rack its executable links,
 native executable, build pins, and artifact inventory, and all three bind the
 source digest of the already-versioned release commit. Every target binds the
-same G and archive digest. The inventory carries no app files: the executable
+same G and rack digest. The inventory carries no app files: the executable
 is the app's only carrier.
 
 **Invariant —** Every appliance executable produced by a current build path
-links its app ZIP. The Darwin, Linux, and Windows release builds, and
-`spice dev xtask -- install` on supported macOS, Linux, and x86-64 Windows
-hosts, read the staged `generations/G.zip` once and admit it as G. Worktree
+links one spice rack: a ZIP whose `app/` members are the staged generation's
+`generations/G.zip`, with stored streams copied unchanged, beside `skill/SKILL.md`
+from `spice/agent/SKILL.md` and `doc/...` from `docs/`. The Darwin, Linux, and
+Windows release builds, and `spice dev xtask -- install` on supported macOS,
+Linux, and x86-64 Windows hosts, assemble it through one path and admit it as G,
+so the same staged generation and tracked sources link the same bytes. Worktree
 dSYMs exist only on macOS, so elsewhere that command publishes without them.
-Each links it as one retained read-only section named `spiceapp`:
-`__TEXT,__spiceapp` on Mach-O and `spiceapp` on ELF and PE32+. The Mach-O
-section follows Apple's two-underscore convention, ELF remains undotted because
-the System V gABI reserves dot-prefixed names for the system, and the shared
-name fits PE's eight-byte section-name limit.
+Each links it as one retained read-only section: `__TEXT,__spicerack` on Mach-O,
+`spicerack` on ELF, and `spicerac` on PE32+. The Mach-O section follows Apple's
+two-underscore convention, ELF remains undotted because the System V gABI
+reserves dot-prefixed names for the system, and PE truncates the name to its
+eight-byte section-name limit.
 
-Every target's relocatable object defines `spiceapp` and `spiceapp_len`; the
-final-image readers locate exactly one `spiceapp` section and recover the
-staged ZIP bytes from it. The Windows target inventory names `bin/spice.exe`
+Every target's relocatable object defines `spicerack` and `spicerack_len`; the
+final-image readers locate exactly one rack section and recover the rack bytes
+from it. The Windows target inventory names `bin/spice.exe`
 and the matching `symbols/spice.pdb`; both are package members, while
 `proof.json` is the package's detached signature artifact.
 

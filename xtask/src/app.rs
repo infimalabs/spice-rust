@@ -9,9 +9,11 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::release::ReleaseEnvironment;
-use spice::serve::canvas::{ARCHIVE_EXTENSION, CanvasArchive};
+use spice::serve::canvas::ARCHIVE_EXTENSION;
+use spice::serve::rack::{Namespace, Rack};
 use wire::{Digest, Domain};
 
+mod rack;
 mod renderer;
 mod source;
 
@@ -230,24 +232,24 @@ fn publish_generation(
     prune_generations(&generations, identity)
 }
 
-/// Write `generations/G.zip`, the canvas archive of generation G, beside its
-/// directory, and admit it as G before any pointer can name G.
+/// Write `generations/G.zip`, the `app` namespace of generation G's rack,
+/// beside its directory, and admit it as G before any pointer can name G.
 fn publish_archive(generations: &Path, identity: &Digest) -> Result<(), AppBuildError> {
     let generation = generations.join(identity.as_str());
     let files = generation_files(&generation)?
         .into_iter()
         .map(|file| {
             let bytes = read_regular(&generation.join(file.as_ref()))?;
-            Ok((file, bytes))
+            Ok((Namespace::App.member(&file), bytes))
         })
         .collect::<Result<Vec<_>, AppBuildError>>()?;
-    let archive = CanvasArchive::write(
+    let archive = Rack::write(
         files
             .iter()
-            .map(|(file, bytes)| (file.as_ref(), bytes.as_slice())),
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
     )
     .map_err(AppBuildError::Canvas)?;
-    CanvasArchive::admit_generation(&archive, identity).map_err(AppBuildError::Canvas)?;
+    Rack::admit_generation(&archive, identity).map_err(AppBuildError::Canvas)?;
     let path = archive_path(generations, identity);
     let destination = atomic::Destination::new(&path).map_err(AppBuildError::Atomic)?;
     let mut staged = destination.stage().map_err(AppBuildError::Atomic)?;
@@ -263,8 +265,9 @@ fn archive_path(generations: &Path, identity: &Digest) -> PathBuf {
         .with_extension(ARCHIVE_EXTENSION)
 }
 
-/// The current staged generation's canvas archive, read once and admitted as
-/// that generation: the one input every appliance build links.
+/// The spice rack every appliance build links: the current staged generation's
+/// `app` archive and the tracked sources of every other namespace, assembled
+/// once and admitted as that generation.
 pub struct StagedCanvas {
     canvas: dist::Canvas,
     tree: u64,
@@ -272,29 +275,33 @@ pub struct StagedCanvas {
 }
 
 impl StagedCanvas {
-    /// Read `generations/G.zip` for the generation the current pointer names.
+    /// Assemble the rack from `generations/G.zip` for the generation the
+    /// current pointer names and the tracked sources under `root`.
     ///
     /// # Errors
     ///
-    /// Refuses an unadmitted current generation, an unreadable archive, and an
-    /// archive that does not admit as G.
+    /// Refuses an unadmitted current generation, an unreadable archive or
+    /// source, an archive that does not admit as G, and a rack beyond its
+    /// bounds.
     pub fn read(root: &Path) -> Result<Self, AppBuildError> {
         let generation = spice::serve::AppSource::resolve(root)
             .and_then(|source| source.current_generation())
             .map_err(|error| AppBuildError::GeneratedStage(error.to_string()))?
             .identity()
             .clone();
-        let bytes = read_regular(&archive_path(
+        let staged = read_regular(&archive_path(
             &root
                 .join(spice::serve::APP_STAGE)
                 .join(spice::serve::APP_STAGE_GENERATIONS),
             &generation,
         ))?;
-        let tree = CanvasArchive::admit_generation(&bytes, &generation)
-            .map_err(AppBuildError::Canvas)?
-            .members()
+        let app = Rack::admit_generation(&staged, &generation).map_err(AppBuildError::Canvas)?;
+        let tree = app
+            .namespace(Namespace::App)
             .map(|(_, member)| u64::from(member.size()))
             .sum();
+        let bytes = rack::assemble(root, &app)?;
+        Rack::admit_generation(&bytes, &generation).map_err(AppBuildError::Canvas)?;
         Ok(Self {
             canvas: dist::Canvas::new(generation, &bytes),
             tree,
@@ -755,7 +762,7 @@ pub enum AppBuildError {
     SourceIdentity(String),
     GeneratedStage(String),
     Atomic(atomic::Error),
-    Canvas(spice::serve::canvas::CanvasArchiveError),
+    Canvas(spice::serve::rack::RackError),
 }
 
 impl fmt::Display for AppBuildError {

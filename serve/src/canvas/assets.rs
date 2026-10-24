@@ -13,8 +13,8 @@ use std::sync::Arc;
 use ::axum::body::Bytes;
 use ::axum::http::HeaderValue;
 
-use super::{CanvasArchive, CanvasArchiveError};
 use crate::asset::{APP, AppSource, AppSourceError, generation_route};
+use crate::rack::{Namespace, Rack, RackError};
 
 /// The browser app source a resident serves.
 #[derive(Clone, Debug)]
@@ -107,13 +107,14 @@ impl std::fmt::Display for CanvasAssets {
     }
 }
 
-/// The admitted canvas archive of an installed executable, indexed once.
+/// The admitted rack of an installed executable, its app members indexed once.
 #[derive(Clone)]
 pub struct EmbeddedArchive(Arc<Embedded>);
 
 struct Embedded {
     generation: wire::Digest,
     members: BTreeMap<&'static str, EmbeddedMember>,
+    rack: Rack<'static>,
 }
 
 struct EmbeddedMember {
@@ -124,31 +125,31 @@ struct EmbeddedMember {
 }
 
 impl EmbeddedArchive {
-    /// Admit the executable's archive and index every member once: its stored
-    /// gzip slice, its inventory MIME type, and its strong ETag. HTML members
-    /// are inflated here, once, for their content security policies.
+    /// Admit the executable's rack and index every app member once: its
+    /// stored gzip slice, its inventory MIME type, and its strong ETag. HTML
+    /// members are inflated here, once, for their content security policies.
     ///
     /// # Errors
     ///
-    /// Refuses everything [`CanvasArchive::admit`] refuses and an HTML member
-    /// that is not exactly one gzip stream.
-    pub fn admit(bytes: &'static [u8]) -> Result<Self, CanvasArchiveError> {
-        let archive = CanvasArchive::admit(bytes)?;
-        let generation = archive.generation().clone();
-        let members = archive
-            .members()
+    /// Refuses everything [`Rack::admit`] refuses and an HTML member that is
+    /// not exactly one gzip stream.
+    pub fn admit(bytes: &'static [u8]) -> Result<Self, RackError> {
+        let rack = Rack::admit(bytes)?;
+        let generation = rack.generation().clone();
+        let members = rack
+            .namespace(Namespace::App)
             .map(|(path, member)| {
                 let content_type =
-                    inventory_content_type(path).ok_or_else(|| CanvasArchiveError::Member {
-                        path: path.to_owned(),
+                    inventory_content_type(path).ok_or_else(|| RackError::Member {
+                        path: Namespace::App.member(path),
                         reason: "is outside the shell inventory",
                     })?;
                 let document = if !is_document(content_type) {
                     None
                 } else if path == wire::manifest::APP_HTML {
-                    Some(Arc::from(archive.shell()))
+                    Some(Arc::from(rack.shell()))
                 } else {
-                    Some(Arc::from(member.inflate(path)?))
+                    Some(Arc::from(member.inflate(&Namespace::App.member(path))?))
                 };
                 let etag = HeaderValue::from_str(&format!("\"{generation}/{path}\""))
                     .expect("a digest and inventory path are an admitted ETag");
@@ -162,11 +163,18 @@ impl EmbeddedArchive {
                     },
                 ))
             })
-            .collect::<Result<_, CanvasArchiveError>>()?;
+            .collect::<Result<_, RackError>>()?;
         Ok(Self(Arc::new(Embedded {
             generation,
             members,
+            rack,
         })))
+    }
+
+    /// The whole admitted rack: every namespace, not only the app it serves.
+    #[must_use]
+    pub fn rack(&self) -> &Rack<'static> {
+        &self.0.rack
     }
 
     /// The immutable generation this embedded source serves.

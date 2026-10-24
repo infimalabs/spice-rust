@@ -1,5 +1,7 @@
 use std::fs;
+use std::sync::LazyLock;
 
+use serve::rack::{Namespace, Rack};
 use spice::repository::Repository;
 
 use super::{Access, Query, Request, Resource, Text, rewrite_continuations, served_reads};
@@ -146,18 +148,12 @@ fn a_served_seat_reads_each_quoted_served_read_as_its_url_and_nothing_else() {
 }
 
 #[test]
-fn the_root_skill_and_quote_targets_are_not_cli_reads() {
+fn the_root_and_quote_targets_are_not_cli_reads() {
     assert_eq!(
         Request::parse("spice://")
             .expect("the root is the index")
             .resource,
         Resource::Index
-    );
-    assert_eq!(
-        Request::parse(spice::install::SKILL_RESOURCE)
-            .expect("the installed skill is static")
-            .resource,
-        Resource::Skill
     );
     assert_eq!(
         Request::parse("spice://quote/v1/steer/1kQnrzNZ/00:2-3")
@@ -167,8 +163,112 @@ fn the_root_skill_and_quote_targets_are_not_cli_reads() {
     );
 }
 
+const RACK_SKILL: &str = "# skill\nline two\nline three\n";
+
+/// A complete rack: an app whose wasm is not text, the skill, and two docs.
+static RACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    let generation = wire::Digest::compute(wire::Domain::DistArtifact, b"resource rack");
+    let declaration = wire::manifest::renderer::encode(&[]).expect("empty declaration encodes");
+    let mut files = serve::APP
+        .assets()
+        .iter()
+        .map(|asset| {
+            let bytes = match asset.file() {
+                "app.html" => format!(
+                    "<main data-app-generation=\"{generation}\" {}=\"{declaration}\"></main>",
+                    wire::manifest::renderer::ATTRIBUTE,
+                )
+                .into_bytes(),
+                "app_bg.wasm" => b"\0asm\xff".to_vec(),
+                file => format!("fixture {file}").into_bytes(),
+            };
+            (Namespace::App.member(asset.file()), bytes)
+        })
+        .collect::<Vec<_>>();
+    files.extend([
+        ("skill/SKILL.md".to_owned(), RACK_SKILL.as_bytes().to_vec()),
+        ("doc/guide.md".to_owned(), b"# guide\n".to_vec()),
+        (
+            "doc/planes/distribution.md".to_owned(),
+            b"# planes\n".to_vec(),
+        ),
+    ]);
+    Rack::write(
+        files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )
+    .expect("fixture rack writes")
+});
+
+/// Read one rack URL the way the seat does, against the fixture rack.
+fn rack_read(url: &str) -> Result<String, String> {
+    let rack = Rack::admit(&RACK).expect("fixture rack admits");
+    let request = Request::parse(url)?;
+    let Resource::Rack { namespace, path } = &request.resource else {
+        panic!("{url} names no rack member: {request:?}");
+    };
+    let document = super::rack::document(&rack, *namespace, path, url)?;
+    match &request.selector {
+        Some(selector) => selector.select(&document),
+        None => Ok(document),
+    }
+}
+
 #[test]
-fn the_installed_skill_resource_is_exact_bounded_and_prompt_compact() {
+fn rack_urls_answer_member_text_line_selections_and_listings() {
+    assert_eq!(
+        rack_read(spice::install::SKILL_RESOURCE).as_deref(),
+        Ok(RACK_SKILL)
+    );
+    assert_eq!(
+        rack_read("spice://skill/SKILL.md").as_deref(),
+        Ok(RACK_SKILL)
+    );
+    assert_eq!(
+        rack_read("spice://SKILL.md:1-2").as_deref(),
+        Ok("# skill\nline two")
+    );
+    assert_eq!(
+        rack_read("spice://doc/guide.md").as_deref(),
+        Ok("# guide\n")
+    );
+
+    let namespace = rack_read("spice://doc").expect("a namespace lists its members");
+    assert!(
+        namespace.ends_with(
+            "\nresources:\n  spice://doc/guide.md\n  spice://doc/planes/distribution.md"
+        ),
+        "{namespace}"
+    );
+    let directory = rack_read("spice://doc/planes/").expect("a directory lists its members");
+    assert!(
+        directory.ends_with("\nresources:\n  spice://doc/planes/distribution.md"),
+        "{directory}"
+    );
+
+    rack_read("spice://doc/absent.md").expect_err("an absent member is refused");
+    rack_read("spice://doc/plan").expect_err("a path prefix is no directory");
+    rack_read("spice://app/app_bg.wasm").expect_err("a member that is not text is refused");
+}
+
+#[test]
+fn rack_urls_refuse_queries_writes_and_digest_or_uuid_generations() {
+    for url in [
+        "spice://SKILL.md?release=current",
+        "spice://skill/SKILL.md?release=current",
+        "spice://doc?limit=3",
+    ] {
+        assert!(refusal(url).contains("takes no query"), "{url}");
+    }
+    let digest = wire::Digest::compute(wire::Domain::DistArtifact, b"a generation");
+    for url in [
+        format!("spice://doc/guide.md@{digest}"),
+        "spice://doc@11111111-2222-3333-4444-555555555555".to_owned(),
+    ] {
+        assert!(refusal(&url).contains("journal short code"), "{url}");
+    }
+
     let ambient = spice::ambient::capture();
     let seat = super::Seat {
         worktree: "/".into(),
@@ -177,28 +277,24 @@ fn the_installed_skill_resource_is_exact_bounded_and_prompt_compact() {
         ambient,
         graphs: Default::default(),
     };
-    let read = |url: &str| {
-        seat.serve(url, Access::Read, |_| panic!("no quote is read"))
-            .expect("the static skill serves")
-    };
+    let refused = seat
+        .serve("spice://skill/SKILL.md", Access::Write("# skill\n"), |_| {
+            panic!("no quote is read")
+        })
+        .expect_err("a rack member takes no write");
+    assert!(refused.contains("takes no write"), "{refused}");
+}
+
+#[test]
+fn the_skill_bootstrap_stays_compact_and_names_the_resource() {
     let document = spice::install::skill_document();
     let bootstrap = spice::install::skill_bootstrap();
-    assert_eq!(read(spice::install::SKILL_RESOURCE), document);
-    assert_eq!(
-        read("spice://SKILL.md:1-2"),
-        document.lines().take(2).collect::<Vec<_>>().join("\n")
-    );
-    assert!(
-        document.len() <= spice::install::SKILL_BYTES_CEILING,
-        "the authoritative document stays within its 8 KiB ceiling"
-    );
     assert!(
         bootstrap.len() < spice::install::SKILL_BOOTSTRAP_BYTES_CEILING,
         "the bootstrap stays below its separate 1 KiB budget"
     );
     assert!(bootstrap.contains(spice::install::SKILL_RESOURCE));
     assert!(!bootstrap.contains(document));
-    refusal("spice://SKILL.md?release=current");
 }
 
 #[test]
@@ -237,7 +333,6 @@ fn urls_naming_unserved_commands_are_refused_naming_them() {
         ("spice://lane/add/x", "spice lane add"),
         ("spice://steer", "spice steer"),
         ("spice://board/handout", "spice board handout"),
-        ("spice://doc", "spice doc"),
     ] {
         let refused = refusal(url);
         assert!(

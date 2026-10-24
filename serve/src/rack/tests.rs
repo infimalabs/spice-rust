@@ -3,7 +3,7 @@ use std::io::Read as _;
 use wire::manifest::renderer::{self, File, Kind, Member};
 use wire::{Digest, Domain};
 
-use super::{CanvasArchive, CanvasArchiveError, MAX_MEMBER_BYTES};
+use super::{MAX_MEMBER_BYTES, Namespace, Rack, RackError, RackInput};
 
 const LOCAL_FLAGS: usize = 6;
 const LOCAL_METHOD: usize = 8;
@@ -30,7 +30,8 @@ fn generation() -> Digest {
     Digest::compute(Domain::DistArtifact, b"canvas fixture generation")
 }
 
-/// One complete generation: every shell file and one declared renderer module.
+/// One complete app generation, every shell file and one declared renderer
+/// module, under the `app` namespace.
 fn files(shell_generation: Option<&Digest>) -> Vec<(String, Vec<u8>)> {
     let module = b"export const renderer = 0;".to_vec();
     let declaration = renderer::encode(&[Member {
@@ -60,12 +61,13 @@ fn files(shell_generation: Option<&Digest>) -> Vec<(String, Vec<u8>)> {
         if name == wire::manifest::APP_HTML {
             *bytes = shell.clone().into_bytes();
         }
+        *name = Namespace::App.member(name);
     }
     files
 }
 
 fn archive_of(files: &[(String, Vec<u8>)]) -> Vec<u8> {
-    CanvasArchive::write(
+    Rack::write(
         files
             .iter()
             .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
@@ -137,9 +139,9 @@ fn rename(bytes: &mut [u8], from: &str, to: &str) {
     bytes[central + CENTRAL_NAME..][..to.len()].copy_from_slice(to.as_bytes());
 }
 
-fn refused_member(result: Result<CanvasArchive<'_>, CanvasArchiveError>) -> String {
+fn refused_member(result: Result<Rack<'_>, RackError>) -> String {
     match result {
-        Err(CanvasArchiveError::Member { path, .. }) => path,
+        Err(RackError::Member { path, .. }) => path,
         other => panic!("expected a member refusal, got {other:?}"),
     }
 }
@@ -152,7 +154,7 @@ fn archives_are_a_pure_function_of_their_files() {
     let bytes = archive_of(&files);
     assert_eq!(bytes, archive_of(&reordered));
 
-    let admitted = CanvasArchive::admit_generation(&bytes, &generation()).expect("archive admits");
+    let admitted = Rack::admit_generation(&bytes, &generation()).expect("archive admits");
     assert_eq!(admitted.shell(), files[0].1.as_slice());
     let paths = admitted.members().map(|(path, _)| path).collect::<Vec<_>>();
     let mut sorted = paths.clone();
@@ -170,21 +172,88 @@ fn archives_are_a_pure_function_of_their_files() {
 }
 
 #[test]
-fn writing_refuses_repeated_and_unnormalized_paths() {
-    let repeated = [("app.html", b"a".as_slice()), ("app.html", b"b".as_slice())];
+fn writing_refuses_repeated_unnormalized_and_unnamespaced_paths() {
+    let repeated = [("doc/a.md", b"a".as_slice()), ("doc/a.md", b"b".as_slice())];
     assert!(matches!(
-        CanvasArchive::write(repeated),
-        Err(CanvasArchiveError::Member { path, .. }) if path == "app.html"
+        Rack::write(repeated),
+        Err(RackError::Member { path, .. }) if path == "doc/a.md"
     ));
-    for path in ["/app.html", "a//b", "./a", "a/..", "a\\b", "a\0b"] {
+    for path in [
+        "/doc/a.md",
+        "doc//b",
+        "doc/./a",
+        "doc/a/..",
+        "doc/a\\b",
+        "doc/a\0b",
+        "a.md",
+        "docs/a.md",
+    ] {
         assert!(
             matches!(
-                CanvasArchive::write([(path, b"x".as_slice())]),
-                Err(CanvasArchiveError::Member { .. })
+                Rack::write([(path, b"x".as_slice())]),
+                Err(RackError::Member { .. })
             ),
             "{path:?}"
         );
     }
+}
+
+#[test]
+fn stored_members_copy_the_stream_their_bytes_would_deflate_to() {
+    let mut files = files(Some(&generation()));
+    files.push(("doc/guide.md".to_owned(), b"# Guide\n".repeat(32)));
+    files.push(("skill/SKILL.md".to_owned(), b"# Skill\n".to_vec()));
+    let bytes = archive_of(&files);
+    let admitted = Rack::admit(&bytes).expect("rack admits");
+    let copied = Rack::write(
+        admitted
+            .members()
+            .map(|(path, member)| (path, RackInput::Stored(member))),
+    )
+    .expect("stored members write");
+    assert_eq!(copied, bytes);
+    assert_eq!(
+        admitted
+            .namespace(Namespace::Doc)
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>(),
+        ["guide.md"]
+    );
+}
+
+#[test]
+fn namespaces_hold_their_declared_member_bounds_and_tool_manifests() {
+    let with = |extra: &[(&str, &[u8])]| {
+        let mut files = files(Some(&generation()));
+        files.extend(
+            extra
+                .iter()
+                .map(|(path, bytes)| ((*path).to_owned(), bytes.to_vec())),
+        );
+        Rack::write(
+            files
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        )
+    };
+    assert!(matches!(
+        with(&[("skill/A.md", b"a"), ("skill/B.md", b"b")]),
+        Err(RackError::Member { path, .. }) if path == "skill/B.md"
+    ));
+    assert!(matches!(
+        with(&[("tool/grep/run.wasm", b"\0asm")]),
+        Err(RackError::Member { path, .. }) if path == "tool/grep"
+    ));
+    assert!(matches!(
+        with(&[("tool/run.wasm", b"\0asm")]),
+        Err(RackError::Member { path, .. }) if path == "tool/run.wasm"
+    ));
+    let tool = with(&[
+        ("tool/grep/manifest.json", b"{}"),
+        ("tool/grep/run.wasm", b"\0asm"),
+    ])
+    .expect("a tool beside its manifest writes");
+    Rack::admit(&tool).expect("a tool beside its manifest admits");
 }
 
 #[test]
@@ -201,19 +270,13 @@ fn admission_refuses_structure_outside_the_records() {
         &trailing[..],
         &displaced[..],
     ] {
-        assert!(matches!(
-            CanvasArchive::admit(crafted),
-            Err(CanvasArchiveError::Structure(_))
-        ));
+        assert!(matches!(Rack::admit(crafted), Err(RackError::Structure(_))));
     }
     let mut counted = bytes;
     for field in [END_HERE, END_COUNT] {
         put_u16(&mut counted, end + field, u16::MAX);
     }
-    assert!(matches!(
-        CanvasArchive::admit(&counted),
-        Err(CanvasArchiveError::Bound(_))
-    ));
+    assert!(matches!(Rack::admit(&counted), Err(RackError::Bound(_))));
 }
 
 #[test]
@@ -237,44 +300,42 @@ fn admission_refuses_header_disagreement_and_noncanonical_members() {
     let mut overlapping = bytes.clone();
     put_u32(&mut overlapping, central[1] + CENTRAL_OFFSET, 0);
     for crafted in [disagreeing, described, deflated, stamped, oversized] {
-        assert_eq!(refused_member(CanvasArchive::admit(&crafted)), "app.html");
+        assert_eq!(refused_member(Rack::admit(&crafted)), "app/app.html");
     }
-    assert_eq!(
-        refused_member(CanvasArchive::admit(&overlapping)),
-        "app.module"
-    );
+    assert_eq!(refused_member(Rack::admit(&overlapping)), "app/app.module");
 
     let mut corrupt = bytes;
     corrupt[data.start + GZIP_BODY] ^= 0xff;
-    assert_eq!(refused_member(CanvasArchive::admit(&corrupt)), "app.html");
+    assert_eq!(refused_member(Rack::admit(&corrupt)), "app/app.html");
 }
 
 #[test]
 fn admission_refuses_paths_outside_the_closed_inventory() {
     let bytes = archive();
     for path in [
-        "/ork.css",
-        "./rk.css",
-        "../k.css",
-        "w\\rk.css",
-        "w\0rk.css",
-        "wo//.css",
-        "work.cs2",
+        "app//ork.css",
+        "app/./rk.css",
+        "app/../k.css",
+        "app/w\\rk.css",
+        "app/w\0rk.css",
+        "app/wo//.css",
+        "app/work.cs2",
+        "ark/work.css",
     ] {
         let mut renamed = bytes.clone();
-        rename(&mut renamed, "work.css", path);
-        let refused = refused_member(CanvasArchive::admit(&renamed));
+        rename(&mut renamed, "app/work.css", path);
+        let refused = refused_member(Rack::admit(&renamed));
         assert_eq!(refused.as_bytes(), path.as_bytes());
     }
     let mut repeated = bytes;
-    rename(&mut repeated, "work.css", "app.html");
-    assert_eq!(refused_member(CanvasArchive::admit(&repeated)), "app.html");
+    rename(&mut repeated, "app/work.css", "app/app.html");
+    assert_eq!(refused_member(Rack::admit(&repeated)), "app/app.html");
 
     let mut incomplete = files(Some(&generation()));
-    incomplete.retain(|(name, _)| name != "renderer-000.mjs");
+    incomplete.retain(|(name, _)| name != "app/renderer-000.mjs");
     assert_eq!(
-        refused_member(CanvasArchive::admit(&archive_of(&incomplete))),
-        "renderer-000.mjs"
+        refused_member(Rack::admit(&archive_of(&incomplete))),
+        "app/renderer-000.mjs"
     );
 }
 
@@ -284,20 +345,14 @@ fn admission_refuses_member_bounds_and_foreign_generations() {
     for (_, data) in locals(&inflated) {
         put_u32(&mut inflated, data.end - GZIP_SIZE, MAX_MEMBER_BYTES);
     }
-    assert!(matches!(
-        CanvasArchive::admit(&inflated),
-        Err(CanvasArchiveError::Bound(_))
-    ));
+    assert!(matches!(Rack::admit(&inflated), Err(RackError::Bound(_))));
 
     let unnamed = archive_of(&files(None));
-    assert!(matches!(
-        CanvasArchive::admit(&unnamed),
-        Err(CanvasArchiveError::Shell(_))
-    ));
+    assert!(matches!(Rack::admit(&unnamed), Err(RackError::Shell(_))));
 
     let other = Digest::compute(Domain::DistArtifact, b"another generation");
     assert!(matches!(
-        CanvasArchive::admit_generation(&archive(), &other),
-        Err(CanvasArchiveError::Generation { found, .. }) if found == generation()
+        Rack::admit_generation(&archive(), &other),
+        Err(RackError::Generation { found, .. }) if found == generation()
     ));
 }

@@ -157,33 +157,47 @@ Owners: [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs),
 activity becomes a Mosaic card lives in [Mosaic card lineage](mosaic-rust.md).
 
 Each staged generation G also has one app ZIP, `generations/G.zip`, beside its
-unzipped directory, which stays the development hot-swap source. G is the
-identity the shell names in every qualified route, not the archive digest.
-Members are sorted by logical path. Each member is one deterministic
-gzip stream (fixed header, one pinned deflate implementation and level) stored
-in ZIP with method STORE and the fixed 1980-01-01 time. The archive has no data
+unzipped directory, which stays the development hot-swap source. Its members are
+the generation's files under `app/`. G is the identity the shell names in every
+qualified route, not the archive digest.
+
+Every appliance executable links one spice rack in the same format: `app/`
+members copied unchanged from `G.zip`, `skill/SKILL.md`, `doc/...` from
+`docs/`, and `tool/NAME/...` beside each tool's `tool/NAME/manifest.json`.
+Members are sorted by logical path. Each member is one deterministic gzip
+stream (fixed header, one pinned deflate implementation and level) stored in
+ZIP with method STORE and the fixed 1980-01-01 time. The archive has no data
 descriptors, extra fields, comments, encryption, or ZIP64. Its bytes are
-therefore a pure function of the generation files, and a member's stored bytes
-are served as-is under `Content-Encoding: gzip`. Admission parses the
+therefore a pure function of its members, and an app member's stored bytes are
+served as-is under `Content-Encoding: gzip`. Admission parses the
 end-of-central-directory record and the central directory once. It refuses,
 naming the member, any byte outside the records, header disagreement, path
-outside the shell inventory, framing violation, or exceeded bound. It derives G
-from the shell, the only member it inflates. Integrity rests on the archive
-digest, not on ZIP CRC fields. Owners:
-[`serve/src/canvas/archive.rs`](../../serve/src/canvas/archive.rs) writes and
-admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
+outside every namespace or outside the app shell inventory, a tool without its
+manifest, framing violation, or exceeded bound. Member bounds are declared per
+namespace and summed; member and total byte bounds cover the whole rack. It
+derives G from the app shell, the only member it inflates. Integrity rests on
+the archive digest, not on ZIP CRC fields. Owners:
+[`serve/src/rack.rs`](../../serve/src/rack.rs) writes and admits racks,
+[`xtask/src/app.rs`](../../xtask/src/app.rs) stages `G.zip`, and
+[`xtask/src/app/rack.rs`](../../xtask/src/app/rack.rs) assembles the linked
+rack from its tracked source list.
+
+A resident reads rack members as `spice://NS/PATH` with the line selectors the
+other resources take; `spice://SKILL.md` is `spice://skill/SKILL.md`, and a
+namespace or directory read lists its members. A URL never names a generation
+by digest or UUID.
 
 The `canvas` crate declares the two symbols a relocatable object defines:
-`spiceapp` at the archive's first byte and `spiceapp_len` at its length. Every
+`spicerack` at the rack's first byte and `spicerack_len` at its length. Every
 current appliance target resolves the first to a mapped address, so the process
-reads its app as a direct static slice without storing a file offset or parsing
-its own image.
+reads its rack as a direct static slice without storing a file offset or
+parsing its own image.
 
-At the object-format boundary, `dist` locates that archive under the same
-`spiceapp` section name in final Mach-O, ELF, and PE32+ images. The eight-byte
-name fits PE's section-name limit. The Windows development build
-enables the same ordinary `spice` binary and modules as macOS and Linux; only
-the filesystem, process, and local-IPC adapters vary by target.
+At the object-format boundary, `dist` locates that rack in final Mach-O, ELF,
+and PE32+ images: `__spicerack` on Mach-O, `spicerack` on ELF, and `spicerac`,
+the name truncated to PE's eight-byte section-name limit, on PE32+. The Windows
+development build enables the same ordinary `spice` binary and modules as macOS
+and Linux; only the filesystem, process, and local-IPC adapters vary by target.
 
 Materialize the pinned xwin/LLVM toolchain, cross-check the ordinary executable,
 then build the complete executable with the current staged canvas:

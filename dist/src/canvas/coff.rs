@@ -2,9 +2,9 @@
 
 use super::{ARCHIVE_SYMBOL, CanvasError, LENGTH_SYMBOL};
 
-/// App ZIP section in a PE image. Executable section names are at most eight
-/// bytes.
-const SECTION: &[u8; 8] = b"spiceapp";
+/// Rack section in a PE image. PE32+ section names hold eight bytes, so this
+/// is the eight-byte prefix a PE linker truncates `spicerack` to.
+const SECTION: &[u8; 8] = b"spicerac";
 
 const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 const IMAGE_NT_OPTIONAL_HDR64_MAGIC: u16 = 0x20b;
@@ -24,7 +24,7 @@ pub(super) fn object(archive: &[u8]) -> Vec<u8> {
     const SYMBOLS: usize = 2;
 
     let data_at = COFF_HEADER_BYTES + SECTIONS * COFF_SECTION_HEADER_BYTES;
-    let archive_bytes = u32::try_from(archive.len()).expect("an app ZIP fits in one COFF section");
+    let archive_bytes = u32::try_from(archive.len()).expect("a rack fits in one COFF section");
     let length_at = data_at
         .checked_add(archive.len())
         .expect("the COFF object size fits in memory")
@@ -213,17 +213,17 @@ fn archive_section(image: &[u8], header: usize) -> Result<Option<&[u8]>, CanvasE
     if field(image, header, SECTION.len(), "PE section name")? != SECTION {
         return Ok(None);
     }
-    let size = usize::try_from(read_u32(image, header + 8, "app ZIP section size")?)
-        .map_err(|_| CanvasError::Malformed("app ZIP section size"))?;
-    let raw_bytes = usize::try_from(read_u32(image, header + 16, "app ZIP raw section size")?)
-        .map_err(|_| CanvasError::Malformed("app ZIP raw section size"))?;
-    let raw_at = usize::try_from(read_u32(image, header + 20, "app ZIP section offset")?)
-        .map_err(|_| CanvasError::Malformed("app ZIP section offset"))?;
+    let size = usize::try_from(read_u32(image, header + 8, "rack section size")?)
+        .map_err(|_| CanvasError::Malformed("rack section size"))?;
+    let raw_bytes = usize::try_from(read_u32(image, header + 16, "rack raw section size")?)
+        .map_err(|_| CanvasError::Malformed("rack raw section size"))?;
+    let raw_at = usize::try_from(read_u32(image, header + 20, "rack section offset")?)
+        .map_err(|_| CanvasError::Malformed("rack section offset"))?;
     if size == 0 || raw_bytes < size {
-        return Err(CanvasError::Malformed("app ZIP section range"));
+        return Err(CanvasError::Malformed("rack section range"));
     }
-    field(image, raw_at, raw_bytes, "app ZIP section range")?;
-    field(image, raw_at, size, "app ZIP section range").map(Some)
+    field(image, raw_at, raw_bytes, "rack section range")?;
+    field(image, raw_at, size, "rack section range").map(Some)
 }
 
 fn field<'a>(
@@ -345,7 +345,7 @@ mod tests {
         let malformed = pe(&[(SECTION, b"")]);
         assert_eq!(
             pe_archive(&malformed),
-            Err(CanvasError::Malformed("app ZIP section range"))
+            Err(CanvasError::Malformed("rack section range"))
         );
 
         let repeated = pe(&[(SECTION, ARCHIVE), (SECTION, b"again")]);
@@ -358,7 +358,7 @@ mod tests {
         truncated.pop();
         assert_eq!(
             pe_archive(&truncated),
-            Err(CanvasError::Malformed("app ZIP section range"))
+            Err(CanvasError::Malformed("rack section range"))
         );
 
         let generation = Digest::compute(Domain::DistArtifact, b"generation");
@@ -392,7 +392,7 @@ mod tests {
         );
         assert_eq!(
             pe_archive(&virtual_overrun),
-            Err(CanvasError::Malformed("app ZIP section range"))
+            Err(CanvasError::Malformed("rack section range"))
         );
     }
 
