@@ -756,16 +756,7 @@ fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {
         &downstream,
         &transitive,
     );
-    complete_correction_and_clean(
-        &bus,
-        epoch,
-        &seats,
-        &implementer,
-        &reviewer,
-        &reviewed,
-        &followup,
-        &downstream,
-    );
+    complete_correction_and_clean(&bus, epoch, &seats, &reviewed, &followup, &downstream);
     clean(&root, bus);
 }
 
@@ -816,20 +807,19 @@ fn assert_finding_blocks(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the release assertion retains the complete two-lane review fixture"
-)]
+/// The implementer at `seats[0]` completes the correction, the reviewer at
+/// `seats[1]` claims and cleanly reviews `reviewed`, and `downstream` becomes
+/// eligible for the implementer again.
 fn complete_correction_and_clean(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &[Seat],
-    implementer: &Actor,
-    reviewer: &Actor,
     reviewed: &TaskHandle,
     correction: &TaskHandle,
     downstream: &TaskHandle,
 ) {
+    let implementer = &Actor::Lane(seats[0].lane);
+    let reviewer = &Actor::Lane(seats[1].lane);
     claim_and_complete_task(bus, epoch, &seats[0], implementer, correction);
     let reviewable = board(bus, epoch, reviewer.clone());
     let entries = actor_entries(&reviewable).expect("corrected board projects to entries");

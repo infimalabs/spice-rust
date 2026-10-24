@@ -21,11 +21,13 @@ pub(in crate::board_command) fn task_defer(
         bus,
         command,
         &snapshot,
-        &defer.task,
-        Some(defer.wait),
+        DeferralRequest {
+            task: &defer.task,
+            deferral: Some(defer.wait),
+            claim_requested: false,
+        },
         defer.clone(),
         repository,
-        false,
         projects,
     )
 }
@@ -53,11 +55,13 @@ pub(in crate::board_command) fn task_wake(
         bus,
         command,
         &snapshot,
-        &wake.task,
-        None,
+        DeferralRequest {
+            task: &wake.task,
+            deferral: None,
+            claim_requested: wake.claim,
+        },
         wake.clone(),
         repository,
-        wake.claim,
         projects,
     )
 }
@@ -496,10 +500,6 @@ fn append_deferral_release(
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the receipt closes one guarded deferral and its two exclusive Git transitions"
-)]
 fn finish_deferral<B: serde::Serialize>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -531,21 +531,28 @@ fn finish_deferral<B: serde::Serialize>(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "deferral mutation keeps optional atomic claim authority explicit"
-)]
+/// What one defer or wake asks of its task: the new deferral, or none to
+/// wake, and whether the caller claims the task in the same write.
+struct DeferralRequest<'a> {
+    task: &'a TaskHandle,
+    deferral: Option<Instant>,
+    claim_requested: bool,
+}
+
 fn change_deferral<B: serde::Serialize + Clone>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     snapshot: &ValidatedSnapshot,
-    task: &TaskHandle,
-    deferral: Option<Instant>,
+    request: DeferralRequest<'_>,
     intent: B,
     repository: Option<&Repository>,
-    claim_requested: bool,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
+    let DeferralRequest {
+        task,
+        deferral,
+        claim_requested,
+    } = request;
     let Some(entry) = task_entry(&snapshot.entries, task) else {
         return refusal(
             "task::unknown",

@@ -124,9 +124,11 @@ fn staged(
         request_body,
         config,
         &design,
-        recipient,
-        message,
-        text,
+        Delivery {
+            recipient,
+            message,
+            text,
+        },
     )?;
     Ok((outcome, Some(recipient.lane)))
 }
@@ -166,19 +168,29 @@ fn messaged_text(
     )
 }
 
-/// Commit the nudge with its one operator MSG to `recipient`, refusing when
+/// One nudge's addressed message: who receives it, what it says, and the
+/// reply text the operator reads once it lands.
+struct Delivery {
+    recipient: Recipient,
+    message: String,
+    text: String,
+}
+
+/// Commit the nudge with its one operator MSG to the recipient, refusing when
 /// the recipient took other work before the write landed.
-#[allow(clippy::too_many_arguments)]
 fn deliver(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request_body: &DesignNudge,
     config: &steer::Config,
     design: &TaskStamp,
-    recipient: Recipient,
-    message: String,
-    text: String,
+    delivery: Delivery,
 ) -> Result<Outcome<CommandAnswer>, Outcome<CommandAnswer>> {
+    let Delivery {
+        recipient,
+        message,
+        text,
+    } = delivery;
     let at = current_instant()?;
     let origin = task_origin(design)?;
     let mut write = JournalWrite::new(

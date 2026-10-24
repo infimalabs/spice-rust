@@ -162,18 +162,22 @@ pub(in crate::board_command) fn task_oops_add(
         Ok(creation) => creation,
         Err(outcome) => return outcome,
     };
-    let (design_prepared, report) = match prepare_oops_rows(
-        command,
-        add,
-        &project,
-        &design_project,
-        projects,
-        origin,
-        creation,
-        report_born,
-        creates_design,
-    ) {
-        Ok(prepared) => prepared,
+    let design = if creates_design {
+        match prepare_oops_design(
+            add,
+            &design_project,
+            projects,
+            origin.clone(),
+            creation.clone(),
+        ) {
+            Ok(design) => Some(design),
+            Err(outcome) => return outcome,
+        }
+    } else {
+        None
+    };
+    let report = match prepare_oops_report(add, &project, projects, origin, creation, report_born) {
+        Ok(report) => report,
         Err(outcome) => return outcome,
     };
     commit_oops_intake(
@@ -181,25 +185,26 @@ pub(in crate::board_command) fn task_oops_add(
         command,
         add,
         &snapshot,
-        design_prepared,
-        report,
+        OopsRows { design, report },
         generation,
         projects,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn prepare_oops_rows(
-    command: &wire::AdmittedCommand,
+/// The rows one oops intake is born as: its Plan report and, when the
+/// current generation has no open Design, the Design it opens.
+struct OopsRows {
+    design: Option<PreparedTask>,
+    report: PreparedTask,
+}
+
+fn prepare_oops_design(
     add: &TaskOopsAdd,
-    project: &Project,
     design_project: &Project,
     projects: &ProjectPolicy,
-    origin: CreationCause,
+    cause: CreationCause,
     creation: TaskCreationCapture,
-    report_born: &wire::TaskStamp,
-    creates_design: bool,
-) -> Result<(Option<PreparedTask>, PreparedTask), Outcome<CommandAnswer>> {
+) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let design_add = TaskAdd {
         preparation: None,
         intent: Some(wire::TaskIntent::OpportunisticDesign),
@@ -215,6 +220,28 @@ fn prepare_oops_rows(
         claim: false,
         draft: false,
     };
+    prepare_task_for(
+        &design_add,
+        design_project,
+        projects,
+        TaskSeed {
+            cause,
+            creation,
+            flow: vec!["design".parse().expect("design is a phase")],
+            filing: wire::TaskFiling::Filed,
+        },
+        add.design.clone(),
+    )
+}
+
+fn prepare_oops_report(
+    add: &TaskOopsAdd,
+    project: &Project,
+    projects: &ProjectPolicy,
+    cause: CreationCause,
+    creation: TaskCreationCapture,
+    report_born: &wire::TaskStamp,
+) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let report_add = TaskAdd {
         preparation: None,
         intent: Some(wire::TaskIntent::Plan),
@@ -232,32 +259,18 @@ fn prepare_oops_rows(
         claim: false,
         draft: false,
     };
-    let design = creates_design
-        .then(|| {
-            prepare_task_for(
-                command,
-                &design_add,
-                design_project,
-                projects,
-                origin.clone(),
-                creation.clone(),
-                vec!["design".parse().expect("design is a phase")],
-                wire::TaskFiling::Filed,
-                add.design.clone(),
-            )
-        })
-        .transpose()?;
     let mut report = prepare_task_for(
-        command,
         &report_add,
         project,
         projects,
-        origin,
-        creation,
-        ["plan", "review"]
-            .map(|phase| phase.parse().expect("fixed OOPS Plan phase"))
-            .to_vec(),
-        wire::TaskFiling::Filed,
+        TaskSeed {
+            cause,
+            creation,
+            flow: ["plan", "review"]
+                .map(|phase| phase.parse().expect("fixed OOPS Plan phase"))
+                .to_vec(),
+            filing: wire::TaskFiling::Filed,
+        },
         report_born.clone(),
     )?;
     report.statement.preparation = Some(wire::TaskPreparation {
@@ -266,7 +279,7 @@ fn prepare_oops_rows(
         construction: report_born.clone(),
     });
     report.statement.dependencies.push(add.design.clone());
-    Ok((design, report))
+    Ok(report)
 }
 
 fn require_oops_design_witnesses(
@@ -289,64 +302,31 @@ fn require_oops_design_witnesses(
         },
     )
 }
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one oops intake commits its report, optional Design, and generation against one snapshot"
-)]
+/// Commit one oops intake: the report, the Design it opens when the current
+/// generation has none, and the generation advance binding them.
 fn commit_oops_intake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request_body: &TaskOopsAdd,
     snapshot: &ValidatedSnapshot,
-    design: Option<PreparedTask>,
-    report: PreparedTask,
+    rows: OopsRows,
     generation: wire::OopsGenerationHead,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
+    let OopsRows { design, report } = rows;
     let post = prepared_entry(&report, projects);
     let next = next_action(snapshot, &post);
     let task = report.task.clone();
     let origin = report.origin.clone();
     let at = report.at;
     let creation = report.creation.clone();
-    let report_add = TaskAdd {
-        preparation: None,
-        intent: Some(wire::TaskIntent::Plan),
-        title: request_body.title.clone(),
-        pitch: wire::pitch::derive(&request_body.title, None),
-        project: Some(report.project.clone()),
-        description: None,
-        acceptance: Vec::new(),
-        requirements: wire::EnvironmentRequirements::default(),
-        origin: request_body.origin.clone(),
-        flow: Some("plan,review".to_owned()),
-        depends: Vec::new(),
-        claim: false,
-        draft: false,
-    };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     creation.guard(&mut write);
     let cause = match design {
         Some(design) => {
             let design_stamp = design.statement.born.clone();
-            let design_add = TaskAdd {
-                preparation: None,
-                intent: Some(wire::TaskIntent::OpportunisticDesign),
-                title: wire::OOPS_DESIGN_TITLE.to_owned(),
-                pitch: wire::OOPS_DESIGN_PITCH.to_owned(),
-                project: Some(wire::OOPS_DESIGN_PROJECT.to_owned()),
-                description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
-                acceptance: Vec::new(),
-                requirements: wire::EnvironmentRequirements::default(),
-                origin: request_body.origin.clone(),
-                flow: Some("design".to_owned()),
-                depends: Vec::new(),
-                claim: false,
-                draft: false,
-            };
-            let added = match append_prepared_task(&mut write, &design_add, design, FactCause::Root)
-            {
+            let added = match append_prepared_task(&mut write, design, FactCause::Root) {
                 Ok(fact) => fact,
                 Err(outcome) => return outcome,
             };
@@ -370,7 +350,7 @@ fn commit_oops_intake(
         }
         None => FactCause::Root,
     };
-    if let Err(outcome) = append_prepared_task(&mut write, &report_add, report, cause) {
+    if let Err(outcome) = append_prepared_task(&mut write, report, cause) {
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {

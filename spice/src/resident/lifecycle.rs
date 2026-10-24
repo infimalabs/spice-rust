@@ -624,11 +624,15 @@ impl Runtime {
                     bus,
                     snapshot,
                     repository,
-                    epoch,
-                    lane,
-                    occupant,
-                    &config.projects,
-                    &config.allocation,
+                    crate::board_command::AutomaticSeat {
+                        epoch,
+                        lane,
+                        occupant,
+                    },
+                    crate::board_command::AllocationPolicy {
+                        projects: &config.projects,
+                        allocation: &config.allocation,
+                    },
                 )
                 .map_err(unit_outcome)?;
                 let launched = lane_surface::begin_automatic_wake(

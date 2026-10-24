@@ -761,7 +761,6 @@ fn implicit_completion_reads_completed_prerequisites_before_advancing_a_plan() {
     let plan = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "plan",
         "Reconcile completed work",
         "task.read",

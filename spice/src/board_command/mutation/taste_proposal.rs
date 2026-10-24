@@ -106,10 +106,12 @@ pub(in crate::board_command) fn taste_proposal_add(
         &normalized,
         &project,
         projects,
-        origin,
-        creation,
-        flow,
-        wire::TaskFiling::Filed,
+        TaskSeed {
+            cause: origin,
+            creation,
+            flow,
+            filing: wire::TaskFiling::Filed,
+        },
     ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
@@ -123,14 +125,15 @@ pub(in crate::board_command) fn taste_proposal_add(
     commit_prepared_task(
         bus,
         command,
-        &normalized,
         add.clone(),
         &snapshot,
-        prepared,
-        post,
-        dependency_witnesses,
+        AdmittedCreation {
+            prepared,
+            post,
+            dependency_witnesses,
+            claim: None,
+        },
         move |write| guard_proposal_observation(write, observation),
-        None,
     )
 }
 

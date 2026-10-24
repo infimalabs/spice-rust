@@ -339,47 +339,27 @@ fn require_acyclic_correction(
 }
 
 /// Create each new correction in the same transaction as its finding.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "review follow-ups retain the enclosing transaction's exact authority inputs"
-)]
 pub(super) fn record_followups(
     write: &mut JournalWrite,
-    command: &wire::AdmittedCommand,
-    snapshot: &ValidatedSnapshot,
-    review: &TaskReview,
-    reviewed: PendingFact,
-    origin: &CreationCause,
-    creation: Option<&TaskCreationCapture>,
-    repository: Option<&Repository>,
-    projects: &ProjectPolicy,
+    followups: &[ReviewFollowup],
+    context: &FollowupContext<'_>,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let reviewed_task = task_heads(&snapshot.answer, &review.task)?;
-    let context = FollowupContext {
-        command,
-        snapshot,
-        reviewed_task,
-        reviewed,
-        origin,
-        creation,
-        repository,
-        projects,
-    };
-    for followup in &review.then {
-        create_followup(write, &context, followup)?;
+    for followup in followups {
+        create_followup(write, context, followup)?;
     }
     Ok(())
 }
 
-struct FollowupContext<'a> {
-    command: &'a wire::AdmittedCommand,
-    snapshot: &'a ValidatedSnapshot,
-    reviewed_task: &'a BoardTask,
-    reviewed: PendingFact,
-    origin: &'a CreationCause,
-    creation: Option<&'a TaskCreationCapture>,
-    repository: Option<&'a Repository>,
-    projects: &'a ProjectPolicy,
+/// The enclosing review transaction's authority, as each correction reads it.
+pub(super) struct FollowupContext<'a> {
+    pub(super) command: &'a wire::AdmittedCommand,
+    pub(super) snapshot: &'a ValidatedSnapshot,
+    pub(super) reviewed_task: &'a BoardTask,
+    pub(super) reviewed: PendingFact,
+    pub(super) origin: &'a CreationCause,
+    pub(super) creation: Option<&'a TaskCreationCapture>,
+    pub(super) repository: Option<&'a Repository>,
+    pub(super) projects: &'a ProjectPolicy,
 }
 
 type FollowupPolicy = (Vec<wire::Phase>, wire::Phase, Option<wire::TasteHold>);

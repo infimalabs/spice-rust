@@ -312,9 +312,11 @@ impl PreparedClaim {
             command,
             selected,
             &snapshot.entries,
-            Some(claim_activation_next_action(selected)),
-            origin_context,
-            room_context,
+            ClaimReading {
+                next: Some(claim_activation_next_action(selected)),
+                origin_context,
+                room_context,
+            },
             self.prepared_git
                 .as_ref()
                 .and_then(spice::task_git::ClaimPreparation::transplant),
@@ -333,19 +335,24 @@ impl PreparedClaim {
             prepared_git,
             recovery,
         } = self;
-        if let Err(outcome) = append_claim_heads(
+        if let Err(outcome) = mint_claim(
             write,
-            command,
-            selected,
-            selected.born(),
-            grant.lane,
-            grant.occupant,
-            grant.at,
-            grant.expiry,
-            grant.maximum,
-            grant.git,
-            recovery,
-            grant.source,
+            board::allocate::Mint {
+                task: selected.born(),
+                actor: command.actor(),
+                workflow: selected.workflow(),
+                project: selected.project().as_str(),
+                lane: grant.lane,
+                occupant: grant.occupant,
+                epoch: command.epoch(),
+                at: grant.at,
+                expiry: grant.expiry,
+                maximum: grant.maximum,
+                git: grant.git,
+                recovery,
+                source: grant.source,
+                cause: None,
+            },
         ) {
             if let Some(prepared) = prepared_git
                 && let Err(error) = prepared.rollback()
@@ -358,20 +365,27 @@ impl PreparedClaim {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the claim answer carries each independently derived context the claimant reads"
-)]
+/// The texts a claimant reads with its answer: the command it runs next and
+/// the steering and room context each derived on its own.
+struct ClaimReading {
+    next: Option<Box<str>>,
+    origin_context: Option<Box<str>>,
+    room_context: Option<Box<str>>,
+}
+
 fn claim_answer(
     command: &wire::AdmittedCommand,
     selected: &Entry,
     entries: &[Entry],
-    next: Option<Box<str>>,
-    origin_context: Option<Box<str>>,
-    room_context: Option<Box<str>>,
+    reading: ClaimReading,
     transplant: Option<&wire::intent::ClaimTransplant>,
     nothing_stolen: bool,
 ) -> wire::intent::ClaimAnswer {
+    let ClaimReading {
+        next,
+        origin_context,
+        room_context,
+    } = reading;
     wire::intent::ClaimAnswer {
         task: selected.handle().clone(),
         statement: Some(Box::new(wire::intent::ClaimStatement {
@@ -445,19 +459,24 @@ pub(in crate::board_command) fn commit_claim(
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard_claim(&mut write, &snapshot, command, possession, &task, projects);
-    if let Err(outcome) = append_claim_heads(
+    if let Err(outcome) = mint_claim(
         &mut write,
-        command,
-        &selected,
-        &born,
-        lane,
-        occupant,
-        at,
-        expiry,
-        maximum,
-        git,
-        win.recovery.clone(),
-        source,
+        board::allocate::Mint {
+            task: &born,
+            actor: command.actor(),
+            workflow: selected.workflow(),
+            project: selected.project().as_str(),
+            lane,
+            occupant,
+            epoch: command.epoch(),
+            at,
+            expiry,
+            maximum,
+            git,
+            recovery: win.recovery.clone(),
+            source,
+            cause: None,
+        },
     ) {
         if let Some(prepared) = prepared_git
             && let Err(error) = prepared.rollback()
@@ -481,9 +500,11 @@ pub(in crate::board_command) fn commit_claim(
         command,
         &selected,
         &snapshot.entries,
-        next,
-        origin_context,
-        room_context,
+        ClaimReading {
+            next,
+            origin_context,
+            room_context,
+        },
         prepared_git
             .as_ref()
             .and_then(spice::task_git::ClaimPreparation::transplant),
@@ -1048,45 +1069,12 @@ fn guard_claim(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one claim fact and its two heads share one boundary"
-)]
-fn append_claim_heads(
+/// Mint one claim and its two heads, naming the head whose build refused.
+pub(in crate::board_command) fn mint_claim(
     write: &mut JournalWrite,
-    command: &wire::AdmittedCommand,
-    selected: &Entry,
-    task: &wire::TaskStamp,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    at: Instant,
-    expiry: Instant,
-    maximum: Instant,
-    git: Option<GitBoundary>,
-    recovery: Option<String>,
-    source: body::SourceBoundary,
-) -> Result<(), Outcome<CommandAnswer>> {
-    board::allocate::mint(
-        write,
-        board::allocate::Mint {
-            task,
-            actor: command.actor(),
-            workflow: selected.workflow(),
-            project: selected.project().as_str(),
-            lane,
-            occupant,
-            epoch: command.epoch(),
-            at,
-            expiry,
-            maximum,
-            git,
-            recovery,
-            source,
-            cause: None,
-        },
-    )
-    .map(|_| ())
-    .map_err(|error| match error {
+    mint: board::allocate::Mint<'_>,
+) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    board::allocate::mint(write, mint).map_err(|error| match error {
         board::allocate::MintError::Assignment(error) => {
             store_fault("review::assignment-build", &error.to_string())
         }

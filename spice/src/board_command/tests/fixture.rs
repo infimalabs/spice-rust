@@ -549,7 +549,13 @@ pub(super) fn add_project(
     project: &str,
     flow: Option<&str>,
 ) -> TaskHandle {
-    add_project_with_acceptance(bus, epoch, actor, task, title, project, flow, &[])
+    issue_add(
+        bus,
+        epoch,
+        actor,
+        task,
+        authored_add(title, project, flow, &[]),
+    )
 }
 
 /// An admitted authored creation cause for fixtures that need any one.
@@ -557,46 +563,66 @@ pub(super) fn fixture_origin() -> wire::Origin {
     "ack:fixtures".parse().expect("fixture origin is valid")
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "task fixtures retain the command's authored fields"
-)]
+/// Add one operator-authored task carrying `acceptance`; without items the
+/// flow defaults to the ordinary two phases.
 pub(super) fn add_project_with_acceptance(
     bus: &Bus,
     epoch: CanonicalUuid,
-    actor: Actor,
     task: &str,
     title: &str,
     project: &str,
     flow: Option<&str>,
     acceptance: &[&str],
 ) -> TaskHandle {
+    issue_add(
+        bus,
+        epoch,
+        Actor::Operator,
+        task,
+        authored_add(title, project, flow, acceptance),
+    )
+}
+
+fn authored_add(title: &str, project: &str, flow: Option<&str>, acceptance: &[&str]) -> TaskAdd {
+    TaskAdd {
+        preparation: None,
+        intent: None,
+        title: title.to_owned(),
+        pitch: "This work keeps the fixture honest.".to_owned(),
+        project: Some(project.to_owned()),
+        description: None,
+        acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
+        requirements: wire::EnvironmentRequirements::default(),
+        origin: Some(fixture_origin()),
+        flow: flow
+            .or_else(|| acceptance.is_empty().then_some("todo,review"))
+            .map(str::to_owned),
+        depends: Vec::new(),
+        claim: false,
+        draft: false,
+    }
+}
+
+fn issue_add(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    task: &str,
+    add: TaskAdd,
+) -> TaskHandle {
     let born = stamp(task);
+    let project = add
+        .project
+        .as_deref()
+        .expect("authored fixture names its project");
     let task = TaskHandle::for_project(project, &born);
-    let origin = fixture_origin();
     assert_committed(issue(
         bus,
         epoch,
         actor,
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
-        &TaskAdd {
-            preparation: None,
-            intent: None,
-            title: title.to_owned(),
-            pitch: "This work keeps the fixture honest.".to_owned(),
-            project: Some(project.to_owned()),
-            description: None,
-            acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
-            requirements: wire::EnvironmentRequirements::default(),
-            origin: Some(origin),
-            flow: flow
-                .or_else(|| acceptance.is_empty().then_some("todo,review"))
-                .map(str::to_owned),
-            depends: Vec::new(),
-            claim: false,
-            draft: false,
-        },
+        &add,
     ));
     task
 }
