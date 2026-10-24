@@ -58,11 +58,10 @@ disallowed_methods = "deny"
 # unoptimized development profile for a short edit/build/install loop. The
 # installed development appliance remains stripped because every hook
 # authenticates and copies its complete bytes; release assembly selects its
-# independently optimized profile with `--release`. Test builds likewise keep
-# the large gate and Spice crates
-# unoptimized so a fresh selected-tree path stays inside the canonical
-# workspace-test shard deadline; only the small hashing and wire hotspots stay
-# optimized in that profile.
+# independently optimized profile with `--release`. Test builds keep every
+# workspace crate unoptimized, wire included, because each package's test
+# shard resolves its own dependency features and so recompiles shared crates;
+# only the small third-party hashing hotspots stay optimized in that profile.
 [profile.dev]
 debug = 1
 
@@ -99,7 +98,7 @@ opt-level = 3
 opt-level = 3
 
 [profile.test.package.wire]
-opt-level = 3
+opt-level = 0
 
 [profile.test.package.gate]
 opt-level = 0
