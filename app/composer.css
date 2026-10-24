@@ -482,18 +482,15 @@
 .team-surface:has(+ .team-surface) .team-composer {
   box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
-/* Where two consoles touch, each status band rounds its touching top corner
-   with a lane-top tab's radius. The fleet flows right to left, so the earlier
+/* Where two consoles touch, their status bands meet flush, square like the
+   flush tab strips above them. The fleet flows right to left, so the earlier
    console's touching edge is its left one. Only the earlier console draws the
    dividing rule: its band and pane share one hairline start border in the
    soft edge tone, half the app's 1px edge, so its top rule turns down into
    that rule while the tab row above stays open. The later band has no end
-   border, so its rounded top rule tapers away against the earlier edge. The
-   sibling selectors leave both outer fleet edges bare. */
+   border. The sibling selectors leave both outer fleet edges bare. */
 .team-surface:has(+ .team-surface) > .team-toolbar > .team-status-row,
 .team-surface:has(+ .team-surface) > .team-pane { border-inline-start: .5px solid var(--line-soft); }
-.team-surface:has(+ .team-surface) > .team-toolbar > .team-status-row { border-start-start-radius: var(--app-radius-card); }
-.team-surface + .team-surface > .team-toolbar > .team-status-row { border-start-end-radius: var(--app-radius-card); }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);
