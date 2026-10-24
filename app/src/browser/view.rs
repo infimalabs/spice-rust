@@ -172,7 +172,7 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
     let surface = render.surface.read();
     let runtime = surface.as_ref();
     let content = match content {
-        super::sidebar::Content::Spice => render_spice_sidebar(render, runtime),
+        super::sidebar::Content::Spice => render_spice_sidebar(render, runtime, work),
         super::sidebar::Content::Tasks(selection) => {
             let Some(work) = work else {
                 return Html::default();
@@ -215,7 +215,11 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
         close: render.close_sidebar.clone(),
     })
 }
-fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) -> sidebar::Content {
+fn render_spice_sidebar(
+    render: &AppRender<'_>,
+    runtime: Option<&AppRuntime>,
+    work: Option<&WorkProjection<'_>>,
+) -> sidebar::Content {
     let standings = spice_standings(render, runtime).map(Rc::new);
     let body = html! {
         <div class="app-spice-sidebar-content">
@@ -233,7 +237,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
             )}
             {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
             {super::drafts::render_section(runtime, render.draft_controls, render.sender, &render.select_task)}
-            {super::rooms::render_catalog(runtime, render.room_controls, render.sender)}
+            {super::rooms::render_catalog(runtime, work, render.room_controls, render.sender)}
             {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}
             {quota::render_sidebar(runtime)}
         </div>
