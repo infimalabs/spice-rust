@@ -182,13 +182,21 @@ pub(super) fn build(
 
     let payload = media.join("spice");
     let drivers = payload.join("drivers");
-    fs::create_dir_all(&drivers)
-        .map_err(|error| format!("cannot create {}: {error}", drivers.display()))?;
-    copy_network_driver(
+    for directory in ["network", "serial"] {
+        fs::create_dir_all(drivers.join(directory)).map_err(|error| {
+            format!(
+                "cannot create {}: {error}",
+                drivers.join(directory).display()
+            )
+        })?;
+    }
+    copy_drivers(
         paths,
         inputs.drivers,
-        &declaration.drivers.network,
-        &drivers,
+        &[
+            (&declaration.drivers.network, &drivers.join("network")),
+            (&declaration.drivers.serial, &drivers.join("serial")),
+        ],
     )?;
     copy(inputs.openssh, &payload.join("openssh.msi"))?;
     copy(inputs.runtime, &payload.join("vc_redist.x64.exe"))?;
@@ -204,12 +212,8 @@ pub(super) fn remove_build(paths: &Paths) -> Result<(), String> {
     remove_file(&paths.media_image())
 }
 
-fn copy_network_driver(
-    paths: &Paths,
-    iso: &Path,
-    network: &str,
-    destination: &Path,
-) -> Result<(), String> {
+/// Copy each `(iso directory, destination)` driver set out of the virtio ISO.
+fn copy_drivers(paths: &Paths, iso: &Path, sets: &[(&str, &Path)]) -> Result<(), String> {
     let mount = paths.drivers_mount();
     remove_tree(&mount)?;
     fs::create_dir_all(&mount)
@@ -230,7 +234,9 @@ fn copy_network_driver(
             .arg(iso),
         "hdiutil attach drivers",
     )?;
-    let copied = copy_driver_files(&mount.join(network), destination);
+    let copied = sets
+        .iter()
+        .try_for_each(|(source, destination)| copy_driver_files(&mount.join(source), destination));
     let detached = run_tool(
         Command::new(HDIUTIL).arg("detach").arg(&mount),
         "hdiutil detach drivers",

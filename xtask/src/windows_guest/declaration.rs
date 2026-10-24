@@ -79,6 +79,7 @@ pub(super) struct Drivers {
     sha256: String,
     bytes: u64,
     pub network: String,
+    pub serial: String,
 }
 
 impl Declaration {

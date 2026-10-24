@@ -1,9 +1,10 @@
-//! QEMU process, QMP control, disk lifecycle, and SSH reachability.
+//! QEMU process, QMP control, disk lifecycle, and SSH readiness.
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{BufRead as _, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -21,7 +22,11 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(3 * 60 * 60);
 const BOOT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const SSH_RETRY: Duration = Duration::from_secs(5);
+/// The virtio-serial port name the guest's announcer opens as
+/// `\\.\Global\org.spice.ready`; the setup script names the same port.
+const READY_PORT: &str = "org.spice.ready";
+/// The line the guest's announcer writes on that port once sshd listens.
+const READY_LINE: &str = "ready";
 
 /// Machine-local guest state beneath the repository's shared Spice directory.
 pub(super) struct Paths {
@@ -89,6 +94,12 @@ impl Paths {
         self.root.join("screen.png")
     }
 
+    /// Unix socket QEMU serves for the guest's serial port; the guest writes
+    /// [`READY_LINE`] on it once sshd listens.
+    fn ready_socket(&self) -> PathBuf {
+        self.root.join("ready.sock")
+    }
+
     /// Remove every guest artifact except verified downloads in the cache.
     pub(super) fn remove_guest(&self) -> Result<(), String> {
         for path in [
@@ -100,6 +111,7 @@ impl Paths {
             self.record(),
             self.media_image(),
             self.screen(),
+            self.ready_socket(),
         ] {
             remove_file(&path)?;
         }
@@ -279,13 +291,64 @@ pub(super) fn reset(paths: &Paths, declaration: &Declaration) -> Result<(), Stri
     copy_writable(&paths.base_variables(), &paths.variables())
 }
 
-/// Start the persistent guest in the background and wait until SSH answers.
+/// What one wait on the guest's readiness port learned.
+#[derive(Debug, Eq, PartialEq)]
+enum Readiness {
+    /// The guest wrote [`READY_LINE`]: sshd listens.
+    Announced,
+    /// QEMU closed the port: the guest exited.
+    Stopped,
+    /// The bound expired before any announcement.
+    Silent,
+}
+
+/// Block on the readiness port until the guest announces, QEMU closes it, or
+/// `arm` declines to bound another read.
+///
+/// `arm` runs before every read and sets that read's timeout from whatever
+/// time remains; it answers false once nothing remains. Lines other than the
+/// announcement are firmware or driver chatter and are read past.
+fn readiness(
+    reader: &mut impl BufRead,
+    mut arm: impl FnMut() -> bool,
+) -> Result<Readiness, String> {
+    let mut line = String::new();
+    loop {
+        if !arm() {
+            return Ok(Readiness::Silent);
+        }
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => return Ok(Readiness::Stopped),
+            Ok(_) if line.trim_end_matches(['\r', '\n']) == READY_LINE => {
+                return Ok(Readiness::Announced);
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                return Ok(Readiness::Silent);
+            }
+            Err(error) => {
+                return Err(format!("cannot read the guest's readiness port: {error}"));
+            }
+        }
+    }
+}
+
+/// Start the persistent guest in the background and wait until it announces
+/// that SSH answers.
 pub(super) fn boot(
     paths: &Paths,
     declaration: &Declaration,
     host_key: HostKey,
 ) -> Result<(), String> {
     let machine = &declaration.machine;
+    let socket = paths.ready_socket();
+    remove_file(&socket)?;
     run_tool(
         Command::new(&declaration.tools.qemu_system.path)
             .args(qemu_arguments(paths, declaration, &paths.overlay(), false))
@@ -293,23 +356,25 @@ pub(super) fn boot(
             .stdin(Stdio::null()),
         "QEMU",
     )?;
-    let started = Instant::now();
-    loop {
-        let reachable = ssh(paths, machine, host_key)
-            .args(["exit", "0"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|error| format!("cannot start ssh: {error}"))?
-            .success();
-        if reachable {
-            return Ok(());
-        }
-        if !running(machine.qmp_port) {
+    // QEMU serves the socket before it daemonizes, so the connection is
+    // open long before Windows reaches its services.
+    let deadline = Instant::now() + BOOT_TIMEOUT;
+    let stream = UnixStream::connect(&socket).map_err(|error| {
+        format!(
+            "cannot open the guest's readiness socket {}: {error}",
+            socket.display()
+        )
+    })?;
+    let mut reader = BufReader::new(&stream);
+    match readiness(&mut reader, || {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        !remaining.is_zero() && stream.set_read_timeout(Some(remaining)).is_ok()
+    })? {
+        Readiness::Announced => {}
+        Readiness::Stopped => {
             return Err("the guest stopped before SSH became reachable".to_owned());
         }
-        if started.elapsed() > BOOT_TIMEOUT {
+        Readiness::Silent => {
             capture_screen(machine.qmp_port, &paths.screen());
             return Err(format!(
                 "SSH did not answer within {} minutes; the guest is still running and its screen is saved to {}",
@@ -317,9 +382,19 @@ pub(super) fn boot(
                 paths.screen().display()
             ));
         }
-        // The guest announces nothing to the host when its SSH service comes
-        // up; a refused forward is the only way to learn it is not up yet.
-        thread::sleep(SSH_RETRY);
+    }
+    let reachable = ssh(paths, machine, host_key)
+        .args(["exit", "0"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("cannot start ssh: {error}"))?
+        .success();
+    if reachable {
+        Ok(())
+    } else {
+        Err("the guest announced SSH readiness but refused the SSH connection".to_owned())
     }
 }
 
@@ -427,6 +502,20 @@ fn qemu_arguments(
     arguments.push("virtio-net-pci,netdev=net".into());
     arguments.push("-qmp".into());
     arguments.push(format!("tcp:127.0.0.1:{},server=on,wait=off", machine.qmp_port).into());
+    // The guest announces on a named virtio-serial port, which the pinned
+    // vioserial driver exposes as \\.\Global\<name>. Windows ARM64 drives
+    // neither the virt machine's PL011 (`-serial`) nor a PCI 16550. The
+    // port's host end is the readiness socket.
+    arguments.push("-chardev".into());
+    arguments.push(with_path(
+        "socket,id=ready,server=on,wait=off",
+        "path",
+        &paths.ready_socket(),
+    ));
+    arguments.push("-device".into());
+    arguments.push("virtio-serial-pci".into());
+    arguments.push("-device".into());
+    arguments.push(format!("virtserialport,chardev=ready,name={READY_PORT}").into());
     for option in ["-display", "none", "-monitor", "none", "-serial", "none"] {
         arguments.push(option.into());
     }
@@ -434,10 +523,17 @@ fn qemu_arguments(
 }
 
 fn drive(options: &str, file: &Path) -> OsString {
+    with_path(options, "file", file)
+}
+
+/// `options` with a `key=` path appended, escaped as QEMU option values are.
+fn with_path(options: &str, key: &str, path: &Path) -> OsString {
     let mut value = OsString::from(options);
-    value.push(",file=");
+    value.push(",");
+    value.push(key);
+    value.push("=");
     // QEMU option values escape a literal comma by doubling it.
-    value.push(file.to_string_lossy().replace(',', ",,"));
+    value.push(path.to_string_lossy().replace(',', ",,"));
     value
 }
 
@@ -557,5 +653,67 @@ impl Qmp {
                 Err(error) => return error.kind() == std::io::ErrorKind::UnexpectedEof,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Read};
+
+    use super::*;
+
+    /// A port whose reads time out after its scripted bytes run out.
+    struct Port {
+        bytes: io::Cursor<Vec<u8>>,
+        then_closes: bool,
+    }
+
+    impl Read for Port {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            match self.bytes.read(buffer)? {
+                0 if self.then_closes => Ok(0),
+                0 => Err(io::ErrorKind::TimedOut.into()),
+                read => Ok(read),
+            }
+        }
+    }
+
+    fn port(bytes: &str, then_closes: bool) -> BufReader<Port> {
+        BufReader::new(Port {
+            bytes: io::Cursor::new(bytes.as_bytes().to_vec()),
+            then_closes,
+        })
+    }
+
+    #[test]
+    fn the_announcement_is_found_past_earlier_chatter() {
+        let mut reader = port("firmware noise\r\nready\r\nlater\r\n", false);
+        assert_eq!(readiness(&mut reader, || true), Ok(Readiness::Announced));
+    }
+
+    #[test]
+    fn a_closed_port_means_the_guest_stopped() {
+        let mut reader = port("partial", true);
+        assert_eq!(readiness(&mut reader, || true), Ok(Readiness::Stopped));
+    }
+
+    #[test]
+    fn a_timed_out_read_means_the_guest_stayed_silent() {
+        let mut reader = port("not yet\n", false);
+        assert_eq!(readiness(&mut reader, || true), Ok(Readiness::Silent));
+    }
+
+    #[test]
+    fn an_expired_bound_stops_before_another_read() {
+        let mut reader = port("ready\n", false);
+        assert_eq!(readiness(&mut reader, || false), Ok(Readiness::Silent));
+    }
+
+    #[test]
+    fn qemu_option_paths_escape_commas() {
+        assert_eq!(
+            with_path("socket,id=ready", "path", Path::new("/a,b/ready.sock")),
+            OsString::from("socket,id=ready,path=/a,,b/ready.sock")
+        );
     }
 }
