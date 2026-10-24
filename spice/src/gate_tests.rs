@@ -107,6 +107,10 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
             OsString::from("/toolchain/cargo"),
         ),
+        (
+            OsString::from(crate::rtk::HISTORY_VARIABLE),
+            OsString::from("/fixture/rtk/producer-lane/history.db"),
+        ),
     ]);
     let consumer = compiler_environment_from([
         (
@@ -132,6 +136,14 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from("/toolchain/cargo"),
         ),
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
+        (
+            OsString::from(crate::rtk::HISTORY_VARIABLE),
+            OsString::from("/fixture/rtk/consumer-lane/history.db"),
+        ),
+        (
+            OsString::from(crate::agent_launch::OMP_DISABLE_LSPMUX),
+            OsString::from("1"),
+        ),
     ]);
 
     assert_eq!(producer, consumer);
