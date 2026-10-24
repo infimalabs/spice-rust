@@ -2,7 +2,7 @@ use super::*;
 
 /// A Design releases its next step whatever its phase spelling: an accepted
 /// ordinary output loses only its Design edge and becomes capturable work with
-/// no Plan between them, while its rejected sibling stays gated.
+/// no Plan between them, while the veto closes its rejected sibling.
 #[test]
 fn a_design_selects_an_ordinary_output_with_an_open_vocabulary_phase() {
     let (root, bus, epoch, seats) = fixture("preparation-design-ordinary-output", 2);
