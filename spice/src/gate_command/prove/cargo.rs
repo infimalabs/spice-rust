@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) const RUNNER: &str = "spice-cargo-proof-shard";
 pub(super) const INPUT_STRATEGY: &str = "cargo-package-closure-v2";
-pub(super) const TEST_SHARD_DECLARATION: &str = "gate::cargo-workspace-tests::proof-shard-v3";
+pub(super) const TEST_SHARD_DECLARATION: &str = "gate::cargo-workspace-tests::proof-shard-v4";
 
 pub(super) struct Execution {
     shard: CargoGateShard,

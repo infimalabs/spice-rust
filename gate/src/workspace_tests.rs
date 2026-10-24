@@ -124,6 +124,10 @@ const CARGO_STARTUP_DOMINATED_TARGET_LIMIT: usize = 2;
 /// The finite inventory and this per-shard bound compose the coordinator bound;
 /// a separate aggregate cutoff could cancel healthy shards in later waves.
 const SHARD_DEADLINE: Duration = Duration::from_secs(180);
+/// A proof test shard's workspace-wide prebuild compiles every workspace test
+/// target, which cold exceeds [`SHARD_DEADLINE`]; a timed-out prebuild keeps its
+/// finished units, so a retry resumes rather than restarts.
+const WORKSPACE_PREBUILD_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const METADATA_DEADLINE: Duration = Duration::from_secs(30);
 const OUTPUT_DRAIN_DEADLINE: Duration = Duration::from_secs(5);
