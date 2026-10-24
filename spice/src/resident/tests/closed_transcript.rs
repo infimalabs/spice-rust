@@ -41,7 +41,8 @@ fn a_closing_seat_presents_every_record_its_occupant_left_behind() {
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let generation = publisher.batch().expect("closing generation begins");
-    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation);
+    let ambient = spice::ambient::capture();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation, &ambient);
 
     drop(seats.vacate(lane));
     for (closed_lane, closed_occupant) in seats.take_vacated() {

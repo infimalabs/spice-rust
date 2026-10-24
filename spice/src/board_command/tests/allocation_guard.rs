@@ -382,7 +382,7 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
 ///
 /// The project policy and allocator config are the ones `dispatch` builds, so
 /// the plan is the plan the ordinary command door would have made.
-fn plan_claim(bus: &Bus, command: &wire::AdmittedCommand) -> ClaimPlan {
+fn plan_claim(bus: &Bus, command: &wire::AdmittedCommand) -> ClaimPlan<'static> {
     match claim_plan(
         bus,
         command,

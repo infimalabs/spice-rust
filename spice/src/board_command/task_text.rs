@@ -188,7 +188,7 @@ pub(crate) fn text_edit(
 
 /// The current evidence of one task, read as an edit of it reads it.
 pub(crate) fn current_task(
-    repository: &Repository,
+    repository: Host<'_>,
     task: &TaskHandle,
 ) -> Result<BoardTask, Outcome<CommandAnswer>> {
     let board = current_board(repository, single_task_read(task))?;
@@ -198,7 +198,7 @@ pub(crate) fn current_task(
 /// Replace `text` of `task` through the `task modify` intent, as the CLI's
 /// actor, when `named` is the digest of the text it replaces.
 pub(crate) fn replace_text(
-    repository: &Repository,
+    repository: Host<'_>,
     task: &TaskHandle,
     text: TaskText,
     named: Option<&Digest>,

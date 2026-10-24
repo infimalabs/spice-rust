@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn materialize_and_update(
-    root: &Path,
+    root: Worktree<'_>,
     target: &str,
     expected: &str,
     action: &str,
@@ -16,7 +16,7 @@ pub(super) fn materialize_and_update(
 /// before this update, so this one owned transition must not invoke hooks that
 /// guard operator-authored reference changes.
 pub(super) fn materialize_and_update_owned(
-    root: &Path,
+    root: Worktree<'_>,
     target: &str,
     expected: &str,
     action: &str,
@@ -25,7 +25,7 @@ pub(super) fn materialize_and_update_owned(
 }
 
 pub(super) fn materialize_release(
-    root: &Path,
+    root: Worktree<'_>,
     target: &str,
     expected: &str,
     snapshot: &snapshot::Captured,
@@ -41,7 +41,7 @@ pub(super) fn materialize_release(
 }
 
 fn materialize_and_update_with_hooks(
-    root: &Path,
+    root: Worktree<'_>,
     target: &str,
     expected: &str,
     action: &str,
@@ -112,7 +112,7 @@ fn materialize_and_update_with_hooks(
 }
 
 pub(super) fn materialize_resolution(
-    root: &Path,
+    root: Worktree<'_>,
     target: &str,
     expected: &str,
     tree: &str,
@@ -160,7 +160,7 @@ pub(super) fn materialize_resolution(
 /// sealed resolution, so whatever the integration held at the baseline stays
 /// staged against it.
 pub(super) fn materialize_integration(
-    root: &Path,
+    root: Worktree<'_>,
     target: &str,
     expected: &str,
     label: &str,
@@ -194,7 +194,7 @@ pub(super) fn materialize_integration(
 }
 
 fn update_ref(
-    root: &Path,
+    root: Worktree<'_>,
     reference: &str,
     target: &str,
     expected: &str,
@@ -217,7 +217,7 @@ fn update_ref(
     }
 }
 
-fn restore_move_failure(root: &Path, error: Error) -> Error {
+fn restore_move_failure(root: Worktree<'_>, error: Error) -> Error {
     match recover_pending(root) {
         Ok(()) => error,
         Err(recovery) => recovery,
@@ -225,7 +225,7 @@ fn restore_move_failure(root: &Path, error: Error) -> Error {
 }
 
 pub(super) fn materialize_conflict(
-    root: &Path,
+    root: Worktree<'_>,
     merged_tree: &str,
     records: &[String],
     agent: &str,
@@ -251,7 +251,7 @@ pub(super) fn materialize_conflict(
 }
 
 fn install_conflict(
-    root: &Path,
+    root: Worktree<'_>,
     merged_tree: &str,
     records: &[String],
     agent: &str,
@@ -343,7 +343,7 @@ pub(super) fn conflict_error(label: &str, upstream: &str) -> Error {
     )
 }
 
-pub(super) fn require_no_open_merge(root: &Path, label: &str) -> Result<(), Error> {
+pub(super) fn require_no_open_merge(root: Worktree<'_>, label: &str) -> Result<(), Error> {
     if let Some(upstream) = try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])? {
         return Err(conflict_error(label, &upstream));
     }
@@ -351,7 +351,7 @@ pub(super) fn require_no_open_merge(root: &Path, label: &str) -> Result<(), Erro
 }
 
 /// Refuse a dirty lane with recovery's generic advice.
-pub(super) fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
+pub(super) fn require_clean(root: Worktree<'_>, action: &str) -> Result<(), Error> {
     require_clean_or(
         root,
         action,
@@ -363,7 +363,11 @@ pub(super) fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
 ///
 /// An open merge overrides `remedy`: its paths are a merge to resolve, and
 /// committing it by hand would bypass the completion that owns it.
-pub(super) fn require_clean_or(root: &Path, action: &str, remedy: &str) -> Result<(), Error> {
+pub(super) fn require_clean_or(
+    root: Worktree<'_>,
+    action: &str,
+    remedy: &str,
+) -> Result<(), Error> {
     let status = required_read(root, &["status", "--porcelain"], "inspect worktree")?;
     if status.is_empty() {
         return Ok(());
@@ -385,7 +389,11 @@ pub(super) fn require_clean_or(root: &Path, action: &str, remedy: &str) -> Resul
     ))
 }
 
-pub(super) fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, Error> {
+pub(super) fn is_ancestor(
+    root: Worktree<'_>,
+    ancestor: &str,
+    descendant: &str,
+) -> Result<bool, Error> {
     let output = run(root, &["merge-base", "--is-ancestor", ancestor, descendant])?;
     match output.status {
         0 => Ok(true),
@@ -397,7 +405,10 @@ pub(super) fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Resu
     }
 }
 
-pub(super) fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<String>, Error> {
+pub(super) fn merge_first_parent(
+    root: Worktree<'_>,
+    commit: &str,
+) -> Result<Option<String>, Error> {
     let line = required_read(
         root,
         &["rev-list", "--parents", "-n", "1", commit],
@@ -407,7 +418,10 @@ pub(super) fn merge_first_parent(root: &Path, commit: &str) -> Result<Option<Str
     Ok((parents.len() >= 2).then(|| parents[0].to_owned()))
 }
 
-pub(super) fn merge_second_parent(root: &Path, commit: &str) -> Result<Option<String>, Error> {
+pub(super) fn merge_second_parent(
+    root: Worktree<'_>,
+    commit: &str,
+) -> Result<Option<String>, Error> {
     let line = required_read(
         root,
         &["rev-list", "--parents", "-n", "1", commit],
@@ -418,7 +432,7 @@ pub(super) fn merge_second_parent(root: &Path, commit: &str) -> Result<Option<St
 }
 
 pub(super) fn recovered_lane_head(
-    root: &Path,
+    root: Worktree<'_>,
     head: &str,
     meta: Metadata<'_>,
 ) -> Result<Option<String>, Error> {
@@ -509,7 +523,7 @@ pub(super) fn compose_message(meta: Metadata<'_>) -> String {
     format!("{prefix}{title} {}{phase}\n\n{trailers}", meta.label)
 }
 
-pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
+pub(super) fn recover_pending(root: Worktree<'_>) -> Result<(), Error> {
     let marker = transaction_path(root)?;
     let bytes = match fs::read(&marker) {
         Ok(bytes) => bytes,
@@ -556,7 +570,12 @@ pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
     remove_marker(&marker)
 }
 
-fn recover_resolution(root: &Path, expected: &str, target: &str, tree: &str) -> Result<(), Error> {
+fn recover_resolution(
+    root: Worktree<'_>,
+    expected: &str,
+    target: &str,
+    tree: &str,
+) -> Result<(), Error> {
     let current = required_read(root, &["rev-parse", "HEAD"], "recover task resolution")?;
     if current == target {
         let restored = run(root, &["read-tree", "--reset", "-u", target])?;
@@ -586,7 +605,7 @@ fn recover_resolution(root: &Path, expected: &str, target: &str, tree: &str) -> 
     }
 }
 
-fn recover_integration(root: &Path, expected: &str, target: &str) -> Result<(), Error> {
+fn recover_integration(root: Worktree<'_>, expected: &str, target: &str) -> Result<(), Error> {
     let current = required_read(root, &["rev-parse", "HEAD"], "recover task integration")?;
     if current == target {
         return clear_merge_state(root);
@@ -602,7 +621,7 @@ fn recover_integration(root: &Path, expected: &str, target: &str) -> Result<(), 
 }
 
 fn recover_move(
-    root: &Path,
+    root: Worktree<'_>,
     expected: &str,
     target: &str,
     dirty: Option<&snapshot::Rollback>,
@@ -643,7 +662,7 @@ fn recover_move(
 }
 
 fn recover_conflict(
-    root: &Path,
+    root: Worktree<'_>,
     agent: &str,
     upstream: &str,
     previous: &BTreeMap<String, Option<String>>,
@@ -682,7 +701,7 @@ fn recover_conflict(
     restore_merge_state(root, previous)
 }
 
-fn snapshot_merge_state(root: &Path) -> Result<BTreeMap<String, Option<String>>, Error> {
+fn snapshot_merge_state(root: Worktree<'_>) -> Result<BTreeMap<String, Option<String>>, Error> {
     MERGE_STATE_FILES
         .iter()
         .map(|name| {
@@ -700,7 +719,7 @@ fn snapshot_merge_state(root: &Path) -> Result<BTreeMap<String, Option<String>>,
 }
 
 fn restore_merge_state(
-    root: &Path,
+    root: Worktree<'_>,
     previous: &BTreeMap<String, Option<String>>,
 ) -> Result<(), Error> {
     for name in MERGE_STATE_FILES {
@@ -720,7 +739,7 @@ fn restore_merge_state(
     Ok(())
 }
 
-pub(super) fn clear_merge_state(root: &Path) -> Result<(), Error> {
+pub(super) fn clear_merge_state(root: Worktree<'_>) -> Result<(), Error> {
     for name in MERGE_STATE_FILES {
         let path = git_state_path(root, name)?;
         match fs::remove_file(&path) {
@@ -732,12 +751,12 @@ pub(super) fn clear_merge_state(root: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn write_git_state(root: &Path, name: &str, content: &str) -> Result<(), Error> {
+fn write_git_state(root: Worktree<'_>, name: &str, content: &str) -> Result<(), Error> {
     let path = git_state_path(root, name)?;
     fs::write(&path, content).map_err(|error| filesystem_fault("write Git state", &path, error))
 }
 
-pub(super) fn git_state_path(root: &Path, name: &str) -> Result<PathBuf, Error> {
+pub(super) fn git_state_path(root: Worktree<'_>, name: &str) -> Result<PathBuf, Error> {
     let written = required_read(
         root,
         &["rev-parse", "--git-path", name],
@@ -751,7 +770,7 @@ pub(super) fn git_state_path(root: &Path, name: &str) -> Result<PathBuf, Error> 
     })
 }
 
-pub(super) fn transaction_path(root: &Path) -> Result<PathBuf, Error> {
+pub(super) fn transaction_path(root: Worktree<'_>) -> Result<PathBuf, Error> {
     git_state_path(root, TRANSACTION_FILE)
 }
 

@@ -50,27 +50,28 @@ fn release_transition(
     })
 }
 
-pub(in crate::board_command) fn prepare_release(
+pub(in crate::board_command) fn prepare_release<'a>(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     claimed: Seq,
-    repository: Option<&Repository>,
+    repository: Option<Host<'a>>,
     planning_phase: Option<&str>,
-) -> Result<Option<spice::task_git::ParkedRelease>, Outcome<CommandAnswer>> {
+) -> Result<Option<spice::task_git::ParkedRelease<'a>>, Outcome<CommandAnswer>> {
     let Some(resident) = repository else {
         return Ok(None);
     };
-    let lane = task_repository(snapshot, command, resident)?;
+    let lane = task_repository(snapshot, command, &resident)?;
     let opening = snapshot
         .facts
         .at(claimed)
         .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
         .and_then(|won| won.git);
     if let Some(phase) = planning_phase {
-        spice::task_git::prepare_planning_free(&lane, phase, opening.as_ref())
+        spice::task_git::prepare_planning_free(&lane, resident.ambient, phase, opening.as_ref())
             .map_err(task_git_outcome)
     } else {
-        spice::task_git::prepare_free(&lane, opening.as_ref()).map_err(task_git_outcome)
+        spice::task_git::prepare_free(&lane, resident.ambient, opening.as_ref())
+            .map_err(task_git_outcome)
     }
 }
 
@@ -136,7 +137,7 @@ pub(in crate::board_command) fn claim_free(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     task: &TaskRef,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {

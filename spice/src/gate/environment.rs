@@ -1,6 +1,5 @@
 //! Canonical compiler environment shared by Cargo-launched and installed rims.
 
-use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
@@ -57,12 +56,8 @@ const SESSION_IDENTITY: [&str; 9] = [
     "TMUX_PANE",
 ];
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the canonical gate command rim owns compiler environment acquisition"
-)]
-pub(super) fn compiler_environment() -> Vec<(OsString, OsString)> {
-    compiler_environment_from(env::vars_os())
+pub(super) fn compiler_environment(ambient: &crate::ambient::Ambient) -> Vec<(OsString, OsString)> {
+    compiler_environment_from(ambient.variables().iter().cloned())
 }
 
 #[cfg(test)]

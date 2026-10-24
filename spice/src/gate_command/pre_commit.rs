@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 use gate::{ArmFamily, ClaimCapture, GateId};
 use serde::{Deserialize, Serialize};
 use sill::{
-    Acquisition, Argv, Cancellation, Completion, Deadlines, Environment, LockFile, LockName,
-    Output, Possession, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
-    StreamPolicy, WaitOutcome, WaitPolicy,
+    Acquisition, Argv, Cancellation, Completion, Deadlines, LockFile, LockName, Output, Possession,
+    ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome,
+    WaitPolicy,
 };
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::{
     Actor, CanonicalUuid, Digest, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply,
@@ -335,24 +336,22 @@ pub(super) fn run(
     profile_output: Option<PathBuf>,
     configuration: Option<&spice::config::RepositoryCapture>,
     live: bool,
+    ambient: &Ambient,
 ) -> Outcome<Report> {
     let mut profile = profile::Profile::new(profile_output);
-    let outcome = run_profiled(&mut profile, configuration, live);
+    let outcome = run_profiled(&mut profile, configuration, live, ambient);
     profile.publish();
     outcome
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the pre-commit binary rim acquires its explicit hook environment"
-)]
 fn run_profiled(
     profile: &mut profile::Profile,
     configuration: Option<&spice::config::RepositoryCapture>,
     live: bool,
+    ambient: &Ambient,
 ) -> Outcome<Report> {
-    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
-        return configured::recursion_refusal(&source);
+    if let Some(source) = ambient.get(configured::SOURCE_VARIABLE) {
+        return configured::recursion_refusal(source);
     }
     let current = match env::current_dir() {
         Ok(current) => current,
@@ -368,7 +367,10 @@ fn run_profiled(
         Err(error) => return fault("cargo-output::lease-unavailable", error),
     };
     let capture_started = Instant::now();
-    let generation = if env::var_os(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT).is_some() {
+    let generation = if ambient
+        .get(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
+        .is_some()
+    {
         match capture_appliance_generation_fence(&repository) {
             Ok(generation) => generation,
             Err(failure) => return worker_failure(failure),
@@ -382,7 +384,7 @@ fn run_profiled(
         Err(failure) => return worker_failure(failure),
     };
     let core_started = Instant::now();
-    let claim = match capture_gate_claim(&repository) {
+    let claim = match capture_gate_claim(&repository, ambient) {
         Ok(claim) => claim,
         Err(failure) => return worker_failure(failure),
     };
@@ -392,6 +394,7 @@ fn run_profiled(
     };
     let prepared = configured::Dispatch::capture_at_with_claim_and_configuration(
         repository.clone(),
+        ambient,
         claim.clone(),
         configuration,
     );
@@ -411,12 +414,12 @@ fn run_profiled(
     if let Err(failure) = finish_appliance_generation_audit(&mut audit, profile) {
         return worker_failure(failure);
     }
-    run_with(|files| supervise(files, &generation, &claim, live))
+    run_with(|files| supervise(files, &generation, &claim, live, ambient))
 }
 
 fn run_admission_inline(
     claim: ClaimCapture,
-    dispatch: configured::Dispatch,
+    dispatch: configured::Dispatch<'_>,
     audit: &mut ApplianceGenerationAudit,
     profile: &mut profile::Profile,
 ) -> Outcome<Report> {
@@ -434,8 +437,11 @@ fn run_admission_inline(
     }
 }
 
-fn capture_gate_claim(repository: &Repository) -> Result<ClaimCapture, WorkerFailure> {
-    let Some(lane) = crate::bootstrap_environment(wire::SpiceVariable::Lane.as_str()) else {
+fn capture_gate_claim(
+    repository: &Repository,
+    ambient: &Ambient,
+) -> Result<ClaimCapture, WorkerFailure> {
+    let Some(lane) = ambient.get(wire::SpiceVariable::Lane.as_str()) else {
         return Ok(ClaimCapture::Idle);
     };
     let lane = lane.to_str().ok_or_else(|| WorkerFailure {
@@ -523,18 +529,18 @@ fn run_with(supervisor: impl FnOnce(&WorkerFiles) -> Outcome<Report>) -> Outcome
     }
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the hidden worker rim must reject configured-command recursion before reading caller paths"
-)]
-pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32> {
+pub(super) fn worker_entry(
+    mut arguments: impl Iterator<Item = OsString>,
+    ambient: &Ambient,
+) -> Option<i32> {
     let _executable = arguments.next()?;
     let worker = arguments.next()?;
     if worker.as_os_str() != OsStr::new(WORKER_ARGUMENT) {
         return None;
     }
-    if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
-        let refusal: Outcome<()> = configured::recursion_refusal(&source);
+    // Reject configured-command recursion before reading caller paths.
+    if let Some(source) = ambient.get(configured::SOURCE_VARIABLE) {
+        let refusal: Outcome<()> = configured::recursion_refusal(source);
         crate::render::render(&refusal, crate::render::Form::Text)
             .expect("typed recursion refusal renders as text")
             .speak();
@@ -571,6 +577,7 @@ pub(super) fn worker_entry(mut arguments: impl Iterator<Item = OsString>) -> Opt
         claim
             .as_deref()
             .expect("the pre-commit worker requires its board claim capture"),
+        ambient,
     );
     Some(match result {
         Ok(()) => 0,
@@ -586,6 +593,7 @@ fn supervise(
     generation: &ApplianceGenerationFence,
     claim: &ClaimCapture,
     live: bool,
+    ambient: &Ambient,
 ) -> Outcome<Report> {
     let parent = match ParentCancellation::capture() {
         Ok(parent) => parent,
@@ -614,6 +622,7 @@ fn supervise(
         ],
         ProcessBounds::production(),
         parent.cancellation(),
+        ambient,
     ) {
         Ok(spec) => spec,
         Err(error) => return fault("gate::pre-commit-worker-invalid", error),
@@ -649,6 +658,7 @@ fn worker_run(
     terminal: &Path,
     generation: &OsStr,
     claim: &OsStr,
+    ambient: &Ambient,
 ) -> io::Result<()> {
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
@@ -668,7 +678,7 @@ fn worker_run(
                 fault: true,
             })?;
             write_phase(&mut progress, &WorkerPhase::Capture).map_err(worker_io_failure)?;
-            dispatch(&mut progress, started, claim, &mut profile)
+            dispatch(&mut progress, started, claim, &mut profile, ambient)
         });
     match result {
         Ok(report) => {
@@ -1033,9 +1043,17 @@ fn worker_spec_with_cancellation(
     arguments: impl IntoIterator<Item = OsString>,
     bounds: ProcessBounds,
     cancellation: Cancellation,
+    ambient: &Ambient,
 ) -> Result<Spec, String> {
     let current = env::current_dir().map_err(|error| error.to_string())?;
-    worker_spec_at_with_cancellation(executable, arguments, &current, bounds, cancellation)
+    worker_spec_at_with_cancellation(
+        executable,
+        arguments,
+        &current,
+        bounds,
+        cancellation,
+        ambient,
+    )
 }
 
 fn worker_spec_at_with_cancellation(
@@ -1044,6 +1062,7 @@ fn worker_spec_at_with_cancellation(
     root: &Path,
     bounds: ProcessBounds,
     cancellation: Cancellation,
+    ambient: &Ambient,
 ) -> Result<Spec, String> {
     let capture = StreamPolicy::Capture {
         limit: OUTPUT_LIMIT,
@@ -1051,7 +1070,7 @@ fn worker_spec_at_with_cancellation(
     Ok(Spec {
         argv: Argv::new(executable, arguments).map_err(|error| error.to_string())?,
         cwd: root.to_path_buf(),
-        environment: ambient_environment().map_err(|error| error.to_string())?,
+        environment: ambient.environment().map_err(|error| error.to_string())?,
         group: ProcessGroup::New,
         deadlines: Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap)
             .map_err(|error| error.to_string())?,
@@ -1065,14 +1084,6 @@ fn worker_spec_at_with_cancellation(
         redaction: Redaction::All,
         grace: bounds.grace,
     })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the canonical commit-gate process rim captures the caller environment once"
-)]
-pub(super) fn ambient_environment() -> Result<Environment, sill::SpecError> {
-    Environment::new(env::vars_os())
 }
 
 #[cfg(test)]

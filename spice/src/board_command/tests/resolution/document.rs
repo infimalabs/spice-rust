@@ -24,7 +24,7 @@ fn doc_leaf_owns_classification_and_normal_form_reasons() {
         .expect("doc leaf parses");
     let contract = crate::cli::selected_contract(&matches).expect("doc contract is selected");
     let leaf = crate::cli::selected_matches(&matches);
-    let classification = run_doc(&repository, contract, leaf, dialect::emit);
+    let classification = run_doc(host(&repository), contract, leaf, dialect::emit);
     assert!(
         matches!(
             classification,
@@ -40,7 +40,7 @@ fn doc_leaf_owns_classification_and_normal_form_reasons() {
         .expect("doc leaf parses");
     let contract = crate::cli::selected_contract(&matches).expect("doc contract is selected");
     let leaf = crate::cli::selected_matches(&matches);
-    let normal_form = run_doc(&repository, contract, leaf, |_| " \n\t\n".to_owned());
+    let normal_form = run_doc(host(&repository), contract, leaf, |_| " \n\t\n".to_owned());
     assert!(
         matches!(
             normal_form,

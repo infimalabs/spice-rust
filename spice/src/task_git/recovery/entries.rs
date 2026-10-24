@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn capture_paths(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     paths: &[String],
     absence_allowed: bool,
@@ -26,7 +26,7 @@ pub(super) fn capture_paths(
 }
 
 pub(super) fn capture_entry(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     written: &str,
 ) -> Result<Option<StoredEntry>, Error> {
@@ -90,7 +90,11 @@ pub(super) fn read_entry_bytes(
     ))
 }
 
-pub(super) fn verify_paths(worktree: &Path, root: &Path, paths: &[PathState]) -> Result<(), Error> {
+pub(super) fn verify_paths(
+    worktree: Worktree<'_>,
+    root: &Path,
+    paths: &[PathState],
+) -> Result<(), Error> {
     for state in paths {
         let observed = observe_entry(worktree, &state.path)?;
         let expected = state.entry.as_ref().map(observation);
@@ -105,7 +109,7 @@ pub(super) fn verify_paths(worktree: &Path, root: &Path, paths: &[PathState]) ->
 }
 
 pub(super) fn observe_entry(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     written: &str,
 ) -> Result<Option<ObservedEntry>, Error> {
     let path = admitted_path(worktree, written)?;
@@ -129,14 +133,18 @@ pub(super) fn observation(entry: &StoredEntry) -> ObservedEntry {
     }
 }
 
-pub(super) fn restore_index(worktree: &Path, root: &Path, blob: &StoredBlob) -> Result<(), Error> {
+pub(super) fn restore_index(
+    worktree: Worktree<'_>,
+    root: &Path,
+    blob: &StoredBlob,
+) -> Result<(), Error> {
     let bytes = read_blob(root, blob)?;
     let path = git_state_path(worktree, "index")?;
     atomic_bytes(&path, &bytes, "restore exact Git index")
 }
 
 pub(super) fn restore_paths(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     paths: &[PathState],
 ) -> Result<(), Error> {
@@ -150,7 +158,7 @@ pub(super) fn restore_paths(
 }
 
 pub(super) fn write_entry(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     written: &str,
     entry: &StoredEntry,
@@ -164,7 +172,7 @@ pub(super) fn write_entry(
     }
 }
 
-pub(super) fn ensure_parents(worktree: &Path, written: &str) -> Result<(), Error> {
+pub(super) fn ensure_parents(worktree: Worktree<'_>, written: &str) -> Result<(), Error> {
     validate_relative(written)?;
     let mut cursor = worktree.to_path_buf();
     let components = Path::new(written).components().collect::<Vec<_>>();

@@ -20,6 +20,7 @@ use wire::{
 };
 
 use crate::cli::{Contract, Guard, Principal, ReplyPositionLaw};
+use spice::ambient::Ambient;
 
 mod browser;
 mod deadline_stream;
@@ -50,9 +51,9 @@ use session::{AuthenticatedSession, dialable_endpoint, open_session};
 #[cfg(test)]
 use session::{decode_opening, open_session_with};
 pub(crate) use steering::execute_steering;
-pub(crate) use typed::execute_typed;
 #[cfg(test)]
 use typed::kind_for;
+pub(crate) use typed::{Host, execute_typed};
 
 /// Bound for an opening that proves a contract and sends no command, so no
 /// registry row governs it.
@@ -149,12 +150,13 @@ struct ForeignRepository {
 fn foreign_repository(
     operator_discovery: &Path,
     connection: Connection,
+    ambient: &Ambient,
 ) -> Option<ForeignRepository> {
     if matches!(connection, Connection::Operator) {
         return None;
     }
-    let wrapper = crate::bootstrap_environment(wire::SpiceVariable::WrapperSpice.as_str())?;
-    foreign_repository_from_paths(connection, Path::new(&wrapper), operator_discovery)
+    let wrapper = ambient.get(wire::SpiceVariable::WrapperSpice.as_str())?;
+    foreign_repository_from_paths(connection, Path::new(wrapper), operator_discovery)
 }
 
 fn foreign_repository_from_paths(
@@ -193,14 +195,15 @@ pub(crate) fn execute(
     discovery_path: &Path,
     contract: &Contract,
     selected: SelectedCommand<'_>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let mapped = MappedCommand::selected(contract, selected);
-    let connection = match ambient_lane_identity() {
+    let connection = match ambient_lane_identity(ambient) {
         Ok(Some(lane)) => Connection::Lane(lane),
         Ok(None) => Connection::Operator,
         Err(outcome) => return outcome,
     };
-    execute_mapped(discovery_path, contract, connection, mapped)
+    execute_mapped(discovery_path, contract, connection, mapped, ambient)
 }
 
 /// Submit one contract-bound command through the operator connection even
@@ -212,9 +215,16 @@ pub(crate) fn execute_operator(
     discovery_path: &Path,
     contract: &Contract,
     selected: SelectedCommand<'_>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let mapped = MappedCommand::selected(contract, selected);
-    execute_mapped(discovery_path, contract, Connection::Operator, mapped)
+    execute_mapped(
+        discovery_path,
+        contract,
+        Connection::Operator,
+        mapped,
+        ambient,
+    )
 }
 
 fn execute_mapped(
@@ -222,8 +232,16 @@ fn execute_mapped(
     contract: &Contract,
     connection: Connection,
     mapped: ClientResult<MappedCommand>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
-    execute_mapped_with(operator_discovery, contract, connection, mapped, |_| {})
+    execute_mapped_with(
+        operator_discovery,
+        contract,
+        connection,
+        mapped,
+        ambient,
+        |_| {},
+    )
 }
 
 fn execute_mapped_with(
@@ -231,13 +249,14 @@ fn execute_mapped_with(
     contract: &Contract,
     connection: Connection,
     mapped: ClientResult<MappedCommand>,
+    ambient: &Ambient,
     after_transient: impl FnMut(&Fault),
 ) -> Outcome<CommandAnswer> {
     let mapped = match mapped {
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let foreign = foreign_repository(operator_discovery, connection);
+    let foreign = foreign_repository(operator_discovery, connection, ambient);
     let discovery_path = selected_discovery_path(operator_discovery, connection);
     let bound = answer_bound(mapped.kind, &discovery_path);
     execute_mapped_within(
@@ -358,13 +377,15 @@ fn restart_unfinished(
 pub(crate) fn authenticate(
     discovery_path: &Path,
     contract: &Contract,
+    ambient: &Ambient,
 ) -> ClientResult<CanonicalUuid> {
-    authenticate_with(discovery_path, contract, |_| {})
+    authenticate_with(discovery_path, contract, ambient, |_| {})
 }
 
 fn authenticate_with(
     discovery_path: &Path,
     contract: &Contract,
+    ambient: &Ambient,
     after_transient: impl FnMut(&Fault),
 ) -> ClientResult<CanonicalUuid> {
     if !contract.guards.contains(&Guard::Resident) || matches!(contract.principal, Principal::Local)
@@ -374,8 +395,8 @@ fn authenticate_with(
             "selected CLI contract has no authenticated resident read mapping",
         ));
     }
-    let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
-    let foreign = foreign_repository(discovery_path, connection);
+    let connection = ambient_lane_identity(ambient)?.map_or(Connection::Operator, Connection::Lane);
+    let foreign = foreign_repository(discovery_path, connection, ambient);
     let selected = selected_discovery_path(discovery_path, connection);
     let resident_lock = resident_lock_path(discovery_path);
     let session = acquire_session_with(
@@ -408,6 +429,7 @@ fn read_inbox(
     operator_discovery: &Path,
     connection: Connection,
     lane: Option<CanonicalUuid>,
+    ambient: &Ambient,
 ) -> Result<InboxSnapshot, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["inbox"])
         .expect("the generated CLI registry carries the inbox contract");
@@ -421,7 +443,13 @@ fn read_inbox(
             retired: false,
         },
     )?;
-    let outcome = execute_mapped(operator_discovery, contract, connection, Ok(mapped));
+    let outcome = execute_mapped(
+        operator_discovery,
+        contract,
+        connection,
+        Ok(mapped),
+        ambient,
+    );
     match outcome {
         Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(position),
@@ -438,8 +466,10 @@ fn read_inbox(
 pub(crate) fn read_lane_inbox(
     operator_discovery: &Path,
     lane: CanonicalUuid,
+    ambient: &Ambient,
 ) -> Result<InboxAnswer, Outcome<CommandAnswer>> {
-    read_inbox(operator_discovery, Connection::Lane(lane), None).map(|snapshot| snapshot.answer)
+    read_inbox(operator_discovery, Connection::Lane(lane), None, ambient)
+        .map(|snapshot| snapshot.answer)
 }
 
 /// Resolve one quote target over the lane's own authenticated connection.
@@ -447,6 +477,7 @@ pub(crate) fn read_lane_quote(
     operator_discovery: &Path,
     lane: CanonicalUuid,
     target: &str,
+    ambient: &Ambient,
 ) -> Result<wire::QuoteResolution, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["quote"])
         .expect("the generated CLI registry carries the quote contract");
@@ -454,7 +485,13 @@ pub(crate) fn read_lane_quote(
         target: target.to_owned(),
     };
     let mapped = MappedCommand::selected(contract, SelectedCommand::QuoteRead { body: &body });
-    match execute_mapped(operator_discovery, contract, Connection::Lane(lane), mapped) {
+    match execute_mapped(
+        operator_discovery,
+        contract,
+        Connection::Lane(lane),
+        mapped,
+        ambient,
+    ) {
         Outcome::Reply(Reply {
             body: CommandAnswer::Quote(resolution),
             ..
@@ -711,11 +748,11 @@ pub(crate) fn as_lane<T>(lane: CanonicalUuid, commands: impl FnOnce() -> T) -> T
     commands()
 }
 
-fn ambient_lane_identity() -> ClientResult<Option<CanonicalUuid>> {
+fn ambient_lane_identity(ambient: &Ambient) -> ClientResult<Option<CanonicalUuid>> {
     if let Some(lane) = SEATED_LANE.get() {
         return Ok(Some(lane));
     }
-    let Some(value) = crate::bootstrap_environment(steer::hook::LANE) else {
+    let Some(value) = ambient.get(steer::hook::LANE) else {
         return Ok(None);
     };
     let Some(value) = value.to_str() else {

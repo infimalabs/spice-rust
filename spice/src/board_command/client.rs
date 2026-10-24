@@ -19,16 +19,27 @@ mod cycle;
 use cycle::{design_cycle, design_cycle_lines, design_cycle_next, design_holder_next};
 
 /// Execute one generated board-family CLI leaf.
-pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+pub(crate) fn run(
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<CommandAnswer> {
     match discover_repository() {
-        Ok(repository) => dispatch_client(&repository, contract, matches),
+        Ok(repository) => dispatch_client(
+            Host {
+                repository: &repository,
+                ambient,
+            },
+            contract,
+            matches,
+        ),
         Err(outcome) => outcome,
     }
 }
 
 /// Execute one generated board-family CLI leaf against `repository`.
 pub(crate) fn run_at(
-    repository: &Repository,
+    repository: Host<'_>,
     matches: &ArgMatches,
     contract: &Contract,
 ) -> Outcome<CommandAnswer> {
@@ -36,9 +47,15 @@ pub(crate) fn run_at(
 }
 
 /// Execute `task next`, keeping the empty-drain readout beside the outcome.
-pub(crate) fn run_task_next(contract: &Contract) -> TaskNext {
+pub(crate) fn run_task_next(contract: &Contract, ambient: &Ambient) -> TaskNext {
     match discover_repository() {
-        Ok(repository) => client_next(&repository, contract),
+        Ok(repository) => client_next(
+            Host {
+                repository: &repository,
+                ambient,
+            },
+            contract,
+        ),
         Err(outcome) => TaskNext {
             outcome,
             drain: None,
@@ -55,7 +72,7 @@ fn discover_repository() -> Result<Repository, Outcome<CommandAnswer>> {
 }
 
 fn dispatch_client(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -98,7 +115,7 @@ fn dispatch_client(
 }
 
 fn client_report(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -174,7 +191,7 @@ pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposa
 use submission::{mutate_task, mutate_task_from_board};
 
 fn client_ledger(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -353,7 +370,7 @@ pub(crate) fn ledger_output(
     })
 }
 
-fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
+fn client_next(repository: Host<'_>, contract: &Contract) -> TaskNext {
     let mut drain = None;
     let outcome = retry_task_next(|| {
         let board = match current_board(repository, BoardRead::Next) {
@@ -509,7 +526,7 @@ fn retryable_task_next(outcome: &Outcome<CommandAnswer>) -> bool {
 }
 
 fn client_reclaim(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -605,7 +622,7 @@ pub(super) fn reclaim_claim<'a>(
 }
 
 fn client_note(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -625,7 +642,7 @@ fn client_note(
 }
 
 fn client_defer(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -670,7 +687,7 @@ fn client_defer(
 }
 
 fn client_wake(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -697,7 +714,7 @@ fn client_wake(
 }
 
 fn client_file(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -762,7 +779,7 @@ fn client_file(
 }
 
 fn client_free(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -795,7 +812,7 @@ fn client_free(
 }
 
 fn client_depends(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -876,7 +893,7 @@ pub(super) fn dependency_removal_plan_child<'a>(
 }
 
 fn client_modify(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -1365,7 +1382,7 @@ fn dispatch_working_group(
 pub(crate) fn dispatch_with_repository(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {

@@ -18,6 +18,7 @@ use std::thread;
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
+use spice::ambient::Ambient;
 use wire::CanonicalUuid;
 
 use super::super::{Terminal, uri};
@@ -366,7 +367,11 @@ fn fail(replies: &Arc<Mutex<Replies>>, failure: String) {
 /// Serve requests until the old supervisor closes this helper's input. The
 /// current executable owns parsing, command dispatch, and the stateful graph
 /// cache; the old supervisor understands only this small framed contract.
-pub(in crate::resident::supervisor) fn run(lane: &OsString, worktree: &OsString) -> io::Result<()> {
+pub(in crate::resident::supervisor) fn run(
+    lane: &OsString,
+    worktree: &OsString,
+    ambient: &Ambient,
+) -> io::Result<()> {
     let lane = lane
         .to_str()
         .and_then(|lane| lane.parse::<CanonicalUuid>().ok())
@@ -376,13 +381,12 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, worktree: &OsString)
         spice::repository::Repository::discover(&worktree).map_err(io::Error::other)?;
     let paths = super::super::super::RuntimePaths::from_repository(&repository)
         .map_err(|outcome| io::Error::other(format!("{outcome:?}")))?;
-    let environment = crate::session_environment();
     let server = uri::resident_server(
         paths.serve,
         paths.journal,
         lane,
         repository.worktree_root().to_path_buf(),
-        environment,
+        ambient.clone(),
     );
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();

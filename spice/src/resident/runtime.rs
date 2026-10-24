@@ -46,6 +46,9 @@ pub(super) struct SurfaceConfig {
     pub(super) projects: board::ProjectPolicy,
     pub(super) lane: lane::Config,
     omp_binary: String,
+    /// The process environment `main` captured, for every child and Git
+    /// operation this resident runs.
+    pub(super) ambient: Ambient,
 }
 
 struct SurfaceLaunch<'a> {
@@ -74,7 +77,7 @@ pub(super) struct StartupSurface {
 pub(super) fn load_startup_surface(
     repository: &Repository,
 ) -> Result<StartupSurface, spice::config::LoadError> {
-    load_startup_surface_with(repository, || {})
+    load_startup_surface_with(repository, &spice::ambient::capture(), || {})
 }
 
 /// Create the runtime directory, then capture the startup surface from it.
@@ -87,17 +90,19 @@ pub(super) fn load_startup_surface(
 pub(super) fn prepare_startup(
     repository: &Repository,
     paths: &RuntimePaths,
+    ambient: &Ambient,
 ) -> Result<StartupSurface, Outcome<()>> {
     fs::create_dir_all(&paths.runtime)
         .map_err(|error| environment_fault("resident::runtime-unavailable", &error.to_string()))?;
     let loaded = spice::config::capture_repository(repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    Ok(startup_surface_from_loaded(&loaded))
+    Ok(startup_surface_from_loaded(&loaded, ambient.clone()))
 }
 
 #[cfg(test)]
 pub(super) fn load_startup_surface_with<F>(
     repository: &Repository,
+    ambient: &Ambient,
     after_capture: F,
 ) -> Result<StartupSurface, spice::config::LoadError>
 where
@@ -105,10 +110,10 @@ where
 {
     let loaded = spice::config::capture_repository(repository, &[])?;
     after_capture();
-    Ok(startup_surface_from_loaded(&loaded))
+    Ok(startup_surface_from_loaded(&loaded, ambient.clone()))
 }
 
-fn startup_surface_from_loaded(loaded: &spice::config::Loaded) -> StartupSurface {
+fn startup_surface_from_loaded(loaded: &spice::config::Loaded, ambient: Ambient) -> StartupSurface {
     StartupSurface {
         config: SurfaceConfig {
             serve: *loaded.resolved().root().serve(),
@@ -127,6 +132,7 @@ fn startup_surface_from_loaded(loaded: &spice::config::Loaded) -> StartupSurface
                 .binary()
                 .as_str()
                 .to_owned(),
+            ambient,
         },
         trust: crate::trust_command::Surface::from_loaded(loaded),
     }
@@ -390,6 +396,7 @@ pub(crate) fn up(
     test_app_stage: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
+    ambient: &Ambient,
 ) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
@@ -411,9 +418,12 @@ pub(crate) fn up(
     };
     up_from_with(
         &current,
-        app,
-        AppBinding { listen, access },
-        leaf.get_flag("open"),
+        UpRequest {
+            app,
+            binding: AppBinding { listen, access },
+            open: leaf.get_flag("open"),
+            ambient,
+        },
         progress,
         endpoint,
         child.map(|child| child.status),
@@ -542,27 +552,43 @@ fn skill_refusal(detail: &str) -> Outcome<()> {
 }
 
 /// Run the explicit demo/test surface against its worktree-built app stage.
-pub(crate) fn up_from(current: &Path, binding: AppBinding) -> Outcome<()> {
+pub(crate) fn up_from(current: &Path, binding: AppBinding, ambient: &Ambient) -> Outcome<()> {
     up_from_with(
         current,
-        AppSelection::Staged,
-        binding,
-        false,
+        UpRequest {
+            app: AppSelection::Staged,
+            binding,
+            open: false,
+            ambient,
+        },
         &mut io::sink(),
         &mut io::sink(),
         None,
     )
 }
 
-fn up_from_with(
-    current: &Path,
+/// What one resident start serves, before any repository authority is read.
+struct UpRequest<'a> {
     app: AppSelection,
     binding: AppBinding,
+    /// Whether the operator asked this start to also open the app.
     open: bool,
+    ambient: &'a Ambient,
+}
+
+fn up_from_with(
+    current: &Path,
+    request: UpRequest<'_>,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
     daemon: Option<ChildStatus>,
 ) -> Outcome<()> {
+    let UpRequest {
+        app,
+        binding,
+        open,
+        ambient,
+    } = request;
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => {
@@ -580,7 +606,7 @@ fn up_from_with(
         Ok(paths) => paths,
         Err(outcome) => return outcome,
     };
-    let startup_surface = match prepare_startup(&repository, &paths) {
+    let startup_surface = match prepare_startup(&repository, &paths, ambient) {
         Ok(surface) => surface,
         Err(outcome) => return outcome,
     };
@@ -717,7 +743,7 @@ pub(super) fn settle_surface(
 
 /// Stop the resident serving the current directory and answer with the
 /// state it moved from and the dark it reached.
-pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<StateAnswer> {
+pub(crate) fn down(contract: &crate::cli::Contract, ambient: &Ambient) -> Outcome<StateAnswer> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => {
@@ -727,11 +753,15 @@ pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<StateAnswer> {
             ));
         }
     };
-    down_from(&current, contract)
+    down_from(&current, contract, ambient)
 }
 
-pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<StateAnswer> {
-    down_from_with(current, contract, crate::command_client::execute)
+pub(crate) fn down_from(
+    current: &Path,
+    contract: &crate::cli::Contract,
+    ambient: &Ambient,
+) -> Outcome<StateAnswer> {
+    down_from_with(current, contract, ambient, crate::command_client::execute)
 }
 
 /// Stop the resident serving `current` through the operator connection even
@@ -742,17 +772,25 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
 pub(crate) fn down_from_operator(
     current: &Path,
     contract: &crate::cli::Contract,
+    ambient: &Ambient,
 ) -> Outcome<StateAnswer> {
-    down_from_with(current, contract, crate::command_client::execute_operator)
+    down_from_with(
+        current,
+        contract,
+        ambient,
+        crate::command_client::execute_operator,
+    )
 }
 
 fn down_from_with(
     current: &Path,
     contract: &crate::cli::Contract,
+    ambient: &Ambient,
     execute: fn(
         &Path,
         &crate::cli::Contract,
         crate::command_client::SelectedCommand<'_>,
+        &Ambient,
     ) -> Outcome<CommandAnswer>,
 ) -> Outcome<StateAnswer> {
     let repository = match Repository::discover(current) {
@@ -772,6 +810,7 @@ fn down_from_with(
         &paths.serve,
         contract,
         crate::command_client::SelectedCommand::Down,
+        ambient,
     );
     let outcome = decode_dark_outcome(outcome);
     if matches!(outcome, Outcome::Reply(_))

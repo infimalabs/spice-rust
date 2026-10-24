@@ -17,6 +17,7 @@ use sill::{
     Output as SillOutput, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy,
     StreamPolicy, WaitPolicy, WaitStep,
 };
+use spice::ambient::Ambient;
 
 use super::verify_timing::{self, Conclusion, Disposition, Stage};
 use super::{
@@ -55,12 +56,13 @@ const ACTION_PROCESS_BOUNDS: ProcessBounds = ProcessBounds {
 
 pub(super) fn verify_package_system(
     package: &str,
+    ambient: &Ambient,
     output: &mut impl Write,
 ) -> Result<(), VerifyError> {
     let cancellation = CancellationToken::new();
     let interrupted = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signal_guard = SignalGuard::install(cancellation.clone(), Arc::clone(&interrupted))?;
-    let runner = SystemRunner;
+    let runner = SystemRunner { ambient };
     let result = verify_package_with_control(package, &runner, output, &cancellation);
     drop(signal_guard);
     if interrupted.load(std::sync::atomic::Ordering::Acquire) {

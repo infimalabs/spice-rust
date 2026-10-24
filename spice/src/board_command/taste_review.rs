@@ -279,7 +279,7 @@ impl ReleasedPlan {
 /// Read one statement against the repository taste policy and the built-in
 /// pitch shape, which applies even where no repository policy exists.
 pub(super) fn task_taste_review(
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     snapshot: &ValidatedSnapshot,
     actor: &Actor,
     title: &str,
@@ -291,7 +291,7 @@ pub(super) fn task_taste_review(
     let Some(repository) = repository else {
         return Ok((!matches.is_empty()).then_some(TasteReview { matches }));
     };
-    let loaded = spice::config::load_repository(repository, &[])
+    let loaded = spice::config::load_repository(&repository, &[])
         .map_err(|error| environment_fault("task::taste-policy-unreadable", &error.to_string()))?;
     let bag = loaded.root().taste().bag();
     let seat = match actor {

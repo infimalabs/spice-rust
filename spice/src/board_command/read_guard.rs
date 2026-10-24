@@ -644,16 +644,7 @@ pub(super) fn task_repository(
 }
 
 pub(super) fn publish_task_boundary(
-    repository: Option<&Repository>,
-    snapshot: &ValidatedSnapshot,
-    command: &wire::AdmittedCommand,
-    entry: &Entry,
-) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
-    publish_task_boundary_inner(repository, snapshot, command, entry)
-}
-
-fn publish_task_boundary_inner(
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     entry: &Entry,
@@ -661,7 +652,7 @@ fn publish_task_boundary_inner(
     let Some(resident) = repository else {
         return Ok(None);
     };
-    let lane = task_repository(snapshot, command, resident)?;
+    let lane = task_repository(snapshot, command, &resident)?;
     let actor = command.actor().to_string();
     let at = current_instant()?;
     let active = board::Active::admit(entry, command.actor(), at).map_err(|error| {
@@ -685,7 +676,13 @@ fn publish_task_boundary_inner(
             .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
             .and_then(|won| won.git)
     });
-    match spice::task_git::publish_claimed(&lane, metadata, &active, opening.as_ref()) {
+    match spice::task_git::publish_claimed(
+        &lane,
+        resident.ambient,
+        metadata,
+        &active,
+        opening.as_ref(),
+    ) {
         Ok(boundary) => Ok(Some(boundary)),
         Err(error) => Err(task_git_outcome(error)),
     }
@@ -1159,12 +1156,12 @@ pub(super) fn allocation_subscription(
     Ok(subscription.clone())
 }
 
-pub(super) enum PreparedTaskGit {
-    Release(spice::task_git::ParkedRelease),
-    Claim(spice::task_git::ClaimPreparation),
+pub(super) enum PreparedTaskGit<'a> {
+    Release(spice::task_git::ParkedRelease<'a>),
+    Claim(spice::task_git::ClaimPreparation<'a>),
 }
 
-impl PreparedTaskGit {
+impl PreparedTaskGit<'_> {
     fn rollback(self) -> Result<(), spice::task_git::Error> {
         match self {
             Self::Release(prepared) => prepared.rollback(),
@@ -1191,7 +1188,7 @@ pub(super) fn committed_with_task_git(
     bus: &Bus,
     write: JournalWrite,
     body: CommandAnswer,
-    prepared: PreparedTaskGit,
+    prepared: PreparedTaskGit<'_>,
 ) -> Outcome<CommandAnswer> {
     match bus.commit(write) {
         Ok(CommitOutcome::Committed(commit)) => Outcome::Reply(Reply {

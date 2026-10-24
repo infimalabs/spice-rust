@@ -4,6 +4,7 @@ use super::*;
 
 /// Capture at the ambient working directory.
 pub(super) fn capture_inner<'trace>(
+    ambient: &Ambient,
     selector: Selector,
     input_mode: InputMode,
     selected: Option<GateId>,
@@ -12,11 +13,14 @@ pub(super) fn capture_inner<'trace>(
 ) -> Result<BatteryCapture<'trace>, RunError> {
     let directory = env::current_dir()
         .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
-    capture_at_inner(&directory, selector, input_mode, selected, trace, claim)
+    capture_at_inner(
+        ambient, &directory, selector, input_mode, selected, trace, claim,
+    )
 }
 
 /// Capture at an explicitly admitted repository directory.
 pub(super) fn capture_at_inner<'trace>(
+    ambient: &Ambient,
     directory: &Path,
     selector: Selector,
     input_mode: InputMode,
@@ -31,11 +35,12 @@ pub(super) fn capture_at_inner<'trace>(
         _ => RunError::refusal("gate::state-refused", error),
     })?;
     let actor = acting_actor(repository.worktree_root())?;
+    let search_path = ambient.get(PROCESS_PATH).map(OsStr::to_os_string);
     let rim = match &selector {
-        Selector::Staged => RimCapture::staged(directory, search_path()),
+        Selector::Staged => RimCapture::staged(directory, search_path),
         Selector::Revision(_) => RimCapture::new(
             directory,
-            search_path(),
+            search_path,
             selected_changes(repository.worktree_root(), &selector)?,
         ),
     }

@@ -543,6 +543,7 @@ impl Runtime {
             config,
             ..
         } = resident;
+        let host = crate::command_client::Host::new(repository, &config.ambient);
         let occupant = new_uuid();
         match trigger {
             Trigger::PendingInbox => {
@@ -603,7 +604,7 @@ impl Runtime {
                 let claim = crate::board_command::claim_automatic(
                     bus,
                     snapshot,
-                    repository,
+                    host,
                     crate::board_command::AutomaticSeat {
                         epoch,
                         lane,
@@ -634,7 +635,7 @@ impl Runtime {
                         Ok(pending_launch(trigger, lane, None, Some(claim), launch))
                     }
                     Ok(lane_surface::BeginAutomaticWake::Unstarted(failure)) | Err(failure) => {
-                        match crate::board_command::release_automatic(bus, repository, &claim) {
+                        match crate::board_command::release_automatic(bus, host, &claim) {
                             Ok(()) => Err(failure),
                             Err(release) => Err(unit_outcome(release)),
                         }

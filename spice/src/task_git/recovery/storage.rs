@@ -146,7 +146,7 @@ pub(super) fn write_manifest(root: &Path, manifest: &Manifest) -> Result<(), Err
 
 pub(super) fn store_git_output(
     root: &Path,
-    worktree: &Path,
+    worktree: Worktree<'_>,
     args: &[&str],
     action: &str,
 ) -> Result<StoredBlob, Error> {
@@ -154,7 +154,11 @@ pub(super) fn store_git_output(
     store_blob(root, &bytes)
 }
 
-pub(super) fn git_bytes(worktree: &Path, args: &[&str], action: &str) -> Result<Vec<u8>, Error> {
+pub(super) fn git_bytes(
+    worktree: Worktree<'_>,
+    args: &[&str],
+    action: &str,
+) -> Result<Vec<u8>, Error> {
     let output = run(worktree, args)?;
     if output.success() {
         Ok(output.stdout.into_bytes())
@@ -237,7 +241,7 @@ pub(super) fn verify_blob_bytes(root: &Path, blob: &StoredBlob, bytes: &[u8]) ->
     }
 }
 
-pub(super) fn configuration(worktree: &Path) -> Result<String, Error> {
+pub(super) fn configuration(worktree: Worktree<'_>) -> Result<String, Error> {
     let output = run(
         worktree,
         &["config", "--local", "--null", "--list", "--show-origin"],
@@ -252,7 +256,7 @@ pub(super) fn configuration(worktree: &Path) -> Result<String, Error> {
     }
 }
 
-pub(super) fn index_listing(worktree: &Path) -> Result<String, Error> {
+pub(super) fn index_listing(worktree: Worktree<'_>) -> Result<String, Error> {
     let output = run(worktree, &["ls-files", "--stage", "--debug", "-z"])?;
     if output.success() {
         Ok(output.stdout)
@@ -282,7 +286,7 @@ pub(super) fn path_text(path: &Path) -> Result<String, Error> {
     })
 }
 
-pub(super) fn current_head(worktree: &Path) -> Result<String, Error> {
+pub(super) fn current_head(worktree: Worktree<'_>) -> Result<String, Error> {
     required_read(worktree, &["rev-parse", "HEAD"], "read recovery HEAD")
 }
 

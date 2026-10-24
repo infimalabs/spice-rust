@@ -18,6 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lane::capture::CaptureReporter;
 use lane::occupant::DetachedProcess;
 use serde::{Deserialize, Serialize};
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::CanonicalUuid;
 
@@ -521,7 +522,7 @@ fn state_launch_inner(
     })
 }
 
-fn run(request_path: &Path) -> io::Result<()> {
+fn run(request_path: &Path, ambient: &Ambient) -> io::Result<()> {
     let request: Request = read_json(request_path, REQUEST_BYTES)?;
     if request.version != REQUEST_VERSION {
         return Err(io::Error::new(
@@ -548,7 +549,7 @@ fn run(request_path: &Path) -> io::Result<()> {
         failure: None,
     };
     publish_json(&request.state, &starting)?;
-    if let Err(error) = run_agent(&request, starting.clone()) {
+    if let Err(error) = run_agent(&request, starting.clone(), ambient) {
         let mut failed = read_state(&request.state).unwrap_or(starting);
         failed.phase = Phase::Failed;
         failed.failure = Some(error.to_string());
@@ -558,7 +559,7 @@ fn run(request_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
+fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Result<()> {
     let repository = Repository::discover(&request.worktree).map_err(io::Error::other)?;
     let paths = RuntimePaths::from_repository(&repository).map_err(outcome_error)?;
     let vendor = request
@@ -588,7 +589,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
             effort: request.effort.as_deref(),
         },
         capture_reporter,
-        &HostProbes,
+        &HostProbes { ambient },
     )
     .map_err(outcome_error)?;
     let git = launch.git;

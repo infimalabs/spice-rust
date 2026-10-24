@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
+use spice::ambient::Ambient;
 use wire::body::{SteerAcked, SteerDeclined, SteerSent, TaskAdded, TranscriptLocus};
 use wire::intent::{CommandAnswer, TasteProposalAdd};
 use wire::{
@@ -13,6 +14,7 @@ use wire::{
 use super::{
     Contract, Surface, current_repository, fault, load_failure, locus_text, refusal, retag,
 };
+use crate::command_client::Host;
 
 const MAX_AUTHORED_CORRECTIONS: usize = 1_024;
 const MAX_EXCERPT_CHARS: usize = 1_000;
@@ -98,15 +100,20 @@ struct MiningSnapshot {
 pub(crate) fn mine(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<TasteMiningReport> {
     let MiningSnapshot {
         repository,
         threshold,
         facts,
         cursor,
-    } = match mining_snapshot(contract, configuration) {
+    } = match mining_snapshot(contract, configuration, ambient) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
+    };
+    let host = Host {
+        repository: &repository,
+        ambient,
     };
     let (corrections, scanned, excluded) = match corrections(&facts) {
         Ok(result) => result,
@@ -125,7 +132,7 @@ pub(crate) fn mine(
         })
         .collect();
     let board = match crate::board_command::current_board(
-        &repository,
+        host,
         wire::intent::BoardRead::Tasks {
             tasks,
             dependencies: false,
@@ -140,14 +147,7 @@ pub(crate) fn mine(
         Ok(priors) => priors,
         Err(error) => return evidence_fault(error),
     };
-    let filed = file_candidates(
-        &repository,
-        contract,
-        threshold,
-        cursor,
-        &candidates,
-        &priors,
-    );
+    let filed = file_candidates(host, contract, threshold, cursor, &candidates, &priors);
     let Reply {
         position,
         body: findings,
@@ -171,6 +171,7 @@ pub(crate) fn mine(
 fn mining_snapshot(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Result<MiningSnapshot, Outcome<TasteMiningReport>> {
     let repository = current_repository()?;
     let surface = match Surface::scoped(&repository, configuration) {
@@ -189,7 +190,7 @@ fn mining_snapshot(
         Ok(state) => state,
         Err(error) => return Err(crate::state_failure(&error).outcome()),
     };
-    if let Err(outcome) = crate::command_client::authenticate(state.serve(), contract) {
+    if let Err(outcome) = crate::command_client::authenticate(state.serve(), contract, ambient) {
         return Err(retag(outcome));
     }
     let reader = match journal::JournalReader::open(state.journal()) {
@@ -230,7 +231,7 @@ fn mining_snapshot(
 /// File each qualifying candidate not already proposed, answering every
 /// candidate's finding at the position of the last filing.
 fn file_candidates(
-    repository: &spice::repository::Repository,
+    repository: Host<'_>,
     contract: &Contract,
     threshold: usize,
     cursor: Seq,

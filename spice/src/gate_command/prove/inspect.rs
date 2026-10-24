@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) fn current(
     repository: &Repository,
+    ambient: &Ambient,
     store: &EvidenceStore,
     candidate_tree: &spice::gate::CandidateTree,
     anchor: &spice::gate::PreparedArm<'_>,
@@ -47,7 +48,7 @@ pub(super) fn current(
         })
         .collect::<Vec<_>>();
     actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));
-    if let Err(error) = validate_source(repository, anchor, candidate_tree) {
+    if let Err(error) = validate_source(repository, ambient, anchor, candidate_tree) {
         let _ = anchor.reject_state();
         return Err(error);
     }

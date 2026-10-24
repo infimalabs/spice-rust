@@ -8,6 +8,7 @@ use std::time::Duration;
 use bus::Bus;
 use lane::occupant::Seats;
 use pulldown_cmark::{Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
+use spice::ambient::Ambient;
 use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{
@@ -61,6 +62,8 @@ pub(super) struct CaptureSurfaces<'a, P> {
     tastes: &'a taste::Bag,
     steering: &'a steer::Config,
     publisher: &'a P,
+    /// The environment transcript lookups resolve vendor homes from.
+    ambient: &'a Ambient,
     /// Tool calls an occupant may run without prose before each prod.
     narration: u32,
 }
@@ -71,12 +74,14 @@ impl<'a, P> CaptureSurfaces<'a, P> {
         tastes: &'a taste::Bag,
         steering: &'a steer::Config,
         publisher: &'a P,
+        ambient: &'a Ambient,
     ) -> Self {
         Self {
             paths,
             tastes,
             steering,
             publisher,
+            ambient,
             narration: lane::Config::default().narration(),
         }
     }

@@ -5,15 +5,23 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::Path;
 
+use spice::ambient::Ambient;
+
 use super::command::{current, inbox};
 use super::terminal::job;
 
+/// One request-path entry, run against the environment `main` captured.
+type RequestEntry = fn(&Path, &Ambient) -> io::Result<()>;
+
 /// Dispatch a hidden entry before normal CLI parsing.
-pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32> {
+pub(crate) fn entry(
+    arguments: impl IntoIterator<Item = OsString>,
+    ambient: &Ambient,
+) -> Option<i32> {
     let mut arguments = arguments.into_iter();
     let _executable = arguments.next()?;
     let role = arguments.next()?;
-    if let Some(code) = current::entry(&role, &mut arguments) {
+    if let Some(code) = current::entry(&role, &mut arguments, ambient) {
         return Some(code);
     }
     if role == OsStr::new(inbox::ENTRY) {
@@ -23,7 +31,7 @@ pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32
             eprintln!("lane inbox takes a lane and a projection state path");
             return Some(2);
         };
-        return Some(match inbox::run(&lane, Path::new(&projection)) {
+        return Some(match inbox::run(&lane, Path::new(&projection), ambient) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("lane inbox failed: {error}");
@@ -31,10 +39,10 @@ pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32
             }
         });
     }
-    let (name, run): (&str, fn(&Path) -> io::Result<()>) = if role == OsStr::new(super::ENTRY) {
+    let (name, run): (&str, RequestEntry) = if role == OsStr::new(super::ENTRY) {
         ("lane supervisor", super::run)
     } else if role == OsStr::new(job::ENTRY) {
-        ("lane job", job::keep)
+        ("lane job", |request, _| job::keep(request))
     } else {
         return None;
     };
@@ -46,7 +54,7 @@ pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32
         eprintln!("{name} received unexpected arguments");
         return Some(2);
     }
-    Some(match run(Path::new(&request)) {
+    Some(match run(Path::new(&request), ambient) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("{name} failed: {error}");

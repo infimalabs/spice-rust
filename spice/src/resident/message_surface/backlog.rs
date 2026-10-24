@@ -146,8 +146,11 @@ pub(in crate::resident) fn restore_agent_messages(
     publisher: &serve::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
+    ambient: &Ambient,
 ) -> CommandResult<()> {
-    restore_agent_messages_with(None, paths, residency, publisher, reader, diagnostic)
+    restore_agent_messages_with(
+        None, paths, residency, publisher, reader, diagnostic, ambient,
+    )
 }
 
 pub(in crate::resident) fn restore_agent_messages_indexed(
@@ -157,8 +160,17 @@ pub(in crate::resident) fn restore_agent_messages_indexed(
     publisher: &serve::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
+    ambient: &Ambient,
 ) -> CommandResult<()> {
-    restore_agent_messages_with(Some(bus), paths, residency, publisher, reader, diagnostic)
+    restore_agent_messages_with(
+        Some(bus),
+        paths,
+        residency,
+        publisher,
+        reader,
+        diagnostic,
+        ambient,
+    )
 }
 
 fn restore_agent_messages_with(
@@ -168,6 +180,7 @@ fn restore_agent_messages_with(
     publisher: &serve::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
+    ambient: &Ambient,
 ) -> CommandResult<()> {
     seed_session_profiles(residency, reader);
     reader.startup_work = StartupWork::default();
@@ -181,7 +194,8 @@ fn restore_agent_messages_with(
         }
         reader.startup_work.begin_lane();
         available.push(row.lane);
-        if let Some(work) = restore_lane(bus, paths, row, &generation, reader, diagnostic)? {
+        if let Some(work) = restore_lane(bus, paths, row, &generation, reader, diagnostic, ambient)?
+        {
             reader.startup_work.add(work);
         }
     }
@@ -202,7 +216,7 @@ fn restore_agent_messages_with(
     publisher
         .set_lane_availability(current, available.iter().copied())
         .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
-    let history = Arc::new(DurableHistory::new(bus, paths, residency, reader));
+    let history = Arc::new(DurableHistory::new(bus, paths, residency, reader, ambient));
     let history_open = history
         .lanes
         .keys()
@@ -357,8 +371,9 @@ impl DurableHistory {
         paths: &RuntimePaths,
         residency: &wire::ResidencyHead,
         reader: &BacklogReader,
+        ambient: &Ambient,
     ) -> Self {
-        let environment = crate::session_environment();
+        let environment = crate::session_environment(ambient);
         let lanes = residency
             .lanes
             .iter()
@@ -787,6 +802,7 @@ fn restore_lane(
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
+    ambient: &Ambient,
 ) -> CommandResult<Option<listen::TailWork>> {
     let Some(author) = row
         .occupant
@@ -817,7 +833,7 @@ fn restore_lane(
                 &session.identity,
                 &session.vendor,
                 std::path::Path::new(&session.worktree),
-                &crate::session_environment(),
+                &crate::session_environment(ambient),
             )
             .ok()
             .map(|(path, _)| path)

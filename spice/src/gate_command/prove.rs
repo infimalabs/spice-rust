@@ -19,6 +19,7 @@ use sill::Environment;
 use wire::output::Export;
 use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
+use spice::ambient::Ambient;
 use spice::change_gate::{ChangeGateError, StagedActionSelection};
 
 use super::output;
@@ -267,15 +268,17 @@ impl AdmissionPreparation {
     pub(super) fn verify_current(
         &mut self,
         repository: &Repository,
+        ambient: &Ambient,
         claim: &gate::ClaimCapture,
     ) -> Result<bool, ProveFailure> {
-        let refreshed =
-            if let Some(staged) = refresh_staged_source(&self.staged, repository, claim)? {
-                self.staged = staged;
-                true
-            } else {
-                false
-            };
+        let refreshed = if let Some(staged) =
+            refresh_staged_source(&self.staged, repository, ambient, claim)?
+        {
+            self.staged = staged;
+            true
+        } else {
+            false
+        };
         self.verify_source()?;
         self.verify_fingerprint_authority(repository)?;
         Ok(refreshed)
@@ -319,6 +322,7 @@ impl AdmissionPreparation {
 fn refresh_staged_source(
     staged: &StagedActionSelection,
     repository: &Repository,
+    ambient: &Ambient,
     claim: &gate::ClaimCapture,
 ) -> Result<Option<StagedActionSelection>, ProveFailure> {
     match staged
@@ -333,6 +337,7 @@ fn refresh_staged_source(
                 .staged_authority()
                 .expect("admission preparation retains staged authority");
             let anchor = spice::gate::prepare_arm_at_with_claim(
+                ambient,
                 repository.worktree_root(),
                 gate::Selector::staged(),
                 GateId::Staging,
@@ -428,7 +433,11 @@ struct PendingReceipt {
     capture: Option<Export>,
 }
 
-pub(crate) fn prove(matches: &clap::ArgMatches, live: bool) -> Outcome<ProveReport> {
+pub(crate) fn prove(
+    matches: &clap::ArgMatches,
+    live: bool,
+    ambient: &Ambient,
+) -> Outcome<ProveReport> {
     let request = Request {
         action: matches.get_one::<String>("ACTION").map(String::as_str),
         missing: matches.get_flag("missing"),
@@ -441,7 +450,7 @@ pub(crate) fn prove(matches: &clap::ArgMatches, live: bool) -> Outcome<ProveRepo
             format!("{action:?} is not a registered gate action or Cargo shard"),
         );
     }
-    match run(request, live) {
+    match run(request, live, ambient) {
         Ok(mut report) => {
             report.text = summary(&report, request, matches.get_flag("verbose"));
             Outcome::Reply(Reply {
@@ -525,7 +534,7 @@ fn prove_command(request: Request<'_>, flag: &str) -> String {
     command
 }
 
-fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
+fn run(request: Request<'_>, live: bool, ambient: &Ambient) -> Result<ProveReport, ProveFailure> {
     let current = std::env::current_dir()
         .map_err(|error| ProveFailure::fault("gate::prove-working-directory-unavailable", error))?;
     let repository = Repository::discover(&current)
@@ -534,8 +543,9 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
     let _lease = crate::cargo_command::output_lease(&repository)
         .map_err(|error| ProveFailure::fault("cargo-output::lease-unavailable", error))?;
     let candidate_tree =
-        spice::gate::capture_candidate_tree(&repository).map_err(ProveFailure::run)?;
-    let anchor = spice::change_gate::prepare_staged_anchor().map_err(ProveFailure::selection)?;
+        spice::gate::capture_candidate_tree(&repository, ambient).map_err(ProveFailure::run)?;
+    let anchor =
+        spice::change_gate::prepare_staged_anchor(ambient).map_err(ProveFailure::selection)?;
     let store = EvidenceStore::open(repository.common_dir()).map_err(ProveFailure::store)?;
     let fingerprint = request
         .uses_fingerprint()
@@ -544,6 +554,7 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
     if request.inspect() {
         return inspect::current(
             &repository,
+            ambient,
             &store,
             &candidate_tree,
             &anchor,
@@ -555,7 +566,7 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
     let staged = if let Some(authority) = fingerprint.as_ref() {
         match fingerprint::lookup_complete(&store, authority) {
             Ok(Some(actions)) => {
-                validate_source(&repository, &anchor, &candidate_tree)?;
+                validate_source(&repository, ambient, &anchor, &candidate_tree)?;
                 anchor.reject_state().map_err(ProveFailure::run)?;
                 return Ok(ProveReport::new(
                     candidate_tree.to_string(),
@@ -579,7 +590,7 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
                 manifest.cargo_tests(),
             )
             .map_err(ProveFailure::selection)?,
-            Ok(None) => spice::change_gate::prepare_staged_actions_from_anchor(anchor)
+            Ok(None) => spice::change_gate::prepare_staged_actions_from_anchor(ambient, anchor)
                 .map_err(ProveFailure::selection)?,
             Err(error) => {
                 let _ = anchor.reject_state();
@@ -587,7 +598,7 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
             }
         }
     } else {
-        spice::change_gate::prepare_staged_actions_from_anchor(anchor)
+        spice::change_gate::prepare_staged_actions_from_anchor(ambient, anchor)
             .map_err(ProveFailure::selection)?
     };
     let (mut actions, pending, expectations) =
@@ -619,7 +630,7 @@ fn run(request: Request<'_>, live: bool) -> Result<ProveReport, ProveFailure> {
     let published = single_flight::run(
         &store,
         pending,
-        || validate_source(&repository, staged.anchor(), &candidate_tree),
+        || validate_source(&repository, ambient, staged.anchor(), &candidate_tree),
         || staged.reject_state().map_err(ProveFailure::run),
         &output::Progress::stderr("gate prove", live),
         &output::capture_directory(repository.common_dir()),
@@ -657,13 +668,15 @@ fn complete_actions<A, R, O, E>(
 
 fn validate_source(
     repository: &Repository,
+    ambient: &Ambient,
     anchor: &spice::gate::PreparedArm<'_>,
     candidate_tree: &spice::gate::CandidateTree,
 ) -> Result<(), ProveFailure> {
     anchor
         .verify_refreshable_source()
         .map_err(ProveFailure::run)?;
-    let observed = spice::gate::capture_candidate_tree(repository).map_err(ProveFailure::run)?;
+    let observed =
+        spice::gate::capture_candidate_tree(repository, ambient).map_err(ProveFailure::run)?;
     if &observed != candidate_tree {
         return Err(ProveFailure::refusal(
             "gate::prove-source-moved",

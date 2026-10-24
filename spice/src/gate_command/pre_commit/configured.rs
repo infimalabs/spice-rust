@@ -13,6 +13,7 @@ use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
+use spice::ambient::Ambient;
 use spice::config::{PreCommitStep, pre_commit_declarations};
 use spice::repository::Repository;
 use wire::{ConfigSource, Digest, Outcome, Refusal, RefusalDiagnostic, TrustState};
@@ -519,23 +520,28 @@ impl DispatchAuthority {
 }
 
 /// One typed dispatch policy and one staged source retained for the whole battery.
-pub(super) struct Dispatch {
+pub(super) struct Dispatch<'a> {
     repository: Repository,
+    ambient: &'a Ambient,
     policy: DispatchPolicy,
     claim: gate::ClaimCapture,
     anchor: spice::gate::PreparedArm<'static>,
     authority: DispatchAuthority,
 }
 
-pub(super) struct AdmissionDispatch {
+pub(super) struct AdmissionDispatch<'a> {
     repository: Repository,
+    ambient: &'a Ambient,
     policy: DispatchPolicy,
     claim: gate::ClaimCapture,
     authority: DispatchAuthority,
 }
 
-impl Dispatch {
-    pub(super) fn capture_with_claim(claim: gate::ClaimCapture) -> Result<Self, ConfiguredFailure> {
+impl<'a> Dispatch<'a> {
+    pub(super) fn capture_with_claim(
+        claim: gate::ClaimCapture,
+        ambient: &'a Ambient,
+    ) -> Result<Self, ConfiguredFailure> {
         let current = env::current_dir().map_err(|error| {
             ConfiguredFailure::fault(
                 "gate::pre-commit-working-directory-unavailable",
@@ -545,18 +551,12 @@ impl Dispatch {
         let repository = Repository::discover(&current).map_err(|error| {
             ConfiguredFailure::fault(spice::repository::ResolveError::REASON, error.to_string())
         })?;
-        Self::capture_at_with_claim(repository, claim)
-    }
-
-    pub(super) fn capture_at_with_claim(
-        repository: Repository,
-        claim: gate::ClaimCapture,
-    ) -> Result<Self, ConfiguredFailure> {
-        Self::capture_at_with_claim_and_configuration(repository, claim, None)
+        Self::capture_at_with_claim_and_configuration(repository, ambient, claim, None)
     }
 
     pub(super) fn capture_at_with_claim_and_configuration(
         repository: Repository,
+        ambient: &'a Ambient,
         claim: gate::ClaimCapture,
         configuration: Option<&spice::config::RepositoryCapture>,
     ) -> Result<Self, ConfiguredFailure> {
@@ -567,6 +567,7 @@ impl Dispatch {
             ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
         })?;
         let anchor = spice::gate::prepare_arm_at_with_claim(
+            ambient,
             repository.worktree_root(),
             gate::Selector::staged(),
             gate::GateId::Staging,
@@ -580,6 +581,7 @@ impl Dispatch {
         let authority = DispatchAuthority::capture(&anchor)?;
         let mut dispatch = Self {
             repository,
+            ambient,
             policy,
             claim,
             anchor,
@@ -589,6 +591,10 @@ impl Dispatch {
             dispatch.verify()?;
         }
         Ok(dispatch)
+    }
+
+    pub(super) const fn ambient(&self) -> &'a Ambient {
+        self.ambient
     }
 
     pub(super) const fn builtins_enabled(&self) -> bool {
@@ -642,6 +648,7 @@ impl Dispatch {
 
     fn refresh_anchor(&mut self, trigger: &str) -> Result<(), ConfiguredFailure> {
         let anchor = spice::gate::prepare_arm_at_with_claim(
+            self.ambient,
             self.repository.worktree_root(),
             gate::Selector::staged(),
             gate::GateId::Staging,
@@ -672,6 +679,7 @@ impl Dispatch {
     pub(super) fn rebind(self, expected: &Digest) -> Result<Self, ConfiguredFailure> {
         let Self {
             repository,
+            ambient,
             policy,
             claim,
             anchor,
@@ -688,6 +696,7 @@ impl Dispatch {
         }
         let mut rebound = Self {
             repository,
+            ambient,
             policy,
             claim,
             anchor,
@@ -700,9 +709,10 @@ impl Dispatch {
 
     pub(super) fn into_admission(
         self,
-    ) -> Result<(AdmissionDispatch, spice::gate::PreparedArm<'static>), ConfiguredFailure> {
+    ) -> Result<(AdmissionDispatch<'a>, spice::gate::PreparedArm<'static>), ConfiguredFailure> {
         let Self {
             repository,
+            ambient,
             policy,
             claim,
             anchor,
@@ -711,6 +721,7 @@ impl Dispatch {
         Ok((
             AdmissionDispatch {
                 repository,
+                ambient,
                 policy,
                 claim,
                 authority,
@@ -727,7 +738,9 @@ impl Dispatch {
         if !self.has_configured() {
             return Ok(None);
         }
-        let base = ambient_environment()?;
+        // The configured command rim extends a sorted copy of the caller environment.
+        let mut base = self.ambient.variables().to_vec();
+        base.sort();
         if let Some((_, source)) = base
             .iter()
             .find(|(name, _)| name == OsStr::new(SOURCE_VARIABLE))
@@ -771,15 +784,19 @@ impl Dispatch {
     }
 }
 
-impl AdmissionDispatch {
+impl<'a> AdmissionDispatch<'a> {
     pub(super) const fn repository(&self) -> &Repository {
         &self.repository
+    }
+
+    pub(super) const fn ambient(&self) -> &'a Ambient {
+        self.ambient
     }
 
     pub(super) fn resume(
         self,
         staged: spice::change_gate::StagedActionSelection,
-    ) -> Result<Dispatch, ConfiguredFailure> {
+    ) -> Result<Dispatch<'a>, ConfiguredFailure> {
         let anchor = staged.into_anchor();
         let observed = DispatchAuthority::capture(&anchor)?;
         if let Some(movement) = self.authority.movement(&observed) {
@@ -791,6 +808,7 @@ impl AdmissionDispatch {
         self.policy.verify_selected(anchor.root())?;
         let mut dispatch = Dispatch {
             repository: self.repository,
+            ambient: self.ambient,
             policy: self.policy,
             claim: self.claim,
             anchor,
@@ -1161,16 +1179,6 @@ pub(super) fn recursion_refusal<T>(source: &OsStr) -> Outcome<T> {
 
 fn json(value: &(impl Serialize + ?Sized)) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"<unencodable>\"".to_owned())
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the configured pre-commit command rim captures and then sanitizes the caller environment once"
-)]
-fn ambient_environment() -> Result<Vec<(OsString, OsString)>, ConfiguredFailure> {
-    let mut environment = env::vars_os().collect::<Vec<_>>();
-    environment.sort();
-    Ok(environment)
 }
 
 #[cfg(test)]

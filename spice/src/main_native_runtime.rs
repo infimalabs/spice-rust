@@ -107,11 +107,19 @@ pub(super) fn run_mounted(selection: cli::MountSelection<'_>) -> ! {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_app_stage: bool) -> ! {
+pub(super) fn resident_up(
+    leaf: &clap::ArgMatches,
+    form: Form,
+    test_app_stage: bool,
+    ambient: &spice::ambient::Ambient,
+) -> ! {
     if !leaf.get_flag("foreground") {
-        deliver_display(&resident::launch(leaf, None, leaf.get_flag("open")), form);
+        deliver_display(
+            &resident::launch(leaf, None, leaf.get_flag("open"), ambient),
+            form,
+        );
     }
-    let child = match resident::ChildLaunch::capture() {
+    let child = match resident::ChildLaunch::capture(ambient) {
         Ok(child) => child,
         Err(outcome) => deliver(&outcome, form),
     };
@@ -128,6 +136,7 @@ pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_app_stage: b
             test_app_stage,
             &mut io::stderr().lock(),
             &mut io::stdout().lock(),
+            ambient,
         ),
         // A detached child is itself a JSON process so any terminal outcome in
         // the common log stays typed. Its progress still belongs in that log,
@@ -138,10 +147,16 @@ pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_app_stage: b
             test_app_stage,
             &mut io::stderr().lock(),
             &mut io::sink(),
+            ambient,
         ),
-        (Form::Json, None) => {
-            resident::up(leaf, None, test_app_stage, &mut io::sink(), &mut io::sink())
-        }
+        (Form::Json, None) => resident::up(
+            leaf,
+            None,
+            test_app_stage,
+            &mut io::sink(),
+            &mut io::sink(),
+            ambient,
+        ),
     };
     if let Some(status) = status {
         status.failed(&outcome);

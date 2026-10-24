@@ -36,7 +36,7 @@ pub(super) fn issue_repository<B: Serialize>(
     dispatch_with_repository(
         bus,
         &command,
-        Some(repository),
+        Some(host(repository)),
         &projects,
         &board::NextConfig::default(),
     )

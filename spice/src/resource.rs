@@ -26,6 +26,7 @@ use wire::intent::CommandAnswer;
 use wire::{CanonicalUuid, Digest, Outcome, TaskHandle};
 
 use crate::board_command::TaskText;
+use crate::command_client::Host;
 use crate::render::{self, Form};
 
 mod graph;
@@ -963,7 +964,7 @@ impl Span {
 }
 
 /// The current text under a first line naming the URL that replaces it.
-fn text_document(repository: &Repository, text: &Text) -> Result<String, String> {
+fn text_document(repository: Host<'_>, text: &Text) -> Result<String, String> {
     let task = crate::board_command::current_task(repository, &text.handle)
         .map_err(|outcome| command_rendering(&outcome))?;
     let statement = &task.statement.body;
@@ -977,7 +978,7 @@ fn text_document(repository: &Repository, text: &Text) -> Result<String, String>
 }
 
 /// Replace a task text through the `task modify` intent.
-fn replace(repository: &Repository, text: &Text, content: &str) -> Result<String, String> {
+fn replace(repository: Host<'_>, text: &Text, content: &str) -> Result<String, String> {
     let outcome = crate::board_command::replace_text(
         repository,
         &text.handle,
@@ -999,12 +1000,13 @@ fn command_rendering(outcome: &Outcome<CommandAnswer>) -> String {
     }
 }
 
-/// Who reads or writes: the lane, its checkout, and the session state its
-/// occupant's own commands see.
+/// Who reads or writes: the lane, its checkout, the session state its
+/// occupant's own commands see, and the environment its client reads.
 pub(crate) struct Seat {
     pub(crate) worktree: PathBuf,
     pub(crate) lane: CanonicalUuid,
     pub(crate) environment: crate::session_command::Environment,
+    pub(crate) ambient: spice::ambient::Ambient,
     pub(crate) graphs: graph::Pages,
 }
 
@@ -1036,9 +1038,11 @@ impl Seat {
                 ));
             }
             let repository = repository()?;
-            return crate::command_client::as_lane(self.lane, || {
-                replace(&repository, text, content)
-            });
+            let host = Host {
+                repository: &repository,
+                ambient: &self.ambient,
+            };
+            return crate::command_client::as_lane(self.lane, || replace(host, text, content));
         }
         let document = match &request.resource {
             Resource::Index => INDEX.to_owned(),
@@ -1056,7 +1060,11 @@ impl Seat {
                     ));
                 }
                 let repository = repository()?;
-                crate::command_client::as_lane(self.lane, || text_document(&repository, text))?
+                let host = Host {
+                    repository: &repository,
+                    ambient: &self.ambient,
+                };
+                crate::command_client::as_lane(self.lane, || text_document(host, text))?
             }
         };
         match &request.selector {
@@ -1073,6 +1081,10 @@ impl Seat {
         let contract = crate::cli::selected_contract(&matches)
             .expect("the generated parser selects only registered contracts");
         let leaf = crate::cli::selected_matches(&matches);
+        let host = Host {
+            repository,
+            ambient: &self.ambient,
+        };
         let document = match contract.path {
             ["task", "artifact", ..] => {
                 let outcome = crate::task_artifact_command::run_at(repository, leaf, contract);
@@ -1110,6 +1122,7 @@ impl Seat {
                     leaf,
                     contract,
                     Some(self.lane.to_string().into()),
+                    &self.ambient,
                 );
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
@@ -1119,11 +1132,12 @@ impl Seat {
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
             ["lane", "list"] => {
-                let outcome = crate::lane_command::list_at(repository, leaf, contract);
+                let outcome =
+                    crate::lane_command::list_at(repository, leaf, contract, &self.ambient);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
             ["board", "graph"] => self.graphs.read(query, || {
-                let outcome = crate::board_command::graph_snapshot_at(repository, leaf, contract);
+                let outcome = crate::board_command::graph_snapshot_at(host, leaf, contract);
                 match outcome {
                     Outcome::Reply(wire::Reply {
                         position: wire::ReplyPosition::Snapshot(snapshot),
@@ -1137,7 +1151,7 @@ impl Seat {
                 }
             })?,
             _ => {
-                let outcome = crate::board_command::run_at(repository, leaf, contract);
+                let outcome = crate::board_command::run_at(host, leaf, contract);
                 let rendering = render::render_with_reply_text(
                     &outcome,
                     Form::Text,

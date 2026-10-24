@@ -2,7 +2,7 @@ use super::*;
 use wire::rooms::{RoomAuthorityStamp, RoomCharge, RoomContributionKind, RoomQuestion, RoomSource};
 
 pub(super) fn dispatch_room_client(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Option<Outcome<CommandAnswer>> {
@@ -19,7 +19,7 @@ pub(super) fn dispatch_room_client(
 }
 
 pub(super) fn client_room_post(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -40,7 +40,7 @@ pub(super) fn client_room_post(
 /// connected lane, witnessing the Design's statement and workflow as the board
 /// reads and resolving each `--cite` key to the exact source it names.
 fn client_room_contribute(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -163,7 +163,7 @@ pub(in crate::board_command) fn cite(
 
 /// Leave one room as the connected lane and say what still keeps it there.
 fn client_room_leave(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -233,7 +233,7 @@ fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
 
 /// Submit one operator ACK, NAK, reply, recovery, or assessment.
 fn client_room_control(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {

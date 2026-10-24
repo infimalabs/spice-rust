@@ -91,9 +91,9 @@ impl InboxRow {
 pub(crate) fn run(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
-    lane_environment: Option<OsString>,
+    ambient: &spice::ambient::Ambient,
 ) -> Outcome<InboxView> {
-    paged(matches, || super::run(matches, contract, lane_environment))
+    paged(matches, || super::run(matches, contract, ambient))
 }
 
 /// [`run`] against `repository`.
@@ -102,9 +102,10 @@ pub(crate) fn run_at(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
     lane_environment: Option<OsString>,
+    ambient: &spice::ambient::Ambient,
 ) -> Outcome<InboxView> {
     paged(matches, || {
-        super::run_at(repository, matches, contract, lane_environment)
+        super::run_at(repository, matches, contract, lane_environment, ambient)
     })
 }
 

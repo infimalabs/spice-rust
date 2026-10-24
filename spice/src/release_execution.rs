@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use spice::ambient::Ambient;
 use wire::release::{Operation, RegistryEvidence, ReleaseObservations, ReleasePlan};
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal};
 
@@ -26,9 +27,13 @@ fn package_failure(error: crate::release_package::PackageFailure) -> dist::Effec
     }
 }
 
-fn run_release_gate(root: &Path, source_commit: &str) -> Result<(), dist::EffectError> {
+fn run_release_gate(
+    root: &Path,
+    ambient: &Ambient,
+    source_commit: &str,
+) -> Result<(), dist::EffectError> {
     run_release_gate_with(root, source_commit, |root, selector| {
-        let report = spice::gate::run_strict_at(root, selector).map_err(|error| {
+        let report = spice::gate::run_strict_at(ambient, root, selector).map_err(|error| {
             if error.is_fault() {
                 dist::EffectError::Environment(error.to_string())
             } else {
@@ -262,15 +267,20 @@ impl dist::ReleaseJournal for FileReleaseJournal {
     }
 }
 
-pub(super) struct SystemEffects {
+pub(super) struct SystemEffects<'a> {
     root: PathBuf,
     probe_root: PathBuf,
     authority: dist::ReleaseAuthority,
     package: Option<(Digest, crate::release_package::ReleaseIndex)>,
+    ambient: &'a Ambient,
 }
 
-impl SystemEffects {
-    fn new(root: &Path, journal_root: &Path) -> Result<Self, dist::EffectError> {
+impl<'a> SystemEffects<'a> {
+    fn new(
+        root: &Path,
+        journal_root: &Path,
+        ambient: &'a Ambient,
+    ) -> Result<Self, dist::EffectError> {
         let authority = dist::current_authority(root)
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
         let probe_root = journal_root
@@ -282,6 +292,7 @@ impl SystemEffects {
             probe_root,
             authority,
             package: None,
+            ambient,
         })
     }
 
@@ -471,7 +482,7 @@ impl SystemEffects {
     }
 }
 
-impl dist::EffectPort for SystemEffects {
+impl dist::EffectPort for SystemEffects<'_> {
     fn preflight(&mut self, plan: &ReleasePlan) -> Result<ReleaseObservations, dist::EffectError> {
         let mut observed = plan.observations.clone();
         let repository =
@@ -585,7 +596,7 @@ impl dist::EffectPort for SystemEffects {
     }
 }
 
-impl SystemEffects {
+impl SystemEffects<'_> {
     fn converge_preconditions(
         &self,
         plan: &ReleasePlan,
@@ -630,7 +641,7 @@ impl SystemEffects {
                 "correctness gate received the wrong prior-state shape".to_owned(),
             ));
         }
-        run_release_gate(&self.root, &plan.source_commit)?;
+        run_release_gate(&self.root, self.ambient, &plan.source_commit)?;
         let head = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
         let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
         if head != plan.source_commit || !status.is_empty() {

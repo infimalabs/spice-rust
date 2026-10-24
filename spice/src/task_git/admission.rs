@@ -37,12 +37,19 @@ impl Admission {
     /// A non-empty command comes from the lane's own checkout, so a baseline
     /// carrying a weaker command cannot relax it. An empty command is retained
     /// as the explicit signal to resolve policy from each integrated tree.
-    pub(super) fn resolve(repository: &Repository, agent_head: &str) -> Result<Self, Error> {
+    pub(super) fn resolve(
+        repository: &Repository,
+        ambient: &Ambient,
+        agent_head: &str,
+    ) -> Result<Self, Error> {
         let resolved = crate::config::load_repository(repository, &[])
             .map_err(|error| Error::fault("git::admission-unreadable", error.to_string()))?;
         Ok(Self {
             lane_argv: resolved.root().policy().admission().to_vec(),
-            authored_tree: tree_of(repository.worktree_root(), agent_head)?,
+            authored_tree: tree_of(
+                Worktree::new(repository.worktree_root(), ambient),
+                agent_head,
+            )?,
         })
     }
 
@@ -50,10 +57,11 @@ impl Admission {
     pub(super) fn admit(
         &self,
         repository: &Repository,
+        ambient: &Ambient,
         integrated: &str,
         label: &str,
     ) -> Result<(), Error> {
-        let root = repository.worktree_root();
+        let root = Worktree::new(repository.worktree_root(), ambient);
         // Bytes identical to the lane's own tree are the ones it already
         // worked, so a completion that merged nothing new is not charged for
         // the command. Every synthesized and every raced tree differs here,
@@ -132,7 +140,7 @@ impl AdmissionOutput {
     }
 }
 
-fn tree_of(root: &Path, commit: &str) -> Result<String, Error> {
+fn tree_of(root: Worktree<'_>, commit: &str) -> Result<String, Error> {
     required_read(
         root,
         &["rev-parse", &format!("{commit}^{{tree}}")],
@@ -141,7 +149,7 @@ fn tree_of(root: &Path, commit: &str) -> Result<String, Error> {
 }
 
 /// Run the declared command over the checkout at `root`.
-fn run_admission(root: &Path, argv: &[String]) -> Result<AdmissionOutput, Error> {
+fn run_admission(root: Worktree<'_>, argv: &[String]) -> Result<AdmissionOutput, Error> {
     let outcome = sill::spawn(admission_spec(root, argv)?)
         .map_err(|error| Error::fault("git::admission-launch-failed", error.to_string()))?
         .wait()
@@ -178,7 +186,7 @@ fn captured(output: Option<&sill::CapturedOutput>) -> String {
     })
 }
 
-fn admission_spec(root: &Path, argv: &[String]) -> Result<sill::Spec, Error> {
+fn admission_spec(root: Worktree<'_>, argv: &[String]) -> Result<sill::Spec, Error> {
     let (program, arguments) = argv
         .split_first()
         .ok_or_else(|| invalid_admission("command must name a program"))?;
@@ -189,7 +197,9 @@ fn admission_spec(root: &Path, argv: &[String]) -> Result<sill::Spec, Error> {
         argv: sill::Argv::new(program.as_str(), arguments)
             .map_err(|error| invalid_admission(&error.to_string()))?,
         cwd: root.to_path_buf(),
-        environment: ambient_environment()
+        environment: root
+            .ambient
+            .environment()
             .map_err(|error| invalid_admission(&error.to_string()))?,
         group: sill::ProcessGroup::New,
         deadlines: sill::Deadlines::new(
@@ -208,21 +218,6 @@ fn admission_spec(root: &Path, argv: &[String]) -> Result<sill::Spec, Error> {
         redaction: sill::Redaction::All,
         grace: PROCESS_GROUP_GRACE,
     })
-}
-
-/// The environment the operator's own shell would give a Git or admission
-/// command.
-///
-/// The declared command belongs to the repository and names a tool by the
-/// name an operator types, so it must resolve that tool the way their shell
-/// does. Naming a fixed subset here would decide for every repository which
-/// of its tools may be found.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the native binary rim captures the exact child environment"
-)]
-pub(super) fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
-    sill::Environment::new(std::env::vars_os())
 }
 
 fn invalid_admission(detail: &str) -> Error {

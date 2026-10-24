@@ -11,6 +11,7 @@ pub mod agent_launch;
 pub mod agent_prose;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod agent_wrapper;
+pub mod ambient;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cargo_isolation;
 #[cfg(unix)]

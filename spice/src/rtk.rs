@@ -12,6 +12,8 @@ use sill::{
 
 pub use wire::body::{RtkHealth as Health, RtkHealthState as HealthState};
 
+use crate::ambient::Ambient;
+
 /// Exact configured RTK identity carried into supervised shell wrappers.
 pub const EXECUTABLE_VARIABLE: &str = wire::SpiceVariable::RtkExecutable.as_str();
 /// RTK's upstream history database override.
@@ -71,8 +73,8 @@ impl InvocationFailure {
 
 /// Observe whether the exact configured executable can join supervised commands.
 #[must_use]
-pub fn probe_health(executable: &OsStr, working: &Path) -> Health {
-    let environment = match ambient_environment() {
+pub fn probe_health(executable: &OsStr, working: &Path, ambient: &Ambient) -> Health {
+    let environment = match ambient.environment() {
         Ok(environment) => environment,
         Err(error) => {
             return health(
@@ -189,9 +191,9 @@ fn parse_version(output: &str) -> Option<[u32; 3]> {
 
 /// Ask the configured RTK executable to rewrite one command.
 #[must_use]
-pub fn rewrite(command: &[OsString], executable: &OsStr) -> Decision {
+pub fn rewrite(command: &[OsString], executable: &OsStr, ambient: &Ambient) -> Decision {
     rewrite_with(command, executable, |arguments| {
-        run_selector(executable, arguments)
+        run_selector(executable, arguments, ambient)
     })
 }
 
@@ -412,11 +414,16 @@ fn degraded(command: &[OsString], executable: &OsStr, reason: &str) -> Decision 
     }
 }
 
-fn run_selector(executable: &OsStr, arguments: &[String]) -> Result<SelectorResult, String> {
+fn run_selector(
+    executable: &OsStr,
+    arguments: &[String],
+    ambient: &Ambient,
+) -> Result<SelectorResult, String> {
     let working =
         env::current_dir().map_err(|error| format!("working directory unavailable: {error}"))?;
-    let environment =
-        ambient_environment().map_err(|error| format!("invalid selector environment: {error}"))?;
+    let environment = ambient
+        .environment()
+        .map_err(|error| format!("invalid selector environment: {error}"))?;
     run_selector_in(executable, arguments, &working, environment)
 }
 
@@ -532,14 +539,6 @@ fn captured_text(output: Option<&sill::CapturedOutput>, stream: &str) -> Result<
     }
     String::from_utf8(output.bytes().to_vec())
         .map_err(|_| format!("selector {stream} was not UTF-8"))
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the external-process rim captures the wrapper environment once"
-)]
-fn ambient_environment() -> Result<Environment, sill::SpecError> {
-    Environment::new(env::vars_os())
 }
 
 #[cfg(test)]

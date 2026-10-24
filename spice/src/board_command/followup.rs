@@ -358,7 +358,7 @@ pub(super) struct FollowupContext<'a> {
     pub(super) reviewed: PendingFact,
     pub(super) origin: &'a CreationCause,
     pub(super) creation: Option<&'a TaskCreationCapture>,
-    pub(super) repository: Option<&'a Repository>,
+    pub(super) repository: Option<Host<'a>>,
     pub(super) projects: &'a ProjectPolicy,
 }
 

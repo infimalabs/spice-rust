@@ -9,6 +9,7 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
+use spice::ambient::Ambient;
 use spice::config::{self, Resolved, Root};
 use spice::repository::Repository;
 use wire::{
@@ -26,7 +27,7 @@ use crate::cli::{self, ExternalTool};
 pub(crate) fn inspect(
     working: &Path,
     environment: &[(SpiceVariable, bool)],
-    search_path: Option<&OsStr>,
+    ambient: &Ambient,
     configuration: Option<&config::RepositoryCapture>,
 ) -> Outcome<DoctorReport<Root>> {
     let repository = match Repository::discover(working) {
@@ -44,7 +45,7 @@ pub(crate) fn inspect(
         Err(error) => return Outcome::Refusal(configuration_refusal(&error)),
     };
     let resolved = loaded.resolved().clone();
-    let probe = FilesystemProbe::new(working, search_path);
+    let probe = FilesystemProbe { working, ambient };
 
     Outcome::Reply(Reply {
         position: ReplyPosition::Direct {},
@@ -324,21 +325,12 @@ trait ExecutableProbe {
 
 struct FilesystemProbe<'a> {
     working: &'a Path,
-    search_path: Option<&'a OsStr>,
-}
-
-impl<'a> FilesystemProbe<'a> {
-    const fn new(working: &'a Path, search_path: Option<&'a OsStr>) -> Self {
-        Self {
-            working,
-            search_path,
-        }
-    }
+    ambient: &'a Ambient,
 }
 
 impl ExecutableProbe for FilesystemProbe<'_> {
     fn named(&self, name: &str) -> Result<(), String> {
-        let Some(search_path) = self.search_path else {
+        let Some(search_path) = self.ambient.get("PATH") else {
             return Err(format!(
                 "{name} is not available because the executable search path is absent"
             ));
@@ -365,7 +357,7 @@ impl ExecutableProbe for FilesystemProbe<'_> {
     }
 
     fn rtk(&self, executable: &str) -> Result<(), String> {
-        let health = spice::rtk::probe_health(OsStr::new(executable), self.working);
+        let health = spice::rtk::probe_health(OsStr::new(executable), self.working, self.ambient);
         if health.active() {
             Ok(())
         } else {

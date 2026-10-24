@@ -59,12 +59,13 @@ impl SurfaceRuntimes {
         let extension = quota::pin_extension(&paths.runtime).map_err(|error| {
             environment_fault("resident::quota-extension-unavailable", &error.to_string())
         })?;
-        let mut quota = quota::Runtime::start(config.omp_binary.clone(), extension);
+        let mut quota =
+            quota::Runtime::start(config.omp_binary.clone(), extension, &config.ambient);
         let quota_triggers = quota::Triggers::start(bus)?;
         quota.request();
         let lifecycle = lifecycle::Runtime::new(&config.lane);
         let taste_adjudication = if config.judge_enabled {
-            Some(taste_surface::start_adjudication()?)
+            Some(taste_surface::start_adjudication(&config.ambient)?)
         } else {
             None
         };
@@ -287,7 +288,8 @@ pub(super) async fn run_surface(
     let door = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
     recover_transcripts(bus, paths, epoch, &config.steering, progress)?;
-    let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
+    let mut message_startup =
+        launch_message_startup(bus, paths, epoch, &message_publisher, &config.ambient)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;
     let command_surface = command_surface::Surface::new(
@@ -337,7 +339,7 @@ pub(super) async fn run_surface(
     let message_state = Arc::new(std::sync::Mutex::new(message_startup.reader.into_state()));
     command_surface.attach_profiles(Arc::clone(&message_state));
     let session_compactions =
-        message_surface::SessionCompactions::new(crate::session_environment());
+        message_surface::SessionCompactions::new(crate::session_environment(&config.ambient));
     LiveSurface {
         bus,
         epoch,
@@ -383,9 +385,10 @@ fn launch_message_startup(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     publisher: &serve::stream::MessagePublisher,
+    ambient: &Ambient,
 ) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
     let residency = current_residency(bus, epoch)?;
-    start_message_startup(paths, residency.body(), publisher, bus.reader())
+    start_message_startup(paths, residency.body(), publisher, bus.reader(), ambient)
 }
 
 fn start_message_startup(
@@ -393,10 +396,12 @@ fn start_message_startup(
     residency: &wire::ResidencyHead,
     publisher: &serve::stream::MessagePublisher,
     bus: bus::BusReader,
+    ambient: &Ambient,
 ) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
     let paths = paths.clone();
     let residency = residency.clone();
     let publisher = publisher.clone();
+    let ambient = ambient.clone();
     let (finished, receiver) = oneshot::channel();
     std::thread::Builder::new()
         .name("spice-message-startup".to_owned())
@@ -411,6 +416,7 @@ fn start_message_startup(
                     &publisher,
                     &mut reader,
                     &mut diagnostic,
+                    &ambient,
                 )
                 .map(|()| MessageStartup { reader, diagnostic })
             };
@@ -780,6 +786,7 @@ impl LiveSurface<'_, '_> {
             &command_surface.config.taste,
             &command_surface.config.steering,
             batch,
+            &command_surface.config.ambient,
         )
         .narration(command_surface.config.lane.narration());
         let views =

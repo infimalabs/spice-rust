@@ -6,6 +6,7 @@ use std::thread;
 
 use bus::{Bus, JournalCommit};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
+use spice::ambient::Ambient;
 use wire::body::TranscriptLocus;
 use wire::body::{TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged};
 use wire::{Actor, CanonicalUuid, Digest, Instant, Outcome, Producer, ResidencyHead, Seq};
@@ -110,7 +111,7 @@ pub(super) trait Adjudicator {
     fn adjudicate(&mut self, candidate: &Candidate) -> Result<Judgment, crate::judge::Error>;
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct ProcessAdjudicator {
     process: crate::judge::Process,
 }
@@ -138,9 +139,9 @@ impl Adjudicator for ProcessAdjudicator {
 }
 
 impl ProcessAdjudicator {
-    fn with_cancellation(cancellation: sill::CancellationToken) -> Self {
+    fn new(cancellation: sill::CancellationToken, ambient: Ambient) -> Self {
         Self {
-            process: crate::judge::Process::with_cancellation(cancellation),
+            process: crate::judge::Process::new(cancellation, ambient),
         }
     }
 }
@@ -177,8 +178,9 @@ pub(super) struct AdjudicationRuntime {
     completions: AdjudicationCompletions,
 }
 
-pub(super) fn start_adjudication() -> CommandResult<AdjudicationRuntime> {
-    start_adjudication_with(ProcessAdjudicator::with_cancellation)
+pub(super) fn start_adjudication(ambient: &Ambient) -> CommandResult<AdjudicationRuntime> {
+    let ambient = ambient.clone();
+    start_adjudication_with(move |cancellation| ProcessAdjudicator::new(cancellation, ambient))
 }
 
 fn start_adjudication_with<A>(

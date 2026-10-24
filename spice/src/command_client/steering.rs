@@ -8,10 +8,12 @@ pub(crate) fn execute_steering(
     contract: &Contract,
     selected: SelectedCommand<'_>,
     lane_context: Option<CanonicalUuid>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     match selected {
         SelectedCommand::SteerSend { lane, message } => {
-            let inbox = match read_inbox(discovery_path, Connection::Operator, Some(lane)) {
+            let inbox = match read_inbox(discovery_path, Connection::Operator, Some(lane), ambient)
+            {
                 Ok(inbox) => inbox.answer,
                 Err(outcome) => return outcome,
             };
@@ -38,11 +40,17 @@ pub(crate) fn execute_steering(
                     attachments: Vec::new(),
                 },
             );
-            execute_mapped(discovery_path, contract, Connection::Operator, mapped)
+            execute_mapped(
+                discovery_path,
+                contract,
+                Connection::Operator,
+                mapped,
+                ambient,
+            )
         }
         SelectedCommand::SteerInbox { lane } => {
             let connection = lane_context.map_or(Connection::Operator, Connection::Lane);
-            match read_inbox(discovery_path, connection, lane) {
+            match read_inbox(discovery_path, connection, lane, ambient) {
                 Ok(inbox) => Outcome::Reply(Reply {
                     position: ReplyPosition::Snapshot(inbox.position),
                     body: CommandAnswer::Inbox(inbox.answer),
@@ -50,6 +58,6 @@ pub(crate) fn execute_steering(
                 Err(outcome) => outcome,
             }
         }
-        selected => execute(discovery_path, contract, selected),
+        selected => execute(discovery_path, contract, selected, ambient),
     }
 }

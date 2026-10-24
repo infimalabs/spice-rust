@@ -154,7 +154,15 @@ impl LaunchProbes for InertProbes {
     }
 
     fn session(&self, worktree: PathBuf) -> crate::session_command::Environment {
-        crate::session_environment().rooted(worktree).unglanced()
+        crate::session_environment(&spice::ambient::capture())
+            .rooted(worktree)
+            .unglanced()
+    }
+
+    fn variable(&self, name: &str) -> Option<std::ffi::OsString> {
+        spice::ambient::capture()
+            .get(name)
+            .map(std::ffi::OsStr::to_os_string)
     }
 }
 

@@ -13,7 +13,7 @@ mod withdrawal;
 pub(super) fn dispatch_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
@@ -210,7 +210,7 @@ pub(super) fn propose_design(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request_body: &DesignPropose,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {

@@ -53,7 +53,9 @@ fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
     )
     .expect("write malformed staged policy");
     let paths = vec![wire::TRACKED_POLICY_FILE.to_owned()];
-    let environment = ambient_environment().expect("capture test environment");
+    let environment = crate::ambient::capture()
+        .environment()
+        .expect("capture test environment");
 
     let error = packaged_selection_policy(&root, &paths, &environment)
         .expect_err("malformed staged policy cannot use a compiled inventory");
@@ -72,7 +74,9 @@ fn zero_config_selection_keeps_unclassified_sources_local_and_known_sources_spec
     ));
     fs::create_dir(&root).expect("create zero-config fixture");
     let paths = ["index.qmd", "render.lua", "verify.pl", "README.md"].map(str::to_owned);
-    let environment = ambient_environment().expect("capture test environment");
+    let environment = crate::ambient::capture()
+        .environment()
+        .expect("capture test environment");
     let policy = packaged_selection_policy(&root, &paths, &environment)
         .expect("compile zero-config packaged policy");
 

@@ -206,7 +206,11 @@ pub(crate) struct ViewRequest {
 }
 
 /// Execute one `board` invocation.
-pub(crate) fn board_view(matches: &ArgMatches, contract: &Contract) -> Outcome<BoardView> {
+pub(crate) fn board_view(
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<BoardView> {
     let request = match ViewRequest::from_matches(matches) {
         Ok(request) => request,
         Err(outcome) => return retag(outcome),
@@ -215,13 +219,17 @@ pub(crate) fn board_view(matches: &ArgMatches, contract: &Contract) -> Outcome<B
         Ok(repository) => repository,
         Err(outcome) => return retag(outcome),
     };
+    let repository = Host {
+        repository: &repository,
+        ambient,
+    };
     // An export carries the read exactly as the resident answers it; a view
     // projects the whole board so dependency standing sees every task.
     let read = BoardRead::All {
         family: request.output.as_ref().and(request.family.clone()),
     };
     let (position, board) = match crate::command_client::execute_typed(
-        &repository,
+        repository,
         contract,
         CommandKind::BoardRead,
         Vec::new(),

@@ -4,7 +4,7 @@ use super::*;
 
 /// Map the operator settlement leaves to their typed commands.
 pub(super) fn client_settle(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -16,7 +16,7 @@ pub(super) fn client_settle(
 }
 
 fn client_delete(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -45,7 +45,7 @@ fn client_delete(
 
 /// Conclude a Design done, or collapsed with the stated reason.
 fn client_conclude(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {

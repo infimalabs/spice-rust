@@ -35,11 +35,11 @@ impl RecoveryPreflight {
     }
 }
 pub(super) fn client_add_recovery(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
-    let pending = match spice::task_git::pending_recovery(repository) {
+    let pending = match spice::task_git::pending_recovery(&repository) {
         Ok(pending) => pending,
         Err(error) => return task_git_outcome(error),
     };
@@ -47,16 +47,18 @@ pub(super) fn client_add_recovery(
         Some(recovery) => {
             return resume_pending_client_capture(repository, None, recovery);
         }
-        None => match spice::task_git::quarantine_for_recovery(repository) {
+        None => match spice::task_git::quarantine_for_recovery(&repository, repository.ambient) {
             Ok(recovery) => recovery,
             Err(error) => return task_git_outcome(error),
         },
     };
-    if let Err(error) = spice::task_git::synchronize_recovery(repository, &recovery) {
+    if let Err(error) =
+        spice::task_git::synchronize_recovery(&repository, repository.ambient, &recovery)
+    {
         return rollback_recovery_error(repository, &recovery, error);
     }
     let outcome = submit_recovery_task_add(repository, contract, body);
-    let claim = match spice::task_git::recovery_claim(repository, &recovery) {
+    let claim = match spice::task_git::recovery_claim(&repository, &recovery) {
         Ok(Some(claim)) if claim.fresh => claim,
         Ok(Some(_)) => {
             return refusal(
@@ -66,7 +68,9 @@ pub(super) fn client_add_recovery(
             );
         }
         Ok(None) => {
-            if let Err(error) = spice::task_git::restore_recovery(repository, &recovery) {
+            if let Err(error) =
+                spice::task_git::restore_recovery(&repository, repository.ambient, &recovery)
+            {
                 return task_git_outcome(error);
             }
             return outcome;
@@ -83,12 +87,12 @@ pub(super) fn client_add_recovery(
 }
 
 pub(super) fn client_capture_recovery(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     task: &TaskHandle,
     stealing: bool,
 ) -> Outcome<CommandAnswer> {
-    let pending = match spice::task_git::pending_recovery(repository) {
+    let pending = match spice::task_git::pending_recovery(&repository) {
         Ok(pending) => pending,
         Err(error) => return task_git_outcome(error),
     };
@@ -114,17 +118,19 @@ pub(super) fn client_capture_recovery(
         Ok(preflight) => preflight,
         Err(outcome) => return outcome,
     };
-    let recovery = match spice::task_git::quarantine_for_recovery(repository) {
+    let recovery = match spice::task_git::quarantine_for_recovery(&repository, repository.ambient) {
         Ok(recovery) => recovery,
         Err(error) => return task_git_outcome(error),
     };
-    let boundary = match spice::task_git::synchronize_recovery(repository, &recovery) {
-        Ok(boundary) => boundary,
-        Err(error) => return rollback_recovery_error(repository, &recovery, error),
-    };
+    let boundary =
+        match spice::task_git::synchronize_recovery(&repository, repository.ambient, &recovery) {
+            Ok(boundary) => boundary,
+            Err(error) => return rollback_recovery_error(repository, &recovery, error),
+        };
     let expected = preflight.expected.clone();
     let claim = preflight.seal(boundary);
-    if let Err(error) = spice::task_git::bind_recovery_claim(repository, &recovery, claim.clone()) {
+    if let Err(error) = spice::task_git::bind_recovery_claim(&repository, &recovery, claim.clone())
+    {
         // A failed durable bind can mean another writer sealed a different
         // intent. Preserve that evidence rather than destroying its authority.
         return task_git_outcome(error);
@@ -233,8 +239,8 @@ fn recovery_rule(stealing: bool) -> Name {
     .expect("recovery possession rules are wire names")
 }
 
-pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
-    let recovery = match spice::task_git::pending_recovery(repository) {
+pub(super) fn restore_client_recovery(repository: Host<'_>) -> Outcome<CommandAnswer> {
+    let recovery = match spice::task_git::pending_recovery(&repository) {
         Ok(Some(recovery)) => recovery,
         Ok(None) => {
             return refusal(
@@ -245,7 +251,7 @@ pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<Comman
         }
         Err(error) => return task_git_outcome(error),
     };
-    let sealed = match spice::task_git::recovery_claim(repository, &recovery) {
+    let sealed = match spice::task_git::recovery_claim(&repository, &recovery) {
         Ok(sealed) => sealed,
         Err(error) => return task_git_outcome(error),
     };
@@ -304,7 +310,7 @@ pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<Comman
             );
         }
     }
-    let text = match spice::task_git::restore_recovery(repository, &recovery) {
+    let text = match spice::task_git::restore_recovery(&repository, repository.ambient, &recovery) {
         Ok(spice::task_git::RestoreOutcome::Restored) => {
             format!(
                 "restored dirty-handoff transaction {}",
@@ -325,11 +331,11 @@ pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<Comman
 }
 
 pub(super) fn resume_pending_client_capture(
-    repository: &Repository,
+    repository: Host<'_>,
     requested: Option<&TaskHandle>,
     recovery: spice::task_git::Recovery,
 ) -> Outcome<CommandAnswer> {
-    let claim = match spice::task_git::recovery_claim(repository, &recovery) {
+    let claim = match spice::task_git::recovery_claim(&repository, &recovery) {
         Ok(Some(claim)) => claim,
         Ok(None) => {
             return refusal(
@@ -519,7 +525,7 @@ pub(in crate::board_command) fn recovery_board_state(
 }
 
 fn reconcile_client_recovery(
-    repository: &Repository,
+    repository: Host<'_>,
     task: &TaskHandle,
     recovery: spice::task_git::Recovery,
     sealed: spice::task_git::RecoveryClaim,
@@ -550,7 +556,9 @@ fn reconcile_client_recovery(
                     "retain the quarantine; the successful claim receipt is not reflected by current board heads",
                 );
             }
-            if let Err(error) = spice::task_git::restore_recovery(repository, &recovery) {
+            if let Err(error) =
+                spice::task_git::restore_recovery(&repository, repository.ambient, &recovery)
+            {
                 return task_git_outcome(error);
             }
             outcome.unwrap_or_else(|| {
@@ -562,7 +570,9 @@ fn reconcile_client_recovery(
             })
         }
         RecoveryBoardState::PostClaim { first, last } => {
-            if let Err(error) = spice::task_git::replay_recovery(repository, &recovery) {
+            if let Err(error) =
+                spice::task_git::replay_recovery(&repository, repository.ambient, &recovery)
+            {
                 return task_git_outcome(error);
             }
             outcome
@@ -614,12 +624,12 @@ fn reconcile_client_recovery(
 }
 
 fn rollback_recovery_error(
-    repository: &Repository,
+    repository: Host<'_>,
     recovery: &spice::task_git::Recovery,
     error: spice::task_git::Error,
 ) -> Outcome<CommandAnswer> {
     let outcome = task_git_outcome(error);
-    match spice::task_git::restore_recovery(repository, recovery) {
+    match spice::task_git::restore_recovery(&repository, repository.ambient, recovery) {
         Ok(_) => outcome,
         Err(restore) => task_git_outcome(restore),
     }

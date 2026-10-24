@@ -85,6 +85,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
         &publisher,
         &mut reader,
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("first backlog restores");
     let accepted = operator_session(epoch);
@@ -121,6 +122,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
         &publisher,
         &mut message_surface::BacklogReader::indexed(),
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("a conflicting history projection must not terminate the resident");
     let (_, frames) = source
@@ -187,6 +189,7 @@ fn each_resident_generation_restores_durable_prose_before_app_subscription() {
             &publisher,
             &mut reader,
             &mut diagnostic,
+            &spice::ambient::capture(),
         )
         .expect("durable backlog restores");
         assert!(
@@ -279,6 +282,7 @@ fn startup_fills_the_visible_floor_across_a_sparse_tool_horizon() {
         &publisher,
         &mut reader,
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("sparse backlog restores");
     assert!(
@@ -411,6 +415,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
         &publisher,
         &mut reader,
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("initial backlog restores");
     tape.tee(APPEND).expect("appended prose is captured");
@@ -420,6 +425,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
         &publisher,
         &mut reader,
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("appended backlog resumes");
 
@@ -490,6 +496,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         &publisher,
         &mut reader,
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("initial backlog restores");
     assert!(diagnostic.is_empty());
@@ -822,6 +829,7 @@ fn restore_mixed_acknowledgement_message(
         &publisher,
         &mut reader,
         &mut diagnostic,
+        &spice::ambient::capture(),
     )
     .expect("mixed acknowledgements restore");
     assert!(diagnostic.is_empty());

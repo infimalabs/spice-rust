@@ -111,8 +111,13 @@ fn settle_launch(
         repository,
         paths,
         epoch,
+        config,
         ..
     } = resident;
+    let host = crate::command_client::Host {
+        repository,
+        ambient: &config.ambient,
+    };
     match trigger {
         Trigger::PendingInbox => {
             let woken = woken.expect("an inbox wake retains the steering it was woken for");
@@ -141,7 +146,7 @@ fn settle_launch(
             Ok(lane_surface::AutomaticWake::Started) => Ok(Attempted::Started),
             Ok(lane_surface::AutomaticWake::Unstarted(failure)) | Err(failure) => {
                 let claim = claim.expect("work launch retains its reserved claim");
-                match crate::board_command::release_automatic(bus, repository, claim) {
+                match crate::board_command::release_automatic(bus, host, claim) {
                     Ok(()) => Err(failure),
                     Err(release) => Err(unit_outcome(release)),
                 }

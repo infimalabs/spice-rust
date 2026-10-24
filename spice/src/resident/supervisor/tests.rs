@@ -334,7 +334,7 @@ fn contract_v1_request_is_refused_before_state_publication() {
     )
     .expect("legacy request fixture publishes");
 
-    let error = run(&request_path).expect_err("v1 request refuses");
+    let error = run(&request_path, &Ambient::default()).expect_err("v1 request refuses");
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(
         error

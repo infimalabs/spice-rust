@@ -79,8 +79,8 @@ pub(crate) struct ChildLaunch {
 
 impl ChildLaunch {
     /// Capture a launcher-created handoff, if this is a detached child.
-    pub(crate) fn capture() -> Result<Option<Self>, Outcome<()>> {
-        let Some(mut stream) = inherited_channel()? else {
+    pub(crate) fn capture(ambient: &Ambient) -> Result<Option<Self>, Outcome<()>> {
+        let Some(mut stream) = inherited_channel(ambient)? else {
             return Ok(None);
         };
         let request = read_framed(&mut stream)?;
@@ -101,7 +101,7 @@ impl ChildLaunch {
 /// Take the launch channel the launcher passed on descriptor
 /// [`HANDOFF_FD`], if this is a detached child.
 #[cfg(unix)]
-fn inherited_channel() -> Result<Option<Channel>, Outcome<()>> {
+fn inherited_channel(_ambient: &Ambient) -> Result<Option<Channel>, Outcome<()>> {
     if !handoff_present(HANDOFF_FD)? {
         return Ok(None);
     }
@@ -120,8 +120,11 @@ fn inherited_channel() -> Result<Option<Channel>, Outcome<()>> {
 /// The launcher writes the request as soon as it accepts this process, and
 /// its exit breaks the pipe, so the request read needs no deadline of its own.
 #[cfg(windows)]
-fn inherited_channel() -> Result<Option<Channel>, Outcome<()>> {
-    let Some(name) = crate::bootstrap_environment(HANDOFF_VARIABLE) else {
+fn inherited_channel(ambient: &Ambient) -> Result<Option<Channel>, Outcome<()>> {
+    let Some(name) = ambient
+        .get(HANDOFF_VARIABLE)
+        .map(std::ffi::OsStr::to_os_string)
+    else {
         return Ok(None);
     };
     let name = name.into_string().map_err(|_| {
@@ -171,9 +174,10 @@ pub(crate) fn launch(
     leaf: &clap::ArgMatches,
     handoff_token: Option<String>,
     open: bool,
+    ambient: &Ambient,
 ) -> Outcome<wire::AppOpen> {
     let spawned = PreparedLaunch::admit(leaf, handoff_token)
-        .and_then(|launch| launch.spawn(leaf, ChildRole::Resident { open }));
+        .and_then(|launch| launch.spawn(leaf, ChildRole::Resident { open }, ambient));
     match spawned {
         Ok(launch) => launch.wait(),
         Err(outcome) => map_failure(outcome),
@@ -184,9 +188,9 @@ pub(crate) fn launch(
 /// answer once it reports the window up over the endpoint it admitted. The
 /// child owns the window and any resident it starts; its terminal receipt
 /// lands in the resident log, never on this terminal.
-pub(crate) fn launch_window(leaf: &clap::ArgMatches) -> Outcome<wire::AppOpen> {
-    let spawned =
-        PreparedLaunch::admit(leaf, None).and_then(|launch| launch.spawn(leaf, ChildRole::Window));
+pub(crate) fn launch_window(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome<wire::AppOpen> {
+    let spawned = PreparedLaunch::admit(leaf, None)
+        .and_then(|launch| launch.spawn(leaf, ChildRole::Window, ambient));
     match spawned {
         Ok(launch) => launch.wait_opened(),
         Err(outcome) => map_failure(outcome),
@@ -262,7 +266,12 @@ impl PreparedLaunch {
         })
     }
 
-    fn spawn(self, leaf: &clap::ArgMatches, role: ChildRole) -> Result<SpawnedLaunch, Outcome<()>> {
+    fn spawn(
+        self,
+        leaf: &clap::ArgMatches,
+        role: ChildRole,
+        ambient: &Ambient,
+    ) -> Result<SpawnedLaunch, Outcome<()>> {
         let Self {
             listen,
             token,
@@ -279,7 +288,7 @@ impl PreparedLaunch {
             .try_clone()
             .map_err(|error| daemon_fault("resident::log-unavailable", error))?;
         let mut command = ProcessCommand::new(&executable);
-        ResidentLaunchEnvironment::derive(launcher_environment()).apply(&mut command);
+        ResidentLaunchEnvironment::derive(ambient.variables().iter().cloned()).apply(&mut command);
         command
             .args([
                 "--json",
@@ -321,14 +330,6 @@ impl PreparedLaunch {
             child,
         })
     }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the detached launcher is the rim that captures the shell a resident restart derives from"
-)]
-fn launcher_environment() -> std::env::VarsOs {
-    std::env::vars_os()
 }
 
 struct SpawnedLaunch {

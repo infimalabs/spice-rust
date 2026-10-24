@@ -11,6 +11,7 @@ use std::{
 
 use listen::SurfaceError;
 
+use spice::ambient::Ambient;
 use spice::cli;
 #[cfg(not(target_arch = "wasm32"))]
 use spice::placeholder::PlaceholderReason;
@@ -162,15 +163,16 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn bootstrap_invocation() -> (cli::MountRegistry, clap::ArgMatches, bool) {
+fn bootstrap_invocation() -> (Ambient, cli::MountRegistry, clap::ArgMatches, bool) {
     let _ = PROCESS_STARTED.set(Instant::now());
-    if let Some(code) = resident::supervisor::entry(std::env::args_os()) {
+    let ambient = spice::ambient::capture();
+    if let Some(code) = resident::supervisor::entry(std::env::args_os(), &ambient) {
         terminate_code(code);
     }
     if let Some(code) = app_command::window_entry(std::env::args_os()) {
         terminate_code(code);
     }
-    if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
+    if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os(), &ambient) {
         terminate_code(code);
     }
     let bootstrap_form = if cli::bootstrap_json_selected(std::env::args_os()) {
@@ -214,12 +216,12 @@ fn bootstrap_invocation() -> (cli::MountRegistry, clap::ArgMatches, bool) {
             (mounts, matches)
         }
     };
-    (mounts, matches, test_app_stage)
+    (ambient, mounts, matches, test_app_stage)
 }
 
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
-    let (mounts, matches, test_app_stage) = bootstrap_invocation();
+    let (ambient, mounts, matches, test_app_stage) = bootstrap_invocation();
     #[cfg(target_arch = "wasm32")]
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
@@ -232,7 +234,7 @@ fn main() {
             run_mounted(selection);
         }
         if let Some(command) = cli::run_command(&matches) {
-            run(command);
+            run(command, &ambient);
         }
     }
 
@@ -255,7 +257,7 @@ fn main() {
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let invocation = NativeInvocation(leaf, form, configuration);
+        let invocation = NativeInvocation(leaf, form, configuration, &ambient);
         invocation.dispatch_gate(contract);
         invocation.dispatch_policy(contract);
         invocation.dispatch_controls(contract);
@@ -267,7 +269,7 @@ fn main() {
     }
     #[cfg(not(target_arch = "wasm32"))]
     if contract.path == ["up"] {
-        resident_up(leaf, form, test_app_stage);
+        resident_up(leaf, form, test_app_stage, &ambient);
     } else if test_app_stage {
         deliver_fault(
             Fault {
@@ -280,7 +282,7 @@ fn main() {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
-        ["down"] => resident::down(contract),
+        ["down"] => resident::down(contract, &ambient),
         _ => not_landed(contract),
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -334,29 +336,30 @@ struct NativeInvocation<'a>(
     &'a clap::ArgMatches,
     Form,
     Option<&'a spice::config::RepositoryCapture>,
+    &'a Ambient,
 );
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeInvocation<'_> {
     fn dispatch_gate(&self, contract: &cli::Contract) {
-        let &Self(leaf, form, configuration) = self;
+        let &Self(leaf, form, configuration, ambient) = self;
         // Under `--json` standard error carries one document; gate progress
         // speaks only to text invocations.
         let live = form == Form::Text;
         match contract.path {
-            ["doctor"] => deliver_display(&doctor_outcome(configuration), form),
-            ["demo"] => deliver(&demo_command::run(leaf), form),
+            ["doctor"] => deliver_display(&doctor_outcome(configuration, ambient), form),
+            ["demo"] => deliver(&demo_command::run(leaf, ambient), form),
             ["app"] if leaf.get_flag("foreground") => {
-                deliver_display(&app_command::run(leaf), form)
+                deliver_display(&app_command::run(leaf, ambient), form)
             }
-            ["app"] => deliver_display(&app_command::open(leaf), form),
+            ["app"] => deliver_display(&app_command::open(leaf, ambient), form),
             ["gate"] => deliver_with_reply_text(
-                &gate_command::run(leaf, configuration, live),
+                &gate_command::run(leaf, configuration, live, ambient),
                 form,
                 gate_command::BatteryRun::text,
             ),
             ["gate", "prove"] => deliver_with_reply_text(
-                &gate_command::prove(leaf, live),
+                &gate_command::prove(leaf, live, ambient),
                 form,
                 gate_command::ProveReport::text,
             ),
@@ -373,11 +376,12 @@ impl NativeInvocation<'_> {
                 form,
                 gate_command::KillAnswer::text,
             ),
-            ["gate", "pre-commit"] => {
-                deliver_commit_gate(&gate_command::pre_commit(leaf, configuration, live), form)
-            }
+            ["gate", "pre-commit"] => deliver_commit_gate(
+                &gate_command::pre_commit(leaf, configuration, live, ambient),
+                form,
+            ),
             ["gate", "selection"] => {
-                let outcome = gate_command::selection(live);
+                let outcome = gate_command::selection(live, ambient);
                 if gate_command::CurrentSourceSelectionReport::speaks(&outcome) {
                     deliver_with_reply_text(
                         &outcome,
@@ -388,19 +392,19 @@ impl NativeInvocation<'_> {
                     deliver_commit_gate(&outcome, form)
                 }
             }
-            ["install"] => match install_command::run(leaf) {
+            ["install"] => match install_command::run(leaf, ambient) {
                 install_command::Answer::Plan(outcome) => deliver_display(&outcome, form),
                 install_command::Answer::Receipt(outcome) => deliver_display(&outcome, form),
                 install_command::Answer::Child(status) => terminate_child(status),
             },
-            ["install", "symbols"] => deliver(&install_symbols_command::run(leaf), form),
+            ["install", "symbols"] => deliver(&install_symbols_command::run(leaf, ambient), form),
             ["config"] => deliver_config(&config_command::run(leaf), form),
             _ => {}
         }
     }
 
     fn dispatch_retained_read(&self, contract: &cli::Contract) {
-        let &Self(leaf, form, _) = self;
+        let &Self(leaf, form, _, _) = self;
         match contract.path {
             ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
             ["room", "inbox"] => deliver_display(&room_command::inbox::run(leaf, contract), form),
@@ -418,37 +422,37 @@ impl NativeInvocation<'_> {
     }
 
     fn dispatch_policy(&self, contract: &cli::Contract) {
-        let &Self(leaf, form, configuration) = self;
+        let &Self(leaf, form, configuration, ambient) = self;
         match contract.path {
-            ["dev", "cargo"] => match cargo_command::run(leaf) {
+            ["dev", "cargo"] => match cargo_command::run(leaf, ambient) {
                 cargo_command::RunResult::Child(status) => terminate_child(status),
                 cargo_command::RunResult::Rejected { outcome, code } => {
                     deliver_with_code(&outcome, form, code)
                 }
             },
-            ["dev", "xtask"] => match cargo_command::xtask(leaf) {
+            ["dev", "xtask"] => match cargo_command::xtask(leaf, ambient) {
                 cargo_command::RunResult::Child(status) => terminate_child(status),
                 cargo_command::RunResult::Rejected { outcome, code } => {
                     deliver_with_code(&outcome, form, code)
                 }
             },
-            ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
+            ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf, ambient), form),
             #[cfg(unix)]
             ["dev", "cargo-footprint"] => deliver_display(&cargo_command::footprint(), form),
-            ["dev", "report-page"] => deliver(&board_command::run(leaf, contract), form),
+            ["dev", "report-page"] => deliver(&board_command::run(leaf, contract, ambient), form),
             ["rtk", "gain"] => deliver(&rtk_command::gain(leaf, configuration), form),
-            ["consent"] => deliver_display(&consent_command::read(leaf, contract), form),
+            ["consent"] => deliver_display(&consent_command::read(leaf, contract, ambient), form),
             ["consent", "allow"] => deliver(
-                &consent_command::decide(leaf, contract, wire::Answer::Granted),
+                &consent_command::decide(leaf, contract, wire::Answer::Granted, ambient),
                 form,
             ),
             ["consent", "deny"] => deliver(
-                &consent_command::decide(leaf, contract, wire::Answer::Denied),
+                &consent_command::decide(leaf, contract, wire::Answer::Denied, ambient),
                 form,
             ),
-            ["consent", "policy"] => deliver(&consent_command::policy(contract), form),
+            ["consent", "policy"] => deliver(&consent_command::policy(contract, ambient), form),
             ["lock"] => deliver(&lock_command::report(configuration), form),
-            ["lock", "run"] => match lock_command::run(leaf, configuration) {
+            ["lock", "run"] => match lock_command::run(leaf, configuration, ambient) {
                 lock_command::RunResult::Child(status) => terminate_child(status),
                 lock_command::RunResult::Rejected { outcome, code } => {
                     deliver_with_code(&outcome, form, code)
@@ -471,10 +475,10 @@ impl NativeInvocation<'_> {
             }
             ["backup"] => deliver(&journal_command::backup(leaf), form),
             ["restore"] => deliver(&restore_command::restore(leaf), form),
-            ["journal"] => deliver_display(&journal_command::report(leaf, contract), form),
+            ["journal"] => deliver_display(&journal_command::report(leaf, contract, ambient), form),
             ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
-            ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
-            ["thread"] => deliver_display(&journal_command::thread(leaf, contract), form),
+            ["journal", "verify"] => deliver(&journal_command::verify(contract, ambient), form),
+            ["thread"] => deliver_display(&journal_command::thread(leaf, contract, ambient), form),
             ["version"] => deliver(&version_outcome(), form),
             ["release", "notes"] => deliver_with_reply_text(
                 &release_command::notes(leaf),
@@ -486,7 +490,7 @@ impl NativeInvocation<'_> {
     }
 
     fn dispatch_session_control(&self, contract: &cli::Contract) -> bool {
-        let &Self(leaf, form, configuration) = self;
+        let &Self(leaf, form, configuration, ambient) = self;
         match contract.path {
             ["session"]
             | ["session", "briefing"]
@@ -503,7 +507,12 @@ impl NativeInvocation<'_> {
             | ["session", "timeline"]
             | ["session", "tokens"]
             | ["session", "turns"] => deliver_with_reply_text(
-                &session_command::run(leaf, contract.path, &session_environment(), configuration),
+                &session_command::run(
+                    leaf,
+                    contract.path,
+                    &session_environment(ambient),
+                    configuration,
+                ),
                 form,
                 session_command::Report::text,
             ),
@@ -512,15 +521,15 @@ impl NativeInvocation<'_> {
     }
 
     fn dispatch_board_control(&self, contract: &cli::Contract) -> bool {
-        let &Self(leaf, form, _) = self;
+        let &Self(leaf, form, _, ambient) = self;
         match contract.path {
             ["board"] => deliver_with_reply_text(
-                &board_command::board_view(leaf, contract),
+                &board_command::board_view(leaf, contract, ambient),
                 form,
                 board_command::BoardView::text,
             ),
             ["board", "graph"] | ["board", "handout"] => deliver_with_reply_text(
-                &board_command::graph_view(leaf, contract),
+                &board_command::graph_view(leaf, contract, ambient),
                 form,
                 board_command::GraphView::text,
             ),
@@ -575,25 +584,25 @@ impl NativeInvocation<'_> {
             | ["preparation", "nudge"]
             | ["doc"]
             | ["doc", "ledger"] => {
-                deliver_command_answer(&board_command::run(leaf, contract), form);
+                deliver_command_answer(&board_command::run(leaf, contract, ambient), form);
             }
             ["task", "next"] => task_next_delivery::deliver(
-                &board_command::run_task_next(contract),
+                &board_command::run_task_next(contract, ambient),
                 form,
-                bootstrap_environment(steer::hook::LANE).is_some(),
+                ambient.get(steer::hook::LANE).is_some(),
             ),
             _ => false,
         }
     }
 
     fn dispatch_controls(&self, contract: &cli::Contract) {
-        let &Self(leaf, form, configuration) = self;
+        let &Self(leaf, form, configuration, ambient) = self;
         if self.dispatch_session_control(contract) || self.dispatch_board_control(contract) {
             return;
         }
         match contract.path {
             ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
-            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract), form),
+            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract, ambient), form),
             ["lane"]
             | ["lane", "add"]
             | ["lane", "drain"]
@@ -603,48 +612,53 @@ impl NativeInvocation<'_> {
             | ["lane", "fast"]
             | ["lane", "remove"]
             | ["lane", "import"]
-            | ["recall"] => {
-                deliver_command_answer(&lane_command::run(leaf, contract, configuration), form)
-            }
-            ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
-            ["release", "publish"] => match release_command::run(leaf, contract) {
+            | ["recall"] => deliver_command_answer(
+                &lane_command::run(leaf, contract, configuration, ambient),
+                form,
+            ),
+            ["lane", "purge"] => deliver(&lane_command::purge::run(ambient), form),
+            ["release", "publish"] => match release_command::run(leaf, contract, ambient) {
                 release_command::RunResult::Plan(outcome) => {
                     deliver_with_reply_text(&outcome, form, release_command::PlanPreview::text)
                 }
                 release_command::RunResult::Published(outcome) => deliver(&outcome, form),
             },
-            ["release", "seal"] => deliver(&release_seal::run(contract), form),
+            ["release", "seal"] => deliver(&release_seal::run(contract, ambient), form),
             ["steer"] | ["steer", "cancel"] | ["steer", "resend"] | ["steer", "recover"] => {
-                deliver(
-                    &steering_command::run(
-                        leaf,
-                        contract,
-                        bootstrap_environment(steer::hook::LANE),
-                    ),
-                    form,
-                )
+                deliver(&steering_command::run(leaf, contract, ambient), form)
             }
-            ["inbox"] => deliver_display(
-                &steering_command::inbox::run(
-                    leaf,
-                    contract,
-                    bootstrap_environment(steer::hook::LANE),
-                ),
+            ["inbox"] => {
+                deliver_display(&steering_command::inbox::run(leaf, contract, ambient), form)
+            }
+            ["quote"] => deliver_display(&quote_command::run(leaf, contract, ambient), form),
+            ["trust"] => deliver_display(
+                &trust_command::report(leaf, contract, configuration, ambient),
                 form,
             ),
-            ["quote"] => deliver_display(&quote_command::run(leaf, contract), form),
-            ["trust"] => {
-                deliver_display(&trust_command::report(leaf, contract, configuration), form)
+            ["trust", "pend"] => {
+                deliver(&trust_command::pend(contract, configuration, ambient), form)
             }
-            ["trust", "pend"] => deliver(&trust_command::pend(contract, configuration), form),
-            ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
-            ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
-            ["taste"] => {
-                deliver_display(&taste_command::report(leaf, contract, configuration), form)
+            ["trust", "grant"] => {
+                deliver(&trust_command::rule(leaf, contract, true, ambient), form)
             }
-            ["taste", "add"] => deliver(&taste_command::add(leaf, contract, configuration), form),
-            ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract, configuration), form),
-            ["taste", "mine"] => deliver(&taste_command::mine(contract, configuration), form),
+            ["trust", "revoke"] => {
+                deliver(&trust_command::rule(leaf, contract, false, ambient), form)
+            }
+            ["taste"] => deliver_display(
+                &taste_command::report(leaf, contract, configuration, ambient),
+                form,
+            ),
+            ["taste", "add"] => deliver(
+                &taste_command::add(leaf, contract, configuration, ambient),
+                form,
+            ),
+            ["taste", "drop"] => deliver(
+                &taste_command::drop(leaf, contract, configuration, ambient),
+                form,
+            ),
+            ["taste", "mine"] => {
+                deliver(&taste_command::mine(contract, configuration, ambient), form)
+            }
             _ => {}
         }
     }
@@ -753,6 +767,7 @@ fn not_landed_from<B>(path: &[&str], landing: cli::Landing) -> Outcome<B> {
 #[cfg(not(target_arch = "wasm32"))]
 fn doctor_outcome(
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<wire::DoctorReport<spice::config::Root>> {
     let working = match std::env::current_dir() {
         Ok(path) => path,
@@ -766,21 +781,10 @@ fn doctor_outcome(
     };
     let environment: Vec<_> = wire::SpiceVariable::ALL
         .iter()
-        .map(|variable| {
-            (
-                *variable,
-                bootstrap_environment(variable.as_str()).is_some(),
-            )
-        })
+        .map(|variable| (*variable, ambient.get(variable.as_str()).is_some()))
         .collect();
-    let search_path = bootstrap_environment("PATH");
 
-    doctor::inspect(
-        &working,
-        &environment,
-        search_path.as_deref(),
-        configuration,
-    )
+    doctor::inspect(&working, &environment, ambient, configuration)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -895,9 +899,10 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
 
 /// Runs one command through the structural wrapper.
 #[cfg(not(target_arch = "wasm32"))]
-fn run(command: Vec<OsString>) -> ! {
-    let rewritten = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE)
-        .map(|executable| spice::rtk::rewrite(&command, &executable));
+fn run(command: Vec<OsString>, ambient: &Ambient) -> ! {
+    let rewritten = ambient
+        .get(spice::rtk::EXECUTABLE_VARIABLE)
+        .map(|executable| spice::rtk::rewrite(&command, executable, ambient));
     if let Some(diagnostic) = rewritten
         .as_ref()
         .and_then(spice::rtk::Decision::diagnostic)
@@ -905,7 +910,7 @@ fn run(command: Vec<OsString>) -> ! {
         let mut stderr = io::stderr().lock();
         let _ = writeln!(stderr, "{diagnostic}");
     }
-    let meter = run_meter::Runtime::start(current_live_meter(Path::new(".")));
+    let meter = run_meter::Runtime::start(current_live_meter(Path::new("."), ambient));
     let selected = rewritten
         .as_ref()
         .map_or(command.as_slice(), spice::rtk::Decision::command);
@@ -1068,7 +1073,7 @@ fn deliver_commit_message(run: gate_command::CommitMessageRun, form: Form) -> ! 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn current_live_meter(root: &Path) -> Option<spice::session_meter::LiveMeter> {
+fn current_live_meter(root: &Path, ambient: &Ambient) -> Option<spice::session_meter::LiveMeter> {
     let identities = spice::extension::registry()
         .expect("compiled extension declarations are validated by the test gate")
         .session_vendors()
@@ -1076,8 +1081,10 @@ fn current_live_meter(root: &Path) -> Option<spice::session_meter::LiveMeter> {
         .map(|vendor| {
             (
                 vendor,
-                bootstrap_environment(vendor.thread_id_environment())
-                    .and_then(|value| value.into_string().ok()),
+                ambient
+                    .get(vendor.thread_id_environment())
+                    .and_then(OsStr::to_str)
+                    .map(str::to_owned),
             )
         })
         .collect();
@@ -1121,7 +1128,7 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
 
 mod main_tail;
 
+pub use main_tail::terminate;
 pub(crate) use main_tail::terminate_code;
-pub use main_tail::{bootstrap_environment, terminate};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use main_tail::{session_environment, working_directory};

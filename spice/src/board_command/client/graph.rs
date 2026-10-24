@@ -50,13 +50,17 @@ pub(in crate::board_command) enum Destination {
 }
 
 /// Execute one `board graph` or `board handout` invocation.
-pub(crate) fn graph_view(matches: &ArgMatches, contract: &Contract) -> Outcome<GraphView> {
-    graph_view_in(matches, contract, discover_repository)
+pub(crate) fn graph_view(
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<GraphView> {
+    graph_view_in(matches, contract, ambient, discover_repository)
 }
 
 /// Read the complete validated diagram for native resource paging.
 pub(crate) fn graph_snapshot_at(
-    repository: &Repository,
+    repository: Host<'_>,
     matches: &ArgMatches,
     contract: &Contract,
 ) -> Outcome<CommandAnswer> {
@@ -76,6 +80,7 @@ pub(crate) fn graph_snapshot_at(
 fn graph_view_in<R: std::borrow::Borrow<Repository>>(
     matches: &ArgMatches,
     contract: &Contract,
+    ambient: &Ambient,
     repository: impl FnOnce() -> Result<R, Outcome<CommandAnswer>>,
 ) -> Outcome<GraphView> {
     let at = matches.get_one::<String>("at").cloned();
@@ -95,7 +100,10 @@ fn graph_view_in<R: std::borrow::Borrow<Repository>>(
         Ok(repository) => repository,
         Err(outcome) => return retag(outcome),
     };
-    let repository = repository.borrow();
+    let repository = Host {
+        repository: repository.borrow(),
+        ambient,
+    };
     let reply = if handout {
         let body = BoardHandout {
             output: name.clone(),

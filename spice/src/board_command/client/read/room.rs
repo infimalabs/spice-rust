@@ -45,7 +45,7 @@ pub(super) fn resumes_in_room(options: &TaskShowOptions) -> bool {
 /// `task`'s room for one `task show`, read from the local journal from the
 /// publication a `room:` cursor names, else from the newest.
 pub(super) fn task_show_room(
-    repository: &Repository,
+    repository: Host<'_>,
     task: &BoardTask,
     options: &TaskShowOptions,
 ) -> Result<TaskShowRoom, Outcome<CommandAnswer>> {
@@ -98,7 +98,7 @@ pub(super) fn task_show_room(
 /// the rest; absent when the room holds none.
 pub(in crate::board_command) fn claim_room_context(
     bus: &Bus,
-    repository: &Repository,
+    repository: Host<'_>,
     task: &TaskHandle,
     room: &TaskStamp,
 ) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {

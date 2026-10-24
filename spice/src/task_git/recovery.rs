@@ -216,12 +216,16 @@ pub fn pending_recovery(repository: &Repository) -> Result<Option<Recovery>, Err
 }
 
 /// Seal and remove exactly one dirty generation from the visible lane.
-pub fn quarantine_for_recovery(repository: &Repository) -> Result<Recovery, Error> {
+pub fn quarantine_for_recovery(
+    repository: &Repository,
+    ambient: &Ambient,
+) -> Result<Recovery, Error> {
     if let Some(recovery) = pending_recovery(repository)? {
         return resume_quarantine(repository, recovery);
     }
+    let worktree = Worktree::new(repository.worktree_root(), ambient);
     let root = create_recovery_root(repository)?;
-    let payload = match capture_payload(repository, &root) {
+    let payload = match capture_payload(repository, worktree, &root) {
         Ok(payload) => payload,
         Err(error) => {
             discard_incomplete(&root);
@@ -237,8 +241,8 @@ pub fn quarantine_for_recovery(repository: &Repository) -> Result<Recovery, Erro
         payload,
     };
     write_manifest(&root, &manifest)?;
-    verify_original(repository, &root, &manifest)?;
-    clean_manifest_paths(repository.worktree_root(), &manifest.payload)?;
+    verify_original(repository, worktree, &root, &manifest)?;
+    clean_manifest_paths(worktree, &manifest.payload)?;
     manifest.state = RecoveryState::Quarantined;
     write_manifest(&root, &manifest)?;
     Ok(recovery(&manifest))
@@ -343,11 +347,13 @@ fn synchronized_boundary(manifest: &Manifest) -> Result<GitBoundary, Error> {
 /// Advance the quarantined clean lane through the ordinary claim boundary.
 pub fn synchronize_recovery(
     repository: &Repository,
+    ambient: &Ambient,
     recovery: &Recovery,
 ) -> Result<GitBoundary, Error> {
+    let worktree = Worktree::new(repository.worktree_root(), ambient);
     let root = recovery_root(repository)?;
     let manifest = read_expected(&root, recovery)?;
-    verify_synchronization_identity(repository, &manifest)?;
+    verify_synchronization_identity(repository, worktree, &manifest)?;
     match manifest.state.clone() {
         RecoveryState::Synchronized { boundary }
         | RecoveryState::Replaying { boundary }
@@ -360,7 +366,7 @@ pub fn synchronize_recovery(
             ));
         }
         RecoveryState::Syncing { boundary } => {
-            return resume_synchronization(repository, &root, manifest, boundary);
+            return resume_synchronization(repository, worktree, &root, manifest, boundary);
         }
         RecoveryState::Captured => {
             return Err(interrupted_capture(recovery));
@@ -370,15 +376,16 @@ pub fn synchronize_recovery(
     verify_text(
         "pre-synchronization HEAD",
         &manifest.payload.head,
-        &current_head(repository.worktree_root())?,
+        &current_head(worktree)?,
     )?;
-    require_clean(repository.worktree_root(), "task recovery synchronization")?;
+    require_clean(worktree, "task recovery synchronization")?;
     let sealed = manifest.clone();
     let mut journaled = manifest;
     let boundary = prepare_claim_observed(
         repository,
+        ambient,
         LooseCommits::Adopt,
-        || verify_synchronization_identity(repository, &sealed),
+        || verify_synchronization_identity(repository, worktree, &sealed),
         |boundary| {
             journaled.state = RecoveryState::Syncing {
                 boundary: boundary.clone(),
@@ -395,6 +402,7 @@ pub fn synchronize_recovery(
 
 fn verify_synchronization_identity(
     repository: &Repository,
+    worktree: Worktree<'_>,
     manifest: &Manifest,
 ) -> Result<(), Error> {
     verify_manifest_identity(repository, manifest)?;
@@ -402,7 +410,7 @@ fn verify_synchronization_identity(
         "symbolic ref",
         &manifest.payload.reference,
         &required_read(
-            repository.worktree_root(),
+            worktree,
             &["symbolic-ref", "HEAD"],
             "verify synchronization symbolic HEAD",
         )?,
@@ -410,18 +418,19 @@ fn verify_synchronization_identity(
     verify_text(
         "configuration",
         &manifest.payload.configuration,
-        &configuration(repository.worktree_root())?,
+        &configuration(worktree)?,
     )
 }
 
 fn resume_synchronization(
     repository: &Repository,
+    worktree: Worktree<'_>,
     root: &Path,
     mut manifest: Manifest,
     boundary: GitBoundary,
 ) -> Result<GitBoundary, Error> {
-    recover_pending(repository.worktree_root())?;
-    let head = current_head(repository.worktree_root())?;
+    recover_pending(worktree)?;
+    let head = current_head(worktree)?;
     if head != manifest.payload.head && head != boundary.head {
         return Err(recovery_refusal(
             "git::recovery-sync-ambiguous",
@@ -436,8 +445,9 @@ fn resume_synchronization(
         let sealed = manifest.clone();
         let resumed = prepare_claim_observed(
             repository,
+            worktree.ambient,
             LooseCommits::Adopt,
-            || verify_synchronization_identity(repository, &sealed),
+            || verify_synchronization_identity(repository, worktree, &sealed),
             |_| Ok(()),
         )?;
         if resumed != boundary {
@@ -455,8 +465,11 @@ fn resume_synchronization(
     Ok(boundary)
 }
 
-fn capture_payload(repository: &Repository, root: &Path) -> Result<Payload, Error> {
-    let worktree = repository.worktree_root();
+fn capture_payload(
+    repository: &Repository,
+    worktree: Worktree<'_>,
+    root: &Path,
+) -> Result<Payload, Error> {
     refuse_unsupported_tree_entries(worktree)?;
     let staged_paths = changed_paths(worktree, &["diff", "--name-only", "-z", "--cached"])?;
     let unstaged_paths = changed_paths(worktree, &["diff", "--name-only", "-z"])?;
@@ -514,7 +527,7 @@ fn capture_payload(repository: &Repository, root: &Path) -> Result<Payload, Erro
     })
 }
 
-fn refuse_unsupported_tree_entries(worktree: &Path) -> Result<(), Error> {
+fn refuse_unsupported_tree_entries(worktree: Worktree<'_>) -> Result<(), Error> {
     let mut pending = vec![worktree.to_path_buf()];
     while let Some(directory) = pending.pop() {
         let entries = fs::read_dir(&directory).map_err(|error| {
@@ -531,11 +544,11 @@ fn refuse_unsupported_tree_entries(worktree: &Path) -> Result<(), Error> {
 }
 
 fn inspect_tree_entry(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     path: &Path,
     pending: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    let relative = path.strip_prefix(worktree).map_err(|error| {
+    let relative = path.strip_prefix(&*worktree).map_err(|error| {
         recovery_refusal(
             "git::recovery-path-escape",
             error.to_string(),
@@ -573,7 +586,7 @@ fn inspect_tree_entry(
     ))
 }
 
-fn ignored_path(worktree: &Path, path: &str) -> Result<bool, Error> {
+fn ignored_path(worktree: Worktree<'_>, path: &str) -> Result<bool, Error> {
     let output = run(worktree, &["check-ignore", "--quiet", "--", path])?;
     match output.status {
         0 => Ok(true),
@@ -585,7 +598,7 @@ fn ignored_path(worktree: &Path, path: &str) -> Result<bool, Error> {
     }
 }
 
-fn changed_paths(worktree: &Path, args: &[&str]) -> Result<Vec<String>, Error> {
+fn changed_paths(worktree: Worktree<'_>, args: &[&str]) -> Result<Vec<String>, Error> {
     let output = run(worktree, args)?;
     if !output.success() {
         return Err(Error::fault(
@@ -632,7 +645,7 @@ fn validate_relative(written: &str) -> Result<(), Error> {
     }
 }
 
-fn admitted_path(worktree: &Path, written: &str) -> Result<PathBuf, Error> {
+fn admitted_path(worktree: Worktree<'_>, written: &str) -> Result<PathBuf, Error> {
     validate_relative(written)?;
     let relative = Path::new(written);
     let mut cursor = worktree.to_path_buf();
@@ -667,33 +680,30 @@ fn union_paths(left: &[String], right: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn verify_original(repository: &Repository, root: &Path, manifest: &Manifest) -> Result<(), Error> {
-    refuse_unsupported_tree_entries(repository.worktree_root())?;
+fn verify_original(
+    repository: &Repository,
+    worktree: Worktree<'_>,
+    root: &Path,
+    manifest: &Manifest,
+) -> Result<(), Error> {
+    refuse_unsupported_tree_entries(worktree)?;
     verify_manifest_identity(repository, manifest)?;
     let payload = &manifest.payload;
     verify_text(
         "symbolic ref",
         &payload.reference,
-        &required_read(
-            repository.worktree_root(),
-            &["symbolic-ref", "HEAD"],
-            "verify symbolic HEAD",
-        )?,
+        &required_read(worktree, &["symbolic-ref", "HEAD"], "verify symbolic HEAD")?,
     )?;
-    verify_text(
-        "HEAD",
-        &payload.head,
-        &current_head(repository.worktree_root())?,
-    )?;
+    verify_text("HEAD", &payload.head, &current_head(worktree)?)?;
     verify_text(
         "configuration",
         &payload.configuration,
-        &configuration(repository.worktree_root())?,
+        &configuration(worktree)?,
     )?;
-    verify_index(repository.worktree_root(), root, payload)?;
-    verify_path_sets(repository.worktree_root(), payload)?;
-    verify_paths(repository.worktree_root(), root, &payload.tracked)?;
-    verify_paths(repository.worktree_root(), root, &payload.untracked)
+    verify_index(worktree, root, payload)?;
+    verify_path_sets(worktree, payload)?;
+    verify_paths(worktree, root, &payload.tracked)?;
+    verify_paths(worktree, root, &payload.untracked)
 }
 
 fn verify_manifest_identity(repository: &Repository, manifest: &Manifest) -> Result<(), Error> {
@@ -719,7 +729,7 @@ fn verify_manifest_identity(repository: &Repository, manifest: &Manifest) -> Res
     verify_text("transaction digest", &manifest.transaction, &computed)
 }
 
-fn verify_index(worktree: &Path, root: &Path, payload: &Payload) -> Result<(), Error> {
+fn verify_index(worktree: Worktree<'_>, root: &Path, payload: &Payload) -> Result<(), Error> {
     let index_path = git_state_path(worktree, "index")?;
     let bytes = read_required(&index_path, "verify exact Git index")?;
     verify_blob_bytes(root, &payload.index, &bytes)?;
@@ -730,7 +740,7 @@ fn verify_index(worktree: &Path, root: &Path, payload: &Payload) -> Result<(), E
     )
 }
 
-fn verify_path_sets(worktree: &Path, payload: &Payload) -> Result<(), Error> {
+fn verify_path_sets(worktree: Worktree<'_>, payload: &Payload) -> Result<(), Error> {
     let staged = changed_paths(worktree, &["diff", "--name-only", "-z", "--cached"])?;
     let unstaged = changed_paths(worktree, &["diff", "--name-only", "-z"])?;
     let untracked = changed_paths(
@@ -746,7 +756,7 @@ fn verify_path_sets(worktree: &Path, payload: &Payload) -> Result<(), Error> {
     )
 }
 
-fn clean_manifest_paths(worktree: &Path, payload: &Payload) -> Result<(), Error> {
+fn clean_manifest_paths(worktree: Worktree<'_>, payload: &Payload) -> Result<(), Error> {
     restore_tracked_to_head(worktree, &payload.tracked)?;
     for state in &payload.untracked {
         if !path_is_tracked(worktree, &state.path)? {
@@ -756,7 +766,7 @@ fn clean_manifest_paths(worktree: &Path, payload: &Payload) -> Result<(), Error>
     require_clean(worktree, "task recovery quarantine")
 }
 
-fn path_is_tracked(worktree: &Path, path: &str) -> Result<bool, Error> {
+fn path_is_tracked(worktree: Worktree<'_>, path: &str) -> Result<bool, Error> {
     let output = run(worktree, &["ls-files", "--error-unmatch", "--", path])?;
     match output.status {
         0 => Ok(true),
@@ -768,7 +778,7 @@ fn path_is_tracked(worktree: &Path, path: &str) -> Result<bool, Error> {
     }
 }
 
-fn path_is_tracked_at_head(worktree: &Path, path: &str) -> Result<bool, Error> {
+fn path_is_tracked_at_head(worktree: Worktree<'_>, path: &str) -> Result<bool, Error> {
     let output = run(
         worktree,
         &["ls-tree", "--name-only", "-z", "HEAD", "--", path],
@@ -783,7 +793,7 @@ fn path_is_tracked_at_head(worktree: &Path, path: &str) -> Result<bool, Error> {
     }
 }
 
-fn restore_tracked_to_head(worktree: &Path, paths: &[PathState]) -> Result<(), Error> {
+fn restore_tracked_to_head(worktree: Worktree<'_>, paths: &[PathState]) -> Result<(), Error> {
     let mut owned = vec![
         "restore".to_owned(),
         "--source=HEAD".to_owned(),
@@ -814,7 +824,7 @@ fn restore_tracked_to_head(worktree: &Path, paths: &[PathState]) -> Result<(), E
     }
 }
 
-fn remove_named_path(worktree: &Path, written: &str) -> Result<(), Error> {
+fn remove_named_path(worktree: Worktree<'_>, written: &str) -> Result<(), Error> {
     let path = admitted_path(worktree, written)?;
     match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => {
@@ -835,25 +845,25 @@ fn remove_named_path(worktree: &Path, written: &str) -> Result<(), Error> {
     }
 }
 
-fn verify_rollback_surface(repository: &Repository, manifest: &Manifest) -> Result<(), Error> {
-    refuse_unsupported_tree_entries(repository.worktree_root())?;
+fn verify_rollback_surface(
+    repository: &Repository,
+    worktree: Worktree<'_>,
+    manifest: &Manifest,
+) -> Result<(), Error> {
+    refuse_unsupported_tree_entries(worktree)?;
     verify_manifest_identity(repository, manifest)?;
     verify_text(
         "symbolic ref",
         &manifest.payload.reference,
-        &required_read(
-            repository.worktree_root(),
-            &["symbolic-ref", "HEAD"],
-            "verify symbolic HEAD",
-        )?,
+        &required_read(worktree, &["symbolic-ref", "HEAD"], "verify symbolic HEAD")?,
     )?;
     verify_text(
         "configuration",
         &manifest.payload.configuration,
-        &configuration(repository.worktree_root())?,
+        &configuration(worktree)?,
     )?;
     refuse_unsealed_dirty_paths(
-        repository.worktree_root(),
+        worktree,
         &manifest.payload,
         "git::recovery-rollback-drift",
         "preserve the retained quarantine and inspect concurrent lane edits",
@@ -861,7 +871,7 @@ fn verify_rollback_surface(repository: &Repository, manifest: &Manifest) -> Resu
 }
 
 fn refuse_unsealed_dirty_paths(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     payload: &Payload,
     reason: &'static str,
     remedy: &'static str,
@@ -888,7 +898,7 @@ fn refuse_unsealed_dirty_paths(
     }
 }
 
-fn current_dirty_paths(worktree: &Path) -> Result<BTreeSet<String>, Error> {
+fn current_dirty_paths(worktree: Worktree<'_>) -> Result<BTreeSet<String>, Error> {
     let staged = changed_paths(worktree, &["diff", "--name-only", "-z", "--cached"])?;
     let unstaged = changed_paths(worktree, &["diff", "--name-only", "-z"])?;
     let untracked = changed_paths(

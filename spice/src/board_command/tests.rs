@@ -43,6 +43,16 @@ mod team_history;
 mod claim_grant;
 mod creation_context;
 
+/// The process environment every board test's Git host borrows.
+static AMBIENT: std::sync::LazyLock<Ambient> = std::sync::LazyLock::new(spice::ambient::capture);
+
+fn host(repository: &Repository) -> Host<'_> {
+    Host {
+        repository,
+        ambient: &AMBIENT,
+    }
+}
+
 fn at<'a>(answer: &'a BoardAnswer, task: &TaskHandle) -> &'a BoardTask {
     task_heads(answer, task).expect("fixture task is visible")
 }

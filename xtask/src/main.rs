@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use sill::Deadlines;
+use spice::ambient::Ambient;
 
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
@@ -46,6 +47,7 @@ fn help() -> String {
 }
 
 fn main() -> ExitCode {
+    let ambient = capture_ambient();
     let mut arguments = env::args_os().skip(1);
     let command = arguments.next();
 
@@ -56,22 +58,27 @@ fn main() -> ExitCode {
             writeln!(output, "{}", help()).map_err(Into::into)
         }
         Some(value) if value == OsStr::new("verify") => {
-            run_verify(arguments.collect(), &mut output)
+            run_verify(arguments.collect(), &ambient, &mut output)
         }
         Some(value) if is_exact_command(value, "__verify-system", arguments.len(), 0) => {
             xtask::verify_child(&mut output).map_err(Into::into)
         }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if is_workspace_test_command(value) => {
-            run_workspace_test_command(value, arguments.collect(), &mut output)
+            run_workspace_test_command(value, arguments.collect(), &ambient, &mut output)
         }
-        Some(value) if value == OsStr::new("gate") => {
-            run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
+        Some(value) if value == OsStr::new("gate") => run_gate(
+            arguments.collect(),
+            &ambient,
+            &mut output,
+            &mut io::stderr().lock(),
+        ),
+        Some(value) if value == OsStr::new("app") => {
+            run_app(arguments.collect(), &ambient, &mut output)
         }
-        Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("app-demo") => {
-            run_app_demo(arguments.collect(), &mut output)
+            run_app_demo(arguments.collect(), &ambient, &mut output)
         }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("report") => {
@@ -82,7 +89,7 @@ fn main() -> ExitCode {
         }
         Some(value) if value == OsStr::new("install") => {
             drop(output);
-            return run_install(arguments.collect());
+            return run_install(arguments.collect(), &ambient);
         }
         Some(value) if value == OsStr::new("proof-image") => {
             drop(output);
@@ -90,20 +97,25 @@ fn main() -> ExitCode {
         }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("seal-darwin") => {
-            run_seal_darwin(arguments.collect(), &mut output)
+            run_seal_darwin(arguments.collect(), &ambient, &mut output)
         }
         #[cfg(not(target_arch = "wasm32"))]
         Some(value) if value == OsStr::new("share-darwin") => {
             run_share_darwin(arguments.collect(), &mut output)
         }
         Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
-            run_stage_target(arguments.next(), &mut output, &mut io::stderr().lock())
+            run_stage_target(
+                arguments.next(),
+                &ambient,
+                &mut output,
+                &mut io::stderr().lock(),
+            )
         }
         Some(value) if is_exact_command(value, "windows-appliance", arguments.len(), 0) => {
-            run_windows_appliance(&mut output)
+            run_windows_appliance(&ambient, &mut output)
         }
         Some(value) if is_exact_command(value, "windows-msvc", arguments.len(), 0) => {
-            run_windows_msvc(&mut output)
+            run_windows_msvc(&ambient, &mut output)
         }
         Some(value) if value == OsStr::new("windows-hosted") => {
             drop(output);
@@ -142,7 +154,11 @@ fn finish(result: Result<(), Box<dyn std::error::Error>>) -> ExitCode {
     }
 }
 
-fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+fn run_verify(
+    arguments: Vec<OsString>,
+    ambient: &Ambient,
+    output: &mut impl io::Write,
+) -> CommandResult {
     match arguments.as_slice() {
         [] => xtask::verify(output).map_err(Into::into),
         [option, package] if option == OsStr::new("--package") => {
@@ -150,7 +166,7 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
                 eprintln!("{}", help());
                 return Err(usage_error().into());
             };
-            xtask::verify_package(package, output).map_err(Into::into)
+            xtask::verify_package(package, ambient, output).map_err(Into::into)
         }
         _ => {
             eprintln!("{}", help());
@@ -159,9 +175,13 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
     }
 }
 
-fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+fn run_app(
+    arguments: Vec<OsString>,
+    ambient: &Ambient,
+    output: &mut impl io::Write,
+) -> CommandResult {
     match arguments.as_slice() {
-        [] => xtask::app(&release_environment(), output).map_err(Into::into),
+        [] => xtask::app(&release_environment(ambient), output).map_err(Into::into),
         _ => {
             eprintln!("{}", help());
             Err(usage_error().into())
@@ -169,15 +189,18 @@ fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResu
     }
 }
 
-fn run_windows_appliance(output: &mut impl io::Write) -> CommandResult {
-    let ambient = ambient_environment()?;
-    xtask::build_windows_appliance(release_environment(), ambient, output)
+fn run_windows_appliance(ambient: &Ambient, output: &mut impl io::Write) -> CommandResult {
+    xtask::build_windows_appliance(release_environment(ambient), ambient.environment()?, output)
         .map(|_| ())
         .map_err(Into::into)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_app_demo(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+fn run_app_demo(
+    arguments: Vec<OsString>,
+    ambient: &Ambient,
+    output: &mut impl io::Write,
+) -> CommandResult {
     let open = match arguments.as_slice() {
         [] => false,
         [open] if open == OsStr::new("--open") => true,
@@ -186,11 +209,12 @@ fn run_app_demo(arguments: Vec<OsString>, output: &mut impl io::Write) -> Comman
             return Err(usage_error().into());
         }
     };
-    xtask::app_demo(&release_environment(), open, output).map_err(Into::into)
+    xtask::app_demo(&release_environment(ambient), open, output).map_err(Into::into)
 }
 
 fn run_gate(
     arguments: Vec<OsString>,
+    ambient: &Ambient,
     output: &mut impl io::Write,
     progress: &mut impl io::Write,
 ) -> CommandResult {
@@ -216,7 +240,7 @@ fn run_gate(
     if gate::GateId::TEST_EVIDENCE.contains(&gate_id) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let report = xtask::run_test_evidence(ambient_environment()?, progress, output)?;
+            let report = xtask::run_test_evidence(ambient, progress, output)?;
             return if report
                 .instrument_admits(gate_id)
                 .expect("a registered test-evidence ID has one report decision")
@@ -228,14 +252,14 @@ fn run_gate(
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (output, progress);
+            let _ = (ambient, output, progress);
             return Err(xtask::GateArmError::Unavailable.into());
         }
     }
     if emit_report {
-        xtask::gate_arm_report(gate_id, output).map_err(Into::into)
+        xtask::gate_arm_report(ambient, gate_id, output).map_err(Into::into)
     } else {
-        xtask::gate_arm(gate_id, output).map_err(Into::into)
+        xtask::gate_arm(ambient, gate_id, output).map_err(Into::into)
     }
 }
 
@@ -253,7 +277,11 @@ fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> Com
 /// target, and place the executable: one point-in-time build that touches no
 /// other worktree, the installed appliance, or the resident.
 #[cfg(not(target_arch = "wasm32"))]
-fn run_seal_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+fn run_seal_darwin(
+    arguments: Vec<OsString>,
+    ambient: &Ambient,
+    output: &mut impl io::Write,
+) -> CommandResult {
     let destination = match arguments.as_slice() {
         [] => None,
         [flag, directory] if flag == OsStr::new("--output") => Some(PathBuf::from(directory)),
@@ -266,7 +294,7 @@ fn run_seal_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> Com
     let root = env::current_dir()?;
     xtask::seal_runner(&root, output)?;
     preflight_native_release(TARGET)?;
-    let build = xtask::stage_target(TARGET, release_environment(), output)?;
+    let build = xtask::stage_target(TARGET, release_environment(ambient), output)?;
     if let Some(directory) = destination {
         xtask::place_executable(&build.executable, &directory, output)?;
     }
@@ -299,6 +327,7 @@ fn run_share_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> Co
 
 fn run_stage_target(
     argument: Option<OsString>,
+    ambient: &Ambient,
     output: &mut impl io::Write,
     error_output: &mut impl io::Write,
 ) -> CommandResult {
@@ -307,7 +336,7 @@ fn run_stage_target(
         eprintln!("{}", help());
         return Err(usage_error().into());
     };
-    let environment = release_environment();
+    let environment = release_environment(ambient);
     if target == "x86_64-pc-windows-msvc" && !environment.is_hosted_guest() {
         return xtask::windows_hosted_stage(output, error_output)
             .and_then(|execution| {
@@ -326,8 +355,8 @@ fn run_stage_target(
             .map_err(Into::into)
     })
 }
-fn run_windows_msvc(output: &mut impl io::Write) -> CommandResult {
-    xtask::windows_msvc(&ambient_environment()?, output)
+fn run_windows_msvc(ambient: &Ambient, output: &mut impl io::Write) -> CommandResult {
+    xtask::windows_msvc(&ambient.environment()?, output)
         .map(|_| ())
         .map_err(Into::into)
 }
@@ -347,16 +376,19 @@ fn usage_error() -> UsageError {
     UsageError
 }
 
-fn run_install(arguments: Vec<OsString>) -> ExitCode {
+fn run_install(arguments: Vec<OsString>, ambient: &Ambient) -> ExitCode {
     let Some(mut request) = install_request(&arguments) else {
         eprintln!("{}", help());
         return ExitCode::from(USAGE_EXIT);
     };
-    request.lane = bootstrap_environment(wire::SpiceVariable::Lane.as_str());
-    request.resident =
-        spice::cargo_isolation::ResidentLaunchEnvironment::derive(launcher_environment());
+    request.lane = ambient
+        .get(wire::SpiceVariable::Lane.as_str())
+        .map(OsStr::to_os_string);
+    request.resident = spice::cargo_isolation::ResidentLaunchEnvironment::derive(
+        ambient.variables().iter().cloned(),
+    );
     let mut output = io::stdout().lock();
-    match xtask::refresh(&request, &release_environment(), &mut output) {
+    match xtask::refresh(&request, &release_environment(ambient), &mut output) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
@@ -567,18 +599,19 @@ fn runner_refused(runner: &Path, error: &proof::NativeError) -> io::Error {
     ))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+/// Capture this process's environment once; `main` threads it to every reader.
 #[expect(
     clippy::disallowed_methods,
-    reason = "the binary rim snapshots the environment before passing typed configuration inward"
+    reason = "the xtask binary's single capture of its process environment"
 )]
-fn ambient_environment() -> Result<sill::Environment, sill::SpecError> {
-    sill::Environment::new(env::vars_os())
+fn capture_ambient() -> Ambient {
+    Ambient::new(env::vars_os())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn workspace_tests(
     concurrency: OsString,
+    ambient: &Ambient,
     output: &mut impl io::Write,
     shared_outputs: bool,
     prebuilt: bool,
@@ -587,7 +620,7 @@ fn workspace_tests(
         .to_str()
         .ok_or("workspace-test concurrency is not UTF-8")?
         .parse::<usize>()?;
-    let environment = workspace_test_environment(shared_outputs)?;
+    let environment = workspace_test_environment(ambient, shared_outputs)?;
     let execution = if prebuilt {
         let root = env::current_dir()?;
         xtask::run_prebuilt_shared_workspace_tests_at(&root, environment, concurrency, output)
@@ -613,33 +646,42 @@ fn is_workspace_test_command(command: &OsStr) -> bool {
 fn run_workspace_test_command(
     command: &OsStr,
     arguments: Vec<OsString>,
+    ambient: &Ambient,
     output: &mut impl io::Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match (command.to_str(), arguments.as_slice()) {
         (Some("__workspace-tests"), [concurrency]) => {
-            workspace_tests(concurrency.clone(), output, false, false)
+            workspace_tests(concurrency.clone(), ambient, output, false, false)
         }
         (Some("__workspace-tests-shared"), [concurrency]) => {
-            workspace_tests(concurrency.clone(), output, true, false)
+            workspace_tests(concurrency.clone(), ambient, output, true, false)
         }
         (Some("__workspace-tests-prebuilt-shared"), [concurrency]) => {
-            workspace_tests(concurrency.clone(), output, true, true)
+            workspace_tests(concurrency.clone(), ambient, output, true, true)
         }
-        (Some("__workspace-tests-prebuild-shared"), []) => workspace_tests_prebuild(output),
+        (Some("__workspace-tests-prebuild-shared"), []) => {
+            workspace_tests_prebuild(ambient, output)
+        }
         _ => Err("invalid internal workspace-test command arguments".into()),
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn workspace_tests_prebuild(output: &mut impl io::Write) -> Result<(), Box<dyn std::error::Error>> {
+fn workspace_tests_prebuild(
+    ambient: &Ambient,
+    output: &mut impl io::Write,
+) -> Result<(), Box<dyn std::error::Error>> {
     let root = env::current_dir()?;
-    let environment = workspace_test_environment(true)?;
+    let environment = workspace_test_environment(ambient, true)?;
     xtask::prebuild_shared_workspace_tests_at(&root, environment, output).map_err(Into::into)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn workspace_test_environment(shared_outputs: bool) -> Result<sill::Environment, sill::SpecError> {
-    let environment = ambient_environment()?;
+fn workspace_test_environment(
+    ambient: &Ambient,
+    shared_outputs: bool,
+) -> Result<sill::Environment, sill::SpecError> {
+    let environment = ambient.environment()?;
     if !shared_outputs {
         return Ok(environment);
     }
@@ -655,37 +697,22 @@ fn workspace_test_environment(shared_outputs: bool) -> Result<sill::Environment,
     sill::Environment::new(entries)
 }
 
-fn release_environment() -> xtask::ReleaseEnvironment {
+fn release_environment(ambient: &Ambient) -> xtask::ReleaseEnvironment {
+    let read = |name: &str| ambient.get(name).map(OsStr::to_os_string);
     xtask::ReleaseEnvironment {
-        path: bootstrap_environment("PATH"),
-        home: bootstrap_environment("HOME"),
-        cargo_home: bootstrap_environment("CARGO_HOME"),
-        rustup_home: bootstrap_environment("RUSTUP_HOME"),
-        rustup_toolchain: bootstrap_environment("RUSTUP_TOOLCHAIN"),
-        temporary: bootstrap_environment("TMPDIR"),
-        sdk_root: bootstrap_environment("SDKROOT"),
-        developer_dir: bootstrap_environment("DEVELOPER_DIR"),
-        cargo_target_dir: bootstrap_environment("CARGO_TARGET_DIR"),
-        rustc: bootstrap_environment("RUSTC"),
-        build_rustc: bootstrap_environment("CARGO_BUILD_RUSTC"),
-        stage_root: bootstrap_environment("SPICE_HOSTED_STAGE"), // env-policy: allow
+        path: read("PATH"),
+        home: read("HOME"),
+        cargo_home: read("CARGO_HOME"),
+        rustup_home: read("RUSTUP_HOME"),
+        rustup_toolchain: read("RUSTUP_TOOLCHAIN"),
+        temporary: read("TMPDIR"),
+        sdk_root: read("SDKROOT"),
+        developer_dir: read("DEVELOPER_DIR"),
+        cargo_target_dir: read("CARGO_TARGET_DIR"),
+        rustc: read("RUSTC"),
+        build_rustc: read("CARGO_BUILD_RUSTC"),
+        stage_root: read("SPICE_HOSTED_STAGE"), // env-policy: allow
     }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the xtask binary rim owns ambient release-build acquisition"
-)]
-fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
-    env::var_os(name)
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the xtask binary rim captures the shell environment a resident restart derives from"
-)]
-fn launcher_environment() -> std::env::VarsOs {
-    env::vars_os()
 }
 
 #[cfg(test)]

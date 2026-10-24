@@ -10,13 +10,14 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
+use spice::ambient::Ambient;
 use spice::repository::{Repository, StatePaths};
 use wire::{CanonicalUuid, Fault, FaultClass, LanePurge, LanePurgeReport, Outcome, Reply};
 
 use super::{environment_fault, read_lanes};
 
 /// Retire every per-lane runtime path whose lane the resident no longer seats.
-pub(crate) fn run() -> Outcome<LanePurgeReport> {
+pub(crate) fn run(ambient: &Ambient) -> Outcome<LanePurgeReport> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("lane::cwd-unavailable", &error.to_string()),
@@ -31,7 +32,7 @@ pub(crate) fn run() -> Outcome<LanePurgeReport> {
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let lanes = match read_lanes(state.serve()) {
+    let lanes = match read_lanes(state.serve(), ambient) {
         Ok(lanes) => lanes,
         Err(outcome) => return outcome,
     };

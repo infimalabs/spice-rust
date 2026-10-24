@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use sill::{
     Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
 };
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 
 use super::*;
@@ -64,14 +65,20 @@ pub(in crate::resident) trait LaunchProbes {
 
     /// The session state a launch briefing reads, rooted at `worktree`.
     fn session(&self, worktree: PathBuf) -> crate::session_command::Environment;
+
+    /// The resident's own value of the environment variable `name`.
+    fn variable(&self, name: &str) -> Option<OsString>;
 }
 
-/// The probes a supervised launch runs against the host.
-pub(in crate::resident) struct HostProbes;
+/// The probes a supervised launch runs against the host whose environment
+/// `ambient` holds.
+pub(in crate::resident) struct HostProbes<'a> {
+    pub(in crate::resident) ambient: &'a Ambient,
+}
 
-impl LaunchProbes for HostProbes {
+impl LaunchProbes for HostProbes<'_> {
     fn advance(&self, repository: &Repository) -> String {
-        spice::task_git::advance_at_launch(repository).to_string()
+        spice::task_git::advance_at_launch(repository, self.ambient).to_string()
     }
 
     fn shadow(&self, repository: &Repository, base: Environment) -> CommandResult<Environment> {
@@ -96,7 +103,7 @@ impl LaunchProbes for HostProbes {
         let unavailable = |error: spice::cargo_isolation::IsolationError| {
             store_fault("lane::cargo-isolation-unavailable", &error.to_string())
         };
-        let host = crate::cargo_command::host(repository).map_err(unavailable)?;
+        let host = crate::cargo_command::host(repository, self.ambient).map_err(unavailable)?;
         // The lane-specific home is the resident reader pin: one occupied seat
         // admits one process group, and a replacement occupant cannot prepare
         // the same lane home until that seat is vacant. Manual Cargo children
@@ -108,7 +115,11 @@ impl LaunchProbes for HostProbes {
     }
 
     fn session(&self, worktree: PathBuf) -> crate::session_command::Environment {
-        crate::session_environment().rooted(worktree)
+        crate::session_environment(self.ambient).rooted(worktree)
+    }
+
+    fn variable(&self, name: &str) -> Option<OsString> {
+        self.ambient.get(name).map(std::ffi::OsStr::to_os_string)
     }
 }
 
@@ -178,6 +189,7 @@ pub(in crate::resident) fn occupant_launch(
             model,
             fast_mode,
             resume,
+            probes,
         )?
     } else {
         Pinned::nothing(resume)
@@ -413,7 +425,7 @@ fn launch_environment(
     lane: CanonicalUuid,
     probes: &dyn LaunchProbes,
 ) -> CommandResult<(Environment, wire::body::RtkHealth)> {
-    let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
+    let native_shell = probes.variable("SHELL").ok_or_else(|| {
         store_fault(
             "lane::native-shell-unavailable",
             "the supervised environment has no native SHELL to restore behind interception",
@@ -429,7 +441,7 @@ fn launch_environment(
             .expect("the RTK history contract always has a parent"),
     )
     .map_err(|error| store_fault("lane::rtk-history-unavailable", &error.to_string()))?;
-    let mut values = admitted_ambient(|key| crate::bootstrap_environment(key));
+    let mut values = admitted_ambient(|key| probes.variable(key));
     values.extend(cargo_environment(repository, lane, probes)?);
     values.extend([
         (
@@ -462,7 +474,8 @@ fn launch_environment(
             rtk_history.into_os_string(),
         ),
     ]);
-    if let Some(path) = shell_path(wrapper_command, executable)? {
+    let path = probes.variable("PATH");
+    if let Some(path) = compose_shell_path(wrapper_command, executable.parent(), path.as_deref())? {
         values.push(("PATH".into(), path));
     }
     let environment = Environment::new(values)
@@ -607,11 +620,6 @@ mod rtk_environment_tests {
 }
 
 /// Ambient search path, optionally led by one configured wrapper directory.
-fn shell_path(wrapper: Option<&Path>, executable: &Path) -> CommandResult<Option<OsString>> {
-    let ambient = crate::bootstrap_environment("PATH");
-    compose_shell_path(wrapper, executable.parent(), ambient.as_deref())
-}
-
 fn compose_shell_path(
     wrapper: Option<&Path>,
     executable_directory: Option<&Path>,
@@ -727,10 +735,11 @@ fn pin_omp(
     model: Option<&str>,
     fast_mode: bool,
     resume: vendor::Resume,
+    probes: &dyn LaunchProbes,
 ) -> CommandResult<Pinned> {
     let resume = match resume.session_id() {
         Some(_) => resume,
-        None => pin_session(repository)?,
+        None => pin_session(repository, probes)?,
     };
     let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
     let config_overlay = pin_seat_file(
@@ -788,17 +797,19 @@ fn pin_seat_file(
 /// omp names a session only once it starts and exports nothing to its tools,
 /// so the lane mints the identity, writes the session file omp resumes, and
 /// launches by that identity.
-fn pin_session(repository: &Repository) -> CommandResult<vendor::Resume> {
-    let home = crate::bootstrap_environment("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            store_fault(
-                "lane::session-home-unavailable",
-                "the supervised environment has no HOME to keep oh-my-pi sessions beneath",
-            )
-        })?;
-    let temp =
-        crate::bootstrap_environment("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+fn pin_session(
+    repository: &Repository,
+    probes: &dyn LaunchProbes,
+) -> CommandResult<vendor::Resume> {
+    let home = probes.variable("HOME").map(PathBuf::from).ok_or_else(|| {
+        store_fault(
+            "lane::session-home-unavailable",
+            "the supervised environment has no HOME to keep oh-my-pi sessions beneath",
+        )
+    })?;
+    let temp = probes
+        .variable("TMPDIR")
+        .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
     let layout = vendor::OMP.transcript_layout();
     let sessions = home
         .join(layout.default_home)

@@ -1,8 +1,9 @@
 //! CLI acquisition for the resident steering command family.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use clap::ArgMatches;
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::intent::CommandAnswer;
 use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal};
@@ -17,7 +18,7 @@ mod tests;
 pub(crate) fn run(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
-    lane_environment: Option<OsString>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
@@ -29,7 +30,8 @@ pub(crate) fn run(
             return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
-    run_at(&repository, matches, contract, lane_environment)
+    let lane_environment = ambient.get(steer::hook::LANE).map(OsStr::to_os_string);
+    run_at(&repository, matches, contract, lane_environment, ambient)
 }
 
 /// Execute one steering leaf against `repository`.
@@ -38,6 +40,7 @@ pub(crate) fn run_at(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
     lane_environment: Option<OsString>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let serve = match repository.admit_resident_client() {
         Ok(serve) => serve,
@@ -47,7 +50,7 @@ pub(crate) fn run_at(
         Ok(selection) => selection,
         Err(outcome) => return outcome,
     };
-    execute_steering(&serve, contract, selected, lane_context)
+    execute_steering(&serve, contract, selected, lane_context, ambient)
 }
 
 /// Choose the command one steering contract names, with its lane context.

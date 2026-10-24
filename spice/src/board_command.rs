@@ -6,6 +6,7 @@ use board::{Entry, Project, ProjectError, ProjectPolicy, SystemTaskRoute, View};
 use bus::{Bus, CommitOutcome};
 use clap::ArgMatches;
 use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, PendingFact};
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::body::GitBoundary;
 use wire::intent::{
@@ -27,6 +28,7 @@ use wire::{
 };
 
 use crate::cli::Contract;
+use crate::command_client::Host;
 
 fn claim_capture_from_board(board: &BoardAnswer) -> gate::ClaimCapture {
     let mut active = board.tasks.iter().filter(|task| {

@@ -90,6 +90,14 @@ impl Drop for Scratch {
     }
 }
 
+fn unsignalled(ambient: &spice::ambient::Ambient, interrupt_after_launch: bool) -> RunControl<'_> {
+    RunControl {
+        signals: false,
+        interrupt_after_launch,
+        ambient,
+    }
+}
+
 #[test]
 fn new_seed_copies_the_invoking_linked_worktree_app() {
     const APPLIANCE_IDENTITY: &str =
@@ -584,13 +592,16 @@ fn native_app_stream_begins_live_and_reads_seeded_lane_task() {
         .expect("browser demo seed succeeds");
     let root_for_down = environment.root.clone();
     let discovery_path = environment.state.serve().to_path_buf();
-    let outcome = app_environment_with(environment, false, false, true, false, |endpoint| {
+    let ambient = spice::ambient::capture();
+    let control = unsignalled(&ambient, false);
+    let outcome = app_environment_with(environment, false, control, true, |endpoint| {
         let discovery = read_discovery(&discovery_path);
         assert_eq!(endpoint, discovery.endpoint);
         assert_browser_seed(&discovery);
         let Outcome::Reply(stopped) = crate::resident::down_from_operator(
             &root_for_down,
             crate::cli::contract(&["down"]).expect("down contract"),
+            &ambient,
         ) else {
             panic!("the demo resident stops on request");
         };
@@ -641,9 +652,11 @@ fn gate_environment(name: &str) -> (Scratch, Environment) {
 /// The two cases own separate roots and residents, so they run side by side.
 #[test]
 fn parsed_demo_open_flag_reaches_the_app_gate() {
+    let ambient = spice::ambient::capture();
     let control = RunControl {
         signals: false,
         interrupt_after_launch: true,
+        ambient: &ambient,
     };
 
     std::thread::scope(|scope| {
@@ -728,7 +741,9 @@ fn launch_failure_preserves_one_reusable_or_removable_recovery_root() {
     let root = scratch.child("failed-root");
     let environment = seed_test_environment(Some(&root), Path::new("/opt/spice"))
         .expect("failure demo seed succeeds");
-    let outcome = app_environment_with(environment, true, false, true, false, |_endpoint| {
+    let ambient = spice::ambient::capture();
+    let control = unsignalled(&ambient, false);
+    let outcome = app_environment_with(environment, true, control, true, |_endpoint| {
         Err("fixture browser launcher failed".to_owned())
     });
     let Outcome::Fault(fault) = outcome else {
@@ -754,7 +769,9 @@ fn interruption_preserves_even_an_automatic_cleanup_root() {
     fs::create_dir(&root).unwrap();
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic demo seed succeeds");
-    let outcome = app_environment_with(environment, true, false, false, true, |_endpoint| Ok(()));
+    let ambient = spice::ambient::capture();
+    let control = unsignalled(&ambient, true);
+    let outcome = app_environment_with(environment, true, control, false, |_endpoint| Ok(()));
     let Outcome::Reply(answer) = outcome else {
         panic!("interrupted demo replies with recovery: {outcome:?}");
     };
@@ -772,10 +789,13 @@ fn clean_automatic_service_removes_only_its_demo_root() {
     let environment = seed_test_prepared_root(&root, Path::new("/opt/spice"), true)
         .expect("automatic cleanup seed succeeds");
     let root_for_down = fs::canonicalize(&root).unwrap();
-    let outcome = app_environment_with(environment, true, false, true, false, |_endpoint| {
+    let ambient = spice::ambient::capture();
+    let control = unsignalled(&ambient, false);
+    let outcome = app_environment_with(environment, true, control, true, |_endpoint| {
         let Outcome::Reply(stopped) = crate::resident::down_from_operator(
             &root_for_down,
             crate::cli::contract(&["down"]).expect("down contract"),
+            &ambient,
         ) else {
             panic!("the demo resident stops on request");
         };
@@ -905,7 +925,9 @@ fn an_unwatchable_root_refuses_by_its_own_reason_before_the_browser_is_reached()
     fs::remove_dir_all(&root).expect("the watched root is removed before the watch");
 
     let mut launched = false;
-    let outcome = app_environment_with(environment, false, false, true, false, |_endpoint| {
+    let ambient = spice::ambient::capture();
+    let control = unsignalled(&ambient, false);
+    let outcome = app_environment_with(environment, false, control, true, |_endpoint| {
         launched = true;
         Ok(())
     });

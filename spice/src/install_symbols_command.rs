@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use serde::Serialize;
-use sill::Environment;
+use spice::ambient::Ambient;
 use spice::install::{
     DwarfdumpLookup, SampleError, SampleSymbolization, SymbolVerification, SymbolVerificationError,
     symbolize_sample, verify_symbols,
@@ -20,7 +20,7 @@ pub(crate) struct InstalledSymbols {
     sample: Option<SampleSymbolization>,
 }
 
-pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<InstalledSymbols> {
+pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> Outcome<InstalledSymbols> {
     let working = match std::env::current_dir() {
         Ok(working) => working,
         Err(error) => {
@@ -51,7 +51,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<InstalledSymbols> {
     let sample = match matches.get_one::<String>("sample") {
         None => None,
         Some(sample) => {
-            let environment = match ambient_environment() {
+            let environment = match ambient.environment() {
                 Ok(environment) => environment,
                 Err(error) => return fault("install::environment-failed", error.to_string()),
             };
@@ -90,12 +90,4 @@ fn fault<B>(reason: &str, detail: String) -> Outcome<B> {
         reason: reason.to_owned(),
         detail,
     })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the native binary rim captures the exact child environment"
-)]
-fn ambient_environment() -> Result<Environment, sill::SpecError> {
-    Environment::new(std::env::vars_os())
 }

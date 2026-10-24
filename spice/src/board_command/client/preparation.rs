@@ -81,7 +81,7 @@ struct CoverageInput {
     source: RoomSource,
 }
 pub(super) fn dispatch_client(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
     verb: &str,
@@ -99,7 +99,7 @@ pub(super) fn dispatch_client(
 }
 
 pub(super) fn client_design_propose(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -231,7 +231,7 @@ fn cite_pair(written: &str) -> Result<(wire::Name, &str), Outcome<CommandAnswer>
 
 /// [`pass_record`] for `design`, read from the repository journal.
 fn read_pass_record(
-    repository: &Repository,
+    repository: Host<'_>,
     design: &TaskStamp,
     cites: &mut [CandidateReference],
 ) -> Result<(PassRecord, Option<Seq>), Outcome<CommandAnswer>> {
@@ -334,7 +334,7 @@ fn mint_candidate() -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
 }
 
 pub(super) fn client_candidate_critique(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -361,7 +361,7 @@ pub(super) fn client_candidate_critique(
 }
 
 pub(super) fn client_candidate_cover(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -395,7 +395,7 @@ pub(super) fn client_candidate_cover(
 }
 
 pub(super) fn client_preparation_decide(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -447,7 +447,7 @@ pub(super) fn client_preparation_decide(
 }
 
 pub(super) fn client_candidate_withdraw(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -496,7 +496,7 @@ pub(super) fn client_candidate_withdraw(
 
 /// Current heads of two proposal subjects, read at one journal position.
 fn proposal_heads(
-    repository: &Repository,
+    repository: Host<'_>,
     candidate: &CandidateRef,
     first: &ProposalRef,
     second: &ProposalRef,
@@ -519,7 +519,7 @@ fn proposal_heads(
 
 /// The repository journal, read-only, for inspecting `subject`.
 fn journal_reader(
-    repository: &Repository,
+    repository: Host<'_>,
     subject: &str,
 ) -> Result<journal::JournalReader, Outcome<CommandAnswer>> {
     let state = repository
@@ -534,7 +534,7 @@ fn journal_reader(
 }
 
 fn retained_candidate(
-    repository: &Repository,
+    repository: Host<'_>,
     candidate: &CandidateRef,
 ) -> Result<(DesignPassProposal, Seq), Outcome<CommandAnswer>> {
     let reader = journal_reader(repository, &format!("candidate {}", candidate.candidate))?;
@@ -567,7 +567,7 @@ fn retained_candidate(
 }
 
 pub(super) fn client_output_adopt(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -604,7 +604,7 @@ pub(super) fn client_output_adopt(
 }
 
 pub(super) fn client_design_nudge(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -631,7 +631,7 @@ pub(super) fn client_design_nudge(
 /// text reply, so the reply names the state and action the command left.
 /// A failed read leaves the committed reply as the resident wrote it.
 fn with_cycle(
-    repository: &Repository,
+    repository: Host<'_>,
     design: &TaskStamp,
     outcome: Outcome<CommandAnswer>,
 ) -> Outcome<CommandAnswer> {
@@ -676,7 +676,7 @@ fn invalid_handle(name: &str, detail: &str) -> Outcome<CommandAnswer> {
 }
 
 fn submit_with_tasks<B, F>(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     mut tasks: Vec<TaskStamp>,
     claims: bool,

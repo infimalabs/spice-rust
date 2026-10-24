@@ -47,19 +47,19 @@ struct PreparedTask {
     workflow: WorkflowHead,
 }
 
-struct AtomicClaim {
-    prepared: PreparedClaim,
+struct AtomicClaim<'a> {
+    prepared: PreparedClaim<'a>,
     answer: Box<wire::intent::ClaimAnswer>,
 }
 
-fn prepare_mutation_claim(
+fn prepare_mutation_claim<'a>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    repository: Option<&Repository>,
+    repository: Option<Host<'a>>,
     snapshot: &ValidatedSnapshot,
     selected: &Entry,
     requested: bool,
-) -> Result<Option<AtomicClaim>, Outcome<CommandAnswer>> {
+) -> Result<Option<AtomicClaim<'a>>, Outcome<CommandAnswer>> {
     if !requested {
         return Ok(None);
     }
@@ -75,7 +75,7 @@ fn prepare_mutation_write(
     command: &wire::AdmittedCommand,
     entry: &Entry,
     snapshot: &ValidatedSnapshot,
-    atomic_claim: Option<&AtomicClaim>,
+    atomic_claim: Option<&AtomicClaim<'_>>,
 ) -> Result<JournalWrite, Outcome<CommandAnswer>> {
     let at = match atomic_claim {
         Some(claim) => claim.prepared.at(),
@@ -94,7 +94,7 @@ pub(super) fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -105,7 +105,7 @@ pub(super) fn task_add_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
@@ -239,7 +239,7 @@ fn create_task(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
@@ -348,7 +348,7 @@ fn create_task(
 /// The taste review of a prepared statement. A Draft asserts nothing yet:
 /// taste and preparation bind when it is filed.
 fn prepared_taste_review(
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     snapshot: &ValidatedSnapshot,
     actor: &wire::Actor,
     statement: &wire::TaskHead,
@@ -442,11 +442,11 @@ pub(super) fn task_review_roots(review: &TaskReview) -> Vec<wire::TaskStamp> {
 /// One creation admitted against its snapshot: the prepared heads, the entry
 /// the task stands as once born, the dependency witnesses that guard the
 /// write, and any claim taken in the same transaction.
-struct AdmittedCreation {
+struct AdmittedCreation<'a> {
     prepared: PreparedTask,
     post: Entry,
     dependency_witnesses: Vec<Witness>,
-    claim: Option<PreparedClaim>,
+    claim: Option<PreparedClaim<'a>>,
 }
 
 fn commit_prepared_task<B, F>(

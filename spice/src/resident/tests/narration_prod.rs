@@ -111,7 +111,9 @@ fn a_silent_lane_is_prodded_and_falls_silent_once_it_speaks() {
     let publisher = source.message_publisher();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
-    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher).narration(BOUND);
+    let ambient = spice::ambient::capture();
+    let surfaces =
+        CaptureSurfaces::new(&paths, &tastes, &steering, &publisher, &ambient).narration(BOUND);
 
     occupied.accept(&surfaces, &command(1));
     occupied.accept(&surfaces, &command(2));

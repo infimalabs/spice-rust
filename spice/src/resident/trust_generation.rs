@@ -32,8 +32,10 @@ fn startup_runtime_policy_and_trust_share_one_capture_generation() {
     fs::write(&tracked, FIRST).expect("write first startup policy");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
 
-    let first = super::load_startup_surface_with(&repository, || replace_policy(&tracked, SECOND))
-        .expect("captured startup surface remains admitted");
+    let first = super::load_startup_surface_with(&repository, &spice::ambient::capture(), || {
+        replace_policy(&tracked, SECOND);
+    })
+    .expect("captured startup surface remains admitted");
     assert_eq!(first.config.steering.expiry().to_string(), "12h");
     assert_eq!(first.config.consent.posture(), consent::Answer::Deny);
     assert_eq!(

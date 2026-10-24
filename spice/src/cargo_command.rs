@@ -1,6 +1,6 @@
 //! Supported Cargo launcher over one private worktree home.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
@@ -8,6 +8,7 @@ use std::process::{Child, Command, ExitStatus};
 use std::thread::JoinHandle;
 
 use serde::Serialize;
+use spice::ambient::Ambient;
 use spice::cargo_isolation::{
     BOOTSTRAP_HOME_VARIABLE, CARGO_HOME_VARIABLE, Host, NATIVE_CARGO_VARIABLE,
     NATIVE_RUSTC_VARIABLE, NATIVE_RUSTDOC_VARIABLE, RUSTC_VARIABLE, RUSTDOC_VARIABLE,
@@ -145,13 +146,13 @@ fn writes_lock(arguments: &[OsString]) -> bool {
 /// consult the registry and rewrite `Cargo.lock`; the next invocation seeds
 /// its generation from that lock. Every other subcommand prepares the exact
 /// current lock generation and runs offline within it.
-pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
-    run_invocation(cargo_invocation(matches))
+pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> RunResult {
+    run_invocation(cargo_invocation(matches), ambient)
 }
 
 /// Run the repository's task binary inside the same admitted Cargo boundary.
-pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
-    run_invocation(xtask_invocation(matches))
+pub(crate) fn xtask(matches: &clap::ArgMatches, ambient: &Ambient) -> RunResult {
+    run_invocation(xtask_invocation(matches), ambient)
 }
 
 /// Every argument after `--` reaches Cargo verbatim; only flags before it are
@@ -201,8 +202,8 @@ fn xtask_invocation(matches: &clap::ArgMatches) -> Invocation {
     }
 }
 
-fn run_invocation(invocation: Invocation) -> RunResult {
-    match run_inner(invocation) {
+fn run_invocation(invocation: Invocation, ambient: &Ambient) -> RunResult {
+    match run_inner(invocation, ambient) {
         Ok(status) => RunResult::Child(status),
         Err((outcome, code)) => RunResult::Rejected { outcome, code },
     }
@@ -210,12 +211,10 @@ fn run_invocation(invocation: Invocation) -> RunResult {
 
 /// A supervising pre-commit worker parses the configured leaf's own progress
 /// protocol and captures its output, so its child streams stay verbatim.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "developer Cargo detects authority injected by its supervising pre-commit worker"
-)]
-fn supervised_by_pre_commit() -> bool {
-    std::env::var_os(wire::SpiceVariable::PreCommitSource.as_str()).is_some()
+fn supervised_by_pre_commit(ambient: &Ambient) -> bool {
+    ambient
+        .get(wire::SpiceVariable::PreCommitSource.as_str())
+        .is_some()
 }
 
 /// Developer toolchains and their tests must opt into lane interception state.
@@ -225,18 +224,15 @@ fn isolate_developer_environment(command: &mut Command) {
     }
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the native binary rim captures the exact Cargo seed environment"
-)]
 pub(crate) fn host(
     repository: &Repository,
+    ambient: &Ambient,
 ) -> Result<Host, spice::cargo_isolation::IsolationError> {
-    Host::from_environment(repository.worktree_root(), std::env::vars_os())
+    Host::from_environment(repository.worktree_root(), ambient.variables().to_vec())
 }
 
 /// Inspect the owned store or conservatively reclaim expired unreferenced state.
-pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
+pub(crate) fn store(matches: &clap::ArgMatches, ambient: &Ambient) -> Outcome<StoreAnswer> {
     let working = match std::env::current_dir() {
         Ok(working) => working,
         Err(error) => {
@@ -257,7 +253,7 @@ pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
             });
         }
     };
-    let host = match host(&repository) {
+    let host = match host(&repository, ambient) {
         Ok(host) => host,
         Err(error) => return isolation_outcome(error),
     };
@@ -275,7 +271,7 @@ pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
     }
 }
 
-fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
+fn run_inner(invocation: Invocation, ambient: &Ambient) -> Result<ExitStatus, (Outcome<()>, i32)> {
     let working = std::env::current_dir().map_err(|error| {
         rejected(
             FaultClass::Environment,
@@ -301,7 +297,7 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
             1,
         )
     })?;
-    let host = host(&repository).map_err(isolation_rejection)?;
+    let host = host(&repository, ambient).map_err(isolation_rejection)?;
     let (mut command, _prepared) = if writes_lock(&invocation.arguments) {
         let command = native_command(
             host.cargo(),
@@ -324,8 +320,11 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
             repository.worktree_root(),
             host.bootstrap_home(),
             &invocation.arguments,
-            crate::bootstrap_environment("CARGO_BUILD_TARGET").as_deref(),
-            crate::bootstrap_environment("PATH").unwrap_or_default(),
+            ambient.get("CARGO_BUILD_TARGET"),
+            ambient
+                .get("PATH")
+                .map(OsStr::to_os_string)
+                .unwrap_or_default(),
             &mut command,
         )
         .map_err(isolation_rejection)?;
@@ -334,7 +333,7 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
             .map_err(isolation_rejection)?;
         (command, Some(prepared))
     };
-    if supervised_by_pre_commit() {
+    if supervised_by_pre_commit(ambient) {
         return run_verbatim(&mut command);
     }
     let settings = invocation.settings(

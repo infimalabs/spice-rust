@@ -44,7 +44,8 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let generation = publisher.batch().expect("wake generation begins");
-    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation);
+    let ambient = spice::ambient::capture();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation, &ambient);
 
     accept_capture_record(
         &bus,
@@ -99,7 +100,8 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
 
     // A notice that arrives after its bytes were accounted (the startup overlap)
     // still crosses, and the retained locus refuses the repeat presentation.
-    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
+    let ambient = spice::ambient::capture();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher, &ambient);
     accept_capture_record(
         &bus,
         epoch,

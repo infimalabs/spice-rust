@@ -3,7 +3,11 @@ use super::*;
 use std::ffi::OsString;
 use std::process::ExitStatus;
 
-pub(super) fn required_read(root: &Path, args: &[&str], action: &str) -> Result<String, Error> {
+pub(super) fn required_read(
+    root: Worktree<'_>,
+    args: &[&str],
+    action: &str,
+) -> Result<String, Error> {
     let output = run(root, args)?;
     if output.success() {
         Ok(output.stdout.trim().to_owned())
@@ -12,21 +16,25 @@ pub(super) fn required_read(root: &Path, args: &[&str], action: &str) -> Result<
     }
 }
 
-pub(super) fn try_read(root: &Path, args: &[&str]) -> Result<Option<String>, Error> {
+pub(super) fn try_read(root: Worktree<'_>, args: &[&str]) -> Result<Option<String>, Error> {
     let output = run(root, args)?;
     Ok(output.success().then(|| output.stdout.trim().to_owned()))
 }
 
-pub(super) fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
+pub(super) fn run(root: Worktree<'_>, args: &[&str]) -> Result<GitOutput, Error> {
     run_bounded(root, args, None, &[])
 }
 
-pub(super) fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, Error> {
+pub(super) fn run_with_input(
+    root: Worktree<'_>,
+    args: &[&str],
+    input: &[u8],
+) -> Result<GitOutput, Error> {
     run_bounded(root, args, Some(input), &[])
 }
 
 pub(super) fn run_with_environment(
-    root: &Path,
+    root: Worktree<'_>,
     args: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<GitOutput, Error> {
@@ -34,7 +42,7 @@ pub(super) fn run_with_environment(
 }
 
 fn run_bounded(
-    root: &Path,
+    root: Worktree<'_>,
     args: &[&str],
     input: Option<&[u8]>,
     environment: &[(&str, &str)],
@@ -54,7 +62,7 @@ fn run_bounded(
 }
 
 fn git_spec(
-    root: &Path,
+    root: Worktree<'_>,
     args: &[&str],
     piped_input: bool,
     environment: &[(&str, &str)],
@@ -64,9 +72,9 @@ fn git_spec(
     arguments.push(root.as_os_str().to_owned());
     arguments.extend(args.iter().map(OsString::from));
 
-    let mut inherited = super::admission::ambient_environment()
-        .map_err(invalid_spec)?
-        .entries()
+    let mut inherited = root
+        .ambient
+        .variables()
         .iter()
         .cloned()
         .collect::<BTreeMap<_, _>>();

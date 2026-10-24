@@ -3,13 +3,40 @@
 //! This seam keeps family mapping growth out of the transport client while
 //! preserving its one authenticated request path.
 
+use std::ops::Deref;
+
 use spice::repository::Repository;
 
 use super::*;
 
+/// The repository a resident command addresses, paired with the process
+/// environment its client and Git reads see.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Host<'a> {
+    pub(crate) repository: &'a Repository,
+    pub(crate) ambient: &'a Ambient,
+}
+
+impl<'a> Host<'a> {
+    pub(crate) const fn new(repository: &'a Repository, ambient: &'a Ambient) -> Self {
+        Self {
+            repository,
+            ambient,
+        }
+    }
+}
+
+impl Deref for Host<'_> {
+    type Target = Repository;
+
+    fn deref(&self) -> &Repository {
+        self.repository
+    }
+}
+
 /// Submit one already-typed family request through the sole resident client.
 pub(crate) fn execute_typed<B: Serialize>(
-    repository: &Repository,
+    host: Host<'_>,
     contract: &Contract,
     kind: CommandKind,
     expected: Vec<Witness>,
@@ -31,16 +58,22 @@ pub(crate) fn execute_typed<B: Serialize>(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
-    let state = match repository.admit_state() {
+    let state = match host.admit_state() {
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let connection = match ambient_lane_identity() {
+    let connection = match ambient_lane_identity(host.ambient) {
         Ok(Some(lane)) => Connection::Lane(lane),
         Ok(None) => Connection::Operator,
         Err(outcome) => return outcome,
     };
-    execute_mapped(state.serve(), contract, connection, Ok(mapped))
+    execute_mapped(
+        state.serve(),
+        contract,
+        connection,
+        Ok(mapped),
+        host.ambient,
+    )
 }
 
 pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {

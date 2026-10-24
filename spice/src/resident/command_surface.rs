@@ -138,7 +138,10 @@ impl<'a> Surface<'a> {
         if let Some(outcome) = crate::board_command::dispatch_with_repository(
             self.bus,
             command,
-            Some(self.repository),
+            Some(crate::command_client::Host {
+                repository: self.repository,
+                ambient: &self.config.ambient,
+            }),
             &self.config.projects,
             &self.config.allocation,
         ) {

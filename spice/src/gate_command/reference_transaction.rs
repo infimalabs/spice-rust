@@ -93,6 +93,8 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use spice::ambient::Ambient;
+
 const USAGE: &str =
     "usage: spice gate reference-transaction <preparing|prepared|committed|aborted>";
 const PREPARED: &str = "prepared";
@@ -129,6 +131,7 @@ pub fn apply(
     repository: &Path,
     state: &OsStr,
     input: &str,
+    ambient: &Ambient,
 ) -> Result<(), ReferenceTransactionError> {
     let state = TransactionState::parse(state).unwrap_or(TransactionState::Preparing);
     if state == TransactionState::Preparing {
@@ -146,7 +149,7 @@ pub fn apply(
     let Some(current_ref) = git_read(repository, &["symbolic-ref", "--quiet", "HEAD"])? else {
         return Ok(());
     };
-    match publication(repository, &current_ref)? {
+    match publication(repository, &current_ref, ambient)? {
         Publication::Untracked => Ok(()),
         Publication::Unjudgeable { reference } => {
             refuse_unjudgeable_rewind(repository, &current_ref, &reference, &updates)
@@ -193,7 +196,10 @@ impl TransactionState {
 /// exact prefix is present, every malformed state or arity is owned here and
 /// fails with the public usage exit rather than falling through to another
 /// parser or execution path.
-pub(super) fn entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32> {
+pub(super) fn entry(
+    mut arguments: impl Iterator<Item = OsString>,
+    ambient: &Ambient,
+) -> Option<i32> {
     arguments.next()?;
     if arguments.next().as_deref() != Some(OsStr::new("gate")) {
         return None;
@@ -211,7 +217,7 @@ pub(super) fn entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32
         eprintln!("{USAGE}");
         return Some(2);
     };
-    let result = run(state);
+    let result = run(state, ambient);
     Some(match result {
         Ok(()) => 0,
         Err(error) => {
@@ -221,14 +227,14 @@ pub(super) fn entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32
     })
 }
 
-fn run(state: TransactionState) -> Result<(), Box<dyn Error>> {
+fn run(state: TransactionState, ambient: &Ambient) -> Result<(), Box<dyn Error>> {
     if state == TransactionState::Preparing {
         return Ok(());
     }
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
     let repository = std::env::current_dir()?;
-    apply(&repository, OsStr::new(state.as_str()), &input).map_err(Into::into)
+    apply(&repository, OsStr::new(state.as_str()), &input, ambient).map_err(Into::into)
 }
 
 /// The commit the branch holds before this transaction is written.
@@ -372,11 +378,13 @@ enum Publication {
 fn publication(
     repository: &Path,
     current_ref: &str,
+    ambient: &Ambient,
 ) -> Result<Publication, ReferenceTransactionError> {
     let branch = current_ref
         .strip_prefix(LOCAL_PREFIX)
         .unwrap_or(current_ref);
-    let environment = super::pre_commit::ambient_environment()
+    let environment = ambient
+        .environment()
         .map_err(|source| ReferenceTransactionError::Environment { source })?;
     let Some(pairing) = spice::git_shadow::declared_pairing(repository, branch, &environment)
         .map_err(|source| ReferenceTransactionError::Pairing { source })?

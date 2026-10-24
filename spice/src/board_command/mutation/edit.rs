@@ -10,7 +10,7 @@ pub(in crate::board_command) fn task_edit(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -64,7 +64,7 @@ fn prepare_correction(
     entry: &Entry,
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
 ) -> Result<(TaskHead, CorrectionPublication), Outcome<CommandAnswer>> {
     validate_acceptance(&edit.acceptance)?;
@@ -147,7 +147,7 @@ fn prepare_correction(
 /// A match keeps the statement held, counting one more recheck of a standing
 /// hold; a clear read releases the hold and any plan phase it inserted.
 fn review_taste(
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,

@@ -2,6 +2,7 @@
 
 use gate::{AdmissionBundle, AdmissionBundleFields, EvidenceStore};
 use serde::{Deserialize, Serialize};
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::{Digest, Domain};
 
@@ -42,6 +43,7 @@ impl AdmissionRun {
 pub(super) fn run(
     claim: gate::ClaimCapture,
     repository: &Repository,
+    ambient: &Ambient,
     anchor: spice::gate::PreparedArm<'static>,
     audit: Option<&mut super::ApplianceGenerationAudit>,
     profile: &mut super::profile::Profile,
@@ -96,14 +98,19 @@ pub(super) fn run(
         .into_iter()
         .map(|action| action.expect("missing receipts were handled above"))
         .collect::<Vec<_>>();
-    let live_checks =
-        match settle_admission_state(&mut preparation, repository, &claim, early_live_checks) {
-            Ok(checks) => checks,
-            Err(error) => {
-                let _ = preparation.reject_state();
-                return Err(prove_failure(error));
-            }
-        };
+    let live_checks = match settle_admission_state(
+        &mut preparation,
+        repository,
+        ambient,
+        &claim,
+        early_live_checks,
+    ) {
+        Ok(checks) => checks,
+        Err(error) => {
+            let _ = preparation.reject_state();
+            return Err(prove_failure(error));
+        }
+    };
     let (created_at, expires_at) = admission_window()?;
     let live_check_count = live_checks.len();
     let bundle = AdmissionBundle::new(AdmissionBundleFields {
@@ -139,6 +146,7 @@ pub(super) fn run(
 fn settle_admission_state(
     preparation: &mut super::super::prove::AdmissionPreparation,
     repository: &Repository,
+    ambient: &Ambient,
     claim: &gate::ClaimCapture,
     mut early_live_checks: Option<Vec<gate::AdmissionLiveCheck>>,
 ) -> Result<Vec<gate::AdmissionLiveCheck>, super::super::prove::ProveFailure> {
@@ -147,11 +155,11 @@ fn settle_admission_state(
             Some(checks) => checks,
             None => preparation.execute_live_checks()?,
         };
-        if preparation.verify_current(repository, claim)? {
+        if preparation.verify_current(repository, ambient, claim)? {
             continue;
         }
         preparation.accept_state()?;
-        if preparation.verify_current(repository, claim)? {
+        if preparation.verify_current(repository, ambient, claim)? {
             continue;
         }
         return Ok(live_checks);
