@@ -303,6 +303,9 @@ fn swept(
     signal: impl Fn(GroupSignal) -> io::Result<()>,
 ) -> Ending {
     if signal(GroupSignal::Terminate).is_ok() {
+        // Members that outlived the leader are not this keeper's children,
+        // so nothing signals when the last one leaves; the grace is waited
+        // once, in full, rather than probed.
         thread::sleep(grace);
         let _ = signal(GroupSignal::Kill);
     }

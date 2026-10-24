@@ -29,6 +29,8 @@ mod protected;
 mod spawn;
 mod spec;
 mod surface;
+#[cfg(any(unix, windows))]
+mod watch;
 
 pub use config::{
     ConfigError, ConfiguredPath, ExitCode, ExitStatuses, LockConfig, LockTarget, ShardCount,
@@ -65,3 +67,5 @@ pub use surface::{
     Contention, HeldShard, LockAttempt, LockAvailability, LockExitReport, LockOwnerReport,
     LockPoolReport, LockReport, LockShardReport, LockSurfaceError, LockTargetKind, LockTopology,
 };
+#[cfg(any(unix, windows))]
+pub use watch::{DirectObserver, ProcessExitObserver};

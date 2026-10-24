@@ -269,6 +269,9 @@ fn guardian_main(lock: RawFd, notice: RawFd, descriptor_setup: bool) -> ! {
         // takes, and the opposite of the one the post-signal consumers in
         // `crate::spawn` chose, where forgiving an unreadable answer ends a wait
         // that has already delivered its kill rather than releasing a claim.
+        // The members are not this process's children and the group gains
+        // new ones freely, so no kernel object signals its end; only the
+        // probe can.
         while raw_group_state(pid) != ProcessState::Terminal {
             let request = libc::timespec {
                 tv_sec: 0,

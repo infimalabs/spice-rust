@@ -149,6 +149,9 @@ impl DescendantGroups {
                     format!("{detail} after the {reap:?} reap deadline"),
                 ));
             }
+            // Descendants that outlived their parents are nobody's children
+            // here and new groups can still appear mid-shutdown, so no kernel
+            // object signals the tree's end; only the next snapshot can.
             thread::sleep(REAP_POLL.min(absolute_deadline.saturating_sub(elapsed)));
         }
     }

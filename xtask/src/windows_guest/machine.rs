@@ -6,6 +6,7 @@ use std::io::{BufRead as _, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,7 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(3 * 60 * 60);
 const BOOT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const SSH_RETRY: Duration = Duration::from_secs(5);
 
 /// Machine-local guest state beneath the repository's shared Spice directory.
 pub(super) struct Paths {
@@ -189,17 +191,28 @@ pub(super) fn install(
     )
     .map_err(|error| error.to_string())?;
     let started = Instant::now();
-    let mut reported = started;
+    let (exited, exits) = mpsc::channel();
+    let exit = sill::ProcessExitObserver::or_ended(child.id())
+        .map_err(|error| format!("cannot observe QEMU: {error}"))?;
+    thread::spawn(move || {
+        let _ = exited.send(exit.wait());
+    });
     loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("cannot wait for QEMU: {error}"))?
+        match exits
+            .recv_timeout(PROGRESS_INTERVAL.min(INSTALL_TIMEOUT.saturating_sub(started.elapsed())))
         {
-            return if status.success() {
-                Ok(())
-            } else {
-                Err(format!("QEMU exited with {status} during installation"))
-            };
+            Ok(Ok(())) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let status = child
+                    .wait()
+                    .map_err(|error| format!("cannot wait for QEMU: {error}"))?;
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("QEMU exited with {status} during installation"))
+                };
+            }
+            Ok(Err(error)) => return Err(format!("cannot observe QEMU: {error}")),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
         if started.elapsed() > INSTALL_TIMEOUT {
             capture_screen(machine.qmp_port, &paths.screen());
@@ -212,17 +225,13 @@ pub(super) fn install(
                 paths.screen().display()
             ));
         }
-        if reported.elapsed() > PROGRESS_INTERVAL {
-            reported = Instant::now();
-            capture_screen(machine.qmp_port, &paths.screen());
-            writeln!(
-                output,
-                "still installing after {} minutes",
-                started.elapsed().as_secs() / 60
-            )
-            .map_err(|error| error.to_string())?;
-        }
-        thread::sleep(Duration::from_secs(5));
+        capture_screen(machine.qmp_port, &paths.screen());
+        writeln!(
+            output,
+            "still installing after {} minutes",
+            started.elapsed().as_secs() / 60
+        )
+        .map_err(|error| error.to_string())?;
     }
 }
 
@@ -308,7 +317,9 @@ pub(super) fn boot(
                 paths.screen().display()
             ));
         }
-        thread::sleep(Duration::from_secs(5));
+        // The guest announces nothing to the host when its SSH service comes
+        // up; a refused forward is the only way to learn it is not up yet.
+        thread::sleep(SSH_RETRY);
     }
 }
 
@@ -348,15 +359,13 @@ pub(super) fn stop(
     }
 }
 
+/// Whether QEMU stopped within `timeout`: a connection it holds open closes
+/// when it exits, so the wait is its end of the QMP stream.
 fn wait_stopped(port: u16, timeout: Duration) -> bool {
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if !running(port) {
-            return true;
-        }
-        thread::sleep(Duration::from_secs(1));
+    match Qmp::connect(port) {
+        Ok(qmp) => qmp.closed_within(timeout) || !running(port),
+        Err(_) => true,
     }
-    !running(port)
 }
 
 fn qemu_arguments(
@@ -526,5 +535,27 @@ impl Qmp {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
         serde_json::from_str(&line).map_err(std::io::Error::other)
+    }
+
+    /// Whether QEMU closed this stream within `timeout`, reading past the
+    /// events it emits while shutting down.
+    fn closed_within(mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero()
+                || self
+                    .reader
+                    .get_ref()
+                    .set_read_timeout(Some(remaining))
+                    .is_err()
+            {
+                return false;
+            }
+            match self.message() {
+                Ok(_) => {}
+                Err(error) => return error.kind() == std::io::ErrorKind::UnexpectedEof,
+            }
+        }
     }
 }

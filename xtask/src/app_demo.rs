@@ -3,12 +3,10 @@
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 #[cfg(unix)]
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
@@ -17,8 +15,6 @@ use signal_hook::iterator::Signals;
 use wire::{DemoAnswer, Digest, Fault, Outcome, Refusal};
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
-const READY_POLL: Duration = Duration::from_millis(20);
-const READY_CONNECT: Duration = Duration::from_millis(100);
 
 /// Stage the current worktree's app sources, build its native Spice, and run
 /// an isolated demo serving exactly the generation those sources produced.
@@ -228,6 +224,10 @@ impl DemoChild {
         })
     }
 
+    fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
         self.child.try_wait()
     }
@@ -278,12 +278,51 @@ fn demo_discovery(root: &Path) -> Result<PathBuf, AppDemoError> {
         .map_err(|error| fail(format!("app-demo state unavailable: {error}")))
 }
 
+/// What wakes the wait for the resident's endpoint.
+enum Readiness {
+    /// The runtime directory changed: discovery may have been published.
+    Changed,
+    /// The resident ended.
+    Ended,
+    Failed(String),
+}
+
+/// The endpoint once discovery is published, or `None` once the resident
+/// ends without publishing it. Discovery is published from a bound listener,
+/// so its publication is the endpoint's readiness.
 fn wait_for_endpoint(
     child: &mut DemoChild,
     discovery: &Path,
 ) -> Result<Option<String>, AppDemoError> {
+    let runtime = discovery
+        .parent()
+        .ok_or_else(|| fail("app-demo discovery has no runtime directory"))?;
+    let (wake, wakes) = std::sync::mpsc::channel();
+    let exit = sill::ProcessExitObserver::or_ended(child.id()).map_err(|error| {
+        fail(format!(
+            "app-demo resident exit observer unavailable: {error}"
+        ))
+    })?;
+    let ended = wake.clone();
+    std::thread::spawn(move || {
+        let _ = ended.send(match exit.wait() {
+            Ok(()) => Readiness::Ended,
+            Err(error) => Readiness::Failed(format!("resident exit observer: {error}")),
+        });
+    });
     loop {
-        if let Some(endpoint) = accepting_endpoint(discovery)? {
+        // Armed before the look, so a publication between the look and the
+        // wait still wakes it.
+        let observer = sill::DirectObserver::arm(runtime)
+            .map_err(|error| fail(format!("app-demo discovery observer unavailable: {error}")))?;
+        let changed = wake.clone();
+        std::thread::spawn(move || {
+            let _ = changed.send(match observer.wait() {
+                Ok(()) => Readiness::Changed,
+                Err(error) => Readiness::Failed(format!("discovery observer: {error}")),
+            });
+        });
+        if let Some(endpoint) = published_endpoint(discovery)? {
             return Ok(Some(endpoint));
         }
         if child
@@ -293,11 +332,19 @@ fn wait_for_endpoint(
         {
             return Ok(None);
         }
-        std::thread::sleep(READY_POLL);
+        match wakes.recv() {
+            Ok(Readiness::Changed | Readiness::Ended) => {}
+            Ok(Readiness::Failed(detail)) => {
+                return Err(fail(format!("app-demo readiness wait failed: {detail}")));
+            }
+            Err(std::sync::mpsc::RecvError) => {
+                return Err(fail("app-demo readiness observers ended without a wake"));
+            }
+        }
     }
 }
 
-fn accepting_endpoint(discovery: &Path) -> Result<Option<String>, AppDemoError> {
+fn published_endpoint(discovery: &Path) -> Result<Option<String>, AppDemoError> {
     let bytes = match fs::read(discovery) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -310,19 +357,7 @@ fn accepting_endpoint(discovery: &Path) -> Result<Option<String>, AppDemoError> 
     };
     let discovery: spice::serve::Discovery = wire::decode(&bytes)
         .map_err(|error| fail(format!("app-demo discovery invalid: {error}")))?;
-    let authority = discovery.endpoint.strip_prefix("http://").ok_or_else(|| {
-        fail(format!(
-            "app-demo endpoint is not HTTP: {}",
-            discovery.endpoint
-        ))
-    })?;
-    let address: SocketAddr = authority
-        .parse()
-        .map_err(|error| fail(format!("app-demo endpoint is invalid: {error}")))?;
-    match TcpStream::connect_timeout(&address, READY_CONNECT) {
-        Ok(_) => Ok(Some(discovery.endpoint)),
-        Err(_) => Ok(None),
-    }
+    Ok(Some(discovery.endpoint))
 }
 
 fn announce_endpoint(endpoint: &str, output: &mut impl Write) -> Result<(), AppDemoError> {

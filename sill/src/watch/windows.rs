@@ -20,7 +20,7 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
 };
 
-pub(crate) struct DirectObserver {
+pub struct DirectObserver {
     notification: HANDLE,
 }
 
@@ -31,7 +31,7 @@ unsafe impl Send for DirectObserver {}
 impl DirectObserver {
     /// Arm one notification for entries created, removed, renamed, or
     /// rewritten directly in `watched`.
-    pub(crate) fn arm(watched: &Path) -> io::Result<Self> {
+    pub fn arm(watched: &Path) -> io::Result<Self> {
         let path: Vec<u16> = watched
             .as_os_str()
             .encode_wide()
@@ -58,7 +58,7 @@ impl DirectObserver {
     /// # Errors
     ///
     /// Returns the kernel's refusal to deliver the change.
-    pub(crate) fn wait(self) -> io::Result<()> {
+    pub fn wait(self) -> io::Result<()> {
         signaled(self.notification)
     }
 }
@@ -71,7 +71,7 @@ impl Drop for DirectObserver {
 }
 
 /// One process's exit, armed while the process can still be named.
-pub(crate) enum ProcessExitObserver {
+pub enum ProcessExitObserver {
     Watching(HANDLE),
     Ended,
 }
@@ -86,7 +86,7 @@ impl ProcessExitObserver {
     /// # Errors
     ///
     /// Returns the kernel's refusal to name or open the parent.
-    pub(crate) fn parent() -> io::Result<Self> {
+    pub fn parent() -> io::Result<Self> {
         let parent = parent_id()?;
         // SAFETY: synchronize and limited query access only observe the process.
         let process = unsafe {
@@ -114,7 +114,7 @@ impl ProcessExitObserver {
         Ok(observer)
     }
 
-    pub(crate) fn or_ended(pid: u32) -> io::Result<Self> {
+    pub fn or_ended(pid: u32) -> io::Result<Self> {
         // SAFETY: synchronize access only observes the named process.
         let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
         if !process.is_null() {
@@ -128,7 +128,7 @@ impl ProcessExitObserver {
         Err(error)
     }
 
-    pub(crate) fn wait(self) -> io::Result<()> {
+    pub fn wait(self) -> io::Result<()> {
         match &self {
             Self::Watching(process) => signaled(*process),
             Self::Ended => Ok(()),
