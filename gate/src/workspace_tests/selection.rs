@@ -1323,33 +1323,33 @@ mod tests {
             .collect()
     }
 
-    /// A change compiles only the target it reaches: no sibling target, no
+    /// A change lints only the target it reaches: no sibling target, no
     /// dependent package, the exact package-qualified features a gated target
-    /// requires so Cargo does not skip it, and `--no-run` only for a target
-    /// whose tests run.
+    /// requires so Cargo does not skip it, and the test profile only for a
+    /// target whose tests run.
     #[test]
     fn a_changed_target_source_compiles_only_its_own_target() {
         let fixture = crate::test_repository::Fixture::repository("reach-narrowing");
         let inventory = narrowing_fixture(&fixture);
-        let render = "--message-format=json-render-diagnostics";
+        let tail = "--message-format=json-render-diagnostics -- -D warnings";
 
         assert_eq!(
             units(&inventory, &fixture, "planted/tests/selected.rs"),
             [format!(
-                "test --locked --package planted --test selected --no-run {render}"
+                "clippy --locked --package planted --test selected --profile test {tail}"
             )],
         );
         assert_eq!(
             units(&inventory, &fixture, "planted/tests/guarded.rs"),
             [format!(
-                "test --locked --package planted --test guarded --features planted/guarded \
-                 --no-run {render}"
+                "clippy --locked --package planted --test guarded --features planted/guarded \
+                 --profile test {tail}"
             )],
         );
         assert_eq!(
             units(&inventory, &fixture, "planted/src/bin/tool.rs"),
             [format!(
-                "check --locked --package planted --bin tool {render}"
+                "clippy --locked --package planted --bin tool {tail}"
             )],
         );
     }

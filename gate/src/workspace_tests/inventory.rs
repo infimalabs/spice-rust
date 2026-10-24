@@ -29,32 +29,9 @@ impl WorkspacePackageReach {
         let mut units = Vec::new();
         for check in &self.checks {
             for target in &check.targets {
-                let subcommand = if target.test_harness { "test" } else { "check" };
-                let mut arguments = vec![
-                    subcommand.to_owned(),
-                    "--locked".to_owned(),
-                    "--package".to_owned(),
-                    check.name.clone(),
-                ];
-                arguments.push(target.flag.to_owned());
-                if let Some(name) = &target.name {
-                    arguments.push(name.clone());
-                }
-                if let Some(features) = qualified_required_features(
-                    target
-                        .required_features
-                        .iter()
-                        .map(|feature| (check.name.as_str(), feature.as_str())),
-                ) {
-                    arguments.extend(["--features".to_owned(), features]);
-                }
-                if target.test_harness {
-                    arguments.push("--no-run".to_owned());
-                }
-                arguments.push("--message-format=json-render-diagnostics".to_owned());
                 units.push(RustCheckUnit {
                     identity: format!("{}::{}", check.name, target.identity),
-                    arguments,
+                    arguments: target.clippy_arguments(&check.name),
                 });
             }
         }
@@ -105,6 +82,42 @@ pub(super) struct CargoTargetSelection {
     pub(super) name: Option<String>,
     pub(super) required_features: Vec<String>,
     pub(super) test_harness: bool,
+}
+
+impl CargoTargetSelection {
+    /// `cargo clippy` arguments that compile and lint exactly this target of
+    /// `package` with warnings denied. A test-enabled target is linted under
+    /// the test profile, so its `cfg(test)` code is compiled and linted too.
+    pub(super) fn clippy_arguments(&self, package: &str) -> Vec<String> {
+        let mut arguments = vec![
+            "clippy".to_owned(),
+            "--locked".to_owned(),
+            "--package".to_owned(),
+            package.to_owned(),
+            self.flag.to_owned(),
+        ];
+        arguments.extend(self.name.clone());
+        if let Some(features) = qualified_required_features(
+            self.required_features
+                .iter()
+                .map(|feature| (package, feature.as_str())),
+        ) {
+            arguments.extend(["--features".to_owned(), features]);
+        }
+        if self.test_harness {
+            arguments.extend(["--profile".to_owned(), "test".to_owned()]);
+        }
+        arguments.extend(
+            [
+                "--message-format=json-render-diagnostics",
+                "--",
+                "-D",
+                "warnings",
+            ]
+            .map(str::to_owned),
+        );
+        arguments
+    }
 }
 
 pub(super) fn qualified_required_features<'a>(

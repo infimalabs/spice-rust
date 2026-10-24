@@ -320,29 +320,7 @@ fn typecheck_shards(
     let mut shards = Vec::new();
     for check in &reach {
         for target in &check.targets {
-            let subcommand = if target.test_harness { "test" } else { "check" };
-            let mut argv = vec![
-                subcommand.to_owned(),
-                "--locked".to_owned(),
-                "--package".to_owned(),
-                check.name.clone(),
-                target.flag.to_owned(),
-            ];
-            if let Some(name) = &target.name {
-                argv.push(name.clone());
-            }
-            if let Some(features) = qualified_required_features(
-                target
-                    .required_features
-                    .iter()
-                    .map(|feature| (check.name.as_str(), feature.as_str())),
-            ) {
-                argv.extend(["--features".to_owned(), features]);
-            }
-            if target.test_harness {
-                argv.push("--no-run".to_owned());
-            }
-            argv.push("--message-format=json-render-diagnostics".to_owned());
+            let argv = target.clippy_arguments(&check.name);
             let authority = package_input_authority(
                 inventory,
                 root,
@@ -383,7 +361,7 @@ fn windows_typecheck_shards(
         .iter()
         .map(|check| {
             let mut argv = vec![
-                "check".to_owned(),
+                "clippy".to_owned(),
                 "--locked".to_owned(),
                 "--package".to_owned(),
                 check.package.to_owned(),
@@ -398,6 +376,9 @@ fn windows_typecheck_shards(
                 "--target".to_owned(),
                 WINDOWS_TARGET.to_owned(),
                 "--message-format=json-render-diagnostics".to_owned(),
+                "--".to_owned(),
+                "-D".to_owned(),
+                "warnings".to_owned(),
             ]);
             let mut authority = package_input_authority(
                 inventory,
@@ -974,7 +955,7 @@ mod tests {
         assert_eq!(
             shards[0].argv(),
             [
-                "check",
+                "clippy",
                 "--locked",
                 "--package",
                 "spice",
@@ -983,6 +964,9 @@ mod tests {
                 "--target",
                 "x86_64-pc-windows-msvc",
                 "--message-format=json-render-diagnostics",
+                "--",
+                "-D",
+                "warnings",
             ]
         );
         assert_eq!(
@@ -992,7 +976,7 @@ mod tests {
         assert_eq!(
             shards[1].argv(),
             [
-                "check",
+                "clippy",
                 "--locked",
                 "--package",
                 "spice",
@@ -1000,6 +984,9 @@ mod tests {
                 "--target",
                 "x86_64-pc-windows-msvc",
                 "--message-format=json-render-diagnostics",
+                "--",
+                "-D",
+                "warnings",
             ]
         );
         assert_eq!(
@@ -1009,7 +996,7 @@ mod tests {
         assert_eq!(
             shards[2].argv(),
             [
-                "check",
+                "clippy",
                 "--locked",
                 "--package",
                 "sill",
@@ -1017,6 +1004,9 @@ mod tests {
                 "--target",
                 "x86_64-pc-windows-msvc",
                 "--message-format=json-render-diagnostics",
+                "--",
+                "-D",
+                "warnings",
             ]
         );
         assert!(shards.iter().all(|shard| {
