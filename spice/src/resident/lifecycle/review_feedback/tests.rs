@@ -10,7 +10,7 @@ fn feedback_pass(
     bus: &Bus,
     fixture: &LaunchFixture,
     cursor: Option<Seq>,
-    held: &mut BTreeSet<Seq>,
+    held: &mut BTreeMap<Seq, PhaseAuthors>,
 ) -> bool {
     let snapshot = bus.task_snapshot().expect("feedback snapshot reads");
     reconcile(
@@ -46,13 +46,28 @@ fn finding_seq(bus: &Bus) -> Seq {
         .expect("the finding review")
 }
 
+/// The authors `reviewed_fixture` records: the fixture occupant on the author
+/// lane, judged from the fixture reviewer lane.
+fn fixture_authors(fixture: &LaunchFixture) -> PhaseAuthors {
+    PhaseAuthors {
+        author: ClaimAuthor {
+            lane: fixture.lane,
+            occupant: fixture.occupant,
+        },
+        reviewer: ClaimAuthor {
+            lane: uuid(20),
+            occupant: uuid(21),
+        },
+    }
+}
+
 #[test]
 fn finding_feedback_reaches_the_live_author_once_across_restart() {
     let fixture = LaunchFixture::new();
     let authority = fixture.root.join("authority.sqlite3");
     let (bus, task) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Finding);
 
-    assert!(feedback_pass(&bus, &fixture, None, &mut BTreeSet::new()));
+    assert!(feedback_pass(&bus, &fixture, None, &mut BTreeMap::new()));
     let facts = bus.fact_snapshot().expect("feedback facts read");
     let ledger = steer::Ledger::from_snapshot(&facts).expect("feedback steering replays");
     let pending = ledger.pending(fixture.lane);
@@ -69,7 +84,7 @@ fn finding_feedback_reaches_the_live_author_once_across_restart() {
     let reopened = Bus::start(Journal::open(&authority).expect("feedback journal reopens"))
         .expect("feedback bus restarts");
     assert!(
-        !feedback_pass(&reopened, &fixture, None, &mut BTreeSet::new()),
+        !feedback_pass(&reopened, &fixture, None, &mut BTreeMap::new()),
         "replayed review feedback stays deduplicated"
     );
     assert_eq!(pending_feedback(&reopened, fixture.lane), 1);
@@ -83,10 +98,14 @@ fn a_finding_held_between_seats_reaches_the_resumed_session_once() {
     declare(&fixture, &authority, fixture.occupant, "author-session");
     let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
     let finding = finding_seq(&bus);
-    let mut held = BTreeSet::new();
+    let mut held = BTreeMap::new();
 
     assert!(!feedback_pass(&bus, &fixture, None, &mut held));
-    assert_eq!(held, BTreeSet::from([finding]));
+    assert_eq!(
+        held,
+        BTreeMap::from([(finding, fixture_authors(&fixture))]),
+        "the held finding keeps the authors folded when it was first judged"
+    );
     assert_eq!(pending_feedback(&bus, fixture.lane), 0);
 
     // The projection cursor has passed the finding; the same vendor session
@@ -110,7 +129,7 @@ fn a_renewed_session_on_the_author_lane_drops_the_finding() {
     declare(&fixture, &authority, fixture.occupant, "author-session");
     let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
     let finding = finding_seq(&bus);
-    let mut held = BTreeSet::new();
+    let mut held = BTreeMap::new();
     assert!(!feedback_pass(&bus, &fixture, None, &mut held));
 
     let renewed = uuid(41);
@@ -128,7 +147,7 @@ fn a_held_finding_expires_with_its_directive_lifetime() {
     let authority = fixture.root.join("expired-authority.sqlite3");
     let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
     let finding = finding_seq(&bus);
-    let mut held = BTreeSet::from([finding]);
+    let mut held = BTreeMap::from([(finding, fixture_authors(&fixture))]);
     reseat(
         &bus,
         &fixture,
@@ -170,7 +189,7 @@ fn a_finding_reviewed_from_the_author_session_is_not_delivered() {
     complete_author_phase(&bus, &task);
     claim_review(&bus, fixture.epoch, &task, fixture.lane, resumed);
     complete_review(&bus, &task, fixture.lane, wire::body::Verdict::Finding);
-    let mut held = BTreeSet::new();
+    let mut held = BTreeMap::new();
     assert!(!feedback_pass(&bus, &fixture, None, &mut held));
     assert!(held.is_empty());
     assert_eq!(pending_feedback(&bus, fixture.lane), 0);
@@ -182,7 +201,7 @@ fn a_clean_review_creates_no_feedback() {
     let fixture = LaunchFixture::new();
     let authority = fixture.root.join("clean-authority.sqlite3");
     let (bus, _) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Clean);
-    assert!(!feedback_pass(&bus, &fixture, None, &mut BTreeSet::new()));
+    assert!(!feedback_pass(&bus, &fixture, None, &mut BTreeMap::new()));
     assert!(
         steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("clean facts read"))
             .expect("clean steering replays")
@@ -215,12 +234,12 @@ fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
         &bus,
         &fixture,
         Some(first),
-        &mut BTreeSet::new()
+        &mut BTreeMap::new()
     ));
     assert_eq!(pending_feedback(&bus, fixture.lane), 1);
 
     // From the start, the earlier finding is judged by its own phase's authors.
-    assert!(feedback_pass(&bus, &fixture, None, &mut BTreeSet::new()));
+    assert!(feedback_pass(&bus, &fixture, None, &mut BTreeMap::new()));
     assert_eq!(pending_feedback(&bus, fixture.lane), 2);
     bus.shutdown().expect("twice-reviewed bus stops");
 }

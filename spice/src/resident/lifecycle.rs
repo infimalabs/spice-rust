@@ -213,9 +213,10 @@ pub(super) struct Runtime {
     hold: Duration,
     projection: Projection,
     /// Review findings, possibly behind the projection cursor, whose author
-    /// lane was between seats when judged; each is judged again until a seat
-    /// continues the author's session, another session takes it, or it expires.
-    held_findings: BTreeSet<Seq>,
+    /// lane was between seats when judged, with the authors folded then; each
+    /// is judged again until a seat continues the author's session, another
+    /// session takes it, or it expires.
+    held_findings: BTreeMap<Seq, review_feedback::PhaseAuthors>,
 }
 
 /// Exact admitted command generation that released automatic lifecycle work.
@@ -323,7 +324,7 @@ impl Runtime {
             young: config.young().get(),
             hold: config.hold().get(),
             projection: Projection::new(),
-            held_findings: BTreeSet::new(),
+            held_findings: BTreeMap::new(),
         }
     }
 
