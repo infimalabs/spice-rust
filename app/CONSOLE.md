@@ -185,17 +185,21 @@ A working group's toolbar keeps team geometry, total first and lane tabs after:
 | --- | --- |
 | Total: tasks its members actively work | Total: all actively claimed work associated with the group's Designs |
 | One tab per actively claimed task, in its lane's accent | One tab per lane claiming associated work, in that lane's accent, opening its Chat composer when seated |
-| One presence pip per member | One pip per design, in its accent, by [standing](#design-standing) |
+| One presence pip per member | One pip per design, in its work-map tone, by [standing](#design-standing) |
 | Ticker: newest member activity | Ticker: newest words across the group's rooms; a contribution names its lane and vote |
 
 A design pip reads concluded done, concluded collapsed, or deleted once
 terminal, even while still grouped, and open passive outside every group;
 otherwise claimed while a lane claims it for a pass, else the resident's pass
-cycle state. Awaiting decision carries the warning colour; an unavailable row
-or cycle invents no standing, and each pip's accessible label names it. The
-pips close the status row above the group menu. Each design's tile in the
-Spice menu's Working groups catalog leads with the same pip at an agent
-tile's member size, so readiness reads there without opening the group.
+cycle state. Its colour is the tone its Design's task-overview graph card
+wears, so it agrees with the tab marks: in flight and ready for proposal in the
+live tone, awaiting decision in warning, blocked in danger, and so on. A
+passive Design's pip is a ring in that tone; a terminal or unavailable one
+fades. An unavailable row or cycle invents no standing, and each pip's
+accessible label names it. The pips close the status row above the group menu.
+Each design's tile in the Spice menu's Working groups catalog leads with the
+same pip at an agent tile's member size, so readiness reads there without
+opening the group.
 
 ## Team composer controls
 

@@ -56,8 +56,9 @@ Design-flavored overview and the page's green elsewhere, and a dotted outline
 on both the node frame and its state tag sets it apart from in-flight's solid
 frame and deleted work's dashed one. `DONE` remains quiet settled provenance
 with a single neutral frame and rounded tag. `READY FOR PROPOSAL` marks the
-unpossessed Design whose tab wears the proposal mark, in its live tone. The
-outline and tag shapes keep the states distinct without color, including
+unpossessed Design whose tab wears the proposal mark, in its live tone, and
+`AWAITING DECISION` the Design whose tab wears the decision mark, in warning.
+The outline and tag shapes keep the states distinct without color, including
 reduced-contrast and forced-color presentation; waiting never borrows warning,
 danger, or operator-attention emphasis.
 

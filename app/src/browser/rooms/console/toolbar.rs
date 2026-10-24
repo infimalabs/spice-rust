@@ -41,8 +41,8 @@ pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &
                 >
                     {for channels.iter().zip(&standings).map(|(channel, standing)| {
                         super::super::render_design_pip(
+                            render.work,
                             &channel.stamp,
-                            channel.accent,
                             &channel.label,
                             *standing,
                             super::super::PipSize::Status,
