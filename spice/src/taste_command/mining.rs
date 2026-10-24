@@ -140,16 +140,32 @@ pub(crate) fn mine(
         Ok(priors) => priors,
         Err(error) => return evidence_fault(error),
     };
-    file_candidates(
+    let filed = file_candidates(
         &repository,
         contract,
         threshold,
-        scanned,
-        excluded,
         cursor,
         &candidates,
         &priors,
-    )
+    );
+    let Reply {
+        position,
+        body: findings,
+    } = match filed {
+        Outcome::Reply(reply) => reply,
+        Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => return Outcome::Fault(fault),
+    };
+    Outcome::Reply(Reply {
+        position,
+        body: TasteMiningReport {
+            threshold,
+            scanned,
+            excluded,
+            qualifying: candidates.len(),
+            findings,
+        },
+    })
 }
 
 fn mining_snapshot(
@@ -211,17 +227,16 @@ fn mining_snapshot(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// File each qualifying candidate not already proposed, answering every
+/// candidate's finding at the position of the last filing.
 fn file_candidates(
     repository: &spice::repository::Repository,
     contract: &Contract,
     threshold: usize,
-    scanned: usize,
-    excluded: usize,
     cursor: Seq,
     candidates: &[Candidate],
     priors: &BTreeMap<Digest, Vec<PriorProposal>>,
-) -> Outcome<TasteMiningReport> {
+) -> Outcome<Vec<MinedFinding>> {
     let mut findings = Vec::new();
     let mut position = ReplyPosition::Snapshot(cursor);
     for candidate in candidates {
@@ -277,13 +292,7 @@ fn file_candidates(
     }
     Outcome::Reply(Reply {
         position,
-        body: TasteMiningReport {
-            threshold,
-            scanned,
-            excluded,
-            qualifying: candidates.len(),
-            findings,
-        },
+        body: findings,
     })
 }
 

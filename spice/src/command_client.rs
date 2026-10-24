@@ -263,17 +263,15 @@ fn execute_mapped_within(
 ) -> Outcome<CommandAnswer> {
     let deadline = Instant::now() + bound;
     let resident_lock = resident_lock_path(operator_discovery);
-    let session = match acquire_session_until(
+    let route = SessionRoute {
         contract,
         operator_discovery,
         discovery_path,
-        &resident_lock,
+        resident_lock: &resident_lock,
         foreign,
-        deadline,
-        bound,
-        false,
-        &mut after_transient,
-    ) {
+    };
+    let window = Window { deadline, bound };
+    let session = match acquire_session_until(&route, window, false, &mut after_transient) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
@@ -304,17 +302,7 @@ fn execute_mapped_within(
     // the envelope fresh, while moved authority is returned as its current
     // refusal. Both attempts share one client bound, and a second transport
     // interruption or refusal is terminal rather than an unbounded replay loop.
-    let session = match acquire_session_until(
-        contract,
-        operator_discovery,
-        discovery_path,
-        &resident_lock,
-        foreign,
-        deadline,
-        bound,
-        true,
-        &mut after_transient,
-    ) {
+    let session = match acquire_session_until(&route, window, true, &mut after_transient) {
         Ok(session) => session,
         Err(outcome) => {
             return match ending {
@@ -391,11 +379,13 @@ fn authenticate_with(
     let selected = selected_discovery_path(discovery_path, connection);
     let resident_lock = resident_lock_path(discovery_path);
     let session = acquire_session_with(
-        discovery_path,
-        &selected,
-        &resident_lock,
-        foreign.as_ref(),
-        contract,
+        &SessionRoute {
+            contract,
+            operator_discovery: discovery_path,
+            discovery_path: &selected,
+            resident_lock: &resident_lock,
+            foreign: foreign.as_ref(),
+        },
         OPENING_BOUND,
         after_transient,
     )?;
@@ -478,6 +468,23 @@ pub(crate) fn read_lane_quote(
     }
 }
 
+/// Where one session is acquired: the contract it opens, the discovery it
+/// dials, and the repository route it must still hold.
+struct SessionRoute<'a> {
+    contract: &'a Contract,
+    operator_discovery: &'a Path,
+    discovery_path: &'a Path,
+    resident_lock: &'a Path,
+    foreign: Option<&'a ForeignRepository>,
+}
+
+/// The one client bound an acquisition spends, and the instant it ends.
+#[derive(Clone, Copy)]
+struct Window {
+    deadline: Instant,
+    bound: Duration,
+}
+
 /// Acquire one authenticated session across a resident publication handoff.
 ///
 /// A synchronous re-read admits a replacement that has already published.
@@ -486,49 +493,29 @@ pub(crate) fn read_lane_quote(
 /// opening is retried; the command envelope remains untouched until this
 /// function succeeds.
 fn acquire_session_with(
-    operator_discovery: &Path,
-    discovery_path: &Path,
-    resident_lock: &Path,
-    foreign: Option<&ForeignRepository>,
-    contract: &Contract,
+    route: &SessionRoute<'_>,
     bound: Duration,
     mut after_transient: impl FnMut(&Fault),
 ) -> ClientResult<AuthenticatedSession> {
-    let deadline = Instant::now() + bound;
-    acquire_session_until(
-        contract,
-        operator_discovery,
-        discovery_path,
-        resident_lock,
-        foreign,
-        deadline,
+    let window = Window {
+        deadline: Instant::now() + bound,
         bound,
-        false,
-        &mut after_transient,
-    )
+    };
+    acquire_session_until(route, window, false, &mut after_transient)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "session acquisition binds its discovery paths, repository route, deadline, and retry observer"
-)]
 fn acquire_session_until(
-    contract: &Contract,
-    operator_discovery: &Path,
-    discovery_path: &Path,
-    resident_lock: &Path,
-    foreign: Option<&ForeignRepository>,
-    deadline: Instant,
-    bound: Duration,
+    route: &SessionRoute<'_>,
+    window: Window,
     recovering_submission: bool,
     after_transient: &mut impl FnMut(&Fault),
 ) -> ClientResult<AuthenticatedSession> {
-    require_repository_route(foreign, operator_discovery, resident_lock)?;
-    let attempt = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
+    require_repository_route(route)?;
+    let attempt = acquire_session_attempt(route, window);
     let Err(outcome) = attempt else {
         return attempt;
     };
-    let fault = match refreshable_fault(&outcome, resident_lock, recovering_submission) {
+    let fault = match refreshable_fault(&outcome, route.resident_lock, recovering_submission) {
         Ok(Some(fault)) => fault,
         Ok(None) => return Err(outcome),
         Err(fault) => return Err(Outcome::Fault(fault)),
@@ -537,37 +524,36 @@ fn acquire_session_until(
 
     // A replacement may already have published. Re-read before constructing
     // the observer so a present authenticated surface has no watcher latency.
-    require_repository_route(foreign, operator_discovery, resident_lock)?;
-    let retry = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
+    require_repository_route(route)?;
+    let retry = acquire_session_attempt(route, window);
     let Err(outcome) = retry else {
         return retry;
     };
-    match refreshable_fault(&outcome, resident_lock, recovering_submission) {
+    match refreshable_fault(&outcome, route.resident_lock, recovering_submission) {
         Ok(Some(_)) => {}
         Ok(None) => return Err(outcome),
         Err(fault) => return Err(Outcome::Fault(fault)),
     }
-    let Some(mut observer) = DiscoveryObserver::arm(resident_lock) else {
+    let Some(mut observer) = DiscoveryObserver::arm(route.resident_lock) else {
         return Err(outcome);
     };
     loop {
         // The first iteration closes the interval between the last read and
         // arming the observer; later iterations consume signalled changes.
-        require_repository_route(foreign, operator_discovery, resident_lock)?;
-        let attempt =
-            acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
+        require_repository_route(route)?;
+        let attempt = acquire_session_attempt(route, window);
         let Err(outcome) = attempt else {
             return attempt;
         };
-        let fault = match refreshable_fault(&outcome, resident_lock, recovering_submission) {
+        let fault = match refreshable_fault(&outcome, route.resident_lock, recovering_submission) {
             Ok(Some(fault)) => fault,
             Ok(None) => return Err(outcome),
             Err(fault) => return Err(Outcome::Fault(fault)),
         };
-        match observer.wait(deadline) {
+        match observer.wait(window.deadline) {
             DiscoveryWait::Changed => {}
             DiscoveryWait::Deadline => {
-                return Err(acquisition_deadline(bound, &fault.reason));
+                return Err(acquisition_deadline(window.bound, &fault.reason));
             }
             DiscoveryWait::Failed => return Err(outcome),
         }
@@ -580,15 +566,12 @@ fn acquire_session_until(
 /// An absent or changing operator record is not proof of a foreign resident:
 /// the local resident may be between its lock acquisition and lane-surface
 /// publication, so that state keeps the ordinary bounded wait.
-fn require_repository_route(
-    foreign: Option<&ForeignRepository>,
-    operator_discovery: &Path,
-    resident_lock: &Path,
-) -> ClientResult<()> {
-    let Some(foreign) = foreign else {
+fn require_repository_route(route: &SessionRoute<'_>) -> ClientResult<()> {
+    let Some(foreign) = route.foreign else {
         return Ok(());
     };
-    let Ok(discovery) = DiscoveryRead::open_fault(operator_discovery, resident_lock) else {
+    let Ok(discovery) = DiscoveryRead::open_fault(route.operator_discovery, route.resident_lock)
+    else {
         return Ok(());
     };
     if discovery.require_live_publisher().is_err() {
@@ -610,16 +593,13 @@ fn require_repository_route(
 }
 
 fn acquire_session_attempt(
-    contract: &Contract,
-    discovery_path: &Path,
-    resident_lock: &Path,
-    deadline: Instant,
-    bound: Duration,
+    route: &SessionRoute<'_>,
+    window: Window,
 ) -> ClientResult<AuthenticatedSession> {
-    DiscoveryRead::open(discovery_path, resident_lock).and_then(|discovery| {
-        remaining(deadline)
-            .map_err(|_| acquisition_deadline(bound, "opening the current discovery"))?;
-        open_session(contract, discovery, deadline, bound)
+    DiscoveryRead::open(route.discovery_path, route.resident_lock).and_then(|discovery| {
+        remaining(window.deadline)
+            .map_err(|_| acquisition_deadline(window.bound, "opening the current discovery"))?;
+        open_session(route.contract, discovery, window.deadline, window.bound)
     })
 }
 

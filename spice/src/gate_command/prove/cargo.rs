@@ -88,22 +88,19 @@ pub(super) fn prepare(
         typecheck_selected.then_some(plan.typechecks()),
         staged.cargo_tests().then_some(plan.tests()),
     );
-    let declaration = declaration(manifest, GateId::RustTypecheck)?;
+    let preparation = ShardPreparation {
+        arm: &arm,
+        context: &context,
+        gate_set,
+        typecheck_declaration: declaration(manifest, GateId::RustTypecheck)?,
+        writable_root,
+        environment: &environment,
+        cargo: &authority.cargo,
+        source: &source_execution,
+    };
     shards
         .into_iter()
-        .map(|shard| {
-            prepare_action(
-                &arm,
-                &context,
-                gate_set,
-                declaration,
-                writable_root,
-                environment.clone(),
-                &authority.cargo,
-                source_execution.clone(),
-                shard.clone(),
-            )
-        })
+        .map(|shard| prepare_action(&preparation, shard.clone()))
         .collect()
 }
 
@@ -130,24 +127,38 @@ fn selected_shards<'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What every selected Cargo shard of one proving run shares.
+struct ShardPreparation<'a, 'arm> {
+    arm: &'a spice::gate::PreparedArm<'arm>,
+    context: &'a gate::BatteryContext,
+    gate_set: &'a Digest,
+    typecheck_declaration: &'a str,
+    writable_root: &'a Path,
+    environment: &'a Environment,
+    cargo: &'a Path,
+    source: &'a SourceExecution,
+}
+
 fn prepare_action(
-    arm: &spice::gate::PreparedArm<'_>,
-    context: &gate::BatteryContext,
-    gate_set: &Digest,
-    typecheck_declaration: &str,
-    writable_root: &Path,
-    execution_environment: Environment,
-    cargo: &Path,
-    source: SourceExecution,
+    preparation: &ShardPreparation<'_, '_>,
     shard: CargoGateShard,
 ) -> Result<PreparedAction, ProveFailure> {
+    let ShardPreparation {
+        arm,
+        context,
+        gate_set,
+        typecheck_declaration,
+        writable_root,
+        environment: execution_environment,
+        cargo,
+        source,
+    } = *preparation;
     require_reusable_shard(&shard)?;
     let execution_environment = spice::cargo_isolation::bind_windows_msvc_environment(
         arm.root(),
         source.host.bootstrap_home(),
         shard.argv(),
-        execution_environment,
+        execution_environment.clone(),
     )
     .map_err(ProveFailure::cargo_isolation)?;
     let cargo_environment = normalized_action_environment(execution_environment.entries());
@@ -228,7 +239,7 @@ fn prepare_action(
             writable_root: writable_root.to_path_buf(),
             environment: execution_environment,
             cargo: cargo.to_path_buf(),
-            source,
+            source: source.clone(),
         })),
     })
 }

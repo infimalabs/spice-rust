@@ -34,9 +34,12 @@ pub(super) fn prepare(
     };
     let action_environment = normalized_action_environment(arm.compiler_environment());
     let (environment_names, environment) = environment(&action_environment)?;
+    let reach = staged
+        .selection()
+        .reach_for(gate_id)
+        .expect("requested actions come from the canonical selection");
     let inventory = inventory(
-        staged,
-        gate_id,
+        reach,
         declaration,
         gate_set,
         &context,
@@ -98,10 +101,8 @@ pub(super) fn prepare(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn inventory(
-    staged: &StagedActionSelection,
-    gate_id: GateId,
+    reach: &gate::ChangeArmReach,
     declaration: &str,
     gate_set: &Digest,
     context: &gate::BatteryContext,
@@ -110,10 +111,6 @@ fn inventory(
     baseline: Option<&Digest>,
 ) -> Result<ActionInputInventory, ProveFailure> {
     let configuration = digest_encoded(Domain::GateConfiguration, &context.configuration())?;
-    let reach = staged
-        .selection()
-        .reach_for(gate_id)
-        .expect("requested actions come from the canonical selection");
     let inventory = digest_encoded(Domain::GateInventory, reach)?;
     let mut non_files = vec![
         non_file(

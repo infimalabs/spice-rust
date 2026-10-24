@@ -70,14 +70,19 @@ struct CompactionSourceHorizon {
     vendor: Vendor,
 }
 
+/// Which messages a query selects; an empty set admits every value.
+pub(crate) struct MessageFilter {
+    pub(crate) start: Option<String>,
+    pub(crate) end: Option<String>,
+    pub(crate) contains: Option<String>,
+    pub(crate) turn_ids: BTreeSet<String>,
+    pub(crate) sides: BTreeSet<String>,
+    pub(crate) phases: BTreeSet<String>,
+    pub(crate) flavors: BTreeSet<String>,
+}
+
 pub(crate) struct MessageQuery {
-    start: Option<String>,
-    end: Option<String>,
-    contains: Option<String>,
-    turn_ids: BTreeSet<String>,
-    sides: BTreeSet<String>,
-    phases: BTreeSet<String>,
-    flavors: BTreeSet<String>,
+    filter: MessageFilter,
     limit: NonZeroUsize,
 }
 
@@ -91,28 +96,9 @@ pub(crate) struct MessageDataset {
 }
 
 impl MessageQuery {
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "message query syntax owns its filter fields and retained frontier"
-    )]
-    pub(crate) fn new(
-        start: Option<String>,
-        end: Option<String>,
-        contains: Option<String>,
-        turn_ids: BTreeSet<String>,
-        sides: BTreeSet<String>,
-        phases: BTreeSet<String>,
-        flavors: BTreeSet<String>,
-        limit: usize,
-    ) -> Result<Self, Refusal> {
+    pub(crate) fn new(filter: MessageFilter, limit: usize) -> Result<Self, Refusal> {
         Ok(Self {
-            start,
-            end,
-            contains,
-            turn_ids,
-            sides,
-            phases,
-            flavors,
+            filter,
             limit: frontier_limit(limit)?,
         })
     }
@@ -133,8 +119,12 @@ pub(crate) fn messages(
     let mut residues = ResidueLedger::new();
     let mut work = SessionWork::new(SessionWorkBudget::report());
     for source in sources {
-        let scan =
-            aggregate::scan_message_source(source, query.start.as_deref(), query, &mut work)?;
+        let scan = aggregate::scan_message_source(
+            source,
+            query.filter.start.as_deref(),
+            query,
+            &mut work,
+        )?;
         population = population.saturating_add(scan.offered);
         selected.extend(scan.rows);
         for residue in scan.residues {

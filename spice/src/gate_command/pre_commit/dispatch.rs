@@ -70,7 +70,7 @@ pub(super) fn dispatch_captured(
             .saturating_sub(started.elapsed())
             .saturating_sub(configured::cleanup_reserve());
         let configured = dispatch
-            .execute_configured(remaining, Cancellation::Never, progress)
+            .execute_configured(remaining, Cancellation::Never)
             .map_err(configured_failure)?;
         dispatch.verify().map_err(configured_failure)?;
         configured

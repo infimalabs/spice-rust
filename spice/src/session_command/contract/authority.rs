@@ -77,15 +77,10 @@ fn workflow(name: &str) -> WorkflowHead {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one fixture task spells each statement field the contract journal records"
-)]
 fn task_added(
     write: &mut JournalWrite,
     task: TaskStamp,
     title: &str,
-    project: &str,
     phase: &str,
     intent: Option<wire::TaskIntent>,
     preparation: Option<wire::TaskPreparation>,
@@ -96,7 +91,7 @@ fn task_added(
         workflow.status = wire::WorkflowStatus::reviewed(instant(9));
     }
     let title = title.to_owned();
-    let project = project.to_owned();
+    let project = SESSION_PROJECT.to_owned();
     let dependencies = preparation
         .as_ref()
         .map(|preparation| vec![preparation.parent.clone()])
@@ -159,7 +154,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite) {
         write,
         stamp("SESSION-ready"),
         "Ordinary unclaimed work",
-        SESSION_PROJECT,
         "todo",
         None,
         None,
@@ -170,7 +164,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite) {
         write,
         design.clone(),
         "Speculative Design",
-        SESSION_PROJECT,
         "design",
         Some(wire::TaskIntent::Design),
         None,
@@ -180,7 +173,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite) {
         write,
         stamp("SESSION-output"),
         "Unauthorized candidate",
-        SESSION_PROJECT,
         "todo",
         None,
         Some(wire::TaskPreparation {
@@ -195,7 +187,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite) {
         write,
         released_design.clone(),
         "Concluded Design",
-        SESSION_PROJECT,
         "review",
         Some(wire::TaskIntent::Design),
         None,
@@ -206,7 +197,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite) {
         write,
         released_plan.clone(),
         "Concluded selected Plan",
-        SESSION_PROJECT,
         "review",
         Some(wire::TaskIntent::Plan),
         None,
@@ -216,7 +206,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite) {
         write,
         stamp("SESSION-released-output"),
         "Released nested output",
-        SESSION_PROJECT,
         "todo",
         None,
         Some(wire::TaskPreparation {
@@ -233,7 +222,6 @@ fn seed_claimed_tasks(write: &mut JournalWrite, held: &TaskStamp, peer: &TaskSta
         write,
         held.clone(),
         "Compose Rust briefings",
-        SESSION_PROJECT,
         "review",
         None,
         None,
@@ -243,7 +231,6 @@ fn seed_claimed_tasks(write: &mut JournalWrite, held: &TaskStamp, peer: &TaskSta
         write,
         peer.clone(),
         "Peer active claim",
-        SESSION_PROJECT,
         "todo",
         None,
         None,
@@ -327,29 +314,29 @@ fn seed_recall_authority(path: &Path, thread: &str) {
 
     mint_claim(
         &mut journal,
-        held,
-        Actor::Lane(lane),
-        lane,
-        occupant,
-        epoch,
-        SESSION_PROJECT,
-        "review",
-        instant(1),
-        instant(2),
-        instant(2),
+        FixtureClaim {
+            task: held,
+            lane,
+            occupant,
+            epoch,
+            phase: "review",
+            at: instant(1),
+            expiry: instant(2),
+            maximum: instant(2),
+        },
     );
     mint_claim(
         &mut journal,
-        peer,
-        Actor::Lane(peer_lane),
-        peer_lane,
-        peer_occupant,
-        epoch,
-        SESSION_PROJECT,
-        "todo",
-        instant(2),
-        instant(40),
-        instant(50),
+        FixtureClaim {
+            task: peer,
+            lane: peer_lane,
+            occupant: peer_occupant,
+            epoch,
+            phase: "todo",
+            at: instant(2),
+            expiry: instant(40),
+            maximum: instant(50),
+        },
     );
 }
 
@@ -512,23 +499,30 @@ fn recall_lanes(
     ]
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "claim fixture states every durable identity and residency carrier"
-)]
-fn mint_claim(
-    journal: &mut Journal,
+/// One lane's claim on a session-project fixture task, minted by that lane.
+struct FixtureClaim {
     task: TaskStamp,
-    actor: Actor,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
-    project: &str,
-    phase: &str,
+    phase: &'static str,
     at: Instant,
     expiry: Instant,
     maximum: Instant,
-) {
+}
+
+fn mint_claim(journal: &mut Journal, claim: FixtureClaim) {
+    let FixtureClaim {
+        task,
+        lane,
+        occupant,
+        epoch,
+        phase,
+        at,
+        expiry,
+        maximum,
+    } = claim;
+    let actor = Actor::Lane(lane);
     let mut write = JournalWrite::new(
         actor.clone(),
         "task:SESSION-fixture"
@@ -543,7 +537,7 @@ fn mint_claim(
             task: &task,
             actor: &actor,
             workflow: &workflow(phase),
-            project,
+            project: SESSION_PROJECT,
             lane,
             occupant,
             epoch,

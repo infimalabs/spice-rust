@@ -491,16 +491,7 @@ impl QuoteStore for ResidentStore<'_> {
             .map(|vendor| vendor.dialect())
             .ok_or(SourceError::Unknown)?;
         let root = self.tape.join(lane.to_string()).join(&session.vendor);
-        resolve_tape(
-            &root,
-            source,
-            locus,
-            dialect,
-            lane,
-            session.occupant,
-            self.bus,
-            self.agent_presenter,
-        )
+        self.resolve_tape(&root, source, locus, dialect, lane, session.occupant)
     }
 
     fn steering(&self, key: &str) -> Result<SourceQuote, SourceError> {
@@ -882,50 +873,49 @@ fn hunk_text(
         .ok_or(wire::rooms::RoomSourceUnavailable::Changed {})
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one tape quote binds its source locus, dialect, lane occupancy, reader, and presenter"
-)]
-fn resolve_tape(
-    root: &Path,
-    source: CanonicalUuid,
-    locus: wire::MessageLocus,
-    dialect: listen::Dialect,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    reader: &BusReader,
-    agent_presenter: Option<AgentProsePresenter>,
-) -> Result<SourceQuote, SourceError> {
-    let decoded = decode_record(root, source, locus, dialect).map_err(|error| match error {
-        RecordError::Missing => SourceError::Unknown,
-        RecordError::Unreadable => SourceError::Unreadable,
-    })?;
-    let event = usize::try_from(locus.event)
-        .ok()
-        .and_then(|event| decoded.events().get(event))
-        .ok_or(SourceError::Unknown)?;
-    let media = event_media(event).to_vec();
-    let (identity, text) = if let Some(prose) = crate::agent_prose::quoteable(event) {
-        let text = agent_presenter
-            .map_or_else(
-                || Ok(prose.text.clone()),
-                |present| present(reader, lane, source, locus.event, &prose),
-            )
-            .map_err(|_| SourceError::Unreadable)?;
-        (TextIdentity::Authored(prose.text.clone()), text)
-    } else if media.is_empty() {
-        return Err(SourceError::Unknown);
-    } else {
-        (TextIdentity::Absent, String::new())
-    };
-    Ok(SourceQuote {
-        identity,
-        text,
-        attribution: authored_by(QuoteAuthor::Agent { lane, occupant }),
-        disposition: None,
-        media,
-        body: None,
-    })
+impl ResidentStore<'_> {
+    /// Quote one event of `lane`'s tape record, attributed to `occupant`.
+    fn resolve_tape(
+        &self,
+        root: &Path,
+        source: CanonicalUuid,
+        locus: wire::MessageLocus,
+        dialect: listen::Dialect,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> Result<SourceQuote, SourceError> {
+        let decoded = decode_record(root, source, locus, dialect).map_err(|error| match error {
+            RecordError::Missing => SourceError::Unknown,
+            RecordError::Unreadable => SourceError::Unreadable,
+        })?;
+        let event = usize::try_from(locus.event)
+            .ok()
+            .and_then(|event| decoded.events().get(event))
+            .ok_or(SourceError::Unknown)?;
+        let media = event_media(event).to_vec();
+        let (identity, text) = if let Some(prose) = crate::agent_prose::quoteable(event) {
+            let text = self
+                .agent_presenter
+                .map_or_else(
+                    || Ok(prose.text.clone()),
+                    |present| present(self.bus, lane, source, locus.event, &prose),
+                )
+                .map_err(|_| SourceError::Unreadable)?;
+            (TextIdentity::Authored(prose.text.clone()), text)
+        } else if media.is_empty() {
+            return Err(SourceError::Unknown);
+        } else {
+            (TextIdentity::Absent, String::new())
+        };
+        Ok(SourceQuote {
+            identity,
+            text,
+            attribution: authored_by(QuoteAuthor::Agent { lane, occupant }),
+            disposition: None,
+            media,
+            body: None,
+        })
+    }
 }
 
 fn event_media(event: &listen::Event) -> &[wire::Media] {
