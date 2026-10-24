@@ -202,6 +202,7 @@ fn app_environment(
     );
     entries.insert(RUSTC_WRAPPER.into(), std::ffi::OsString::new());
     entries.insert(RUSTC_WORKSPACE_WRAPPER.into(), std::ffi::OsString::new());
+    entries.insert(CARGO_INCREMENTAL.into(), "0".into());
     entries.insert(
         TRUNK_DISTRIBUTION_DIRECTORY.into(),
         outputs.trunk_dist.as_os_str().to_owned(),
