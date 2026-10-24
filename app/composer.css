@@ -325,7 +325,9 @@
   pointer-events: none;
   transition: opacity var(--app-motion-settle) var(--app-ease-standard);
 }
-.composer-shard > .composer-trace-rail > .activity-trace { inset: 3px 0 0; }
+/* The pane is the whole 32px rail; the curves themselves keep a 4px headroom
+   under its top so lifecycle markers stand clear of the highest peak. */
+.composer-shard > .composer-trace-rail > .activity-trace { inset: 0; }
 .composer-shard:has(> textarea:not(:placeholder-shown)) > .composer-trace-rail { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .composer-shard > .composer-trace-rail { transition: none; }

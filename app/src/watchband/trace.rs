@@ -348,6 +348,19 @@ pub enum Stroke {
     Risen,
 }
 
+/// Clear band under the pane's top that no curve enters, in CSS pixels, so a
+/// lifecycle marker's top stands above the highest peak: the graph is the
+/// rail less this headroom, 28 of a 32-pixel rail.
+pub const CURVE_HEADROOM: f64 = 4.0;
+
+/// A curve level in pane pixels from the top: level 0 on the floor, half a
+/// pixel above the pane's bottom, level 1 at the headroom under its top.
+#[must_use]
+pub fn level_y(level: f64, height: f64) -> f64 {
+    let floor = height - 0.5;
+    floor - level * (floor - CURVE_HEADROOM)
+}
+
 /// A Catmull-Rom curve through `points` in pane pixels as cubic segments, its
 /// control points held inside the pane of `height` so a sharp rise cannot
 /// overshoot the edge. The floor is half a pixel above the pane's bottom.
@@ -416,13 +429,20 @@ mod tests {
 
     const HEIGHT: f64 = 32.0;
 
-    /// Points as the browser places them: 20px apart, level 0 on the floor.
+    /// Points as the browser places them: 20px apart.
     fn pixels(levels: &[f64]) -> Vec<(f64, f64)> {
         levels
             .iter()
             .enumerate()
-            .map(|(index, level)| (index as f64 * 20.0, HEIGHT - 0.5 - level * (HEIGHT - 4.0)))
+            .map(|(index, level)| (index as f64 * 20.0, level_y(*level, HEIGHT)))
             .collect()
+    }
+
+    #[test]
+    fn a_curve_spans_the_floor_to_the_headroom_under_the_top() {
+        assert!((level_y(0.0, HEIGHT) - 31.5).abs() < 1e-9);
+        assert!((level_y(1.0, HEIGHT) - CURVE_HEADROOM).abs() < 1e-9);
+        assert!((level_y(0.5, HEIGHT) - 17.75).abs() < 1e-9);
     }
 
     fn subpaths(d: &str) -> Vec<&str> {
