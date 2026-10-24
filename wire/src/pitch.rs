@@ -150,7 +150,8 @@ const FILE_EXTENSIONS: [&str; 16] = [
 /// Whether one whitespace-delimited token reads as code rather than prose: a
 /// backtick span, a Rust path, a file path, a task handle or stamp, a file
 /// name, or a snake_case or CamelCase symbol. `and/or`, `read/write`, dates,
-/// decimals, and abbreviations such as `e.g.` stay prose.
+/// decimals, abbreviations such as `e.g.`, and words ending in a capital run
+/// such as `macOS` stay prose.
 fn identifier_like(token: &str) -> bool {
     if token.is_empty() {
         return false;
@@ -190,9 +191,21 @@ fn identifier_like(token: &str) -> bool {
     if token.contains('_') && alphanumeric_or(|character| character == '_') {
         return true;
     }
+    camel_case(token) && alphanumeric_or(|_| false)
+}
+
+/// Whether a token has a CamelCase hump: a lowercase letter, then an
+/// uppercase one that itself leads a lowercase run, as `readGuard` and
+/// `TaskStamp` do. A trailing all-caps run is prose, so `macOS`, `iOS`, and
+/// `tvOS` are words, not symbols.
+fn camel_case(token: &str) -> bool {
+    let mut characters = token.chars().peekable();
     let mut previous_lower = false;
-    for character in token.chars() {
-        if previous_lower && character.is_ascii_uppercase() && alphanumeric_or(|_| false) {
+    while let Some(character) = characters.next() {
+        if previous_lower
+            && character.is_ascii_uppercase()
+            && characters.peek().is_some_and(char::is_ascii_lowercase)
+        {
             return true;
         }
         previous_lower = character.is_ascii_lowercase();
@@ -301,6 +314,19 @@ mod tests {
         );
         assert!(findings("A sentence that ends in a quote reads fine, e.g. this one.").is_empty());
         assert!(findings("Why 3.5 seconds matters to a reader who waits.").is_empty());
+        assert!(findings("One word fits macOS, iOS, and Windows alike.").is_empty());
+    }
+
+    #[test]
+    fn a_hump_followed_by_lowercase_is_a_symbol() {
+        let triggers = |pitch: &str| {
+            findings(pitch)
+                .into_iter()
+                .map(|finding| finding.trigger)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(triggers("The readGuard hides the why."), ["readGuard"]);
+        assert_eq!(triggers("A TaskStamp alone reads as code."), ["TaskStamp"]);
     }
 
     #[test]
