@@ -433,7 +433,13 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "up [--foreground] [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
         Local,
         Resident,
-        [JournalMigrated, TrustPended, UpSeated, ClaimRebound],
+        [
+            JournalMigrated,
+            TrustPended,
+            UpSeated,
+            ClaimRebound,
+            RackAdmitted
+        ],
         [JournalLock, Toolful],
         UP_TOOLS,
         Stream,
