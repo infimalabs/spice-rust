@@ -64,8 +64,12 @@ fn trailing_generations_project_private_claimant_notices_without_steering() {
             &fixture.paths,
             fixture.epoch,
             &snapshot,
-            bus.cursor().expect("cursor reads"),
-            Duration::from_secs(3_600),
+            super::super::review_feedback::FindingWindow {
+                cursor: bus.cursor().expect("cursor reads"),
+                held: &mut BTreeSet::new(),
+                now: current_instant().expect("clock reads"),
+                lifetime: Duration::from_secs(3_600),
+            },
         )
         .expect("private notice reconciliation succeeds"),
         "private delivery does not mutate durable authority",

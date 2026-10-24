@@ -5,24 +5,54 @@ use bus::CommitOutcome;
 use journal::{Journal, JournalWrite};
 use wire::{ClaimDisposition, LaneResidency, Origin, Producer, ResidentState, TaskHandle};
 
+/// One lifecycle reconcile of review feedback with the default lifetime.
+fn feedback_pass(
+    bus: &Bus,
+    fixture: &LaunchFixture,
+    cursor: Option<Seq>,
+    held: &mut BTreeSet<Seq>,
+) -> bool {
+    let snapshot = bus.task_snapshot().expect("feedback snapshot reads");
+    reconcile(
+        bus,
+        &fixture.paths,
+        fixture.epoch,
+        &snapshot,
+        FindingWindow {
+            cursor,
+            held,
+            now: now(),
+            lifetime: Duration::from_secs(3_600),
+        },
+    )
+    .expect("review feedback reconciles")
+}
+
+fn pending_feedback(bus: &Bus, lane: CanonicalUuid) -> usize {
+    steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("feedback facts read"))
+        .expect("feedback steering replays")
+        .pending(lane)
+        .len()
+}
+
+fn finding_seq(bus: &Bus) -> Seq {
+    bus.task_snapshot()
+        .expect("finding snapshot reads")
+        .facts()
+        .iter()
+        .rev()
+        .find(|envelope| envelope.fact.kind() == wire::FactKind::TaskReviewed)
+        .map(|envelope| envelope.seq)
+        .expect("the finding review")
+}
+
 #[test]
 fn finding_feedback_reaches_the_live_author_once_across_restart() {
     let fixture = LaunchFixture::new();
     let authority = fixture.root.join("authority.sqlite3");
     let (bus, task) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Finding);
-    let snapshot = bus.task_snapshot().expect("reviewed snapshot reads");
 
-    assert!(
-        reconcile(
-            &bus,
-            &fixture.paths,
-            fixture.epoch,
-            &snapshot,
-            None,
-            Duration::from_secs(3_600),
-        )
-        .expect("review feedback reconciles")
-    );
+    assert!(feedback_pass(&bus, &fixture, None, &mut BTreeSet::new()));
     let facts = bus.fact_snapshot().expect("feedback facts read");
     let ledger = steer::Ledger::from_snapshot(&facts).expect("feedback steering replays");
     let pending = ledger.pending(fixture.lane);
@@ -38,55 +68,113 @@ fn finding_feedback_reaches_the_live_author_once_across_restart() {
     bus.shutdown().expect("feedback bus stops");
     let reopened = Bus::start(Journal::open(&authority).expect("feedback journal reopens"))
         .expect("feedback bus restarts");
-    let snapshot = reopened.task_snapshot().expect("restarted snapshot reads");
     assert!(
-        !reconcile(
-            &reopened,
-            &fixture.paths,
-            fixture.epoch,
-            &snapshot,
-            None,
-            Duration::from_secs(3_600),
-        )
-        .expect("replayed review feedback stays deduplicated")
+        !feedback_pass(&reopened, &fixture, None, &mut BTreeSet::new()),
+        "replayed review feedback stays deduplicated"
     );
-    let facts = reopened
-        .fact_snapshot()
-        .expect("restarted feedback facts read");
-    assert_eq!(
-        steer::Ledger::from_snapshot(&facts)
-            .expect("restarted feedback steering replays")
-            .pending(fixture.lane)
-            .len(),
-        1,
-    );
+    assert_eq!(pending_feedback(&reopened, fixture.lane), 1);
     reopened.shutdown().expect("restarted feedback bus stops");
 }
 
 #[test]
-fn a_stopped_author_receives_no_review_feedback() {
+fn a_finding_held_between_seats_reaches_the_resumed_session_once() {
     let fixture = LaunchFixture::new();
-    let authority = fixture.root.join("inactive-authority.sqlite3");
+    let authority = fixture.root.join("held-authority.sqlite3");
+    declare(&fixture, &authority, fixture.occupant, "author-session");
     let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
-    let snapshot = bus.task_snapshot().expect("inactive snapshot reads");
+    let finding = finding_seq(&bus);
+    let mut held = BTreeSet::new();
+
+    assert!(!feedback_pass(&bus, &fixture, None, &mut held));
+    assert_eq!(held, BTreeSet::from([finding]));
+    assert_eq!(pending_feedback(&bus, fixture.lane), 0);
+
+    // The projection cursor has passed the finding; the same vendor session
+    // resumes under a new occupant.
+    let resumed = uuid(40);
+    declare_on(&bus, &fixture, resumed, "author-session");
+    reseat(&bus, &fixture, resumed, "author-session");
+    assert!(feedback_pass(&bus, &fixture, Some(finding), &mut held));
+    assert!(held.is_empty());
+    assert_eq!(pending_feedback(&bus, fixture.lane), 1);
+
+    assert!(!feedback_pass(&bus, &fixture, None, &mut held));
+    assert_eq!(pending_feedback(&bus, fixture.lane), 1);
+    bus.shutdown().expect("held feedback bus stops");
+}
+
+#[test]
+fn a_renewed_session_on_the_author_lane_drops_the_finding() {
+    let fixture = LaunchFixture::new();
+    let authority = fixture.root.join("renewed-authority.sqlite3");
+    declare(&fixture, &authority, fixture.occupant, "author-session");
+    let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
+    let finding = finding_seq(&bus);
+    let mut held = BTreeSet::new();
+    assert!(!feedback_pass(&bus, &fixture, None, &mut held));
+
+    let renewed = uuid(41);
+    declare_on(&bus, &fixture, renewed, "renewed-session");
+    reseat(&bus, &fixture, renewed, "renewed-session");
+    assert!(!feedback_pass(&bus, &fixture, Some(finding), &mut held));
+    assert!(held.is_empty());
+    assert_eq!(pending_feedback(&bus, fixture.lane), 0);
+    bus.shutdown().expect("renewed feedback bus stops");
+}
+
+#[test]
+fn a_held_finding_expires_with_its_directive_lifetime() {
+    let fixture = LaunchFixture::new();
+    let authority = fixture.root.join("expired-authority.sqlite3");
+    let (bus, _) = reviewed_fixture(&fixture, &authority, false, wire::body::Verdict::Finding);
+    let finding = finding_seq(&bus);
+    let mut held = BTreeSet::from([finding]);
+    reseat(
+        &bus,
+        &fixture,
+        fixture.occupant,
+        &fixture.occupant.to_string(),
+    );
+    let snapshot = bus.task_snapshot().expect("expired snapshot reads");
     assert!(
         !reconcile(
             &bus,
             &fixture.paths,
             fixture.epoch,
             &snapshot,
-            None,
-            Duration::from_secs(3_600),
+            FindingWindow {
+                cursor: Some(finding),
+                held: &mut held,
+                now: shifted(now(), 3_601),
+                lifetime: Duration::from_secs(3_600),
+            },
         )
-        .expect("stopped author is inert")
+        .expect("expired feedback reconciles")
     );
-    assert!(
-        steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("inactive facts read"))
-            .expect("inactive steering replays")
-            .directives()
-            .is_empty(),
-    );
-    bus.shutdown().expect("inactive feedback bus stops");
+    assert!(held.is_empty());
+    assert_eq!(pending_feedback(&bus, fixture.lane), 0);
+    bus.shutdown().expect("expired feedback bus stops");
+}
+
+#[test]
+fn a_finding_reviewed_from_the_author_session_is_not_delivered() {
+    let fixture = LaunchFixture::new();
+    let authority = fixture.root.join("self-authority.sqlite3");
+    let bus = Bus::start(Journal::open(&authority).expect("self journal opens"))
+        .expect("self bus starts");
+    let resumed = uuid(42);
+    declare_on(&bus, &fixture, fixture.occupant, "author-session");
+    declare_on(&bus, &fixture, resumed, "author-session");
+    seat_reviewers(&bus, &fixture, uuid(20), uuid(21), true);
+    let task = claimed_task(&bus, &fixture);
+    complete_author_phase(&bus, &task);
+    claim_review(&bus, fixture.epoch, &task, fixture.lane, resumed);
+    complete_review(&bus, &task, fixture.lane, wire::body::Verdict::Finding);
+    let mut held = BTreeSet::new();
+    assert!(!feedback_pass(&bus, &fixture, None, &mut held));
+    assert!(held.is_empty());
+    assert_eq!(pending_feedback(&bus, fixture.lane), 0);
+    bus.shutdown().expect("self feedback bus stops");
 }
 
 #[test]
@@ -94,18 +182,7 @@ fn a_clean_review_creates_no_feedback() {
     let fixture = LaunchFixture::new();
     let authority = fixture.root.join("clean-authority.sqlite3");
     let (bus, _) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Clean);
-    let snapshot = bus.task_snapshot().expect("clean snapshot reads");
-    assert!(
-        !reconcile(
-            &bus,
-            &fixture.paths,
-            fixture.epoch,
-            &snapshot,
-            None,
-            Duration::from_secs(3_600),
-        )
-        .expect("clean review is inert")
-    );
+    assert!(!feedback_pass(&bus, &fixture, None, &mut BTreeSet::new()));
     assert!(
         steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("clean facts read"))
             .expect("clean steering replays")
@@ -132,40 +209,19 @@ fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
         .find(|envelope| envelope.fact.kind() == wire::FactKind::TaskReviewed)
         .map(|envelope| envelope.seq)
         .expect("the first review");
-    let pending = |bus: &Bus| {
-        steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("feedback facts read"))
-            .expect("feedback steering replays")
-            .pending(fixture.lane)
-            .len()
-    };
 
     // Only the finding past the cursor is judged.
-    assert!(
-        reconcile(
-            &bus,
-            &fixture.paths,
-            fixture.epoch,
-            &snapshot,
-            Some(first),
-            Duration::from_secs(3_600),
-        )
-        .expect("the later finding reconciles")
-    );
-    assert_eq!(pending(&bus), 1);
+    assert!(feedback_pass(
+        &bus,
+        &fixture,
+        Some(first),
+        &mut BTreeSet::new()
+    ));
+    assert_eq!(pending_feedback(&bus, fixture.lane), 1);
 
     // From the start, the earlier finding is judged by its own phase's authors.
-    assert!(
-        reconcile(
-            &bus,
-            &fixture.paths,
-            fixture.epoch,
-            &snapshot,
-            None,
-            Duration::from_secs(3_600),
-        )
-        .expect("the earlier finding reconciles")
-    );
-    assert_eq!(pending(&bus), 2);
+    assert!(feedback_pass(&bus, &fixture, None, &mut BTreeSet::new()));
+    assert_eq!(pending_feedback(&bus, fixture.lane), 2);
     bus.shutdown().expect("twice-reviewed bus stops");
 }
 
@@ -180,22 +236,88 @@ fn reviewed_fixture(
     let reviewer_lane = uuid(20);
     let reviewer = uuid(21);
     seat_reviewers(&bus, fixture, reviewer_lane, reviewer, author_live);
+    let task = claimed_task(&bus, fixture);
+    complete_author_phase(&bus, &task);
+    claim_review(&bus, fixture.epoch, &task, reviewer_lane, reviewer);
+    complete_review(&bus, &task, reviewer_lane, verdict);
+    (bus, task)
+}
+
+/// The fixture task, claimed by the author lane's fixture occupant.
+fn claimed_task(bus: &Bus, fixture: &LaunchFixture) -> TaskStamp {
     let task: TaskStamp = "1kKRRsDR".parse().expect("feedback task stamp");
     let now = now();
-    let author = author_row(fixture, true);
     seed_task_claim(
-        &bus,
+        bus,
         &task,
-        &author,
+        &author_row(fixture, true),
         fixture.epoch,
         shifted(now, -60),
         shifted(now, 3_600),
         shifted(now, 7_200),
     );
-    complete_author_phase(&bus, &task);
-    claim_review(&bus, fixture.epoch, &task, reviewer_lane, reviewer);
-    complete_review(&bus, &task, reviewer_lane, verdict);
-    (bus, task)
+    task
+}
+
+/// Declare `identity` as the author lane's vendor session for `occupant` in a
+/// fresh authority, before the reviewed fixture opens it.
+fn declare(
+    fixture: &LaunchFixture,
+    authority: &std::path::Path,
+    occupant: CanonicalUuid,
+    identity: &str,
+) {
+    let bus = Bus::start(Journal::open(authority).expect("declaration journal opens"))
+        .expect("declaration bus starts");
+    declare_on(&bus, fixture, occupant, identity);
+    bus.shutdown().expect("declaration bus stops");
+}
+
+fn declare_on(bus: &Bus, fixture: &LaunchFixture, occupant: CanonicalUuid, identity: &str) {
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        resident_origin(fixture),
+        now(),
+        Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            wire::body::LaneSessionDeclared {
+                lane: fixture.lane,
+                occupant,
+                worktree: fixture.root.display().to_string(),
+                vendor: fixture.vendor.clone(),
+                launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
+                epoch: fixture.epoch,
+                stream: "session".to_owned(),
+                source: uuid(99),
+                identity: identity.to_owned(),
+                member: 0,
+                offset: 0,
+                length: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("session declaration builds");
+    committed(bus.commit(write).expect("session declaration commits"));
+}
+
+/// Seat `occupant` on the author lane in vendor session `identity`.
+fn reseat(bus: &Bus, fixture: &LaunchFixture, occupant: CanonicalUuid, identity: &str) {
+    let mut author = author_row(fixture, true);
+    author.occupant = Some(occupant);
+    author.lineage.push(occupant);
+    let mut seated = session(fixture, fixture.lane, occupant);
+    seated.identity = identity.to_owned();
+    author.session = Some(seated);
+    let reviewer = reviewer_row(fixture, uuid(20), uuid(21));
+    seat(bus, fixture, vec![author, reviewer]);
+}
+
+fn resident_origin(fixture: &LaunchFixture) -> Origin {
+    format!("resident:{}", fixture.epoch)
+        .parse()
+        .expect("resident origin")
 }
 
 fn seat_reviewers(
@@ -207,27 +329,41 @@ fn seat_reviewers(
 ) {
     let rows = vec![
         author_row(fixture, author_live),
-        LaneResidency {
-            lane: reviewer_lane,
-            team: reviewer_lane,
-            name: Some("reviewer".to_owned()),
-            worktree: fixture.root.display().to_string(),
-            life: "drive".to_owned(),
-            vendor: fixture.vendor.clone(),
-            model: None,
-            effort: None,
-            fast_mode: false,
-            occupant: Some(reviewer),
-            lineage: vec![reviewer],
-            capabilities: vec![uuid(22)],
-            session: Some(session(fixture, reviewer_lane, reviewer)),
-            disposition: "occupied".to_owned(),
-        },
+        reviewer_row(fixture, reviewer_lane, reviewer),
     ];
-    let origin: Origin = format!("resident:{}", fixture.epoch)
-        .parse()
-        .expect("resident origin");
-    let mut write = JournalWrite::new(Actor::Spice, origin, now(), Producer::CommandDoor);
+    seat(bus, fixture, rows);
+}
+
+fn reviewer_row(
+    fixture: &LaunchFixture,
+    reviewer_lane: CanonicalUuid,
+    reviewer: CanonicalUuid,
+) -> LaneResidency {
+    LaneResidency {
+        lane: reviewer_lane,
+        team: reviewer_lane,
+        name: Some("reviewer".to_owned()),
+        worktree: fixture.root.display().to_string(),
+        life: "drive".to_owned(),
+        vendor: fixture.vendor.clone(),
+        model: None,
+        effort: None,
+        fast_mode: false,
+        occupant: Some(reviewer),
+        lineage: vec![reviewer],
+        capabilities: vec![uuid(22)],
+        session: Some(session(fixture, reviewer_lane, reviewer)),
+        disposition: "occupied".to_owned(),
+    }
+}
+
+fn seat(bus: &Bus, fixture: &LaunchFixture, rows: Vec<LaneResidency>) {
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        resident_origin(fixture),
+        now(),
+        Producer::CommandDoor,
+    );
     let seated = write
         .fact(
             wire::body::UpSeated {
