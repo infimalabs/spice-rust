@@ -358,6 +358,10 @@ impl PreparedClaim {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the claim answer carries each independently derived context the claimant reads"
+)]
 fn claim_answer(
     command: &wire::AdmittedCommand,
     selected: &Entry,

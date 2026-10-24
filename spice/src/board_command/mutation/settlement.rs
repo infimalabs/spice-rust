@@ -344,6 +344,10 @@ fn settle(
 
 /// Stage one terminal task and every pending subtree its disposition can no
 /// longer release.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one settlement stages its entry, cause, instant, policy, and oops generation in one write"
+)]
 fn stage_with_controlled(
     write: &mut JournalWrite,
     snapshot: &ValidatedSnapshot,

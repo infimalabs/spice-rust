@@ -619,6 +619,10 @@ struct CompileTimeExternal<'a> {
     source: Option<&'a CargoExternalSourceAuthority>,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "compile-time reuse joins the inventory, roots, selection, producers, and source analysis"
+)]
 fn compile_time_reuse(
     inventory: &Inventory,
     canonical_root: &Path,

@@ -557,6 +557,10 @@ fn prepared_entry(prepared: &PreparedTask, projects: &ProjectPolicy) -> Entry {
     .with_creator_team(prepared.creation.creator_team())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one prepared task binds its command, request, project policy, cause, creation, flow, and filing"
+)]
 fn prepare_task(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,

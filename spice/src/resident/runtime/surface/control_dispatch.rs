@@ -28,6 +28,10 @@ pub(in crate::resident) async fn control_delivery_turn(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a delivery burst borrows each resident runtime a control command can advance"
+)]
 pub(super) async fn dispatch_control_delivery_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
@@ -67,6 +71,10 @@ pub(super) struct ControlDispatch {
     pub(super) inbox_lanes: Vec<CanonicalUuid>,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a control command borrows each resident runtime it can advance"
+)]
 pub(super) async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
@@ -148,6 +156,10 @@ pub(super) async fn dispatch_control(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a control burst borrows each resident runtime a control command can advance"
+)]
 pub(super) async fn dispatch_control_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,

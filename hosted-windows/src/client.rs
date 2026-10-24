@@ -188,6 +188,10 @@ pub fn windows_hosted_commands_into(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one dispatch binds its workspace, source revision, request, destination, and cancellation"
+)]
 fn dispatch(
     root: &Path,
     scratch: &Path,
@@ -245,6 +249,10 @@ fn dispatch(
     finish_artifact_cleanup(operation, cleanup)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one dispatched run binds its workspace, source revision, request, run, destination, and cancellation"
+)]
 fn complete_dispatched_run(
     root: &Path,
     scratch: &Path,

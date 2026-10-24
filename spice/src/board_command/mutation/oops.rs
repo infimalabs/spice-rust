@@ -289,6 +289,10 @@ fn require_oops_design_witnesses(
         },
     )
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one oops intake commits its report, optional Design, and generation against one snapshot"
+)]
 fn commit_oops_intake(
     bus: &Bus,
     command: &wire::AdmittedCommand,

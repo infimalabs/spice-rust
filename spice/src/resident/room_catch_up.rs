@@ -169,6 +169,10 @@ pub(in crate::resident) fn reconcile_commit(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "catch-up reconciliation reads the bus, paths, config, seats, and its lane and room selection"
+)]
 fn reconcile_selected(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -478,6 +482,10 @@ fn plan(
 /// The notice text for `selected`: each publication or owed Design request
 /// under its room, then why `lane` listens to each room shown and, for
 /// `owed`'s room, how it declines the request.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one notice renders its selection beside the presented items, attention, handles, and owed request"
+)]
 fn render(
     lane: CanonicalUuid,
     through: Seq,

@@ -722,6 +722,10 @@ impl Pinned {
 /// Anthropic service tier, and language-server disposition, and the
 /// extension that hands the provider steering as the lane wrote it. The
 /// caller selects omp before entering.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one omp pin binds its repository, vendor config, model, mode, resume, and occupancy"
+)]
 fn pin_omp(
     paths: &RuntimePaths,
     repository: &Repository,
