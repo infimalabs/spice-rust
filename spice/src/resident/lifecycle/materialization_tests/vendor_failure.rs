@@ -469,8 +469,10 @@ fn a_vendor_failure_holds_for_the_configured_hold_from_the_injected_clock() {
         .observe_vendor_failure_at(
             &bus,
             epoch(),
-            lane(),
-            occupant,
+            lane::capture::CaptureExit {
+                lane: lane(),
+                occupant,
+            },
             &format!("  {REFUSAL}\n"),
             instant(10),
             &mut diagnostic,
@@ -511,8 +513,10 @@ fn a_vendor_failure_holds_for_the_configured_hold_from_the_injected_clock() {
         .observe_vendor_failure_at(
             &bus,
             epoch(),
-            lane(),
-            occupant,
+            lane::capture::CaptureExit {
+                lane: lane(),
+                occupant,
+            },
             "a second failure while held",
             instant(20),
             &mut again,
@@ -546,8 +550,10 @@ fn verbose_vendor_text_is_cut_at_a_character_boundary_in_the_evidence() {
         .observe_vendor_failure_at(
             &bus,
             epoch(),
-            lane(),
-            occupant,
+            lane::capture::CaptureExit {
+                lane: lane(),
+                occupant,
+            },
             &verbose,
             instant(10),
             &mut diagnostic,

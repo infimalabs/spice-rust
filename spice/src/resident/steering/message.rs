@@ -168,34 +168,44 @@ pub(in crate::resident) fn publish_authored(
         epoch,
         config,
         record,
-        &BTreeSet::new(),
-        refusals,
+        Pass::Live(refusals),
         diagnostic,
     )
 }
 
-/// Publish one record's packets, leaving those `withheld` names unpublished.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one record's publication carries its judged packets beside the shared resident inputs"
-)]
+/// Which of a record's packets one pass publishes.
+#[derive(Clone, Copy)]
+enum Pass<'a> {
+    /// Live publication reports refusals as the caller chose.
+    Live(Refusals),
+    /// Startup recovery leaves the packets an earlier judgment withheld
+    /// unpublished, and only records refusals.
+    Recovery(&'a BTreeSet<TranscriptLocus>),
+}
+
+/// Publish one record's packets under `pass`.
 fn publish_record(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     config: &steer::Config,
     record: &AuthoredRecord<'_>,
-    withheld: &BTreeSet<TranscriptLocus>,
-    refusals: Refusals,
+    pass: Pass<'_>,
     diagnostic: &mut dyn io::Write,
 ) -> Vec<Result<Published, Unpublished>> {
+    let (withheld, refusals) = match pass {
+        Pass::Live(refusals) => (None, refusals),
+        Pass::Recovery(withheld) => (Some(withheld), Refusals::Record),
+    };
     let mut outcomes = Vec::new();
     for (event, text) in authored_blocks(record.events) {
         for message in steer::ack::scan::scan_messages(text) {
             let place = steer::Locus::at(text, message.header.start);
             let outcome = match packet_locus(record, event, place) {
                 Err(outcome) => Err(Unpublished::Failed(outcome)),
-                Ok(locus) if withheld.contains(&locus) => Err(Unpublished::Withheld),
+                Ok(locus) if withheld.is_some_and(|withheld| withheld.contains(&locus)) => {
+                    Err(Unpublished::Withheld)
+                }
                 Ok(locus) => {
                     let outcome = match &message.publication {
                         Err(refusal) => Err(Unpublished::Refused {
@@ -278,16 +288,7 @@ pub(in crate::resident) fn publish_at_startup(
         .task_snapshot()
         .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
     for row in &residency.body().lanes {
-        let Some(session) = row
-            .session
-            .as_ref()
-            .filter(|session| session.lane == row.lane)
-        else {
-            continue;
-        };
-        if let Err(detail) =
-            recover_lane(bus, paths, epoch, config, &view, row, session, diagnostic)
-        {
+        if let Err(detail) = recover_lane(bus, paths, epoch, config, &view, row, diagnostic) {
             let _ = writeln!(
                 diagnostic,
                 "lane {} MSG recovery incomplete: {detail}",
@@ -298,10 +299,6 @@ pub(in crate::resident) fn publish_at_startup(
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one lane's recovery reads the residency row its session names"
-)]
 fn recover_lane(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -309,9 +306,15 @@ fn recover_lane(
     config: &steer::Config,
     view: &bus::TaskSnapshot,
     row: &wire::LaneResidency,
-    session: &wire::LaneSession,
     diagnostic: &mut dyn io::Write,
 ) -> Result<(), String> {
+    let Some(session) = row
+        .session
+        .as_ref()
+        .filter(|session| session.lane == row.lane)
+    else {
+        return Ok(());
+    };
     // An occupant with no birth on its lane authors nothing publishable.
     let Ok(birth) = view.facts().occupant_address(row.lane, session.occupant) else {
         return Ok(());
@@ -378,8 +381,7 @@ fn recover_lane(
                 locus: *locus,
                 events,
             },
-            &withheld,
-            Refusals::Record,
+            Pass::Recovery(&withheld),
             diagnostic,
         );
     }

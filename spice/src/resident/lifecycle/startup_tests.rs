@@ -22,19 +22,17 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
     let mut seats = Seats::new();
     let mut diagnostic = Vec::new();
 
+    let resident = Resident {
+        bus: &bus,
+        repository: &repository,
+        paths: &fixture.paths,
+        epoch: fixture.epoch,
+        lane_runtime: &lane_runtime,
+        config: &surface.config,
+        profiles: None,
+    };
     let deadline = runtime
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            None,
-            &mut launches,
-            &mut diagnostic,
-        )
+        .reconcile(&resident, &mut seats, &mut launches, &mut diagnostic)
         .expect("Drain startup reconciles");
 
     assert_eq!(deadline, None);

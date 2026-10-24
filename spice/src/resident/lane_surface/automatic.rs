@@ -140,7 +140,6 @@ pub(in crate::resident) fn finish_wake(
         command,
         &pending.request,
         &observed,
-        epoch,
         &proven,
         pending.claim.as_ref(),
         pending.renewal.as_ref(),
@@ -230,12 +229,15 @@ fn automatic_refusal(
     ))
 }
 
-struct WakeRequest<'a> {
-    lane: CanonicalUuid,
-    decision: Option<&'a bus::TaskSnapshot>,
-    reserved: Option<&'a crate::board_command::AutomaticClaim>,
+/// One automatic wake the lifecycle selected: the occupant to seat on the
+/// lane and the authority that selected it.
+pub(in crate::resident) struct WakeRequest<'a> {
+    pub(in crate::resident) lane: CanonicalUuid,
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) decision: Option<&'a bus::TaskSnapshot>,
+    pub(in crate::resident) reserved: Option<&'a crate::board_command::AutomaticClaim>,
     /// Whether the lane was woken to deliver its pending steering.
-    inbox: bool,
+    pub(in crate::resident) inbox: bool,
 }
 
 struct WakeAdmission {
@@ -285,29 +287,16 @@ pub(in crate::resident) struct PendingAutomaticWake {
 /// resident-recognition transaction that seats it. The start commits against
 /// the lane's authority current at completion, so commits elsewhere while the
 /// session proves itself never refuse it.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one automatic wake owns the complete resident launch boundary"
-)]
 pub(in crate::resident) fn begin_automatic_wake(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     runtime: &Runtime<'_>,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    decision: Option<&bus::TaskSnapshot>,
-    reserved: Option<&crate::board_command::AutomaticClaim>,
-    inbox: bool,
+    request: &WakeRequest<'_>,
 ) -> CommandResult<BeginAutomaticWake> {
-    let request = WakeRequest {
-        lane,
-        decision,
-        reserved,
-        inbox,
-    };
-    let admitted = admit_automatic_wake(bus, paths, epoch, seats, &request)?;
+    let WakeRequest { lane, occupant, .. } = *request;
+    let admitted = admit_automatic_wake(bus, paths, epoch, seats, request)?;
     if let Some(renewal) = admitted.renewal.as_ref() {
         super::renewal::prepare(bus, runtime, renewal)?;
     }
@@ -416,26 +405,16 @@ fn finish_automatic_wake_with_clock(
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the synchronous test boundary exercises the same split launch continuation"
-)]
 pub(in crate::resident) fn wake_automatic(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    decision: Option<&bus::TaskSnapshot>,
-    reserved: Option<&crate::board_command::AutomaticClaim>,
-    inbox: bool,
+    request: &WakeRequest<'_>,
     promotion_at: Option<wire::Instant>,
 ) -> CommandResult<AutomaticWake> {
-    match begin_automatic_wake(
-        bus, paths, epoch, seats, runtime, lane, occupant, decision, reserved, inbox,
-    )? {
+    match begin_automatic_wake(bus, paths, epoch, seats, runtime, request)? {
         BeginAutomaticWake::Unstarted(outcome) => Ok(AutomaticWake::Unstarted(outcome)),
         BeginAutomaticWake::Launch(launch) => {
             let (launch, pending) = launch.into_parts();

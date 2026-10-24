@@ -18,7 +18,6 @@ pub(super) fn project_targets<'a>(
     {
         return Ok(Vec::new());
     }
-    let entries = projection.entries();
     let selection = projection.selection();
     let satisfied = selection.resolved();
     let appliance = spice::version::running().map_err(Outcome::Fault)?;
@@ -26,15 +25,29 @@ pub(super) fn project_targets<'a>(
         .environment()
         .with_appliance(appliance.product.clone());
     let projected_residency = residency.body();
-    let ready_at = projection.ready_at();
+    let view = BoardView {
+        snapshot,
+        entries: projection.entries(),
+        selection,
+        ready_at: projection.ready_at(),
+        allocation,
+        environment: &environment,
+        now,
+    };
     let mut targets = Vec::new();
     for row in &projected_residency.lanes {
         if row.occupant.is_some() || row.disposition == "occupied" || !holds.seats(row.lane) {
             continue;
         }
         let pending_inbox = projection.has_operator_steering(row.lane);
-        let (held_claim, held_parked) =
-            held_claim(entries, satisfied, ready_at, row, &environment, now)?;
+        let (held_claim, held_parked) = held_claim(
+            view.entries,
+            satisfied,
+            view.ready_at,
+            row,
+            &environment,
+            now,
+        )?;
         let subscription = subscription(projected_residency, row)?;
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
@@ -42,18 +55,7 @@ pub(super) fn project_targets<'a>(
         let work = if held_parked {
             Work::default()
         } else {
-            work_availability(
-                snapshot,
-                entries,
-                selection,
-                ready_at,
-                row,
-                subscription.as_ref(),
-                allocation,
-                first_drain_member,
-                &environment,
-                now,
-            )?
+            work_availability(&view, row, subscription.as_ref(), first_drain_member)?
         };
         targets.push(Target {
             lane: row.lane,
@@ -194,22 +196,12 @@ impl Default for Work<'_> {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one lane's availability reads the snapshot, index, readiness, residency, team, allocation, environment, and clock"
-)]
-fn work_availability<'a>(
-    snapshot: &bus::TaskSnapshot,
-    entries: &'a [Entry],
-    selection: &board::SelectionIndex,
-    ready_at: &BTreeMap<TaskStamp, Instant>,
+fn work_availability<'e>(
+    view: &BoardView<'_, 'e>,
     row: &wire::LaneResidency,
     subscription: Option<&wire::TeamSubscription>,
-    allocation: &board::NextConfig,
     first_drain_member: bool,
-    environment: &wire::Environment,
-    now: Instant,
-) -> CommandResult<Work<'a>> {
+) -> CommandResult<Work<'e>> {
     let Some(subscription) = subscription.filter(|subscription| {
         matches!(
             subscription.policy,
@@ -218,17 +210,7 @@ fn work_availability<'a>(
     }) else {
         return Ok(Work::default());
     };
-    let (selected, task) = selected_ready(
-        snapshot,
-        entries,
-        selection,
-        ready_at,
-        &Actor::Lane(row.lane),
-        subscription,
-        allocation,
-        environment,
-        now,
-    )?;
+    let (selected, task) = selected_ready(view, &Actor::Lane(row.lane), subscription)?;
     let last_resort = selected.is_some_and(|selected| selected.last_resort);
     let (drain_queue, available) = if subscription.policy == wire::intent::TeamLife::Drain {
         (

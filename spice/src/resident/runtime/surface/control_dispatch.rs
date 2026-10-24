@@ -28,39 +28,37 @@ pub(in crate::resident) async fn control_delivery_turn(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a delivery burst borrows each resident runtime a control command can advance"
-)]
+/// The app command door and the effects its dispatched commands owe: the
+/// inbox deliveries they name and the live changes they record.
+pub(super) struct Controls {
+    pub(super) control: serve::axum::Control,
+    pub(super) inbox_deliveries: InboxDeliveries,
+    pub(super) live_changes: lane_surface::LiveChanges,
+}
+
 pub(super) async fn dispatch_control_delivery_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
-    lifecycle: &mut lifecycle::Runtime,
-    control: &mut serve::axum::Control,
+    wakes: &mut Wakes,
+    controls: &mut Controls,
     request: Option<serve::axum::ControlRequest>,
-    inbox_deliveries: &mut InboxDeliveries,
-    lifecycle_reconciliation: &mut lifecycle::Reconciliation,
-    launches: &mut super::super::launch_runtime::Runtime,
-    live_changes: &lane_surface::LiveChanges,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<bool> {
     let dispatched = dispatch_control_burst(
         command_surface,
         seats,
-        lifecycle,
-        control,
+        &mut wakes.lifecycle,
+        &mut wakes.launches,
+        controls,
         request,
-        inbox_deliveries,
-        launches,
-        live_changes,
         diagnostic,
     )
     .await?;
     if let Some(witness) = dispatched.lifecycle_witness {
-        lifecycle_reconciliation.request(witness);
+        wakes.reconciliation.request(witness);
     }
     if !dispatched.reached_dark {
-        deliver_owed_inbox(command_surface, inbox_deliveries).await?;
+        deliver_owed_inbox(command_surface, &mut controls.inbox_deliveries).await?;
     }
     Ok(dispatched.reached_dark)
 }
@@ -71,18 +69,13 @@ pub(super) struct ControlDispatch {
     pub(super) inbox_lanes: Vec<CanonicalUuid>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a control command borrows each resident runtime it can advance"
-)]
 pub(super) async fn dispatch_control(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    control: &mut serve::axum::Control,
-    request: Option<serve::axum::ControlRequest>,
     launches: &mut super::super::launch_runtime::Runtime,
-    live_changes: &lane_surface::LiveChanges,
+    controls: &mut Controls,
+    request: Option<serve::axum::ControlRequest>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<ControlDispatch> {
     let request = request
@@ -136,7 +129,7 @@ pub(super) async fn dispatch_control(
             });
         }
     };
-    live_changes.owe(effects.live_changes);
+    controls.live_changes.owe(effects.live_changes);
     let lifecycle_witness = lifecycle_released.then(|| {
         let position = match &outcome {
             Outcome::Reply(reply) => Some(reply.position),
@@ -147,7 +140,7 @@ pub(super) async fn dispatch_control(
     let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
     complete_response(request, outcome).await;
     if reached_dark {
-        control.close();
+        controls.control.close();
     }
     Ok(ControlDispatch {
         reached_dark,
@@ -156,19 +149,13 @@ pub(super) async fn dispatch_control(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a control burst borrows each resident runtime a control command can advance"
-)]
 pub(super) async fn dispatch_control_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    control: &mut serve::axum::Control,
-    request: Option<serve::axum::ControlRequest>,
-    inbox_deliveries: &mut InboxDeliveries,
     launches: &mut super::super::launch_runtime::Runtime,
-    live_changes: &lane_surface::LiveChanges,
+    controls: &mut Controls,
+    request: Option<serve::axum::ControlRequest>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<ControlDispatch> {
     let mut request = request;
@@ -182,15 +169,14 @@ pub(super) async fn dispatch_control_burst(
             command_surface,
             seats,
             lifecycle,
-            control,
-            request.take(),
             launches,
-            live_changes,
+            controls,
+            request.take(),
             diagnostic,
         )
         .await?;
         for lane in dispatched.inbox_lanes {
-            inbox_deliveries.insert(lane);
+            controls.inbox_deliveries.insert(lane);
         }
         burst.reached_dark |= dispatched.reached_dark;
         if dispatched.lifecycle_witness.is_some() {
@@ -202,7 +188,7 @@ pub(super) async fn dispatch_control_burst(
         {
             break;
         }
-        request = match control.try_recv() {
+        request = match controls.control.try_recv() {
             Ok(request) => Some(request),
             Err(
                 tokio::sync::mpsc::error::TryRecvError::Empty

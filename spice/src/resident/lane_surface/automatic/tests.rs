@@ -26,11 +26,13 @@ fn automatic_wake_starts_a_vacant_lane_whatever_its_row_life() {
         fixture.epoch,
         &mut seats,
         &runtime,
-        fixture.lane,
-        fixture.occupant,
-        None,
-        None,
-        false,
+        &WakeRequest {
+            lane: fixture.lane,
+            occupant: fixture.occupant,
+            decision: None,
+            reserved: None,
+            inbox: false,
+        },
         None,
     );
 
@@ -89,11 +91,13 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
         fixture.epoch,
         &mut Seats::new(),
         &runtime,
-        fixture.lane,
-        fixture.occupant,
-        None,
-        None,
-        false,
+        &WakeRequest {
+            lane: fixture.lane,
+            occupant: fixture.occupant,
+            decision: None,
+            reserved: None,
+            inbox: false,
+        },
         None,
     );
 
@@ -170,11 +174,13 @@ fn a_vacated_job_horizon_renews_the_claim_through_successor_carry() {
             fixture.epoch,
             &mut seats,
             &runtime,
-            fixture.lane,
-            fixture.occupant,
-            Some(&decision),
-            None,
-            false,
+            &WakeRequest {
+                lane: fixture.lane,
+                occupant: fixture.occupant,
+                decision: Some(&decision),
+                reserved: None,
+                inbox: false,
+            },
             Some(delivered),
         )
         .expect("successor wake commits"),

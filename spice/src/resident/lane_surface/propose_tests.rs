@@ -45,9 +45,8 @@ fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     let born = seed_birth(&bus, &durable, old_epoch, start);
-    seed_restart_claim(
-        &bus, &task, &durable, old_epoch, new_epoch, start, expiry, maximum,
-    );
+    seed_task_claim(&bus, &task, &durable, old_epoch, start, expiry, maximum);
+    seed_restart_residency(&bus, &durable, new_epoch, start);
     let residency_position = bus
         .residency_head()
         .expect("residency reads")
@@ -392,24 +391,6 @@ pub(in crate::resident) fn assert_successor_address(
         expired,
         Err(bus::AddressRefusal::Expired { birth: historical })
     );
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the fixture seeds one exact claim and residency boundary"
-)]
-fn seed_restart_claim(
-    bus: &Bus,
-    task: &wire::TaskStamp,
-    durable: &wire::LaneResidency,
-    old_epoch: CanonicalUuid,
-    new_epoch: CanonicalUuid,
-    start: wire::Instant,
-    expiry: wire::Instant,
-    maximum: wire::Instant,
-) {
-    seed_task_claim(bus, task, durable, old_epoch, start, expiry, maximum);
-    seed_restart_residency(bus, durable, new_epoch, start);
 }
 
 pub(in crate::resident) fn seed_task_claim(

@@ -54,14 +54,9 @@ pub(in crate::resident) fn account_exit(
         return Ok(());
     }
     match word {
-        LastWord::Failure(failure) => lifecycle.observe_vendor_failure(
-            bus,
-            epoch,
-            exit.lane,
-            exit.occupant,
-            &failure,
-            diagnostic,
-        ),
+        LastWord::Failure(failure) => {
+            lifecycle.observe_vendor_failure(bus, epoch, exit, &failure, diagnostic)
+        }
         LastWord::Answered | LastWord::Silent => {
             let settled = word == LastWord::Answered && !direction_pending(bus, exit.lane)?;
             lifecycle.observe_death(bus, epoch, seated, exit.lane, settled, diagnostic)
@@ -81,21 +76,18 @@ fn direction_pending(bus: &Bus, lane: CanonicalUuid) -> CommandResult<bool> {
         .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))
 }
 
-/// Account one supervisor failure the way its own notice would have.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one failure crosses the same accounting surfaces as one exit"
-)]
+/// Account one occupant exit its supervisor's `failure` caused, the way the
+/// failure's own notice would have.
 pub(super) fn account_failure(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
+    exit: lane::capture::CaptureExit,
     failure: &str,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    let lane::capture::CaptureExit { lane, occupant } = exit;
     let _ = writeln!(
         diagnostic,
         "lane {lane} occupant {occupant} supervisor failed: {failure}"
@@ -118,16 +110,15 @@ pub(super) fn account_failure(
 /// Account every seated occupant whose supervisor published an ending and
 /// whose notice of it is not waiting at the door.
 pub(super) fn reap_ended_seats(
-    bus: &Bus,
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    diagnostic: &mut dyn io::Write,
     door: &mut capture::SupervisorReports,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let noticed = door.noticed_endings();
     sweep_seats(
-        bus,
+        command_surface.bus(),
         command_surface.epoch(),
         command_surface.paths,
         seats,
@@ -188,7 +179,13 @@ pub(in crate::resident) fn sweep_seats(
                 diagnostic,
             ),
             supervisor::ending::PublishedEnding::Failed(failure) => account_failure(
-                bus, epoch, seats, lifecycle, lane, occupant, &failure, diagnostic,
+                bus,
+                epoch,
+                seats,
+                lifecycle,
+                lane::capture::CaptureExit { lane, occupant },
+                &failure,
+                diagnostic,
             ),
         };
         super::deferral::defer_store_fault(accounted, diagnostic, "reaped seat accounting")?;
@@ -203,13 +200,7 @@ pub(in crate::resident) fn sweep_seats(
 /// seat ledger. The closing sweep runs here, after the turn, where the taste,
 /// steering, and app surfaces all exist; a refused commit is deferred the
 /// way exit accounting defers it.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the closing sweep crosses the same live capture surfaces as a noticed record"
-)]
 pub(in crate::resident) fn present_closed_transcripts(
-    bus: &Bus,
-    epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     message_publisher: &serve::stream::MessagePublisher,
@@ -217,6 +208,7 @@ pub(in crate::resident) fn present_closed_transcripts(
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    let (bus, epoch) = (command_surface.bus(), command_surface.epoch());
     let vacated = seats.take_vacated();
     if vacated.is_empty() {
         return Ok(());

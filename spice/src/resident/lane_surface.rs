@@ -42,7 +42,7 @@ mod team;
 use automatic::wake;
 pub(super) use automatic::{
     AutomaticLaunch, AutomaticWake, BeginAutomaticWake, PendingAutomaticWake, PendingWake,
-    WakeLaunch, begin_automatic_wake, begin_wake, finish_automatic_wake, finish_wake,
+    WakeLaunch, WakeRequest, begin_automatic_wake, begin_wake, finish_automatic_wake, finish_wake,
 };
 use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 #[cfg(test)]

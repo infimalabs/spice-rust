@@ -172,14 +172,12 @@ pub(in crate::resident) fn occupant_launch(
     let fresh = resume.session_id().is_none();
     let pinned = if name.as_str() == vendor::OMP.name() {
         pin_omp(
-            paths,
+            &crate::resident::supervisor::supervisor_directory(paths, lane, occupant),
             &repository,
             resolved.root().vendor().omp(),
             model,
             fast_mode,
             resume,
-            lane,
-            occupant,
         )?
     } else {
         Pinned::nothing(resume)
@@ -718,30 +716,23 @@ impl Pinned {
 }
 
 /// Pin what an oh-my-pi occupant reads from disk before it launches: the
-/// session it resumes, the overlay carrying its compaction threshold,
-/// Anthropic service tier, and language-server disposition, and the
-/// extension that hands the provider steering as the lane wrote it. The
-/// caller selects omp before entering.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one omp pin binds its repository, vendor config, model, mode, resume, and occupancy"
-)]
+/// session it resumes, and beside its supervisor record in `directory` the
+/// overlay carrying its compaction threshold, Anthropic service tier, and
+/// language-server disposition, and the extension that hands the provider
+/// steering as the lane wrote it. The caller selects omp before entering.
 fn pin_omp(
-    paths: &RuntimePaths,
+    directory: &Path,
     repository: &Repository,
     omp: &vendor::config::OmpConfig,
     model: Option<&str>,
     fast_mode: bool,
     resume: vendor::Resume,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
 ) -> CommandResult<Pinned> {
     let resume = match resume.session_id() {
         Some(_) => resume,
         None => pin_session(repository)?,
     };
     let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
-    let directory = crate::resident::supervisor::supervisor_directory(paths, lane, occupant);
     let config_overlay = pin_seat_file(
         &directory.join("omp.yml"),
         &vendor::omp::config_overlay(threshold, omp.lsp(), fast_mode),

@@ -169,10 +169,11 @@ impl<W: Write + Send + 'static> Driver<W> {
         });
         Self::with_server(
             stdin,
-            read_inbox,
-            read_briefing,
-            String::new,
-            || true,
+            super::Readers {
+                inbox: Box::new(read_inbox),
+                briefing: Box::new(read_briefing),
+                ..super::Readers::default()
+            },
             server,
             seal,
             terminal,
@@ -189,10 +190,11 @@ impl<W: Write + Send + 'static> Driver<W> {
         let server: UriServer = Box::new(|_, _| Err(vendor::omp::URI_SERVED.to_owned()));
         Self::with_server(
             stdin,
-            read_inbox,
-            || None,
-            read_resume,
-            || true,
+            super::Readers {
+                inbox: Box::new(read_inbox),
+                resume: Box::new(read_resume),
+                ..super::Readers::default()
+            },
             server,
             steer::Key::for_identity(crate::resident::new_uuid()),
             None,
@@ -217,10 +219,11 @@ impl<W: Write + Send + 'static> Driver<W> {
         let server: UriServer = Box::new(|_, _| Err(vendor::omp::URI_SERVED.to_owned()));
         Self::with_server(
             stdin,
-            || None,
-            || None,
-            read_resume,
-            read_seated,
+            super::Readers {
+                resume: Box::new(read_resume),
+                seated: Box::new(read_seated),
+                ..super::Readers::default()
+            },
             server,
             steer::Key::for_identity(crate::resident::new_uuid()),
             None,

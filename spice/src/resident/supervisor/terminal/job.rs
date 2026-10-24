@@ -52,7 +52,8 @@ use index::ServiceIndex;
 pub(in crate::resident::supervisor) use keeper::keep;
 pub(in crate::resident) use keeper::{Control, Handle, Observed};
 use keeper::{Signal, watch};
-use launch::{KeeperLaunch, Launch, failed_start_error, launch_detached};
+pub(in crate::resident) use launch::Launch;
+use launch::{KeeperLaunch, failed_start_error, launch_detached};
 pub(in crate::resident) use reconcile::{reconcile_services, reconcile_turn_services};
 pub(in crate::resident) use service::{ServiceAdmission, ServiceAuthority};
 use service::{ServiceClaim, ServiceOwner};
@@ -220,32 +221,14 @@ impl Jobs {
     /// Returns the failure of recording the request, revalidating a service's
     /// claim after publication, launching the keeper, or removing a failed
     /// start's record. Only a launch known not to own a process is removed.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one job start carries the shell call's command, cwd, environment, deadline, task, service, notices, and events"
-    )]
     pub(in crate::resident) fn start(
         &self,
-        command: &str,
-        argv: Vec<OsString>,
-        cwd: &Path,
-        environment: &Environment,
-        timeout: Option<Duration>,
+        job: Launch<'_>,
         task: Option<TaskStamp>,
         service: Option<ServiceAdmission<'_>>,
-        notices: &[String],
-        events: bool,
     ) -> io::Result<Job> {
         self.start_with(
-            Launch {
-                command,
-                argv,
-                cwd,
-                environment,
-                timeout,
-                notices,
-                events,
-            },
+            job,
             task,
             service,
             |directory, request, cwd, environment| {

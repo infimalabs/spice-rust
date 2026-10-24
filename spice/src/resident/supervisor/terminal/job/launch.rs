@@ -19,14 +19,14 @@ use super::detach;
 use super::{ENTRY, LOG};
 
 /// What one job start records before its keeper launches.
-pub(super) struct Launch<'a> {
-    pub(super) command: &'a str,
-    pub(super) argv: Vec<OsString>,
-    pub(super) cwd: &'a Path,
-    pub(super) environment: &'a Environment,
-    pub(super) timeout: Option<Duration>,
-    pub(super) notices: &'a [String],
-    pub(super) events: bool,
+pub(in crate::resident) struct Launch<'a> {
+    pub(in crate::resident) command: &'a str,
+    pub(in crate::resident) argv: Vec<OsString>,
+    pub(in crate::resident) cwd: &'a Path,
+    pub(in crate::resident) environment: &'a Environment,
+    pub(in crate::resident) timeout: Option<Duration>,
+    pub(in crate::resident) notices: &'a [String],
+    pub(in crate::resident) events: bool,
 }
 
 /// Whether a keeper launch established process ownership. An unknown outcome

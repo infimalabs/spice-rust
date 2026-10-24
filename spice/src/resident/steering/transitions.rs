@@ -92,7 +92,6 @@ pub(in crate::resident) fn send(
     let occupant = lane.occupant;
     publish(
         bus,
-        epoch,
         config,
         command,
         &residency,
@@ -118,13 +117,8 @@ struct Publication<'a> {
 }
 
 /// Journal one new directive against the residency it witnessed.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the publication door takes each authority it guards separately"
-)]
 fn publish<B: serde::Serialize>(
     bus: &Bus,
-    epoch: CanonicalUuid,
     config: &steer::Config,
     command: &wire::AdmittedCommand,
     residency: &journal::JournalHead<wire::ResidencyHead>,
@@ -132,6 +126,7 @@ fn publish<B: serde::Serialize>(
     receipt: wire::Command<B>,
     effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
+    let epoch = residency.body().epoch;
     let witness = Witness::Residency {
         lane: publication.lane,
         occupant: publication.occupant,
@@ -383,9 +378,18 @@ pub(in crate::resident) fn resend(
     if stages.is_empty() {
         return resend_snapshot(paths, &directive, position, answer);
     }
-    commit_resend(
-        bus, epoch, command, resend, &directive, at, stages, answer, effects,
-    )
+    let mut proposal = match escalation(command, &directive, at, stages) {
+        Ok(proposal) => proposal,
+        Err(outcome) => return outcome,
+    };
+    if let Err(error) = proposal.command_result(
+        typed_command(command, resend.clone()),
+        epoch,
+        answer.clone(),
+    ) {
+        return typed_store_fault("steer::receipt-invalid", &error.to_string());
+    }
+    finish(bus, directive.body().lane, proposal, answer, effects)
 }
 
 fn resend_snapshot(
@@ -401,23 +405,19 @@ fn resend_snapshot(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn commit_resend(
-    bus: &Bus,
-    epoch: CanonicalUuid,
+/// Stage each escalation a live directive owes at `at`, guarded on the stage
+/// it was read at.
+fn escalation(
     command: &wire::AdmittedCommand,
-    resend: &wire::intent::DirectiveRef,
     directive: &journal::JournalHead<wire::SteeringHead>,
     at: Instant,
     stages: Vec<wire::body::SteeringStage>,
-    answer: DirectiveAnswer,
-    effects: &mut CommandEffects,
-) -> Outcome<CommandAnswer> {
+) -> Result<JournalWrite, Outcome<CommandAnswer>> {
     let origin = directive.body().origin.clone();
     let cause = directive.body().created;
     let mut proposal = JournalWrite::new(command.actor().clone(), origin, at, Producer::BusTimer);
     proposal.guard(stage_guard(
-        resend.directive,
+        directive.body().directive,
         directive.position(),
         directive.body().stage,
     ));
@@ -430,27 +430,15 @@ fn commit_resend(
             lane: directive.body().lane,
             stage,
         };
-        let pending = match proposal.fact(escalated.clone(), FactCause::Existing(cause)) {
-            Ok(pending) => pending,
-            Err(error) => return typed_store_fault("steer::fact-invalid", &error.to_string()),
-        };
-        next =
-            match steer::Ledger::transition_head(&next, steer::Steering::Escalated(&escalated), at)
-            {
-                Ok(next) => next,
-                Err(error) => return typed_store_fault("steer::index-invalid", &error.to_string()),
-            };
+        let pending = proposal
+            .fact(escalated.clone(), FactCause::Existing(cause))
+            .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
+        next = steer::Ledger::transition_head(&next, steer::Steering::Escalated(&escalated), at)
+            .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
         last = Some(pending);
     }
     proposal.steering_head(last.expect("nonempty stages append a fact"), move |_| next);
-    if let Err(error) = proposal.command_result(
-        typed_command(command, resend.clone()),
-        epoch,
-        answer.clone(),
-    ) {
-        return typed_store_fault("steer::receipt-invalid", &error.to_string());
-    }
-    finish(bus, directive.body().lane, proposal, answer, effects)
+    Ok(proposal)
 }
 
 pub(in crate::resident) fn recover(
@@ -606,7 +594,6 @@ fn removed_destination(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn append_disposition(
     proposal: &mut JournalWrite,
     directive: &journal::JournalHead<wire::SteeringHead>,
