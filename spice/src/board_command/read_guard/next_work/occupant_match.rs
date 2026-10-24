@@ -2,27 +2,26 @@
 //! the `task next` supplier of [`board::Claimant::match_score`].
 //!
 //! The score is [`spice::rooms::standing::standing`] with the running occupant,
-//! the one ranker Design nudges and the best-match wake order share. The
-//! frequency profile is fitted once per selection; a candidate's statement is
-//! prepared only when the ladder asks for its score, which the board does only
-//! for rows tied on every key above the handle. A cold or absent profile
-//! scores zero for every row, leaving the handle order exactly.
+//! the one ranker Design nudges and the best-match wake order share. The fit
+//! and each candidate's vector come from the shared [`MatchCache`]; a
+//! candidate is weighed only when the ladder asks for its score, which the
+//! board does only for rows tied on every key above the handle. A cold or
+//! absent profile scores zero for every row, leaving the handle order exactly.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use board::Entry;
-use board::similarity::{FrequencyProfile, Prepared, TermCounts};
+use board::similarity::{FrequencyProfile, MatchCache};
 use spice::rooms::profile::SessionProfiles;
 use spice::rooms::standing::standing;
-use wire::{CanonicalUuid, TaskStamp};
+use wire::CanonicalUuid;
 
 pub(super) struct OccupantMatch<'a> {
     profiles: RefCell<&'a mut SessionProfiles>,
-    frequency: FrequencyProfile,
+    frequency: Arc<FrequencyProfile>,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    prepared: RefCell<BTreeMap<TaskStamp, Option<Prepared>>>,
 }
 
 impl<'a> OccupantMatch<'a> {
@@ -34,24 +33,20 @@ impl<'a> OccupantMatch<'a> {
     ) -> Self {
         Self {
             profiles: RefCell::new(profiles),
-            frequency: FrequencyProfile::recent(entries.iter().map(Entry::statement)),
+            frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement)),
             lane,
             occupant,
-            prepared: RefCell::new(BTreeMap::new()),
         }
     }
 
     /// The occupant's standing for `entry`; zero when nothing scores.
     pub(super) fn score(&self, entry: &Entry) -> f64 {
-        let mut prepared = self.prepared.borrow_mut();
-        let statement = prepared
-            .entry(entry.born().clone())
-            .or_insert_with(|| self.frequency.prepare(&TermCounts::task(entry.statement())));
+        let statement = MatchCache::shared().prepare(&self.frequency, entry.statement());
         let mut profiles = self.profiles.borrow_mut();
         standing(
             &mut profiles,
             &self.frequency,
-            statement.as_ref(),
+            statement.as_deref(),
             entry.born(),
             self.lane,
             Some(self.occupant),

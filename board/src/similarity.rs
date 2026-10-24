@@ -8,12 +8,14 @@
 //!
 //! Term counts are canonical and fit-independent. A [`Prepared`] vector is a
 //! derived cache weighted under one fitted [`Generation`]; two vectors compare
-//! only when they share it. Room awareness and claim overlap both score with
-//! this one engine.
+//! only when they share it. Every matcher (Design awareness and nudges, the
+//! wake and `task next` match, and claim overlap) takes its fit and statement
+//! vectors from the one shared [`MatchCache`].
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use wire::TaskHead;
 use wire::rooms::{COMPLETION_VALIDATION_BYTES, DESIGN_NOTICE_SHOWN_TERMS};
@@ -235,10 +237,64 @@ impl FrequencyProfile {
     pub fn generation(&self) -> Generation {
         self.generation
     }
+}
 
-    /// Fit from the [`FREQUENCY_WINDOW`] most recently revised task statements.
+/// The fitted recent window and the task vectors weighted under it, so every
+/// matcher over an unchanged board reuses one fit.
+///
+/// Keys are content, never journal positions: the fit is keyed by the
+/// window's statements and each vector by its statement's counted text, so
+/// equal keys always mean equal inputs and one cache may serve any journal.
+/// Vectors are dropped whole when the window moves; a vector asked under any
+/// other fit is weighted afresh and not kept. The lock is a leaf, held only
+/// inside these methods.
+#[derive(Debug, Default)]
+pub struct MatchCache(Mutex<FittedWindow>);
+
+/// Content identity of the authored text [`TermCounts::task`] counts.
+type StatementKey = [u8; 32];
+
+/// The content key of exactly the texts [`TermCounts::task`] counts, in its
+/// order, so equal keys always count equally.
+fn statement_key(statement: &TaskHead) -> StatementKey {
+    let mut hasher = blake3::Hasher::new();
+    for text in std::iter::once(statement.title.as_str())
+        .chain(statement.description.as_deref())
+        .chain(statement.acceptance.iter().map(String::as_str))
+    {
+        hasher.update(&(text.len() as u64).to_le_bytes());
+        hasher.update(text.as_bytes());
+    }
+    *hasher.finalize().as_bytes()
+}
+
+#[derive(Debug, Default)]
+struct FittedWindow {
+    fit: Option<(StatementKey, Arc<FrequencyProfile>)>,
+    prepared: BTreeMap<StatementKey, Option<Arc<Prepared>>>,
+}
+
+impl MatchCache {
+    /// An empty cache.
     #[must_use]
-    pub fn recent<'a>(statements: impl Iterator<Item = &'a TaskHead>) -> Self {
+    pub const fn new() -> Self {
+        Self(Mutex::new(FittedWindow {
+            fit: None,
+            prepared: BTreeMap::new(),
+        }))
+    }
+
+    /// The process's one cache, which every production matcher shares.
+    #[must_use]
+    pub fn shared() -> &'static Self {
+        static SHARED: MatchCache = MatchCache::new();
+        &SHARED
+    }
+
+    /// The fit over the [`FREQUENCY_WINDOW`] most recently revised task
+    /// statements, refitted only when that window's statements changed.
+    #[must_use]
+    pub fn fit<'a>(&self, statements: impl Iterator<Item = &'a TaskHead>) -> Arc<FrequencyProfile> {
         let mut recent = BinaryHeap::with_capacity(FREQUENCY_WINDOW + 1);
         for statement in statements {
             recent.push(Reverse(RecentStatement(statement)));
@@ -246,13 +302,69 @@ impl FrequencyProfile {
                 recent.pop();
             }
         }
-        Self::of(
-            recent
-                .into_iter()
-                .map(|Reverse(RecentStatement(statement))| TermCounts::task(statement)),
-        )
+        let recent = recent.into_sorted_vec();
+        let mut hasher = blake3::Hasher::new();
+        for Reverse(RecentStatement(statement)) in &recent {
+            hasher.update(&statement_key(statement));
+        }
+        let key = *hasher.finalize().as_bytes();
+        let mut window = self.window();
+        if let Some((current, frequency)) = &window.fit
+            && *current == key
+        {
+            return Arc::clone(frequency);
+        }
+        let frequency =
+            Arc::new(FrequencyProfile::of(recent.into_iter().map(
+                |Reverse(RecentStatement(statement))| TermCounts::task(statement),
+            )));
+        *window = FittedWindow {
+            fit: Some((key, Arc::clone(&frequency))),
+            prepared: BTreeMap::new(),
+        };
+        frequency
     }
 
+    /// `statement` weighted under `frequency`, reused while `frequency` is
+    /// this cache's current fit. `None` when it has no weightable terms.
+    #[must_use]
+    pub fn prepare(
+        &self,
+        frequency: &FrequencyProfile,
+        statement: &TaskHead,
+    ) -> Option<Arc<Prepared>> {
+        let weigh = || {
+            frequency
+                .prepare(&TermCounts::task(statement))
+                .map(Arc::new)
+        };
+        let mut window = self.window();
+        if window
+            .fit
+            .as_ref()
+            .is_none_or(|(_, current)| current.generation != frequency.generation)
+        {
+            return weigh();
+        }
+        window
+            .prepared
+            .entry(statement_key(statement))
+            .or_insert_with(weigh)
+            .clone()
+    }
+
+    /// The cached window; a panic mid-update leaves only an empty cache.
+    fn window(&self) -> MutexGuard<'_, FittedWindow> {
+        self.0.lock().unwrap_or_else(|poisoned| {
+            self.0.clear_poison();
+            let mut window = poisoned.into_inner();
+            *window = FittedWindow::default();
+            window
+        })
+    }
+}
+
+impl FrequencyProfile {
     /// Cosine similarity for two documents fitted against this same profile.
     #[must_use]
     pub fn score(&self, left: &TermCounts, right: &TermCounts) -> Option<f64> {
@@ -369,6 +481,90 @@ mod tests {
 
     fn close(left: f64, right: f64) {
         assert!((left - right).abs() < 1e-12, "{left} != {right}");
+    }
+
+    fn head(revision: u64, title: &str) -> TaskHead {
+        let born = wire::TaskStamp::for_micros(revision as i64).expect("fixture stamp");
+        let seq = wire::Seq::new(revision).expect("fixture position");
+        TaskHead {
+            preparation: None,
+            intent: None,
+            born: born.clone(),
+            queue_origin: seq,
+            title: title.to_owned(),
+            pitch: "Matching reuses one fit.".to_owned(),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
+            project: "board.kernel".to_owned(),
+            filing: wire::TaskFiling::Filed,
+            priority: None,
+            taste: None,
+            document_slug: None,
+            taste_proposal: None,
+            dependencies: Vec::new(),
+            provenance: wire::TaskProvenance::Task(born),
+            creation: wire::body::TaskCreationContext::unavailable(
+                wire::body::TaskCreationUnavailable::SpiceActor,
+            ),
+            revision: seq,
+        }
+    }
+
+    #[test]
+    fn a_cache_reuses_one_exact_fit_and_vector_until_its_window_moves() {
+        let board = [
+            head(1, "Snapshot cursor paging"),
+            head(2, "Publication boundary retention"),
+            head(3, "Lane team design"),
+        ];
+        let uncached =
+            |statements: &[TaskHead]| FrequencyProfile::of(statements.iter().map(TermCounts::task));
+        let cache = MatchCache::default();
+        let fit = cache.fit(board.iter());
+        assert_eq!(*fit, uncached(&board), "the cached fit is the exact fit");
+        assert!(
+            Arc::ptr_eq(&fit, &cache.fit(board.iter().rev())),
+            "an unchanged window, in any order, reuses its fit"
+        );
+        let vector = cache.prepare(&fit, &board[0]).expect("weighted statement");
+        assert_eq!(
+            *vector,
+            fit.prepare(&TermCounts::task(&board[0])).expect("weighted")
+        );
+        assert!(
+            Arc::ptr_eq(&vector, &cache.prepare(&fit, &board[0]).expect("weighted")),
+            "an unchanged statement reuses its vector"
+        );
+
+        // The same positions under other text, as another journal would hold.
+        let mut edited = board.clone();
+        edited[1] = head(2, "Publication boundary retention cursor");
+        let refit = cache.fit(edited.iter());
+        assert_eq!(
+            *refit,
+            uncached(&edited),
+            "a changed statement refits the window"
+        );
+        assert_ne!(refit.generation(), fit.generation());
+        let reweighted = cache
+            .prepare(&refit, &edited[0])
+            .expect("weighted statement");
+        assert_eq!(reweighted.generation(), refit.generation());
+        close(
+            reweighted
+                .cosine(&cache.prepare(&refit, &edited[1]).expect("weighted"))
+                .expect("one fit"),
+            refit
+                .score(&TermCounts::task(&edited[0]), &TermCounts::task(&edited[1]))
+                .expect("scored"),
+        );
+        let stale = cache.prepare(&fit, &board[0]).expect("weighted statement");
+        assert_eq!(
+            stale.generation(),
+            fit.generation(),
+            "a vector asked under a superseded fit stays in that fit's generation"
+        );
     }
 
     #[test]
