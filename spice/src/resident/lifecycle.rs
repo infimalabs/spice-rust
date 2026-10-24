@@ -29,7 +29,7 @@ mod holds;
 mod launch;
 mod matching;
 mod materialization;
-use availability::{ready_instant, selected_ready};
+use availability::{BoardView, ready_instant, selected_ready};
 use matching::match_targets;
 use materialization::Projection;
 pub(super) mod generation_notices;
@@ -297,6 +297,19 @@ pub(super) enum WakeKind {
     Hold,
 }
 
+/// The resident authority a lifecycle reconciliation reads and wakes through.
+pub(super) struct Resident<'a> {
+    pub(super) bus: &'a Bus,
+    pub(super) repository: &'a Repository,
+    pub(super) paths: &'a RuntimePaths,
+    pub(super) epoch: CanonicalUuid,
+    pub(super) lane_runtime: &'a lane_surface::Runtime<'a>,
+    pub(super) config: &'a SurfaceConfig,
+    /// The retained session profiles the best-match order scores; absent
+    /// until message startup restores them.
+    pub(super) profiles: Option<&'a std::sync::Mutex<super::message_surface::MessageState>>,
+}
+
 impl Runtime {
     pub(super) fn new(config: &lane::Config) -> Self {
         Self {
@@ -310,59 +323,33 @@ impl Runtime {
     }
 
     /// Reconcile one authoritative snapshot and execute at most one wake.
-    /// `profiles` holds the retained session profiles the best-match order
-    /// scores; it is absent until message startup restores them.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "the lifecycle authority composes every existing resident fold explicitly"
-    )]
     pub(super) fn reconcile(
         &mut self,
-        bus: &Bus,
-        repository: &Repository,
-        paths: &RuntimePaths,
-        epoch: CanonicalUuid,
+        resident: &Resident<'_>,
         seats: &mut Seats,
-        lane_runtime: &lane_surface::Runtime<'_>,
-        config: &SurfaceConfig,
-        profiles: Option<&std::sync::Mutex<super::message_surface::MessageState>>,
         launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
         let now = current_instant()?;
-        self.reconcile_at(
-            now,
-            bus,
-            repository,
-            paths,
-            epoch,
-            seats,
-            lane_runtime,
-            config,
-            profiles,
-            launches,
-            diagnostic,
-        )
+        self.reconcile_at(now, resident, seats, launches, diagnostic)
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "deterministic lifecycle resolution retains the complete resident effect boundary"
-    )]
     fn reconcile_at(
         &mut self,
         now: Instant,
-        bus: &Bus,
-        repository: &Repository,
-        paths: &RuntimePaths,
-        epoch: CanonicalUuid,
+        resident: &Resident<'_>,
         seats: &mut Seats,
-        lane_runtime: &lane_surface::Runtime<'_>,
-        config: &SurfaceConfig,
-        profiles: Option<&std::sync::Mutex<super::message_surface::MessageState>>,
         launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
+        let &Resident {
+            bus,
+            paths,
+            epoch,
+            config,
+            profiles,
+            ..
+        } = resident;
         lane_surface::reconcile_renewal(bus, paths, epoch)?;
         let mut snapshot = bus
             .task_snapshot()
@@ -433,18 +420,7 @@ impl Runtime {
                 })
             }
             Resolution::Attempt { trigger, lane } => {
-                let result = self.attempt(
-                    trigger,
-                    lane,
-                    bus,
-                    repository,
-                    paths,
-                    epoch,
-                    seats,
-                    lane_runtime,
-                    config,
-                    &snapshot,
-                );
+                let result = self.attempt(trigger, lane, resident, seats, &snapshot);
                 self.settle_attempt(now, trigger, lane, result, launches, diagnostic)?
             }
         };
@@ -550,23 +526,23 @@ impl Runtime {
         self.launching.remove(&lane);
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one lifecycle attempt owns the complete resident effect boundary"
-    )]
     fn attempt(
         &mut self,
         trigger: Trigger,
         lane: CanonicalUuid,
-        bus: &Bus,
-        repository: &Repository,
-        paths: &RuntimePaths,
-        epoch: CanonicalUuid,
+        resident: &Resident<'_>,
         seats: &mut Seats,
-        lane_runtime: &lane_surface::Runtime<'_>,
-        config: &SurfaceConfig,
         snapshot: &bus::TaskSnapshot,
     ) -> CommandResult<Attempted> {
+        let &Resident {
+            bus,
+            repository,
+            paths,
+            epoch,
+            lane_runtime,
+            config,
+            ..
+        } = resident;
         let occupant = new_uuid();
         match trigger {
             Trigger::PendingInbox => {
@@ -577,11 +553,13 @@ impl Runtime {
                     epoch,
                     seats,
                     lane_runtime,
-                    lane,
-                    occupant,
-                    Some(snapshot),
-                    None,
-                    true,
+                    &lane_surface::WakeRequest {
+                        lane,
+                        occupant,
+                        decision: Some(snapshot),
+                        reserved: None,
+                        inbox: true,
+                    },
                 );
                 match wake {
                     Ok(lane_surface::BeginAutomaticWake::Launch(launch)) => {
@@ -608,11 +586,13 @@ impl Runtime {
                 epoch,
                 seats,
                 lane_runtime,
-                lane,
-                occupant,
-                Some(snapshot),
-                None,
-                false,
+                &lane_surface::WakeRequest {
+                    lane,
+                    occupant,
+                    decision: Some(snapshot),
+                    reserved: None,
+                    inbox: false,
+                },
             )? {
                 lane_surface::BeginAutomaticWake::Launch(launch) => {
                     Ok(pending_launch(trigger, lane, None, None, launch))
@@ -637,11 +617,13 @@ impl Runtime {
                     epoch,
                     seats,
                     lane_runtime,
-                    lane,
-                    occupant,
-                    None,
-                    Some(&claim),
-                    false,
+                    &lane_surface::WakeRequest {
+                        lane,
+                        occupant,
+                        decision: None,
+                        reserved: Some(&claim),
+                        inbox: false,
+                    },
                 );
                 match launched {
                     Ok(lane_surface::BeginAutomaticWake::Launch(launch)) => {

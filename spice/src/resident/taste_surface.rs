@@ -357,16 +357,20 @@ pub(super) fn recognize(
 ) -> CommandResult<()> {
     recognize_with(
         bus,
-        paths,
         epoch,
         bag,
         steering_config,
         judge,
         record,
-        |bus, _, proposal| commit(bus, proposal),
-        |_, paths, _, lane| {
-            steering::notify_inbox(paths, lane);
-            Ok(())
+        |bus, openings, proposal| {
+            let committed = commit(bus, proposal)?;
+            // The shared fold authority turns an inbox failure into durable
+            // parked progress. Only failure to record either publication or
+            // parking remains an error here.
+            if !openings.is_empty() {
+                steering::notify_inbox(paths, record.lane);
+            }
+            Ok(committed)
         },
     )
 }
@@ -422,24 +426,19 @@ fn applicability_context(
     Ok(context)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the test seam names both durable commit and disposable publication"
-)]
-fn recognize_with<C, P>(
+/// [`recognize`] with `commit_write` committing each proposal and announcing
+/// its openings.
+fn recognize_with<C>(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     bag: &taste::Bag,
     steering_config: &steer::Config,
     mut judge: Option<&mut dyn Adjudicator>,
     record: &lane::capture::CaptureRecord,
     mut commit_write: C,
-    mut publish: P,
 ) -> CommandResult<()>
 where
     C: FnMut(&Bus, &[Opening], JournalWrite) -> CommandResult<JournalCommit>,
-    P: FnMut(&Bus, &RuntimePaths, &ResidencyHead, CanonicalUuid) -> CommandResult<()>,
 {
     if !bag.tastes().iter().any(taste::Taste::enabled) || !has_authored_prose(record) {
         return Ok(());
@@ -469,35 +468,21 @@ where
             return Ok(());
         }
 
-        let minted_micros = bus
-            .read(|read| read.steering_minted_micros())
-            .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
-        let at = current_instant()?;
-        let expires = expiry(at, steering_config.expiry().get())?;
+        let basis = Basis::read(
+            bus,
+            steering_config,
+            epoch,
+            origin,
+            record.lane,
+            record.occupant,
+            anchor,
+        )?;
         let proposal = if let Some(adjudicator) = judge.as_deref_mut() {
-            judged_recognition_proposal(
-                epoch,
-                origin,
-                record,
-                anchor,
-                unsuppressed,
-                minted_micros,
-                at,
-                expires,
-                &mut decision_cache,
-                adjudicator,
-            )?
+            judged_recognition_proposal(&basis, unsuppressed, &mut decision_cache, adjudicator)?
         } else {
             Some(reminder_proposal(
-                epoch,
-                origin,
-                record.lane,
-                record.occupant,
-                anchor,
+                &basis,
                 one_candidate_per_warning(unsuppressed),
-                minted_micros,
-                at,
-                expires,
             )?)
         };
         let Some((openings, proposal)) = proposal else {
@@ -505,15 +490,7 @@ where
         };
 
         match commit_write(bus, &openings, proposal) {
-            Ok(_) => {
-                // The shared fold authority turns an inbox failure into durable
-                // parked progress. Only failure to record either publication
-                // or parking remains an error here.
-                if !openings.is_empty() {
-                    publish(bus, paths, observed.body(), record.lane)?;
-                }
-                return Ok(());
-            }
+            Ok(_) => return Ok(()),
             Err(Outcome::Refusal(_)) if attempt + 1 < COMMIT_RETRIES => {
                 // A command or duplicate capture may have won between the
                 // optimistic read and the guarded commit. Rebuild from the
@@ -534,55 +511,76 @@ fn one_candidate_per_warning(candidates: Vec<Candidate>) -> Vec<Candidate> {
         .collect()
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "proposal construction names the authority snapshot, indexed key clock, and cache boundary"
-)]
-fn judged_recognition_proposal(
-    epoch: CanonicalUuid,
-    origin: wire::Origin,
-    record: &lane::capture::CaptureRecord,
-    anchor: Seq,
-    unsuppressed: Vec<Candidate>,
-    minted_micros: Option<i64>,
-    at: Instant,
-    expires: Instant,
-    decision_cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
-    adjudicator: &mut dyn Adjudicator,
-) -> CommandResult<Option<(Vec<Opening>, JournalWrite)>> {
-    let decisions = adjudicate_candidates(unsuppressed, anchor, decision_cache, adjudicator);
-    if decisions.is_empty() {
-        return Ok(None);
-    }
-    judged_proposal(
-        epoch,
-        origin,
-        record.lane,
-        record.occupant,
-        anchor,
-        decisions,
-        minted_micros,
-        at,
-        expires,
-    )
-    .map(Some)
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the proposal binds one judged capture epoch and its indexed key clock"
-)]
-fn judged_proposal(
+/// The authority one taste proposal binds: the capture's occupant and
+/// compaction anchor under `epoch`, the anchor's origin, and the steering key
+/// clock and instants every opening it mints carries.
+struct Basis {
     epoch: CanonicalUuid,
     origin: wire::Origin,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     anchor: Seq,
-    decisions: Vec<JudgedCandidate>,
     minted_micros: Option<i64>,
     at: Instant,
     expires: Instant,
+}
+
+impl Basis {
+    /// Read the steering key clock and stamp one proposal attempt now.
+    fn read(
+        bus: &Bus,
+        steering_config: &steer::Config,
+        epoch: CanonicalUuid,
+        origin: wire::Origin,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        anchor: Seq,
+    ) -> CommandResult<Self> {
+        let minted_micros = bus
+            .read(|read| read.steering_minted_micros())
+            .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
+        let at = current_instant()?;
+        let expires = expiry(at, steering_config.expiry().get())?;
+        Ok(Self {
+            epoch,
+            origin,
+            lane,
+            occupant,
+            anchor,
+            minted_micros,
+            at,
+            expires,
+        })
+    }
+}
+
+fn judged_recognition_proposal(
+    basis: &Basis,
+    unsuppressed: Vec<Candidate>,
+    decision_cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
+    adjudicator: &mut dyn Adjudicator,
+) -> CommandResult<Option<(Vec<Opening>, JournalWrite)>> {
+    let decisions = adjudicate_candidates(unsuppressed, basis.anchor, decision_cache, adjudicator);
+    if decisions.is_empty() {
+        return Ok(None);
+    }
+    judged_proposal(basis, decisions).map(Some)
+}
+
+fn judged_proposal(
+    basis: &Basis,
+    decisions: Vec<JudgedCandidate>,
 ) -> CommandResult<(Vec<Opening>, JournalWrite)> {
+    let &Basis {
+        epoch,
+        ref origin,
+        lane,
+        occupant,
+        anchor,
+        minted_micros,
+        at,
+        expires,
+    } = basis;
     let openings = openings(
         decisions
             .iter()
@@ -652,21 +650,20 @@ fn taste_decision(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the proposal binds one reminder capture epoch and its indexed key clock"
-)]
 fn reminder_proposal(
-    epoch: CanonicalUuid,
-    origin: wire::Origin,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    anchor: Seq,
+    basis: &Basis,
     candidates: Vec<Candidate>,
-    minted_micros: Option<i64>,
-    at: Instant,
-    expires: Instant,
 ) -> CommandResult<(Vec<Opening>, JournalWrite)> {
+    let &Basis {
+        epoch,
+        ref origin,
+        lane,
+        occupant,
+        anchor,
+        minted_micros,
+        at,
+        expires,
+    } = basis;
     let openings = openings(candidates, minted_micros)?;
     let mut proposal = JournalWrite::new(
         Actor::Spice,
@@ -789,22 +786,16 @@ pub(super) fn complete_judgment(
         if decisions.is_empty() {
             return Ok(());
         }
-        let minted_micros = bus
-            .read(|read| read.steering_minted_micros())
-            .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
-        let at = current_instant()?;
-        let expires = expiry(at, steering_config.expiry().get())?;
-        let (openings, proposal) = judged_proposal(
+        let basis = Basis::read(
+            bus,
+            steering_config,
             epoch,
             origin,
             completed.prepared.lane,
             completed.prepared.occupant,
             completed.prepared.anchor,
-            decisions,
-            minted_micros,
-            at,
-            expires,
         )?;
+        let (openings, proposal) = judged_proposal(&basis, decisions)?;
         match commit(bus, proposal) {
             Ok(_) => {
                 if !openings.is_empty() {

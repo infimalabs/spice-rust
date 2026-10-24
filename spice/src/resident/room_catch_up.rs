@@ -130,14 +130,15 @@ pub(in crate::resident) fn reconcile(
     seats: &Seats,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    reconcile_selected(
+    reconcile_commit(
         bus,
         paths,
         config,
         seats,
-        true,
-        &BTreeSet::new(),
-        &BTreeSet::new(),
+        &Changes {
+            authority: true,
+            ..Changes::default()
+        },
         diagnostic,
     )
 }
@@ -154,35 +155,15 @@ pub(in crate::resident) fn reconcile_commit(
     changes: &Changes,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    if !changes.authority && changes.lanes.is_empty() && changes.rooms.is_empty() {
+    let Changes {
+        authority: all,
+        lanes,
+        rooms,
+    } = changes;
+    let all = *all;
+    if !all && lanes.is_empty() && rooms.is_empty() {
         return Ok(());
     }
-    reconcile_selected(
-        bus,
-        paths,
-        config,
-        seats,
-        changes.authority,
-        &changes.lanes,
-        &changes.rooms,
-        diagnostic,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "catch-up reconciliation reads the bus, paths, config, seats, and its lane and room selection"
-)]
-fn reconcile_selected(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    config: &SurfaceConfig,
-    seats: &Seats,
-    all: bool,
-    lanes: &BTreeSet<CanonicalUuid>,
-    rooms: &BTreeSet<TaskStamp>,
-    diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
     let selected_occupant = seats.lanes().into_iter().any(|lane| {
         seats.occupant(lane).is_some() && (all || lanes.contains(&lane) || !rooms.is_empty())
     });
@@ -378,10 +359,7 @@ fn plan(
     rooms: Option<&BTreeSet<TaskStamp>>,
 ) -> CommandResult<Option<Notice>> {
     let after = cursor(bus, lane)?;
-    let mut sources = Vec::new();
-    let mut attention = Vec::new();
-    let mut presented = BTreeMap::new();
-    let mut handles = BTreeMap::new();
+    let mut gathered = Gathered::default();
     if let Some(rooms) = rooms {
         for room in rooms {
             let index = planning.rooms.get(room).ok_or_else(|| {
@@ -391,34 +369,17 @@ fn plan(
                 )
             })?;
             let entry = &planning.entries[*index];
-            append_room(
-                bus,
-                paths,
-                lane,
-                planning,
-                entry,
-                after,
-                &mut sources,
-                &mut attention,
-                &mut presented,
-            )?;
-            handles.insert(room.clone(), entry.handle().clone());
+            append_room(bus, paths, lane, planning, entry, after, &mut gathered)?;
+            gathered
+                .handles
+                .insert(room.clone(), entry.handle().clone());
         }
     } else {
         for entry in &planning.entries {
-            let room = entry.born().clone();
-            append_room(
-                bus,
-                paths,
-                lane,
-                planning,
-                entry,
-                after,
-                &mut sources,
-                &mut attention,
-                &mut presented,
-            )?;
-            handles.insert(room, entry.handle().clone());
+            append_room(bus, paths, lane, planning, entry, after, &mut gathered)?;
+            gathered
+                .handles
+                .insert(entry.born().clone(), entry.handle().clone());
         }
     }
     let mut owed_room = None;
@@ -433,20 +394,23 @@ fn plan(
         && let Some(index) = planning.rooms.get(&owed.design)
     {
         let entry = &planning.entries[*index];
-        if !attention
+        if !gathered
+            .attention
             .iter()
             .any(|view: &spice::rooms::RoomAttention| view.room == owed.design)
         {
-            attention.push(room_attention(bus, lane, planning, &owed.design)?);
+            gathered
+                .attention
+                .push(room_attention(bus, lane, planning, &owed.design)?);
         }
         let text = spice::rooms::awareness::request_text(&owed.request);
-        sources.push(CatchUpSource {
+        gathered.sources.push(CatchUpSource {
             seq: owed.at,
             room: owed.design.clone(),
             kind: CatchUpKind::Invitation,
             bytes: text.len(),
         });
-        presented.insert(
+        gathered.presented.insert(
             owed.at,
             Presented {
                 room: owed.design.clone(),
@@ -454,11 +418,19 @@ fn plan(
                 item: Item::Invitation(text),
             },
         );
-        handles.insert(owed.design.clone(), entry.handle().clone());
+        gathered
+            .handles
+            .insert(owed.design.clone(), entry.handle().clone());
         owed_room = Some(owed.design);
     }
-    let selected = select_catch_up(lane, after, &attention, sources, CatchUpBudget::STANDARD)
-        .map_err(|error| store_fault("room::catch-up-authority-invalid", &error.to_string()))?;
+    let selected = select_catch_up(
+        lane,
+        after,
+        &gathered.attention,
+        std::mem::take(&mut gathered.sources),
+        CatchUpBudget::STANDARD,
+    )
+    .map_err(|error| store_fault("room::catch-up-authority-invalid", &error.to_string()))?;
     let Some(through) = selected.through else {
         return Ok(None);
     };
@@ -466,9 +438,7 @@ fn plan(
         lane,
         through,
         &selected,
-        &presented,
-        &attention,
-        &handles,
+        &gathered,
         owed_room.as_ref(),
         &planning.entries,
     );
@@ -479,23 +449,34 @@ fn plan(
     }))
 }
 
+/// Everything the rooms shown to one lane contribute to its notice: the
+/// catch-up sources to select from, each room's attention, each source's
+/// presentation, and each room's handle.
+#[derive(Default)]
+struct Gathered {
+    sources: Vec<CatchUpSource>,
+    attention: Vec<spice::rooms::RoomAttention>,
+    presented: BTreeMap<Seq, Presented>,
+    handles: BTreeMap<TaskStamp, TaskHandle>,
+}
+
 /// The notice text for `selected`: each publication or owed Design request
 /// under its room, then why `lane` listens to each room shown and, for
 /// `owed`'s room, how it declines the request.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one notice renders its selection beside the presented items, attention, handles, and owed request"
-)]
 fn render(
     lane: CanonicalUuid,
     through: Seq,
     selected: &spice::rooms::CatchUp,
-    presented: &BTreeMap<Seq, Presented>,
-    attention: &[spice::rooms::RoomAttention],
-    handles: &BTreeMap<TaskStamp, TaskHandle>,
+    gathered: &Gathered,
     owed: Option<&TaskStamp>,
     entries: &[board::Entry],
 ) -> String {
+    let Gathered {
+        presented,
+        attention,
+        handles,
+        ..
+    } = gathered;
     let mut text = String::from(
         "<system-notice>\n# Room catch-up\nBounded background items for rooms this lane currently listens to:\n",
     );
@@ -542,7 +523,6 @@ fn render(
     text
 }
 
-#[allow(clippy::too_many_arguments)]
 fn append_room(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -550,9 +530,7 @@ fn append_room(
     planning: &Planning,
     entry: &board::Entry,
     after: Option<Seq>,
-    sources: &mut Vec<CatchUpSource>,
-    attention: &mut Vec<spice::rooms::RoomAttention>,
-    presented: &mut BTreeMap<Seq, Presented>,
+    gathered: &mut Gathered,
 ) -> CommandResult<()> {
     let room = entry.born().clone();
     let room_attention = room_attention(bus, lane, planning, &room)?;
@@ -581,7 +559,7 @@ fn append_room(
     for publication in projections {
         let seq = publication.seq();
         let display = publication.to_string();
-        sources.push(CatchUpSource {
+        gathered.sources.push(CatchUpSource {
             seq,
             room: room.clone(),
             kind: CatchUpKind::Publication {
@@ -592,7 +570,7 @@ fn append_room(
             },
             bytes: display.len(),
         });
-        presented.insert(
+        gathered.presented.insert(
             seq,
             Presented {
                 room: room.clone(),
@@ -601,7 +579,7 @@ fn append_room(
             },
         );
     }
-    attention.push(room_attention);
+    gathered.attention.push(room_attention);
     Ok(())
 }
 

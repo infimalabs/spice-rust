@@ -47,35 +47,29 @@ impl Runtime {
         &mut self,
         bus: &Bus,
         epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
+        exit: lane::capture::CaptureExit,
         failure: &str,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
         let now = current_instant()?;
-        self.observe_vendor_failure_at(bus, epoch, lane, occupant, failure, now, diagnostic)
+        self.observe_vendor_failure_at(bus, epoch, exit, failure, now, diagnostic)
     }
 
     /// [`Self::observe_vendor_failure`] with the clock supplied, so the hold
     /// deadline a fixture asserts is the deadline the reducer was handed.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one hold crosses the journal, the reducer, the clock, and the diagnostic"
-    )]
     pub(super) fn observe_vendor_failure_at(
         &mut self,
         bus: &Bus,
         epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-        occupant: CanonicalUuid,
+        exit: lane::capture::CaptureExit,
         failure: &str,
         now: Instant,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
         let until = hold_deadline(self.hold, now)?;
-        let evidence = vendor_failure_evidence(occupant, failure);
-        let input = vendor_failure_input(bus, epoch, lane)?;
-        let Some(held) = self.holds.failed(lane, evidence, until, input) else {
+        let evidence = vendor_failure_evidence(exit.occupant, failure);
+        let input = vendor_failure_input(bus, epoch, exit.lane)?;
+        let Some(held) = self.holds.failed(exit.lane, evidence, until, input) else {
             return Ok(());
         };
         self.commit_hold(bus, epoch, held, diagnostic)

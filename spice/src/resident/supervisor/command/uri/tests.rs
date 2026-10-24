@@ -30,10 +30,7 @@ fn driver(
     let (ended, exits) = mpsc::channel();
     let driver = Driver::with_server(
         Vec::new(),
-        || None,
-        || None,
-        String::new,
-        || true,
+        crate::resident::supervisor::command::Readers::default(),
         Box::new(move |url: &str, access: Access<'_>| {
             ANSWERING.with(|answering| *answering.borrow_mut() = Some(Ended(ended.clone())));
             serve(url, access)

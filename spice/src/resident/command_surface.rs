@@ -626,16 +626,7 @@ impl<'a> Surface<'a> {
         pending: lifecycle::PendingLaunch,
         launched: super::CommandResult<super::supervisor::Launch>,
     ) -> super::CommandResult<Option<CanonicalUuid>> {
-        lifecycle.complete_launch(
-            self.bus,
-            self.repository,
-            self.paths,
-            self.epoch,
-            seats,
-            diagnostic,
-            pending,
-            launched,
-        )
+        lifecycle.complete_launch(&self.resident(), seats, diagnostic, pending, launched)
     }
 
     pub(super) fn notify_inbox(&self, lane: CanonicalUuid) {
@@ -646,6 +637,22 @@ impl<'a> Surface<'a> {
         self.epoch
     }
 
+    pub(super) const fn bus(&self) -> &'a Bus {
+        self.bus
+    }
+
+    fn resident(&self) -> lifecycle::Resident<'_> {
+        lifecycle::Resident {
+            bus: self.bus,
+            repository: self.repository,
+            paths: self.paths,
+            epoch: self.epoch,
+            lane_runtime: &self.lane,
+            config: self.config,
+            profiles: self.profiles.get().map(AsRef::as_ref),
+        }
+    }
+
     pub(super) fn reconcile_lifecycle(
         &self,
         lifecycle: &mut lifecycle::Runtime,
@@ -653,18 +660,7 @@ impl<'a> Surface<'a> {
         launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> super::CommandResult<Option<lifecycle::WakeDeadline>> {
-        lifecycle.reconcile(
-            self.bus,
-            self.repository,
-            self.paths,
-            self.epoch,
-            seats,
-            &self.lane,
-            self.config,
-            self.profiles.get().map(AsRef::as_ref),
-            launches,
-            diagnostic,
-        )
+        lifecycle.reconcile(&self.resident(), seats, launches, diagnostic)
     }
 
     pub(super) fn observe_lifecycle_death(

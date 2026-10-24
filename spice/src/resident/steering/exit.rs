@@ -248,7 +248,6 @@ fn dispose_head(
         pending,
         disposition,
         recognition.answer.as_deref(),
-        at,
     )?;
     commit(bus, proposal).map_err(typed_outcome)?;
     Ok((disposition, reply))

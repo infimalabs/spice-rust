@@ -1,23 +1,34 @@
 use super::*;
 
+/// One reconciliation's view of the board every vacant lane selects from;
+/// `'e` is the projection the selected task borrows from.
+pub(super) struct BoardView<'a, 'e> {
+    pub(super) snapshot: &'a bus::TaskSnapshot,
+    pub(super) entries: &'e [Entry],
+    pub(super) selection: &'a board::SelectionIndex,
+    pub(super) ready_at: &'a BTreeMap<TaskStamp, Instant>,
+    pub(super) allocation: &'a board::NextConfig,
+    pub(super) environment: &'a wire::Environment,
+    pub(super) now: Instant,
+}
+
 /// Select current work, with the task selected, or retain the exact deadline
 /// of a temporarily blocked phase handoff so the resident reconciles when its
 /// prior owner becomes valid.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "selection reads the snapshot, index, readiness, actor, team, allocation, environment, and clock"
-)]
-pub(super) fn selected_ready<'a>(
-    snapshot: &bus::TaskSnapshot,
-    entries: &'a [Entry],
-    selection: &board::SelectionIndex,
-    ready_at: &BTreeMap<TaskStamp, Instant>,
+pub(super) fn selected_ready<'e>(
+    view: &BoardView<'_, 'e>,
     actor: &Actor,
     subscription: &wire::TeamSubscription,
-    allocation: &board::NextConfig,
-    environment: &wire::Environment,
-    now: Instant,
-) -> CommandResult<(Option<SelectedReady>, Option<&'a Entry>)> {
+) -> CommandResult<(Option<SelectedReady>, Option<&'e Entry>)> {
+    let &BoardView {
+        snapshot,
+        entries,
+        selection,
+        ready_at,
+        allocation,
+        environment,
+        now,
+    } = view;
     let recent_cell = snapshot.recent_claim_cell(actor);
     let satisfied = selection.resolved();
     let selected = board::select_with_index_at(

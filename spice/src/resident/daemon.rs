@@ -347,9 +347,11 @@ impl SpawnedLaunch {
             &mut self.child,
             self.observer,
             self.state.runtime(),
-            self.state.serve(),
-            self.baseline.as_deref(),
-            self.token.as_deref(),
+            &Arrival {
+                serve: self.state.serve(),
+                baseline: self.baseline.as_deref(),
+                token: self.token.as_deref(),
+            },
             self.state.resident_log(),
             &mut self.parent_handoff,
         );
@@ -560,17 +562,11 @@ fn open_log(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the waiter owns one fixed launch observation"
-)]
 fn wait_for_ready(
     child: &mut Child,
     observer: DirectObserver,
     watched: &Path,
-    serve: &Path,
-    baseline: Option<&[u8]>,
-    token: Option<&str>,
+    arrival: &Arrival<'_>,
     log_path: &Path,
     status: &mut Channel,
 ) -> Result<serve::Discovery, Option<Outcome<()>>> {
@@ -583,7 +579,7 @@ fn wait_for_ready(
     wait_for_change(observer, sender.clone(), Signal::woke);
     wait_for_exit(child.id(), sender.clone());
 
-    if let Some(discovery) = candidate(serve, baseline, token)? {
+    if let Some(discovery) = arrival.candidate()? {
         return Ok(discovery);
     }
     loop {
@@ -612,13 +608,13 @@ fn wait_for_ready(
                         &error.to_string(),
                     ))
                 })?;
-                if let Some(discovery) = candidate(serve, baseline, token)? {
+                if let Some(discovery) = arrival.candidate()? {
                     return Ok(discovery);
                 }
                 wait_for_change(next, sender.clone(), Signal::woke);
             }
             Ok(Signal::Exited) => {
-                if let Some(discovery) = candidate(serve, baseline, token)? {
+                if let Some(discovery) = arrival.candidate()? {
                     return Ok(discovery);
                 }
                 let _ = child.wait();
@@ -673,31 +669,37 @@ fn arrival_horizon(runtime: &Path) -> Duration {
     ARRIVAL_HORIZON
 }
 
-fn candidate(
-    serve: &Path,
-    baseline: Option<&[u8]>,
-    token: Option<&str>,
-) -> Result<Option<serve::Discovery>, Option<Outcome<()>>> {
-    let Some(bytes) = read_optional(serve).map_err(|error| {
-        Some(environment_fault(
-            "resident::daemon-discovery-unavailable",
-            &error.to_string(),
-        ))
-    })?
-    else {
-        return Ok(None);
-    };
-    if baseline == Some(bytes.as_slice()) {
-        return Ok(None);
+/// The discovery a launch waits for: a probed publication at `serve` that
+/// differs from the `baseline` present before launch.
+struct Arrival<'a> {
+    serve: &'a Path,
+    baseline: Option<&'a [u8]>,
+    token: Option<&'a str>,
+}
+
+impl Arrival<'_> {
+    fn candidate(&self) -> Result<Option<serve::Discovery>, Option<Outcome<()>>> {
+        let Some(bytes) = read_optional(self.serve).map_err(|error| {
+            Some(environment_fault(
+                "resident::daemon-discovery-unavailable",
+                &error.to_string(),
+            ))
+        })?
+        else {
+            return Ok(None);
+        };
+        if self.baseline == Some(bytes.as_slice()) {
+            return Ok(None);
+        }
+        let discovery = wire::decode::<serve::Discovery>(&bytes).map_err(|error| {
+            Some(environment_fault(
+                "resident::daemon-discovery-invalid",
+                &error.to_string(),
+            ))
+        })?;
+        probe(&discovery, self.token).map_err(Some)?;
+        Ok(Some(discovery))
     }
-    let discovery = wire::decode::<serve::Discovery>(&bytes).map_err(|error| {
-        Some(environment_fault(
-            "resident::daemon-discovery-invalid",
-            &error.to_string(),
-        ))
-    })?;
-    probe(&discovery, token).map_err(Some)?;
-    Ok(Some(discovery))
 }
 
 fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {

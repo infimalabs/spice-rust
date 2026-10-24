@@ -138,10 +138,6 @@ fn resolve_cancel(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one renewal commit carries the complete admitted command boundary"
-)]
 fn commit_set(
     bus: &Bus,
     paths: &RuntimePaths,

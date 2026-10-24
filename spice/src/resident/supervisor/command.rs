@@ -55,6 +55,27 @@ type ResumeReader = Box<dyn Fn() -> String + Send + Sync>;
 /// Whether the journal's residency head seats this driver's occupant.
 type SeatedReader = Box<dyn Fn() -> bool + Send + Sync>;
 
+/// What a driver reads of its occupant's durable state.
+struct Readers {
+    inbox: InboxReader,
+    briefing: BriefingReader,
+    resume: ResumeReader,
+    seated: SeatedReader,
+}
+
+/// Reads of an occupant with no steering, briefing, or resume notice, seated.
+#[cfg(test)]
+impl Default for Readers {
+    fn default() -> Self {
+        Self {
+            inbox: Box::new(|| None),
+            briefing: Box::new(|| None),
+            resume: Box::new(String::new),
+            seated: Box::new(|| true),
+        }
+    }
+}
+
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
     read_inbox: InboxReader,
@@ -287,36 +308,37 @@ impl<W: Write + Send + 'static> Driver<W> {
         let seating = terminal.clone();
         Ok(Self::with_server(
             stdin,
-            move || inbox.read(),
-            move || briefing.briefing(),
-            move || sessions.resume(),
-            move || seating.as_ref().is_none_or(Terminal::seated),
+            Readers {
+                inbox: Box::new(move || inbox.read()),
+                briefing: Box::new(move || briefing.briefing()),
+                resume: Box::new(move || sessions.resume()),
+                seated: Box::new(move || seating.as_ref().is_none_or(Terminal::seated)),
+            },
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
         ))
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the command server owns each independent reader, the URI server, the seal, and the terminal"
-    )]
     fn with_server(
         stdin: W,
-        read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
-        read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
-        read_resume: impl Fn() -> String + Send + Sync + 'static,
-        read_seated: impl Fn() -> bool + Send + Sync + 'static,
+        readers: Readers,
         uri_server: uri::UriServer,
         seal: steer::Key,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
+        let Readers {
+            inbox,
+            briefing,
+            resume,
+            seated,
+        } = readers;
         Arc::new(Self {
             stdin: Mutex::new(Some(stdin)),
-            read_inbox: Box::new(read_inbox),
-            read_briefing: Box::new(read_briefing),
-            read_resume: Box::new(read_resume),
-            read_seated: Box::new(read_seated),
+            read_inbox: inbox,
+            read_briefing: briefing,
+            read_resume: resume,
+            read_seated: seated,
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             room_catch_up_sent: Mutex::new(None),

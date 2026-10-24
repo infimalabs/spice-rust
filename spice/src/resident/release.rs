@@ -38,22 +38,7 @@ pub(super) fn dispatch_release_publish(
     let crate::release_command::PublicationState::Fresh { proof } = prepared.state else {
         unreachable!("published state returned above")
     };
-    let origin = prepared
-        .snapshot
-        .facts()
-        .at(proof)
-        .map(|fact| fact.origin.clone())
-        .expect("observed proof position belongs to the same canonical snapshot");
-    let proposal = match propose_release_publish(
-        paths,
-        command,
-        publish,
-        prepared.release,
-        prepared.state,
-        proof,
-        origin,
-        epoch,
-    ) {
+    let proposal = match propose_release_publish(paths, command, publish, prepared, proof, epoch) {
         Ok(proposal) => proposal,
         Err(outcome) => return outcome,
     };
@@ -126,17 +111,24 @@ fn prepare_release_publish(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn propose_release_publish(
     paths: &RuntimePaths,
     command: &wire::AdmittedCommand,
     publish: &ReleasePublish,
-    release: crate::release_command::AdmittedRelease,
-    state: crate::release_command::PublicationState,
+    prepared: PreparedReleasePublish,
     proof: Seq,
-    origin: wire::Origin,
     epoch: CanonicalUuid,
 ) -> Result<JournalWrite, Outcome<CommandAnswer>> {
+    let PreparedReleasePublish {
+        release,
+        snapshot,
+        state,
+    } = prepared;
+    let origin = snapshot
+        .facts()
+        .at(proof)
+        .map(|fact| fact.origin.clone())
+        .expect("observed proof position belongs to the same canonical snapshot");
     let mut proposal = write_at_origin(
         command.actor().clone(),
         origin,

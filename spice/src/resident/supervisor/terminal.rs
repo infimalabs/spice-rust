@@ -218,15 +218,17 @@ impl Terminal {
         };
         let (argv, diagnostic) = self.argv(call);
         let started = self.jobs.start(
-            &call.command,
-            argv,
-            &self.cwd,
-            &self.environment,
-            call.lifetime.deadline(),
+            job::Launch {
+                command: &call.command,
+                argv,
+                cwd: &self.cwd,
+                environment: &self.environment,
+                timeout: call.lifetime.deadline(),
+                notices: &call.notices,
+                events: call.events,
+            },
             task,
             service,
-            &call.notices,
-            call.events,
         );
         let job = match started {
             Ok(job) => job,

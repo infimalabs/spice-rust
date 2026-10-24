@@ -129,7 +129,7 @@ async fn assert_pending_wakes_are_request_local(
     lifecycle: &mut lifecycle::Runtime,
     launches: &mut super::super::super::launch_runtime::Runtime,
 ) {
-    let (server, mut control) = command_server(fixture, bus).await;
+    let (server, control) = command_server(fixture, bus).await;
     let address = server.local_addr().expect("command address reads");
     let (shutdown, stopped) = oneshot::channel();
     let serving = tokio::spawn(server.up_until(async move {
@@ -140,20 +140,24 @@ async fn assert_pending_wakes_are_request_local(
     let operator = fixture.occupant;
     let client =
         tokio::task::spawn_blocking(move || exercise_commands(address, epoch, lane, operator));
-    let live_changes =
-        lane_surface::LiveChanges::start(bus, &fixture.paths).expect("live changes start");
+    let mut controls = super::super::control_dispatch::Controls {
+        control,
+        inbox_deliveries: InboxDeliveries::new(),
+        live_changes: lane_surface::LiveChanges::start(bus, &fixture.paths)
+            .expect("live changes start"),
+    };
     for _ in 0..3 {
-        let request = tokio::time::timeout(std::time::Duration::from_secs(2), control.recv())
-            .await
-            .expect("the client submits the next command");
+        let request =
+            tokio::time::timeout(std::time::Duration::from_secs(2), controls.control.recv())
+                .await
+                .expect("the client submits the next command");
         let dispatched = super::super::control_dispatch::dispatch_control(
             command_surface,
             seats,
             lifecycle,
-            &mut control,
-            request,
             launches,
-            &live_changes,
+            &mut controls,
+            request,
             &mut Vec::new(),
         )
         .await

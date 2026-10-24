@@ -1,15 +1,6 @@
 //! Recognition transaction races.
 
 use super::*;
-fn notify(
-    _: &Bus,
-    paths: &RuntimePaths,
-    _: &ResidencyHead,
-    lane: CanonicalUuid,
-) -> CommandResult<()> {
-    steering::notify_inbox(paths, lane);
-    Ok(())
-}
 
 #[test]
 fn transaction_guard_retries_after_both_key_and_directive_command_races() {
@@ -20,7 +11,6 @@ fn transaction_guard_retries_after_both_key_and_directive_command_races() {
 
     recognize_with(
         &fixture.bus,
-        &fixture.paths,
         fixture.epoch,
         &bag,
         &steer::Config::default(),
@@ -47,7 +37,6 @@ fn transaction_guard_retries_after_both_key_and_directive_command_races() {
             }
             commit(bus, proposal)
         },
-        notify,
     )
     .expect("guard retries from current authority");
 
@@ -76,7 +65,6 @@ fn transaction_guard_rebuilds_when_compaction_moves_after_recognition() {
 
     recognize_with(
         &fixture.bus,
-        &fixture.paths,
         fixture.epoch,
         &bag,
         &steer::Config::default(),
@@ -99,7 +87,6 @@ fn transaction_guard_rebuilds_when_compaction_moves_after_recognition() {
             }
             commit(bus, proposal)
         },
-        notify,
     )
     .expect("epoch movement rebuilds");
 
@@ -117,7 +104,6 @@ fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
 
     recognize_with(
         &fixture.bus,
-        &fixture.paths,
         fixture.epoch,
         &bag,
         &steer::Config::default(),
@@ -137,7 +123,6 @@ fn transaction_guard_treats_a_concurrent_same_content_winner_as_success() {
             }
             commit(bus, proposal)
         },
-        notify,
     )
     .expect("the concurrent winner suppresses retry work");
 
@@ -167,7 +152,6 @@ fn concurrent_adjudication_replay_records_one_judgment_and_one_directive() {
 
     recognize_with(
         &fixture.bus,
-        &fixture.paths,
         fixture.epoch,
         &bag,
         &steer::Config::default(),
@@ -187,7 +171,6 @@ fn concurrent_adjudication_replay_records_one_judgment_and_one_directive() {
             }
             commit(bus, proposal)
         },
-        notify,
     )
     .expect("the concurrent judgment winner suppresses replay work");
 

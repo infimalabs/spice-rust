@@ -7,7 +7,7 @@ mod launch_completion;
 use std::sync::Arc;
 
 use control_dispatch::{
-    ControlDeliveryTurn, control_delivery_turn, dispatch_control_delivery_burst,
+    ControlDeliveryTurn, Controls, control_delivery_turn, dispatch_control_delivery_burst,
 };
 
 use super::*;
@@ -267,7 +267,7 @@ pub(super) async fn run_surface(
     let StartedSurface {
         capabilities,
         discovery,
-        mut control,
+        control,
         mut publication,
         shutdown,
         mut server_task,
@@ -284,7 +284,7 @@ pub(super) async fn run_surface(
     )
     .await?;
     let channels = capture::channels();
-    let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
+    let door = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
     recover_transcripts(bus, paths, epoch, &config.steering, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
@@ -299,37 +299,34 @@ pub(super) async fn run_surface(
         config,
         &reads,
     );
-    let mut launches = super::launch_runtime::Runtime::new();
+    let mut wakes = Wakes {
+        timers: backgrounds.timers,
+        lifecycle: backgrounds.lifecycle,
+        launches: super::launch_runtime::Runtime::new(),
+        door,
+        reconciliation: lifecycle::Reconciliation::default(),
+    };
+    let mut controls = Controls {
+        control,
+        inbox_deliveries: InboxDeliveries::new(),
+        live_changes: backgrounds.live_changes,
+    };
     let (taste_submitter, taste_completions) = taste_parts(backgrounds.taste_adjudication.as_mut());
     publish_ready_surface(
-        bus,
-        epoch,
         &command_surface,
         seats,
+        &mut wakes,
         progress,
-        &mut backgrounds.timers,
-        &mut backgrounds.lifecycle,
-        &mut supervisor_reports,
-        &mut launches,
         &mut publication,
     )
     .await?;
-    let mut inbox_deliveries = InboxDeliveries::new();
-    let mut lifecycle_reconciliation = lifecycle::Reconciliation::default();
     let Some(message_startup) = await_message_startup(
         &mut message_startup,
-        bus,
         &command_surface,
         seats,
-        &mut backgrounds.lifecycle,
-        &mut backgrounds.timers,
-        &mut launches,
-        &mut supervisor_reports,
-        &mut control,
+        &mut wakes,
+        &mut controls,
         &mut server_task,
-        &mut inbox_deliveries,
-        &mut lifecycle_reconciliation,
-        &backgrounds.live_changes,
         progress,
     )
     .await?
@@ -346,7 +343,6 @@ pub(super) async fn run_surface(
         epoch,
         seats,
         command_surface: &command_surface,
-        control,
         server_task,
         message_publisher,
         message_state,
@@ -357,50 +353,27 @@ pub(super) async fn run_surface(
         records: channels.records,
         failures: channels.failures,
         exits: channels.exits,
-        supervisor_reports,
         diagnostic: progress,
-        timers: backgrounds.timers,
         quota: backgrounds.quota,
         quota_triggers: backgrounds.quota_triggers,
         timer_commits: backgrounds.timer_commits,
-        lifecycle: backgrounds.lifecycle,
-        launches,
-        inbox_deliveries,
-        lifecycle_reconciliation,
-        live_changes: backgrounds.live_changes,
+        wakes,
+        controls,
     }
     .drive(publication, shutdown)
     .await
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "readiness joins the resident's command, timer, lifecycle, and publication owners"
-)]
 async fn publish_ready_surface(
-    bus: &Bus,
-    epoch: CanonicalUuid,
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
+    wakes: &mut Wakes,
     diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    lifecycle: &mut lifecycle::Runtime,
-    door: &mut capture::SupervisorReports,
-    launches: &mut super::launch_runtime::Runtime,
     publication: &mut SurfacePublication<'_>,
 ) -> CommandResult<()> {
-    reconcile_wakes(
-        bus,
-        command_surface,
-        seats,
-        diagnostic,
-        timers,
-        lifecycle,
-        launches,
-        door,
-    )?;
+    wakes.reconcile(command_surface, seats, diagnostic)?;
     command_surface.synchronize_reads_before_publish()?;
-    let residency = current_residency(bus, epoch)?;
+    let residency = current_residency(command_surface.bus(), command_surface.epoch())?;
     tokio::task::yield_now().await;
     publication.publish(command_surface.paths, residency.body(), diagnostic)
 }
@@ -449,24 +422,13 @@ fn start_message_startup(
     Ok(receiver)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "startup admission services the live command and server boundaries"
-)]
 async fn await_message_startup(
     startup: &mut oneshot::Receiver<CommandResult<MessageStartup>>,
-    bus: &Bus,
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
-    lifecycle: &mut lifecycle::Runtime,
-    timers: &mut timers::Runtime,
-    launches: &mut super::launch_runtime::Runtime,
-    door: &mut capture::SupervisorReports,
-    control: &mut serve::axum::Control,
+    wakes: &mut Wakes,
+    controls: &mut Controls,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
-    inbox_deliveries: &mut InboxDeliveries,
-    lifecycle_reconciliation: &mut lifecycle::Reconciliation,
-    live_changes: &lane_surface::LiveChanges,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<Option<MessageStartup>> {
     loop {
@@ -479,27 +441,24 @@ async fn await_message_startup(
                 return ready.map(Some);
             }
             (turn, request) = control_delivery_turn(
-                control, inbox_deliveries, lifecycle_reconciliation.control_enabled(),
+                &mut controls.control,
+                &controls.inbox_deliveries,
+                wakes.reconciliation.control_enabled(),
             ) => match turn {
                 ControlDeliveryTurn::Control => {
-                    reconcile_for_control(
-                        lifecycle_reconciliation, bus, command_surface, seats, diagnostic, timers,
-                        lifecycle, launches, door,
-                    )?;
+                    wakes.settle_for_control(command_surface, seats, diagnostic)?;
                     if dispatch_control_delivery_burst(
-                        command_surface, seats, lifecycle, control, request, inbox_deliveries,
-                        lifecycle_reconciliation, launches, live_changes, diagnostic,
+                        command_surface, seats, wakes, controls, request, diagnostic,
                     ).await? {
                         return Ok(None);
                     }
                 }
                 ControlDeliveryTurn::Delivery => {
-                    deliver_owed_inbox(command_surface, inbox_deliveries).await?;
+                    deliver_owed_inbox(command_surface, &mut controls.inbox_deliveries).await?;
                 }
             },
-            completed = launches.recv() => launch_completion::accept(
-                bus, command_surface, seats, lifecycle, lifecycle_reconciliation,
-                timers, launches, door, diagnostic, completed,
+            completed = wakes.launches.recv() => launch_completion::accept(
+                command_surface, seats, wakes, diagnostic, completed,
             ).await?,
             ending = &mut *server_task => return Err(server_outcome(ending)),
         }
@@ -573,7 +532,6 @@ struct LiveSurface<'s, 'c> {
     epoch: CanonicalUuid,
     seats: &'s mut Seats,
     command_surface: &'s command_surface::Surface<'c>,
-    control: serve::axum::Control,
     server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: serve::stream::MessagePublisher,
     message_state: Arc<std::sync::Mutex<message_surface::MessageState>>,
@@ -584,17 +542,12 @@ struct LiveSurface<'s, 'c> {
     records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
     failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
     exits: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureExit>,
-    supervisor_reports: capture::SupervisorReports,
     diagnostic: &'s mut dyn io::Write,
-    timers: timers::Runtime,
     quota: quota::Runtime,
     quota_triggers: quota::Triggers,
     timer_commits: bus::BroadcastSubscriber,
-    lifecycle: lifecycle::Runtime,
-    launches: super::launch_runtime::Runtime,
-    inbox_deliveries: InboxDeliveries,
-    lifecycle_reconciliation: lifecycle::Reconciliation,
-    live_changes: lane_surface::LiveChanges,
+    wakes: Wakes,
+    controls: Controls,
 }
 
 impl LiveSurface<'_, '_> {
@@ -606,10 +559,10 @@ impl LiveSurface<'_, '_> {
     ) -> CommandResult<()> {
         let mut input_lead = input::Lead::Supervisor;
         while !self.turn(&mut input_lead).await? {
-            self.live_changes.settle_groups(self.bus, self.epoch)?;
+            self.controls
+                .live_changes
+                .settle_groups(self.bus, self.epoch)?;
             reap::present_closed_transcripts(
-                self.bus,
-                self.epoch,
                 self.seats,
                 self.command_surface,
                 &self.message_publisher,
@@ -618,7 +571,7 @@ impl LiveSurface<'_, '_> {
                 self.diagnostic,
             )?;
         }
-        self.timers.synchronize(self.bus)?;
+        self.wakes.timers.synchronize(self.bus)?;
         stop_surface(publication, shutdown, self.server_task).await
     }
 
@@ -633,28 +586,22 @@ impl LiveSurface<'_, '_> {
             // three inputs that can remain continuously ready.
             input = input::next(
                 input_lead,
-                self.supervisor_reports.recv(),
+                self.wakes.door.recv(),
                 control_delivery_turn(
-                    &mut self.control,
-                    &self.inbox_deliveries,
-                    self.lifecycle_reconciliation.control_enabled(),
+                    &mut self.controls.control,
+                    &self.controls.inbox_deliveries,
+                    self.wakes.reconciliation.control_enabled(),
                 ),
                 self.records.recv(),
             ) => match input {
-                input::Input::Supervisor(report) => accept_supervisor_reports(
-                    bus, epoch, self.seats, command_surface, &self.message_publisher,
-                    self.taste_submitter.as_deref_mut(), &mut self.lifecycle,
-                    &mut self.session_compactions, self.supervisor_reports.batch(report),
-                    self.message_state.as_ref(), self.diagnostic,
-                )?,
+                input::Input::Supervisor(report) => {
+                    let reports = self.wakes.door.batch(report);
+                    self.accept_supervisor_reports(reports)?;
+                }
                 input::Input::Control((turn, request)) => {
                     return self.control_turn(turn, request).await;
                 }
-                input::Input::Record(record) => accept_record_turn(
-                    bus, epoch, self.seats, command_surface, &self.message_publisher,
-                    self.taste_submitter.as_deref_mut(), &mut self.session_compactions, record,
-                    self.message_state.as_ref(), self.diagnostic,
-                )?,
+                input::Input::Record(record) => self.accept_record_turn(record)?,
             },
             () = narration::wait(narration_deadline) => accept_narration_turn(
                 bus, epoch, self.seats, command_surface, self.message_state.as_ref(), self.diagnostic,
@@ -663,32 +610,24 @@ impl LiveSurface<'_, '_> {
                 bus, epoch, command_surface, self.taste_submitter.as_deref_mut(), completed?,
             )?,
             failure = self.failures.recv() => accept_failure(
-                bus, epoch, self.seats, command_surface, &mut self.lifecycle, self.diagnostic, failure,
+                bus, epoch, self.seats, command_surface, &mut self.wakes.lifecycle, self.diagnostic,
+                failure,
             )?,
             exit = self.exits.recv() => accept_exit(
-                bus, epoch, self.seats, command_surface, &mut self.lifecycle, self.diagnostic, exit,
+                bus, epoch, self.seats, command_surface, &mut self.wakes.lifecycle, self.diagnostic,
+                exit,
             )?,
-            timer = self.timers.recv() => accept_timer_turn(
-                bus, self.seats, command_surface, &mut self.lifecycle, &mut self.supervisor_reports,
-                self.diagnostic, &mut self.timers, &mut self.lifecycle_reconciliation,
-                &mut self.launches, timer,
+            timer = self.wakes.timers.recv() => self.wakes.accept_timer(
+                command_surface, self.seats, self.diagnostic, timer,
             )?,
             () = self.quota_triggers.wait_periodic() => {
                 request_quota(&mut self.quota, &mut self.quota_triggers);
             }
             completed = self.quota.recv() => self.quota.accept(completed),
-            Some(change) = self.live_changes.recv() => change.record(bus, epoch),
-            committed = self.timer_commits.recv() => accept_commit_turn(
-                bus, self.seats, command_surface, &self.message_publisher, &mut self.lifecycle,
-                &mut self.supervisor_reports, self.message_state.as_ref(), self.diagnostic,
-                &mut self.timers, &mut self.quota, &mut self.quota_triggers,
-                &mut self.lifecycle_reconciliation, &mut self.design_completions,
-                &mut self.launches, committed,
-            )?,
-            completed = self.launches.recv() => launch_completion::accept(
-                bus, command_surface, self.seats, &mut self.lifecycle,
-                &mut self.lifecycle_reconciliation, &mut self.timers, &mut self.launches,
-                &mut self.supervisor_reports, self.diagnostic, completed,
+            Some(change) = self.controls.live_changes.recv() => change.record(bus, epoch),
+            committed = self.timer_commits.recv() => self.accept_commit_turn(committed)?,
+            completed = self.wakes.launches.recv() => launch_completion::accept(
+                command_surface, self.seats, &mut self.wakes, self.diagnostic, completed,
             ).await?,
             ending = &mut self.server_task => return Err(server_outcome(ending)),
         }
@@ -702,33 +641,217 @@ impl LiveSurface<'_, '_> {
         request: Option<serve::axum::ControlRequest>,
     ) -> CommandResult<bool> {
         if let ControlDeliveryTurn::Delivery = turn {
-            deliver_owed_inbox(self.command_surface, &mut self.inbox_deliveries).await?;
+            deliver_owed_inbox(self.command_surface, &mut self.controls.inbox_deliveries).await?;
             return Ok(false);
         }
-        reconcile_for_control(
-            &mut self.lifecycle_reconciliation,
-            self.bus,
-            self.command_surface,
-            self.seats,
-            self.diagnostic,
-            &mut self.timers,
-            &mut self.lifecycle,
-            &mut self.launches,
-            &mut self.supervisor_reports,
-        )?;
+        self.wakes
+            .settle_for_control(self.command_surface, self.seats, self.diagnostic)?;
         dispatch_control_delivery_burst(
             self.command_surface,
             self.seats,
-            &mut self.lifecycle,
-            &mut self.control,
+            &mut self.wakes,
+            &mut self.controls,
             request,
-            &mut self.inbox_deliveries,
-            &mut self.lifecycle_reconciliation,
-            &mut self.launches,
-            &self.live_changes,
             self.diagnostic,
         )
         .await
+    }
+
+    /// Accept one drained batch of supervisor notices in arrival order.
+    fn accept_supervisor_reports(
+        &mut self,
+        reports: Vec<io::Result<super::supervisor::Notice>>,
+    ) -> CommandResult<()> {
+        let batch = begin_message_batch(&self.message_publisher)?;
+        for report in reports {
+            if let Ok(notice) = &report
+                && let Some((lane, occupant)) = message_notice_identity(notice)
+            {
+                let residency = current_residency(self.bus, self.epoch)?;
+                if residency
+                    .body()
+                    .lanes
+                    .iter()
+                    .any(|row| row.lane == lane && row.occupant == Some(occupant))
+                {
+                    self.session_compactions.synchronize(
+                        (residency.body(), lane),
+                        &batch,
+                        self.message_state.as_ref(),
+                        self.diagnostic,
+                    )?;
+                }
+            }
+            self.accept_supervisor_report(&batch, report)?;
+        }
+        commit_message_batch(batch)
+    }
+
+    /// Fold one captured record into its session's compaction state, then present it.
+    fn accept_record_turn(
+        &mut self,
+        record: Option<lane::capture::CaptureRecord>,
+    ) -> CommandResult<()> {
+        let batch = begin_message_batch(&self.message_publisher)?;
+        if let Some(lane) = record.as_ref().map(|record| record.lane) {
+            let residency = current_residency(self.bus, self.epoch)?;
+            self.session_compactions.synchronize(
+                (residency.body(), lane),
+                &batch,
+                self.message_state.as_ref(),
+                self.diagnostic,
+            )?;
+        }
+        self.accept_record(&batch, record)?;
+        commit_message_batch(batch)
+    }
+
+    fn accept_supervisor_report(
+        &mut self,
+        batch: &serve::stream::MessageBatch,
+        report: io::Result<super::supervisor::Notice>,
+    ) -> CommandResult<()> {
+        let (bus, epoch, command_surface) = (self.bus, self.epoch, self.command_surface);
+        let notice = match report {
+            Ok(notice) => notice,
+            Err(error) => {
+                let _ = writeln!(self.diagnostic, "lane supervisor notice refused: {error}");
+                return Ok(());
+            }
+        };
+        if let super::supervisor::Notice::Exited { lane, occupant } = notice {
+            return accept_exit(
+                bus,
+                epoch,
+                self.seats,
+                command_surface,
+                &mut self.wakes.lifecycle,
+                self.diagnostic,
+                Some(lane::capture::CaptureExit { lane, occupant }),
+            );
+        }
+        if let super::supervisor::Notice::Failed {
+            lane,
+            occupant,
+            failure,
+        } = notice
+        {
+            return super::reap::account_failure(
+                bus,
+                epoch,
+                self.seats,
+                &mut self.wakes.lifecycle,
+                lane::capture::CaptureExit { lane, occupant },
+                &failure,
+                self.diagnostic,
+            );
+        }
+        if let super::supervisor::Notice::FastRefused {
+            lane,
+            occupant,
+            refusal,
+        } = notice
+        {
+            lane_surface::record_fast_refusal(bus, epoch, lane, occupant, &refusal);
+            return Ok(());
+        }
+        let residency = current_residency(bus, epoch)?;
+        let Some(record) = accept_ask(command_surface, residency.body(), notice, self.diagnostic)?
+        else {
+            return Ok(());
+        };
+        self.accept_record(batch, Some(record))
+    }
+
+    fn accept_record(
+        &mut self,
+        batch: &serve::stream::MessageBatch,
+        record: Option<lane::capture::CaptureRecord>,
+    ) -> CommandResult<()> {
+        let record = record.ok_or_else(|| {
+            environment_fault(
+                "lane::capture-records-closed",
+                "lane capture record receiver closed",
+            )
+        })?;
+        let command_surface = self.command_surface;
+        let surfaces = CaptureSurfaces::new(
+            command_surface.paths,
+            &command_surface.config.taste,
+            &command_surface.config.steering,
+            batch,
+        )
+        .narration(command_surface.config.lane.narration());
+        let views =
+            message_surface::CaptureViews::new(self.message_state.as_ref(), self.diagnostic);
+        match self.taste_submitter.as_deref_mut() {
+            Some(taste_judge) => message_surface::accept_capture_record_deferred(
+                self.bus,
+                self.epoch,
+                self.seats,
+                &surfaces,
+                taste_judge,
+                &record,
+                views,
+            ),
+            None => accept_capture_record(
+                self.bus, self.epoch, self.seats, &surfaces, None, &record, views,
+            ),
+        }
+    }
+
+    /// Let one journal commit settle the reconciliation and the sweep it may run.
+    ///
+    /// Every presented record commits a fact, so this arm fires throughout a
+    /// lane's ending; the sweep asks the door before it judges any seat.
+    fn accept_commit_turn(
+        &mut self,
+        committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
+    ) -> CommandResult<()> {
+        let (bus, command_surface) = (self.bus, self.command_surface);
+        let (paths, config) = (command_surface.paths, command_surface.config);
+        let message_state = self.message_state.as_ref();
+        let commit =
+            self.wakes
+                .accept_commit(command_surface, self.seats, self.diagnostic, committed)?;
+        if self.quota_triggers.accept_commits(bus)? {
+            self.quota.request();
+        }
+        settle_spoken_acknowledgements(
+            bus,
+            &self.message_publisher,
+            message_state,
+            self.diagnostic,
+        )?;
+        let changes = commit
+            .map(|commit| room_catch_up::changes(bus, commit))
+            .transpose()?;
+        match &changes {
+            Some(changes) => room_catch_up::reconcile_commit(
+                bus,
+                paths,
+                config,
+                self.seats,
+                changes,
+                self.diagnostic,
+            )?,
+            None => room_catch_up::reconcile(bus, paths, config, self.seats, self.diagnostic)?,
+        }
+        message_surface::advance_profile_warming(
+            &bus.reader(),
+            paths,
+            message_state,
+            self.diagnostic,
+        )?;
+        design_input::reconcile(
+            bus,
+            paths,
+            config,
+            self.seats,
+            &mut self.design_completions,
+            message_state,
+            self.diagnostic,
+        )
     }
 }
 
@@ -755,101 +878,6 @@ async fn deliver_owed_inbox_with(
     Ok(())
 }
 
-/// Accept one drained batch of supervisor notices in arrival order.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a batch of supervisor notices crosses the same live capture surfaces as one"
-)]
-fn accept_supervisor_reports(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    command_surface: &command_surface::Surface<'_>,
-    message_publisher: &serve::stream::MessagePublisher,
-    mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
-    lifecycle: &mut lifecycle::Runtime,
-    session_compactions: &mut message_surface::SessionCompactions,
-    reports: Vec<io::Result<super::supervisor::Notice>>,
-    message_state: &std::sync::Mutex<message_surface::MessageState>,
-    diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
-    let batch = begin_message_batch(message_publisher)?;
-    for report in reports {
-        if let Ok(notice) = &report
-            && let Some((lane, occupant)) = message_notice_identity(notice)
-        {
-            let residency = current_residency(bus, epoch)?;
-            if residency
-                .body()
-                .lanes
-                .iter()
-                .any(|row| row.lane == lane && row.occupant == Some(occupant))
-            {
-                session_compactions.synchronize(
-                    (residency.body(), lane),
-                    &batch,
-                    message_state,
-                    diagnostic,
-                )?;
-            }
-        }
-        accept_supervisor_report(
-            bus,
-            epoch,
-            seats,
-            command_surface,
-            &batch,
-            taste_judge.as_deref_mut(),
-            lifecycle,
-            report,
-            message_state,
-            diagnostic,
-        )?;
-    }
-    commit_message_batch(batch)
-}
-
-/// Fold one captured record into its session's compaction state, then present it.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one record crosses the same live capture surfaces as a batch of notices"
-)]
-fn accept_record_turn(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    command_surface: &command_surface::Surface<'_>,
-    message_publisher: &serve::stream::MessagePublisher,
-    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
-    session_compactions: &mut message_surface::SessionCompactions,
-    record: Option<lane::capture::CaptureRecord>,
-    message_state: &std::sync::Mutex<message_surface::MessageState>,
-    diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
-    let batch = begin_message_batch(message_publisher)?;
-    if let Some(lane) = record.as_ref().map(|record| record.lane) {
-        let residency = current_residency(bus, epoch)?;
-        session_compactions.synchronize(
-            (residency.body(), lane),
-            &batch,
-            message_state,
-            diagnostic,
-        )?;
-    }
-    accept_record(
-        bus,
-        epoch,
-        seats,
-        command_surface,
-        &batch,
-        taste_judge,
-        record,
-        message_state,
-        diagnostic,
-    )?;
-    commit_message_batch(batch)
-}
-
 fn message_notice_identity(
     notice: &super::supervisor::Notice,
 ) -> Option<(CanonicalUuid, CanonicalUuid)> {
@@ -860,114 +888,6 @@ fn message_notice_identity(
         | Notice::Failed { lane, occupant, .. } => Some((*lane, *occupant)),
         Notice::Asked { .. } | Notice::FastRefused { .. } => None,
     }
-}
-
-/// Consume one fired timer, then reconcile the lifecycle it may have moved.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a timer turn crosses the timers, the lifecycle, and the door its sweep asks"
-)]
-fn accept_timer_turn(
-    bus: &Bus,
-    seats: &mut Seats,
-    command_surface: &command_surface::Surface<'_>,
-    lifecycle: &mut lifecycle::Runtime,
-    door: &mut capture::SupervisorReports,
-    diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    reconciliation: &mut lifecycle::Reconciliation,
-    launches: &mut super::launch_runtime::Runtime,
-    timer: Option<bus::timer::TimerEvent>,
-) -> CommandResult<()> {
-    let timer = timer.ok_or_else(|| {
-        environment_fault(
-            "bus::timer-events-closed",
-            "the production timer event stream closed while the resident was live",
-        )
-    })?;
-    let fired = timers.consume(bus, timer)?;
-    accept_timer_fired(bus, command_surface, lifecycle, fired)?;
-    reconcile_lifecycle(
-        reconciliation,
-        bus,
-        command_surface,
-        seats,
-        diagnostic,
-        timers,
-        lifecycle,
-        launches,
-        door,
-    )
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one supervisor notice crosses the same live capture surfaces as an in-process record"
-)]
-fn accept_supervisor_report<P: message_surface::AgentMessagePublisher>(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    command_surface: &command_surface::Surface<'_>,
-    message_publisher: &P,
-    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
-    lifecycle: &mut lifecycle::Runtime,
-    report: io::Result<super::supervisor::Notice>,
-    message_state: &std::sync::Mutex<message_surface::MessageState>,
-    diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
-    let notice = match report {
-        Ok(notice) => notice,
-        Err(error) => {
-            let _ = writeln!(diagnostic, "lane supervisor notice refused: {error}");
-            return Ok(());
-        }
-    };
-    if let super::supervisor::Notice::Exited { lane, occupant } = notice {
-        return accept_exit(
-            bus,
-            epoch,
-            seats,
-            command_surface,
-            lifecycle,
-            diagnostic,
-            Some(lane::capture::CaptureExit { lane, occupant }),
-        );
-    }
-    if let super::supervisor::Notice::Failed {
-        lane,
-        occupant,
-        failure,
-    } = notice
-    {
-        return super::reap::account_failure(
-            bus, epoch, seats, lifecycle, lane, occupant, &failure, diagnostic,
-        );
-    }
-    if let super::supervisor::Notice::FastRefused {
-        lane,
-        occupant,
-        refusal,
-    } = notice
-    {
-        lane_surface::record_fast_refusal(bus, epoch, lane, occupant, &refusal);
-        return Ok(());
-    }
-    let residency = current_residency(bus, epoch)?;
-    let Some(record) = accept_ask(command_surface, residency.body(), notice, diagnostic)? else {
-        return Ok(());
-    };
-    accept_record(
-        bus,
-        epoch,
-        seats,
-        command_surface,
-        message_publisher,
-        taste_judge,
-        Some(record),
-        message_state,
-        diagnostic,
-    )
 }
 
 /// Decide a lane's consent request, or hand every other notice on as the
@@ -1100,57 +1020,6 @@ async fn stop_surface(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one capture record crosses all resident-owned fold surfaces"
-)]
-fn accept_record<P: message_surface::AgentMessagePublisher>(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    command_surface: &command_surface::Surface<'_>,
-    message_publisher: &P,
-    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
-    record: Option<lane::capture::CaptureRecord>,
-    message_state: &std::sync::Mutex<message_surface::MessageState>,
-    diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
-    let record = record.ok_or_else(|| {
-        environment_fault(
-            "lane::capture-records-closed",
-            "lane capture record receiver closed",
-        )
-    })?;
-    let surfaces = CaptureSurfaces::new(
-        command_surface.paths,
-        &command_surface.config.taste,
-        &command_surface.config.steering,
-        message_publisher,
-    )
-    .narration(command_surface.config.lane.narration());
-    if let Some(taste_judge) = taste_judge {
-        message_surface::accept_capture_record_deferred(
-            bus,
-            epoch,
-            seats,
-            &surfaces,
-            taste_judge,
-            &record,
-            message_surface::CaptureViews::new(message_state, diagnostic),
-        )
-    } else {
-        accept_capture_record(
-            bus,
-            epoch,
-            seats,
-            &surfaces,
-            None,
-            &record,
-            message_surface::CaptureViews::new(message_state, diagnostic),
-        )
-    }
-}
-
 fn begin_message_batch(
     publisher: &serve::stream::MessagePublisher,
 ) -> CommandResult<serve::stream::MessageBatch> {
@@ -1228,149 +1097,6 @@ fn request_quota(quota: &mut quota::Runtime, triggers: &mut quota::Triggers) {
     quota.request();
 }
 
-/// Let one journal commit settle the reconciliation and the sweep it may run.
-///
-/// Every presented record commits a fact, so this arm fires throughout a
-/// lane's ending; the sweep asks the door before it judges any seat.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a commit turn crosses the message surfaces and the lifecycle it reconciles"
-)]
-fn accept_commit_turn(
-    bus: &Bus,
-    seats: &mut Seats,
-    command_surface: &command_surface::Surface<'_>,
-    message_publisher: &serve::stream::MessagePublisher,
-    lifecycle: &mut lifecycle::Runtime,
-    door: &mut capture::SupervisorReports,
-    message_state: &std::sync::Mutex<message_surface::MessageState>,
-    diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    quota: &mut quota::Runtime,
-    quota_triggers: &mut quota::Triggers,
-    reconciliation: &mut lifecycle::Reconciliation,
-    design_completions: &mut design_awareness::CompletionCursor,
-    launches: &mut super::launch_runtime::Runtime,
-    committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
-) -> CommandResult<()> {
-    let commit = accept_commit(
-        bus,
-        command_surface,
-        seats,
-        diagnostic,
-        timers,
-        lifecycle,
-        launches,
-        door,
-        committed,
-    )?;
-    match commit {
-        Some(commit) => reconciliation.settle_commit(commit),
-        None => reconciliation.settle(),
-    }
-    if quota_triggers.accept_commits(bus)? {
-        quota.request();
-    }
-    settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)?;
-    let changes = commit
-        .map(|commit| room_catch_up::changes(bus, commit))
-        .transpose()?;
-    match &changes {
-        Some(changes) => room_catch_up::reconcile_commit(
-            bus,
-            command_surface.paths,
-            command_surface.config,
-            seats,
-            changes,
-            diagnostic,
-        )?,
-        None => room_catch_up::reconcile(
-            bus,
-            command_surface.paths,
-            command_surface.config,
-            seats,
-            diagnostic,
-        )?,
-    }
-    message_surface::advance_profile_warming(
-        &bus.reader(),
-        command_surface.paths,
-        message_state,
-        diagnostic,
-    )?;
-    design_input::reconcile(
-        bus,
-        command_surface.paths,
-        command_surface.config,
-        seats,
-        design_completions,
-        message_state,
-        diagnostic,
-    )?;
-    Ok(())
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one commit reconciles the timers, the lifecycle, and the door its sweep asks"
-)]
-fn accept_commit(
-    bus: &Bus,
-    command_surface: &command_surface::Surface<'_>,
-    seats: &mut Seats,
-    diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    lifecycle: &mut lifecycle::Runtime,
-    launches: &mut super::launch_runtime::Runtime,
-    door: &mut capture::SupervisorReports,
-    committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
-) -> CommandResult<Option<JournalCommit>> {
-    match committed {
-        Ok(commit) => {
-            command_surface.refresh_reads()?;
-            if !timers.covers(commit) {
-                super::deferral::defer_store_fault(
-                    reconcile_wakes(
-                        bus,
-                        command_surface,
-                        seats,
-                        diagnostic,
-                        timers,
-                        lifecycle,
-                        launches,
-                        door,
-                    ),
-                    diagnostic,
-                    "lifecycle reconciliation",
-                )?;
-            }
-            Ok(Some(commit))
-        }
-        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-            command_surface.refresh_reads()?;
-            super::deferral::defer_store_fault(
-                reconcile_wakes(
-                    bus,
-                    command_surface,
-                    seats,
-                    diagnostic,
-                    timers,
-                    lifecycle,
-                    launches,
-                    door,
-                ),
-                diagnostic,
-                "lifecycle reconciliation",
-            )?;
-            Ok(None)
-        }
-        Err(tokio::sync::broadcast::error::RecvError::Closed) => Err(environment_fault(
-            "bus::lifecycle-commits-closed",
-            "the durable commit stream closed while the resident was live",
-        )),
-    }
-}
-
 /// Follow every commit with the cards that spoke an acknowledgement ahead of
 /// the journal, so any committed retirement re-presents its card from the
 /// journal disposition. The app being unavailable is a
@@ -1389,90 +1115,127 @@ fn settle_spoken_acknowledgements(
     message_surface::app_diagnostic(settled, diagnostic)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one reconciliation crosses the timers, the lifecycle, and the door its sweep asks"
-)]
-fn reconcile_for_control(
-    reconciliation: &mut lifecycle::Reconciliation,
-    bus: &Bus,
-    command_surface: &command_surface::Surface<'_>,
-    seats: &mut Seats,
-    diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    lifecycle: &mut lifecycle::Runtime,
-    launches: &mut super::launch_runtime::Runtime,
-    door: &mut capture::SupervisorReports,
-) -> CommandResult<()> {
-    if reconciliation.control_settles() {
-        reconcile_lifecycle(
-            reconciliation,
-            bus,
+/// The resident runtimes a wake reconciliation advances: the timers it
+/// re-arms, the lifecycle it resolves, the launches it starts, the supervisor
+/// door its seat sweep asks first, and the reconciliation demand it settles.
+struct Wakes {
+    timers: timers::Runtime,
+    lifecycle: lifecycle::Runtime,
+    launches: super::launch_runtime::Runtime,
+    door: capture::SupervisorReports,
+    reconciliation: lifecycle::Reconciliation,
+}
+
+impl Wakes {
+    /// Consume one fired timer, then reconcile the lifecycle it may have moved.
+    fn accept_timer(
+        &mut self,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        diagnostic: &mut dyn io::Write,
+        timer: Option<bus::timer::TimerEvent>,
+    ) -> CommandResult<()> {
+        let timer = timer.ok_or_else(|| {
+            environment_fault(
+                "bus::timer-events-closed",
+                "the production timer event stream closed while the resident was live",
+            )
+        })?;
+        let bus = command_surface.bus();
+        let fired = self.timers.consume(bus, timer)?;
+        accept_timer_fired(bus, command_surface, &mut self.lifecycle, fired)?;
+        self.settle(command_surface, seats, diagnostic)
+    }
+
+    /// Reconcile for one journal commit the timers do not already cover, then
+    /// settle the demand it answers; a lagged stream reconciles and settles
+    /// unconditionally.
+    fn accept_commit(
+        &mut self,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        diagnostic: &mut dyn io::Write,
+        committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
+    ) -> CommandResult<Option<JournalCommit>> {
+        let commit = match committed {
+            Ok(commit) => Some(commit),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => None,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                return Err(environment_fault(
+                    "bus::lifecycle-commits-closed",
+                    "the durable commit stream closed while the resident was live",
+                ));
+            }
+        };
+        command_surface.refresh_reads()?;
+        if commit.is_none_or(|commit| !self.timers.covers(commit)) {
+            super::deferral::defer_store_fault(
+                self.reconcile(command_surface, seats, diagnostic),
+                diagnostic,
+                "lifecycle reconciliation",
+            )?;
+        }
+        match commit {
+            Some(commit) => self.reconciliation.settle_commit(commit),
+            None => self.reconciliation.settle(),
+        }
+        Ok(commit)
+    }
+
+    /// Settle the reconciliation demand a control turn is waiting on.
+    fn settle_for_control(
+        &mut self,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        diagnostic: &mut dyn io::Write,
+    ) -> CommandResult<()> {
+        if self.reconciliation.control_settles() {
+            self.settle(command_surface, seats, diagnostic)?;
+        }
+        Ok(())
+    }
+
+    /// Reconcile wakes and settle the pending demand.
+    fn settle(
+        &mut self,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        diagnostic: &mut dyn io::Write,
+    ) -> CommandResult<()> {
+        // A deferred sweep leaves the demand pending, so the next control turn
+        // drives it again instead of a timer having to notice.
+        let swept = self.reconcile(command_surface, seats, diagnostic);
+        if swept.is_ok() {
+            self.reconciliation.settle();
+        }
+        super::deferral::defer_store_fault(swept, diagnostic, "lifecycle reconciliation")
+    }
+
+    fn reconcile(
+        &mut self,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        diagnostic: &mut dyn io::Write,
+    ) -> CommandResult<()> {
+        let bus = command_surface.bus();
+        self.timers.synchronize(bus)?;
+        super::reap::reap_ended_seats(
             command_surface,
             seats,
+            &mut self.lifecycle,
+            &mut self.door,
             diagnostic,
-            timers,
-            lifecycle,
-            launches,
-            door,
         )?;
+        let (paths, epoch) = (command_surface.paths, command_surface.epoch());
+        lane_surface::reconcile_seats(bus, paths, epoch, seats, diagnostic)?;
+        let wake = command_surface.reconcile_lifecycle(
+            &mut self.lifecycle,
+            seats,
+            &mut self.launches,
+            diagnostic,
+        )?;
+        self.timers.synchronize_wake(wake)
     }
-    Ok(())
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one reconciliation crosses the timers, the lifecycle, and the door its sweep asks"
-)]
-fn reconcile_lifecycle(
-    reconciliation: &mut lifecycle::Reconciliation,
-    bus: &Bus,
-    command_surface: &command_surface::Surface<'_>,
-    seats: &mut Seats,
-    diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    lifecycle: &mut lifecycle::Runtime,
-    launches: &mut super::launch_runtime::Runtime,
-    door: &mut capture::SupervisorReports,
-) -> CommandResult<()> {
-    // A deferred sweep leaves the demand pending, so the next control turn
-    // drives it again instead of a timer having to notice.
-    let swept = reconcile_wakes(
-        bus,
-        command_surface,
-        seats,
-        diagnostic,
-        timers,
-        lifecycle,
-        launches,
-        door,
-    );
-    if swept.is_ok() {
-        reconciliation.settle();
-    }
-    super::deferral::defer_store_fault(swept, diagnostic, "lifecycle reconciliation")
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "wake reconciliation borrows each resident runtime it advances"
-)]
-fn reconcile_wakes(
-    bus: &Bus,
-    command_surface: &command_surface::Surface<'_>,
-    seats: &mut Seats,
-    diagnostic: &mut dyn io::Write,
-    timers: &mut timers::Runtime,
-    lifecycle: &mut lifecycle::Runtime,
-    launches: &mut super::launch_runtime::Runtime,
-    door: &mut capture::SupervisorReports,
-) -> CommandResult<()> {
-    timers.synchronize(bus)?;
-    super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic, door)?;
-    let (paths, epoch) = (command_surface.paths, command_surface.epoch());
-    lane_surface::reconcile_seats(bus, paths, epoch, seats, diagnostic)?;
-    let wake = command_surface.reconcile_lifecycle(lifecycle, seats, launches, diagnostic)?;
-    timers.synchronize_wake(wake)
 }
 
 pub(in crate::resident) fn deliver_next_inbox(

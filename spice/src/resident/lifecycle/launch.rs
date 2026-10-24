@@ -38,29 +38,22 @@ pub(super) fn pending_launch(
 
 impl Runtime {
     /// Settle one automatic launch, answering the lane it seated and started.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one completion settles the lifecycle authority that admitted its launch"
-    )]
     pub(in crate::resident) fn complete_launch(
         &mut self,
-        bus: &Bus,
-        repository: &Repository,
-        paths: &RuntimePaths,
-        epoch: CanonicalUuid,
+        resident: &Resident<'_>,
         seats: &mut Seats,
         diagnostic: &mut dyn std::io::Write,
         pending: PendingLaunch,
         launched: CommandResult<super::super::supervisor::Launch>,
     ) -> CommandResult<Option<CanonicalUuid>> {
+        let &Resident {
+            bus, paths, epoch, ..
+        } = resident;
         self.launching.remove(&pending.lane);
         let result =
             lane_surface::finish_automatic_wake(bus, paths, epoch, seats, pending.wake, launched);
         let attempted = settle_launch(
-            bus,
-            repository,
-            paths,
-            epoch,
+            resident,
             pending.trigger,
             pending.lane,
             pending.woken.as_ref(),
@@ -105,21 +98,21 @@ impl Runtime {
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one completed launch retains the exact trigger compensation contract"
-)]
 fn settle_launch(
-    bus: &Bus,
-    repository: &Repository,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
+    resident: &Resident<'_>,
     trigger: Trigger,
     lane: CanonicalUuid,
     woken: Option<&super::super::steering::WokenInbox>,
     claim: Option<&crate::board_command::AutomaticClaim>,
     launched: CommandResult<lane_surface::AutomaticWake>,
 ) -> CommandResult<Attempted> {
+    let &Resident {
+        bus,
+        repository,
+        paths,
+        epoch,
+        ..
+    } = resident;
     match trigger {
         Trigger::PendingInbox => {
             let woken = woken.expect("an inbox wake retains the steering it was woken for");

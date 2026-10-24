@@ -12,10 +12,6 @@ use super::*;
 /// seated: a sender that asked and ended its turn hears the answer at its next
 /// seat, since a reply, like any peer message, never wakes a lane. It returns
 /// the sending lane that must be told once the write commits.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the retirement write, its answered head, and the spoken answer are one reply"
-)]
 pub(super) fn append_peer_reply(
     bus: &Bus,
     proposal: &mut JournalWrite,
@@ -24,8 +20,8 @@ pub(super) fn append_peer_reply(
     retirement: PendingFact,
     disposition: Disposition,
     clause: Option<&str>,
-    at: Instant,
 ) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
+    let at = proposal.at();
     let told = answered.body();
     let (Some(sender), None) = (told.from, told.control.as_deref()) else {
         return Ok(None);

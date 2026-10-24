@@ -13,49 +13,29 @@ enum Settled {
     Automatic,
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one launch completion rejoins every resident authority it can settle"
-)]
 pub(super) async fn accept(
-    bus: &Bus,
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
-    lifecycle: &mut lifecycle::Runtime,
-    reconciliation: &mut lifecycle::Reconciliation,
-    timers: &mut timers::Runtime,
-    launches: &mut super::super::launch_runtime::Runtime,
-    door: &mut capture::SupervisorReports,
+    wakes: &mut Wakes,
     diagnostic: &mut dyn io::Write,
     completed: super::super::launch_runtime::Completion,
 ) -> CommandResult<()> {
-    match settle(command_surface, seats, lifecycle, diagnostic, completed).await? {
+    match settle(
+        command_surface,
+        seats,
+        &mut wakes.lifecycle,
+        diagnostic,
+        completed,
+    )
+    .await?
+    {
         Settled::Command(witness) => {
             if let Some(witness) = witness {
-                reconciliation.request(witness);
+                wakes.reconciliation.request(witness);
             }
-            reconcile_for_control(
-                reconciliation,
-                bus,
-                command_surface,
-                seats,
-                diagnostic,
-                timers,
-                lifecycle,
-                launches,
-                door,
-            )
+            wakes.settle_for_control(command_surface, seats, diagnostic)
         }
-        Settled::Automatic => reconcile_wakes(
-            bus,
-            command_surface,
-            seats,
-            diagnostic,
-            timers,
-            lifecycle,
-            launches,
-            door,
-        ),
+        Settled::Automatic => wakes.reconcile(command_surface, seats, diagnostic),
     }
 }
 

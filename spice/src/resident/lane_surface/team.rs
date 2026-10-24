@@ -132,7 +132,6 @@ pub(in crate::resident) fn configure(
     };
     commit_configured(
         bus,
-        epoch,
         command,
         request,
         effects,
@@ -151,13 +150,8 @@ pub(in crate::resident) fn configure(
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one team configuration commits its command, request, effects, residency guard, and write"
-)]
 fn commit_configured(
     bus: &Bus,
-    epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &TeamConfigure,
     effects: &mut CommandEffects,
@@ -165,6 +159,7 @@ fn commit_configured(
     mut write: journal::JournalWrite,
     configured: ConfiguredTeam,
 ) -> Outcome<CommandAnswer> {
+    let epoch = observed.body().epoch;
     guard_residency(&mut write, observed);
     let fact = match write.fact(
         wire::body::TeamConfigured {

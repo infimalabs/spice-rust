@@ -128,20 +128,16 @@ pub(super) fn propose_drain(
 /// taken: the successor records land in the same commit that seats the
 /// occupant, so no lane is ever durably renewed without one running and no
 /// seated successor observes predecessor-bound task authority.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one wake proposal carries the complete admitted command boundary"
-)]
 pub(super) fn propose_wake(
     command: &wire::AdmittedCommand,
     request: &LaneState,
     observed: &journal::JournalHead<wire::ResidencyHead>,
-    epoch: CanonicalUuid,
     proven: &ProvenOccupant,
     claim: Option<&super::automatic::HeldClaimAuthority>,
     renewal: Option<&wire::LaneRenewalRecord>,
     answer: LaneChangeAnswer,
 ) -> CommandResult<JournalWrite> {
+    let epoch = observed.body().epoch;
     let occupant = proven.occupant;
     let group = proven.group;
     let session = &proven.session;
