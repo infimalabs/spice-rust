@@ -49,7 +49,11 @@ pub(crate) fn read_next_work(
     } else {
         None
     };
-    let mut occupant_profiles = match (profiles, running_occupant(residency.body(), &principal)) {
+    // Only a selection asks for scores: a held claim or an owed Design request
+    // answers without fitting the frequency profile or taking the profile lock.
+    let selecting = held.is_none() && design_request.is_none();
+    let running = running_occupant(residency.body(), &principal).filter(|_| selecting);
+    let mut occupant_profiles = match (profiles, running) {
         (Some(profiles), Some((lane, occupant))) => Some((
             message_surface::lock_state(profiles)
                 .map_err(crate::resident::design_awareness::command_answer_outcome)?,
