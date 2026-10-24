@@ -12,7 +12,7 @@ impl Aggregate {
             .last()
             .cloned()
             .expect("one resolved thread yields at least one source");
-        let thread = ThreadView {
+        let thread = Box::new(ThreadView {
             id,
             vendor: source.vendor,
             transcript: source.path.clone(),
@@ -29,7 +29,7 @@ impl Aggregate {
                 .latest
                 .as_ref()
                 .map(|turn| turn_view(turn, Some((false, 180)))),
-        };
+        });
         Report::Thread {
             source,
             sources: self.sources,
@@ -54,7 +54,7 @@ impl Aggregate {
             .last()
             .cloned()
             .expect("one resolved thread yields at least one source");
-        let thread = ThreadView {
+        let thread = Box::new(ThreadView {
             id,
             vendor: source.vendor,
             transcript: source.path.clone(),
@@ -64,7 +64,7 @@ impl Aggregate {
             start: None,
             end: None,
             latest_turn: None,
-        };
+        });
         Report::Thread {
             residues: vec![Residue {
                 source: source.path.clone(),

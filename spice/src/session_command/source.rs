@@ -1073,9 +1073,10 @@ mod tests {
         else {
             panic!("third declaration reaches briefing");
         };
-        let crate::session_command::model::Report::Recall { sources, live, .. } = reply.body else {
+        let crate::session_command::model::Report::Recall(recall) = reply.body else {
             panic!("briefing returns recall");
         };
+        let crate::session_command::model::RecallView { sources, live, .. } = *recall;
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].vendor, super::Vendor::declared(fixture));
         assert!(

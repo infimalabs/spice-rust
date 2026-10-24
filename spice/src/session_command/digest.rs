@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::model::{
-    BoardGlanceView, HeldWorkView, LiveView, OutstandingAskView, PeerView, PostureView, Report,
+    BoardGlanceView, HeldWorkView, LiveView, OutstandingAskView, PeerView, PostureView, RecallView,
     RepositoryGlanceView, RetiredDirectionView,
 };
 
@@ -30,9 +30,9 @@ const STATUS: &str = "spice task status";
 const INBOX: &str = "spice inbox";
 const LANES: &str = "spice lane list";
 
-/// Fold one briefing report into its page; any other report folds to nothing.
-pub(super) fn fold(report: &Report, files: &[String]) -> String {
-    let Report::Recall {
+/// Fold one briefing into its page.
+pub(super) fn fold(report: &RecallView, files: &[String]) -> String {
+    let RecallView {
         asks,
         held_work,
         posture,
@@ -44,10 +44,7 @@ pub(super) fn fold(report: &Report, files: &[String]) -> String {
         live,
         residues,
         ..
-    } = report
-    else {
-        return String::new();
-    };
+    } = report;
     // The transcript the page was read from, so a continuation reads the
     // same thread whichever process runs it.
     let history = |view: &str| -> String {
@@ -479,7 +476,7 @@ mod tests {
 
     use super::super::model::{
         BoardGlanceView, HeldClaimView, HeldWorkView, LanePostureView, LiveView,
-        OutstandingAskView, PostureView, RecentTurnView, Report, RepositoryGlanceView,
+        OutstandingAskView, PostureView, RecallView, RecentTurnView, RepositoryGlanceView,
         RetiredDirectionView,
     };
     use super::{BRIEFING_BYTES, fold, without_answered};
@@ -489,8 +486,8 @@ mod tests {
     }
 
     /// A briefing whose every section holds `rows` rows of about `bytes`.
-    fn recall(rows: usize, bytes: usize) -> Report {
-        Report::Recall {
+    fn recall(rows: usize, bytes: usize) -> RecallView {
+        RecallView {
             asks: Some(Bounded {
                 rows: (0..rows)
                     .map(|index| OutstandingAskView {
@@ -586,10 +583,11 @@ mod tests {
         let page = fold(&report, &[]);
         assert!(folds(&page).is_empty(), "{page}");
 
-        let Report::Recall { repository, .. } = &mut report else {
-            unreachable!()
-        };
-        repository.as_mut().expect("fixture repository").dirty_total = 5;
+        report
+            .repository
+            .as_mut()
+            .expect("fixture repository")
+            .dirty_total = 5;
         assert_eq!(
             folds(&fold(&report, &[])),
             ["- … 3 more: `git status --short`"]
@@ -629,16 +627,10 @@ mod tests {
     #[test]
     fn an_unread_inbox_is_not_an_empty_inbox() {
         let mut report = recall(1, 40);
-        let Report::Recall { asks, .. } = &mut report else {
-            unreachable!()
-        };
-        asks.as_mut().expect("fixture asks").rows.clear();
+        report.asks.as_mut().expect("fixture asks").rows.clear();
         assert!(!fold(&report, &[]).contains("## Pending steering"));
 
-        let Report::Recall { asks, .. } = &mut report else {
-            unreachable!()
-        };
-        *asks = None;
+        report.asks = None;
         assert!(fold(&report, &[]).contains("## Pending steering\n- unread; see Unknown\n"));
     }
 
@@ -659,10 +651,7 @@ mod tests {
             fold(
                 &{
                     let mut report = recall(2, 40);
-                    let Report::Recall { asks, .. } = &mut report else {
-                        unreachable!()
-                    };
-                    asks.as_mut().expect("fixture asks").rows.clear();
+                    report.asks.as_mut().expect("fixture asks").rows.clear();
                     report
                 },
                 &[]
@@ -716,10 +705,7 @@ mod tests {
     fn a_current_lane_hold_is_visible_in_the_briefing_until_resumed() {
         let mut report = recall(1, 40);
         let hold_evidence = "occupant ended on a vendor error: provider refused this turn";
-        let Report::Recall { posture, .. } = &mut report else {
-            unreachable!()
-        };
-        *posture = Some(PostureView {
+        report.posture = Some(PostureView {
             cwd: "/worktree".to_owned(),
             worktree: "/worktree".to_owned(),
             head: Some("main".to_owned()),
@@ -740,10 +726,8 @@ mod tests {
         assert!(held.contains(hold_evidence), "{held}");
         assert!(held.contains("2026-10-08T22:30:00.000Z"), "{held}");
 
-        let Report::Recall { posture, .. } = &mut report else {
-            unreachable!()
-        };
-        posture
+        report
+            .posture
             .as_mut()
             .and_then(|posture| posture.lane.as_mut())
             .expect("fixture lane posture")
@@ -754,9 +738,7 @@ mod tests {
     #[test]
     fn one_answer_is_shown_once() {
         let mut report = recall(1, 40);
-        let Report::Recall { live, .. } = &mut report else {
-            unreachable!()
-        };
+        let live = &mut report.live;
         live.recent[0].final_answer = Some(clip("the one distinctive answer", 80));
         let answer = live.recent[0].final_answer.clone();
         live.latest_final = answer.clone();

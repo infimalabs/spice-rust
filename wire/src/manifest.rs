@@ -298,18 +298,17 @@ pub struct HostedWindowsIdentity {
 /// The one sealed execution identity carried by replay evidence.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase", deny_unknown_fields)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "proof receipts keep every environment inline; boxing adds an allocation to every hosted replay"
-)]
 pub enum ProofEnvironment {
     /// A digest-pinned OCI image executed through the sealed container route.
     Oci { image: ProofImage },
     /// The domain-separated digest of one admitted native runner executable.
     Native { runner: Digest },
-    /// One provider-authenticated ephemeral native Windows execution.
+    /// One provider-authenticated ephemeral native Windows execution; its
+    /// identity is boxed because it is many times the size of the other two.
     #[serde(rename = "hosted-windows")]
-    HostedWindows { identity: HostedWindowsIdentity },
+    HostedWindows {
+        identity: Box<HostedWindowsIdentity>,
+    },
 }
 
 impl ProofEnvironment {
@@ -332,8 +331,10 @@ impl ProofEnvironment {
 
     /// Construct an ephemeral hosted Windows identity.
     #[must_use]
-    pub const fn hosted_windows(identity: HostedWindowsIdentity) -> Self {
-        Self::HostedWindows { identity }
+    pub fn hosted_windows(identity: HostedWindowsIdentity) -> Self {
+        Self::HostedWindows {
+            identity: Box::new(identity),
+        }
     }
 }
 

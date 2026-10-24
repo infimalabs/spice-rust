@@ -239,7 +239,7 @@ macro_rules! vocabulary {
                     $(
                         Self::$variant => {
                             decode_registered_body::<registered_body!($variant)>(body)
-                                .map(sealed::RegisteredBody::$variant)
+                                .map(|decoded| sealed::RegisteredBody::$variant(Box::new(decoded)))
                         }
                     )+
                 }
@@ -248,13 +248,11 @@ macro_rules! vocabulary {
 
         mod sealed {
             /// One registered body, decoded once from the fields it arrived as.
+            /// Every body is boxed so the enum stays one pointer wide inside
+            /// each [`super::AnyFact`], whichever of the registered DTOs it holds.
             #[derive(Debug, Clone, PartialEq, Eq)]
-            #[allow(
-                clippy::large_enum_variant,
-                reason = "a decoded body lives inside the fact that carried it; boxing the task statement adds an allocation to every task fact"
-            )]
             pub enum RegisteredBody {
-                $($variant(registered_body!($variant)),)+
+                $($variant(Box<registered_body!($variant)>),)+
             }
 
             /// Closes [`super::Body`] to the registered vocabulary and lets each
@@ -268,7 +266,7 @@ macro_rules! vocabulary {
             impl sealed::Registered for registered_body!($variant) {
                 fn registered(decoded: &sealed::RegisteredBody) -> Option<&Self> {
                     match decoded {
-                        sealed::RegisteredBody::$variant(body) => Some(body),
+                        sealed::RegisteredBody::$variant(body) => Some(&**body),
                         _ => None,
                     }
                 }
