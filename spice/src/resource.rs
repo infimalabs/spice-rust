@@ -3,7 +3,7 @@
 //! replaces by writing.
 //!
 //! A namespace URL, `spice://NS/PATH`, reads one member of the spice rack
-//! linked into this executable as text, and [`crate::install::SKILL_RESOURCE`]
+//! linked into this executable, and [`crate::install::SKILL_RESOURCE`]
 //! is its skill member. Every other first read URL names one existing CLI
 //! read: [`Request::parse`] maps it onto that read's arguments, and
 //! [`Seat::serve`] runs the read in process as the lane, so authority, scoping,
@@ -47,7 +47,7 @@ pub(crate) const SCHEME: &str = "spice://";
 const INDEX: &str = "\
 spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
 spice://SKILL.md  complete authoritative agent skill from this executable's spice rack, the member spice://skill/SKILL.md names; takes line selectors but no query
-spice://NS/PATH  one member of this executable's spice rack (namespaces app, doc, skill, tool) as text; NS or NS/DIRECTORY lists its members; takes line selectors but no query or write; a digest or UUID never names a generation
+spice://NS/PATH  one member of this executable's spice rack (namespaces app, doc, skill, tool): text inline, other media as one line naming its type, size, digest, and extracted file; NS or NS/DIRECTORY lists its members; takes line selectors but no query or write; a digest or UUID never names a generation
 spice://board  task status
 spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
