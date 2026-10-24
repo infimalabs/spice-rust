@@ -22,6 +22,14 @@ fn proof_host_share() -> usize {
 }
 
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+/// Rustflags for the Windows cross-target units, passed as a `--config`
+/// override so they bind only that target. The host lint pass already runs
+/// clippy over every non-`cfg(windows)` line, so the cross-target shard only
+/// has to compile the Windows cfg of the same crates: `cargo check` with rustc
+/// warnings denied keeps the type-error and Windows-only-diagnostic guarantee
+/// at the cost of the check phase alone, instead of clippy's lint pass on top.
+const WINDOWS_RUSTFLAGS_CONFIG: &str =
+    "target.x86_64-pc-windows-msvc.rustflags=[\"-D\", \"warnings\"]";
 const WINDOWS_TOOLCHAIN_PIN: &str = "dist/windows-msvc.toml";
 const WINDOWS_TYPECHECKS: [WindowsTypecheck; 3] = [
     WindowsTypecheck {
@@ -376,7 +384,7 @@ fn windows_typecheck_shards(
         .iter()
         .map(|check| {
             let mut argv = vec![
-                "clippy".to_owned(),
+                "check".to_owned(),
                 "--locked".to_owned(),
                 "--package".to_owned(),
                 check.package.to_owned(),
@@ -390,10 +398,9 @@ fn windows_typecheck_shards(
             argv.extend([
                 "--target".to_owned(),
                 WINDOWS_TARGET.to_owned(),
+                "--config".to_owned(),
+                WINDOWS_RUSTFLAGS_CONFIG.to_owned(),
                 "--message-format=json-render-diagnostics".to_owned(),
-                "--".to_owned(),
-                "-D".to_owned(),
-                "warnings".to_owned(),
             ]);
             let mut authority = package_input_authority(
                 inventory,
@@ -1048,6 +1055,7 @@ mod tests {
 
     fn assert_windows_typecheck_contract(shards: &[CargoGateShard]) {
         assert_eq!(shards.len(), 3);
+        let rustflags = "target.x86_64-pc-windows-msvc.rustflags=[\"-D\", \"warnings\"]";
         assert_eq!(
             shards[0].action_id(),
             "cargo:typecheck:spice::windows-x86_64-pc-windows-msvc-bin:spice"
@@ -1055,7 +1063,7 @@ mod tests {
         assert_eq!(
             shards[0].argv(),
             [
-                "clippy",
+                "check",
                 "--locked",
                 "--package",
                 "spice",
@@ -1063,10 +1071,9 @@ mod tests {
                 "spice",
                 "--target",
                 "x86_64-pc-windows-msvc",
+                "--config",
+                rustflags,
                 "--message-format=json-render-diagnostics",
-                "--",
-                "-D",
-                "warnings",
             ]
         );
         assert_eq!(
@@ -1076,17 +1083,16 @@ mod tests {
         assert_eq!(
             shards[1].argv(),
             [
-                "clippy",
+                "check",
                 "--locked",
                 "--package",
                 "spice",
                 "--tests",
                 "--target",
                 "x86_64-pc-windows-msvc",
+                "--config",
+                rustflags,
                 "--message-format=json-render-diagnostics",
-                "--",
-                "-D",
-                "warnings",
             ]
         );
         assert_eq!(
@@ -1096,17 +1102,16 @@ mod tests {
         assert_eq!(
             shards[2].argv(),
             [
-                "clippy",
+                "check",
                 "--locked",
                 "--package",
                 "sill",
                 "--tests",
                 "--target",
                 "x86_64-pc-windows-msvc",
+                "--config",
+                rustflags,
                 "--message-format=json-render-diagnostics",
-                "--",
-                "-D",
-                "warnings",
             ]
         );
         assert!(shards.iter().all(|shard| {
