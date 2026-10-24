@@ -17,6 +17,7 @@ mod deferred_exit;
 mod exit_disposal;
 mod group_arrangement;
 mod reaped_seat;
+mod released_last_resort;
 mod selection_wait;
 mod trust_ice;
 mod vendor_failure;
