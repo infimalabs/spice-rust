@@ -318,8 +318,12 @@ impl Projection {
                 .flatten();
             let phase_handoff = crate::board_command::phase_handoff(snapshot.facts(), &heads)
                 .map_err(super::unit_outcome)?;
+            let explicit_release = heads
+                .claim()
+                .is_some_and(|claim| snapshot.facts().is_explicit_release(task, claim.position()));
             let entry = entry(&heads, projects)?
                 .with_creator_team(creator_team)
+                .with_explicit_release(explicit_release)
                 .with_phase_handoff(phase_handoff)
                 .with_grouped(snapshot.facts().grouped(task))
                 .with_design(snapshot.facts().design(heads.statement().body()));
