@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::{CanonicalUuid, ClaimDisposition, TaskHandle, TaskHead};
 
 use crate::Entry;
-use crate::similarity::{CLAIM_OVERLAP_FLOOR, FrequencyProfile, TermCounts};
+use crate::similarity::{CLAIM_OVERLAP_FLOOR, MatchCache};
 
 /// A shared identifier is exact evidence only while at most one in this many
 /// claim-time statements names it, and never fewer than the pair itself.
@@ -25,7 +25,7 @@ pub struct ClaimOverlap {
 
 /// Find active claims whose statement overlaps the selected one.
 ///
-/// Every statement is weighted under one TF-IDF profile fitted from the recent
+/// Every statement is weighted under the shared TF-IDF fit of the recent
 /// window of `entries`. A claim warns when its cosine with the selected
 /// statement reaches [`CLAIM_OVERLAP_FLOOR`], or when both name one exact
 /// code-shaped identifier few of `entries` carry, so board-wide boilerplate
@@ -34,7 +34,8 @@ pub struct ClaimOverlap {
 /// product or code surface.
 #[must_use]
 pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> {
-    let frequency = FrequencyProfile::recent(entries.iter().map(Entry::statement));
+    let matcher = MatchCache::shared();
+    let frequency = matcher.fit(entries.iter().map(Entry::statement));
     let mut identifier_frequency = BTreeMap::<String, usize>::new();
     for identifier in entries
         .iter()
@@ -43,7 +44,7 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
         *identifier_frequency.entry(identifier).or_default() += 1;
     }
     let rare_limit = (entries.len() / IDENTIFIER_RARITY).max(2);
-    let selected_vector = frequency.prepare(&TermCounts::task(selected.statement()));
+    let selected_vector = matcher.prepare(&frequency, selected.statement());
     let selected_identifiers = identifiers(selected.statement());
     let mut overlaps = entries
         .iter()
@@ -63,7 +64,7 @@ pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> 
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            let vector = frequency.prepare(&TermCounts::task(entry.statement()));
+            let vector = matcher.prepare(&frequency, entry.statement());
             let (similar, explanation) = selected_vector.as_ref().zip(vector.as_ref()).map_or(
                 (false, Vec::new()),
                 |(left, right)| {

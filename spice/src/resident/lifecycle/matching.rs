@@ -1,12 +1,12 @@
-use board::similarity::{FrequencyProfile, TermCounts};
+use board::similarity::MatchCache;
 use spice::rooms::standing::standing;
 
 use super::super::message_surface;
 use super::*;
 
 /// Score each vacant lane's retained work against the task the allocator
-/// selected for it, through the ranker Design nudges share. The frequency
-/// profile is fitted once from the recent statements; a lane's own cards of
+/// selected for it, through the ranker Design nudges share, under the shared
+/// [`MatchCache`] fit; a lane's own cards of
 /// its task never count. Scores order lanes only against one another, so
 /// fewer than two selected targets leave every target unscored.
 pub(super) fn match_targets(
@@ -22,17 +22,18 @@ pub(super) fn match_targets(
     {
         return Ok(());
     }
-    let frequency = FrequencyProfile::recent(entries.iter().map(Entry::statement));
+    let matcher = MatchCache::shared();
+    let frequency = matcher.fit(entries.iter().map(Entry::statement));
     let mut state = message_surface::lock_state(profiles)?;
     for target in targets {
         let Some(task) = target.task else {
             continue;
         };
-        let statement = frequency.prepare(&TermCounts::task(task.statement()));
+        let statement = matcher.prepare(&frequency, task.statement());
         target.matched = standing(
             &mut state.profiles,
             &frequency,
-            statement.as_ref(),
+            statement.as_deref(),
             task.born(),
             target.lane,
             None,

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use board::similarity::{FrequencyProfile, TermCounts};
+use board::similarity::MatchCache;
 use spice::rooms::nudge::{FreeLanes, Recipient, choose};
 use spice::rooms::profile::SessionProfiles;
 use wire::intent::CommandAnswer;
@@ -75,8 +75,9 @@ fn recipient(
             None => {}
         }
     }
-    let frequency = FrequencyProfile::recent(planning.entries.iter().map(board::Entry::statement));
-    let vector = frequency.prepare(&TermCounts::task(entry.statement()));
+    let matcher = MatchCache::shared();
+    let frequency = matcher.fit(planning.entries.iter().map(board::Entry::statement));
+    let vector = matcher.prepare(&frequency, entry.statement());
     let chosen = match profiles {
         Some(profiles) => {
             design_awareness::bind_current_sessions(
@@ -88,7 +89,7 @@ fn recipient(
             choose(
                 &mut state.profiles,
                 &frequency,
-                vector.as_ref(),
+                vector.as_deref(),
                 &free,
                 design,
             )
@@ -96,7 +97,7 @@ fn recipient(
         None => choose(
             &mut SessionProfiles::default(),
             &frequency,
-            vector.as_ref(),
+            vector.as_deref(),
             &free,
             design,
         ),

@@ -5,6 +5,7 @@
 //! reads never rescore or invent evidence.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use board::similarity::{
     FrequencyProfile, GenerationMismatch, MATCH_SCORE_BASE, Prepared, TermCounts,
@@ -300,8 +301,9 @@ fn plan_profile_requests(
     if opportunities.is_empty() {
         return Ok(Vec::new());
     }
-    let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
-    let prepared = prepare_open_designs(entries, &frequency);
+    let matcher = board::similarity::MatchCache::shared();
+    let frequency = matcher.fit(entries.iter().map(board::Entry::statement));
+    let prepared = prepare_open_designs(entries, matcher, &frequency);
     let scoring = Scoring {
         facts,
         frequency: &frequency,
@@ -390,14 +392,15 @@ fn plan_profile_requests(
 /// Each filed open Design weighted under `frequency`.
 fn prepare_open_designs<'e>(
     entries: &'e [board::Entry],
+    matcher: &board::similarity::MatchCache,
     frequency: &FrequencyProfile,
-) -> Vec<(&'e board::Entry, Prepared)> {
+) -> Vec<(&'e board::Entry, Arc<Prepared>)> {
     entries
         .iter()
         .filter(|entry| entry.is_filed() && open_design(entry))
         .filter_map(|entry| {
-            frequency
-                .prepare(&TermCounts::task(entry.statement()))
+            matcher
+                .prepare(frequency, entry.statement())
                 .map(|vector| (entry, vector))
         })
         .collect()
@@ -407,7 +410,7 @@ fn prepare_open_designs<'e>(
 struct Scoring<'e> {
     facts: &'e bus::TaskFacts,
     frequency: &'e FrequencyProfile,
-    prepared: &'e [(&'e board::Entry, Prepared)],
+    prepared: &'e [(&'e board::Entry, Arc<Prepared>)],
 }
 
 /// The Design one session's current cards select for an opportunity.
@@ -568,7 +571,7 @@ fn rank_asks(
 /// One prepared open Design weighted under its invitation floor.
 fn candidate<'a>(
     facts: &bus::TaskFacts,
-    (design, vector): &'a (&'a board::Entry, Prepared),
+    (design, vector): &'a (&'a board::Entry, Arc<Prepared>),
 ) -> DesignCandidate<'a, board::Entry> {
     DesignCandidate::new(
         design.born(),
