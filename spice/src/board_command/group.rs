@@ -229,10 +229,12 @@ pub(crate) fn move_working_group(
     let outcome = change_partition(
         bus,
         command,
-        origin,
-        revision,
-        status,
-        witnesses,
+        PartitionChange {
+            origin,
+            revision,
+            status,
+            witnesses,
+        },
         |write, at| {
             write
                 .fact(fact, FactCause::Root)
@@ -400,10 +402,12 @@ pub(super) fn set_working_group_fast(
     change_partition(
         bus,
         command,
-        working_group_origin(),
-        revision,
-        WorkingGroupChangeStatus::Retuned,
-        Vec::new(),
+        PartitionChange {
+            origin: working_group_origin(),
+            revision,
+            status: WorkingGroupChangeStatus::Retuned,
+            witnesses: Vec::new(),
+        },
         |write, _| {
             let arranged = write
                 .fact(fact, FactCause::Root)
@@ -463,7 +467,17 @@ pub(crate) fn disband_working_group(
         fact,
         request.clone(),
     );
-    shelve_committed(outcome, bus, command, config, projects, allocation, handles)
+    shelve_committed(
+        outcome,
+        bus,
+        command,
+        ShelvingPolicy {
+            config,
+            projects,
+            allocation,
+        },
+        handles,
+    )
 }
 
 /// Set one standing group's shared activity stance. A change to Passive
@@ -480,6 +494,11 @@ pub(crate) fn set_working_group_stance(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+    let policy = ShelvingPolicy {
+        config,
+        projects,
+        allocation,
+    };
     let (current, revision) = match advancing_partition(bus, command) {
         Ok(found) => found,
         Err(outcome) => return (outcome, Vec::new()),
@@ -505,9 +524,7 @@ pub(crate) fn set_working_group_stance(
         return repair_shelving(
             bus,
             command,
-            config,
-            projects,
-            allocation,
+            policy,
             current.revision,
             request.stance,
             handles,
@@ -531,7 +548,7 @@ pub(crate) fn set_working_group_stance(
         fact,
         request.clone(),
     );
-    shelve_committed(outcome, bus, command, config, projects, allocation, handles)
+    shelve_committed(outcome, bus, command, policy, handles)
 }
 
 fn stance_unchanged(stance: WorkingGroupStance) -> Outcome<CommandAnswer> {
@@ -562,23 +579,26 @@ fn design_handles(
     .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))
 }
 
+/// The steering, project, and allocation policy shelving reads each Design's
+/// room under.
+#[derive(Clone, Copy)]
+struct ShelvingPolicy<'a> {
+    config: &'a steer::Config,
+    projects: &'a ProjectPolicy,
+    allocation: &'a board::NextConfig,
+}
+
 /// Commit shelving still owed to a group that already stands Passive, without
 /// restating its partition. Nothing owed keeps the unchanged-stance refusal.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "repair shelves under the stance command's steering, policy, and partition"
-)]
 fn repair_shelving(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    config: &steer::Config,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
+    policy: ShelvingPolicy<'_>,
     revision: u64,
     stance: WorkingGroupStance,
     handles: Vec<TaskHandle>,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let shelved = shelve(bus, command, config, projects, allocation, handles);
+    let shelved = shelve(bus, command, policy, handles);
     let Some(range) = shelved.range else {
         if shelved.owed.is_empty() {
             return (stance_unchanged(stance), Vec::new());
@@ -629,16 +649,14 @@ struct Shelved {
 fn shelve(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    config: &steer::Config,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
+    policy: ShelvingPolicy<'_>,
     designs: Vec<TaskHandle>,
 ) -> Shelved {
     let mut shelved = Shelved::default();
     for design in designs {
         let mut settled = false;
         for _ in 0..SHELVING_ATTEMPTS {
-            let room = match Deactivation::read(bus, &design, projects, allocation) {
+            let room = match Deactivation::read(bus, &design, policy.projects, policy.allocation) {
                 Ok(Some(room)) if !room.is_quiescent() => room,
                 Ok(_) => {
                     settled = true;
@@ -647,7 +665,7 @@ fn shelve(
                 Err(_) => break,
             };
             let directive = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
-            match room.commit(bus, command, config, (directive, command.id())) {
+            match room.commit(bus, command, policy.config, (directive, command.id())) {
                 Ok(Shelving::Committed { range, lane }) => {
                     shelved.range = Some(shelved.range.map_or(range, |covered| SeqRange {
                         first: covered.first.min(range.first),
@@ -859,19 +877,22 @@ fn arrangement_refusal(error: DesignError<'_>) -> Outcome<CommandAnswer> {
     refusal(reason, Some(observed), detail)
 }
 
-/// Commit one partition change under `origin`: `stage` appends the change's
-/// facts to a write guarded by the command's witnesses and `witnesses`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one partition change owns its origin, witnesses, staging, and receipt"
-)]
-fn change_partition<F, B>(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
+/// One partition change's identity: the origin it commits under, the revision
+/// and status its receipt answers, and the witnesses guarding it beyond the
+/// command's own.
+struct PartitionChange {
     origin: wire::Origin,
     revision: u64,
     status: WorkingGroupChangeStatus,
     witnesses: Vec<Witness>,
+}
+
+/// Commit one partition change: `stage` appends the change's facts to a write
+/// guarded by the command's witnesses and the change's own.
+fn change_partition<F, B>(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    change: PartitionChange,
     stage: F,
     body: B,
 ) -> Outcome<CommandAnswer>
@@ -879,6 +900,12 @@ where
     F: FnOnce(&mut JournalWrite, Instant) -> Result<(), Outcome<CommandAnswer>>,
     B: serde::Serialize,
 {
+    let PartitionChange {
+        origin,
+        revision,
+        status,
+        witnesses,
+    } = change;
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -915,10 +942,12 @@ fn restate<B: serde::Serialize>(
     change_partition(
         bus,
         command,
-        working_group_origin(),
-        revision,
-        status,
-        Vec::new(),
+        PartitionChange {
+            origin: working_group_origin(),
+            revision,
+            status,
+            witnesses: Vec::new(),
+        },
         |write, _| {
             write
                 .fact(fact, FactCause::Root)
@@ -935,9 +964,7 @@ fn shelve_committed(
     mut outcome: Outcome<CommandAnswer>,
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    config: &steer::Config,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
+    policy: ShelvingPolicy<'_>,
     handles: Vec<TaskHandle>,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
     let Outcome::Reply(Reply {
@@ -947,7 +974,7 @@ fn shelve_committed(
     else {
         return (outcome, Vec::new());
     };
-    let shelved = shelve(bus, command, config, projects, allocation, handles);
+    let shelved = shelve(bus, command, policy, handles);
     change.owed = shelved.owed;
     (outcome, shelved.lanes)
 }

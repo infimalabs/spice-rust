@@ -8,7 +8,9 @@ mod requirements;
 mod settlement;
 mod taste_proposal;
 pub(super) use deferral::{task_defer, task_file, task_wake};
-pub(super) use settlement::{stage_conclusion, task_close, task_conclude, task_delete};
+pub(super) use settlement::{
+    DecisionWrite, stage_conclusion, task_close, task_conclude, task_delete,
+};
 
 #[cfg(test)]
 pub(super) use claim::Possession;
@@ -16,7 +18,8 @@ pub(super) use claim::Possession;
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
 use claim::{PreparedClaim, claim_room, prepare_capture_claim};
 pub(super) use claim::{
-    claim_activation_next_action, claim_lease, claim_win, refuse_held_design, task_parked_commits,
+    claim_activation_next_action, claim_lease, claim_win, mint_claim, refuse_held_design,
+    task_parked_commits,
 };
 pub(super) use edit::task_edit;
 pub(super) use oops::task_oops_add;
@@ -110,33 +113,10 @@ pub(super) fn task_add_with(
     if let Err(outcome) = draft_creation_admitted(add) {
         return outcome;
     }
-    let requested = add.project.as_deref().unwrap_or("task.private");
-    let project = match projects.admit_manual_creation(requested) {
-        Ok(project) => project,
-        Err(error) => {
-            let reason = if matches!(error, ProjectError::SystemReserved(_)) {
-                "task::project-system-reserved"
-            } else {
-                "task::add-refused"
-            };
-            return refusal(
-                reason,
-                Some(error.to_string()),
-                &manual_project_repair(projects),
-            );
-        }
-    };
     create_task(
         bus,
         command,
         add,
-        Some(project),
-        if add.draft {
-            wire::TaskFiling::Draft
-        } else {
-            wire::TaskFiling::Filed
-        },
-        add.clone(),
         repository,
         projects,
         allocation,
@@ -214,44 +194,65 @@ fn oops_claim_project(
     }
     Ok(project)
 }
-#[allow(
-    clippy::too_many_arguments,
-    reason = "task creation keeps request identity, repository policy, and board authority explicit"
-)]
-fn create_task<B: serde::Serialize>(
+/// Admit one manual creation's project and read the actor's board against the
+/// tasks the request names, refusing a project the board does not admit for
+/// manual creation or a dependency on an unfiled Draft.
+fn admit_add_project(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    project: Option<Project>,
-    filing: wire::TaskFiling,
-    request_body: B,
-    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
-    after_validation: impl FnOnce(),
-) -> Outcome<CommandAnswer> {
+) -> Result<(Project, ValidatedSnapshot), Outcome<CommandAnswer>> {
+    let requested = add.project.as_deref().unwrap_or("task.private");
+    let project = projects.admit_manual_creation(requested).map_err(|error| {
+        let reason = if matches!(error, ProjectError::SystemReserved(_)) {
+            "task::project-system-reserved"
+        } else {
+            "task::add-refused"
+        };
+        refusal(
+            reason,
+            Some(error.to_string()),
+            &manual_project_repair(projects),
+        )
+    })?;
     let roots = task_add_roots(add);
-    let snapshot = match validated_working_snapshot_for_tasks(
+    let snapshot = validated_working_snapshot_for_tasks(
         bus,
         command.actor().clone(),
         &roots,
         projects,
         allocation,
-    ) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let project = match project {
-        Some(project) => project,
-        None => match oops_claim_project(command.actor(), &snapshot.entries) {
-            Ok(project) => project,
-            Err(outcome) => return outcome,
-        },
-    };
+    )?;
     let unfiled = referenced_unfiled(&snapshot.entries, add.depends.iter());
     if !unfiled.is_empty() {
-        return unfiled_dependency_refusal(&unfiled);
+        return Err(unfiled_dependency_refusal(&unfiled));
     }
+    Ok((project, snapshot))
+}
+
+/// Create one manually added task: admit its project, validate the request
+/// against the actor's board, prepare its heads, and commit them with any
+/// claim the request takes.
+fn create_task(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    after_validation: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
+    let (project, snapshot) = match admit_add_project(bus, command, add, projects, allocation) {
+        Ok(admitted) => admitted,
+        Err(outcome) => return outcome,
+    };
+    let filing = if add.draft {
+        wire::TaskFiling::Draft
+    } else {
+        wire::TaskFiling::Filed
+    };
     let intrinsic = operator_draft_origin(command, filing);
     let offers_draft = command.holds(wire::principal::PrincipalRole::Operator);
     let origin = match resolve_creation_origin(
@@ -278,7 +279,16 @@ fn create_task<B: serde::Serialize>(
         Err(outcome) => return outcome,
     };
     let mut prepared = match prepare_task(
-        command, add, &project, projects, origin, creation, flow, filing,
+        command,
+        add,
+        &project,
+        projects,
+        TaskSeed {
+            cause: origin,
+            creation,
+            flow,
+            filing,
+        },
     ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
@@ -323,14 +333,15 @@ fn create_task<B: serde::Serialize>(
     commit_prepared_task(
         bus,
         command,
-        add,
-        request_body,
+        add.clone(),
         &snapshot,
-        prepared,
-        post,
-        dependency_witnesses,
+        AdmittedCreation {
+            prepared,
+            post,
+            dependency_witnesses,
+            claim: added_claim,
+        },
         |_| {},
-        added_claim,
     )
 }
 
@@ -428,23 +439,34 @@ pub(super) fn task_review_roots(review: &TaskReview) -> Vec<wire::TaskStamp> {
     roots
 }
 
-#[allow(clippy::too_many_arguments)]
-fn commit_prepared_task<B, F>(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    add: &TaskAdd,
-    request_body: B,
-    snapshot: &ValidatedSnapshot,
+/// One creation admitted against its snapshot: the prepared heads, the entry
+/// the task stands as once born, the dependency witnesses that guard the
+/// write, and any claim taken in the same transaction.
+struct AdmittedCreation {
     prepared: PreparedTask,
     post: Entry,
     dependency_witnesses: Vec<Witness>,
+    claim: Option<PreparedClaim>,
+}
+
+fn commit_prepared_task<B, F>(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request_body: B,
+    snapshot: &ValidatedSnapshot,
+    creation: AdmittedCreation,
     extra_guard: F,
-    added_claim: Option<PreparedClaim>,
 ) -> Outcome<CommandAnswer>
 where
     B: serde::Serialize,
     F: FnOnce(&mut JournalWrite),
 {
+    let AdmittedCreation {
+        prepared,
+        post,
+        dependency_witnesses,
+        claim: added_claim,
+    } = creation;
     let origin_context = if added_claim.is_some() {
         match task_steering_origin_output(bus, &snapshot.facts, &post) {
             Ok(context) => context,
@@ -477,7 +499,7 @@ where
     }
     extra_guard(&mut write);
     let task = prepared.task.clone();
-    if let Err(outcome) = append_prepared_task(&mut write, add, prepared, FactCause::Root) {
+    if let Err(outcome) = append_prepared_task(&mut write, prepared, FactCause::Root) {
         return outcome;
     }
     if let Some(claim) = added_claim
@@ -503,9 +525,11 @@ where
     committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
+/// Append one prepared task's birth fact and both heads. The fact repeats the
+/// prepared statement's authored fields, so a statement adjusted after
+/// preparation is born as adjusted.
 fn append_prepared_task(
     write: &mut JournalWrite,
-    add: &TaskAdd,
     prepared: PreparedTask,
     cause: FactCause,
 ) -> Result<journal::PendingFact, Outcome<CommandAnswer>> {
@@ -515,11 +539,11 @@ fn append_prepared_task(
                 preparation: prepared.statement.preparation.clone(),
                 intent: prepared.statement.intent,
                 task: prepared.born.clone(),
-                title: add.title.clone(),
-                pitch: add.pitch.trim().to_owned(),
-                description: add.description.clone(),
-                acceptance: add.acceptance.clone(),
-                requirements: add.requirements.clone(),
+                title: prepared.statement.title.clone(),
+                pitch: prepared.statement.pitch.clone(),
+                description: prepared.statement.description.clone(),
+                acceptance: prepared.statement.acceptance.clone(),
+                requirements: prepared.statement.requirements.clone(),
                 project: prepared.project,
                 filing: prepared.statement.filing,
                 priority: prepared.statement.priority,
@@ -557,19 +581,22 @@ fn prepared_entry(prepared: &PreparedTask, projects: &ProjectPolicy) -> Entry {
     .with_creator_team(prepared.creation.creator_team())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one prepared task binds its command, request, project policy, cause, creation, flow, and filing"
-)]
+/// What one new task is born from: the cause it answers, the creation capture
+/// it records, the flow it opens in, and its filing.
+#[derive(Clone)]
+struct TaskSeed {
+    cause: CreationCause,
+    creation: TaskCreationCapture,
+    flow: Vec<wire::Phase>,
+    filing: wire::TaskFiling,
+}
+
 fn prepare_task(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     project: &Project,
     projects: &ProjectPolicy,
-    cause: CreationCause,
-    creation: TaskCreationCapture,
-    flow: Vec<wire::Phase>,
-    filing: wire::TaskFiling,
+    seed: TaskSeed,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
@@ -585,31 +612,22 @@ fn prepare_task(
             "task add requires exactly one intended absent birth stamp",
         ));
     };
-    prepare_task_for(
-        command,
-        add,
-        project,
-        projects,
+    prepare_task_for(add, project, projects, seed, born.clone())
+}
+
+fn prepare_task_for(
+    add: &TaskAdd,
+    project: &Project,
+    projects: &ProjectPolicy,
+    seed: TaskSeed,
+    born: wire::TaskStamp,
+) -> Result<PreparedTask, Outcome<CommandAnswer>> {
+    let TaskSeed {
         cause,
         creation,
         flow,
         filing,
-        born.clone(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_task_for(
-    _command: &wire::AdmittedCommand,
-    add: &TaskAdd,
-    project: &Project,
-    projects: &ProjectPolicy,
-    cause: CreationCause,
-    creation: TaskCreationCapture,
-    flow: Vec<wire::Phase>,
-    filing: wire::TaskFiling,
-    born: wire::TaskStamp,
-) -> Result<PreparedTask, Outcome<CommandAnswer>> {
+    } = seed;
     if cause.provenance.parent() == Some(&born) {
         return Err(refusal(
             "task::origin-self",

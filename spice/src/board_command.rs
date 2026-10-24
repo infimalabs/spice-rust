@@ -118,7 +118,8 @@ mod next_action;
 use next_action::*;
 mod automatic_lifecycle;
 pub(crate) use automatic_lifecycle::{
-    AutomaticClaim, claim_automatic, is_automatic_claim, release_automatic,
+    AllocationPolicy, AutomaticClaim, AutomaticSeat, claim_automatic, is_automatic_claim,
+    release_automatic,
 };
 mod mutation;
 use mutation::*;

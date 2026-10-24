@@ -79,7 +79,6 @@ fn done_into_a_continuing_phase_carries_the_claim_to_its_lane() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "CARRY-1kCarry01",
         "Carry the claim across the plan phase",
         "board.test",

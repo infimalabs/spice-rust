@@ -624,7 +624,6 @@ fn plan_cannot_remove_the_only_pending_child_carrying_acceptance() {
     let plan = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-plan001",
         "Plan-only parent",
         "board.test",
@@ -634,7 +633,6 @@ fn plan_cannot_remove_the_only_pending_child_carrying_acceptance() {
     let child = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-child01",
         "Accepted child",
         "board.test",
@@ -674,7 +672,6 @@ fn plan_removes_one_child_while_another_pending_child_carries_acceptance() {
     let plan = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-plan002",
         "Plan-only parent",
         "board.test",
@@ -684,7 +681,6 @@ fn plan_removes_one_child_while_another_pending_child_carries_acceptance() {
     let first = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-child02",
         "First accepted child",
         "board.test",
@@ -694,7 +690,6 @@ fn plan_removes_one_child_while_another_pending_child_carries_acceptance() {
     let second = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-child03",
         "Remaining accepted child",
         "board.test",
@@ -730,7 +725,6 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
     let plan = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-plan003",
         "Plan-only parent",
         "board.test",
@@ -740,7 +734,6 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
     let forward = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-child04",
         "Forward accepted child",
         "board.test",
@@ -750,7 +743,6 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
     let reverse = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REMOVE-child05",
         "Reverse accepted child",
         "board.test",

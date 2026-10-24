@@ -176,7 +176,6 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "EDITED-1kKfYW01",
         "Original title",
         "board.test",
@@ -342,7 +341,6 @@ fn a_live_claimed_correction_moves_neither_claim_nor_lease() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "EDITED-1kKfYW11",
         "Original title",
         "board.test",

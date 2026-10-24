@@ -15,23 +15,31 @@ pub(crate) struct AutomaticClaim {
     pub(crate) occupant: wire::CanonicalUuid,
 }
 
+/// The vacant seat one automatic claim is minted for.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AutomaticSeat {
+    pub(crate) epoch: wire::CanonicalUuid,
+    pub(crate) lane: wire::CanonicalUuid,
+    pub(crate) occupant: wire::CanonicalUuid,
+}
+
+/// The board policy an automatic claim selects and admits under.
+#[derive(Clone, Copy)]
+pub(crate) struct AllocationPolicy<'a> {
+    pub(crate) projects: &'a ProjectPolicy,
+    pub(crate) allocation: &'a board::NextConfig,
+}
+
 /// Select and claim once for a vacant resident-owned lane.
 ///
 /// This is the automatic counterpart of `claim_win`: the same validated
 /// snapshot, selector, allocator guard, and mint writer decide the result.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one automatic claim carries the complete allocator decision boundary"
-)]
 pub(crate) fn claim_automatic(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
     repository: &Repository,
-    epoch: wire::CanonicalUuid,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
+    seat: AutomaticSeat,
+    policy: AllocationPolicy<'_>,
 ) -> Result<AutomaticClaim, Outcome<CommandAnswer>> {
     let PreparedClaim {
         write,
@@ -41,9 +49,7 @@ pub(crate) fn claim_automatic(
         born,
         actor,
         git,
-    } = prepare_claim(
-        bus, observed, repository, epoch, lane, occupant, projects, allocation,
-    )?;
+    } = prepare_claim(bus, observed, repository, seat, policy)?;
     let answer = automatic_answer(&selected, &entries, task, actor, git.transplant());
     match committed_with_task_git(
         bus,
@@ -53,8 +59,8 @@ pub(crate) fn claim_automatic(
     ) {
         Outcome::Reply(_) => Ok(AutomaticClaim {
             task: born,
-            lane,
-            occupant,
+            lane: seat.lane,
+            occupant: seat.occupant,
         }),
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
@@ -71,23 +77,26 @@ struct PreparedClaim {
     git: spice::task_git::ClaimPreparation,
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the prepared write captures one automatic allocator boundary"
-)]
 fn prepare_claim(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
     repository: &Repository,
-    epoch: wire::CanonicalUuid,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
+    seat: AutomaticSeat,
+    policy: AllocationPolicy<'_>,
 ) -> Result<PreparedClaim, Outcome<CommandAnswer>> {
+    let AutomaticSeat {
+        epoch,
+        lane,
+        occupant,
+    } = seat;
     let actor = Actor::Lane(lane);
-    let snapshot =
-        validated_snapshot_for_automatic(observed, actor.clone(), occupant, projects, allocation)?;
+    let snapshot = validated_snapshot_for_automatic(
+        observed,
+        actor.clone(),
+        occupant,
+        policy.projects,
+        policy.allocation,
+    )?;
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
     let selected = select_task(&snapshot, &actor, &subscription)?;
@@ -116,17 +125,22 @@ fn prepare_claim(
     );
     if let Err(outcome) = mint_claim(
         &mut write,
-        &selected,
-        &born,
-        &actor,
-        lane,
-        occupant,
-        epoch,
-        at,
-        expiry,
-        maximum,
-        git.boundary.clone(),
-        source,
+        board::allocate::Mint {
+            task: &born,
+            actor: &actor,
+            workflow: selected.workflow(),
+            project: selected.project().as_str(),
+            lane,
+            occupant,
+            epoch,
+            at,
+            expiry,
+            maximum,
+            git: Some(git.boundary.clone()),
+            recovery: None,
+            source,
+            cause: None,
+        },
     ) {
         return Err(match git.rollback() {
             Ok(()) => outcome,
@@ -274,54 +288,6 @@ fn claim_source_boundary(
 ) -> Result<body::SourceBoundary, Outcome<CommandAnswer>> {
     bus.source_boundary(lane)
         .map_err(|error| store_fault("claim::boundary-unreadable", &error.to_string()))
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one claim fact and its two heads share one boundary"
-)]
-fn mint_claim(
-    write: &mut JournalWrite,
-    selected: &Entry,
-    task: &TaskStamp,
-    actor: &Actor,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    epoch: wire::CanonicalUuid,
-    at: Instant,
-    expiry: Instant,
-    maximum: Instant,
-    git: GitBoundary,
-    source: body::SourceBoundary,
-) -> Result<(), Outcome<CommandAnswer>> {
-    board::allocate::mint(
-        write,
-        board::allocate::Mint {
-            task,
-            actor,
-            workflow: selected.workflow(),
-            project: selected.project().as_str(),
-            lane,
-            occupant,
-            epoch,
-            at,
-            expiry,
-            maximum,
-            git: Some(git),
-            recovery: None,
-            source,
-            cause: None,
-        },
-    )
-    .map(|_| ())
-    .map_err(|error| match error {
-        board::allocate::MintError::Assignment(error) => {
-            store_fault("review::assignment-build", &error.to_string())
-        }
-        board::allocate::MintError::Claim(error) => {
-            store_fault("claim::win-build", &error.to_string())
-        }
-    })
 }
 
 fn automatic_answer(

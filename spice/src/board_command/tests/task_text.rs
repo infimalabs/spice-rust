@@ -32,7 +32,6 @@ fn a_replacement_lands_only_over_the_text_its_digest_names() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "TEXT-1kKfYW01",
         "Replace by digest",
         "board.test",
@@ -139,7 +138,6 @@ fn acceptance_text_reads_back_as_the_items_it_names() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "TEXT-1kKfYW03",
         "Acceptance as text",
         "board.test",

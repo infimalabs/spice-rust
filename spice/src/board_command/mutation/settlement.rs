@@ -231,28 +231,26 @@ pub(in crate::board_command) fn task_conclude(
     )
 }
 
-/// Stage an accepted pass recommendation into the decision's own `write`,
+/// The decision write one staged conclusion joins: its journal write, the
+/// decision fact the conclusion follows, and the instant it settles at.
+pub(in crate::board_command) struct DecisionWrite<'a> {
+    pub(in crate::board_command) write: &'a mut JournalWrite,
+    pub(in crate::board_command) decided: PendingFact,
+    pub(in crate::board_command) at: Instant,
+}
+
+/// Stage an accepted pass recommendation into the decision's own write,
 /// through the same admission and heads as `task conclude`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the decision's write, cause, and instant join the conclusion's own inputs"
-)]
 pub(in crate::board_command) fn stage_conclusion(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    design: TaskHandle,
-    conclusion: body::DesignConclusion,
+    conclude: &TaskConclude,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
-    write: &mut JournalWrite,
-    cause: PendingFact,
-    at: Instant,
+    decision: DecisionWrite<'_>,
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
-    let conclude = TaskConclude {
-        task: design,
-        conclusion,
-    };
-    let settlement = Settlement::Conclude(&conclude);
+    let DecisionWrite { write, decided, at } = decision;
+    let settlement = Settlement::Conclude(conclude);
     let snapshot = validated_working_snapshot(
         bus,
         command.actor().clone(),
@@ -263,16 +261,17 @@ pub(in crate::board_command) fn stage_conclusion(
     guard_task_projection(write, snapshot.task_barrier.clone());
     let entry = admitted_entry(&snapshot, settlement)?;
     let oops_generation = prepare_oops_settlement(write, &snapshot, entry)?;
-    let cause = FactCause::Pending(cause);
     stage_with_controlled(
         write,
         &snapshot,
         entry,
         settlement,
-        cause,
-        at,
+        Staging {
+            cause: FactCause::Pending(decided),
+            at,
+            oops_generation,
+        },
         projects,
-        oops_generation,
     )
     .map(|(_, closed)| closed)
 }
@@ -320,10 +319,12 @@ fn settle(
         &snapshot,
         entry,
         settlement,
-        FactCause::Root,
-        at,
+        Staging {
+            cause: FactCause::Root,
+            at,
+            oops_generation,
+        },
         projects,
-        oops_generation,
     ) {
         Ok(staged) => staged,
         Err(outcome) => return outcome,
@@ -342,21 +343,23 @@ fn settle(
     committed(bus, write, CommandAnswer::Task(Box::new(answer)))
 }
 
+/// Where one settlement stages in its write: the fact it follows, the instant
+/// it settles at, and the oops generation it advances, if any.
+struct Staging {
+    cause: FactCause,
+    at: Instant,
+    oops_generation: Option<wire::OopsGenerationHead>,
+}
+
 /// Stage one terminal task and every pending subtree its disposition can no
 /// longer release.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one settlement stages its entry, cause, instant, policy, and oops generation in one write"
-)]
 fn stage_with_controlled(
     write: &mut JournalWrite,
     snapshot: &ValidatedSnapshot,
     entry: &Entry,
     settlement: Settlement<'_>,
-    cause: FactCause,
-    at: Instant,
+    staging: Staging,
     projects: &ProjectPolicy,
-    oops_generation: Option<wire::OopsGenerationHead>,
 ) -> Result<(Entry, Vec<TaskHandle>), Outcome<CommandAnswer>> {
     let controlled = if cascades_controlled(entry, settlement) {
         board::controlled_pending(&snapshot.entries, entry.born())
@@ -364,15 +367,8 @@ fn stage_with_controlled(
         Default::default()
     };
     require_controlled_unheld(&controlled, settlement)?;
-    let (post, settled) = stage(
-        write,
-        entry,
-        settlement,
-        cause,
-        at,
-        projects,
-        oops_generation,
-    )?;
+    let at = staging.at;
+    let (post, settled) = stage(write, entry, settlement, staging, projects)?;
     if controlled.is_empty() {
         return Ok((post, Vec::new()));
     }
@@ -388,10 +384,12 @@ fn stage_with_controlled(
             write,
             controlled,
             Settlement::Close(&close),
-            FactCause::Pending(settled),
-            at,
+            Staging {
+                cause: FactCause::Pending(settled),
+                at,
+                oops_generation: None,
+            },
             projects,
-            None,
         )?;
         closed.push(controlled.handle().clone());
     }
@@ -404,11 +402,14 @@ fn stage(
     write: &mut JournalWrite,
     entry: &Entry,
     settlement: Settlement<'_>,
-    cause: FactCause,
-    at: Instant,
+    staging: Staging,
     projects: &ProjectPolicy,
-    oops_generation: Option<wire::OopsGenerationHead>,
 ) -> Result<(Entry, PendingFact), Outcome<CommandAnswer>> {
+    let Staging {
+        cause,
+        at,
+        oops_generation,
+    } = staging;
     let claimed = entry
         .claim()
         .filter(|claim| claim.disposition == ClaimDisposition::Active)

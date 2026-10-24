@@ -12,7 +12,6 @@ fn a_holder_self_edit_is_retried_by_the_completion_client() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "EDIT-selfdone1",
         "Edit then complete",
         "board.test",
@@ -45,7 +44,6 @@ fn a_foreign_edit_is_returned_as_witness_movement_by_the_completion_client() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "EDIT-foreign01",
         "Do not cross a foreign edit",
         "board.test",
@@ -128,9 +126,7 @@ fn complete_through_client(
     let (endpoint, stop_sender, worker) = spawn_completion_server(
         bus,
         epoch,
-        capabilities,
-        app,
-        version,
+        serve::axum::Generation::new(epoch, capabilities, version, app),
         task.clone(),
         edit_actor,
         title,
@@ -166,16 +162,10 @@ fn complete_through_client(
     (outcome, bus)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the fixture server binds every serve capability beside the task edit it replays"
-)]
 fn spawn_completion_server(
     bus: Bus,
     epoch: CanonicalUuid,
-    capabilities: serve::axum::Capabilities,
-    app: serve::canvas::CanvasAssets,
-    version: wire::Version,
+    generation: serve::axum::Generation,
     task: TaskHandle,
     edit_actor: Actor,
     title: &'static str,
@@ -194,7 +184,6 @@ fn spawn_completion_server(
                 .build()
                 .expect("completion fixture runtime builds");
             runtime.block_on(async move {
-                let generation = serve::axum::Generation::new(epoch, capabilities, version, app);
                 let (server, mut control) = serve::axum::Server::bind(generation)
                     .await
                     .expect("completion fixture server binds");

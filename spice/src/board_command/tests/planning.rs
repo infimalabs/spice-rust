@@ -707,7 +707,6 @@ fn an_ordinary_disposition_refusal_names_claimed_task_deletion() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "TASK-duplicate",
         "Remove duplicate work",
         "board.test",
@@ -747,7 +746,6 @@ fn an_intentless_plan_flow_still_records_a_disposition() {
     let plan = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "PLAN-flow",
         "Plan by flow alone",
         "board.test",
@@ -777,7 +775,6 @@ fn a_disposed_plan_settles_on_clean_review_without_constructing_or_authorizing_w
     let cover = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "COVER-landed",
         "Answer the reported need",
         "board.test",
@@ -908,7 +905,6 @@ fn operator_closed_child_cannot_satisfy_plan_construction() {
     let child = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "CONTRACT-negative",
         "Investigate one possible contract",
         "board.test",
@@ -951,7 +947,6 @@ fn ordinary_done_cannot_supply_a_required_review_verdict() {
     let task = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "REVIEW-verdict",
         "Review the declared deliverable",
         "board.test",
@@ -1032,7 +1027,6 @@ fn negative_controller_closure_closes_every_dependent_branch() {
     let ordinary = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "TASK-ordinary-edge",
         "Unrelated follow-on",
         "board.test",
@@ -1097,7 +1091,6 @@ fn settling_one_controller_preserves_a_branch_owned_by_another_open_controller()
     let branch = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "TASK-shared-branch",
         "Follow shared output",
         "board.test",

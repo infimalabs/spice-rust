@@ -165,13 +165,15 @@ pub(super) fn task_done(
         command,
         done,
         entry,
-        &transition,
-        at,
-        published,
-        source,
-        next,
-        parked.as_ref().map(|release| release.parked()),
-        carried,
+        Completion {
+            transition: &transition,
+            at,
+            published,
+            source,
+            next,
+            parked: parked.as_ref().map(|release| release.parked()),
+            carried,
+        },
     ) {
         Ok(answer) => answer,
         Err(outcome) => return rollback_release(parked, outcome),
@@ -548,23 +550,34 @@ pub(super) fn carries_claim(
             .is_some_and(|index| index + 1 < flow.len())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one completion, its workflow change, and the claim it frees or carries share one write"
-)]
+/// What one completion settled before the journal opened: the workflow change,
+/// the boundaries it recorded, and whether the claim is carried or freed.
+struct Completion<'a> {
+    transition: &'a board::Transition,
+    at: Instant,
+    published: Option<body::GitBoundary>,
+    source: body::SourceBoundary,
+    next: Option<Box<str>>,
+    parked: Option<&'a body::TaskParkedCommits>,
+    carried: bool,
+}
+
 fn append_done(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
     done: &TaskDone,
     entry: &Entry,
-    transition: &board::Transition,
-    at: Instant,
-    published: Option<body::GitBoundary>,
-    source: body::SourceBoundary,
-    next: Option<Box<str>>,
-    parked: Option<&body::TaskParkedCommits>,
-    carried: bool,
+    completion: Completion<'_>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
+    let Completion {
+        transition,
+        at,
+        published,
+        source,
+        next,
+        parked,
+        carried,
+    } = completion;
     let status = transition.next().status.as_str().to_owned();
     let terminal_status = if transition.next().status.is_pending() {
         body::TaskCompletionStatus::Pending
@@ -605,21 +618,35 @@ fn append_done(
     let workflow = transition.next().clone();
     write.workflow_head(entry.born().clone(), workflow_fact, move |_| workflow);
     let claim = if carried {
-        let until = carry_claim(
+        // Mint the completing lane's claim on the phase just entered, in place
+        // of the claim it held, with the ordinary lease and the boundaries the
+        // completion recorded, as a consequence of the phase fact.
+        let held = entry.claim().expect("Active proof requires a claim head");
+        let (expiry, maximum) = claim_lease(at)?;
+        mint_claim(
             write,
-            command,
-            entry,
-            transition.next(),
-            workflow_fact,
-            at,
-            published,
-            source,
+            board::allocate::Mint {
+                task: entry.born(),
+                actor: command.actor(),
+                workflow: transition.next(),
+                project: entry.project().as_str(),
+                lane: held.lane,
+                occupant: held.occupant,
+                epoch: command.epoch(),
+                at,
+                expiry,
+                maximum,
+                git: published,
+                recovery: None,
+                source,
+                cause: Some(workflow_fact),
+            },
         )?;
         Some(Box::new(carried_claim_answer(
             entry,
             command.actor(),
             &transition.next().phase,
-            until,
+            expiry,
         )))
     } else {
         free_claim(write, entry, completed, parked)?;
@@ -666,55 +693,6 @@ fn free_claim(
         ..claim
     });
     Ok(())
-}
-
-/// Mint the completing lane's claim on the phase just entered, in place of the
-/// claim it held, with the ordinary lease and the boundaries the completion
-/// recorded, as a consequence of the phase fact; answers the lease expiry.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one claim fact and its two heads share one boundary"
-)]
-fn carry_claim(
-    write: &mut JournalWrite,
-    command: &wire::AdmittedCommand,
-    entry: &Entry,
-    workflow: &wire::WorkflowHead,
-    phased: PendingFact,
-    at: Instant,
-    git: Option<body::GitBoundary>,
-    source: body::SourceBoundary,
-) -> Result<Instant, Outcome<CommandAnswer>> {
-    let held = entry.claim().expect("Active proof requires a claim head");
-    let (expiry, maximum) = claim_lease(at)?;
-    board::allocate::mint(
-        write,
-        board::allocate::Mint {
-            task: entry.born(),
-            actor: command.actor(),
-            workflow,
-            project: entry.project().as_str(),
-            lane: held.lane,
-            occupant: held.occupant,
-            epoch: command.epoch(),
-            at,
-            expiry,
-            maximum,
-            git,
-            recovery: None,
-            source,
-            cause: Some(phased),
-        },
-    )
-    .map(|_| expiry)
-    .map_err(|error| match error {
-        board::allocate::MintError::Assignment(error) => {
-            store_fault("review::assignment-build", &error.to_string())
-        }
-        board::allocate::MintError::Claim(error) => {
-            store_fault("claim::win-build", &error.to_string())
-        }
-    })
 }
 
 /// The carried claim said where the lane reads the completion: the phase it
@@ -1112,16 +1090,23 @@ fn commit_review(
     .with_grouped(entry.grouped())
     .with_design(entry.design());
     let next = next_action(&snapshot, &post);
+    let reviewed_task = match task_heads(&snapshot.answer, &review.task) {
+        Ok(reviewed_task) => reviewed_task,
+        Err(outcome) => return outcome,
+    };
     if let Err(outcome) = record_followups(
         &mut write,
-        command,
-        &snapshot,
-        review,
-        reviewed,
-        &origin,
-        creation.as_ref(),
-        repository,
-        projects,
+        &review.then,
+        &FollowupContext {
+            command,
+            snapshot: &snapshot,
+            reviewed_task,
+            reviewed,
+            origin: &origin,
+            creation: creation.as_ref(),
+            repository,
+            projects,
+        },
     ) {
         return outcome;
     }

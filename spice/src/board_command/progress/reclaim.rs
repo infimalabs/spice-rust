@@ -11,13 +11,17 @@ pub(super) struct ReclaimWindow {
 #[derive(Clone)]
 enum ReclaimResidency {
     Exact,
-    Rebound {
-        lane: wire::CanonicalUuid,
-        occupant: wire::CanonicalUuid,
-        ancestor: wire::CanonicalUuid,
-        epoch: wire::CanonicalUuid,
-        source: body::SourceBoundary,
-    },
+    Rebound(Rebound),
+}
+
+/// The seat a same-team recovery moves the claim onto.
+#[derive(Clone)]
+struct Rebound {
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    ancestor: wire::CanonicalUuid,
+    epoch: wire::CanonicalUuid,
+    source: body::SourceBoundary,
 }
 
 impl ReclaimWindow {
@@ -28,7 +32,7 @@ impl ReclaimWindow {
     pub(super) const fn producer(&self) -> Producer {
         match &self.residency {
             ReclaimResidency::Exact => Producer::BusTimer,
-            ReclaimResidency::Rebound { .. } => Producer::CommandDoor,
+            ReclaimResidency::Rebound(_) => Producer::CommandDoor,
         }
     }
 }
@@ -86,7 +90,7 @@ pub(super) fn reclaim_window(
                 "request a duration that extends the current expiry",
             ));
         }
-        ReclaimResidency::Rebound { .. } => std::cmp::max(requested, lease.expiry),
+        ReclaimResidency::Rebound(_) => std::cmp::max(requested, lease.expiry),
         ReclaimResidency::Exact => requested,
     };
     let mut lease = lease.clone();
@@ -163,13 +167,13 @@ fn reclaim_residency(
     let source = bus
         .source_boundary(lane)
         .map_err(|error| store_fault("claim::rebound-boundary-unreadable", &error.to_string()))?;
-    Ok(ReclaimResidency::Rebound {
+    Ok(ReclaimResidency::Rebound(Rebound {
         lane: *lane,
         occupant,
         ancestor: claim.occupant,
         epoch: command.epoch(),
         source,
-    })
+    }))
 }
 
 fn moved_refusal(renew: &ClaimRenew) -> Outcome<CommandAnswer> {
@@ -183,17 +187,16 @@ pub(super) fn append_reclaim(
     at: Instant,
     window: ReclaimWindow,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    match window.residency.clone() {
-        ReclaimResidency::Exact => append_renewal(write, entry, command, at, window),
-        ReclaimResidency::Rebound {
-            lane,
-            occupant,
-            ancestor,
-            epoch,
-            source,
-        } => append_rebound(
-            write, entry, at, window, lane, occupant, ancestor, epoch, source,
-        ),
+    let ReclaimWindow {
+        until,
+        lease,
+        residency,
+    } = window;
+    match residency {
+        ReclaimResidency::Exact => append_renewal(write, entry, command, at, until, lease),
+        ReclaimResidency::Rebound(rebound) => {
+            append_rebound(write, entry, at, until, lease, rebound)
+        }
     }
 }
 
@@ -202,22 +205,22 @@ fn append_renewal(
     entry: &Entry,
     command: &wire::AdmittedCommand,
     at: Instant,
-    window: ReclaimWindow,
+    until: Instant,
+    mut lease: LeaseHead,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let renewed = write
         .fact(
             body::ClaimRenewed {
                 task: entry.born().clone(),
                 epoch: command.epoch(),
-                until: window.until,
-                maximum: window.lease.maximum,
+                until,
+                maximum: lease.maximum,
             },
             FactCause::Root,
         )
         .map_err(|error| store_fault("claim::reclaim-build", &error.to_string()))?;
-    let mut lease = window.lease;
     lease.renewal = at;
-    lease.expiry = window.until;
+    lease.expiry = until;
     write.lease_head(entry.born().clone(), renewed, move |_| lease);
     acknowledge(write, entry, renewed);
     Ok(())
@@ -243,21 +246,21 @@ fn acknowledge(write: &mut JournalWrite, entry: &Entry, renewed: journal::Pendin
     });
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one rebound fact updates one claim and lease boundary"
-)]
 fn append_rebound(
     write: &mut JournalWrite,
     entry: &Entry,
     at: Instant,
-    window: ReclaimWindow,
-    lane: wire::CanonicalUuid,
-    occupant: wire::CanonicalUuid,
-    ancestor: wire::CanonicalUuid,
-    epoch: wire::CanonicalUuid,
-    source: body::SourceBoundary,
+    until: Instant,
+    mut lease: LeaseHead,
+    rebound: Rebound,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    let Rebound {
+        lane,
+        occupant,
+        ancestor,
+        epoch,
+        source,
+    } = rebound;
     let rebound = write
         .fact(
             body::ClaimRebound {
@@ -266,8 +269,8 @@ fn append_rebound(
                 occupant,
                 ancestor,
                 epoch,
-                until: window.until,
-                maximum: window.lease.maximum,
+                until,
+                maximum: lease.maximum,
                 source,
             },
             FactCause::Root,
@@ -284,9 +287,8 @@ fn append_rebound(
         fact,
         ..claim
     });
-    let mut lease = window.lease;
     lease.renewal = at;
-    lease.expiry = window.until;
+    lease.expiry = until;
     lease.epoch = epoch;
     write.lease_head(entry.born().clone(), rebound, move |_| lease);
     Ok(())

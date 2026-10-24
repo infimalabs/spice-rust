@@ -751,7 +751,6 @@ fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
     let first = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "MOSAIC-1kKQTw1V",
         "App lacks the mosaic lane interface",
         "board.alpha",
@@ -761,7 +760,6 @@ fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
     let overlapping = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "FIDELIT-1kKRSfyV",
         "Rebuild the lane watchband and message mosaic",
         "rim.beta",
@@ -771,7 +769,6 @@ fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
     let same_stem = add_project_with_acceptance(
         &bus,
         epoch,
-        Actor::Operator,
         "MOSAIC-1kKQTw1W",
         "Audit unrelated board output",
         "board.gamma",

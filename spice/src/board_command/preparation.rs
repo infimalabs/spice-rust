@@ -1025,7 +1025,19 @@ fn commit_decision(
             allocation,
         } => {
             let closed = match super::mutation::stage_conclusion(
-                bus, command, design, conclusion, projects, allocation, &mut write, decided, at,
+                bus,
+                command,
+                &TaskConclude {
+                    task: design,
+                    conclusion,
+                },
+                projects,
+                allocation,
+                super::mutation::DecisionWrite {
+                    write: &mut write,
+                    decided,
+                    at,
+                },
             ) {
                 Ok(closed) => closed,
                 Err(outcome) => return outcome,
