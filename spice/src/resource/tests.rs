@@ -218,19 +218,40 @@ fn extractions() -> std::path::PathBuf {
     ))
 }
 
+/// The short code the fixture journal admits the rack under.
+const RACK_CODE: wire::SequenceCode = wire::SequenceCode::new(42);
+
 /// Read one rack URL the way the seat does, against the fixture rack,
-/// extracting beneath `root`.
-fn rack_read_into(url: &str, root: &std::path::Path) -> Result<String, String> {
+/// extracting beneath `root` under the fact `code` names.
+fn rack_read_coded(
+    url: &str,
+    root: &std::path::Path,
+    code: Option<wire::SequenceCode>,
+) -> Result<String, String> {
     let rack = Rack::admit(&RACK).expect("fixture rack admits");
     let request = Request::parse(url)?;
-    let Resource::Rack { namespace, path } = &request.resource else {
+    let Resource::Rack {
+        namespace,
+        path,
+        generation,
+    } = &request.resource
+    else {
         panic!("{url} names no rack member: {request:?}");
     };
-    let document = super::rack::document(&rack, *namespace, path, url, || Ok(root.to_path_buf()))?;
+    let document = super::rack::document(&rack, *namespace, path, *generation, url, || {
+        Ok(super::rack::Runtime {
+            extractions: root.to_path_buf(),
+            code,
+        })
+    })?;
     match &request.selector {
         Some(selector) => selector.select(&document),
         None => Ok(document),
     }
+}
+
+fn rack_read_into(url: &str, root: &std::path::Path) -> Result<String, String> {
+    rack_read_coded(url, root, Some(RACK_CODE))
 }
 
 fn rack_read(url: &str) -> Result<String, String> {
@@ -284,7 +305,7 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
         .clone();
     let file = root.join(generation.as_str()).join(format!("{digest}.png"));
     let expected = format!(
-        "image/png {} bytes digest {digest} at {}",
+        "image/png {} bytes digest {digest} generation {RACK_CODE} at {}",
         RACK_FIGURE.len(),
         file.display()
     );
@@ -338,6 +359,46 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
 }
 
 #[test]
+fn rack_urls_serve_only_the_linked_generation_by_its_admitting_short_code() {
+    let root = extractions();
+    let plain = rack_read_into("spice://doc/guide.md", &root).expect("the member reads");
+    assert_eq!(
+        rack_read_into(&format!("spice://doc/guide.md@{RACK_CODE}"), &root).as_deref(),
+        Ok(plain.as_str())
+    );
+    assert_eq!(
+        rack_read_into(&format!("spice://doc@{RACK_CODE}"), &root),
+        rack_read_into("spice://doc", &root)
+    );
+    assert_eq!(
+        rack_read_into(&format!("spice://doc/guide.md@{RACK_CODE}:1"), &root).as_deref(),
+        Ok("# guide")
+    );
+
+    let other = wire::SequenceCode::new(43);
+    let refused = rack_read_into(&format!("spice://doc/guide.md@{other}"), &root)
+        .expect_err("another code is refused");
+    assert!(
+        refused.contains(&format!("links generation {RACK_CODE}")),
+        "{refused}"
+    );
+
+    let unadmitted = rack_read_coded(&format!("spice://doc/guide.md@{RACK_CODE}"), &root, None)
+        .expect_err("no fact admits the rack");
+    assert!(
+        unadmitted.contains("no journal fact admits"),
+        "{unadmitted}"
+    );
+    let pointer = rack_read_coded("spice://doc/figure.png", &root, None).expect("hands off");
+    assert!(
+        !pointer.contains("generation") && pointer.contains(" at "),
+        "{pointer}"
+    );
+
+    std::fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
 fn rack_urls_refuse_queries_writes_and_digest_or_uuid_generations() {
     for url in [
         "spice://SKILL.md?release=current",
@@ -353,6 +414,10 @@ fn rack_urls_refuse_queries_writes_and_digest_or_uuid_generations() {
     ] {
         assert!(refusal(&url).contains("journal short code"), "{url}");
     }
+    assert!(
+        refusal("spice://doc/guide.md@not-a-code").contains("no journal short code"),
+        "other text is no code"
+    );
 
     let ambient = spice::ambient::capture();
     let seat = super::Seat {

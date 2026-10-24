@@ -37,6 +37,8 @@ pub mod journal_schema;
 pub mod placeholder;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod quote;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod rack_admission;
 pub mod repository;
 pub mod resident_lock;
 pub mod rooms;

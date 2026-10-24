@@ -47,7 +47,7 @@ pub(crate) const SCHEME: &str = "spice://";
 const INDEX: &str = "\
 spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
 spice://SKILL.md  complete authoritative agent skill from this executable's spice rack, the member spice://skill/SKILL.md names; takes line selectors but no query
-spice://NS/PATH  one member of this executable's spice rack (namespaces app, doc, skill, tool): text inline, other media as one line naming its type, size, digest, and extracted file; NS or NS/DIRECTORY lists its members; takes line selectors but no query or write; a digest or UUID never names a generation
+spice://NS/PATH[@CODE]  one member of this executable's spice rack (namespaces app, doc, skill, tool): text inline, other media as one line naming its type, size, digest, generation short code, and extracted file; NS or NS/DIRECTORY lists its members; CODE is the short code of the journal fact admitting the linked rack, the only generation served; takes line selectors but no query or write; a digest or UUID never names a generation
 spice://board  task status
 spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
@@ -104,10 +104,12 @@ pub(crate) struct Request {
 enum Resource {
     Index,
     /// One member of this executable's spice rack, or with no such member the
-    /// members beneath `path` (empty for the whole namespace).
+    /// members beneath `path` (empty for the whole namespace), optionally
+    /// under the generation short code the URL named.
     Rack {
         namespace: Namespace,
         path: String,
+        generation: Option<wire::SequenceCode>,
     },
     /// A quote target, as the URL spelled it without its selector.
     Quote(String),
@@ -1057,11 +1059,14 @@ impl Seat {
         }
         let document = match &request.resource {
             Resource::Index => INDEX.to_owned(),
-            Resource::Rack { namespace, path } => rack::linked(*namespace, path, url, || {
-                let state = repository()?.admit_state().map_err(|error| {
-                    format!("spice cannot admit the runtime directory {url} extracts into: {error}")
-                })?;
-                Ok(state.rack().to_path_buf())
+            Resource::Rack {
+                namespace,
+                path,
+                generation,
+            } => rack::linked(*namespace, path, *generation, url, || {
+                repository()?.admit_state().map_err(|error| {
+                    format!("spice cannot admit the runtime directory {url} reads through: {error}")
+                })
             })?,
             Resource::Quote(target) => read_quote(target)?,
             Resource::Read(query) => {

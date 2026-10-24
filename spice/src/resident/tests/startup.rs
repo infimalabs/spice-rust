@@ -544,3 +544,41 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[test]
+fn a_linked_rack_is_admitted_once_and_resolved_by_its_own_archive() {
+    let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    let epoch = test_uuid(3);
+    let first = wire::Digest::compute(wire::Domain::DistArtifact, b"rack one");
+    let second = wire::Digest::compute(wire::Domain::DistArtifact, b"rack two");
+    let generation = wire::Digest::compute(wire::Domain::DistArtifact, b"app");
+
+    let admitted = runtime::admit_rack(&bus, epoch, &first, &generation).expect("rack admits");
+    assert_eq!(
+        runtime::admit_rack(&bus, epoch, &first, &generation).expect("rack re-admits"),
+        admitted,
+        "a second start appends no second fact for the same archive"
+    );
+    let newer = runtime::admit_rack(&bus, epoch, &second, &generation).expect("another admits");
+    assert!(newer > admitted);
+
+    let code = |archive: wire::Digest| {
+        bus.read(move |read| spice::rack_admission::code(read, &archive))
+            .expect("admissions read")
+    };
+    assert_eq!(
+        code(first),
+        Some(wire::SequenceCode::new(admitted.get())),
+        "an older archive resolves its own fact, not the newest"
+    );
+    assert_eq!(code(second), Some(wire::SequenceCode::new(newer.get())));
+    assert_eq!(
+        code(wire::Digest::compute(
+            wire::Domain::DistArtifact,
+            b"unlinked"
+        )),
+        None
+    );
+    bus.shutdown().expect("fixture bus stops");
+}
