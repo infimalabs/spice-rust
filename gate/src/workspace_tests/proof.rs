@@ -8,6 +8,9 @@ use input_provenance::selected_package_input_paths;
 
 const DIGEST_HEX_LENGTH: usize = 64;
 const RUST_TEST_THREADS: &str = "RUST_TEST_THREADS";
+/// A shard compiles its selected tree once, so incremental sessions are
+/// never reused; left on, they double the warm output under the lane bound.
+const CARGO_INCREMENTAL: &str = "CARGO_INCREMENTAL";
 /// Ordinary gate lanes that share one host. Each proof shard schedules its
 /// Cargo jobs and harness threads within one lane's share of the host.
 const PROOF_HOST_LANES: usize = 4;
@@ -756,15 +759,13 @@ fn canonical_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-/// Execute one planned Cargo shard with fixed proof-runner bounds.
-pub fn run_cargo_gate_shard_at(
-    root: &Path,
+/// The environment every shard's Cargo and test executables run under: the
+/// ambient compiler environment with its output roots, wrappers, job share,
+/// and incremental switch pinned, whatever the inherited values were.
+fn shard_environment(
     writable_root: &Path,
     environment: Environment,
-    cargo: &OsStr,
-    shard: &CargoGateShard,
-    output: &mut impl Write,
-) -> Result<CargoGateShardResult, WorkspaceTestError> {
+) -> Result<Environment, WorkspaceTestError> {
     let mut entries = environment
         .entries()
         .iter()
@@ -780,11 +781,23 @@ pub fn run_cargo_gate_shard_at(
     );
     entries.insert(OsString::from(RUSTC_WRAPPER), OsString::new());
     entries.insert(OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new());
+    entries.insert(OsString::from(CARGO_INCREMENTAL), OsString::from("0"));
     let share = proof_host_share().to_string();
     entries.insert(OsString::from(CARGO_BUILD_JOBS), OsString::from(&share));
     entries.insert(OsString::from(RUST_TEST_THREADS), OsString::from(share));
-    let environment =
-        Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))?;
+    Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+}
+
+/// Execute one planned Cargo shard with fixed proof-runner bounds.
+pub fn run_cargo_gate_shard_at(
+    root: &Path,
+    writable_root: &Path,
+    environment: Environment,
+    cargo: &OsStr,
+    shard: &CargoGateShard,
+    output: &mut impl Write,
+) -> Result<CargoGateShardResult, WorkspaceTestError> {
+    let environment = shard_environment(writable_root, environment)?;
     let runs = if shard.kind == CargoGateShardKind::Test {
         // Compile before starting the execution clock: the workspace prebuild
         // has its own deadline, and the shard's executables then share one.
@@ -889,6 +902,30 @@ fn run_shard_process(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shard_pins_incremental_off_over_an_inherited_setting() {
+        let inherited = Environment::new([
+            (CARGO_INCREMENTAL, "1"),
+            (CARGO_TARGET_DIR, "/ambient/target"),
+        ])
+        .expect("fixture environment");
+        let environment =
+            shard_environment(Path::new("/writable"), inherited).expect("shard environment");
+        let entries = environment
+            .entries()
+            .iter()
+            .cloned()
+            .collect::<BTreeMap<OsString, OsString>>();
+        assert_eq!(
+            entries.get(OsStr::new(CARGO_INCREMENTAL)),
+            Some(&OsString::from("0"))
+        );
+        assert_eq!(
+            entries.get(OsStr::new(CARGO_BUILD_BUILD_DIR)),
+            Some(&OsString::from("/writable/target/cargo-build"))
+        );
+    }
 
     fn generated_outputs(plan: &CargoGateShardPlan) -> BTreeSet<String> {
         plan.typechecks()
