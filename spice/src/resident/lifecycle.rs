@@ -212,6 +212,10 @@ pub(super) struct Runtime {
     /// How long a hold keeps the lane from its next wake.
     hold: Duration,
     projection: Projection,
+    /// Review findings, possibly behind the projection cursor, whose author
+    /// lane was between seats when judged; each is judged again until a seat
+    /// continues the author's session, another session takes it, or it expires.
+    held_findings: BTreeSet<Seq>,
 }
 
 /// Exact admitted command generation that released automatic lifecycle work.
@@ -319,6 +323,7 @@ impl Runtime {
             young: config.young().get(),
             hold: config.hold().get(),
             projection: Projection::new(),
+            held_findings: BTreeSet::new(),
         }
     }
 
@@ -369,8 +374,12 @@ impl Runtime {
             paths,
             epoch,
             &snapshot,
-            cursor,
-            config.steering.expiry().get(),
+            review_feedback::FindingWindow {
+                cursor,
+                held: &mut self.held_findings,
+                now,
+                lifetime: config.steering.expiry().get(),
+            },
         )? {
             snapshot = bus.task_snapshot().map_err(|error| {
                 store_fault("lifecycle::snapshot-unreadable", &error.to_string())

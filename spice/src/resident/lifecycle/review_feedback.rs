@@ -1,10 +1,17 @@
-//! Durable peer-review feedback delivered to the still-running phase author.
+//! Durable peer-review feedback delivered to the phase author's vendor session.
+//!
+//! A finding reaches the lane seat that continues the session which completed
+//! the judged phase: the same occupant, or a later occupant that resumed the
+//! same vendor session after a seat boundary or compaction. While the author
+//! lane is between seats the finding is held and judged again on the next
+//! reconcile; a renewal that starts another session never receives it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use journal::FactCause;
-use wire::{Actor, CanonicalUuid, Seq, TaskStamp};
+use wire::rooms::DesignSession;
+use wire::{Actor, CanonicalUuid, Instant, LaneResidency, Seq, TaskStamp};
 
 use super::*;
 
@@ -28,29 +35,68 @@ struct Feedback {
     residency: journal::JournalHead<wire::ResidencyHead>,
 }
 
+/// What one finding's author can receive at this reconcile.
+enum Judgment {
+    /// A seat continuing the author's session is live.
+    Deliver(Feedback),
+    /// The author lane is between seats; judge the finding again later.
+    Hold,
+    /// Never deliverable: judged by its own author's session, continued by no
+    /// seat because another session holds the lane, or past its lifetime.
+    Drop,
+}
+
+/// Which findings one reconcile judges, and the clock and directive lifetime
+/// it judges them by.
+pub(super) struct FindingWindow<'a> {
+    /// Lifecycle projection cursor; every finding after it is new.
+    pub(super) cursor: Option<Seq>,
+    /// Findings still waiting for a seat, replaced by those that still wait.
+    pub(super) held: &'a mut BTreeSet<Seq>,
+    pub(super) now: Instant,
+    pub(super) lifetime: Duration,
+}
+
+/// Deliver every finding after the window's cursor or held for a seat whose
+/// author session is seated, and leave held exactly the findings still
+/// waiting for a seat.
 pub(super) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     snapshot: &bus::TaskSnapshot,
-    cursor: Option<Seq>,
-    lifetime: Duration,
+    window: FindingWindow<'_>,
 ) -> CommandResult<bool> {
+    let FindingWindow {
+        cursor,
+        held,
+        now,
+        lifetime,
+    } = window;
     let mut refreshed = None;
     let mut changed = false;
     loop {
         let observed = refreshed.as_ref().unwrap_or(snapshot);
-        let findings = pending_findings(observed.facts(), cursor)?;
+        let findings = pending_findings(observed.facts(), cursor, held)?;
+        let mut waiting = BTreeSet::new();
         let mut appended = false;
-        for envelope in observed.facts().after(cursor) {
+        for (seq, authors) in &findings {
+            let envelope = observed.facts().at(*seq).ok_or_else(|| {
+                store_fault(
+                    "review-feedback::finding-missing",
+                    "a folded finding has no fact in the snapshot it was folded from",
+                )
+            })?;
             let Some(reviewed) = envelope.fact.read::<wire::body::TaskReviewed>() else {
                 continue;
             };
-            let Some(authors) = findings.get(&envelope.seq) else {
-                continue;
-            };
-            let Some(feedback) = feedback(observed, envelope, &reviewed, authors)? else {
-                continue;
+            let feedback = match judge(observed, envelope, &reviewed, authors, now, lifetime)? {
+                Judgment::Deliver(feedback) => feedback,
+                Judgment::Hold => {
+                    waiting.insert(*seq);
+                    continue;
+                }
+                Judgment::Drop => continue,
             };
             let control = wire::review_feedback_control(&feedback.task, feedback.reviewed);
             let directive = super::super::steering::internal_directive_identity(&control);
@@ -87,6 +133,7 @@ pub(super) fn reconcile(
             break;
         }
         if !appended {
+            *held = waiting;
             return Ok(changed);
         }
         refreshed = Some(bus.task_snapshot().map_err(|error| {
@@ -95,12 +142,14 @@ pub(super) fn reconcile(
     }
 }
 
-fn feedback(
+fn judge(
     snapshot: &bus::TaskSnapshot,
     envelope: &wire::Envelope<wire::AnyFact>,
     reviewed: &wire::body::TaskReviewed,
     authors: &PhaseAuthors,
-) -> CommandResult<Option<Feedback>> {
+    now: Instant,
+    lifetime: Duration,
+) -> CommandResult<Judgment> {
     let finding = reviewed
         .finding
         .as_deref()
@@ -112,22 +161,36 @@ fn feedback(
             )
         })?;
     let PhaseAuthors { author, reviewer } = *authors;
-    if author.occupant == reviewer.occupant {
-        return Ok(None);
+    let author_session = snapshot.facts().lane_session(author.lane, author.occupant);
+    if same_session(snapshot, author, author_session, reviewer) {
+        return Ok(Judgment::Drop);
+    }
+    if outlived(envelope.at, now, lifetime) {
+        return Ok(Judgment::Drop);
     }
     let Some(residency) = snapshot.residency().cloned() else {
-        return Ok(None);
+        return Ok(Judgment::Hold);
     };
-    let Some(target) = residency.body().lanes.iter().find(|lane| {
-        lane.disposition == "occupied"
-            && lane.occupant == Some(author.occupant)
-            && lane
-                .session
-                .as_ref()
-                .is_some_and(|session| session.occupant == author.occupant)
-    }) else {
-        return Ok(None);
+    let Some(row) = residency
+        .body()
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == author.lane)
+    else {
+        return Ok(Judgment::Drop);
     };
+    let seated = row.disposition == "occupied"
+        && row
+            .session
+            .as_ref()
+            .is_some_and(|session| row.occupant == Some(session.occupant));
+    if !seated {
+        return Ok(Judgment::Hold);
+    }
+    if !continues(row, author, author_session) {
+        return Ok(Judgment::Drop);
+    }
+    let target = row.lane;
     let heads = snapshot
         .tasks()
         .binary_search_by(|heads| heads.statement().body().born.cmp(&reviewed.task))
@@ -139,10 +202,10 @@ fn feedback(
                 "the reviewed task has no current statement head",
             )
         })?;
-    Ok(Some(Feedback {
+    Ok(Judgment::Deliver(Feedback {
         reviewed: envelope.seq,
         task: reviewed.task.clone(),
-        lane: target.lane,
+        lane: target,
         text: feedback_text(
             &wire::TaskHandle::for_project(
                 &heads.statement().body().project,
@@ -154,7 +217,50 @@ fn feedback(
     }))
 }
 
-/// Every finding after the cursor, with the claim authors it judged.
+/// Whether the seat on the author's lane `row` continues the vendor session
+/// that completed the judged phase: the author's own occupant, or a later one
+/// that resumed the same session. Widening delivery to every seat in the
+/// lane's renewal lineage replaces this body with
+/// `row.lineage.contains(&author.occupant)`.
+fn continues(
+    row: &LaneResidency,
+    author: ClaimAuthor,
+    author_session: Option<&DesignSession>,
+) -> bool {
+    row.session.as_ref().is_some_and(|seated| {
+        seated.occupant == author.occupant
+            || author_session.is_some_and(|session| {
+                session.vendor == seated.vendor && session.identity == seated.identity
+            })
+    })
+}
+
+/// Whether `reviewer` judged from the same vendor session as `author`.
+fn same_session(
+    snapshot: &bus::TaskSnapshot,
+    author: ClaimAuthor,
+    author_session: Option<&DesignSession>,
+    reviewer: ClaimAuthor,
+) -> bool {
+    author.occupant == reviewer.occupant
+        || (author.lane == reviewer.lane
+            && author_session.is_some_and(|session| {
+                snapshot
+                    .facts()
+                    .lane_session(reviewer.lane, reviewer.occupant)
+                    == Some(session)
+            }))
+}
+
+/// Whether a finding recorded `at` is past the directive lifetime it would be
+/// delivered with.
+fn outlived(at: Instant, now: Instant, lifetime: Duration) -> bool {
+    let age = now.get().duration_since(at.get());
+    age.is_positive() && age.unsigned_abs() >= lifetime
+}
+
+/// Every finding after the cursor or held for a seat, with the claim authors
+/// it judged.
 ///
 /// Authorship is folded once, forward across the task history, rather than
 /// once per finding: a resident that starts against years of reviews would
@@ -162,9 +268,15 @@ fn feedback(
 fn pending_findings(
     facts: &bus::TaskFacts,
     cursor: Option<Seq>,
+    held: &BTreeSet<Seq>,
 ) -> CommandResult<BTreeMap<Seq, PhaseAuthors>> {
     let mut wanted = BTreeMap::new();
-    for envelope in facts.after(cursor) {
+    let mut candidates = BTreeSet::new();
+    let held_rows = held
+        .iter()
+        .filter(|seq| cursor.is_some_and(|cursor| **seq <= cursor))
+        .filter_map(|seq| facts.at(*seq));
+    for envelope in held_rows.chain(facts.after(cursor)) {
         let Some(reviewed) = envelope.fact.read::<wire::body::TaskReviewed>() else {
             continue;
         };
@@ -175,7 +287,9 @@ fn pending_findings(
             ));
         }
         if reviewed.verdict == wire::body::Verdict::Finding {
-            wanted.insert(reviewed.task, envelope.seq);
+            candidates.insert(envelope.seq);
+            let newest = wanted.entry(reviewed.task).or_insert(envelope.seq);
+            *newest = (*newest).max(envelope.seq);
         }
     }
     let Some(newest) = wanted.values().max().copied() else {
@@ -215,7 +329,7 @@ fn pending_findings(
             }
             PhaseStep::Reviewed(finding) => {
                 let reviewer = active.remove(&task);
-                if !finding || cursor.is_some_and(|cursor| envelope.seq <= cursor) {
+                if !finding || !candidates.contains(&envelope.seq) {
                     continue;
                 }
                 let author = completed.get(&task).copied().ok_or_else(|| {

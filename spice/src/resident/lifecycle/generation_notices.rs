@@ -22,19 +22,18 @@ pub(super) fn reconcile(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     snapshot: &bus::TaskSnapshot,
-    cursor: Option<Seq>,
-    lifetime: Duration,
+    findings: super::review_feedback::FindingWindow<'_>,
 ) -> CommandResult<bool> {
     for (lane, notice) in assignment_notices(snapshot) {
         super::super::supervisor::command::task_assignment(paths, lane, notice);
     }
-    for (lane, ended) in assignment_ends(snapshot, cursor) {
+    for (lane, ended) in assignment_ends(snapshot, findings.cursor) {
         super::super::supervisor::command::task_assignment_ended(paths, lane, ended);
     }
     for (lane, notice) in notices(bus, snapshot)? {
         super::super::supervisor::command::task_generation(paths, lane, notice);
     }
-    super::review_feedback::reconcile(bus, paths, epoch, snapshot, cursor, lifetime)
+    super::review_feedback::reconcile(bus, paths, epoch, snapshot, findings)
 }
 
 fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskAssignmentNotice)> {
