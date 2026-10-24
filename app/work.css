@@ -684,9 +684,10 @@
   font-size: var(--app-type-meta);
 }
 
-/* A design tile is an .app-roster-tile; its standing ends line one where an
-   agent tile puts its model. */
-.room-design > header span { flex: 0 1 auto; margin-inline-start: auto; opacity: .8; }
+/* A design tile is an .app-roster-tile led by its standing pip, as an agent
+   tile is by its lane pip; its standing words end line one where an agent
+   tile puts its model. */
+.room-design-standing { flex: 0 1 auto; margin-inline-start: auto; opacity: .8; }
 
 .room-inline-actions {
   display: flex;

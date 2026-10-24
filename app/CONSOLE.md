@@ -186,7 +186,9 @@ terminal, even while still grouped, and open passive outside every group;
 otherwise claimed while a lane claims it for a pass, else the resident's pass
 cycle state. Awaiting decision carries the warning colour; an unavailable row
 or cycle invents no standing, and each pip's accessible label names it. The
-pips close the status row above the group menu.
+pips close the status row above the group menu. Each design's tile in the
+Spice menu's Working groups catalog leads with the same pip at an agent
+tile's member size, so readiness reads there without opening the group.
 
 ## Team composer controls
 

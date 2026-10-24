@@ -39,7 +39,15 @@ pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &
                     aria-label={format!("{} designs", channels.len())}
                     data-team-size={channels.len().to_string()}
                 >
-                    {for channels.iter().zip(&standings).map(|(channel, standing)| render_pip(channel, *standing))}
+                    {for channels.iter().zip(&standings).map(|(channel, standing)| {
+                        super::super::render_design_pip(
+                            &channel.stamp,
+                            channel.accent,
+                            &channel.label,
+                            *standing,
+                            super::super::PipSize::Status,
+                        )
+                    })}
                 </span>
             </div>
         </header>
@@ -145,23 +153,6 @@ fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Htm
                 data-sidebar-focus-key={focus_key}
             >{label}</span>
         }
-    }
-}
-
-/// One Design's pip: its accent, shaped by its standing.
-fn render_pip(channel: &Channel, standing: DesignStanding) -> Html {
-    let label = format!("{}: {}", channel.label, standing.label());
-    html! {
-        <span
-            key={channel.stamp.to_string()}
-            class={classes!("app-presence-pip", "app-presence-pip--status", "group-design-pip", standing.key())}
-            role="img"
-            data-design={channel.stamp.to_string()}
-            data-accent={channel.accent.to_string()}
-            data-design-standing={standing.key()}
-            aria-label={label.clone()}
-            title={label}
-        ></span>
     }
 }
 

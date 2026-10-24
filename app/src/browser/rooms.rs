@@ -21,7 +21,7 @@ use crate::AppRuntime;
 use crate::client_action::{ClientAction, GroupChange};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::roster::{Change, Destination};
-use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
+use crate::runtime::{DesignStanding, RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 mod approval;
 mod conclusion;
@@ -470,8 +470,9 @@ fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandl
 }
 
 /// One design as a roster tile, the agent tile's twin: a link to its read view
-/// wearing its dealt accent, its handle and standing over its task's title
-/// while the board carries the task, else its anchor label alone.
+/// wearing its dealt accent, led by its standing pip as an agent tile is by its
+/// lane pip, its handle and standing over its task's title while the board
+/// carries the task, else its anchor label alone.
 fn render_design(runtime: &AppRuntime, design: &TaskStamp, accent: usize) -> Html {
     let task = runtime.board().and_then(|board| board.row(design));
     let label = task.map_or_else(
@@ -490,8 +491,9 @@ fn render_design(runtime: &AppRuntime, design: &TaskStamp, accent: usize) -> Htm
             data-design-standing={standing.key()}
         >
             <header>
+                {render_design_pip(design, accent, &label, standing, PipSize::Member)}
                 <strong data-roster-handle="">{label}</strong>
-                <span>{standing.label()}</span>
+                <span class="room-design-standing">{standing.label()}</span>
             </header>
             <p>
                 if let Some(task) = task {
@@ -499,6 +501,42 @@ fn render_design(runtime: &AppRuntime, design: &TaskStamp, accent: usize) -> Htm
                 }
             </p>
         </a>
+    }
+}
+
+/// How large a design's standing pip draws: a group tab's status dot or a
+/// roster tile's member pip, an agent's twin at either size.
+#[derive(Clone, Copy)]
+enum PipSize {
+    Status,
+    Member,
+}
+
+/// One Design's pip: its accent, shaped by its standing. The group tab and the
+/// Spice menu's tile draw this one pip so the two never disagree.
+fn render_design_pip(
+    design: &TaskStamp,
+    accent: usize,
+    label: &str,
+    standing: DesignStanding,
+    size: PipSize,
+) -> Html {
+    let label = format!("{label}: {}", standing.label());
+    let size = match size {
+        PipSize::Status => "app-presence-pip--status",
+        PipSize::Member => "app-presence-pip--member",
+    };
+    html! {
+        <span
+            key={design.to_string()}
+            class={classes!("app-presence-pip", size, "group-design-pip", standing.key())}
+            role="img"
+            data-design={design.to_string()}
+            data-accent={accent.to_string()}
+            data-design-standing={standing.key()}
+            aria-label={label.clone()}
+            title={label}
+        ></span>
     }
 }
 
