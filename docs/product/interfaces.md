@@ -249,15 +249,12 @@ composed selections remain browser-local and release a Work URL before opening.
 The complete route grammar and overview behavior live in
 [`app/OVERVIEW.md`](../../app/OVERVIEW.md#task-overview).
 
-The command bar presents execution work from the left and Design planning from
-the right as gapless mirrored strips. Each aggregate total occupies its strip's
-outside end; only the two outside edges carry rails and rounded corners. The
-execution rail remains LTR with label then count, while the Design rail uses
-RTL container order with LTR tabs and count then label. Labels therefore meet
-the outside totals while each named count faces inward instead of colliding
-with another badge. Each rail keeps its anchored edge initially visible
-through overflow. Counts, danger marks, titles, and navigation retain the exact
-scope each tab names.
+The command bar hangs two global totals from its top edge immediately before
+the Spice button: all open execution work, then all open Design work. Each is
+the same badge-only horn tab as before, one task-tab gap from the other; the
+Design total stands off the button by the button's own gap from the window
+edge, with no per-stem tabs and no row reserved above the bar. Counts, danger
+marks, titles, and navigation retain the exact scope each total names.
 
 ## Kept jobs
 

@@ -1,7 +1,7 @@
 //! The chrome standing above the feed.
 //!
-//! Mirrored execution and Design-planning task rails across the top, one band
-//! of lane standings under them, one line of the newest command outcome under
+//! Two global totals beside the Spice launcher across the top, one band of
+//! lane standings under them, one line of the newest command outcome under
 //! that, and the card the feed packs. All four are placement and markup only:
 //! every number they show is derived in [`crate::watchband`], which a native
 //! test can reach, so what is left here is the part that genuinely needs a
@@ -34,18 +34,17 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let execution_rail =
-        render_global_work_rail(render.work, render.navigate, GlobalWorkRail::Execution);
-    let design_rail = render_global_work_rail(render.work, render.navigate, GlobalWorkRail::Design);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
             <div class="app-commandbar-content">
-                {execution_rail}
-                {design_rail}
                 // Connection is routine state: the Spice button, tab title, and
                 // icon carry it visibly; only assistive technology hears it.
                 <span class="visually-hidden" role="status">{connection_label.clone()}</span>
+                <nav class="app-work-totals" aria-label="Open work">
+                    {render_work_total(render.work, render.navigate, GlobalWorkRail::Execution)}
+                    {render_work_total(render.work, render.navigate, GlobalWorkRail::Design)}
+                </nav>
                 {render_spice_button(SpiceButton {
                     connection: render.connection,
                     app_update: (**render.app_update).as_ref(),
@@ -267,6 +266,8 @@ pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> S
     }
 }
 
+/// Which global total a button counts: all open execution work, or all open
+/// Design work.
 #[derive(Clone, Copy)]
 enum GlobalWorkRail {
     Execution,
@@ -281,28 +282,7 @@ impl GlobalWorkRail {
         }
     }
 
-    fn stem_scope(self, stem: crate::work::WorkStemIdentity) -> WorkScope {
-        match self {
-            Self::Execution => WorkScope::Stem(stem),
-            Self::Design => WorkScope::Planning { stem: Some(stem) },
-        }
-    }
-
-    const fn class(self) -> &'static str {
-        match self {
-            Self::Execution => "app-global-work-tabs",
-            Self::Design => "app-design-work-tabs",
-        }
-    }
-
-    const fn aria_label(self) -> &'static str {
-        match self {
-            Self::Execution => "Open execution task stems",
-            Self::Design => "Open Design task stems",
-        }
-    }
-
-    const fn focus_prefix(self) -> &'static str {
+    const fn focus_key(self) -> &'static str {
         match self {
             Self::Execution => "global-work",
             Self::Design => "design-work",
@@ -324,84 +304,26 @@ impl GlobalWorkRail {
     }
 }
 
-/// Open active and passive Designs among Design-rail tasks: the rail's
-/// pills name both, so a stem of only passive Designs reads as idle.
-#[derive(Clone, Copy, Default)]
-struct DesignSplit {
-    active: usize,
-    passive: usize,
-}
-
-impl DesignSplit {
-    fn of<'p, 'a: 'p>(tasks: impl IntoIterator<Item = &'p crate::work::WorkTask<'a>>) -> Self {
-        let mut split = Self::default();
-        for task in tasks {
-            match task.row().design_standing() {
-                Some(wire::intent::DesignStanding::Active) => split.active += 1,
-                Some(wire::intent::DesignStanding::Passive) => split.passive += 1,
-                _ => {}
-            }
-        }
-        split
-    }
-
-    fn title(self) -> String {
-        format!("; Designs {} active, {} passive", self.active, self.passive)
-    }
-}
-
-fn render_global_work_rail(
+/// The label-less total for one global rail, the same hanging tab as before
+/// seated beside the Spice launcher; nothing while that rail holds no open
+/// work. Its badge is one open-task count, matching every team total, and it
+/// opens the rail's whole scope.
+fn render_work_total(
     work: Option<&WorkProjection<'_>>,
     navigate: &Callback<navigation::Intent>,
     rail: GlobalWorkRail,
 ) -> Html {
-    let base_accent =
-        matches!(rail, GlobalWorkRail::Design).then(|| watchband::DESIGN_BASE.to_string());
     let scope = rail.scope();
-    let groups = work
-        .map(|work| work.stem_task_groups(&scope))
-        .unwrap_or_default();
-    let designs = |tasks: &[&crate::work::WorkTask<'_>]| {
-        matches!(rail, GlobalWorkRail::Design).then(|| DesignSplit::of(tasks.iter().copied()))
-    };
-    let total = work
+    let Some(counts) = work
         .map(|work| work.scope_counts(&scope))
         .filter(|counts| counts.has_open())
-        .map(|counts| {
-            let all = groups
-                .iter()
-                .flat_map(|group| group.tasks().iter().copied());
-            let split = matches!(rail, GlobalWorkRail::Design).then(|| DesignSplit::of(all));
-            render_aggregate_pill(counts, split, navigate, rail)
-        });
-    html! {
-        <nav
-            class={classes!("app-horn-tabs", rail.class())}
-            aria-label={rail.aria_label()}
-            data-base-flavor={base_accent.as_ref().map(|_| "accent")}
-            data-accent={base_accent}
-        >
-            {total}
-            {for groups.iter().map(|group| render_stem_pill(group, designs(group.tasks()), navigate, rail))}
-        </nav>
-    }
-}
-
-/// The label-less total leading one global rail. Its badge is one open-task
-/// count, matching every team total.
-fn render_aggregate_pill(
-    counts: WorkCounts,
-    designs: Option<DesignSplit>,
-    navigate: &Callback<navigation::Intent>,
-    rail: GlobalWorkRail,
-) -> Html {
-    let title = format!(
-        "{}{}",
-        task_count_title(rail.aggregate_title(), counts),
-        designs.map(DesignSplit::title).unwrap_or_default(),
-    );
-    let focus_key = rail.focus_prefix();
-    let scope = rail.scope();
+    else {
+        return Html::default();
+    };
+    let base_accent =
+        matches!(rail, GlobalWorkRail::Design).then(|| watchband::DESIGN_BASE.to_string());
+    let title = task_count_title(rail.aggregate_title(), counts);
+    let focus_key = rail.focus_key();
     let navigate = navigate.clone();
     html! {
         <button
@@ -412,57 +334,12 @@ fn render_aggregate_pill(
             aria-label={title}
             data-work-scope={rail.data_scope()}
             data-work-mark={work_mark(counts)}
-            data-designs-active={designs.map(|split| split.active.to_string())}
-            data-designs-passive={designs.map(|split| split.passive.to_string())}
+            data-base-flavor={base_accent.as_ref().map(|_| "accent")}
+            data-accent={base_accent}
             data-sidebar-focus-key={focus_key}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
             {render_task_count(counts)}
-        </button>
-    }
-}
-
-/// One stem tab opening the exact rail partition its count describes.
-fn render_stem_pill(
-    group: &crate::work::StemTaskGroup<'_, '_>,
-    designs: Option<DesignSplit>,
-    navigate: &Callback<navigation::Intent>,
-    rail: GlobalWorkRail,
-) -> Html {
-    let identity = group.stem();
-    let counts = group.counts();
-    let scope = rail.stem_scope(identity.clone());
-    let focus_key = format!("{}:{identity}", rail.focus_prefix());
-    let title = format!(
-        "{}{}",
-        task_count_title(&identity.to_string(), counts),
-        designs.map(DesignSplit::title).unwrap_or_default(),
-    );
-    let navigate = navigate.clone();
-    let label = html! { <span class="app-horn-tab__label">{identity.stem().to_owned()}</span> };
-    let count = render_task_count(counts);
-    html! {
-        <button
-            key={focus_key.clone()}
-            class="app-horn-tab app-horn-tab--down"
-            type="button"
-            title={title.clone()}
-            aria-label={title}
-            data-task-stem={identity.stem().to_owned()}
-            data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
-            data-work-mark={work_mark(counts)}
-            data-designs-active={designs.map(|split| split.active.to_string())}
-            data-designs-passive={designs.map(|split| split.passive.to_string())}
-            data-sidebar-focus-key={focus_key}
-            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
-        >
-            if matches!(rail, GlobalWorkRail::Design) {
-                {count}
-                {label}
-            } else {
-                {label}
-                {count}
-            }
         </button>
     }
 }
