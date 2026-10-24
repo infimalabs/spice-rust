@@ -68,9 +68,12 @@
      rising from a team rail. Tabs carry no inline rails. */
   --app-horn-tab-block-size: 32px;
   --app-horn-tab-inset: 10px;
-  /* Global and team totals keep one badge and tab footprint for every count:
-     a wider count takes room from the badge's inline padding. */
+  /* Global and team totals keep one tab footprint for every count, sized
+     around a round count badge. */
   --app-total-badge-inline-size: 16px;
+  /* A count badge is a circle through two digits: two monospace digits plus
+     its inline padding span exactly its block size. Wider counts grow a pill. */
+  --app-count-badge-size: 1.8em;
   --app-total-tab-inline-size: calc(2 * var(--app-horn-tab-inset) + var(--app-total-badge-inline-size));
   --app-presence-pip-size: 8px;
   --app-presence-member-border-width: 5px;
@@ -312,13 +315,6 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .team-task-rail > .team-tasks > .app-horn-tab { border-radius: 0; }
 .team-task-rail > .team-tasks > .app-horn-tab:last-child { border-start-start-radius: var(--app-radius-card); }
 .team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) { border-start-start-radius: 0; }
-:is([data-work-scope="all"], [data-work-scope="design"], [data-work-scope="team"], [data-work-scope="group"]) .app-count-badge {
-  display: inline-block;
-  box-sizing: border-box;
-  min-inline-size: var(--app-total-badge-inline-size);
-  padding-inline: 0;
-  text-align: center;
-}
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
   background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--app-base-control));
   color: var(--app-base-muted);
@@ -342,12 +338,18 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   outline-offset: -2px;
 }
 .app-count-badge {
-  padding: 0 5px;
+  display: inline-block;
+  box-sizing: border-box;
+  min-inline-size: var(--app-count-badge-size);
+  block-size: var(--app-count-badge-size);
+  padding: 0 .3em;
   border-radius: var(--app-radius-pill);
   background: var(--app-base-muted);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-base-ground) 24%, transparent);
   color: var(--app-base-ground);
   font-size: var(--app-type-badge);
+  line-height: var(--app-count-badge-size);
+  text-align: center;
 }
 
 .app-presence-pip {
