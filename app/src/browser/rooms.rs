@@ -311,6 +311,7 @@ const GROUP_WORDING: Wording = Wording {
 
 pub(super) fn render_catalog(
     runtime: Option<&AppRuntime>,
+    work: Option<&WorkProjection<'_>>,
     controls: &Controls,
     sender: &SenderHandle,
 ) -> Html {
@@ -333,7 +334,7 @@ pub(super) fn render_catalog(
                 if let Some(notice) = (*controls.notice).clone() {
                     <p class="room-notice" role="status">{notice}</p>
                 }
-                {render_roster(runtime, controls, sender)}
+                {render_roster(runtime, work, controls, sender)}
             </>
         },
     };
@@ -419,7 +420,12 @@ fn section(title: &'static str, body: Html) -> Html {
 /// The working-group roster: each group a card named for its lead design with
 /// the console it opens, then New working group and the ungrouped Designs.
 /// Every design tile links its read view.
-fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandle) -> Html {
+fn render_roster(
+    runtime: &AppRuntime,
+    work: Option<&WorkProjection<'_>>,
+    controls: &Controls,
+    sender: &SenderHandle,
+) -> Html {
     let partition = runtime.room_projection().partition();
     let tasks = runtime
         .board()
@@ -446,10 +452,9 @@ fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandl
             activate: Callback::from(move |()| controls.open(group.clone(), None)),
         }
     };
-    let work = super::project_work(Some(runtime));
     let member = |design: &TaskStamp, _grouped: bool| {
         let accent = crate::watchband::design_accent(&partition.groups, design);
-        render_design(runtime, work.as_ref(), design, accent)
+        render_design(runtime, work, design, accent)
     };
     let revision = partition.revision;
     let submit = {
