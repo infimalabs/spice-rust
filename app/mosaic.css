@@ -473,8 +473,8 @@ path.image-annotation-hit { fill: none; }
   block-size: var(--team-header-size);
   padding: 0;
 }
-/* The ticker runs over TURBO; the pips sit over the team menu, no wider than a round control. */
-.team-toolbar > .team-status-row { grid-area: status; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--team-control-inline-size) / 2); box-sizing: border-box; min-width: 0; padding-inline: 0; }
+/* The ticker runs over TURBO; the pips sit over the team menu, no wider than a round control. The band's top rule, where the open tab row meets the console, is the soft edge tone, the same hairline the inter-console edge draws. */
+.team-toolbar > .team-status-row { grid-area: status; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--team-control-inline-size) / 2); box-sizing: border-box; min-width: 0; padding-inline: 0; border-block-start: var(--app-edge-soft); }
 .team-toolbar > .team-status-row:not(:has(> .team-lights)) { grid-template-columns: minmax(0, 1fr); padding-inline-end: var(--team-toolbar-inline-inset); }
 .team-status-row > .team-lights {
   --team-pip-columns: 3; position: relative; display: grid; grid-auto-flow: column dense; direction: rtl; place-content: center; gap: var(--team-pip-gap);
