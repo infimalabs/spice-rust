@@ -69,6 +69,8 @@ impl Request<'_> {
 pub(crate) struct ProveReport {
     candidate_tree: String,
     source: Digest,
+    /// Which private snapshot ran and which worktree paths it left out.
+    snapshot: gate::tree::WorktreeDivergence,
     actions: Vec<ProveActionReport>,
     /// The decision-first terminal projection; `--json` carries the fields.
     #[serde(skip)]
@@ -76,10 +78,16 @@ pub(crate) struct ProveReport {
 }
 
 impl ProveReport {
-    const fn new(candidate_tree: String, source: Digest, actions: Vec<ProveActionReport>) -> Self {
+    const fn new(
+        candidate_tree: String,
+        source: Digest,
+        snapshot: gate::tree::WorktreeDivergence,
+        actions: Vec<ProveActionReport>,
+    ) -> Self {
         Self {
             candidate_tree,
             source,
+            snapshot,
             actions,
             text: String::new(),
         }
@@ -503,6 +511,7 @@ fn summary(report: &ProveReport, request: Request<'_>, verbose: bool) -> String 
     if !verbose && present > 0 {
         summary.closing("detail", &prove_command(request, "--verbose"));
     }
+    summary.snapshot(&report.snapshot);
     let next = if request.action.is_some() {
         prove_command(
             Request {
@@ -546,6 +555,7 @@ fn run(request: Request<'_>, live: bool, ambient: &Ambient) -> Result<ProveRepor
         spice::gate::capture_candidate_tree(&repository, ambient).map_err(ProveFailure::run)?;
     let anchor =
         spice::change_gate::prepare_staged_anchor(ambient).map_err(ProveFailure::selection)?;
+    let snapshot = anchor.worktree_divergence().map_err(ProveFailure::run)?;
     let store = EvidenceStore::open(repository.common_dir()).map_err(ProveFailure::store)?;
     let fingerprint = request
         .uses_fingerprint()
@@ -561,6 +571,7 @@ fn run(request: Request<'_>, live: bool, ambient: &Ambient) -> Result<ProveRepor
             fingerprint
                 .as_ref()
                 .expect("inspection always derives fingerprint authority"),
+            snapshot,
         );
     }
     let staged = if let Some(authority) = fingerprint.as_ref() {
@@ -571,6 +582,7 @@ fn run(request: Request<'_>, live: bool, ambient: &Ambient) -> Result<ProveRepor
                 return Ok(ProveReport::new(
                     candidate_tree.to_string(),
                     anchor.source().clone(),
+                    snapshot,
                     actions,
                 ));
             }
@@ -640,6 +652,7 @@ fn run(request: Request<'_>, live: bool, ambient: &Ambient) -> Result<ProveRepor
     Ok(ProveReport::new(
         candidate_tree.to_string(),
         staged.selection().source().clone(),
+        snapshot,
         actions,
     ))
 }

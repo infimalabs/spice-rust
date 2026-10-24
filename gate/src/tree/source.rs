@@ -390,6 +390,14 @@ impl RevisionSeal {
             Self::Metadata(metadata) => metadata.resolve(repo, revision, workspace),
         }
     }
+
+    /// The commit this seal resolved its revision to.
+    pub(super) const fn resolved_id(&self) -> gix::ObjectId {
+        match self {
+            Self::ObjectId(id) => *id,
+            Self::Metadata(metadata) => metadata.resolved,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -77,19 +77,23 @@ pub(super) fn run(
     };
     let (result, elapsed) = progress.watching(
         || phase.get(),
-        || spice::gate::run_traced(invocation.ambient, selector, &mut trace),
+        || {
+            let prepared = spice::gate::prepare_traced(invocation.ambient, selector, &mut trace)?;
+            let snapshot = prepared.worktree_divergence()?;
+            spice::gate::run_prepared(prepared).map(|report| (report, snapshot))
+        },
     );
     let verdict = match &result {
-        Ok(report) if report.admits() => "admitted",
+        Ok((report, _)) if report.admits() => "admitted",
         Ok(_) => "refused",
         Err(_) => "failed",
     };
     progress.line(format_args!("{verdict} after {}", Elapsed(elapsed)));
-    let report = result?;
+    let (report, snapshot) = result?;
     let retained = wire::encode(&report)
         .map_err(|error| error.to_string())
         .and_then(|bytes| output::retain(captures, &bytes));
-    let text = summary(&report, elapsed, invocation, retained.as_ref());
+    let text = summary(&report, elapsed, invocation, retained.as_ref(), &snapshot);
     Ok(BatteryRun { report, text })
 }
 
@@ -98,6 +102,7 @@ fn summary(
     elapsed: Duration,
     invocation: &Invocation<'_>,
     retained: Result<&wire::output::Export, &String>,
+    snapshot: &gate::tree::WorktreeDivergence,
 ) -> String {
     let results = report.results();
     let refused = results
@@ -134,6 +139,7 @@ fn summary(
         ),
         Err(error) => summary.closing("complete report was not retained", error),
     }
+    summary.snapshot(snapshot);
     if !invocation.verbose {
         summary.closing("detail", &invocation.command(true));
     }

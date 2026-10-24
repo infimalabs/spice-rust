@@ -408,6 +408,20 @@ fn run_profiled(
             return worker_failure(configured_failure(error));
         }
     };
+    // The hook measures the staged index, never the checkout: say so whenever
+    // the worktree holds edits that index does not.
+    let snapshot = match prepared.worktree_divergence() {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            if let Err(failure) = finish_appliance_generation_audit(&mut audit, profile) {
+                return worker_failure(failure);
+            }
+            return worker_failure(configured_failure(error));
+        }
+    };
+    if !snapshot.is_empty() {
+        super::output::Progress::stderr("gate pre-commit", live).line(format_args!("{snapshot}"));
+    }
     if prepared.admission_enabled() && !prepared.has_configured() {
         return run_admission_inline(claim, prepared, &mut audit, profile);
     }

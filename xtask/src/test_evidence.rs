@@ -45,6 +45,12 @@ pub fn run(
     let environment = selected_test_environment(environment, repository.worktree_root())?;
     let prepared = spice::gate::prepare_strict(ambient, gate::Selector::staged())
         .map_err(TestEvidenceRunError::new)?;
+    let snapshot = prepared
+        .worktree_divergence()
+        .map_err(TestEvidenceRunError::new)?;
+    if !snapshot.is_empty() {
+        writeln!(progress, "test-evidence: {snapshot}").map_err(TestEvidenceRunError::new)?;
+    }
     let workspace = workspace_tests::run_at(
         prepared.root(),
         environment,
