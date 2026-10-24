@@ -6,7 +6,7 @@ use wire::{DurationWord, Name};
 
 use crate::life::Life;
 
-/// The defaultable lane policy: tracked, except the machine-local wake order.
+/// The defaultable, tracked lane policy.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -20,26 +20,6 @@ pub struct Config {
     hold: DurationWord,
     #[serde(deserialize_with = "nonzero_narration")]
     narration: u32,
-    wake_order: WakeOrder,
-}
-
-/// Which lane wakes first among vacant lanes due for the same trigger whose
-/// work is in the same class (ordinary, or the lane's own last resort).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum WakeOrder {
-    /// The lane whose retained work best matches the task the allocator
-    /// selected for it wakes first, scored by the matcher Design nudges use;
-    /// equal or absent matches fall to the most recent claim, and a lane with
-    /// no match ranks below every lane with one. Related work stays together.
-    #[default]
-    BestMatch,
-    /// The lane that has gone longest without claiming wakes first; a lane
-    /// that never claimed counts as oldest. Work rotates through a team.
-    LeastRecentlyClaimed,
-    /// The lane that claimed most recently wakes first; a lane that never
-    /// claimed comes last. Work concentrates on the most recently active seats.
-    MostRecentlyClaimed,
 }
 
 impl Config {
@@ -91,12 +71,6 @@ impl Config {
     pub const fn narration(&self) -> u32 {
         self.narration
     }
-
-    /// Which due lane wakes first.
-    #[must_use]
-    pub const fn wake_order(&self) -> WakeOrder {
-        self.wake_order
-    }
 }
 
 impl Default for Config {
@@ -114,7 +88,6 @@ impl Default for Config {
                 .expect("the compiled young threshold is valid"),
             hold: "30m".parse().expect("the compiled lane hold is valid"),
             narration: 24,
-            wake_order: WakeOrder::BestMatch,
         }
     }
 }

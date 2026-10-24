@@ -402,7 +402,7 @@ impl Runtime {
         });
         targets.retain(|target| !self.launching.contains(&target.lane));
         self.backoff.retain_targets(&targets);
-        let task = match resolve(&targets, &self.backoff, now, config.lane.wake_order()) {
+        let task = match resolve(&targets, &self.backoff, now) {
             Resolution::Idle => None,
             Resolution::Wait { lane, deadline, .. } => {
                 // A wait is unchanged process-local scheduler state, not a
@@ -723,16 +723,11 @@ fn available_from_selected(selected: Option<SelectedReady>) -> CommandResult<Ava
 /// Wake the highest-precedence due trigger. Among lanes due for the same
 /// trigger, a lane whose work is ordinary wakes before one whose work is its
 /// own last resort, so an idle peer takes a review before its author does;
-/// under best-match, lanes due for the same work trigger then rank by how well
-/// each lane's retained work matches its selected task, a scored lane above an
-/// unscored one; `order` then ranks lanes by their newest durable claim, and
-/// lane id breaks exact ties. The same rank settles which lane a wait names.
-fn resolve(
-    targets: &[Target],
-    backoff: &Backoff,
-    now: Instant,
-    order: lane::WakeOrder,
-) -> Resolution {
+/// lanes due for the same work trigger then rank by how well each lane's
+/// retained work matches its selected task, a scored lane above an unscored
+/// one, then by their newest durable claim, and lane id breaks exact ties.
+/// The same rank settles which lane a wait names.
+fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
     let mut candidates = Vec::new();
     for target in targets {
         let (trigger, available) = if target.pending_inbox {
@@ -763,9 +758,7 @@ fn resolve(
         if let Some((_, target, _)) = candidates
             .iter()
             .filter(|(candidate, _, due)| *candidate == trigger && *due <= now)
-            .min_by(|(_, left, _), (_, right, _)| {
-                wake_rank(order, (trigger, left), (trigger, right))
-            })
+            .min_by(|(_, left, _), (_, right, _)| wake_rank((trigger, left), (trigger, right)))
         {
             return Resolution::Attempt {
                 trigger,
@@ -779,7 +772,7 @@ fn resolve(
             |(left_trigger, left, left_due), (right_trigger, right, right_due)| {
                 left_due
                     .cmp(right_due)
-                    .then_with(|| wake_rank(order, (*left_trigger, left), (*right_trigger, right)))
+                    .then_with(|| wake_rank((*left_trigger, left), (*right_trigger, right)))
                     .then_with(|| (*left_trigger as u8).cmp(&(*right_trigger as u8)))
             },
         )
@@ -793,37 +786,27 @@ fn resolve(
 }
 
 /// Which of two due lanes wakes first: ordinary work before a lane's own last
-/// resort, then the higher match when both are due for the same work trigger
-/// under best-match, then `order`'s claim recency, then lane id.
+/// resort, then the higher match when both are due for the same work trigger,
+/// then the newest durable claim, then lane id. Inbox and held-claim wakes
+/// carry no match, so they rank by claim recency alone.
 fn wake_rank(
-    order: lane::WakeOrder,
     (left_trigger, left): (Trigger, &Target),
     (right_trigger, right): (Trigger, &Target),
 ) -> std::cmp::Ordering {
     let work = |trigger| matches!(trigger, Trigger::DrainQueue | Trigger::AvailableWork);
     let last_resort = |trigger, target: &Target| work(trigger) && target.last_resort;
-    let matched = if order == lane::WakeOrder::BestMatch
-        && left_trigger == right_trigger
-        && work(left_trigger)
-    {
+    let matched = if left_trigger == right_trigger && work(left_trigger) {
         // Cosines are never negative, so an unscored lane ranks below all.
         let score = |target: &Target| target.matched.unwrap_or(f64::NEG_INFINITY);
         score(right).total_cmp(&score(left))
     } else {
         std::cmp::Ordering::Equal
     };
-    let claims = match order {
-        // `None` sorts first: a lane that never claimed is the oldest.
-        lane::WakeOrder::LeastRecentlyClaimed => left.last_claim.cmp(&right.last_claim),
-        // Reversed, `None` sorts last: a lane that never claimed is the coldest.
-        lane::WakeOrder::BestMatch | lane::WakeOrder::MostRecentlyClaimed => {
-            right.last_claim.cmp(&left.last_claim)
-        }
-    };
     last_resort(left_trigger, left)
         .cmp(&last_resort(right_trigger, right))
         .then(matched)
-        .then(claims)
+        // Reversed, `None` sorts last: a lane that never claimed is the coldest.
+        .then_with(|| right.last_claim.cmp(&left.last_claim))
         .then_with(|| left.lane.cmp(&right.lane))
 }
 
@@ -859,8 +842,6 @@ mod tests {
             .expect("fixture instant")
     }
 
-    pub(super) const ROTATE: lane::WakeOrder = lane::WakeOrder::LeastRecentlyClaimed;
-
     pub(super) fn target(lane: u8) -> Target<'static> {
         Target {
             lane: super::tests::lane(lane),
@@ -882,7 +863,7 @@ mod tests {
         row.held_claim = Available::Ready;
         row.available = Available::At(instant(30));
         assert_eq!(
-            resolve(&[row], &Backoff::default(), instant(10), ROTATE),
+            resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::PendingInbox,
                 lane: lane(1),
@@ -890,7 +871,7 @@ mod tests {
         );
         row.pending_inbox = false;
         assert_eq!(
-            resolve(&[row], &Backoff::default(), instant(10), ROTATE),
+            resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::HeldClaim,
                 lane: lane(1),
@@ -907,12 +888,7 @@ mod tests {
         let mut inbox = target(3);
         inbox.pending_inbox = true;
         assert_eq!(
-            resolve(
-                &[available, held, inbox],
-                &Backoff::default(),
-                instant(10),
-                ROTATE
-            ),
+            resolve(&[available, held, inbox], &Backoff::default(), instant(10),),
             Resolution::Attempt {
                 trigger: Trigger::PendingInbox,
                 lane: lane(3),
@@ -920,12 +896,7 @@ mod tests {
         );
         inbox.pending_inbox = false;
         assert_eq!(
-            resolve(
-                &[available, held, inbox],
-                &Backoff::default(),
-                instant(10),
-                ROTATE
-            ),
+            resolve(&[available, held, inbox], &Backoff::default(), instant(10),),
             Resolution::Attempt {
                 trigger: Trigger::HeldClaim,
                 lane: lane(2),
@@ -938,7 +909,7 @@ mod tests {
         let mut row = target(1);
         row.available = Available::At(instant(12));
         assert_eq!(
-            resolve(&[row], &Backoff::default(), instant(10), ROTATE),
+            resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Wait {
                 trigger: Trigger::AvailableWork,
                 lane: lane(1),
@@ -946,7 +917,7 @@ mod tests {
             }
         );
         assert!(matches!(
-            resolve(&[row], &Backoff::default(), instant(12), ROTATE),
+            resolve(&[row], &Backoff::default(), instant(12)),
             Resolution::Attempt { .. }
         ));
 
@@ -1185,10 +1156,7 @@ mod tests {
             timed: BTreeMap::from([(lane(1), instant(30))]),
             ..Backoff::default()
         };
-        assert_eq!(
-            resolve(&[row], &backoff, instant(10), ROTATE),
-            Resolution::Idle
-        );
+        assert_eq!(resolve(&[row], &backoff, instant(10)), Resolution::Idle);
     }
 
     #[test]
@@ -1221,7 +1189,7 @@ mod tests {
                 ..Backoff::default()
             };
             assert_eq!(
-                resolve(&[row], &backoff, instant(10), ROTATE),
+                resolve(&[row], &backoff, instant(10)),
                 Resolution::Wait {
                     trigger,
                     lane: lane(1),
@@ -1238,7 +1206,7 @@ mod tests {
         let mut ready = target(2);
         ready.available = Available::Ready;
         assert_eq!(
-            resolve(&[waiting, ready], &Backoff::default(), instant(10), ROTATE),
+            resolve(&[waiting, ready], &Backoff::default(), instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::AvailableWork,
                 lane: lane(2),
@@ -1257,7 +1225,7 @@ mod tests {
             ..Backoff::default()
         };
         assert_eq!(
-            resolve(&[retrying, sibling], &backoff, instant(10), ROTATE),
+            resolve(&[retrying, sibling], &backoff, instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::AvailableWork,
                 lane: lane(2),
@@ -1273,14 +1241,11 @@ mod tests {
             parked: BTreeMap::from([(lane(1), Trigger::AvailableWork)]),
             ..Backoff::default()
         };
-        assert_eq!(
-            resolve(&[row], &backoff, instant(10), ROTATE),
-            Resolution::Idle,
-        );
+        assert_eq!(resolve(&[row], &backoff, instant(10)), Resolution::Idle,);
 
         row.held_claim = Available::Ready;
         assert_eq!(
-            resolve(&[row], &backoff, instant(10), ROTATE),
+            resolve(&[row], &backoff, instant(10)),
             Resolution::Attempt {
                 trigger: Trigger::HeldClaim,
                 lane: lane(1),

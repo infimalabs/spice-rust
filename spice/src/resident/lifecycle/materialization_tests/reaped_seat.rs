@@ -89,12 +89,7 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
     let reaped_targets = targets(&reaped, &projection);
     assert!(reaped_targets[0].pending_inbox);
     assert_eq!(
-        resolve(
-            &reaped_targets,
-            &Backoff::default(),
-            instant(50),
-            lane::WakeOrder::default()
-        ),
+        resolve(&reaped_targets, &Backoff::default(), instant(50),),
         Resolution::Attempt {
             trigger: Trigger::PendingInbox,
             lane: lane(),
