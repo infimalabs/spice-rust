@@ -549,6 +549,10 @@ pub struct ClaimAnswer {
     /// Non-blocking overlap warnings discovered from the claim-time board.
     #[serde(default, skip_serializing_if = "claim_warnings_empty")]
     pub warnings: Box<[ClaimWarning]>,
+    /// A steal found no live holder: it claimed the task with nobody
+    /// displaced, as a capture would have.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nothing_stolen: bool,
     /// Executable creation-context command or stable unavailable reason on fresh assignment.
     #[serde(
         default,

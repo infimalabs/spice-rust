@@ -194,7 +194,7 @@ fn capture_recovery_preflight(
             },
             Some(heads.statement.body.handle.to_string()),
             if stealing {
-                "capture --steal only a ready, pending task held by another actor"
+                "capture --steal only a ready, pending task, held or not"
             } else {
                 "capture only an unclaimed, ready, pending task"
             },
@@ -579,6 +579,7 @@ fn reconcile_client_recovery(
                         room_context: None,
                         next: None,
                         phase: None,
+                        nothing_stolen: false,
                         transplant: None,
                     };
                     let body = if task_reply {

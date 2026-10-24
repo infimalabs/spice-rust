@@ -318,6 +318,7 @@ impl PreparedClaim {
             self.prepared_git
                 .as_ref()
                 .and_then(spice::task_git::ClaimPreparation::transplant),
+            false,
         )
     }
 
@@ -365,6 +366,7 @@ fn claim_answer(
     origin_context: Option<Box<str>>,
     room_context: Option<Box<str>>,
     transplant: Option<&wire::intent::ClaimTransplant>,
+    nothing_stolen: bool,
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task: selected.handle().clone(),
@@ -385,6 +387,7 @@ fn claim_answer(
             })
             .collect::<Vec<_>>()
             .into_boxed_slice(),
+        nothing_stolen,
         creation_context: Some(task_creation_context_output(&selected.statement().creation)),
         origin_context,
         room_context,
@@ -480,6 +483,10 @@ pub(in crate::board_command) fn commit_claim(
         prepared_git
             .as_ref()
             .and_then(spice::task_git::ClaimPreparation::transplant),
+        matches!(possession, Possession::Steal | Possession::RecoverSteal)
+            && selected
+                .claim()
+                .is_none_or(|claim| claim.disposition != ClaimDisposition::Active),
     );
     if let Err(error) = write.command_result(
         request(command, win.clone()),
@@ -710,7 +717,7 @@ fn named_claim_selection<'a>(
         Possession::Steal | Possession::RecoverSteal => (
             board::stealable_entry(&satisfied, entry, command.actor(), &environment),
             "claim::steal-ineligible",
-            "capture --steal only a ready, pending task held by another actor",
+            "capture --steal only a ready, pending task, held or not",
         ),
         Possession::Recover | Possession::Capture => {
             refuse_held_design(entry, &satisfied)?;

@@ -196,6 +196,7 @@ pub(in crate::board_command) fn claim_free(
         room_context: None,
         next,
         phase: None,
+        nothing_stolen: false,
         transplant: None,
     };
     finish_release(bus, command, task, write, answer, parked)

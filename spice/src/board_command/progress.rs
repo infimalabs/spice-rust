@@ -62,6 +62,7 @@ pub(super) fn claim_reclaim_with_clock(
         room_context: None,
         next: None,
         phase: None,
+        nothing_stolen: false,
         transplant: None,
     };
     if let Err(error) = write.command_result(
@@ -739,6 +740,7 @@ fn carried_claim_answer(
             name: phase.clone(),
             deliverable: board::phase::deliverable(phase).map(Box::from),
         }),
+        nothing_stolen: false,
         transplant: None,
     }
 }
