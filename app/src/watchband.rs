@@ -57,8 +57,8 @@ pub use task_links::{reported_tasks, task_mentions};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub use trace::{
     Occupancy, Stroke, TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceCurve,
-    TraceMarker, TraceMarkerKind, TraceOff, TraceSpan, curve_path, drawn_spans, off_intervals,
-    trace,
+    TraceMarker, TraceMarkerKind, TraceOff, TraceSpan, curve_path, drawn_spans, level_y,
+    off_intervals, trace,
 };
 
 /// Accent slots the band cycles through.

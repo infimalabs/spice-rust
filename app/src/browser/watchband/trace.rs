@@ -12,8 +12,8 @@ use yew::prelude::*;
 use super::super::clock::now_millis;
 use crate::watchband::{
     Occupancy, Stroke, TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceCurve,
-    TraceMarker, TraceMarkerKind, TraceOff, TraceSpan, curve_path, drawn_spans, off_intervals,
-    trace,
+    TraceMarker, TraceMarkerKind, TraceOff, TraceSpan, curve_path, drawn_spans, level_y,
+    off_intervals, trace,
 };
 
 #[derive(Properties, PartialEq)]
@@ -293,11 +293,11 @@ fn on_rects(spans: &[TraceSpan], width: f64, height: f64) -> Vec<(f64, f64, f64,
 }
 
 /// Sample `index` of `levels` in pane pixels: time runs across to the
-/// now-dot's room, level rises from the floor.
+/// now-dot's room, level rises from the floor to the headroom under the top.
 fn point(levels: &[f64], index: usize, width: f64, height: f64) -> (f64, f64) {
     #[allow(clippy::cast_precision_loss)]
     let x = index as f64 * span(width) / (levels.len() - 1) as f64;
-    (x, height - 0.5 - levels[index] * (height - DOT_ROOM))
+    (x, level_y(levels[index], height))
 }
 
 /// The curve's points in pane pixels, held level one step past now so the
