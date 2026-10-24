@@ -231,11 +231,14 @@ cargo check --locked --package spice --tests --target x86_64-pc-windows-msvc
 cargo check --locked --package sill --tests --target x86_64-pc-windows-msvc
 ```
 
-Their proof inputs include `dist/windows-msvc.toml`, the complete package
-closure, and the changed paths. They use Gate's admitted Cargo home and pinned
-toolchain, produce typed compiler diagnostics, and perform no link or guest
-execution. A cached host check therefore cannot conceal a new Unix-only API in
-shared source.
+Each passes `--config 'target.x86_64-pc-windows-msvc.rustflags=["-D", "warnings"]'`
+so rustc warnings in Windows-only code fail the check; the host lint pass
+already runs clippy over every other line, so the cross-target shard spends
+the check phase only. Their proof inputs include `dist/windows-msvc.toml`, the
+complete package closure, and the changed paths. They use Gate's admitted Cargo
+home and pinned toolchain, produce typed compiler diagnostics, and perform no
+link or guest execution. A cached host check therefore cannot conceal a new
+Unix-only API in shared source.
 
 The final command writes and verifies
 `target/x86_64-pc-windows-msvc/release/spice.exe`; a native release stage also
