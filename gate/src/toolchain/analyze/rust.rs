@@ -417,6 +417,10 @@ fn set_owner_writable(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
     #[cfg(not(target_family = "unix"))]
     {
         let mut permissions = metadata.permissions();
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "on Windows this clears only the read-only attribute; the world-writable hazard is Unix-only"
+        )]
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions)
     }
