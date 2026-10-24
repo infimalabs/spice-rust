@@ -551,7 +551,13 @@ impl SubmissionQueue {
     }
 
     /// Lanes still awaiting residency among the identities one read nominated.
-    #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+    #[cfg_attr(
+        all(test, not(target_arch = "wasm32")),
+        expect(
+            dead_code,
+            reason = "only the wasm32 browser connection's lane read checks awaiting lanes"
+        )
+    )]
     pub(crate) fn awaiting_lanes(&self, ids: &[CanonicalUuid]) -> BTreeSet<CanonicalUuid> {
         ids.iter()
             .filter_map(|id| {
@@ -643,7 +649,13 @@ impl SubmissionQueue {
     }
 
     /// Restore the first nominated tail whose fresh lane read found no target.
-    #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+    #[cfg_attr(
+        all(test, not(target_arch = "wasm32")),
+        expect(
+            dead_code,
+            reason = "only the wasm32 browser connection's lane read refuses a nominated tail"
+        )
+    )]
     pub(crate) fn refuse_awaiting_lane(
         &mut self,
         lane: CanonicalUuid,

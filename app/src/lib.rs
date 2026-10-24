@@ -71,7 +71,13 @@ pub mod pane;
 #[cfg(any(target_arch = "wasm32", test))]
 mod preparation_decision;
 #[cfg(any(target_arch = "wasm32", test))]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser chrome and sidebar render quota"
+    )
+)]
 mod quota;
 #[cfg(any(target_arch = "wasm32", test))]
 mod reconnect;
@@ -102,7 +108,13 @@ mod browser;
 
 #[derive(Clone)]
 #[cfg(any(target_arch = "wasm32", test))]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser connection keeps the pending-request table"
+    )
+)]
 pub(crate) enum PendingKind {
     Jobs {
         respond: client_action::JobsResponse,

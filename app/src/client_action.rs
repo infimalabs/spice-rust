@@ -16,7 +16,13 @@ pub(crate) type PrincipalResponse =
     std::rc::Rc<dyn Fn(Result<wire::principal::PrincipalStanding, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser room console and task detail post to rooms"
+    )
+)]
 pub(crate) struct RoomPostAction {
     pub(crate) room: TaskHandle,
     pub(crate) head: wire::Seq,
@@ -53,14 +59,26 @@ impl RoomPostAction {
 }
 
 /// One operator item disposition, reply, recovery, or relevance assessment.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser room conversation sends room controls"
+    )
+)]
 pub(crate) enum RoomControlRequest {
     Control(wire::intent::RoomControl),
 }
 
 /// One preparation write with the heads its surface observed: an exact
 /// proposal decision, or a nudge pushing an open Design to proposal.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser approval and nudge controls send preparation requests"
+    )
+)]
 pub(crate) enum PreparationRequest {
     Decide {
         request: Box<wire::rooms::PreparationDecide>,
@@ -73,7 +91,13 @@ pub(crate) enum PreparationRequest {
 }
 
 /// One principal write, the same command `spice principal` sends.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser principals view writes principals"
+    )
+)]
 pub(crate) enum PrincipalWrite {
     Admit(wire::principal::PrincipalAdmit),
     Edit(wire::principal::PrincipalEdit),
@@ -82,7 +106,13 @@ pub(crate) enum PrincipalWrite {
     Deauthorize(wire::principal::PrincipalDeauthorize),
 }
 
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser connection asks a principal write for its command kind"
+    )
+)]
 impl PrincipalWrite {
     pub(crate) const fn kind(&self) -> wire::CommandKind {
         match self {
@@ -111,7 +141,13 @@ impl PrincipalWrite {
 
 /// One typed task creation, statement revision, or filing, with the heads it
 /// was drawn from.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser drafts view sends draft requests"
+    )
+)]
 pub(crate) enum DraftRequest {
     Create {
         request: wire::intent::TaskAdd,
@@ -128,14 +164,26 @@ pub(crate) enum DraftRequest {
 }
 
 /// Wake one deferred filed task now, or set the instant its deferral wakes at.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser deferral control sends deferral requests"
+    )
+)]
 pub(crate) enum DeferralRequest {
     Wake(wire::intent::TaskWake),
     Defer(wire::intent::TaskDefer),
 }
 
 /// What one working-group change asks the authority for.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser rooms and watchband group controls change groups"
+    )
+)]
 pub(crate) enum GroupChange {
     /// Move one design into a group, founding it under a fresh identity, or
     /// out of every group.
@@ -150,7 +198,6 @@ pub(crate) enum GroupChange {
     Stance(wire::rooms::WorkingGroupStanceSet),
 }
 
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 impl GroupChange {
     /// The identity bytes this change names, which the action mailbox bounds.
     pub(crate) fn bytes(&self) -> usize {
@@ -175,7 +222,13 @@ impl GroupChange {
     }
 }
 
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser connection dispatches client actions"
+    )
+)]
 pub(crate) enum ClientAction {
     Jobs {
         respond: JobsResponse,

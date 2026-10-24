@@ -36,7 +36,6 @@ pub(crate) struct GroupView {
     focus: Option<TaskStamp>,
 }
 
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 impl RoomViews {
     /// Restore only canonical presentation rows. Corrupt or duplicate rows
     /// grant no authority and are discarded rather than guessed together.
@@ -173,7 +172,13 @@ impl RoomViews {
 /// One local presentation change, applied to whatever state is current when
 /// it lands rather than to the state its issuer last rendered.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser rooms surface and console emit room view actions"
+    )
+)]
 pub(crate) enum RoomViewAction {
     Open {
         group: RoomAuthorityStamp,
@@ -208,7 +213,6 @@ pub(crate) enum RoomViewAction {
     },
 }
 
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 impl GroupView {
     pub(crate) fn draft(&self, design: &TaskStamp) -> &str {
         self.drafts
