@@ -239,7 +239,7 @@ fn publish_turn_boundary(
             compaction_method: None,
             final_answer: false,
             acknowledgement: None,
-            text: "New turn".to_owned(),
+            text: super::turn_cause::summary(record.events.iter().map(|&(_, event)| event)),
             provider_error: None,
             classifications: Vec::new(),
             quote_target: None,

@@ -1204,7 +1204,7 @@ fn rendered<B>(
 /// What a seat whose omp serves `spice://` learns about the scheme: told in
 /// its first turn and again with each briefing after a compaction, never to
 /// a seat whose registration was refused or whose vendor has no host schemes.
-const SEAT_GUIDE: &str = "\
+pub(crate) const SEAT_GUIDE: &str = "\
 <system-notice>
 # spice:// reads
 This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, room inbox and results, preparation authority, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).

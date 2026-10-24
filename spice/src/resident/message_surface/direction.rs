@@ -33,7 +33,7 @@ fn delivered_keys(text: &str) -> Vec<steer::Key> {
     keys
 }
 
-fn operator_text(event: &listen::Event) -> Option<&str> {
+pub(super) fn operator_text(event: &listen::Event) -> Option<&str> {
     match event {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Operator => {
             Some(prose.text.as_str())

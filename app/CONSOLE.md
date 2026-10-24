@@ -118,7 +118,12 @@ bottom-up from the right, a shorter top row nesting half a pitch in. The ticker
 keeps age, status, prefix, accent, accessible label, and live region. A running
 command's line names its tool, such as `job:`, then its latest nonblank output
 before intent and context, so a narrow ticker cuts context first; hover shows
-the bounded line. An empty fleet reserves no pips and invents no status.
+the bounded line. A new turn names what opened it from the prompt the lane
+received: each Spice notice's heading or lead sentence with the facts it lists
+(an assignment, a resumed seat's held claim and pending keys, a briefing, room
+catch-up, a finished job), each direction key, and each peer note's sender;
+the `spice://` guide names nothing, and a turn with no such cause shows the
+bare `new turn` label. An empty fleet reserves no pips and invents no status.
 
 ## Task strips
 
