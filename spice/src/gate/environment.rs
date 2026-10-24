@@ -11,7 +11,10 @@ const CARGO_HOME: &str = "CARGO_HOME";
 const RUSTUP_HOME: &str = "RUSTUP_HOME";
 pub(super) const SHELL_HOOK_PREFIX: &[u8] = b"SPICE_SHELL_HOOK_"; // env-policy: allow
 
-const OPERATIONAL_ROUTING: [&str; 9] = [
+/// Names that route a command to its producer, lane, or agent tooling. The
+/// RTK history database is one per lane and the multiplexer opt-out is omp's
+/// alone, so neither may partition receipt identity across lanes.
+const OPERATIONAL_ROUTING: [&str; 11] = [
     wire::SpiceVariable::AgentVendor.as_str(),
     wire::SpiceVariable::Hooks.as_str(),
     wire::SpiceVariable::Lane.as_str(),
@@ -21,6 +24,8 @@ const OPERATIONAL_ROUTING: [&str; 9] = [
     wire::SpiceVariable::RtkExecutable.as_str(),
     wire::SpiceVariable::Session.as_str(),
     wire::SpiceVariable::WrapperSpice.as_str(),
+    crate::rtk::HISTORY_VARIABLE,
+    crate::agent_launch::OMP_DISABLE_LSPMUX,
 ];
 
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
