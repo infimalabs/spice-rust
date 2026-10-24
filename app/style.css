@@ -338,11 +338,16 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-horn-tab__handle.dormant {
   color: color-mix(in srgb, var(--app-base-muted) 62%, transparent);
 }
-/* A local handle in its work's accent: tinted text and background always, with
-   rails supplied by the enclosing base. */
+/* A local handle in its work's accent: tinted text, background, and top rail
+   always; the rail strengthens on hover within the same accent, where the
+   base rail strengthens within the base. Totals tabs keep the base flavor. */
 .app-horn-tab__handle[data-accent] {
   --app-horn-tab-tint: var(--accent-slot);
   color: color-mix(in srgb, var(--accent-slot) 55%, var(--app-base-ink));
+  border-color: color-mix(in srgb, var(--accent-slot) 55%, var(--app-base-line));
+}
+.app-horn-tab__handle[data-accent]:hover {
+  border-color: color-mix(in srgb, var(--accent-slot) 80%, var(--app-base-line));
 }
 .app-horn-tabs :focus-visible {
   outline: var(--app-focus-ring-width) solid var(--app-base-focus);
