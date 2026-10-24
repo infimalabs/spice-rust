@@ -124,7 +124,13 @@ impl From<&BoardAnswer> for BoardView {
 
 impl BoardView {
     /// Whether `task` is a Design the operator's decision holds.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[cfg_attr(
+        all(not(test), not(target_arch = "wasm32")),
+        expect(
+            dead_code,
+            reason = "only the wasm32 work and attention views ask whether a decision holds a Design"
+        )
+    )]
     pub(crate) fn awaiting_selection(&self, task: &wire::TaskStamp) -> bool {
         self.design_cycles.get(task) == Some(&wire::rooms::DesignCycle::AwaitingDecision)
     }

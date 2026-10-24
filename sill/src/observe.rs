@@ -221,7 +221,13 @@ pub struct Observation {
     frame_limit: usize,
     queue_capacity: usize,
     sink_deadline: Duration,
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg_attr(
+        not(any(unix, windows)),
+        expect(
+            dead_code,
+            reason = "only the unix and windows spawners read the observer"
+        )
+    )]
     observer: Arc<dyn RecordObserver>,
 }
 

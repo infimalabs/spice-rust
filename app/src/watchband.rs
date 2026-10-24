@@ -33,7 +33,13 @@ mod renewal;
 mod submission;
 mod task_links;
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(
+    test,
+    expect(
+        dead_code,
+        reason = "only the wasm32 browser watchband draws the trace"
+    )
+)]
 mod trace;
 
 #[cfg(any(target_arch = "wasm32", test))]

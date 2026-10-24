@@ -52,6 +52,8 @@ unexpected_cfgs = { level = "deny", check-cfg = ["cfg(rust_analyzer)"] }
 [workspace.lints.clippy]
 all = "deny"
 disallowed_methods = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
 
 # Keep line-level diagnostics while avoiding full variable debug information in
 # ordinary development artifacts. Self-hosted Spice and Gate builds inherit the

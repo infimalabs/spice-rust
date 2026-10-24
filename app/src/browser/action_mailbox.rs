@@ -15,7 +15,13 @@ const HISTORY_RECORD_LIMIT: usize = 32;
 /// large selection never crowds out current reads and mutations.
 pub(super) const TASK_DETAIL_READ_LIMIT: usize = 16;
 /// Outstanding contribution reads, bounded like task detail reads.
-#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+#[cfg_attr(
+    all(test, not(target_arch = "wasm32")),
+    expect(
+        dead_code,
+        reason = "only contribution_read_slots reads the limit, for the wasm32 refresh loop"
+    )
+)]
 const CONTRIBUTION_READ_LIMIT: usize = 8;
 const TEXT_ALLOWANCE_BYTES: usize = wire::media::MAX_MEDIA_BYTES;
 const MEDIA_URL_BYTES: usize = wire::media::MAX_MEDIA_BYTES.div_ceil(3) * 4 + 64;
@@ -172,7 +178,13 @@ impl ActionQueue {
         })
     }
     /// How many more contribution reads may be outstanding.
-    #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+    #[cfg_attr(
+        all(test, not(target_arch = "wasm32")),
+        expect(
+            dead_code,
+            reason = "only the wasm32 browser refresh loop bounds its contribution reads"
+        )
+    )]
     pub(super) fn contribution_read_slots(&self) -> usize {
         let outstanding = self
             .mailbox
@@ -183,7 +195,13 @@ impl ActionQueue {
             .count();
         CONTRIBUTION_READ_LIMIT.saturating_sub(outstanding)
     }
-    #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+    #[cfg_attr(
+        all(test, not(target_arch = "wasm32")),
+        expect(
+            dead_code,
+            reason = "only the wasm32 browser refresh loop deduplicates task relation reads"
+        )
+    )]
     pub(super) fn has_task_relations(&self, key: &crate::TaskRelationsKey) -> bool {
         self.mailbox.borrow().pending.values().any(|entry| {
             matches!(&entry.kind, PendingKind::TaskRelations { key: pending } if pending == key)
