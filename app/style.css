@@ -398,10 +398,11 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-semantic-live) 14%, transparent);
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
-/* A working group's pips are its designs, each in its accent and shaped by its
-   standing: claimed burns, a pass cycle in progress dims, passive rings, a
-   decision the operator owes warns, and concluded, deleted, or unavailable fades. */
-.app-presence-pip--status.group-design-pip { --app-presence-color: var(--accent-slot); }
+/* A design's pips, on its group tab and its Spice menu tile, wear its accent
+   shaped by its standing: claimed burns, a pass cycle in progress dims,
+   passive rings, a decision the operator owes warns, and concluded, deleted,
+   or unavailable fades. */
+.app-presence-pip.group-design-pip { --app-presence-color: var(--accent-slot); }
 .group-design-pip:is(.gathering-input, .ready-for-proposal, .waiting-on-selected-work) { --app-presence-opacity: .55; }
 .group-design-pip.passive { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
 .group-design-pip.awaiting-decision { --app-presence-color: var(--warning); }
@@ -1036,7 +1037,7 @@ a.app-roster-tile:hover { border-color: var(--accent-slot, var(--accent)); }
 a.app-roster-tile:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: 2px; }
 .app-spice-topology .section-count { font-variant-numeric: tabular-nums; }
 .app-roster-tile > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.app-spice-topology-agent > header .app-presence-pip--member { flex: none; width: 6px; height: 6px; border-width: var(--app-focus-ring-strong-width); }
+.app-roster-tile > header .app-presence-pip--member { flex: none; width: 6px; height: 6px; border-width: var(--app-focus-ring-strong-width); }
 .app-roster-tile > header strong { flex: none; color: color-mix(in srgb, var(--accent-slot, var(--accent)) 70%, var(--ink)); font-size: var(--app-type-summary); line-height: 1.2; }
 .app-roster-tile > header span,
 .app-roster-tile > p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
