@@ -45,7 +45,8 @@ impl SpeechOwner {
 
 /// One browser-local speech posture, ordered by loudness: Quiet voices
 /// nothing, Speak voices resident-classified final answers and acknowledged
-/// steering, and Narrate voices each live card edge.
+/// steering, and Narrate voices every live card's edges, or the whole card
+/// when it answers steering.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub enum SpeechMode {
     #[default]
@@ -461,7 +462,8 @@ pub struct NarrationMessage {
     pub playback: wire::SpeechPlayback,
     /// Stable message identity within that lane.
     pub key: String,
-    /// Narrate-mode utterance: the card's edge segments.
+    /// Narrate-mode utterance: the card's edge segments, or the resident's
+    /// whole-hunk selection when the card acknowledges steering.
     pub narration: Option<String>,
     /// Resident-classified utterance eligible for Speak mode.
     pub automatic_speech: Option<String>,
