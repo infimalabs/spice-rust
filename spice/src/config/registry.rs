@@ -644,7 +644,7 @@ configuration_registry! {
     }
     fixed "lane.wake_order" {
         kind: String,
-        builtin: Some(Builtin::String("most-recently-claimed")),
+        builtin: Some(Builtin::String("best-match")),
         layers: LOCAL,
         class: MachineLocal,
         flag: None,

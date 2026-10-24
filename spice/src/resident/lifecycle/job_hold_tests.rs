@@ -6,7 +6,7 @@ use super::*;
 const ROTATE: lane::WakeOrder = lane::WakeOrder::LeastRecentlyClaimed;
 
 /// A vacant lane with a settled held claim and other work it could take.
-fn vacant_holder() -> Target {
+fn vacant_holder() -> Target<'static> {
     Target {
         lane: lane(1),
         last_claim: None,
@@ -15,6 +15,8 @@ fn vacant_holder() -> Target {
         drain_queue: Available::Ready,
         available: Available::Ready,
         last_resort: false,
+        task: None,
+        matched: None,
     }
 }
 

@@ -1,8 +1,8 @@
 //! The one lane an operator's Design nudge messages.
 //!
 //! The operator already chose to push the Design, so no stance floor applies:
-//! any free lane may take it, and the TF-IDF matcher Design awareness uses only
-//! orders them.
+//! any free lane may take it, and the shared [`standing`] ranker only orders
+//! them.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use board::similarity::{FrequencyProfile, GenerationMismatch, Prepared};
 use wire::{CanonicalUuid, TaskStamp};
 
-use super::profile::{EvidenceKey, SessionProfiles};
+use super::profile::SessionProfiles;
+use super::standing::{Standing, standing};
 
 /// The lane a nudge messages and how well its retained profile matched.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -73,63 +74,25 @@ pub fn choose(
     free: &FreeLanes,
     nudged: &TaskStamp,
 ) -> Result<Option<Recipient>, GenerationMismatch> {
-    let own = |key: &EvidenceKey| matches!(key, EvidenceKey::Task { task, .. } if task == nudged);
-    let foreign = |key: &EvidenceKey| !own(key);
     let mut best: Option<Recipient> = None;
     for (&lane, &occupant) in &free.seated {
-        let (score, worked) = match profiles
-            .session(lane, occupant)
-            .cloned()
-            .and_then(|session| profiles.profile_mut(&session))
-        {
-            Some(profile) => {
-                let evidence = profile.evidence_mut();
-                let worked = evidence.holds(own);
-                let score = match design {
-                    Some(design) => evidence.best_score_where(frequency, design, foreign)?,
-                    None => None,
-                };
-                (score, worked)
-            }
-            None => (None, false),
-        };
-        offer(&mut best, lane, score, true, worked);
-    }
-    let mut retained = BTreeMap::<CanonicalUuid, (Option<f64>, bool)>::new();
-    for (session, profile) in profiles.iter_mut() {
-        if !free.vacant.contains(&session.lane) {
-            continue;
-        }
-        let evidence = profile.evidence_mut();
-        let (known, worked) = retained.entry(session.lane).or_default();
-        *worked |= evidence.holds(own);
-        if let Some(design) = design {
-            let score = evidence.best_score_where(frequency, design, foreign)?;
-            if score.is_some_and(|score| known.is_none_or(|known| score > known)) {
-                *known = score;
-            }
-        }
+        let standing = standing(profiles, frequency, design, nudged, lane, Some(occupant))?;
+        offer(&mut best, lane, standing, true);
     }
     for &lane in &free.vacant {
-        let (score, worked) = retained.get(&lane).copied().unwrap_or_default();
-        offer(&mut best, lane, score, false, worked);
+        let standing = standing(profiles, frequency, design, nudged, lane, None)?;
+        offer(&mut best, lane, standing, false);
     }
     Ok(best)
 }
 
 /// Keep `lane` when it strictly outranks the current best.
-fn offer(
-    best: &mut Option<Recipient>,
-    lane: CanonicalUuid,
-    score: Option<f64>,
-    seated: bool,
-    last_resort: bool,
-) {
+fn offer(best: &mut Option<Recipient>, lane: CanonicalUuid, standing: Standing, seated: bool) {
     let candidate = Recipient {
         lane,
-        score: score.unwrap_or(0.0),
+        score: standing.score.unwrap_or(0.0),
         seated,
-        last_resort,
+        last_resort: standing.worked,
     };
     if best.as_ref().is_none_or(|known| candidate.outranks(known)) {
         *best = Some(candidate);

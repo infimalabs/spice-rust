@@ -404,7 +404,7 @@ fn iced_fixture(digest: &wire::Digest) -> (Bus, ProjectPolicy, Projection) {
     (bus, projects, projection)
 }
 
-pub(super) fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Target {
+pub(super) fn target<'a>(snapshot: &bus::TaskSnapshot, projection: &'a Projection) -> Target<'a> {
     let targets = project_targets(
         snapshot,
         projection,

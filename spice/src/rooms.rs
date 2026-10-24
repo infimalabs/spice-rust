@@ -19,6 +19,7 @@ mod catch_up;
 pub mod evidence;
 pub mod nudge;
 pub mod profile;
+pub mod standing;
 
 pub use catch_up::{
     CatchUp, CatchUpBudget, CatchUpKind, CatchUpSource, MAX_CATCH_UP_BYTES, MAX_CATCH_UP_ITEMS,

@@ -27,8 +27,10 @@ use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_
 mod availability;
 mod holds;
 mod launch;
+mod matching;
 mod materialization;
 use availability::{ready_instant, selected_ready};
+use matching::match_targets;
 use materialization::Projection;
 pub(super) mod generation_notices;
 mod review_feedback;
@@ -83,8 +85,8 @@ struct SelectedReady {
     last_resort: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Target {
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Target<'a> {
     lane: CanonicalUuid,
     /// Journal position of the newest claim this lane won; `None` if it never has.
     last_claim: Option<Seq>,
@@ -96,6 +98,12 @@ struct Target {
     /// this lane's last-resort class: its own independent handoff or review,
     /// or a row it freed.
     last_resort: bool,
+    /// The task the allocator selected for this lane's drain-queue or
+    /// available-work trigger, which a claim would select again.
+    task: Option<&'a Entry>,
+    /// How well the lane's retained work matches `task`, scored only under
+    /// the best-match order; absent when nothing scores.
+    matched: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -302,6 +310,8 @@ impl Runtime {
     }
 
     /// Reconcile one authoritative snapshot and execute at most one wake.
+    /// `profiles` holds the retained session profiles the best-match order
+    /// scores; it is absent until message startup restores them.
     #[allow(
         clippy::too_many_arguments,
         reason = "the lifecycle authority composes every existing resident fold explicitly"
@@ -315,6 +325,7 @@ impl Runtime {
         seats: &mut Seats,
         lane_runtime: &lane_surface::Runtime<'_>,
         config: &SurfaceConfig,
+        profiles: Option<&std::sync::Mutex<super::message_surface::MessageState>>,
         launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
@@ -328,6 +339,7 @@ impl Runtime {
             seats,
             lane_runtime,
             config,
+            profiles,
             launches,
             diagnostic,
         )
@@ -347,6 +359,7 @@ impl Runtime {
         seats: &mut Seats,
         lane_runtime: &lane_surface::Runtime<'_>,
         config: &SurfaceConfig,
+        profiles: Option<&std::sync::Mutex<super::message_surface::MessageState>>,
         launches: &mut super::launch_runtime::Runtime,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
@@ -401,6 +414,11 @@ impl Runtime {
         });
         targets.retain(|target| !self.launching.contains(&target.lane));
         self.backoff.retain_targets(&targets);
+        if config.lane.wake_order() == lane::WakeOrder::BestMatch
+            && let Some(profiles) = profiles
+        {
+            match_targets(&mut targets, self.projection.entries(), profiles)?;
+        }
         let task = match resolve(&targets, &self.backoff, now, config.lane.wake_order()) {
             Resolution::Idle => None,
             Resolution::Wait { lane, deadline, .. } => {
@@ -722,8 +740,10 @@ fn available_from_selected(selected: Option<SelectedReady>) -> CommandResult<Ava
 /// Wake the highest-precedence due trigger. Among lanes due for the same
 /// trigger, a lane whose work is ordinary wakes before one whose work is its
 /// own last resort, so an idle peer takes a review before its author does;
-/// `order` then ranks lanes by their newest durable claim, and lane id breaks
-/// exact ties. The same rank settles which lane a wait names.
+/// under best-match, lanes due for the same work trigger then rank by how well
+/// each lane's retained work matches its selected task, a scored lane above an
+/// unscored one; `order` then ranks lanes by their newest durable claim, and
+/// lane id breaks exact ties. The same rank settles which lane a wait names.
 fn resolve(
     targets: &[Target],
     backoff: &Backoff,
@@ -790,23 +810,36 @@ fn resolve(
 }
 
 /// Which of two due lanes wakes first: ordinary work before a lane's own last
-/// resort, then `order`, then lane id.
+/// resort, then the higher match when both are due for the same work trigger
+/// under best-match, then `order`'s claim recency, then lane id.
 fn wake_rank(
     order: lane::WakeOrder,
     (left_trigger, left): (Trigger, &Target),
     (right_trigger, right): (Trigger, &Target),
 ) -> std::cmp::Ordering {
-    let last_resort = |trigger, target: &Target| {
-        matches!(trigger, Trigger::DrainQueue | Trigger::AvailableWork) && target.last_resort
+    let work = |trigger| matches!(trigger, Trigger::DrainQueue | Trigger::AvailableWork);
+    let last_resort = |trigger, target: &Target| work(trigger) && target.last_resort;
+    let matched = if order == lane::WakeOrder::BestMatch
+        && left_trigger == right_trigger
+        && work(left_trigger)
+    {
+        // Cosines are never negative, so an unscored lane ranks below all.
+        let score = |target: &Target| target.matched.unwrap_or(f64::NEG_INFINITY);
+        score(right).total_cmp(&score(left))
+    } else {
+        std::cmp::Ordering::Equal
     };
     let claims = match order {
         // `None` sorts first: a lane that never claimed is the oldest.
         lane::WakeOrder::LeastRecentlyClaimed => left.last_claim.cmp(&right.last_claim),
         // Reversed, `None` sorts last: a lane that never claimed is the coldest.
-        lane::WakeOrder::MostRecentlyClaimed => right.last_claim.cmp(&left.last_claim),
+        lane::WakeOrder::BestMatch | lane::WakeOrder::MostRecentlyClaimed => {
+            right.last_claim.cmp(&left.last_claim)
+        }
     };
     last_resort(left_trigger, left)
         .cmp(&last_resort(right_trigger, right))
+        .then(matched)
         .then(claims)
         .then_with(|| left.lane.cmp(&right.lane))
 }
@@ -843,9 +876,9 @@ mod tests {
             .expect("fixture instant")
     }
 
-    const ROTATE: lane::WakeOrder = lane::WakeOrder::LeastRecentlyClaimed;
+    pub(super) const ROTATE: lane::WakeOrder = lane::WakeOrder::LeastRecentlyClaimed;
 
-    fn target(lane: u8) -> Target {
+    pub(super) fn target(lane: u8) -> Target<'static> {
         Target {
             lane: super::tests::lane(lane),
             last_claim: None,
@@ -854,6 +887,8 @@ mod tests {
             drain_queue: Available::None,
             available: Available::None,
             last_resort: false,
+            task: None,
+            matched: None,
         }
     }
 
@@ -913,155 +948,6 @@ mod tests {
                 lane: lane(2),
             }
         );
-    }
-
-    #[test]
-    fn due_lanes_wake_in_the_configured_claim_order() {
-        let lane_at = |lane: u8, claim: Option<u64>, available| Target {
-            last_claim: claim.map(|seq| Seq::new(seq).expect("claim position")),
-            available,
-            ..target(lane)
-        };
-        let ready = |lane, claim| lane_at(lane, Some(claim), Available::Ready);
-        let chosen = |order, targets: &[Target]| match resolve(
-            targets,
-            &Backoff::default(),
-            instant(10),
-            order,
-        ) {
-            Resolution::Attempt { trigger, lane } | Resolution::Wait { trigger, lane, .. } => {
-                (trigger, lane)
-            }
-            Resolution::Idle => panic!("a due lane resolves"),
-        };
-        let work = |n| (Trigger::AvailableWork, lane(n));
-        let held = |claim| Target {
-            held_claim: Available::Ready,
-            ..ready(5, claim)
-        };
-        let later = |lane, claim| lane_at(lane, Some(claim), Available::At(instant(20)));
-        let never = lane_at(4, None, Available::Ready);
-
-        // Rotation: older claims wake first whatever the lane ids or input
-        // order, and once the woken lane claims, the next wake moves on.
-        let rotate = |targets: &[Target]| chosen(ROTATE, targets);
-        assert_eq!(rotate(&[ready(1, 90), ready(3, 40), ready(2, 70)]), work(3));
-        assert_eq!(rotate(&[ready(1, 90), ready(3, 91), ready(2, 70)]), work(2));
-        // A never-claimed lane outranks every claimed one; exact ties fall to lane id.
-        assert_eq!(rotate(&[ready(1, 5), never]), work(4));
-        assert_eq!(rotate(&[ready(2, 7), ready(1, 7)]), work(1));
-        // Rank never overrides trigger precedence.
-        assert_eq!(
-            rotate(&[ready(1, 1), held(99)]),
-            (Trigger::HeldClaim, lane(5))
-        );
-        // Equal deadlines wait on the same least recently claimed lane.
-        assert_eq!(rotate(&[later(1, 50), later(2, 30)]), work(2));
-
-        // Concentration: the newest claim wakes first and keeps waking while
-        // it keeps claiming.
-        let warm = |targets: &[Target]| chosen(lane::WakeOrder::MostRecentlyClaimed, targets);
-        assert_eq!(warm(&[ready(1, 90), ready(3, 40), ready(2, 70)]), work(1));
-        assert_eq!(warm(&[ready(1, 92), ready(3, 91), ready(2, 70)]), work(1));
-        // A never-claimed lane comes last; exact ties still fall to lane id.
-        assert_eq!(warm(&[ready(1, 5), never]), work(1));
-        assert_eq!(warm(&[never, lane_at(3, None, Available::Ready)]), work(3));
-        assert_eq!(warm(&[ready(2, 7), ready(1, 7)]), work(1));
-        // Rank never overrides trigger precedence.
-        assert_eq!(
-            warm(&[ready(1, 99), held(1)]),
-            (Trigger::HeldClaim, lane(5))
-        );
-        // Equal deadlines wait on the same most recently claimed lane.
-        assert_eq!(warm(&[later(1, 50), later(2, 30)]), work(1));
-    }
-
-    #[test]
-    fn ordinary_work_wakes_before_a_lanes_own_last_resort() {
-        let chosen = |order, targets: &[Target]| match resolve(
-            targets,
-            &Backoff::default(),
-            instant(10),
-            order,
-        ) {
-            Resolution::Attempt { trigger, lane } | Resolution::Wait { trigger, lane, .. } => {
-                (trigger, lane)
-            }
-            Resolution::Idle => panic!("a due lane resolves"),
-        };
-        let due = |lane: u8, claim: u64, last_resort, available| Target {
-            last_claim: Some(Seq::new(claim).expect("claim position")),
-            available,
-            last_resort,
-            ..target(lane)
-        };
-        // The author's claim is the newest and the peer's is old, so neither
-        // claim order alone keeps the author last; the class decides first.
-        let author = due(1, 90, true, Available::Ready);
-        let peer = due(2, 10, false, Available::Ready);
-        let fresh = Target {
-            last_claim: None,
-            ..peer
-        };
-        for order in [ROTATE, lane::WakeOrder::MostRecentlyClaimed] {
-            let pick = |targets: &[Target]| chosen(order, targets);
-            assert_eq!(pick(&[author, peer]), (Trigger::AvailableWork, lane(2)));
-            assert_eq!(pick(&[author, fresh]), (Trigger::AvailableWork, lane(2)));
-            // The class ranks drain-queue lanes the same way.
-            let drain = |target: Target| Target {
-                drain_queue: target.available,
-                available: Available::None,
-                ..target
-            };
-            assert_eq!(
-                pick(&[drain(author), drain(peer)]),
-                (Trigger::DrainQueue, lane(2))
-            );
-            // A peerless author still wakes for its last resort.
-            assert_eq!(pick(&[author]), (Trigger::AvailableWork, lane(1)));
-            // Within one class the configured order still decides.
-            let other_author = due(3, 50, true, Available::Ready);
-            let warm_author = if order == ROTATE { 3 } else { 1 };
-            assert_eq!(
-                pick(&[author, other_author]),
-                (Trigger::AvailableWork, lane(warm_author))
-            );
-            // The class never overrides trigger precedence, and only work
-            // triggers carry it.
-            let holding = Target {
-                held_claim: Available::Ready,
-                ..author
-            };
-            assert_eq!(pick(&[peer, holding]), (Trigger::HeldClaim, lane(1)));
-            let holding_peer = Target {
-                lane: lane(4),
-                last_claim: Some(Seq::new(10).expect("claim position")),
-                last_resort: false,
-                ..holding
-            };
-            assert_eq!(
-                pick(&[holding, holding_peer]),
-                (
-                    Trigger::HeldClaim,
-                    if order == ROTATE { lane(4) } else { lane(1) }
-                )
-            );
-            // A due last resort still wakes before a peer whose work is not yet due.
-            let pending_peer = due(2, 10, false, Available::At(instant(20)));
-            assert_eq!(
-                pick(&[author, pending_peer]),
-                (Trigger::AvailableWork, lane(1))
-            );
-            // Equal wait deadlines name the ordinary lane.
-            let later = |target: Target| Target {
-                available: Available::At(instant(20)),
-                ..target
-            };
-            assert_eq!(
-                pick(&[later(author), later(peer)]),
-                (Trigger::AvailableWork, lane(2))
-            );
-        }
     }
 
     #[test]
@@ -1472,3 +1358,5 @@ mod tests {
 
 #[cfg(test)]
 mod materialization_tests;
+#[cfg(test)]
+mod wake_order_tests;

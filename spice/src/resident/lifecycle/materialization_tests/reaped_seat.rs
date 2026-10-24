@@ -340,7 +340,7 @@ pub(super) fn occupied_seed_with_session(
     write
 }
 
-fn targets(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Vec<Target> {
+fn targets<'a>(snapshot: &bus::TaskSnapshot, projection: &'a Projection) -> Vec<Target<'a>> {
     project_targets(
         snapshot,
         projection,

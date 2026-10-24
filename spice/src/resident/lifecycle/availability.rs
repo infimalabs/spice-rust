@@ -1,10 +1,11 @@
 use super::*;
 
-/// Select current work or retain the exact deadline of a temporarily blocked
-/// phase handoff so the resident reconciles when its prior owner becomes valid.
-pub(super) fn selected_ready(
+/// Select current work, with the task selected, or retain the exact deadline
+/// of a temporarily blocked phase handoff so the resident reconciles when its
+/// prior owner becomes valid.
+pub(super) fn selected_ready<'a>(
     snapshot: &bus::TaskSnapshot,
-    entries: &[Entry],
+    entries: &'a [Entry],
     selection: &board::SelectionIndex,
     ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
@@ -12,7 +13,7 @@ pub(super) fn selected_ready(
     allocation: &board::NextConfig,
     environment: &wire::Environment,
     now: Instant,
-) -> CommandResult<Option<SelectedReady>> {
+) -> CommandResult<(Option<SelectedReady>, Option<&'a Entry>)> {
     let recent_cell = snapshot.recent_claim_cell(actor);
     let satisfied = selection.resolved();
     let selected = board::select_with_index_at(
@@ -26,21 +27,16 @@ pub(super) fn selected_ready(
         now,
     );
     let Some(selected) = selected else {
-        return Ok(board::blocked_handoff_until(
-            entries,
-            satisfied,
-            actor,
-            subscription,
-            environment,
-            now,
-        )
-        .map(|at| SelectedReady {
-            at,
-            eligible: 0,
-            handoff: false,
-            handoff_wait: true,
-            last_resort: false,
-        }));
+        let wait =
+            board::blocked_handoff_until(entries, satisfied, actor, subscription, environment, now)
+                .map(|at| SelectedReady {
+                    at,
+                    eligible: 0,
+                    handoff: false,
+                    handoff_wait: true,
+                    last_resort: false,
+                });
+        return Ok((wait, None));
     };
     let at = ready_instant(selected.entry(), ready_at)?;
     let handoff = selected.entry().phase_handoff().is_some();
@@ -50,13 +46,16 @@ pub(super) fn selected_ready(
             board::selectable_entry_at(satisfied, entry, actor, subscription, environment, now)
         })
         .count();
-    Ok(Some(SelectedReady {
-        at,
-        eligible,
-        handoff,
-        handoff_wait: false,
-        last_resort: selected.last_resort(),
-    }))
+    Ok((
+        Some(SelectedReady {
+            at,
+            eligible,
+            handoff,
+            handoff_wait: false,
+            last_resort: selected.last_resort(),
+        }),
+        Some(selected.entry()),
+    ))
 }
 
 pub(super) fn ready_instant(

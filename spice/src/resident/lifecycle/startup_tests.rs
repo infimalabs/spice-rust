@@ -31,6 +31,7 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
             &mut seats,
             &lane_runtime,
             &surface.config,
+            None,
             &mut launches,
             &mut diagnostic,
         )
