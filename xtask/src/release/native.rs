@@ -6,10 +6,14 @@ use std::path::Path;
 use wire::manifest::ReleaseTarget;
 
 /// Ask Cargo for the exact linked binary carrying `canvas`, retaining line
-/// tables for targets whose declared debug artifact consumes them. Keeping the
-/// profile override on this target-specific command leaves the stripped Linux
-/// executable bytes unchanged. `cargo rustc` hands the link argument to the
-/// final executable alone, so no dependency rebuilds when the archive changes.
+/// tables for targets whose declared debug artifact consumes them. The
+/// macOS executable must leave the link unstripped: `dsymutil` follows the
+/// symbol table's object-file entries to assemble the dSYM, after which the
+/// builder strips the executable itself. Linux declares no debug artifact,
+/// so its symbol table goes at link. MSVC receives no strip setting because
+/// rustc spells one as `/DEBUG:NONE`, which would suppress the declared PDB.
+/// `cargo rustc` hands the link argument to the final executable alone, so no
+/// dependency rebuilds when the archive changes.
 pub(super) fn cargo_arguments(
     target: ReleaseTarget,
     target_dir: &Path,
@@ -41,6 +45,12 @@ pub(super) fn cargo_arguments(
         arguments.extend([
             OsString::from("--config"),
             OsString::from("profile.release.debug=\"line-tables-only\""),
+        ]);
+    }
+    if target == ReleaseTarget::X86_64UnknownLinuxMusl {
+        arguments.extend([
+            OsString::from("--config"),
+            OsString::from("profile.release.strip=\"symbols\""),
         ]);
     }
     arguments.extend(canvas.link_arguments(target_dir, object)?);

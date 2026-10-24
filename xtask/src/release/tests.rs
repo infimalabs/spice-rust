@@ -170,12 +170,12 @@ impl Executor for FakeExecutor {
         }
         if command.label == "native-strip" && !refused {
             fs::write(
-                PathBuf::from(&command.arguments[1]),
+                PathBuf::from(&command.arguments[0]),
                 linked(self.target, &self.archive, b"stripped"),
             )
             .expect("strip exact linked executable fixture");
             if self.moved_symbols_after_uuid.get() {
-                let dwarf = dsym_path(Path::new(&command.arguments[1]))
+                let dwarf = dsym_path(Path::new(&command.arguments[0]))
                     .join("Contents/Resources/DWARF/spice");
                 fs::rename(&dwarf, dwarf.with_extension("captured"))
                     .expect("retain captured DWARF fixture");
@@ -459,6 +459,13 @@ fn assert_native_build(
             .any(|argument| argument == "profile.release.debug=\"line-tables-only\""),
         target.debug_path().is_some()
     );
+    assert_eq!(
+        record
+            .arguments
+            .iter()
+            .any(|argument| argument == "profile.release.strip=\"symbols\""),
+        target == ReleaseTarget::X86_64UnknownLinuxMusl
+    );
     let binary = record
         .arguments
         .windows(2)
@@ -576,10 +583,7 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         "dSYM UUID must read the held DWARF descriptor: {symbol_uuid:?}"
     );
     assert_eq!(record("native-strip").program, macos.strip);
-    assert_eq!(
-        record("native-strip").arguments,
-        [OsStr::new("-S"), executable.as_os_str()]
-    );
+    assert_eq!(record("native-strip").arguments, [executable.as_os_str()]);
 }
 
 fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {

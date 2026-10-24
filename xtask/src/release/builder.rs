@@ -143,10 +143,14 @@ impl<E: Executor> CommandBuilder<'_, E> {
                 "executable UUID {executable_uuid} differs from dSYM UUID {symbol_uuid}"
             )));
         }
+        // A full `strip`, not `-S`: release DWARF already lives in the object
+        // files the dSYM was built from, so `-S` removed nothing, and the
+        // retained symbol table was 15.8M of the 77.7M aarch64 executable
+        // (142,118 names). `LC_UUID` survives, so the dSYM still pairs.
         self.run(CommandSpec::new(
             "native-strip",
             &tools.strip,
-            [OsString::from("-S"), executable.as_os_str().to_owned()],
+            [executable.as_os_str().to_owned()],
         ))?;
         Ok(DerivedMacSymbols {
             public: MacSymbols {
