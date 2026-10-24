@@ -150,9 +150,10 @@ menu below them. Tabs past a total scroll under edge fades. Local tabs
 meet each other and the total without gap, border, or interior rounding; only
 the strip's outside ends keep the thick rail and corner.
 
-An accented tab's text is accent-tinted over a 5% accent ground, 10% on hover.
-Rails keep the neutral line color and undim one step on hover; totals stay
-neutral. Every count badge is one neutral
+An accented tab's text is accent-tinted over a 5% accent ground, 10% on hover,
+and its top rail is the accent mixed into the line color, stronger on hover.
+Unclaimed handles and totals keep the neutral rail, which undims one step on
+hover. Every count badge is one neutral
 [open-task total](../docs/product/loops.md#the-jitter-contract). Gate waits
 read the resident's
 [one classification](../docs/product/invariants/identity.md#work-gate-waits-have-one-resident-owned-classification);
