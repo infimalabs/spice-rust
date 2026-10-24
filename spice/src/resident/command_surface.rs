@@ -661,6 +661,7 @@ impl<'a> Surface<'a> {
             seats,
             &self.lane,
             self.config,
+            self.profiles.get().map(AsRef::as_ref),
             launches,
             diagnostic,
         )

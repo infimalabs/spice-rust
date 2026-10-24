@@ -24,17 +24,21 @@ pub struct Config {
 }
 
 /// Which lane wakes first among vacant lanes due for the same trigger whose
-/// work is in the same class (ordinary, or the lane's own last resort), ranked
-/// by the journal position of each lane's newest durable claim.
+/// work is in the same class (ordinary, or the lane's own last resort).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WakeOrder {
+    /// The lane whose retained work best matches the task the allocator
+    /// selected for it wakes first, scored by the matcher Design nudges use;
+    /// equal or absent matches fall to the most recent claim, and a lane with
+    /// no match ranks below every lane with one. Related work stays together.
+    #[default]
+    BestMatch,
     /// The lane that has gone longest without claiming wakes first; a lane
     /// that never claimed counts as oldest. Work rotates through a team.
     LeastRecentlyClaimed,
     /// The lane that claimed most recently wakes first; a lane that never
     /// claimed comes last. Work concentrates on the most recently active seats.
-    #[default]
     MostRecentlyClaimed,
 }
 
@@ -110,7 +114,7 @@ impl Default for Config {
                 .expect("the compiled young threshold is valid"),
             hold: "30m".parse().expect("the compiled lane hold is valid"),
             narration: 24,
-            wake_order: WakeOrder::MostRecentlyClaimed,
+            wake_order: WakeOrder::BestMatch,
         }
     }
 }

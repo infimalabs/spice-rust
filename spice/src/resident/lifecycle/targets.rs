@@ -1,12 +1,12 @@
 use super::*;
 
-pub(super) fn project_targets(
+pub(super) fn project_targets<'a>(
     snapshot: &bus::TaskSnapshot,
-    projection: &Projection,
+    projection: &'a Projection,
     now: Instant,
     holds: &Holds,
     allocation: &board::NextConfig,
-) -> CommandResult<Vec<Target>> {
+) -> CommandResult<Vec<Target<'a>>> {
     let Some(residency) = snapshot.residency() else {
         return Ok(Vec::new());
     };
@@ -39,8 +39,8 @@ pub(super) fn project_targets(
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
         });
-        let (drain_queue, available, last_resort) = if held_parked {
-            (Available::None, Available::None, false)
+        let work = if held_parked {
+            Work::default()
         } else {
             work_availability(
                 snapshot,
@@ -63,9 +63,11 @@ pub(super) fn project_targets(
                 .map(|(claim, _)| claim),
             pending_inbox,
             held_claim,
-            drain_queue,
-            available,
-            last_resort,
+            drain_queue: work.drain_queue,
+            available: work.available,
+            last_resort: work.last_resort,
+            task: work.task,
+            matched: None,
         });
     }
     Ok(targets)
@@ -171,9 +173,30 @@ fn subscription(
     Ok(subscription.cloned())
 }
 
-fn work_availability(
+/// What one lane's work triggers would claim: the drain-queue and
+/// available-work availability, whether that work is the lane's own last
+/// resort, and the task the allocator selected.
+struct Work<'a> {
+    drain_queue: Available,
+    available: Available,
+    last_resort: bool,
+    task: Option<&'a Entry>,
+}
+
+impl Default for Work<'_> {
+    fn default() -> Self {
+        Self {
+            drain_queue: Available::None,
+            available: Available::None,
+            last_resort: false,
+            task: None,
+        }
+    }
+}
+
+fn work_availability<'a>(
     snapshot: &bus::TaskSnapshot,
-    entries: &[Entry],
+    entries: &'a [Entry],
     selection: &board::SelectionIndex,
     ready_at: &BTreeMap<TaskStamp, Instant>,
     row: &wire::LaneResidency,
@@ -182,16 +205,16 @@ fn work_availability(
     first_drain_member: bool,
     environment: &wire::Environment,
     now: Instant,
-) -> CommandResult<(Available, Available, bool)> {
+) -> CommandResult<Work<'a>> {
     let Some(subscription) = subscription.filter(|subscription| {
         matches!(
             subscription.policy,
             wire::intent::TeamLife::Drain | wire::intent::TeamLife::Drive
         )
     }) else {
-        return Ok((Available::None, Available::None, false));
+        return Ok(Work::default());
     };
-    let selected = selected_ready(
+    let (selected, task) = selected_ready(
         snapshot,
         entries,
         selection,
@@ -203,17 +226,18 @@ fn work_availability(
         now,
     )?;
     let last_resort = selected.is_some_and(|selected| selected.last_resort);
-    if subscription.policy == wire::intent::TeamLife::Drain {
-        Ok((
+    let (drain_queue, available) = if subscription.policy == wire::intent::TeamLife::Drain {
+        (
             drain_from_selected(selected, first_drain_member)?,
             Available::None,
-            last_resort,
-        ))
+        )
     } else {
-        Ok((
-            Available::None,
-            available_from_selected(selected)?,
-            last_resort,
-        ))
-    }
+        (Available::None, available_from_selected(selected)?)
+    };
+    Ok(Work {
+        drain_queue,
+        available,
+        last_resort,
+        task,
+    })
 }
