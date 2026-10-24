@@ -26,6 +26,7 @@ mod prose_stream;
 mod session_compaction;
 mod sweep;
 mod tool_preview;
+mod turn_cause;
 use acknowledgement::{
     ContextState, Presentation, present_steering_acknowledgements_with_directives,
     scan_presentations,

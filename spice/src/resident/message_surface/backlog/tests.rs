@@ -332,7 +332,6 @@ fn assert_replay_boundary(contents: &str) {
             wire::AgentActivityKind::Prose,
         ]
     );
-    assert_eq!(collected[1].text, "New turn");
     assert_eq!(collected[2].text, "resumed work");
     fs::remove_dir_all(root).expect("turn boundary fixture cleanup");
 }

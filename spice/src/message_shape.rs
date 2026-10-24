@@ -113,7 +113,7 @@ fn is_rehydration(text: &str) -> bool {
     }
 }
 
-fn is_skill_link(line: &str) -> bool {
+pub(crate) fn is_skill_link(line: &str) -> bool {
     let line = line.trim();
     let Some(rest) = line.strip_prefix("[$") else {
         return false;
