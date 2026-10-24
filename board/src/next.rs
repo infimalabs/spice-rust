@@ -433,6 +433,7 @@ pub fn select_at<'a>(
             subscription,
             recent_cell,
             environment,
+            match_score: None,
         },
         band,
         &resolved_tasks(entries),
@@ -460,9 +461,10 @@ pub fn select_with_satisfied<'a>(
         subscription,
         recent_cell,
         environment,
+        match_score: None,
     };
     let candidates = candidates(entries, claimant, satisfied, None);
-    choose(&candidates, band).map(|index| candidates[index])
+    choose(&candidates, band, None).map(|index| candidates[index])
 }
 
 /// [`select_with_satisfied`] at an explicit allocation instant.
@@ -475,7 +477,7 @@ pub fn select_with_satisfied_at<'a>(
     now: Instant,
 ) -> Option<Selection<'a>> {
     let candidates = candidates(entries, claimant, satisfied, Some(now));
-    choose(&candidates, band).map(|index| candidates[index])
+    choose(&candidates, band, claimant.match_score).map(|index| candidates[index])
 }
 
 /// [`select_with_satisfied_at`] using graph evidence already derived for this
@@ -495,7 +497,7 @@ pub fn select_with_index_at<'a>(
         &index.scores,
         Some(now),
     );
-    choose(&candidates, band).map(|candidate| candidates[candidate])
+    choose(&candidates, band, claimant.match_score).map(|candidate| candidates[candidate])
 }
 
 /// Who asks for work and from where: the allocation inputs that describe the
@@ -508,6 +510,10 @@ pub struct Claimant<'a> {
     pub subscription: &'a TeamSubscription,
     pub recent_cell: Option<&'a ClaimCell>,
     pub environment: &'a wire::Environment,
+    /// How well the claimant's own recent work matches a candidate: the last
+    /// in-band tie-breaker before the handle. The board never computes it;
+    /// absent, every row scores zero and the handle decides as before.
+    pub match_score: Option<&'a dyn Fn(&Entry) -> f64>,
 }
 
 /// Every task [`select`] would hand `actor`, in the order it would hand them out.
@@ -572,11 +578,12 @@ fn offer_order_at_inner<'a>(
         subscription,
         recent_cell,
         environment,
+        match_score: None,
     };
     let completed = resolved_tasks(entries);
     let mut remaining = candidates(entries, claimant, &completed, now);
     let mut order = Vec::with_capacity(remaining.len());
-    while let Some(index) = choose(&remaining, band) {
+    while let Some(index) = choose(&remaining, band, None) {
         order.push(remaining.swap_remove(index));
     }
     order
@@ -605,6 +612,7 @@ fn indexed_candidates<'a>(
         subscription,
         recent_cell,
         environment,
+        match_score: _,
     } = claimant;
     debug_assert_eq!(entries.len(), scores.effective_priorities.len());
     debug_assert_eq!(entries.len(), scores.downstream_weights.len());
@@ -632,8 +640,14 @@ fn indexed_candidates<'a>(
 /// A prior claimant's continuation outranks other work. Within that class,
 /// ordinary work outranks last-resort rows, then effective priority and
 /// downstream weight. Within `band` of that group's greatest urgency, peer
-/// occupancy repels, then locality movement costs, then the handle decides.
-fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
+/// occupancy repels, then locality movement costs, then the claimant's
+/// `match_score` (higher first, absent zero), then the handle decides. The
+/// score is asked only of rows that reached that final tie.
+fn choose(
+    candidates: &[Selection<'_>],
+    band: u64,
+    match_score: Option<&dyn Fn(&Entry) -> f64>,
+) -> Option<usize> {
     let preferred = candidates.iter().any(|candidate| candidate.preferred);
     let peer_class = candidates
         .iter()
@@ -683,13 +697,25 @@ fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
         .filter(|(_, candidate)| candidate.peer_occupied == peer_occupied)
         .map(|(_, candidate)| candidate.movement)
         .min()?;
-    in_band
+    let matched = in_band
         .into_iter()
         .filter(|(_, candidate)| {
             candidate.peer_occupied == peer_occupied && candidate.movement == movement
         })
-        .min_by_key(|(_, candidate)| candidate.entry.handle())
-        .map(|(index, _)| index)
+        .map(|(index, candidate)| {
+            let score = match_score.map_or(0.0, |score| score(candidate.entry));
+            (index, candidate, score)
+        })
+        .collect::<Vec<_>>();
+    let best = matched
+        .iter()
+        .map(|(_, _, score)| *score)
+        .max_by(f64::total_cmp)?;
+    matched
+        .into_iter()
+        .filter(|(_, _, score)| score.total_cmp(&best).is_eq())
+        .min_by_key(|(_, candidate, _)| candidate.entry.handle())
+        .map(|(index, _, _)| index)
 }
 
 fn peer_occupies(entries: &[Entry], candidate: &Entry, actor: &Actor) -> bool {

@@ -364,6 +364,7 @@ impl Lanes {
             None,
             &config.projects,
             &config.allocation,
+            None,
         )
         .expect("room post dispatches");
         let Outcome::Reply(wire::Reply {
@@ -507,6 +508,7 @@ impl Lanes {
             Actor::Lane(test_uuid(lane)),
             &config.projects,
             &config.allocation,
+            None,
         )
         .expect("next-work projection succeeds")
         .next

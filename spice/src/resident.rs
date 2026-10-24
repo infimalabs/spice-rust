@@ -213,7 +213,7 @@ mod lane_surface;
 mod launch_runtime;
 mod lifecycle;
 mod log;
-mod message_surface;
+pub(crate) mod message_surface;
 mod narration;
 mod policy_surface;
 mod principal_surface;

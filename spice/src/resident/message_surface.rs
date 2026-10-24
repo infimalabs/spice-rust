@@ -113,13 +113,13 @@ impl<'a> CaptureViews<'a> {
 }
 
 #[derive(Debug, Default)]
-pub(in crate::resident) struct MessageState {
+pub(crate) struct MessageState {
     previews: CallPreviews,
     media_hydration: media_hydration::MediaHydration,
     observations: MessageObservations,
     prose: BTreeMap<CanonicalUuid, ProseState>,
     pending: pending::PendingPresentations,
-    pub(in crate::resident) profiles: spice::rooms::profile::SessionProfiles,
+    pub(crate) profiles: spice::rooms::profile::SessionProfiles,
     pub(in crate::resident) narration: super::narration::Streaks,
     presented: BTreeMap<(CanonicalUuid, CanonicalUuid, Option<CanonicalUuid>), listen::Position>,
     /// Current OMP message creation time, including silent message-start records.
@@ -132,7 +132,7 @@ pub(in crate::resident) struct MessageState {
     accounting: lane::ingest::Coalescing,
 }
 
-pub(in crate::resident) fn lock_state(
+pub(crate) fn lock_state(
     state: &Mutex<MessageState>,
 ) -> CommandResult<MutexGuard<'_, MessageState>> {
     state

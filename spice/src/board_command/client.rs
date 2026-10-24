@@ -1362,7 +1362,7 @@ pub(crate) fn dispatch(
             set_working_group_stance(bus, command, stance, &config, &projects, &allocation).0,
         );
     }
-    dispatch_with_repository(bus, command, None, &projects, &allocation)
+    dispatch_with_repository(bus, command, None, &projects, &allocation, None)
 }
 fn dispatch_working_group(
     bus: &Bus,
@@ -1378,13 +1378,15 @@ fn dispatch_working_group(
     })
 }
 
-/// Dispatch with the resident repository required by production Git boundaries.
+/// Dispatch with the resident repository required by production Git boundaries
+/// and the retained session profiles `task next` ranks in-band ties by.
 pub(crate) fn dispatch_with_repository(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
 ) -> Option<Outcome<CommandAnswer>> {
     if let Some(outcome) =
         super::dispatch_preparation(bus, command, repository, projects, allocation)
@@ -1401,7 +1403,7 @@ pub(crate) fn dispatch_with_repository(
     let outcome = match command.body() {
         wire::intent::Intent::ReportRead(read) => read_report(bus, read, command, projects),
         wire::intent::Intent::BoardRead(read) => {
-            read_board(bus, read, command.actor().clone(), projects, allocation)
+            read_board(bus, read, command, projects, allocation, profiles)
         }
         wire::intent::Intent::TaskDetail(detail) => read_task_detail(
             bus,

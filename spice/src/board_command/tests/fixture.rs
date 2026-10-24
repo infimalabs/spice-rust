@@ -208,7 +208,7 @@ pub(super) fn issue_with_allocation<B: Serialize>(
         dialect::PROJECT_MAX_DEPTH as u64,
     )
     .expect("board command test project policy");
-    dispatch_with_repository(bus, &command, None, &projects, allocation)
+    dispatch_with_repository(bus, &command, None, &projects, allocation, None)
         .expect("board command owns fixture kind")
 }
 
