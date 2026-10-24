@@ -210,14 +210,29 @@ pub(crate) fn project_attention(
         .iter()
         .filter_map(|entry| RoomWork::from_task(room, entry))
         .collect::<Vec<_>>();
-    let mut duties = room_asks(bus, room)?;
-    duties.extend(room_native_duties(bus, room)?);
+    let probe = room.clone();
+    let rows = bus
+        .read(move |read| read_room_duty_rows(read, &probe))
+        .map_err(|error| store_fault("room::duties-unreadable", &error.to_string()))?;
+    let duties = room_duties(room, rows)?;
+    derive_attention(room, publications, &work, &duties, residency)
+}
+
+/// [`project_attention`] for inputs already in hand: `work` and `duties` may
+/// cover several rooms, since the projection filters by anchor.
+pub(crate) fn derive_attention(
+    room: &wire::TaskStamp,
+    publications: &[wire::Envelope<wire::AnyFact>],
+    work: &[RoomWork],
+    duties: &[RoomDuty],
+    residency: &wire::ResidencyHead,
+) -> Result<spice::rooms::RoomAttention, Outcome<CommandAnswer>> {
     derive_room_attention(
         room,
         &RoomProjectionSources {
             publications: Declared::Available(publications),
-            work: Declared::Available(&work),
-            duties: Declared::Available(&duties),
+            work: Declared::Available(work),
+            duties: Declared::Available(duties),
             responsibilities: Declared::Available(&[]),
             residency: Declared::Available(residency),
         },
@@ -226,26 +241,50 @@ pub(crate) fn project_attention(
     .map_err(projection_refusal)
 }
 
-/// The newest recorded Design request that asked each lane about `room`,
-/// read through the per-Design notice index; a non-Design room has none.
-fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
-    let probe = room.clone();
-    let (rows, more) = bus
-        .read(move |read| {
-            let mut rows = Vec::new();
-            let mut after = None;
-            for _ in 0..ROOM_PUBLICATION_PAGES {
-                let page = read.design_notices(&probe, after, journal::FactReadBudget::RETAINED)?;
-                rows.extend(page.rows);
-                let Some(continuation) = page.continuation else {
-                    return Ok((rows, false));
-                };
-                after = Some(continuation);
-            }
-            Ok((rows, true))
-        })
-        .map_err(|error| store_fault("room::asks-unreadable", &error.to_string()))?;
-    if more {
+/// The indexed rows one room's duties are derived from, read inside one
+/// journal transaction so a caller projecting many rooms pays one round trip.
+pub(crate) struct RoomDutyRows {
+    /// Design notice records naming the room, oldest first.
+    asks: Vec<wire::Envelope<wire::AnyFact>>,
+    /// Whether notices remained beyond the bounded pages read.
+    asks_overflow: bool,
+    /// Live stop requests bound to the room, in creation order.
+    stops: Vec<journal::JournalHead<wire::SteeringHead>>,
+}
+
+/// Read the rows behind `room`'s duties through the per-Design notice index
+/// and the steering index; a non-Design room has no notices.
+pub(crate) fn read_room_duty_rows(
+    read: &journal::JournalRead<'_>,
+    room: &wire::TaskStamp,
+) -> Result<RoomDutyRows, journal::GuardError> {
+    let mut asks = Vec::new();
+    let mut after = None;
+    let mut asks_overflow = true;
+    for _ in 0..ROOM_PUBLICATION_PAGES {
+        let page = read.design_notices(room, after, journal::FactReadBudget::RETAINED)?;
+        asks.extend(page.rows);
+        let Some(continuation) = page.continuation else {
+            asks_overflow = false;
+            break;
+        };
+        after = Some(continuation);
+    }
+    let stops = read.live_room_stops(room, spice::rooms::MAX_ROOM_ATTENTION_SIGNALS)?;
+    Ok(RoomDutyRows {
+        asks,
+        asks_overflow,
+        stops,
+    })
+}
+
+/// Every duty bound to `room`: the newest recorded Design request that asked
+/// each lane about it, and each live stop request, which no leave can end.
+pub(crate) fn room_duties(
+    room: &wire::TaskStamp,
+    rows: RoomDutyRows,
+) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
+    if rows.asks_overflow {
         return Err(refusal(
             "room::attention-budget",
             Some(format!(
@@ -255,8 +294,18 @@ fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome
             "reduce retained room traffic before retrying",
         ));
     }
+    let limit = spice::rooms::MAX_ROOM_ATTENTION_SIGNALS;
+    if rows.stops.len() >= limit {
+        return Err(refusal(
+            "room::attention-budget",
+            Some(format!(
+                "room {room} holds {limit} or more live stop requests"
+            )),
+            "settle or cancel live room stop requests before retrying",
+        ));
+    }
     let mut newest = std::collections::BTreeMap::new();
-    for envelope in rows {
+    for envelope in rows.asks {
         if let Some(noticed) = envelope.fact.read::<wire::rooms::DesignNoticed>()
             && noticed.design == *room
         {
@@ -266,15 +315,28 @@ fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome
             );
         }
     }
-    Ok(newest
+    let asked = newest
         .into_iter()
         .map(|(lane, (source, position))| RoomDuty {
             room: room.clone(),
             lane,
             kind: RoomDutyKind::Asked { source, position },
             standing: RoomDutyStanding::Owed,
-        })
-        .collect())
+        });
+    let stops = rows.stops.into_iter().map(|head| {
+        let position = head.body().created;
+        let head = head.into_body();
+        RoomDuty {
+            room: room.clone(),
+            lane: head.lane,
+            kind: RoomDutyKind::Stop {
+                key: head.key,
+                position,
+            },
+            standing: RoomDutyStanding::Owed,
+        }
+    });
+    Ok(asked.chain(stops).collect())
 }
 
 fn notice_source(evidence: &wire::rooms::DesignNoticeEvidence) -> String {
@@ -289,44 +351,6 @@ fn notice_source(evidence: &wire::rooms::DesignNoticeEvidence) -> String {
             )
         }
     }
-}
-
-/// Every native duty bound to `room` that no leave can end: each live stop
-/// request addresses its lane.
-fn room_native_duties(
-    bus: &Bus,
-    room: &wire::TaskStamp,
-) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
-    let limit = spice::rooms::MAX_ROOM_ATTENTION_SIGNALS;
-    let probe = room.clone();
-    let steering = bus
-        .read(move |read| read.live_room_stops(&probe, limit))
-        .map_err(|error| store_fault("room::duties-unreadable", &error.to_string()))?;
-    if steering.len() >= limit {
-        return Err(refusal(
-            "room::attention-budget",
-            Some(format!(
-                "room {room} holds {limit} or more live stop requests"
-            )),
-            "settle or cancel live room stop requests before retrying",
-        ));
-    }
-    Ok(steering
-        .into_iter()
-        .map(|head| {
-            let position = head.body().created;
-            let head = head.into_body();
-            RoomDuty {
-                room: room.clone(),
-                lane: head.lane,
-                kind: RoomDutyKind::Stop {
-                    key: head.key,
-                    position,
-                },
-                standing: RoomDutyStanding::Owed,
-            }
-        })
-        .collect())
 }
 
 fn projection_refusal(error: RoomProjectionError) -> Outcome<CommandAnswer> {

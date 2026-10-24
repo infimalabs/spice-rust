@@ -359,31 +359,7 @@ fn plan(
     rooms: Option<&BTreeSet<TaskStamp>>,
 ) -> CommandResult<Option<Notice>> {
     let after = cursor(bus, lane)?;
-    let mut gathered = Gathered::default();
-    if let Some(rooms) = rooms {
-        for room in rooms {
-            let index = planning.rooms.get(room).ok_or_else(|| {
-                store_fault(
-                    "room::catch-up-anchor-missing",
-                    &format!("publication index names unknown room {room}"),
-                )
-            })?;
-            let entry = &planning.entries[*index];
-            append_room(bus, paths, lane, planning, entry, after, &mut gathered)?;
-            gathered
-                .handles
-                .insert(room.clone(), entry.handle().clone());
-        }
-    } else {
-        for entry in &planning.entries {
-            append_room(bus, paths, lane, planning, entry, after, &mut gathered)?;
-            gathered
-                .handles
-                .insert(entry.born().clone(), entry.handle().clone());
-        }
-    }
-    let mut owed_room = None;
-    if let Some(owed) = super::design_awareness::owed_request(
+    let owed = super::design_awareness::owed_request(
         bus,
         &planning.snapshot,
         &planning.entries,
@@ -391,17 +367,51 @@ fn plan(
         occupant,
     )
     .map_err(unit_outcome)?
-        && let Some(index) = planning.rooms.get(&owed.design)
-    {
-        let entry = &planning.entries[*index];
+    .filter(|owed| planning.rooms.contains_key(&owed.design));
+    let indices = match rooms {
+        Some(rooms) => rooms
+            .iter()
+            .map(|room| {
+                planning.rooms.get(room).copied().ok_or_else(|| {
+                    store_fault(
+                        "room::catch-up-anchor-missing",
+                        &format!("publication index names unknown room {room}"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        None => (0..planning.entries.len()).collect(),
+    };
+    let mut projected = project_rooms(
+        bus,
+        planning,
+        lane,
+        indices.iter().map(|index| planning.entries[*index].born()),
+        owed.as_ref().map(|owed| &owed.design),
+    )?;
+    let mut gathered = Gathered::default();
+    for index in indices {
+        let entry = &planning.entries[index];
+        if let Some(attention) = projected.get(entry.born()) {
+            append_room(bus, paths, lane, entry, after, attention, &mut gathered)?;
+        }
+        gathered
+            .handles
+            .insert(entry.born().clone(), entry.handle().clone());
+    }
+    let mut owed_room = None;
+    if let Some(owed) = owed {
+        let entry = &planning.entries[planning.rooms[&owed.design]];
         if !gathered
             .attention
             .iter()
             .any(|view: &spice::rooms::RoomAttention| view.room == owed.design)
         {
-            gathered
-                .attention
-                .push(room_attention(bus, lane, planning, &owed.design)?);
+            gathered.attention.push(
+                projected
+                    .remove(&owed.design)
+                    .expect("the owed Design's room is always projected"),
+            );
         }
         let text = spice::rooms::awareness::request_text(&owed.request);
         gathered.sources.push(CatchUpSource {
@@ -527,13 +537,12 @@ fn append_room(
     bus: &Bus,
     paths: &RuntimePaths,
     lane: CanonicalUuid,
-    planning: &Planning,
     entry: &board::Entry,
     after: Option<Seq>,
+    room_attention: &spice::rooms::RoomAttention,
     gathered: &mut Gathered,
 ) -> CommandResult<()> {
     let room = entry.born().clone();
-    let room_attention = room_attention(bus, lane, planning, &room)?;
     let Some(authority) = room_attention
         .lanes
         .iter()
@@ -579,42 +588,64 @@ fn append_room(
             },
         );
     }
-    gathered.attention.push(room_attention);
+    gathered.attention.push(room_attention.clone());
     Ok(())
 }
 
-fn room_attention(
+/// Project attention for the rooms among `rooms` that `lane` could listen
+/// to, in one journal read: a lane listens only through its own active work
+/// in a room, a Design request that asked some lane about it, or a live stop
+/// request bound to it, so a room with none of those is skipped before any
+/// per-room query. `forced` is projected regardless. Each projection equals
+/// [`crate::board_command::project_attention`] over the lane's latest
+/// publication in that room.
+pub(in crate::resident) fn project_rooms<'a>(
     bus: &Bus,
-    lane: CanonicalUuid,
     planning: &Planning,
-    room: &TaskStamp,
-) -> CommandResult<spice::rooms::RoomAttention> {
-    crate::board_command::project_attention(
-        bus,
-        &planning.entries,
-        &planning.residency,
-        room,
-        latest_lane_publication(bus, room, lane)?.as_slice(),
-    )
-    .map_err(unit_outcome)
-}
-
-/// The lane's newest publication in `room`: a later one answers or declines a
-/// Design request, and a leave bounds derived listening.
-fn latest_lane_publication(
-    bus: &Bus,
-    room: &TaskStamp,
     lane: CanonicalUuid,
-) -> CommandResult<Option<wire::Envelope<wire::AnyFact>>> {
-    let room = room.clone();
+    rooms: impl Iterator<Item = &'a TaskStamp>,
+    forced: Option<&TaskStamp>,
+) -> CommandResult<BTreeMap<TaskStamp, spice::rooms::RoomAttention>> {
+    let work = spice::rooms::RoomWork::from_tasks(&planning.entries);
+    let mut candidates = rooms.cloned().collect::<BTreeSet<_>>();
+    candidates.extend(forced.cloned());
+    let mut considered = work
+        .iter()
+        .filter(|(_, rows)| rows.iter().any(|row| row.lane() == lane))
+        .map(|(room, _)| room.clone())
+        .collect::<BTreeSet<_>>();
+    considered.extend(forced.cloned());
     let actor = Actor::Lane(lane);
-    bus.read(move |read| read.latest_room_publication(&room, &actor))
-        .map_err(|error| {
-            store_fault(
-                "room::catch-up-lane-publication-unreadable",
-                &error.to_string(),
-            )
+    let rows = bus
+        .read(move |read| {
+            considered.extend(read.design_notice_rooms()?);
+            considered.extend(read.live_stop_rooms()?);
+            candidates
+                .into_iter()
+                .filter(|room| considered.contains(room))
+                .map(|room| {
+                    let duties = crate::board_command::read_room_duty_rows(read, &room)?;
+                    let latest = read.latest_room_publication(&room, &actor)?;
+                    Ok((room, duties, latest))
+                })
+                .collect::<Result<Vec<_>, _>>()
         })
+        .map_err(|error| store_fault("room::catch-up-attention-unreadable", &error.to_string()))?;
+    rows.into_iter()
+        .map(|(room, duty_rows, latest)| {
+            let duties =
+                crate::board_command::room_duties(&room, duty_rows).map_err(unit_outcome)?;
+            let attention = crate::board_command::derive_attention(
+                &room,
+                latest.as_slice(),
+                work.get(&room).map(Vec::as_slice).unwrap_or_default(),
+                &duties,
+                &planning.residency,
+            )
+            .map_err(unit_outcome)?;
+            Ok((room, attention))
+        })
+        .collect()
 }
 
 pub(in crate::resident) fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {

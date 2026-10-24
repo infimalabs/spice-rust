@@ -1,5 +1,7 @@
 //! Indexed room publication, notice, maturity, and authority pages.
 
+use std::collections::BTreeSet;
+
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::RoomAuthorityStamp;
 
@@ -193,6 +195,34 @@ impl JournalRead<'_> {
             continuation,
             horizon: Some(horizon),
         })
+    }
+
+    /// Every Design some notice record names through the current horizon,
+    /// read once so a caller projecting many rooms can skip those no lane was
+    /// ever asked about without a notice query per room.
+    pub fn design_notice_rooms(&self) -> Result<BTreeSet<wire::TaskStamp>, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(BTreeSet::new());
+        };
+        let horizon = i64::try_from(horizon.get())
+            .map_err(|_| GuardError::Invalid("Design notice cursor exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare("SELECT DISTINCT design FROM design_notices WHERE seq <= ?1")
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map([horizon], |row| row.get::<_, String>(0))
+            .map_err(GuardError::Store)?;
+        let mut designs = BTreeSet::new();
+        for row in rows {
+            let indexed = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            designs.insert(indexed.parse::<wire::TaskStamp>().map_err(|error| {
+                GuardError::Invalid(format!("Design notice key {indexed:?} is invalid: {error}"))
+            })?);
+        }
+        Ok(designs)
     }
 
     /// How many of a Design's notice records lie strictly after `after`, or
