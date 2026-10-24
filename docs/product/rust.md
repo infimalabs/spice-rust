@@ -231,10 +231,15 @@ cargo check --locked --package spice --tests --target x86_64-pc-windows-msvc
 cargo check --locked --package sill --tests --target x86_64-pc-windows-msvc
 ```
 
-Each passes `--config 'target.x86_64-pc-windows-msvc.rustflags=["-D", "warnings"]'`
-so rustc warnings in Windows-only code fail the check; the host lint pass
-already runs clippy over every other line, so the cross-target shard spends
-the check phase only. Their proof inputs include `dist/windows-msvc.toml`, the
+Each runs with `CARGO_ENCODED_RUSTFLAGS` set to the inherited rustflags
+followed by `-D warnings`, so rustc warnings in Windows-only code fail the
+check. Cargo reads that variable ahead of `RUSTFLAGS` and any configured
+rustflags, so an inherited setting extends the deny but cannot displace it; the
+inherited flags are `CARGO_ENCODED_RUSTFLAGS` when set, else `RUSTFLAGS`. With
+`--target`, the flags bind only the Windows units, and host checks and tests
+keep their rustflags as inherited. The host lint pass already runs clippy over
+every other line, so the cross-target shard spends the check phase only. Their
+proof inputs include `dist/windows-msvc.toml`, the
 complete package closure, and the changed paths. They use Gate's admitted Cargo
 home and pinned toolchain, produce typed compiler diagnostics, and perform no
 link or guest execution. A cached host check therefore cannot conceal a new

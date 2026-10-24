@@ -22,14 +22,20 @@ fn proof_host_share() -> usize {
 }
 
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
-/// Rustflags for the Windows cross-target units, passed as a `--config`
-/// override so they bind only that target. The host lint pass already runs
-/// clippy over every non-`cfg(windows)` line, so the cross-target shard only
-/// has to compile the Windows cfg of the same crates: `cargo check` with rustc
-/// warnings denied keeps the type-error and Windows-only-diagnostic guarantee
-/// at the cost of the check phase alone, instead of clippy's lint pass on top.
-const WINDOWS_RUSTFLAGS_CONFIG: &str =
-    "target.x86_64-pc-windows-msvc.rustflags=[\"-D\", \"warnings\"]";
+/// Rustflags each Windows cross-target shard appends to the inherited ones.
+/// The host lint pass already runs clippy over every non-`cfg(windows)` line,
+/// so the cross-target shard only has to compile the Windows cfg of the same
+/// crates: `cargo check` with rustc warnings denied keeps the type-error and
+/// Windows-only-diagnostic guarantee at the cost of the check phase alone,
+/// instead of clippy's lint pass on top.
+const WINDOWS_DENY_WARNINGS: [&str; 2] = ["-D", "warnings"];
+const RUSTFLAGS: &str = "RUSTFLAGS";
+/// Cargo reads exactly one rustflags source, this one first: ahead of
+/// `RUSTFLAGS`, `target.<triple>.rustflags`, and `build.rustflags`. A flag
+/// pinned here cannot be displaced by an inherited setting.
+const CARGO_ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
+/// Cargo's separator between `CARGO_ENCODED_RUSTFLAGS` elements.
+const ENCODED_RUSTFLAGS_SEPARATOR: &str = "\u{1f}";
 const WINDOWS_TOOLCHAIN_PIN: &str = "dist/windows-msvc.toml";
 const WINDOWS_TYPECHECKS: [WindowsTypecheck; 3] = [
     WindowsTypecheck {
@@ -80,6 +86,10 @@ pub struct CargoGateShard {
     manifest: Option<String>,
     targets: Vec<String>,
     argv: Vec<String>,
+    /// Rustflags appended to the inherited ones through Cargo's
+    /// highest-precedence source; empty leaves rustflags exactly as retained.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    appended_rustflags: Vec<String>,
     input_paths: Vec<String>,
     compile_time_producers: Vec<CargoCompileTimeProducer>,
     compile_time_authorities: Vec<CargoCompileTimeAuthority>,
@@ -361,6 +371,7 @@ fn typecheck_shards(
                 manifest: None,
                 targets: vec![target.identity.clone()],
                 argv,
+                appended_rustflags: Vec::new(),
                 input_paths: authority.input_paths,
                 compile_time_producers: authority.producers,
                 compile_time_authorities: authority.compile_time,
@@ -398,8 +409,6 @@ fn windows_typecheck_shards(
             argv.extend([
                 "--target".to_owned(),
                 WINDOWS_TARGET.to_owned(),
-                "--config".to_owned(),
-                WINDOWS_RUSTFLAGS_CONFIG.to_owned(),
                 "--message-format=json-render-diagnostics".to_owned(),
             ]);
             let mut authority = package_input_authority(
@@ -421,6 +430,7 @@ fn windows_typecheck_shards(
                 manifest: None,
                 targets: vec![check.identity.to_owned()],
                 argv,
+                appended_rustflags: WINDOWS_DENY_WARNINGS.map(str::to_owned).to_vec(),
                 input_paths: authority.input_paths,
                 compile_time_producers: authority.producers,
                 compile_time_authorities: authority.compile_time,
@@ -515,6 +525,7 @@ fn test_shard(
         manifest: Some(manifest),
         targets,
         argv,
+        appended_rustflags: Vec::new(),
         input_paths: authority.input_paths,
         compile_time_producers: authority.producers,
         compile_time_authorities: authority.compile_time,
@@ -768,10 +779,13 @@ fn canonical_digest(value: &str) -> bool {
 
 /// The environment every shard's Cargo and test executables run under: the
 /// ambient compiler environment with its output roots, wrappers, job share,
-/// and incremental switch pinned, whatever the inherited values were.
+/// and incremental switch pinned, whatever the inherited values were. A shard
+/// that appends rustflags also pins `CARGO_ENCODED_RUSTFLAGS`; any other shard
+/// keeps the retained rustflags untouched.
 fn shard_environment(
     writable_root: &Path,
     environment: Environment,
+    appended_rustflags: &[String],
 ) -> Result<Environment, WorkspaceTestError> {
     let mut entries = environment
         .entries()
@@ -792,7 +806,45 @@ fn shard_environment(
     let share = proof_host_share().to_string();
     entries.insert(OsString::from(CARGO_BUILD_JOBS), OsString::from(&share));
     entries.insert(OsString::from(RUST_TEST_THREADS), OsString::from(share));
+    if !appended_rustflags.is_empty() {
+        let rustflags = pinned_rustflags(&entries, appended_rustflags)?;
+        entries.insert(OsString::from(CARGO_ENCODED_RUSTFLAGS), rustflags);
+    }
     Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))
+}
+
+/// The rustflags Cargo would have read from `entries`, followed by
+/// `appended`, encoded for `CARGO_ENCODED_RUSTFLAGS`. The inherited flags are
+/// `CARGO_ENCODED_RUSTFLAGS` when present, else `RUSTFLAGS` split as Cargo
+/// splits it, else none.
+fn pinned_rustflags(
+    entries: &BTreeMap<OsString, OsString>,
+    appended: &[String],
+) -> Result<OsString, WorkspaceTestError> {
+    let mut flags = if let Some(encoded) = entries.get(OsStr::new(CARGO_ENCODED_RUSTFLAGS)) {
+        encoded.clone()
+    } else if let Some(flags) = entries.get(OsStr::new(RUSTFLAGS)) {
+        let flags = flags
+            .to_str()
+            .ok_or_else(|| WorkspaceTestError::new(format!("{RUSTFLAGS} is not valid UTF-8")))?;
+        OsString::from(
+            flags
+                .split(' ')
+                .map(str::trim)
+                .filter(|flag| !flag.is_empty())
+                .collect::<Vec<_>>()
+                .join(ENCODED_RUSTFLAGS_SEPARATOR),
+        )
+    } else {
+        OsString::new()
+    };
+    for flag in appended {
+        if !flags.is_empty() {
+            flags.push(ENCODED_RUSTFLAGS_SEPARATOR);
+        }
+        flags.push(flag);
+    }
+    Ok(flags)
 }
 
 /// Execute one planned Cargo shard with fixed proof-runner bounds.
@@ -804,7 +856,7 @@ pub fn run_cargo_gate_shard_at(
     shard: &CargoGateShard,
     output: &mut impl Write,
 ) -> Result<CargoGateShardResult, WorkspaceTestError> {
-    let environment = shard_environment(writable_root, environment)?;
+    let environment = shard_environment(writable_root, environment, &shard.appended_rustflags)?;
     let runs = if shard.kind == CargoGateShardKind::Test {
         // Compile before starting the execution clock: the workspace prebuild
         // has its own deadline, and the shard's executables then share one.
@@ -918,7 +970,7 @@ mod tests {
         ])
         .expect("fixture environment");
         let environment =
-            shard_environment(Path::new("/writable"), inherited).expect("shard environment");
+            shard_environment(Path::new("/writable"), inherited, &[]).expect("shard environment");
         let entries = environment
             .entries()
             .iter()
@@ -932,6 +984,71 @@ mod tests {
             entries.get(OsStr::new(CARGO_BUILD_BUILD_DIR)),
             Some(&OsString::from("/writable/target/cargo-build"))
         );
+    }
+
+    /// `(CARGO_ENCODED_RUSTFLAGS, RUSTFLAGS)` in the environment of a shard
+    /// appending `appended` under the `inherited` compiler environment.
+    fn shard_rustflags(
+        inherited: &[(&str, &str)],
+        appended: &[String],
+    ) -> (Option<OsString>, Option<OsString>) {
+        let inherited = Environment::new(inherited.iter().copied()).expect("fixture environment");
+        let environment = shard_environment(Path::new("/writable"), inherited, appended)
+            .expect("shard environment");
+        let entries = environment
+            .entries()
+            .iter()
+            .cloned()
+            .collect::<BTreeMap<OsString, OsString>>();
+        (
+            entries.get(OsStr::new(CARGO_ENCODED_RUSTFLAGS)).cloned(),
+            entries.get(OsStr::new(RUSTFLAGS)).cloned(),
+        )
+    }
+
+    #[test]
+    fn a_windows_shard_pins_the_warning_deny_over_inherited_rustflags() {
+        let deny = WINDOWS_DENY_WARNINGS.map(str::to_owned);
+        assert_eq!(
+            shard_rustflags(&[], &deny),
+            (Some(OsString::from("-D\u{1f}warnings")), None)
+        );
+        assert_eq!(
+            shard_rustflags(
+                &[
+                    (CARGO_ENCODED_RUSTFLAGS, "-C\u{1f}debuginfo=0"),
+                    (RUSTFLAGS, "-C opt-level=1"),
+                ],
+                &deny,
+            ),
+            (
+                Some(OsString::from("-C\u{1f}debuginfo=0\u{1f}-D\u{1f}warnings")),
+                Some(OsString::from("-C opt-level=1")),
+            )
+        );
+        assert_eq!(
+            shard_rustflags(&[(RUSTFLAGS, " -C  debuginfo=0 ")], &deny),
+            (
+                Some(OsString::from("-C\u{1f}debuginfo=0\u{1f}-D\u{1f}warnings")),
+                Some(OsString::from(" -C  debuginfo=0 ")),
+            )
+        );
+    }
+
+    #[test]
+    fn a_host_shard_keeps_inherited_rustflags_as_retained() {
+        let inherited = [
+            (CARGO_ENCODED_RUSTFLAGS, "-C\u{1f}debuginfo=0"),
+            (RUSTFLAGS, "-C opt-level=1"),
+        ];
+        assert_eq!(
+            shard_rustflags(&inherited, &[]),
+            (
+                Some(OsString::from("-C\u{1f}debuginfo=0")),
+                Some(OsString::from("-C opt-level=1")),
+            )
+        );
+        assert_eq!(shard_rustflags(&[], &[]), (None, None));
     }
 
     fn generated_outputs(plan: &CargoGateShardPlan) -> BTreeSet<String> {
@@ -1055,7 +1172,6 @@ mod tests {
 
     fn assert_windows_typecheck_contract(shards: &[CargoGateShard]) {
         assert_eq!(shards.len(), 3);
-        let rustflags = "target.x86_64-pc-windows-msvc.rustflags=[\"-D\", \"warnings\"]";
         assert_eq!(
             shards[0].action_id(),
             "cargo:typecheck:spice::windows-x86_64-pc-windows-msvc-bin:spice"
@@ -1071,8 +1187,6 @@ mod tests {
                 "spice",
                 "--target",
                 "x86_64-pc-windows-msvc",
-                "--config",
-                rustflags,
                 "--message-format=json-render-diagnostics",
             ]
         );
@@ -1090,8 +1204,6 @@ mod tests {
                 "--tests",
                 "--target",
                 "x86_64-pc-windows-msvc",
-                "--config",
-                rustflags,
                 "--message-format=json-render-diagnostics",
             ]
         );
@@ -1109,8 +1221,6 @@ mod tests {
                 "--tests",
                 "--target",
                 "x86_64-pc-windows-msvc",
-                "--config",
-                rustflags,
                 "--message-format=json-render-diagnostics",
             ]
         );
@@ -1123,6 +1233,10 @@ mod tests {
                     .input_paths()
                     .iter()
                     .any(|path| path == "spice/src/lib.rs")
+        }));
+        assert!(shards.iter().all(|shard| {
+            shard_rustflags(&[(RUSTFLAGS, "-C debuginfo=0")], &shard.appended_rustflags).0
+                == Some(OsString::from("-C\u{1f}debuginfo=0\u{1f}-D\u{1f}warnings"))
         }));
     }
 
