@@ -12,8 +12,8 @@ use super::dataset::{
 };
 use super::model::{
     ActivityView, CompactionRecord, CompactionView, DialogueLine, LiveTurnView, LiveView,
-    MessageRecord, MessageView, OutstandingAskView, RecentTurnView, Report, SliceView, SweepWindow,
-    TurnRecord, TurnView,
+    MessageRecord, MessageView, OutstandingAskView, RecallView, RecentTurnView, Report, SliceView,
+    SweepWindow, TurnRecord, TurnView,
 };
 use super::source::ResolvedSource;
 use crate::read_page::{self as page, Page, Paged};
@@ -255,7 +255,7 @@ pub(crate) fn recall(
                 .finish(|_| SpiceCommand::new("inbox", lane).expect("inbox is one Spice command")))
         })
         .transpose()?;
-    let mut report = Report::Recall {
+    let mut recall = Box::new(RecallView {
         asks,
         held_work: authorities.held_work,
         posture: authorities.posture,
@@ -268,12 +268,9 @@ pub(crate) fn recall(
         sources: data.sources,
         residues: data.residues.len(),
         digest: String::new(),
-    };
-    let folded = super::digest::fold(&report, files);
-    if let Report::Recall { digest, .. } = &mut report {
-        *digest = folded;
-    }
-    Ok(report)
+    });
+    recall.digest = super::digest::fold(&recall, files);
+    Ok(Report::Recall(recall))
 }
 
 /// Compactions a briefing reaches back across for recent turns.

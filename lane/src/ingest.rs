@@ -57,10 +57,6 @@ pub struct Ingestion {
 
 /// What one ingestion pass left behind.
 #[derive(Debug)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "one pass returns one value that the caller consumes at once; the empty variant is the common answer and boxing the accounted one would cost every sweep an allocation"
-)]
 pub enum Ingested {
     /// No complete record was available, so no fact was written.
     ///

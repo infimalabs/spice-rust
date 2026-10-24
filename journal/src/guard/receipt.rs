@@ -4,10 +4,6 @@ use super::*;
 
 /// Result of looking up a client command identity in durable authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "an exact replay returns one typed answer consumed immediately; boxing it would add an avoidable allocation to the retry path"
-)]
 pub enum CommandReplay {
     /// The identity names this exact admitted request and its committed answer.
     Exact(wire::Outcome<wire::intent::CommandAnswer>),

@@ -20,6 +20,7 @@ mod model;
 pub(crate) mod project;
 mod source;
 
+use model::RecallView;
 pub(crate) use model::Report;
 
 /// Resolve one known vendor thread, launched in `worktree`, to its preserved
@@ -243,9 +244,10 @@ fn render_lane_briefing(
         let _ = sender.send(DeadlineEvent::Complete(report, std::time::Instant::now()));
     });
     let page = match built {
-        Ok(Report::Recall {
-            held_work, digest, ..
-        }) => {
+        Ok(Report::Recall(recall)) => {
+            let RecallView {
+                held_work, digest, ..
+            } = *recall;
             let notices = [
                 assignment_notice(moment, held_work.own_claim.as_ref()),
                 renewal_notice(moment, &held_work),

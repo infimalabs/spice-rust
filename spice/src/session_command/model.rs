@@ -546,12 +546,38 @@ pub(crate) struct ThreadView {
     pub(crate) latest_turn: Option<TurnView>,
 }
 
+/// The briefing page's typed rows: current authority first, then the live
+/// working set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RecallView {
+    /// Absent when the steering ledger could not be read; see `unknowns`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) asks: Option<Bounded<OutstandingAskView>>,
+    pub(crate) held_work: HeldWorkView,
+    pub(crate) posture: Option<PostureView>,
+    /// The other lanes of this lane's team, in residency order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) peers: Vec<PeerView>,
+    /// Operator direction this lane already retired, newest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) directions: Vec<RetiredDirectionView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) board: Option<BoardGlanceView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) repository: Option<RepositoryGlanceView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unknowns: Vec<AuthorityUnknown>,
+    pub(crate) live: LiveView,
+    pub(crate) sources: Vec<SourceView>,
+    pub(crate) residues: usize,
+    /// The folded text page an agent reads; JSON keeps the typed rows.
+    #[serde(skip)]
+    pub(crate) digest: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "session", rename_all = "kebab-case", deny_unknown_fields)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "boxing a complete typed CLI document would add a second representation at the serialization boundary"
-)]
 pub(crate) enum Report {
     Context {
         identity: String,
@@ -564,32 +590,9 @@ pub(crate) enum Report {
         #[serde(flatten)]
         page: Bounded<ContextRecord>,
     },
-    /// The briefing: current authority first, then the live working set.
-    Recall {
-        /// Absent when the steering ledger could not be read; see `unknowns`.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        asks: Option<Bounded<OutstandingAskView>>,
-        held_work: HeldWorkView,
-        posture: Option<PostureView>,
-        /// The other lanes of this lane's team, in residency order.
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        peers: Vec<PeerView>,
-        /// Operator direction this lane already retired, newest first.
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        directions: Vec<RetiredDirectionView>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        board: Option<BoardGlanceView>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        repository: Option<RepositoryGlanceView>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        unknowns: Vec<AuthorityUnknown>,
-        live: LiveView,
-        sources: Vec<SourceView>,
-        residues: usize,
-        /// The folded text page an agent reads; JSON keeps the typed rows.
-        #[serde(skip)]
-        digest: String,
-    },
+    /// The briefing: current authority first, then the live working set. It
+    /// is boxed because it is more than twice the size of any other page.
+    Recall(Box<RecallView>),
     Sweep {
         sources: Vec<SourceView>,
         #[serde(flatten)]
@@ -662,7 +665,8 @@ pub(crate) enum Report {
     Thread {
         source: SourceView,
         sources: Vec<SourceView>,
-        thread: ThreadView,
+        /// Boxed: the thread with its latest turn is the widest page body.
+        thread: Box<ThreadView>,
         residues: Vec<Residue>,
     },
     /// A page written whole to the file its `--export` named.
@@ -673,7 +677,7 @@ impl Report {
     /// The briefing's folded page; every other report speaks its typed body.
     pub(crate) fn text(&self) -> Option<&str> {
         match self {
-            Self::Recall { digest, .. } => Some(digest),
+            Self::Recall(recall) => Some(&recall.digest),
             _ => None,
         }
     }
