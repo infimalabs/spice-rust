@@ -398,15 +398,12 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-semantic-live) 14%, transparent);
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
-/* A design's pips, on its group tab and its Spice menu tile, wear its accent
-   shaped by its standing: claimed burns, a pass cycle in progress dims,
-   passive rings, a decision the operator owes warns, and concluded, deleted,
-   or unavailable fades. */
-.app-presence-pip.group-design-pip { --app-presence-color: var(--accent-slot); }
-.group-design-pip:is(.gathering-input, .ready-for-proposal, .waiting-on-selected-work) { --app-presence-opacity: .55; }
+/* A design's pips, on its group tab and its Spice menu tile, wear the tone its
+   work-map card and tab mark wear (work.css), shaped by its standing: passive
+   rings, and concluded, deleted, or unavailable fades. */
+.app-presence-pip.group-design-pip { --app-presence-color: var(--work-card-tone); }
 .group-design-pip.passive { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
-.group-design-pip.awaiting-decision { --app-presence-color: var(--warning); }
-.group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
+.group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.awaiting-decision { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
 

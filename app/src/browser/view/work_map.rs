@@ -372,18 +372,20 @@ fn map_targets(
     )
 }
 
+/// The tone one task wears wherever a surface colours it by lifecycle: the
+/// work map's cards and a Design's pips.
 #[derive(Clone, Copy)]
-struct TaskTone {
-    availability: &'static str,
-    disposition: Option<&'static str>,
-    /// The tab mark this node carries, so the graph names what the tab marks.
-    mark: Option<&'static str>,
-    label: &'static str,
+pub(in crate::browser) struct TaskTone {
+    pub(in crate::browser) availability: &'static str,
+    pub(in crate::browser) disposition: Option<&'static str>,
+    /// The tab mark this task carries, so the graph names what the tab marks.
+    pub(in crate::browser) mark: Option<&'static str>,
+    pub(in crate::browser) label: &'static str,
 }
 
 /// A board row is authoritative; a task the board lacks takes its settled
 /// status from the typed enrichment.
-fn task_tone(
+pub(in crate::browser) fn task_tone(
     work: &WorkProjection<'_>,
     task: &TaskStamp,
     status: Option<&wire::WorkflowStatusKind>,
@@ -416,7 +418,14 @@ fn task_tone(
         WorkAvailability::Blocked => "Blocked",
         WorkAvailability::Waiting => "Waiting",
         WorkAvailability::Passive => "Passive",
-        WorkAvailability::Selection => "Awaiting decision",
+        WorkAvailability::Selection => {
+            return Some(TaskTone {
+                availability: availability.key(),
+                disposition: None,
+                mark: Some(WorkMark::Decision.key()),
+                label: "Awaiting decision",
+            });
+        }
         WorkAvailability::Held => "Held",
         WorkAvailability::Deferred => "Deferred",
         WorkAvailability::Parked => "Parked",

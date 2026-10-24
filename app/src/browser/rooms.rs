@@ -22,6 +22,7 @@ use crate::client_action::{ClientAction, GroupChange};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::roster::{Change, Destination};
 use crate::runtime::{DesignStanding, RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
+use crate::work::WorkProjection;
 
 mod approval;
 mod conclusion;
@@ -445,9 +446,10 @@ fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandl
             activate: Callback::from(move |()| controls.open(group.clone(), None)),
         }
     };
+    let work = super::project_work(Some(runtime));
     let member = |design: &TaskStamp, _grouped: bool| {
         let accent = crate::watchband::design_accent(&partition.groups, design);
-        render_design(runtime, design, accent)
+        render_design(runtime, work.as_ref(), design, accent)
     };
     let revision = partition.revision;
     let submit = {
@@ -473,7 +475,12 @@ fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandl
 /// wearing its dealt accent, led by its standing pip as an agent tile is by its
 /// lane pip, its handle and standing over its task's title while the board
 /// carries the task, else its anchor label alone.
-fn render_design(runtime: &AppRuntime, design: &TaskStamp, accent: usize) -> Html {
+fn render_design(
+    runtime: &AppRuntime,
+    work: Option<&WorkProjection<'_>>,
+    design: &TaskStamp,
+    accent: usize,
+) -> Html {
     let task = runtime.board().and_then(|board| board.row(design));
     let label = task.map_or_else(
         || anchor_label(runtime, design),
@@ -491,7 +498,7 @@ fn render_design(runtime: &AppRuntime, design: &TaskStamp, accent: usize) -> Htm
             data-design-standing={standing.key()}
         >
             <header>
-                {render_design_pip(design, accent, &label, standing, PipSize::Member)}
+                {render_design_pip(work, design, &label, standing, PipSize::Member)}
                 <strong data-roster-handle="">{label}</strong>
                 <span class="room-design-standing">{standing.label()}</span>
             </header>
@@ -512,15 +519,17 @@ enum PipSize {
     Member,
 }
 
-/// One Design's pip: its accent, shaped by its standing. The group tab and the
-/// Spice menu's tile draw this one pip so the two never disagree.
+/// One Design's pip: the tone its work-map card and tab mark wear, shaped by
+/// its standing. The group tab and the Spice menu's tile draw this one pip so
+/// the two never disagree.
 fn render_design_pip(
+    work: Option<&WorkProjection<'_>>,
     design: &TaskStamp,
-    accent: usize,
     label: &str,
     standing: DesignStanding,
     size: PipSize,
 ) -> Html {
+    let tone = work.and_then(|work| super::view::task_tone(work, design, None));
     let label = format!("{label}: {}", standing.label());
     let size = match size {
         PipSize::Status => "app-presence-pip--status",
@@ -532,8 +541,10 @@ fn render_design_pip(
             class={classes!("app-presence-pip", size, "group-design-pip", standing.key())}
             role="img"
             data-design={design.to_string()}
-            data-accent={accent.to_string()}
             data-design-standing={standing.key()}
+            data-work-availability={tone.map(|tone| tone.availability)}
+            data-work-disposition={tone.and_then(|tone| tone.disposition)}
+            data-work-mark={tone.and_then(|tone| tone.mark)}
             aria-label={label.clone()}
             title={label}
         ></span>

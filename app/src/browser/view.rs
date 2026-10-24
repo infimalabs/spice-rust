@@ -14,7 +14,7 @@ mod work_detail;
 mod work_jobs;
 mod work_map;
 
-pub(super) use work_map::WorkMapState;
+pub(super) use work_map::{WorkMapState, task_tone};
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
