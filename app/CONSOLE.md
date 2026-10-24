@@ -14,9 +14,9 @@ unavailable-location notice.
 
 Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
 header, composer, and stream without a nested vertical scroller. Side-by-side
-consoles share one faint dividing edge in the soft shared edge tone, painted on
-the earlier console's end edge from the foot of the task band to the consoles'
-bottom, so its controls read as in front of the next console.
+consoles share one faint dividing edge in the left console's soft edge tone,
+painted on that console's end edge from the foot of the task band to the
+consoles' bottom, so the earlier console's controls read as in front of it.
 
 ## Working groups and teams
 
@@ -106,10 +106,11 @@ The toolbar has two rows: the task strip, then a status band led by the live
 ticker and closed by presence pips directly above the composer's team menu, no
 wider than that round control, so the ticker runs on over TURBO. The ticker's
 age aligns with the composer ages below at every width. The status band is the
-console's top edge. Where two consoles touch, their bands meet flush and square
-like the tab strips above, and only the earlier console draws the half-width
-hairline divider, its top rule turning down into it. A corner at the browser
-edge stays square.
+console's top edge, ruled in the soft edge tone so the open tab row meets the
+console quietly. Where two consoles touch, their bands meet flush and square
+like the tab strips above, and only the left console draws the half-width
+hairline divider in its own flavor, its top rule turning down into it. A
+corner at the browser edge stays square.
 
 Pips show how many agents there are and whether each is working, stalled, or
 off: one per member in canonical order, coloured by active, queued, waiting,
