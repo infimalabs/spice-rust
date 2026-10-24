@@ -5,7 +5,9 @@ use super::super::watchband::lane_composer_href;
 use super::*;
 use crate::composer_markdown::inline::LineControls;
 use crate::runtime::LaneView;
-use crate::work::{TaskOverviewBase, TaskOverviewSelection, WorkProjection, WorkTask};
+use crate::work::{
+    TaskOverviewBase, TaskOverviewSelection, WorkDependency, WorkProjection, WorkTask,
+};
 use wire::TaskStamp;
 
 pub(super) struct WorkDetailRender<'a, 'work> {
@@ -748,10 +750,17 @@ fn render_relationships(
     statement: &wire::intent::BoardStatement,
     targets: &RelationTargets<'_>,
 ) -> Html {
-    let dependencies = statement
-        .dependencies
-        .iter()
-        .map(|born| render_task_link(work, born, "Dependency", targets));
+    // The projected edges add the construction roots a Design released,
+    // which it waits on; a row outside the projection keeps its statement.
+    let dependencies = task.map_or_else(
+        || statement.dependencies.iter().collect::<Vec<_>>(),
+        |task| {
+            task.dependencies()
+                .iter()
+                .map(WorkDependency::born)
+                .collect()
+        },
+    );
     let dependents = task
         .into_iter()
         .flat_map(|task| task.dependents().iter())
@@ -759,9 +768,12 @@ fn render_relationships(
             let row = work.tasks()[dependent.task()].row();
             render_task_link(work, &row.statement.body.born, "Dependent", targets)
         });
-    if statement.dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
+    if dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
         return empty_section("No dependencies or dependents.");
     }
+    let dependencies = dependencies
+        .into_iter()
+        .map(|born| render_task_link(work, born, "Dependency", targets));
     html! {
         <section class="app-sheet-section">
             <h3>{"Relationships"}</h3>

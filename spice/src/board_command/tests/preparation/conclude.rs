@@ -228,14 +228,22 @@ fn collapse_settles_unselected_tree_without_retracting_selected_output() {
     group_design(&bus, epoch, &design);
     claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let output = add_plan_output(&bus, epoch, &design, "Selected collapsed output");
-    let spare = add_plan_output(&bus, epoch, &design, "Unselected collapsed Plan");
-    let descendant = add_output(&bus, epoch, &spare, "Unselected Plan output");
+    let spare = add_plan_output(&bus, epoch, &design, "Rejected collapsed Plan");
+    let descendant = add_output(&bus, epoch, &spare, "Rejected Plan output");
+    let unproposed = add_plan_output(&bus, epoch, &design, "Unproposed collapsed Plan");
+    let unproposed_descendant = add_output(&bus, epoch, &unproposed, "Unproposed Plan output");
     let (candidate, source) = retain_test_candidate(&bus, epoch, &seats, &design, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &design, &candidate, &source);
     let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     select_candidate_outputs(&bus, epoch, &design, candidate, &[&output], 1);
     let output_stamp = output.born().expect("output stamp");
     assert!(!open_blocked(&bus, epoch).contains(&output_stamp));
+    for closed in [&spare, &descendant] {
+        assert!(
+            workflow(&bus, epoch, closed).status.is_completed(),
+            "the veto settles the rejected Plan with its pending subtree"
+        );
+    }
 
     for blank in ["", "  \n"] {
         let refused = conclude(&bus, epoch, Actor::Operator, &design, collapse(blank));
@@ -253,8 +261,8 @@ fn collapse_settles_unselected_tree_without_retracting_selected_output() {
     };
     assert_eq!(
         answer.closed.iter().collect::<BTreeSet<_>>(),
-        [&spare, &descendant].into_iter().collect(),
-        "the answer names every pending task settled with the controller"
+        [&unproposed, &unproposed_descendant].into_iter().collect(),
+        "the answer names every pending task still gated by the controller"
     );
     let collapsed = workflow(&bus, epoch, &design);
     assert!(collapsed.status.is_completed());
@@ -267,13 +275,13 @@ fn collapse_settles_unselected_tree_without_retracting_selected_output() {
         "an authorized output remains live"
     );
     assert!(!open_blocked(&bus, epoch).contains(&output_stamp));
-    for closed in [&spare, &descendant] {
+    for closed in [&unproposed, &unproposed_descendant] {
         assert!(
             workflow(&bus, epoch, closed).status.is_completed(),
             "every unselected branch member is settled"
         );
     }
-    let closed_stamps = [&spare, &descendant]
+    let closed_stamps = [&unproposed, &unproposed_descendant]
         .map(|task| task.born().expect("closed task stamp"))
         .into_iter()
         .collect::<BTreeSet<_>>();

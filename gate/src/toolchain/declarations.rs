@@ -280,12 +280,12 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         },
         configuration: ConfigurationSource {
             source: "rust-toolchain.toml",
-            field: "toolchain.channel",
+            field: "toolchain.channel + toolchain.components[clippy]",
         },
         tools: RUST_TYPECHECK_TOOLS,
         analysis: &[
-            "cargo <test for a test-enabled target or check> --locked --package <one reached package> <one exact reached target flag> <--features exact package-qualified required features> <--no-run for a test-enabled target>",
-            "cargo check --locked --package <spice or sill> <--bin spice or --tests> --target x86_64-pc-windows-msvc --message-format=json-render-diagnostics when the complete staged tree declares dist/windows-msvc.toml",
+            "cargo clippy --locked --package <one reached package> <one exact reached target flag> <--features exact package-qualified required features> <--profile test for a test-enabled target> --message-format=json-render-diagnostics -- -D warnings",
+            "cargo clippy --locked --package <spice or sill> <--bin spice or --tests> --target x86_64-pc-windows-msvc --message-format=json-render-diagnostics -- -D warnings when the complete staged tree declares dist/windows-msvc.toml",
         ],
     },
     ToolchainDeclaration {

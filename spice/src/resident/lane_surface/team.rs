@@ -151,6 +151,10 @@ pub(in crate::resident) fn configure(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one team configuration commits its command, request, effects, residency guard, and write"
+)]
 fn commit_configured(
     bus: &Bus,
     epoch: CanonicalUuid,

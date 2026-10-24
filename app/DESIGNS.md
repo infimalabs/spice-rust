@@ -94,9 +94,11 @@ version:
   undecided outputs, until each carries a verdict, so no silent default ever
   grants or withholds authorization. Each
   output may carry its own comment, and the version may carry an optional
-  overall comment. Only accepted outputs are released; rejected outputs stay
-  gated, and the Design remains open. Rejecting every output releases nothing,
-  like a historical Return decision.
+  overall comment. Only accepted outputs are released; a rejected output is
+  closed by the decision, with any pending work it controlled, and the
+  Design remains open, waiting on each released output as its prerequisite
+  until that output settles. Rejecting every output releases nothing, like a
+  historical Return decision, and readies the next pass at once.
 - **Collapse** requires a reason naming why this version's premise did not
   hold. It atomically records the decision and concludes the Design collapsed.
 

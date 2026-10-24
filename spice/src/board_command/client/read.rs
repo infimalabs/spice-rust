@@ -562,11 +562,33 @@ pub(in crate::board_command) fn task_show_bounded(
         }
     }
     lines.push("depends:".to_owned());
-    if statement.dependencies.is_empty() {
+    // A Design waits on each construction root it released, so those rows
+    // read as prerequisites beside the statement's own edges.
+    let released = if wire::intent::is_open_design(statement.intent, &task.workflow.body) {
+        board
+            .tasks
+            .iter()
+            .filter(|row| {
+                row.workflow.body.status.is_pending()
+                    && wire::intent::released_construction_root(
+                        &row.statement.body.born,
+                        &row.statement.body.dependencies,
+                        row.statement.body.preparation.as_ref(),
+                    ) == Some(&statement.born)
+            })
+            .map(|row| &row.statement.body.born)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    if statement.dependencies.is_empty() && released.is_empty() {
         lines.push("  -".to_owned());
     } else {
         for dependency in &statement.dependencies {
             lines.push(render_dependency(board, dependency));
+        }
+        for dependency in released {
+            lines.push(format!("{} released", render_dependency(board, dependency)));
         }
     }
     lines.extend(artifact_lines(&statement.handle, artifacts));
@@ -1166,7 +1188,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
                 .to_owned(),
             "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and depends on that Plan; --preparation HANDLE associates it explicitly. A sub-Plan waits on its parent Plan like any other constructed task. Origin alone creates no edge."
                 .to_owned(),
-            "  Explicit --depends adds ordinary prerequisites. A Design dependency is an ordinary editable edge; preparation decide removes the accepted outputs' exact edges as part of the operator decision. Do not add a reciprocal plan-to-output edge."
+            "  Explicit --depends adds ordinary prerequisites. A Design dependency is an ordinary editable edge; preparation decide removes the accepted outputs' exact edges, closes the rejected ones, and from then on the Design waits on each released output as its prerequisite until that output settles. Never add that controller-to-output edge by hand: it is derived from the output's retained preparation."
                 .to_owned(),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),

@@ -46,7 +46,7 @@ pub use board::{
     TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
     TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskStep,
     TaskTimeline, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery,
-    TextAnswer, is_open_design,
+    TextAnswer, is_open_design, released_construction_root,
 };
 pub use jobs::{
     KeptJob, LaneJobAnswer, LaneJobCatalog, LaneJobPhase, LaneJobRef, LaneJobScope, LaneJobsAnswer,

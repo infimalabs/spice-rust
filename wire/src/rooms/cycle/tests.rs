@@ -466,7 +466,7 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
 }
 
 #[test]
-fn decisions_wait_on_released_work_unless_feedback_or_later_input_arrives() {
+fn decisions_wait_on_released_work_until_it_settles() {
     let outputs = || vec![task(OUTPUT), task(SECOND)];
     let mut accepted = Journal::new();
     accepted.passed(
@@ -499,20 +499,32 @@ fn decisions_wait_on_released_work_unless_feedback_or_later_input_arrives() {
     contributed_while_running.lane(&contributed(DESIGN, 2, RoomContributionKind::charge(-1)));
     assert_eq!(
         contributed_while_running.cycle(true),
-        DesignCycle::ReadyForProposal
+        DesignCycle::WaitingOnSelectedWork,
+        "input recorded while released work runs does not reopen a pass"
+    );
+    assert_eq!(
+        contributed_while_running.cycle(false),
+        DesignCycle::ReadyForProposal,
+        "that input counts once the released work has settled"
     );
 
-    for (name, outcome) in [
-        (
-            "mixed",
-            resolved(
-                10,
-                &[
-                    (OUTPUT, OutputVerdict::Accepted),
-                    (SECOND, OutputVerdict::Rejected),
-                ],
-            ),
+    let mut mixed = Journal::new();
+    mixed.passed(
+        resolved(
+            10,
+            &[
+                (OUTPUT, OutputVerdict::Accepted),
+                (SECOND, OutputVerdict::Rejected),
+            ],
         ),
+        outputs(),
+    );
+    assert_eq!(
+        mixed.cycle(true),
+        DesignCycle::WaitingOnSelectedWork,
+        "a rejection is feedback, but the accepted output still holds the Design"
+    );
+    for (name, outcome) in [
         (
             "all rejected",
             resolved(
@@ -533,7 +545,11 @@ fn decisions_wait_on_released_work_unless_feedback_or_later_input_arrives() {
     ] {
         let mut journal = Journal::new();
         journal.passed(outcome, outputs());
-        assert_eq!(journal.cycle(true), DesignCycle::ReadyForProposal, "{name}");
+        assert_eq!(
+            journal.cycle(false),
+            DesignCycle::ReadyForProposal,
+            "{name}"
+        );
     }
 }
 

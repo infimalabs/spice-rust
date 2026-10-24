@@ -530,9 +530,10 @@ fn commit_coverage(
 
 /// What one decision commits beyond its own immutable record.
 enum Consequence<'a> {
-    /// A work resolution authorizes exactly its accepted outputs.
-    Authorize(Vec<TaskHead>, ExecutionAuthorization),
-    /// A return or all-rejected work resolution changes no task head.
+    /// A work resolution authorizes exactly its accepted outputs and closes
+    /// its rejected ones with their pending subtrees.
+    Resolve(Resolution<'a>),
+    /// A return changes no task head.
     Record(&'static str),
     /// An accepted outputless recommendation concludes its Design.
     Conclude {
@@ -542,6 +543,19 @@ enum Consequence<'a> {
         projects: &'a ProjectPolicy,
         allocation: &'a board::NextConfig,
     },
+}
+
+/// The accepted output heads one decision releases and the authorization
+/// that releases them.
+type Authorization = (Vec<TaskHead>, ExecutionAuthorization);
+
+/// The heads a work resolution rewrites: accepted outputs lose their edge to
+/// the Design under one authorization; rejected outputs close.
+struct Resolution<'a> {
+    authorization: Option<Authorization>,
+    rejected: Vec<TaskHandle>,
+    projects: &'a ProjectPolicy,
+    allocation: &'a board::NextConfig,
 }
 
 fn require_opportunistic_source(
@@ -610,40 +624,18 @@ pub(super) fn decide_preparation(
     let consequence = match &decision.outcome {
         DecisionOutcome::Returned { .. } => Consequence::Record("returned the proposal"),
         DecisionOutcome::Resolved { outputs, .. } => {
-            if candidate.recommendation != wire::rooms::DesignPassRecommendation::Work {
-                return refusal(
-                    "preparation::decision-kind-mismatch",
-                    Some(candidate_ref.candidate.to_string()),
-                    "resolve outputs only for a work proposal",
-                );
-            }
-            if outputs.len() != candidate.outputs.len()
-                || outputs
-                    .iter()
-                    .zip(&candidate.outputs)
-                    .any(|(decision, candidate)| decision.output != *candidate)
-            {
-                return refusal(
-                    "preparation::decision-output-mismatch",
-                    Some(candidate_ref.candidate.to_string()),
-                    "accept or reject every output of the exact proposal in shown order",
-                );
-            }
-            let accepted = decision
-                .outcome
-                .accepted_outputs()
-                .cloned()
-                .collect::<Vec<_>>();
-            if accepted.is_empty() {
-                Consequence::Record("resolved every output as rejected")
-            } else {
-                match prepare_selection(
-                    &snapshot, command, controller, decision, &candidate, &accepted,
-                ) {
-                    Ok((outputs, authorization)) => Consequence::Authorize(outputs, authorization),
-                    Err(outcome) => return outcome,
-                }
-            }
+            let (authorization, rejected) = match resolve_outputs(
+                &snapshot, command, controller, decision, &candidate, outputs,
+            ) {
+                Ok(resolved) => resolved,
+                Err(outcome) => return outcome,
+            };
+            Consequence::Resolve(Resolution {
+                authorization,
+                rejected,
+                projects,
+                allocation,
+            })
         }
         DecisionOutcome::Accepted { .. } => {
             let (conclusion, action) = match candidate.recommendation {
@@ -684,6 +676,52 @@ pub(super) fn decide_preparation(
         retain_candidate,
         consequence,
     )
+}
+
+/// Match a work resolution against its exact proposal and derive the heads
+/// it authorizes and the handles it closes.
+fn resolve_outputs(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    controller: &journal::TaskHeads,
+    decision: &wire::rooms::PreparationDecision,
+    candidate: &DesignPassProposal,
+    outputs: &[wire::rooms::OutputDecision],
+) -> Result<(Option<Authorization>, Vec<TaskHandle>), Outcome<CommandAnswer>> {
+    let candidate_ref = decision.outcome.candidate();
+    if candidate.recommendation != wire::rooms::DesignPassRecommendation::Work {
+        return Err(refusal(
+            "preparation::decision-kind-mismatch",
+            Some(candidate_ref.candidate.to_string()),
+            "resolve outputs only for a work proposal",
+        ));
+    }
+    if outputs.len() != candidate.outputs.len()
+        || outputs
+            .iter()
+            .zip(&candidate.outputs)
+            .any(|(decision, candidate)| decision.output != *candidate)
+    {
+        return Err(refusal(
+            "preparation::decision-output-mismatch",
+            Some(candidate_ref.candidate.to_string()),
+            "accept or reject every output of the exact proposal in shown order",
+        ));
+    }
+    let accepted = decision
+        .outcome
+        .accepted_outputs()
+        .cloned()
+        .collect::<Vec<_>>();
+    let rejected = rejected_output_handles(snapshot, &decision.outcome)?;
+    let authorization = if accepted.is_empty() {
+        None
+    } else {
+        Some(prepare_selection(
+            snapshot, command, controller, decision, candidate, &accepted,
+        )?)
+    };
+    Ok((authorization, rejected))
 }
 
 /// The exact Design pass proposal a decision disposes of. Ordinary proposals
@@ -869,6 +907,12 @@ fn prepare_selection(
         candidate,
         selected_outputs,
     )?;
+    require_acyclic_selection(
+        snapshot,
+        &candidate.candidate.controller,
+        &outputs,
+        decision,
+    )?;
     let authorization = ExecutionAuthorization {
         decision: decision.decision.clone(),
         candidate: candidate.candidate.clone(),
@@ -877,6 +921,91 @@ fn prepare_selection(
         coverage: Vec::new(),
     };
     Ok((outputs, authorization))
+}
+
+/// A released output becomes the Design's prerequisite, so an accepted output
+/// that transitively waits on pending work this Design still gates would
+/// wait on the Design that waits on it. Outputs this decision settles, by
+/// acceptance or rejection, no longer gate anything; any other gated task on
+/// the chain refuses the whole decision and names the chain.
+fn require_acyclic_selection(
+    snapshot: &bus::TaskSnapshot,
+    controller: &TaskStamp,
+    outputs: &[TaskHead],
+    decision: &wire::rooms::PreparationDecision,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let settled_here = decision
+        .outcome
+        .accepted_outputs()
+        .chain(decision.outcome.rejected_outputs())
+        .collect::<Vec<_>>();
+    for output in outputs {
+        let mut chain = vec![output.born.clone()];
+        let mut pending = output
+            .dependencies
+            .iter()
+            .filter(|dependency| *dependency != controller)
+            .map(|dependency| (dependency.clone(), 1usize))
+            .collect::<Vec<_>>();
+        let mut visited = Vec::new();
+        while let Some((task, depth)) = pending.pop() {
+            if visited.contains(&task) {
+                continue;
+            }
+            visited.push(task.clone());
+            let Some(heads) = snapshot
+                .tasks()
+                .iter()
+                .find(|heads| heads.statement().body().born == task)
+            else {
+                continue;
+            };
+            if !heads.workflow().body().status.is_pending() {
+                continue;
+            }
+            chain.truncate(depth);
+            chain.push(task.clone());
+            let statement = heads.statement().body();
+            if statement.dependencies.contains(controller) && !settled_here.contains(&&task) {
+                return Err(refusal(
+                    "preparation::selection-cycle",
+                    Some(
+                        chain
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" -> "),
+                    ),
+                    "the accepted output waits on work this Design still gates; accept or reject that work in the same decision, or unlink it first",
+                ));
+            }
+            pending.extend(
+                statement
+                    .dependencies
+                    .iter()
+                    .map(|dependency| (dependency.clone(), depth + 1)),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Every rejected output of a work resolution, as the handle its closure
+/// names.
+fn rejected_output_handles(
+    snapshot: &bus::TaskSnapshot,
+    outcome: &DecisionOutcome,
+) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
+    outcome
+        .rejected_outputs()
+        .map(|output| {
+            let heads = task_heads(snapshot, output)?;
+            Ok(TaskHandle::for_project(
+                &heads.statement().body().project,
+                output,
+            ))
+        })
+        .collect()
 }
 
 fn require_input_witnesses(
@@ -994,27 +1123,23 @@ fn commit_decision(
         Err(error) => return store_fault("preparation::decision-invalid", &error.to_string()),
     };
     let action = match consequence {
-        Consequence::Authorize(outputs, authorization) => {
-            let authorized = match write.fact(
-                ExecutionAuthorized {
-                    authorization: authorization.clone(),
-                },
-                FactCause::Pending(decided),
+        Consequence::Resolve(resolution) => {
+            let validation = format!(
+                "Rejected by decision {} of candidate {}",
+                decision.decision.decision, candidate.candidate.candidate
+            );
+            match stage_resolution(
+                bus,
+                command,
+                &mut write,
+                decided,
+                at,
+                &validation,
+                resolution,
             ) {
-                Ok(fact) => fact,
-                Err(error) => {
-                    return store_fault("preparation::authorization-invalid", &error.to_string());
-                }
-            };
-            let selected = outputs.len();
-            for mut output in outputs {
-                let controller = authorization.decision.controller.clone();
-                output
-                    .dependencies
-                    .retain(|dependency| dependency != &controller);
-                write.task_head(authorized, move |revision| TaskHead { revision, ..output });
+                Ok(action) => action,
+                Err(outcome) => return outcome,
             }
-            format!("selected {selected} output(s)")
         }
         Consequence::Record(action) => action.to_owned(),
         Consequence::Conclude {
@@ -1058,6 +1183,66 @@ fn commit_decision(
         return store_fault("preparation::decision-receipt-invalid", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Text(answer))
+}
+
+/// Stage a work resolution's head rewrites under its decision fact and
+/// describe what it did.
+fn stage_resolution(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    write: &mut JournalWrite,
+    decided: PendingFact,
+    at: wire::Instant,
+    validation: &str,
+    resolution: Resolution<'_>,
+) -> Result<String, Outcome<CommandAnswer>> {
+    let Resolution {
+        authorization,
+        rejected,
+        projects,
+        allocation,
+    } = resolution;
+    let mut parts = Vec::with_capacity(2);
+    if let Some((outputs, authorization)) = authorization {
+        let authorized = write
+            .fact(
+                ExecutionAuthorized {
+                    authorization: authorization.clone(),
+                },
+                FactCause::Pending(decided),
+            )
+            .map_err(|error| {
+                store_fault("preparation::authorization-invalid", &error.to_string())
+            })?;
+        parts.push(format!("selected {} output(s)", outputs.len()));
+        for mut output in outputs {
+            let controller = authorization.decision.controller.clone();
+            output
+                .dependencies
+                .retain(|dependency| dependency != &controller);
+            write.task_head(authorized, move |revision| TaskHead { revision, ..output });
+        }
+    }
+    if !rejected.is_empty() {
+        let closed = super::mutation::stage_rejection(
+            bus, command, &rejected, validation, projects, allocation, write, decided, at,
+        )?;
+        if !closed.is_empty() {
+            parts.push(format!(
+                "closed {}",
+                closed
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    Ok(if parts.is_empty() {
+        "resolved every output as already settled".to_owned()
+    } else {
+        parts.join(" and ")
+    })
 }
 
 pub(super) fn adopt_output(

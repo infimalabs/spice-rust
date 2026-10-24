@@ -8,7 +8,9 @@ mod requirements;
 mod settlement;
 mod taste_proposal;
 pub(super) use deferral::{task_defer, task_file, task_wake};
-pub(super) use settlement::{stage_conclusion, task_close, task_conclude, task_delete};
+pub(super) use settlement::{
+    stage_conclusion, stage_rejection, task_close, task_conclude, task_delete,
+};
 
 #[cfg(test)]
 pub(super) use claim::Possession;
@@ -557,6 +559,10 @@ fn prepared_entry(prepared: &PreparedTask, projects: &ProjectPolicy) -> Entry {
     .with_creator_team(prepared.creation.creator_team())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one prepared task binds its command, request, project policy, cause, creation, flow, and filing"
+)]
 fn prepare_task(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,

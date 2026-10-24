@@ -243,6 +243,68 @@ fn lifecycle_precedence_follows_task_status_standings() {
 }
 
 #[test]
+fn a_design_depends_on_the_outputs_it_released_while_gated_outputs_stay_its_dependents() {
+    let design = design(1, "alpha.design");
+    let output = |value: i64, released: bool| {
+        let mut row = task(value, "alpha.work");
+        row.statement.body.preparation = Some(wire::TaskPreparation {
+            parent: stamp(1),
+            controller: stamp(1),
+            construction: stamp(value),
+        });
+        if !released {
+            row.statement.body.dependencies.push(stamp(1));
+        }
+        row
+    };
+    let mut settled = output(4, true);
+    settled.workflow.body.status = wire::WorkflowStatus::completed(
+        "2026-09-23T06:00:00.000Z"
+            .parse()
+            .expect("fixture completion"),
+    );
+    let board = board(vec![design, output(2, false), output(3, true), settled]);
+    let projection = WorkProjection::from_board(&board);
+    let [design, gated, released, settled] = projection.tasks.as_slice() else {
+        panic!("the projection keeps every row")
+    };
+
+    assert_eq!(
+        design
+            .dependencies()
+            .iter()
+            .map(|dependency| (dependency.born().clone(), dependency.satisfied()))
+            .collect::<Vec<_>>(),
+        vec![(stamp(3), false), (stamp(4), true)],
+        "the Design waits on each released root until it settles"
+    );
+    assert!(
+        released
+            .dependents()
+            .iter()
+            .any(|dependent| dependent.task() == 0),
+        "the released root counts the Design among its dependents"
+    );
+    assert_eq!(
+        gated
+            .dependencies()
+            .iter()
+            .map(WorkDependency::born)
+            .collect::<Vec<_>>(),
+        vec![&stamp(1)],
+        "a gated output keeps its statement edge to the Design"
+    );
+    assert!(
+        gated.belongs_to_design(),
+        "gated work is placed with the Design"
+    );
+    assert!(
+        !released.belongs_to_design() && !settled.belongs_to_design(),
+        "released work keeps execution placement rather than joining the Design namespace"
+    );
+}
+
+#[test]
 fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
     let design = |value| design(value, "alpha.design");
     let mut held = design(1);

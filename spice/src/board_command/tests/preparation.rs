@@ -105,8 +105,16 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        [spare.born().expect("spare output stamp")].into(),
-        "the rejected sibling stays gated while its rejection readies the Design"
+        [controller.born().expect("controller stamp")].into(),
+        "the rejected sibling is closed by the decision and the Design waits on its released output"
+    );
+    assert!(
+        !at(&board(&bus, epoch, Actor::Operator), &spare)
+            .workflow
+            .body
+            .status
+            .is_pending(),
+        "the rejected sibling is settled by the decision"
     );
     let first = preparation_page(&root, &[controller.as_str(), "--limit", "2"]);
     assert_eq!(first["controller"], controller.as_str());
@@ -245,152 +253,6 @@ fn each_design_decision_removes_only_its_edge_from_a_shared_output() {
             "{design} retains its distinct authorization"
         );
     }
-    clean(&root, bus);
-}
-
-#[test]
-fn operator_selection_releases_outputs_and_leaves_the_design_unclaimed_and_open() {
-    let (root, bus, epoch, seats) = fixture("preparation-held-selection", 2);
-    let controller = add_controller(
-        &bus,
-        epoch,
-        "Held preparation controller",
-        wire::TaskIntent::Design,
-        None,
-    );
-    group_design(&bus, epoch, &controller);
-    claim_task(
-        &bus,
-        epoch,
-        &seats[0],
-        &Actor::Lane(seats[0].lane),
-        &controller,
-    );
-    let output = add_plan_output(&bus, epoch, &controller, "Selected held output");
-    let spare = add_plan_output(&bus, epoch, &controller, "Unselected held output");
-    let (candidate, source) =
-        retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
-    record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
-    assert_eq!(
-        open_awaiting_selection(&bus, epoch),
-        [controller.born().expect("Design stamp")].into(),
-        "the completed pass waits on its exact operator decision"
-    );
-
-    authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
-
-    let current = board(&bus, epoch, Actor::Operator);
-    assert!(
-        at(&current, &controller)
-            .claim
-            .as_ref()
-            .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active),
-        "the proposal released the Design claim before operator selection"
-    );
-    let gated = open_gated(&bus, epoch);
-    assert!(
-        !gated.contains(&output.born().expect("output stamp")),
-        "the selected output runs while its Design stays open"
-    );
-    assert!(gated.contains(&spare.born().expect("spare stamp")));
-    assert!(
-        open_awaiting_selection(&bus, epoch).is_empty(),
-        "the held Design remains in flight while its spare waits neutrally"
-    );
-    clean(&root, bus);
-}
-
-#[test]
-fn later_candidate_versions_release_additional_exact_output_subsets() {
-    let (root, bus, epoch, seats) = fixture("preparation-multi-version-selection", 1);
-    let design = add_controller(
-        &bus,
-        epoch,
-        "Versioned preparation controller",
-        wire::TaskIntent::Design,
-        None,
-    );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
-    let first = add_plan_output(&bus, epoch, &design, "First version output");
-    let second = add_plan_output(&bus, epoch, &design, "Later version output");
-    let (initial, _) = retain_candidate_version(
-        &bus,
-        epoch,
-        &seats[0],
-        &design,
-        &[&first, &second],
-        1_760_000_000_000_001,
-    );
-    let _first_decision = select_candidate_outputs(&bus, epoch, &design, initial, &[&first], 1);
-    let design_stamp = design.born().expect("Design stamp");
-    let after_first = board(&bus, epoch, Actor::Operator);
-    assert!(
-        !at(&after_first, &first)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(
-        at(&after_first, &second)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    let current = board(&bus, epoch, Actor::Operator);
-    let heads = at(&current, &first);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskClose,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-        ],
-        &TaskClose {
-            task: first.clone(),
-            validation: "the first selected Plan is settled".to_owned(),
-            force_claimed: false,
-        },
-    ));
-
-    let (later, _) = retain_candidate_version(
-        &bus,
-        epoch,
-        &seats[0],
-        &design,
-        &[&second],
-        1_760_000_000_000_002,
-    );
-    let _second_decision = select_candidate_outputs(&bus, epoch, &design, later, &[&second], 2);
-    let current = board(&bus, epoch, Actor::Operator);
-    assert!(
-        !at(&current, &first)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(
-        !at(&current, &second)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(
-        !open_awaiting_selection(&bus, epoch).contains(&design.born().expect("Design stamp")),
-        "all direct outputs now carry exact selection authority"
-    );
-    assert!(
-        at(&current, &design).workflow.body.status.is_pending(),
-        "selections never conclude the Design"
-    );
     clean(&root, bus);
 }
 
@@ -1154,6 +1016,7 @@ mod decision_wait;
 mod ordinary_output;
 mod returned;
 mod selected_plan;
+mod selection;
 mod withdrawal;
 
 #[test]
@@ -1266,15 +1129,15 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&sibling]),
-        "the rejected sibling stays gated while its rejection readies the Design"
+        stamps(&[&design]),
+        "the rejected sibling is closed and the Design waits on the Plan it released"
     );
 
     capture_for(&bus, epoch, &seats[0], &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&sibling, &task]),
+        stamps(&[&design, &task]),
         "the selected Plan holds its task for review"
     );
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
@@ -1287,8 +1150,8 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     );
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&sibling]),
-        "the selected Plan's clean review releases its task"
+        stamps(&[&design]),
+        "the selected Plan's clean review releases its task, which the Design now waits on"
     );
     let worker = Actor::Lane(seats[1].lane);
     capture_for(&bus, epoch, &seats[1], &task);
@@ -1313,7 +1176,10 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     )) else {
         panic!("collapse did not answer with task state");
     };
-    assert_eq!(answer.closed, vec![sibling.clone()]);
+    assert!(
+        answer.closed.is_empty(),
+        "the veto already closed the sibling; collapse leaves released work live"
+    );
     let collapsed = board(&bus, epoch, Actor::Operator);
     assert!(at(&collapsed, &task).workflow.body.status.is_pending());
     assert_eq!(
@@ -1342,28 +1208,17 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
     capture_for(&bus, epoch, &seats[0], &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
-    // With the sibling gone, no frontier row names the Design as its parent;
-    // only the task's controller link reaches it. The rejection readied the
-    // Design, so its lane holds it while the released task is offered.
-    let visible = board(&bus, epoch, Actor::Operator);
-    let heads = at(&visible, &sibling);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskDelete,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-        ],
-        &TaskDelete {
-            task: sibling,
-            reason: "unselected".to_owned(),
-            force_claimed: false,
-        },
-    ));
-    capture_for(&bus, epoch, &seats[0], &design);
+    // The veto closed the sibling, so no frontier row names the Design as
+    // its parent; only the task's controller link reaches it. The Design
+    // waits on the released task, so the allocator offers the task, never
+    // the Design.
+    assert!(
+        !at(&board(&bus, epoch, Actor::Operator), &sibling)
+            .workflow
+            .body
+            .status
+            .is_pending()
+    );
 
     let worker = Actor::Lane(seats[1].lane);
     let Some(NextWorkState::Candidate { task: offered }) =

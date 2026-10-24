@@ -297,6 +297,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         ))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the command server owns each independent reader, the URI server, the seal, and the terminal"
+    )]
     fn with_server(
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,

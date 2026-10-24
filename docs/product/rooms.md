@@ -221,14 +221,17 @@ owns each rule summarized here.
   [ready](invariants/identity.md#work-a-design-schedules-each-pass-from-input-after-its-last-pass):
   its first pass needs steeped maturity or the operator's `preparation nudge
   HANDLE`, and every later pass needs counted input recorded after the last
-  proposal or abandonment. Contributions, operator room posts, nudges, returned
-  or rejecting decisions, and the final settlement of released work count;
-  asks, notices, leaves, and group movement do not. Released work settles by
-  the fact that completes it: a completing `task done`, operator closure or
-  deletion, a conclusion, or the clean final review of a flow that ends in
-  review, which the review fact records as its completed status. Until then
-  the Design gathers input, awaits the operator's decision, or waits on its
-  released work, deferred work included.
+  proposal or abandonment, with no released work still pending. Contributions,
+  operator room posts, nudges, returned or rejecting decisions, and the final
+  settlement of released work count; asks, notices, leaves, and group movement
+  do not. Released work is the Design's prerequisite set: the accepted
+  outputs it waits on, drawn as its dependencies on every graph and sheet
+  without an edge the operator could edit. It settles by the fact that
+  completes it: a completing `task done`, operator closure or deletion, a
+  conclusion, or the clean final review of a flow that ends in review, which
+  the review fact records as its completed status. Until then the Design
+  gathers input, awaits the operator's decision, or waits on its released
+  work, deferred work included, whatever input arrives meanwhile.
 
   `preparation nudge HANDLE`, or the Nudge control in the browser's Design
   menu, is the operator's push of one open Design to proposal before its room
@@ -276,12 +279,14 @@ owns each rule summarized here.
      the claim. Freeing or lapsing instead abandons the pass, and the cycle
      shows that the last pass ended without a proposal.
   3. **Awaiting decision**: the operator acts on the cited proposal with
-     `preparation decide`. Accepting work releases its outputs; accepting an
-     outputless conclude or collapse recommendation concludes the Design;
-     returning it or rejecting any output is counted input, so the Design is
-     ready for its next pass at once.
-  4. **Waiting on selected work**: the accepted work runs. Its final
-     settlement, or any earlier counted input, makes the next pass ready.
+     `preparation decide`. Accepting work releases its outputs and closes the
+     rejected ones; accepting an outputless conclude or collapse
+     recommendation concludes the Design; returning it, or rejecting every
+     output, is counted input, so the Design is ready for its next pass at
+     once.
+  4. **Waiting on selected work**: the accepted work runs as the Design's
+     prerequisites. Its final settlement makes the next pass ready; input
+     recorded meanwhile counts then.
 
   A passive Design keeps its cycle and history but no lane may possess it
   until its working group is Explore or Converge.

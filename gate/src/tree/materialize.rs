@@ -185,17 +185,7 @@ fn discard_path(path: &Path) {
 }
 
 pub(super) fn private_directory(path: &Path) -> Result<(), TreeError> {
-    #[cfg(target_family = "unix")]
-    let permissions = fs::Permissions::from_mode(0o700);
-    #[cfg(not(target_family = "unix"))]
-    let permissions = {
-        let mut permissions = fs::metadata(path)
-            .map_err(|source| TreeError::io("inspecting a private directory", path, source))?
-            .permissions();
-        permissions.set_readonly(false);
-        permissions
-    };
-    fs::set_permissions(path, permissions)
+    crate::permissions::set_owner_writable(path, true)
         .map_err(|source| TreeError::io("making a selected directory private", path, source))
 }
 
@@ -441,27 +431,13 @@ pub(super) fn make_removable(root: &Path) {
         return;
     };
     if metadata.is_dir() {
-        set_owner_writable(root, &metadata);
+        let _ = crate::permissions::set_owner_writable(root, true);
         if let Ok(listing) = fs::read_dir(root) {
             for entry in listing.flatten() {
                 make_removable(&entry.path());
             }
         }
     } else if metadata.is_file() {
-        set_owner_writable(root, &metadata);
-    }
-}
-
-fn set_owner_writable(path: &Path, metadata: &fs::Metadata) {
-    #[cfg(target_family = "unix")]
-    {
-        let mode = if metadata.is_dir() { 0o700 } else { 0o600 };
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
-    }
-    #[cfg(not(target_family = "unix"))]
-    {
-        let mut permissions = metadata.permissions();
-        permissions.set_readonly(false);
-        let _ = fs::set_permissions(path, permissions);
+        let _ = crate::permissions::set_owner_writable(root, false);
     }
 }

@@ -103,10 +103,10 @@ name continuations.
   dependencies without selection/authorization. A Design pass ends with
   `preparation propose JUSTIFICATION`, assembled from acceptance-bearing
   outputs built under the claim and the room (none: `--recommend
-  conclude|collapse`). Keep Designs open: checkpoint/free; only the operator
-  concludes. Outputs await exact `preparation decide`; dependencies, origin,
-  closure, deletion, findings, and group movement never bypass it. No
-  reciprocal controller/output edge. Stop means checkpoint/free.
+  conclude|collapse`). Only the operator concludes a Design; stop means
+  checkpoint/free. Outputs await exact `preparation decide`; dependencies,
+  origin, closure, deletion, findings, and group movement never bypass it. A
+  veto closes the output; accepted work is its derived prerequisite.
 - Work incrementally; commit only under the matching claim. Never pull/push or
   alter harness attribution. Release unfinished work via `task free` or
   self-deferral, never stash/gate bypass; replayed parked edits still need the

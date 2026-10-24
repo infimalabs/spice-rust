@@ -465,16 +465,15 @@ fn run_verbatim(command: &mut Command) -> Result<ExitStatus, (Outcome<()>, i32)>
         .map_err(|error| launch_rejection(&error))?;
     #[cfg(not(windows))]
     let mut child = command.spawn().map_err(|error| launch_rejection(&error))?;
-    let _guard = match relay(&child) {
-        Ok(guard) => guard,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(relay_rejection(&error));
-        }
-    };
-    let status = child.wait().map_err(|error| wait_rejection(&error))?;
-    Ok(status)
+    let relayed = relay(&child);
+    if let Err(error) = &relayed {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(relay_rejection(error));
+    }
+    let status = child.wait().map_err(|error| wait_rejection(&error));
+    drop(relayed);
+    status
 }
 
 /// Forward termination signals to the child's process group until dropped.

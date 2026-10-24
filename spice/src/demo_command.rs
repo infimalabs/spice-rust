@@ -848,6 +848,10 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one seeded task spells each statement field the demo journal records"
+)]
 fn seed_oops_task(
     journal: &mut journal::Journal,
     born: wire::TaskStamp,

@@ -220,6 +220,10 @@ impl Jobs {
     /// Returns the failure of recording the request, revalidating a service's
     /// claim after publication, launching the keeper, or removing a failed
     /// start's record. Only a launch known not to own a process is removed.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one job start carries the shell call's command, cwd, environment, deadline, task, service, notices, and events"
+    )]
     pub(in crate::resident) fn start(
         &self,
         command: &str,

@@ -11,7 +11,7 @@ use crate::TaskStamp;
 pub enum OutputVerdict {
     /// Release this output.
     Accepted,
-    /// Keep this output gated.
+    /// Close this output: the operator's veto settles it in the decision.
     Rejected,
 }
 
@@ -69,8 +69,17 @@ impl DecisionOutcome {
 
     /// Work outputs this decision authorizes, in recorded order.
     pub fn accepted_outputs(&self) -> impl Iterator<Item = &TaskStamp> {
+        self.outputs_with(OutputVerdict::Accepted)
+    }
+
+    /// Work outputs this decision closes, in recorded order.
+    pub fn rejected_outputs(&self) -> impl Iterator<Item = &TaskStamp> {
+        self.outputs_with(OutputVerdict::Rejected)
+    }
+
+    fn outputs_with(&self, verdict: OutputVerdict) -> impl Iterator<Item = &TaskStamp> {
         match self {
-            Self::Resolved { outputs, .. } => EitherOutputs::Resolved(outputs.iter()),
+            Self::Resolved { outputs, .. } => EitherOutputs::Resolved(outputs.iter(), verdict),
             Self::Returned { .. } | Self::Accepted { .. } => EitherOutputs::None,
         }
     }
@@ -97,7 +106,7 @@ impl DecisionOutcome {
 }
 
 enum EitherOutputs<'a> {
-    Resolved(std::slice::Iter<'a, OutputDecision>),
+    Resolved(std::slice::Iter<'a, OutputDecision>, OutputVerdict),
     None,
 }
 
@@ -106,9 +115,9 @@ impl<'a> Iterator for EitherOutputs<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Resolved(outputs) => outputs.find_map(|output| {
-                (output.verdict == OutputVerdict::Accepted).then_some(&output.output)
-            }),
+            Self::Resolved(outputs, verdict) => {
+                outputs.find_map(|output| (output.verdict == *verdict).then_some(&output.output))
+            }
             Self::None => None,
         }
     }

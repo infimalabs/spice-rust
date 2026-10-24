@@ -253,17 +253,37 @@ fn render_scope(view: View, entries: &[Entry], reviews: &[ReviewEdge], live_only
             }
         }
         View::Dependencies => {
+            let designs = entries
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .statement()
+                        .intent
+                        .is_some_and(wire::TaskIntent::is_design)
+                })
+                .map(Entry::born)
+                .collect::<BTreeSet<_>>();
+            let name = |stamp: &TaskStamp| {
+                handles
+                    .get(stamp)
+                    .map_or_else(|| stamp.as_str().to_owned(), ToString::to_string)
+            };
             for entry in ordered.into_iter().filter(visible) {
                 for edge in entry.dependencies() {
-                    let task = handles.get(&edge.task).copied();
-                    let after = handles.get(&edge.after).copied();
-                    writeln!(
-                        text,
-                        "{} -> {}",
-                        task.map_or(edge.task.as_str(), wire::TaskHandle::as_str),
-                        after.map_or(edge.after.as_str(), wire::TaskHandle::as_str)
-                    )
-                    .expect("String writes are infallible");
+                    writeln!(text, "{} -> {}", name(&edge.task), name(&edge.after))
+                        .expect("String writes are infallible");
+                }
+                // A Design waits on each construction root it released, so
+                // the released work reads as the Design's prerequisite.
+                if let Some(design) = wire::intent::released_construction_root(
+                    entry.born(),
+                    &entry.statement().dependencies,
+                    entry.statement().preparation.as_ref(),
+                )
+                .filter(|design| designs.contains(design))
+                {
+                    writeln!(text, "{} -> {}", name(design), entry.handle())
+                        .expect("String writes are infallible");
                 }
             }
         }

@@ -108,7 +108,7 @@ const fn cycle_next(cycle: DesignCycle, availability: DesignAvailability) -> &'s
         }
         (DesignCycle::AwaitingDecision, _) => "You decide the proposal awaiting decision next.",
         (DesignCycle::WaitingOnSelectedWork, _) => {
-            "The work this Design selected finishes next, unless lanes or you add new input."
+            "The work this Design selected finishes next; it is the Design's prerequisite set."
         }
     }
 }

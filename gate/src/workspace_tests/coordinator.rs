@@ -710,17 +710,19 @@ fn wait_for_shard_process(
     }
 }
 
+#[cfg(not(unix))]
+fn wait_after_shard_stop(
+    running: sill::Running,
+    _policy: RunPolicy,
+) -> Result<WaitOutcome, WorkspaceTestError> {
+    running.wait().map_err(shard_wait_error)
+}
+
+#[cfg(unix)]
 fn wait_after_shard_stop(
     running: sill::Running,
     policy: RunPolicy,
 ) -> Result<WaitOutcome, WorkspaceTestError> {
-    #[cfg(not(unix))]
-    {
-        let _ = policy;
-        return running.wait().map_err(shard_wait_error);
-    }
-
-    #[cfg(unix)]
     {
         let mut faults = Vec::new();
         let descendants = match sill::DescendantGroups::discover(running.id()) {

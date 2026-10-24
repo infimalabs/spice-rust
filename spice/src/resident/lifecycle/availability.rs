@@ -3,6 +3,10 @@ use super::*;
 /// Select current work, with the task selected, or retain the exact deadline
 /// of a temporarily blocked phase handoff so the resident reconciles when its
 /// prior owner becomes valid.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "selection reads the snapshot, index, readiness, actor, team, allocation, environment, and clock"
+)]
 pub(super) fn selected_ready<'a>(
     snapshot: &bus::TaskSnapshot,
     entries: &'a [Entry],
