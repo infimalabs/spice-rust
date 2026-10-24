@@ -66,12 +66,20 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
 }
 
 /// The fixed total and active-agent scroller. As on a team rail, the total
-/// holds the right edge and the agents flow leftward from it.
+/// holds the right edge and the agents flow leftward from it, in the order of
+/// the design composers below, each over the first design its work serves.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
-    let (counts, workers) = render
+    let (counts, mut workers) = render
         .work
         .map(|work| work.group_worker_strip(&scope(view, channels)))
         .unwrap_or_default();
+    workers.sort_by_key(|(_, task)| {
+        let statement = &task.row().statement.body;
+        channels
+            .iter()
+            .position(|channel| statement.is_associated_with_design(&channel.stamp))
+            .unwrap_or(channels.len())
+    });
     html! {
         <div class="team-task-rail">
             if !workers.is_empty() {
