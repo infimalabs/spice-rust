@@ -64,6 +64,9 @@ pub struct CargoGateShard {
     kind: CargoGateShardKind,
     action_id: String,
     package: String,
+    /// A test shard's package manifest relative to the selected root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest: Option<String>,
     targets: Vec<String>,
     argv: Vec<String>,
     input_paths: Vec<String>,
@@ -344,6 +347,7 @@ fn typecheck_shards(
                 kind: CargoGateShardKind::Typecheck,
                 action_id: format!("cargo:typecheck:{}::{}", check.name, target.identity),
                 package: check.name.clone(),
+                manifest: None,
                 targets: vec![target.identity.clone()],
                 argv,
                 input_paths: authority.input_paths,
@@ -404,6 +408,7 @@ fn windows_typecheck_shards(
                 kind: CargoGateShardKind::Typecheck,
                 action_id: format!("cargo:typecheck:{}::{}", check.package, check.identity),
                 package: check.package.to_owned(),
+                manifest: None,
                 targets: vec![check.identity.to_owned()],
                 argv,
                 input_paths: authority.input_paths,
@@ -446,32 +451,22 @@ fn test_shard(
     source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<CargoGateShard, WorkspaceTestError> {
-    // Parallelism is scheduling, not proof content: the canonical argv names
-    // no job or thread count, and execution binds one lane's host share
-    // through the environment, so neither enters the receipt digest.
-    let mut argv = vec![
-        "test".to_owned(),
-        "--locked".to_owned(),
-        "--package".to_owned(),
-        package.name.clone(),
-    ];
-    let mut targets = Vec::new();
-    for target in &package.targets {
-        targets.push(target.display());
-        argv.extend(
-            target_arguments(target)?
-                .into_iter()
-                .map(|argument| argument.to_string_lossy().into_owned()),
-        );
-    }
-    if let Some(features) = qualified_required_features(package.targets.iter().flat_map(|target| {
-        target
-            .required_features
-            .iter()
-            .map(|feature| (package.name.as_str(), feature.as_str()))
-    })) {
-        argv.extend(["--features".to_owned(), features]);
-    }
+    // Every test shard names the same workspace-wide prebuild, so dependency
+    // features unify across the workspace and later shards find their units
+    // fresh. Parallelism is scheduling, not proof content: the argv names no
+    // job or thread count, so neither enters the receipt digest.
+    let mut argv = prebuild::workspace_test_arguments(inventory);
+    argv.extend([
+        "--no-run".to_owned(),
+        "--message-format=json-render-diagnostics".to_owned(),
+    ]);
+    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let manifest = relative_manifest(&canonical_root, package)?;
+    let targets = package
+        .targets
+        .iter()
+        .map(TargetIdentity::display)
+        .collect::<Vec<_>>();
     let identity = targets.join(",");
     let provenance = targets
         .iter()
@@ -485,7 +480,7 @@ fn test_shard(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let authority = package_input_authority(
+    let mut authority = package_input_authority(
         inventory,
         root,
         &package.name,
@@ -494,10 +489,20 @@ fn test_shard(
         source_analysis,
         external_source,
     )?;
+    // Workspace-wide feature unification lets any member manifest change the
+    // features this shard's units compile with.
+    for member in &inventory.packages {
+        authority
+            .input_paths
+            .push(relative_manifest(&canonical_root, member)?);
+    }
+    authority.input_paths.sort();
+    authority.input_paths.dedup();
     Ok(CargoGateShard {
         kind: CargoGateShardKind::Test,
         action_id: format!("cargo:test:{}::{identity}", package.name),
         package: package.name.clone(),
+        manifest: Some(manifest),
         targets,
         argv,
         input_paths: authority.input_paths,
@@ -506,6 +511,22 @@ fn test_shard(
         external_source: authority.external_source,
         reuse: authority.reuse,
     })
+}
+
+/// `package`'s manifest relative to the canonical selected root.
+fn relative_manifest(
+    canonical_root: &Path,
+    package: &PackageInventory,
+) -> Result<String, WorkspaceTestError> {
+    let relative = package.root.strip_prefix(canonical_root).map_err(|_| {
+        WorkspaceTestError::new(format!(
+            "Cargo package {:?} root {} escapes selected root {}",
+            package.name,
+            package.root.display(),
+            canonical_root.display(),
+        ))
+    })?;
+    path_text(&relative.join("Cargo.toml"))
 }
 
 struct CargoPackageInputAuthority {
@@ -764,35 +785,57 @@ pub fn run_cargo_gate_shard_at(
     entries.insert(OsString::from(RUST_TEST_THREADS), OsString::from(share));
     let environment =
         Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))?;
-    if shard.kind == CargoGateShardKind::Test {
-        // Match the full verifier: compile the exact selected targets before
-        // starting their execution clock. A fresh staged path can invalidate
-        // Cargo fingerprints even when the selected source bytes are unchanged.
-        let arguments = shard
-            .argv
-            .iter()
-            .map(String::as_str)
-            .take_while(|argument| *argument != "--")
-            .chain(std::iter::once("--no-run"));
-        prebuild::run_prebuild_command(
+    let runs = if shard.kind == CargoGateShardKind::Test {
+        // Compile before starting any execution clock: the workspace prebuild
+        // has its own deadline, and each test executable then gets the shard's.
+        let messages = prebuild::capture_workspace_test_prebuild(
             root,
             &environment,
             cargo,
+            &shard.argv,
+            shard.action_id(),
             output,
-            "cargo test --no-run (proof shard)",
+        )?;
+        let manifest = root.join(shard.manifest.as_deref().ok_or_else(|| {
+            WorkspaceTestError::new(format!("{} names no package manifest", shard.action_id))
+        })?);
+        let package_root = manifest.parent().unwrap_or(root).to_path_buf();
+        prebuild::package_test_executables(&messages, &manifest, &shard.targets)?
+            .into_iter()
+            .map(|executable| {
+                (
+                    executable.into_os_string(),
+                    Vec::new(),
+                    package_root.clone(),
+                )
+            })
+            .collect()
+    } else {
+        vec![(cargo.to_owned(), shard.argv.clone(), root.to_path_buf())]
+    };
+    for (program, arguments, cwd) in runs {
+        let spec = process_spec(
+            &program,
             arguments,
+            &cwd,
+            environment.clone(),
+            SHARD_DEADLINE,
+            Cancellation::Never,
             shard.action_id(),
         )?;
+        run_shard_process(shard, spec, output)?;
     }
-    let spec = process_spec(
-        cargo,
-        shard.argv.iter().map(String::as_str),
-        root,
-        environment,
-        SHARD_DEADLINE,
-        Cancellation::Never,
-        shard.action_id(),
-    )?;
+    Ok(CargoGateShardResult {
+        action_id: shard.action_id.clone(),
+        completion: "passed".to_owned(),
+    })
+}
+
+fn run_shard_process(
+    shard: &CargoGateShard,
+    spec: Spec,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
     let outcome = crate::measure::spawn(spec)
         .map_err(|error| {
             WorkspaceTestError::new(format!("{} launch failed: {error}", shard.action_id))
@@ -818,10 +861,7 @@ pub fn run_cargo_gate_shard_at(
         )));
     }
     match outcome.completion() {
-        Completion::Exited(status) if status.success() => Ok(CargoGateShardResult {
-            action_id: shard.action_id.clone(),
-            completion: "passed".to_owned(),
-        }),
+        Completion::Exited(status) if status.success() => Ok(()),
         completion => Err(WorkspaceTestError::new(format!(
             "{} ended as {}",
             shard.action_id,

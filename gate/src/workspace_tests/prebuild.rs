@@ -1,5 +1,26 @@
 use super::*;
 
+/// Canonical `cargo test` arguments that build every workspace test target
+/// with features unified across the whole workspace.
+pub(super) fn workspace_test_arguments(inventory: &Inventory) -> Vec<String> {
+    let mut arguments = ["test", "--locked", "--workspace", "--all-targets"]
+        .map(str::to_owned)
+        .to_vec();
+    if let Some(features) =
+        qualified_required_features(inventory.packages.iter().flat_map(|package| {
+            package.targets.iter().flat_map(|target| {
+                target
+                    .required_features
+                    .iter()
+                    .map(|feature| (package.name.as_str(), feature.as_str()))
+            })
+        }))
+    {
+        arguments.extend(["--features".to_owned(), features]);
+    }
+    arguments
+}
+
 pub(super) fn prebuild_all_tests(
     root: &Path,
     environment: &Environment,
@@ -7,32 +28,14 @@ pub(super) fn prebuild_all_tests(
     inventory: &Inventory,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
-    let features = qualified_required_features(inventory.packages.iter().flat_map(|package| {
-        package.targets.iter().flat_map(|target| {
-            target
-                .required_features
-                .iter()
-                .map(|feature| (package.name.as_str(), feature.as_str()))
-        })
-    }));
-    let mut arguments = ["test", "--locked", "--workspace", "--all-targets"]
-        .into_iter()
-        .map(OsString::from)
-        .collect::<Vec<_>>();
-    let mut command = "cargo test --locked --workspace --all-targets".to_owned();
-    if let Some(features) = features {
-        arguments.extend([OsString::from("--features"), OsString::from(&features)]);
-        command.push_str(" --features ");
-        command.push_str(&features);
-    }
-    arguments.push(OsString::from("--no-run"));
-    command.push_str(" --no-run");
+    let mut arguments = workspace_test_arguments(inventory);
+    arguments.push("--no-run".to_owned());
     run_prebuild_command(
         root,
         environment,
         cargo,
         output,
-        &command,
+        &format!("cargo {}", arguments.join(" ")),
         arguments,
         "workspace-test prebuild",
     )?;
@@ -891,9 +894,6 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
-    output.flush().map_err(output_error)?;
-    let started = Instant::now();
     let spec = prebuild_process_spec(
         cargo,
         arguments,
@@ -903,6 +903,45 @@ where
         Cancellation::Never,
         owner,
     )?;
+    capture_prebuild(spec, output, command, owner)
+}
+
+/// Build every workspace test target once under [`WORKSPACE_PREBUILD_DEADLINE`]
+/// and return Cargo's JSON messages.
+pub(super) fn capture_workspace_test_prebuild(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+    arguments: &[String],
+    owner: &str,
+    output: &mut impl Write,
+) -> Result<Vec<u8>, WorkspaceTestError> {
+    let spec = prebuild_process_spec(
+        cargo,
+        arguments,
+        root,
+        environment.clone(),
+        WORKSPACE_PREBUILD_DEADLINE,
+        Cancellation::Never,
+        owner,
+    )?;
+    capture_prebuild(
+        spec,
+        output,
+        &format!("cargo {}", arguments.join(" ")),
+        owner,
+    )
+}
+
+fn capture_prebuild(
+    spec: Spec,
+    output: &mut impl Write,
+    command: &str,
+    owner: &str,
+) -> Result<Vec<u8>, WorkspaceTestError> {
+    writeln!(output, "[rust-test] stage=prebuild command={command:?}").map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    let started = Instant::now();
     let outcome = crate::measure::spawn(spec)
         .map_err(|error| WorkspaceTestError::new(format!("prebuild launch failed: {error}")))?
         .wait()
@@ -1084,6 +1123,71 @@ pub(super) struct PrebuiltTestPartition {
     pub(super) exclusive: bool,
 }
 
+/// Test executables a workspace prebuild published for one package's
+/// `kind:name` targets, in `targets` order.
+pub(super) fn package_test_executables(
+    messages: &[u8],
+    manifest: &Path,
+    targets: &[String],
+) -> Result<Vec<PathBuf>, WorkspaceTestError> {
+    let manifest = fs::canonicalize(manifest).map_err(|error| {
+        WorkspaceTestError::new(format!(
+            "package manifest {} is unavailable: {error}",
+            manifest.display()
+        ))
+    })?;
+    let mut found = BTreeMap::new();
+    for (line_index, line) in messages.split(|byte| *byte == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let message: CargoBuildMessage = serde_json::from_slice(line).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "workspace prebuild message {} was invalid Cargo JSON: {error}",
+                line_index + 1,
+            ))
+        })?;
+        if message.reason != "compiler-artifact"
+            || !message.profile.is_some_and(|profile| profile.test)
+        {
+            continue;
+        }
+        let (Some(target), Some(executable), Some(path)) =
+            (message.target, message.executable, message.manifest_path)
+        else {
+            continue;
+        };
+        let key = format!("{}:{}", target.kind.join("+"), target.name);
+        if !targets.contains(&key) || fs::canonicalize(&path).ok().as_ref() != Some(&manifest) {
+            continue;
+        }
+        if !executable_file(&executable) {
+            return Err(WorkspaceTestError::new(format!(
+                "workspace prebuild artifact {} is missing or not executable",
+                executable.display(),
+            )));
+        }
+        if let Some(previous) = found.insert(key, executable.clone()) {
+            return Err(WorkspaceTestError::new(format!(
+                "workspace prebuild published duplicate test artifacts {} and {}",
+                previous.display(),
+                executable.display(),
+            )));
+        }
+    }
+    targets
+        .iter()
+        .map(|target| {
+            found.remove(target).ok_or_else(|| {
+                WorkspaceTestError::new(format!(
+                    "workspace prebuild omitted test artifact {target} of {}",
+                    manifest.display(),
+                ))
+            })
+        })
+        .collect()
+}
+
 #[derive(Deserialize)]
 struct CargoBuildMessage {
     reason: String,
@@ -1095,6 +1199,8 @@ struct CargoBuildMessage {
     profile: Option<CargoBuildProfile>,
     #[serde(default)]
     executable: Option<PathBuf>,
+    #[serde(default)]
+    manifest_path: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
