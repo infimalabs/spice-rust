@@ -40,26 +40,16 @@ fn lane_creation_refuses_missing_session_and_missing_accounted_source() {
     let (root, bus, epoch, seats) = fixture("creation-context-missing", 1);
     let lane = seats[0].lane;
     let command = add_command(epoch, lane);
-    let snapshot = validated_snapshot(
-        &bus,
-        Actor::Lane(lane),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("fixture snapshot validates");
+    let snapshot = validated_snapshot(&bus, Actor::Lane(lane), &guard_projects())
+        .expect("fixture snapshot validates");
     assert_eq!(
         capture_reason(task_creation_capture(&bus, &command, &snapshot)),
         "task::creation-context-session-missing"
     );
 
     declare_session(&bus, epoch, &seats[0], uuid(9_301), 301);
-    let snapshot = validated_snapshot(
-        &bus,
-        Actor::Lane(lane),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("session snapshot validates");
+    let snapshot = validated_snapshot(&bus, Actor::Lane(lane), &guard_projects())
+        .expect("session snapshot validates");
     assert_eq!(
         capture_reason(task_creation_capture(&bus, &command, &snapshot)),
         "task::creation-context-source-ambiguous"
@@ -73,13 +63,8 @@ fn lane_creation_refuses_a_causal_session_that_disagrees_with_its_occupant() {
     authorize_lane_creation(&bus, epoch, &seats[0]);
     let lane = seats[0].lane;
     let command = add_command(epoch, lane);
-    let mut snapshot = validated_snapshot(
-        &bus,
-        Actor::Lane(lane),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("fixture snapshot validates");
+    let mut snapshot = validated_snapshot(&bus, Actor::Lane(lane), &guard_projects())
+        .expect("fixture snapshot validates");
     snapshot.answer.residency.body.lanes[0]
         .session
         .as_mut()
@@ -98,13 +83,8 @@ fn lane_creation_refuses_a_sole_unregistered_stream() {
     let lane = seats[0].lane;
     declare_session(&bus, epoch, &seats[0], uuid(9_302), 302);
     seed_creation_stream(&bus, lane, "stdout");
-    let snapshot = validated_snapshot(
-        &bus,
-        Actor::Lane(lane),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("session snapshot validates");
+    let snapshot = validated_snapshot(&bus, Actor::Lane(lane), &guard_projects())
+        .expect("session snapshot validates");
     assert_eq!(
         capture_reason(task_creation_capture(
             &bus,
@@ -122,13 +102,8 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
     let expected = authorize_lane_creation(&bus, epoch, &seats[0]);
     let lane = seats[0].lane;
     let command = add_command(epoch, lane);
-    let snapshot = validated_snapshot(
-        &bus,
-        Actor::Lane(lane),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("fixture snapshot validates");
+    let snapshot = validated_snapshot(&bus, Actor::Lane(lane), &guard_projects())
+        .expect("fixture snapshot validates");
     let capture = task_creation_capture(&bus, &command, &snapshot)
         .expect("exact lane creation context admits");
     assert_eq!(
@@ -208,13 +183,8 @@ fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
     authorize_lane_creation(&bus, epoch, &seats[0]);
     let lane = seats[0].lane;
     let command = add_command(epoch, lane);
-    let snapshot = validated_snapshot(
-        &bus,
-        Actor::Lane(lane),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("fixture snapshot validates");
+    let snapshot = validated_snapshot(&bus, Actor::Lane(lane), &guard_projects())
+        .expect("fixture snapshot validates");
     let capture = task_creation_capture(&bus, &command, &snapshot)
         .expect("exact lane creation context admits");
     assert_eq!(capture.creator_team(), Some(seats[0].team));

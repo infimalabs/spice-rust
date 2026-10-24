@@ -10,7 +10,6 @@ pub(in crate::board_command) fn validated_working_snapshot(
     principal: wire::Actor,
     roots: &[wire::TaskHandle],
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let roots = roots
         .iter()
@@ -20,7 +19,7 @@ pub(in crate::board_command) fn validated_working_snapshot(
                 .expect("an admitted task handle carries a canonical task stamp")
         })
         .collect::<Vec<_>>();
-    validated_working_snapshot_for_tasks(bus, principal, &roots, projects, allocation)
+    validated_working_snapshot_for_tasks(bus, principal, &roots, projects)
 }
 
 pub(in crate::board_command) fn command_task_snapshot(
@@ -28,14 +27,12 @@ pub(in crate::board_command) fn command_task_snapshot(
     command: &wire::AdmittedCommand,
     task: &wire::TaskHandle,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(task),
         projects,
-        allocation,
     )
 }
 
@@ -44,24 +41,19 @@ pub(in crate::board_command) fn validated_working_snapshot_for_tasks(
     principal: wire::Actor,
     roots: &[wire::TaskStamp],
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
         .map_err(|error| store_fault("board::heads-unreadable", &error.to_string()))?;
     let selected = working_task_selection(&observed, roots);
-    let recent_cell = observed.recent_claim_cell(&principal);
-    let mut snapshot = validated_snapshot_from_with_occupant(
+    validated_snapshot_from_with_occupant(
         &observed,
         principal,
         projects,
-        allocation,
         None,
         Some(&selected),
         true,
-    )?;
-    snapshot.answer.recent_cell = recent_cell;
-    Ok(snapshot)
+    )
 }
 
 pub(in crate::board_command) fn task_ancestry_selection(
@@ -111,19 +103,14 @@ pub(in crate::board_command) fn validated_snapshot_for_automatic(
     principal: wire::Actor,
     occupant: wire::CanonicalUuid,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let selected = working_task_selection(observed, &[]);
-    let recent_cell = observed.recent_claim_cell(&principal);
-    let mut snapshot = validated_snapshot_from_with_occupant(
+    validated_snapshot_from_with_occupant(
         observed,
         principal,
         projects,
-        allocation,
         Some(occupant),
         Some(&selected),
         true,
-    )?;
-    snapshot.answer.recent_cell = recent_cell;
-    Ok(snapshot)
+    )
 }

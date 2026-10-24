@@ -57,7 +57,6 @@ pub(in crate::board_command) fn read_task_relations(
     request: &TaskRelations,
     principal: Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let (roots, relations) = match validate(request) {
         Ok(validated) => validated,
@@ -72,7 +71,6 @@ pub(in crate::board_command) fn read_task_relations(
         &observed,
         principal,
         projects,
-        allocation,
         None,
         Some(&selected),
         false,
@@ -104,21 +102,12 @@ pub(in crate::board_command) fn read_task_relations(
     let lifecycle = lifecycle_records(observed.facts().iter(), &tasks, &roles);
     let dependencies = DependencyIndex::new(&tasks);
     let reverse_origins = reverse_origins(&tasks);
-    let mut nodes = BTreeMap::<TaskRelationNodeRef, TaskRelationNode>::new();
-    let mut queue = VecDeque::<(TaskStamp, u8)>::new();
-    for root in &roots {
-        let node = task_node(tasks[root]);
-        nodes.insert(node.identity(), node);
-        queue.push_back((root.clone(), 0));
-    }
-    let mut expanded = BTreeSet::new();
-    let mut edges = BTreeSet::new();
-    let mut omitted = Omitted::default();
-    while let Some((task, depth)) = queue.pop_front() {
-        if !expanded.insert(task.clone()) {
+    let mut walk = Walk::seed(&roots, &tasks);
+    while let Some((task, depth)) = walk.queue.pop_front() {
+        if !walk.expanded.insert(task.clone()) {
             continue;
         }
-        let mut candidates = candidates(
+        let candidates = candidates(
             &task,
             &relations,
             &tasks,
@@ -127,6 +116,50 @@ pub(in crate::board_command) fn read_task_relations(
             &review_records,
             &lifecycle,
         );
+        walk.admit(depth, candidates, request, &roles);
+    }
+    if let Err(outcome) = attach_origin_requests(bus, &mut walk.nodes) {
+        return outcome;
+    }
+    let answer = walk.answer(snapshot.cursor, roots);
+    snapshot_reply(
+        snapshot.cursor,
+        CommandAnswer::TaskRelations(Box::new(answer)),
+    )
+}
+
+/// The bounded breadth-first state one relationship read expands from its
+/// roots.
+#[derive(Default)]
+struct Walk {
+    nodes: BTreeMap<TaskRelationNodeRef, TaskRelationNode>,
+    queue: VecDeque<(TaskStamp, u8)>,
+    expanded: BTreeSet<TaskStamp>,
+    edges: BTreeSet<TaskRelationEdge>,
+    omitted: Omitted,
+}
+
+impl Walk {
+    fn seed(roots: &[TaskStamp], tasks: &BTreeMap<TaskStamp, &BoardTask>) -> Self {
+        let mut walk = Self::default();
+        for root in roots {
+            let node = task_node(tasks[root]);
+            walk.nodes.insert(node.identity(), node);
+            walk.queue.push_back((root.clone(), 0));
+        }
+        walk
+    }
+
+    /// Admit one expanded task's distinct candidates in edge order. A
+    /// candidate past the requested depth or node limit, or past the edge
+    /// limit, joins the truncation frontier instead.
+    fn admit(
+        &mut self,
+        depth: u8,
+        mut candidates: Vec<Candidate>,
+        request: &TaskRelations,
+        roles: &wire::principal::PrincipalRoles,
+    ) {
         for candidate in &mut candidates {
             if let TaskRelationNode::Claim { actor, .. } = &mut candidate.target {
                 *actor = roles.author(actor);
@@ -136,42 +169,35 @@ pub(in crate::board_command) fn read_task_relations(
         candidates.dedup_by(|left, right| left.edge == right.edge);
         for candidate in candidates {
             let target = candidate.target.identity();
-            let target_exists = nodes.contains_key(&target);
-            if !target_exists && depth >= request.depth {
-                omitted.push(depth.saturating_add(1), candidate.edge);
-                continue;
-            }
-            if !target_exists && nodes.len() >= usize::from(request.node_limit) {
-                omitted.push(depth.saturating_add(1), candidate.edge);
-                continue;
-            }
-            if !edges.contains(&candidate.edge) && edges.len() >= TASK_RELATION_EDGE_LIMIT {
-                omitted.push(depth.saturating_add(1), candidate.edge);
+            let target_exists = self.nodes.contains_key(&target);
+            if (!target_exists
+                && (depth >= request.depth || self.nodes.len() >= usize::from(request.node_limit)))
+                || (!self.edges.contains(&candidate.edge)
+                    && self.edges.len() >= TASK_RELATION_EDGE_LIMIT)
+            {
+                self.omitted.push(depth.saturating_add(1), candidate.edge);
                 continue;
             }
             if !target_exists {
                 if let TaskRelationNodeRef::Task { task } = &target {
-                    queue.push_back((task.clone(), depth.saturating_add(1)));
+                    self.queue
+                        .push_back((task.clone(), depth.saturating_add(1)));
                 }
-                nodes.insert(target, candidate.target);
+                self.nodes.insert(target, candidate.target);
             }
-            edges.insert(candidate.edge);
+            self.edges.insert(candidate.edge);
         }
     }
-    if let Err(outcome) = attach_origin_requests(bus, &mut nodes) {
-        return outcome;
+
+    fn answer(self, snapshot: Seq, roots: Vec<TaskStamp>) -> TaskRelationsAnswer {
+        TaskRelationsAnswer {
+            snapshot,
+            roots,
+            nodes: self.nodes.into_values().collect(),
+            edges: self.edges.into_iter().collect(),
+            truncation: self.omitted.finish(),
+        }
     }
-    let answer = TaskRelationsAnswer {
-        snapshot: snapshot.cursor,
-        roots,
-        nodes: nodes.into_values().collect(),
-        edges: edges.into_iter().collect(),
-        truncation: omitted.finish(),
-    };
-    snapshot_reply(
-        snapshot.cursor,
-        CommandAnswer::TaskRelations(Box::new(answer)),
-    )
 }
 
 /// Attach to each steering origin node the request its key names, from one

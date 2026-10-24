@@ -41,14 +41,7 @@ fn reclaim_at_for(
         expected,
         &renew,
     );
-    claim_reclaim_with_clock(
-        bus,
-        &command,
-        &renew,
-        &guard_projects(),
-        &board::NextConfig::default(),
-        || Ok(at),
-    )
+    claim_reclaim_with_clock(bus, &command, &renew, &guard_projects(), || Ok(at))
 }
 
 pub(super) fn renew_and_assert(
@@ -748,8 +741,6 @@ pub(super) fn assert_reclaim_survives_restart(
             lane,
             &allocation_subscription(&after_restart.residency.body, lane)
                 .expect("restarted lane subscription"),
-            after_restart.allocation_band,
-            after_restart.recent_cell.as_ref(),
             &after_restart.environment(),
         )
         .expect("allocator still has unclaimed work")

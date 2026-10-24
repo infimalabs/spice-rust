@@ -396,18 +396,11 @@ impl Standings {
                 policy: wire::intent::TeamLife::Drain,
                 fast_mode: false,
             });
-        let rank = board::offer_order(
-            entries,
-            &board.principal,
-            &subscription,
-            board.allocation_band,
-            board.recent_cell.as_ref(),
-            &environment,
-        )
-        .into_iter()
-        .enumerate()
-        .map(|(rank, selection)| (selection.entry().born().clone(), rank))
-        .collect();
+        let rank = board::offer_order(entries, &board.principal, &subscription, &environment)
+            .into_iter()
+            .enumerate()
+            .map(|(rank, selection)| (selection.entry().born().clone(), rank))
+            .collect();
         Self { standing, rank }
     }
 

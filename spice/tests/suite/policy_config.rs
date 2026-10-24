@@ -30,7 +30,6 @@ answer = "deny"
 skip = ["src/**", "fixtures/"]
 
 [board.next]
-band = 3
 horizon = "90m"
 
 [lane]
@@ -102,7 +101,6 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert!(!skips[0].matches("src", Shape::Directory));
     assert!(!skips[0].matches("docs/src/lib.rs", Shape::File));
 
-    assert_eq!(decoded.board().next().band(), 3);
     assert_eq!(
         decoded.board().next().horizon(),
         std::time::Duration::from_secs(90 * 60)
@@ -361,13 +359,6 @@ fn unknown_fields_name_their_domain_and_key() {
         );
         assert!(error.contains("extra"), "refusal omitted the key: {error}");
     }
-}
-
-#[test]
-fn a_fractional_tie_band_refuses_loudly() {
-    let band = decode("[board.next]\nband = 2.5\n")
-        .expect_err("an integer urgency scalar needs an integer tie band");
-    assert!(band.contains("board.next.band"), "{band}");
 }
 
 #[test]

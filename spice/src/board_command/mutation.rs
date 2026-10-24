@@ -96,9 +96,8 @@ pub(super) fn task_add(
     add: &TaskAdd,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    task_add_with(bus, command, add, repository, projects, allocation, || {})
+    task_add_with(bus, command, add, repository, projects, || {})
 }
 
 pub(super) fn task_add_with(
@@ -107,21 +106,12 @@ pub(super) fn task_add_with(
     add: &TaskAdd,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
     if let Err(outcome) = draft_creation_admitted(add) {
         return outcome;
     }
-    create_task(
-        bus,
-        command,
-        add,
-        repository,
-        projects,
-        allocation,
-        after_validation,
-    )
+    create_task(bus, command, add, repository, projects, after_validation)
 }
 
 /// A Draft names its exact public project and enters no claim or preparation.
@@ -202,7 +192,6 @@ fn admit_add_project(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<(Project, ValidatedSnapshot), Outcome<CommandAnswer>> {
     let requested = add.project.as_deref().unwrap_or("task.private");
     let project = projects.admit_manual_creation(requested).map_err(|error| {
@@ -218,13 +207,8 @@ fn admit_add_project(
         )
     })?;
     let roots = task_add_roots(add);
-    let snapshot = validated_working_snapshot_for_tasks(
-        bus,
-        command.actor().clone(),
-        &roots,
-        projects,
-        allocation,
-    )?;
+    let snapshot =
+        validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots, projects)?;
     let unfiled = referenced_unfiled(&snapshot.entries, add.depends.iter());
     if !unfiled.is_empty() {
         return Err(unfiled_dependency_refusal(&unfiled));
@@ -241,10 +225,9 @@ fn create_task(
     add: &TaskAdd,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let (project, snapshot) = match admit_add_project(bus, command, add, projects, allocation) {
+    let (project, snapshot) = match admit_add_project(bus, command, add, projects) {
         Ok(admitted) => admitted,
         Err(outcome) => return outcome,
     };
@@ -807,7 +790,6 @@ pub(super) fn task_note(
     command: &wire::AdmittedCommand,
     note: &TaskNote,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let content = match room::authored_observation(&note.note, &note.task) {
         Ok(content) => content,
@@ -818,7 +800,6 @@ pub(super) fn task_note(
         command.actor().clone(),
         std::slice::from_ref(&note.task),
         projects,
-        allocation,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -881,9 +862,8 @@ pub(super) fn task_depends(
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    task_depends_with(bus, command, depends, projects, allocation, || {})
+    task_depends_with(bus, command, depends, projects, || {})
 }
 
 pub(super) fn task_depends_with(
@@ -891,19 +871,13 @@ pub(super) fn task_depends_with(
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
     let roots = std::iter::once(depends.task.clone())
         .chain(depends.after.iter().cloned())
         .collect::<Vec<_>>();
-    let snapshot = match validated_working_snapshot(
-        bus,
-        command.actor().clone(),
-        &roots,
-        projects,
-        allocation,
-    ) {
+    let snapshot = match validated_working_snapshot(bus, command.actor().clone(), &roots, projects)
+    {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

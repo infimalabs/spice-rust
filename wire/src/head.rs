@@ -20,7 +20,7 @@ pub use workflow::{
     WorkflowStatus, WorkflowStatusKind,
 };
 
-/// One allocator locality coordinate captured when a claim is won.
+/// The (project, phase) cell a claim occupied when it was won.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimCell {

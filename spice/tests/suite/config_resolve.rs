@@ -738,7 +738,6 @@ budget = 2
 skip = ["target/**"]
 
 [board.next]
-band = 3
 horizon = "4h"
 
 [lane]

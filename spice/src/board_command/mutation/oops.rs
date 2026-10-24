@@ -4,7 +4,6 @@ fn oops_snapshot(
     command: &wire::AdmittedCommand,
     add: &TaskOopsAdd,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<(ValidatedSnapshot, bool, wire::OopsGenerationHead), Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
@@ -75,7 +74,6 @@ fn oops_snapshot(
         command.actor().clone(),
         std::slice::from_ref(&add.design),
         projects,
-        allocation,
     )?;
     if design.is_some_and(|heads| heads.statement().body().born != add.design) {
         return Err(protocol_fault(
@@ -106,13 +104,11 @@ pub(in crate::board_command) fn task_oops_add(
     command: &wire::AdmittedCommand,
     add: &TaskOopsAdd,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let (snapshot, creates_design, generation) =
-        match oops_snapshot(bus, command, add, projects, allocation) {
-            Ok(snapshot) => snapshot,
-            Err(outcome) => return outcome,
-        };
+    let (snapshot, creates_design, generation) = match oops_snapshot(bus, command, add, projects) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
     let report_born = command
         .expected()
         .iter()

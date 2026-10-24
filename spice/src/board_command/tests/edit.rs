@@ -551,15 +551,7 @@ pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Optio
     let entries = actor_entries(&answer).expect("allocation board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("allocation board has one team subscription");
-    board::select(
-        &entries,
-        actor,
-        &subscription,
-        answer.allocation_band,
-        answer.recent_cell.as_ref(),
-        &answer.environment(),
-    )
-    .map(|selection| {
+    board::select(&entries, actor, &subscription, &answer.environment()).map(|selection| {
         (
             selection.entry().handle().to_string(),
             selection.urgency().value(),

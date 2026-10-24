@@ -297,7 +297,6 @@ impl Lanes {
             &request,
             None,
             &config.projects,
-            &config.allocation,
         );
         assert!(
             matches!(outcome, Outcome::Reply(_)),
@@ -317,13 +316,8 @@ impl Lanes {
             Vec::new(),
             &request,
         );
-        let outcome = crate::board_command::room_leave(
-            &self.bus,
-            &command,
-            &request,
-            &config.projects,
-            &config.allocation,
-        );
+        let outcome =
+            crate::board_command::room_leave(&self.bus, &command, &request, &config.projects);
         assert!(
             matches!(outcome, Outcome::Reply(_)),
             "leave commits: {outcome:?}"
@@ -420,7 +414,6 @@ impl Lanes {
             &request,
             &config.steering,
             &config.projects,
-            &config.allocation,
         );
         assert!(
             matches!(outcome, Outcome::Reply(_)),
@@ -457,7 +450,6 @@ impl Lanes {
             &request,
             &config.steering,
             &config.projects,
-            &config.allocation,
         );
         assert!(
             matches!(outcome, Outcome::Reply(_)),

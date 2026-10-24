@@ -42,7 +42,6 @@ pub(crate) fn read_next_work(
     let held = held_index(&entries, &principal)?;
 
     let subscription = allocation_subscription(residency.body(), &principal)?;
-    let recent_cell = observed.recent_claim_cell(&principal);
     let environment = observed.environment();
     let now = current_instant()?;
     let design_request = if held.is_none() {
@@ -69,7 +68,6 @@ pub(crate) fn read_next_work(
         board::Claimant {
             actor: &principal,
             subscription: &subscription,
-            recent_cell: recent_cell.as_ref(),
             environment: &environment,
             match_score: matcher
                 .as_ref()
@@ -102,15 +100,7 @@ pub(crate) fn read_next_work(
         }
     };
 
-    next_answer(
-        observed,
-        residency,
-        &principal,
-        projects,
-        allocation,
-        recent_cell,
-        state,
-    )
+    next_answer(observed, residency, &principal, projects, state)
 }
 
 fn next_answer(
@@ -118,8 +108,6 @@ fn next_answer(
     residency: &journal::JournalHead<wire::ResidencyHead>,
     principal: &wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-    recent_cell: Option<wire::ClaimCell>,
     next: NextWorkState,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
@@ -146,8 +134,6 @@ fn next_answer(
             public_max_depth: projects.public_max_depth(),
         },
         actor_route: actor_route(principal, &residency.body)?,
-        allocation_band: allocation.band(),
-        recent_cell,
         next: Some(next),
         tasks: Vec::new(),
         offer: Vec::new(),

@@ -27,7 +27,6 @@ pub(super) fn project_targets<'a>(
         .with_appliance(appliance.product.clone());
     let projected_residency = residency.body();
     let view = BoardView {
-        snapshot,
         entries: projection.entries(),
         selection,
         ready_at: projection.ready_at(),

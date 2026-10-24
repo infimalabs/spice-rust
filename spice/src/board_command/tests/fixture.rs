@@ -192,26 +192,6 @@ pub(super) fn issue<B: Serialize>(
     dispatch(bus, &command).expect("board command owns fixture kind")
 }
 
-pub(super) fn issue_with_allocation<B: Serialize>(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    actor: Actor,
-    kind: CommandKind,
-    expected: Vec<Witness>,
-    body: &B,
-    allocation: &board::NextConfig,
-) -> Outcome<CommandAnswer> {
-    let command = fixture_command(epoch, actor, kind, expected, body);
-    let projects = ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("board command test project policy");
-    dispatch_with_repository(bus, &command, None, &projects, allocation, None)
-        .expect("board command owns fixture kind")
-}
-
 pub(super) fn fixture_command<B: Serialize>(
     epoch: CanonicalUuid,
     actor: Actor,
@@ -501,32 +481,6 @@ fn open_and_full(bus: &Bus, epoch: CanonicalUuid) -> (BoardAnswer, Vec<Entry>) {
         (*open),
         actor_entries(&full).expect("full board entries validate"),
     )
-}
-
-pub(super) fn board_with_allocation(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    actor: Actor,
-    allocation: &board::NextConfig,
-) -> BoardAnswer {
-    let outcome = issue_with_allocation(
-        bus,
-        epoch,
-        actor,
-        CommandKind::BoardRead,
-        Vec::new(),
-        &BoardRead::All { family: None },
-        allocation,
-    );
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Snapshot(position),
-        body: CommandAnswer::Board(answer),
-    }) = outcome
-    else {
-        panic!("configured board read did not return a snapshot: {outcome:?}");
-    };
-    assert_eq!(position, answer.cursor);
-    *answer
 }
 
 pub(super) fn add(

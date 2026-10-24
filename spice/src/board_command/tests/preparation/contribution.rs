@@ -93,7 +93,6 @@ pub(super) fn contribute(
             artifacts: &store,
         }),
         &projects(),
-        &board::NextConfig::default(),
     )
 }
 
@@ -705,7 +704,6 @@ fn assert_exact_source_refusals(
             artifacts: &store,
         }),
         &projects(),
-        &board::NextConfig::default(),
     );
     assert_eq!(refused(&unwitnessed), "room::contribution-source-witness");
 }

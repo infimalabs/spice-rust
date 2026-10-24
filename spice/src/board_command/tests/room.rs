@@ -64,13 +64,7 @@ fn leave(
     let wire::intent::Intent::RoomLeave(request) = command.body() else {
         panic!("fixture command carries room leave");
     };
-    room_leave(
-        bus,
-        &command,
-        request,
-        &room_projects(),
-        &board::NextConfig::default(),
-    )
+    room_leave(bus, &command, request, &room_projects())
 }
 
 fn post_listeners(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> Vec<CanonicalUuid> {

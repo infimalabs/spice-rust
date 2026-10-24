@@ -2,7 +2,7 @@
 
 [Product model — core](../model.md) · [Spice product model](../README.md)
 
-Allocation, handoffs, locality, and the dry-board result live in the
+Allocation, handoffs, and the dry-board result live in the
 [work register](../invariants/identity.md#work-allocation-ranks-in-a-fixed-ladder).
 Steering escalation lives in the [steering register](../invariants/identity.md#steering-escalation-is-driven-by-silence-measured-from-publication).
 

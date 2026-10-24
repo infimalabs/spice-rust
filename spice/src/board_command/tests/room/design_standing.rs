@@ -132,7 +132,6 @@ pub(super) fn move_out(
         request,
         &steer::Config::default(),
         &room_projects(),
-        &board::NextConfig::default(),
     )
 }
 
@@ -166,7 +165,6 @@ fn set_stance(
         request,
         &steer::Config::default(),
         &room_projects(),
-        &board::NextConfig::default(),
     )
 }
 

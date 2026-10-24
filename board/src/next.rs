@@ -1,7 +1,8 @@
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::DesignCycle;
-use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
+use wire::{Actor, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
 
 use crate::config::NextConfig;
 use crate::task::Entry;
@@ -346,8 +347,6 @@ pub struct Selection<'a> {
     downstream_weight: usize,
     last_resort: bool,
     preferred: bool,
-    peer_occupied: bool,
-    movement: u8,
     queued_at: Option<Instant>,
 }
 
@@ -391,26 +390,19 @@ impl<'a> Selection<'a> {
 /// environment filters, then ranks a prior claimant's continuation first.
 /// Independent handoffs back to their prior claimant, self-authored reviews,
 /// and explicitly freed rows form the last-resort class. Effective priority and
-/// downstream weight follow. Queue ages within `band` of that group's oldest
-/// row admit locality: an active peer in the same project/phase cell repels,
-/// then movement from `recent_cell` costs one each for changing project and
-/// phase. Rows outside the band cannot be rescued by locality. Identical
-/// evidence always returns the same task regardless of slice order.
+/// downstream weight follow, then the oldest queue origin, then the handle.
+/// Identical evidence always returns the same task regardless of slice order.
 #[must_use]
 pub fn select<'a>(
     entries: &'a [Entry],
     actor: &Actor,
     subscription: &TeamSubscription,
-    band: u64,
-    recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
 ) -> Option<Selection<'a>> {
     select_with_satisfied(
         entries,
         actor,
         subscription,
-        band,
-        recent_cell,
         environment,
         &resolved_tasks(entries),
     )
@@ -424,7 +416,6 @@ pub fn select_at<'a>(
     actor: &Actor,
     subscription: &TeamSubscription,
     policy: NextConfig,
-    recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
     now: Instant,
 ) -> Option<Selection<'a>> {
@@ -433,7 +424,6 @@ pub fn select_at<'a>(
         Claimant {
             actor,
             subscription,
-            recent_cell,
             environment,
             match_score: None,
         },
@@ -453,21 +443,18 @@ pub fn select_with_satisfied<'a>(
     entries: &'a [Entry],
     actor: &Actor,
     subscription: &TeamSubscription,
-    band: u64,
-    recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
     satisfied: &ResolvedTasks,
 ) -> Option<Selection<'a>> {
     let claimant = Claimant {
         actor,
         subscription,
-        recent_cell,
         environment,
         match_score: None,
     };
     let candidates = candidates(entries, claimant, satisfied, None);
     let ranking = Ranking {
-        policy: NextConfig::new(band),
+        policy: NextConfig::default(),
         now: None,
         match_score: None,
     };
@@ -509,13 +496,11 @@ pub fn select_with_index_at<'a>(
 
 /// Who asks for work and from where: the allocation inputs that describe the
 /// claimant rather than the board. The actor's team subscription bounds what
-/// it may take, its most recent claim cell prices movement, and its
-/// environment decides which rows it can satisfy.
+/// it may take, and its environment decides which rows it can satisfy.
 #[derive(Clone, Copy)]
 pub struct Claimant<'a> {
     pub actor: &'a Actor,
     pub subscription: &'a TeamSubscription,
-    pub recent_cell: Option<&'a ClaimCell>,
     pub environment: &'a wire::Environment,
     /// How well the claimant's own recent work matches a candidate, ranked
     /// right after effective priority and downstream weight (higher first,
@@ -554,16 +539,13 @@ pub fn offer_order<'a>(
     entries: &'a [Entry],
     actor: &Actor,
     subscription: &TeamSubscription,
-    band: u64,
-    recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
 ) -> Vec<Selection<'a>> {
     offer_order_at_inner(
         entries,
         actor,
         subscription,
-        NextConfig::new(band),
-        recent_cell,
+        NextConfig::default(),
         environment,
         None,
     )
@@ -576,19 +558,10 @@ pub fn offer_order_at<'a>(
     actor: &Actor,
     subscription: &TeamSubscription,
     policy: NextConfig,
-    recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
     now: Instant,
 ) -> Vec<Selection<'a>> {
-    offer_order_at_inner(
-        entries,
-        actor,
-        subscription,
-        policy,
-        recent_cell,
-        environment,
-        Some(now),
-    )
+    offer_order_at_inner(entries, actor, subscription, policy, environment, Some(now))
 }
 
 fn offer_order_at_inner<'a>(
@@ -596,14 +569,12 @@ fn offer_order_at_inner<'a>(
     actor: &Actor,
     subscription: &TeamSubscription,
     policy: NextConfig,
-    recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
     let claimant = Claimant {
         actor,
         subscription,
-        recent_cell,
         environment,
         match_score: None,
     };
@@ -642,7 +613,6 @@ fn indexed_candidates<'a>(
     let Claimant {
         actor,
         subscription,
-        recent_cell,
         environment,
         match_score: _,
     } = claimant;
@@ -661,8 +631,6 @@ fn indexed_candidates<'a>(
             downstream_weight: scores.downstream_weights[entry_index],
             preferred: is_preferred_continuation(entry, actor),
             last_resort: is_independent_handoff(entry, actor) || is_released_by(entry, actor),
-            peer_occupied: peer_occupies(entries, entry, actor),
-            movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
             queued_at: entry.queued_at(),
         })
         .collect()
@@ -676,7 +644,7 @@ fn indexed_candidates<'a>(
 /// exceeds the policy's horizon are overdue and rank oldest first above any
 /// score; otherwise the claimant's `match_score` (higher first, absent zero),
 /// asked of every row in the group, decides. The tied rows then fall to the
-/// band from their greatest urgency, peer occupancy, movement, and handle.
+/// oldest queue origin, then the handle.
 fn choose(candidates: &[Selection<'_>], ranking: Ranking<'_>) -> Option<usize> {
     let preferred = candidates.iter().any(|candidate| candidate.preferred);
     let peer_class = candidates
@@ -714,16 +682,16 @@ fn choose(candidates: &[Selection<'_>], ranking: Ranking<'_>) -> Option<usize> {
                 .is_some_and(|now| is_overdue(now, *queued_at, &ranking))
         })
     };
-    if let Some(oldest) = group
+    if let Some(first_queued) = group
         .iter()
         .filter_map(|(_, candidate)| overdue(candidate))
         .min()
     {
         let tied = group
             .into_iter()
-            .filter(|(_, candidate)| overdue(candidate) == Some(oldest))
+            .filter(|(_, candidate)| overdue(candidate) == Some(first_queued))
             .collect::<Vec<_>>();
-        return tail(&tied, ranking.policy.band());
+        return oldest(&tied);
     }
     let scored = group
         .into_iter()
@@ -743,7 +711,7 @@ fn choose(candidates: &[Selection<'_>], ranking: Ranking<'_>) -> Option<usize> {
         .filter(|(_, score)| score.total_cmp(&best).is_eq())
         .map(|(candidate, _)| candidate)
         .collect::<Vec<_>>();
-    tail(&tied, ranking.policy.band())
+    oldest(&tied)
 }
 
 /// Whether a row queued at `queued_at` has waited past the policy's horizon.
@@ -756,47 +724,12 @@ fn is_overdue(now: Instant, queued_at: Instant, ranking: &Ranking<'_>) -> bool {
     waited > horizon
 }
 
-/// The one of `tied` the tail of the ladder hands out: within `band` of the
-/// greatest urgency among them, peer occupancy repels, then locality movement
-/// costs, then the handle decides.
-fn tail(tied: &[(usize, &Selection<'_>)], band: u64) -> Option<usize> {
-    let urgency = tied.iter().map(|(_, candidate)| candidate.urgency).max()?;
-    let in_band = tied
-        .iter()
-        .filter(|(_, candidate)| urgency.value().abs_diff(candidate.urgency.value()) <= band)
-        .collect::<Vec<_>>();
-    let peer_occupied = in_band
-        .iter()
-        .map(|(_, candidate)| candidate.peer_occupied)
-        .min()?;
-    let movement = in_band
-        .iter()
-        .filter(|(_, candidate)| candidate.peer_occupied == peer_occupied)
-        .map(|(_, candidate)| candidate.movement)
-        .min()?;
-    in_band
-        .into_iter()
-        .filter(|(_, candidate)| {
-            candidate.peer_occupied == peer_occupied && candidate.movement == movement
-        })
-        .min_by_key(|(_, candidate)| candidate.entry.handle())
+/// The one of `tied` the tail of the ladder hands out: the oldest queue
+/// origin (greatest urgency), then the handle.
+fn oldest(tied: &[(usize, &Selection<'_>)]) -> Option<usize> {
+    tied.iter()
+        .min_by_key(|(_, candidate)| (Reverse(candidate.urgency), candidate.entry.handle()))
         .map(|(index, _)| *index)
-}
-
-fn peer_occupies(entries: &[Entry], candidate: &Entry, actor: &Actor) -> bool {
-    entries.iter().any(|entry| {
-        entry.claim().is_some_and(|claim| {
-            claim.disposition == ClaimDisposition::Active
-                && &claim.actor != actor
-                && claim.cell.project == candidate.project().as_str()
-                && claim.cell.phase == candidate.workflow().phase
-        })
-    })
-}
-
-fn movement_cost(recent: &ClaimCell, candidate: &Entry) -> u8 {
-    u8::from(recent.project != candidate.project().as_str())
-        + u8::from(recent.phase != candidate.workflow().phase)
 }
 
 /// Whether `entry` is an independent handoff back to its prior claimant.

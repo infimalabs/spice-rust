@@ -9,7 +9,6 @@ pub(in crate::board_command) fn read_task_detail(
     detail: &wire::intent::TaskDetail,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let observed = match bus.task_snapshot() {
         Ok(observed) => observed,
@@ -21,7 +20,6 @@ pub(in crate::board_command) fn read_task_detail(
         &observed,
         principal,
         projects,
-        allocation,
         None,
         Some(&projection),
         false,

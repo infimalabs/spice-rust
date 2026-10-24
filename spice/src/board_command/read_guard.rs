@@ -49,12 +49,11 @@ pub(super) fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
         .map_err(|error| store_fault("board::heads-unreadable", &error.to_string()))?;
-    validated_snapshot_from(&observed, principal, projects, allocation)
+    validated_snapshot_from(&observed, principal, projects)
 }
 
 /// The principal role heads an author-naming read resolves fact actors
@@ -70,18 +69,14 @@ pub(super) fn validated_snapshot_from(
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
-    validated_snapshot_from_with_occupant(
-        observed, principal, projects, allocation, None, None, true,
-    )
+    validated_snapshot_from_with_occupant(observed, principal, projects, None, None, true)
 }
 
 fn validated_snapshot_from_with_occupant(
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     prospective_occupant: Option<wire::CanonicalUuid>,
     selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
     retain_facts: bool,
@@ -107,12 +102,6 @@ fn validated_snapshot_from_with_occupant(
     for task in &mut tasks {
         withhold_taste_findings(&principal, &mut task.statement.body.taste);
     }
-    // The allocation history is a global projection: a scoped preflight
-    // neither consumes nor synthesizes a partial one.
-    let recent_cell = selected
-        .is_none()
-        .then(|| observed.recent_claim_cell(&principal))
-        .flatten();
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -145,8 +134,6 @@ fn validated_snapshot_from_with_occupant(
                 public_max_depth: projects.public_max_depth(),
             },
             actor_route,
-            allocation_band: allocation.band(),
-            recent_cell,
             next: None,
             tasks,
             offer: Vec::new(),
@@ -731,7 +718,6 @@ pub(super) fn read_board(
         &observed,
         principal,
         projects,
-        allocation,
         None,
         selected.as_ref(),
         false,
@@ -818,8 +804,8 @@ pub(super) fn read_board(
 /// The order the allocator would offer this board's work to a draining lane.
 ///
 /// The app asks no particular lane, so the reader is a neutral seat: every
-/// active claim is a peer's, no subscription narrows the creator team, and no
-/// locality history moves the band. Each step is `task next`'s own choice.
+/// active claim is a peer's and no subscription narrows the creator team.
+/// Each step is `task next`'s own choice.
 pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::TaskStamp> {
     let subscription = wire::TeamSubscription {
         team: wire::CanonicalUuid::new(uuid::Uuid::nil()),
@@ -831,8 +817,6 @@ pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::
         entries,
         &wire::Actor::Spice,
         &subscription,
-        answer.allocation_band,
-        None,
         &answer.environment(),
     )
     .into_iter()
@@ -845,7 +829,6 @@ pub(super) fn read_graph(
     graph: &BoardGraph,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &graph.at {
         return refusal(
@@ -869,9 +852,9 @@ pub(super) fn read_graph(
         }
     };
     let snapshot = match if graph.all {
-        validated_snapshot(bus, principal, projects, allocation)
+        validated_snapshot(bus, principal, projects)
     } else {
-        validated_working_snapshot(bus, principal, &[], projects, allocation)
+        validated_working_snapshot(bus, principal, &[], projects)
     } {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -907,7 +890,6 @@ pub(super) fn read_handout(
     handout: &BoardHandout,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &handout.at {
         return refusal(
@@ -923,7 +905,7 @@ pub(super) fn read_handout(
             "name an output path or -",
         );
     }
-    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -965,13 +947,12 @@ pub(super) fn read_ledger(
     ledger: &DocLedger,
     principal: wire::Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let roles = match principal_roles(bus) {
         Ok(roles) => roles,
         Err(outcome) => return outcome,
     };
-    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
+    let snapshot = match validated_snapshot(bus, principal, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

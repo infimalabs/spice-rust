@@ -41,7 +41,6 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     "actor": "operator",
     "origin_thread": "operator"
   },
-  "allocation_band": 2,
   "tasks": [
     {
       "visibility": { "kind": "public" },

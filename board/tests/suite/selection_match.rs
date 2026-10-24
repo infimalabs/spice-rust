@@ -1,11 +1,11 @@
 //! The claimant's match score ranks right after effective priority and
 //! downstream weight: it decides among that group unless a row is overdue, and
-//! only the band, peer occupancy, movement and handle follow it.
+//! only the oldest queue origin and the handle follow it.
 
 use board::Entry;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, Phase, Seq, TaskHead, TaskPriority,
-    TaskStamp, WorkflowHead,
+    Actor, CanonicalUuid, ClaimHead, Instant, Phase, Seq, TaskHead, TaskPriority, TaskStamp,
+    WorkflowHead,
 };
 
 fn stamp(text: &str) -> TaskStamp {
@@ -96,26 +96,6 @@ fn entry(name: &str, project: &str, queue_origin: u64, priority: Option<TaskPrio
     admitted(head, None)
 }
 
-/// A peer lane's active claim in the `board.alpha`/todo cell.
-fn peer_claimed(name: &str) -> Entry {
-    let claim = ClaimHead {
-        actor: Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411")),
-        fact: Seq::new(2).expect("non-zero sequence"),
-        claimed: Seq::new(2).expect("non-zero sequence"),
-        cell: wire::ClaimCell {
-            project: "board.alpha".to_owned(),
-            phase: phase("todo"),
-        },
-        lane: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
-        occupant: uuid("019fbbde-5105-75a3-a76a-722afde1e409"),
-        epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
-        recovery: None,
-        disposition: ClaimDisposition::Active,
-        acknowledged: 0,
-    };
-    admitted(statement(name, "board.alpha", 1), Some(claim))
-}
-
 fn handoff(entry: Entry, kind: board::PhaseHandoffKind, until: &str) -> Entry {
     entry.with_phase_handoff(Some(board::PhaseHandoff::new(
         kind,
@@ -129,12 +109,7 @@ fn now() -> Instant {
 }
 
 /// Select with a score that prefers the named handle and ranks every other row zero.
-fn select<'a>(
-    entries: &'a [Entry],
-    recent: Option<&wire::ClaimCell>,
-    band: u64,
-    favored: Option<&str>,
-) -> &'a Entry {
+fn select<'a>(entries: &'a [Entry], favored: Option<&str>) -> &'a Entry {
     let subscription = all_projects();
     let environment = environment();
     let score = |entry: &Entry| f64::from(favored == Some(entry.handle().as_str()));
@@ -144,11 +119,10 @@ fn select<'a>(
         board::Claimant {
             actor: &Actor::Spice,
             subscription: &subscription,
-            recent_cell: recent,
             environment: &environment,
             match_score,
         },
-        board::NextConfig::new(band),
+        board::NextConfig::default(),
         &board::resolved_tasks(entries),
         now(),
     )
@@ -157,45 +131,22 @@ fn select<'a>(
 }
 
 /// The favored row wins over `rival` whichever order the slice lists them in.
-fn favored_wins(favored: &Entry, rival: &Entry, recent: Option<&wire::ClaimCell>) {
+fn favored_wins(favored: &Entry, rival: &Entry) {
     let handle = favored.handle().as_str().to_owned();
     for entries in [
         [favored.clone(), rival.clone()],
         [rival.clone(), favored.clone()],
     ] {
-        let selected = select(&entries, recent, 2, Some(&handle));
+        let selected = select(&entries, Some(&handle));
         assert_eq!(selected.born(), favored.born(), "favored {handle}");
     }
 }
 
 #[test]
-fn a_higher_score_beats_an_older_less_moved_or_peer_free_row_in_either_order() {
-    // Older by far more than the band.
+fn a_higher_score_beats_an_older_row_in_either_order() {
     let oldest = entry("BOARD-a1", "board.alpha", 1, None);
     let favored_young = entry("BOARD-z1", "board.alpha", 40, None);
-    favored_wins(&favored_young, &oldest, None);
-
-    // Less moved from the claimant's recent cell.
-    let recent = wire::ClaimCell {
-        project: "board.alpha".to_owned(),
-        phase: phase("todo"),
-    };
-    let local = entry("BOARD-a1", "board.alpha", 1, None);
-    let favored_moved = entry("BOARD-z1", "board.beta", 1, None);
-    favored_wins(&favored_moved, &local, Some(&recent));
-
-    // Free of any peer's cell.
-    let peer = peer_claimed("BOARD-p1");
-    let free = entry("BOARD-a1", "board.gamma", 1, None);
-    let favored_occupied = entry("BOARD-z1", "board.alpha", 1, None);
-    let handle = favored_occupied.handle().as_str().to_owned();
-    for entries in [
-        [peer.clone(), free.clone(), favored_occupied.clone()],
-        [favored_occupied.clone(), free.clone(), peer.clone()],
-    ] {
-        let selected = select(&entries, None, 2, Some(&handle));
-        assert_eq!(selected.born(), favored_occupied.born());
-    }
+    favored_wins(&favored_young, &oldest);
 }
 
 #[test]
@@ -204,19 +155,13 @@ fn priority_weight_class_and_continuation_each_beat_any_score() {
     let favored = entry("BOARD-a1", "board.alpha", 1, None);
     let handle = favored.handle().as_str().to_owned();
     let entries = [favored.clone(), urgent.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        urgent.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), urgent.born());
 
     let weighted = entry("BOARD-z1", "board.alpha", 1, None);
     let mut dependent = statement("BOARD-z2", "board.alpha", 1);
     dependent.dependencies.push(stamp("BOARD-z1"));
     let entries = [favored.clone(), weighted.clone(), admitted(dependent, None)];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        weighted.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), weighted.born());
 
     let ordinary = entry("BOARD-z1", "board.alpha", 1, None);
     let favored_last_resort = handoff(
@@ -225,10 +170,7 @@ fn priority_weight_class_and_continuation_each_beat_any_score() {
         "2026-08-01T05:00:00.000Z",
     );
     let entries = [favored_last_resort, ordinary.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        ordinary.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), ordinary.born());
 
     let continuation = handoff(
         entry("BOARD-z1", "board.alpha", 1, None),
@@ -236,10 +178,7 @@ fn priority_weight_class_and_continuation_each_beat_any_score() {
         "2026-08-01T07:00:00.000Z",
     );
     let entries = [favored, continuation.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        continuation.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), continuation.born());
 }
 
 #[test]
@@ -256,22 +195,13 @@ fn an_overdue_row_beats_any_score_and_overdue_rows_go_oldest_first() {
 
     // Exactly the horizon is not yet overdue: the score decides.
     let entries = [at_horizon, favored.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        favored.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), favored.born());
 
     let entries = [favored.clone(), overdue.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        overdue.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), overdue.born());
 
     let entries = [overdue, favored, older_overdue.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        older_overdue.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), older_overdue.born());
 
     // The policy's horizon, not the installed one, draws the tier: under a
     // half-hour horizon the hour-old rival is overdue while the favored
@@ -281,10 +211,7 @@ fn an_overdue_row_beats_any_score_and_overdue_rows_go_oldest_first() {
     let rival = entry("BOARD-z1", "board.alpha", 1, None)
         .with_queued_at(Some(instant("2026-08-01T05:00:00.000Z")));
     let entries = [favored.clone(), rival.clone()];
-    assert_eq!(
-        select(&entries, None, 2, Some(&handle)).born(),
-        favored.born()
-    );
+    assert_eq!(select(&entries, Some(&handle)).born(), favored.born());
     let score = |entry: &Entry| f64::from(entry.born() == favored.born());
     let subscription = all_projects();
     let environment = environment();
@@ -293,11 +220,10 @@ fn an_overdue_row_beats_any_score_and_overdue_rows_go_oldest_first() {
         board::Claimant {
             actor: &Actor::Spice,
             subscription: &subscription,
-            recent_cell: None,
             environment: &environment,
             match_score: Some(&score),
         },
-        board::NextConfig::new(2).with_horizon(std::time::Duration::from_secs(1800)),
+        board::NextConfig::new(std::time::Duration::from_secs(1800)),
         &board::resolved_tasks(&entries),
         now(),
     )
@@ -317,8 +243,8 @@ fn a_below_floor_or_absent_score_selects_exactly_what_the_ladder_selects() {
         ([young, oldest.clone()], oldest),
     ] {
         // Every row scoring zero is what a caller's floor hands the board.
-        let floored = select(&entries, None, 2, Some("never-a-handle"));
-        let unscored = select(&entries, None, 2, None);
+        let floored = select(&entries, Some("never-a-handle"));
+        let unscored = select(&entries, None);
         assert_eq!(floored.born(), expected.born());
         assert_eq!(unscored.born(), expected.born());
     }

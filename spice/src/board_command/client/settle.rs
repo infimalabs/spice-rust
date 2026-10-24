@@ -83,17 +83,12 @@ pub(super) fn dispatch_settlement(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
-        wire::intent::Intent::TaskDelete(delete) => {
-            task_delete(bus, command, delete, projects, allocation)
-        }
-        wire::intent::Intent::TaskClose(close) => {
-            task_close(bus, command, close, projects, allocation)
-        }
+        wire::intent::Intent::TaskDelete(delete) => task_delete(bus, command, delete, projects),
+        wire::intent::Intent::TaskClose(close) => task_close(bus, command, close, projects),
         wire::intent::Intent::TaskConclude(conclude) => {
-            task_conclude(bus, command, conclude, projects, allocation)
+            task_conclude(bus, command, conclude, projects)
         }
         _ => return None,
     })

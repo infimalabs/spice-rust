@@ -81,7 +81,6 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("consent.rule[].answer", TRACKED),
     ConfigKeyDeclaration::new("consent.rule[].budget", TRACKED),
     ConfigKeyDeclaration::new("gate.walk.skip", TRACKED),
-    ConfigKeyDeclaration::new("board.next.band", TRACKED),
     ConfigKeyDeclaration::new("board.next.horizon", TRACKED),
     ConfigKeyDeclaration::new("lane.life", TRACKED_FLAG),
     ConfigKeyDeclaration::new("lane.lease", TRACKED),

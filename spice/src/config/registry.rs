@@ -579,13 +579,6 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
-    fixed "board.next.band" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(2)),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
     fixed "board.next.horizon" {
         kind: Duration,
         builtin: Some(Builtin::String("2h")),

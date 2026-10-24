@@ -433,8 +433,6 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
             &lane,
             &allocation_subscription(&available.residency.body, &lane)
                 .expect("fixture lane subscription"),
-            available.allocation_band,
-            available.recent_cell.as_ref(),
             &available.environment(),
         )
         .expect("allocator winner")
@@ -504,8 +502,6 @@ fn exact_recovery_names_one_ready_task_and_journals_its_transaction() {
             &lane,
             &allocation_subscription(&available.residency.body, &lane)
                 .expect("fixture lane subscription"),
-            available.allocation_band,
-            available.recent_cell.as_ref(),
             &available.environment(),
         )
         .expect("allocator winner")

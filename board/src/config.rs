@@ -23,7 +23,6 @@ impl Config {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NextConfig {
-    band: u64,
     #[serde(with = "duration_word")]
     horizon: Duration,
 }
@@ -32,26 +31,11 @@ impl NextConfig {
     /// The wait since queue origin past which a row is overdue, as installed.
     pub const DEFAULT_HORIZON: Duration = Duration::from_secs(2 * 60 * 60);
 
-    /// Construct one admitted allocator policy for an explicit urgency band
-    /// under the installed overdue horizon.
+    /// Construct one admitted allocator policy under an explicit overdue
+    /// horizon.
     #[must_use]
-    pub const fn new(band: u64) -> Self {
-        Self {
-            band,
-            horizon: Self::DEFAULT_HORIZON,
-        }
-    }
-
-    /// The same policy under an explicit overdue horizon.
-    #[must_use]
-    pub const fn with_horizon(self, horizon: Duration) -> Self {
-        Self { horizon, ..self }
-    }
-
-    /// Integer urgency distance treated as an equivalent tie band.
-    #[must_use]
-    pub const fn band(&self) -> u64 {
-        self.band
+    pub const fn new(horizon: Duration) -> Self {
+        Self { horizon }
     }
 
     /// The wait since a row's queue-origin instant past which it is overdue
@@ -64,7 +48,7 @@ impl NextConfig {
 
 impl Default for NextConfig {
     fn default() -> Self {
-        Self::new(2)
+        Self::new(Self::DEFAULT_HORIZON)
     }
 }
 

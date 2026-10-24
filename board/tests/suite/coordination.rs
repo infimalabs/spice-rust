@@ -62,9 +62,8 @@ fn select<'a>(
     entries: &'a [Entry],
     actor: &Actor,
     subscription: &wire::TeamSubscription,
-    band: u64,
 ) -> Option<board::Selection<'a>> {
-    board::select(entries, actor, subscription, band, None, &environment())
+    board::select(entries, actor, subscription, &environment())
 }
 
 fn projects() -> board::ProjectPolicy {
@@ -628,7 +627,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
         assert_eq!(
-            select(&entries, &actor, &all_projects(), 2)
+            select(&entries, &actor, &all_projects())
                 .expect("public task remains eligible")
                 .entry()
                 .handle(),
@@ -776,7 +775,7 @@ fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state()
         &observed_before
     ));
     assert_eq!(
-        select(&entries, &actor, &all_projects(), 2)
+        select(&entries, &actor, &all_projects())
             .expect("ordinary eligible work remains")
             .entry()
             .handle(),
@@ -973,7 +972,7 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
     ready_statement.dependencies = vec![completed_stamp.clone(), deleted_stamp.clone()];
     let ready = admitted(ready_statement, workflow("todo"), None, None).expect("ready");
     let full = [completed, deleted, ready.clone()];
-    let reference = select(&full, &Actor::Spice, &all_projects(), 2)
+    let reference = select(&full, &Actor::Spice, &all_projects())
         .expect("both terminal forms satisfy dependency edges");
 
     let mut settled = board::ResolvedTasks::new();
@@ -984,8 +983,6 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
         &frontier,
         &Actor::Spice,
         &all_projects(),
-        2,
-        None,
         &environment(),
         &settled,
     )
@@ -1001,8 +998,6 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
             &[missing],
             &Actor::Spice,
             &all_projects(),
-            2,
-            None,
             &environment(),
             &settled,
         )
@@ -1023,8 +1018,6 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
             &cycle,
             &Actor::Spice,
             &all_projects(),
-            2,
-            None,
             &environment(),
             &settled,
         )

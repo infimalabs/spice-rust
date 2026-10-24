@@ -118,15 +118,8 @@ fn explicit_release_clears_possession_and_ranks_the_row_last_for_that_lane() {
     let entries = actor_entries(&continued).expect("continued board projects to entries");
     let subscription = allocation_subscription(&continued.residency.body, &lane)
         .expect("lane has an allocation subscription");
-    let quiet = board::select(
-        &entries,
-        &lane,
-        &subscription,
-        continued.allocation_band,
-        continued.recent_cell.as_ref(),
-        &continued.environment(),
-    )
-    .expect("a freed row is ranked last, never excluded");
+    let quiet = board::select(&entries, &lane, &subscription, &continued.environment())
+        .expect("a freed row is ranked last, never excluded");
     assert_eq!(quiet.entry().handle(), &released_task);
     clean(&root, bus);
 }

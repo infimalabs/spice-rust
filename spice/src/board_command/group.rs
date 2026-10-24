@@ -153,7 +153,6 @@ pub(crate) fn move_working_group(
     request: &WorkingGroupMove,
     config: &steer::Config,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
     let design = request.design.clone();
     let (current, head, workflow) = match bus.read(move |read| {
@@ -199,7 +198,7 @@ pub(crate) fn move_working_group(
     };
     let deactivation = if was_active && !fact.partition.design_is_active(&request.design) {
         let handle = TaskHandle::for_project(&task.project, &task.born);
-        match Deactivation::read(bus, &handle, projects, allocation) {
+        match Deactivation::read(bus, &handle, projects) {
             Ok(deactivation) => deactivation,
             Err(outcome) => return (outcome, None),
         }
@@ -436,7 +435,6 @@ pub(crate) fn disband_working_group(
     request: &WorkingGroupDisband,
     config: &steer::Config,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
     let (current, revision) = match advancing_partition(bus, command) {
         Ok(found) => found,
@@ -471,11 +469,7 @@ pub(crate) fn disband_working_group(
         outcome,
         bus,
         command,
-        ShelvingPolicy {
-            config,
-            projects,
-            allocation,
-        },
+        ShelvingPolicy { config, projects },
         handles,
     )
 }
@@ -492,13 +486,8 @@ pub(crate) fn set_working_group_stance(
     request: &WorkingGroupStanceSet,
     config: &steer::Config,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let policy = ShelvingPolicy {
-        config,
-        projects,
-        allocation,
-    };
+    let policy = ShelvingPolicy { config, projects };
     let (current, revision) = match advancing_partition(bus, command) {
         Ok(found) => found,
         Err(outcome) => return (outcome, Vec::new()),
@@ -579,13 +568,11 @@ fn design_handles(
     .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))
 }
 
-/// The steering, project, and allocation policy shelving reads each Design's
-/// room under.
+/// The steering and project policy shelving reads each Design's room under.
 #[derive(Clone, Copy)]
 struct ShelvingPolicy<'a> {
     config: &'a steer::Config,
     projects: &'a ProjectPolicy,
-    allocation: &'a board::NextConfig,
 }
 
 /// Commit shelving still owed to a group that already stands Passive, without
@@ -656,7 +643,7 @@ fn shelve(
     for design in designs {
         let mut settled = false;
         for _ in 0..SHELVING_ATTEMPTS {
-            let room = match Deactivation::read(bus, &design, policy.projects, policy.allocation) {
+            let room = match Deactivation::read(bus, &design, policy.projects) {
                 Ok(Some(room)) if !room.is_quiescent() => room,
                 Ok(_) => {
                     settled = true;
