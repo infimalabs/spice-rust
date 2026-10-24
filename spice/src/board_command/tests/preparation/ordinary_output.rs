@@ -39,8 +39,8 @@ fn a_design_selects_an_ordinary_output_with_an_open_vocabulary_phase() {
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        std::collections::BTreeSet::from([born(&sibling)]),
-        "only the rejected sibling stays gated"
+        std::collections::BTreeSet::from([born(&design)]),
+        "the veto closes the sibling and the Design waits on the output it released"
     );
     assert!(
         !at(&board(&bus, epoch, Actor::Operator), &selected)

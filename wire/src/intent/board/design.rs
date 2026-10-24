@@ -67,6 +67,25 @@ pub fn is_open_design(intent: Option<crate::TaskIntent>, workflow: &crate::Workf
         && workflow.phase.as_str() == "design"
 }
 
+/// The parent that released this construction root: a root built under a
+/// Plan or Design is born depending on its immediate parent, and a Design
+/// decision removes that one edge when it accepts the output. The returned
+/// parent is the controller that now waits on the root until it settles.
+/// Corrections carry provenance without ever holding the edge and are not
+/// construction roots, and a self-owned Plan or Design releases nothing.
+#[must_use]
+pub fn released_construction_root<'a>(
+    born: &crate::TaskStamp,
+    dependencies: &[crate::TaskStamp],
+    preparation: Option<&'a crate::TaskPreparation>,
+) -> Option<&'a crate::TaskStamp> {
+    let preparation = preparation?;
+    (preparation.construction == *born
+        && preparation.parent != *born
+        && !dependencies.contains(&preparation.parent))
+    .then_some(&preparation.parent)
+}
+
 /// One Design's lifecycle standing. An open Design is passive outside every
 /// working group and active inside one; only the operator concludes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

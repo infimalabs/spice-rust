@@ -990,7 +990,8 @@ impl<'a> WorkProjection<'a> {
             .collect::<Vec<_>>();
 
         let proposal_ready = proposal_ready(board, &availability);
-        let dependent_indexes = dependent_indexes(board, &by_born, &availability);
+        let released = released_indexes(board, &by_born);
+        let dependent_indexes = dependent_indexes(board, &by_born, &availability, &released);
         let design_owned = design_owned_indexes(board, &dependent_indexes);
         let offer_ranks = offer_ranks(board, &by_born);
 
@@ -1049,7 +1050,7 @@ impl<'a> WorkProjection<'a> {
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                let dependencies = work_dependencies(row, board, &by_born);
+                let dependencies = work_dependencies(row, board, &by_born, &released[index]);
                 let owner =
                     accountable_owner(row, design_owned[index], teams.as_ref(), &member_teams);
                 let dependents = dependent_indexes[index]
@@ -1124,10 +1125,13 @@ fn home_team(
         })
 }
 
+/// A task's statement dependencies, then the construction roots a Design
+/// released, which it waits on as its own prerequisites until they settle.
 fn work_dependencies<'a>(
     task: &'a BoardTask,
-    board: &BoardView,
+    board: &'a BoardView,
     by_born: &BTreeMap<&TaskStamp, usize>,
+    released: &[usize],
 ) -> Vec<WorkDependency<'a>> {
     task.statement
         .body
@@ -1143,7 +1147,36 @@ fn work_dependencies<'a>(
                 }),
             }
         })
+        .chain(released.iter().map(|&index| {
+            let output = &board.tasks[index];
+            WorkDependency {
+                born: &output.statement.body.born,
+                task: Some(index),
+                satisfied: !output.workflow.body.status.is_pending(),
+            }
+        }))
         .collect()
+}
+
+/// For every task index, the construction roots a Design at that index
+/// released: pending or settled outputs whose immediate parent is that Design
+/// and whose edge to it a decision removed.
+fn released_indexes(board: &BoardView, by_born: &BTreeMap<&TaskStamp, usize>) -> Vec<Vec<usize>> {
+    let mut released = vec![Vec::new(); board.tasks.len()];
+    for (index, task) in board.tasks.iter().enumerate() {
+        let Some(&design) = wire::intent::released_construction_root(
+            &task.statement.body.born,
+            &task.statement.body.dependencies,
+            task.statement.body.preparation.as_ref(),
+        )
+        .and_then(|parent| by_born.get(parent)) else {
+            continue;
+        };
+        if board.tasks[design].design_standing().is_some() {
+            released[design].push(index);
+        }
+    }
+    released
 }
 
 /// Each task's position in the resident's offer order, by task index. A stamp
@@ -1255,6 +1288,7 @@ fn dependent_indexes(
     board: &BoardView,
     by_born: &BTreeMap<&TaskStamp, usize>,
     availability: &[WorkAvailability],
+    released: &[Vec<usize>],
 ) -> Vec<Vec<usize>> {
     let mut dependents = vec![Vec::new(); board.tasks.len()];
     for (dependent, task) in board.tasks.iter().enumerate() {
@@ -1262,6 +1296,9 @@ fn dependent_indexes(
             if let Some(&index) = by_born.get(dependency) {
                 dependents[index].push(dependent);
             }
+        }
+        for &output in &released[dependent] {
+            dependents[output].push(dependent);
         }
     }
     for indexes in &mut dependents {

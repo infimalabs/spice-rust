@@ -9,8 +9,10 @@ use crate::urgency::{Urgency, declared_priority};
 /// Readiness facts every allocation surface shares.
 ///
 /// Ordinary dependencies require settlement. Preparation control uses those
-/// same edges: a Design decision removes selected output edges, while a Plan's
-/// positive settlement satisfies its constructed work.
+/// same edges: a Design decision removes selected output edges, and from then
+/// on the released work is the Design's own prerequisite set, holding it from
+/// another pass until it settles; a Plan's positive settlement satisfies its
+/// constructed work.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,

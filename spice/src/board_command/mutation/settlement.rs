@@ -276,6 +276,78 @@ pub(in crate::board_command) fn stage_conclusion(
     .map(|(_, closed)| closed)
 }
 
+/// Stage the closure of every output a decision rejected, with each pending
+/// subtree it controls, into the decision's own `write`. A rejected output
+/// is settled by the operator's veto rather than left pending behind its
+/// Design; a held one refuses the decision and names its holder.
+pub(in crate::board_command) fn stage_rejection(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    rejected: &[TaskHandle],
+    validation: &str,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    decision: DecisionWrite<'_>,
+) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
+    let DecisionWrite {
+        write,
+        decided: cause,
+        at,
+    } = decision;
+    let snapshot =
+        validated_working_snapshot(bus, command.actor().clone(), rejected, projects, allocation)?;
+    guard_task_projection(write, snapshot.task_barrier.clone());
+    let mut closed = Vec::with_capacity(rejected.len());
+    for handle in rejected {
+        if task_entry(&snapshot.entries, handle)
+            .is_some_and(|entry| !entry.workflow().status.is_pending())
+        {
+            continue;
+        }
+        let close = TaskClose {
+            task: handle.clone(),
+            validation: validation.to_owned(),
+            force_claimed: false,
+        };
+        let settlement = Settlement::Close(&close);
+        let entry = admitted_entry(&snapshot, settlement)?;
+        let controlled = board::controlled_pending(&snapshot.entries, entry.born());
+        require_controlled_unheld(&controlled, settlement)?;
+        let (_, settled) = stage(
+            write,
+            entry,
+            settlement,
+            Staging {
+                cause: FactCause::Pending(cause),
+                at,
+                oops_generation: None,
+            },
+            projects,
+        )?;
+        closed.push(entry.handle().clone());
+        for controlled in controlled {
+            let close = TaskClose {
+                task: controlled.handle().clone(),
+                validation: validation.to_owned(),
+                force_claimed: false,
+            };
+            stage(
+                write,
+                controlled,
+                Settlement::Close(&close),
+                Staging {
+                    cause: FactCause::Pending(settled),
+                    at,
+                    oops_generation: None,
+                },
+                projects,
+            )?;
+            closed.push(controlled.handle().clone());
+        }
+    }
+    Ok(closed)
+}
+
 fn settle(
     bus: &Bus,
     command: &wire::AdmittedCommand,

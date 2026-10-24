@@ -3,7 +3,7 @@ use wire::intent::{
     TaskLifecycleKind, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelations,
 };
 
-fn read_relations(
+pub(super) fn read_relations(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -19,7 +19,9 @@ fn read_relations(
     )
 }
 
-fn answer(outcome: Outcome<CommandAnswer>) -> (wire::Seq, Box<wire::intent::TaskRelationsAnswer>) {
+pub(super) fn answer(
+    outcome: Outcome<CommandAnswer>,
+) -> (wire::Seq, Box<wire::intent::TaskRelationsAnswer>) {
     let Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(position),
         body: CommandAnswer::TaskRelations(answer),

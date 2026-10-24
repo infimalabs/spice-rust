@@ -114,16 +114,53 @@ fn capture_and_recovery_of_a_steeping_design_name_its_cycle_and_next_action() {
     let awaiting = held("capture", wire::rooms::DesignCycle::AwaitingDecision);
     assert!(awaiting.contains("spice preparation decide"), "{awaiting}");
 
-    // Selecting the output and running it leaves the Design waiting on it.
+    // Selecting the output leaves the Design waiting on it: the released
+    // work is the Design's prerequisite, so counted input recorded meanwhile
+    // does not open another pass until the work settles.
     select_candidate_outputs(&bus, epoch, &design, candidate, &[&output], 1);
     claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &output);
     let waiting = held("capture", wire::rooms::DesignCycle::WaitingOnSelectedWork);
     assert!(waiting.contains("finish the work decision"), "{waiting}");
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_committed(nudge_design(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &current,
+        &design,
+    ));
+    held("capture", wire::rooms::DesignCycle::WaitingOnSelectedWork);
+    held("recover", wire::rooms::DesignCycle::WaitingOnSelectedWork);
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let heads = at(&current, &output);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskClose {
+            task: output,
+            validation: "the released output settled".to_owned(),
+            force_claimed: true,
+        },
+    ));
+    assert_committed(win_named(&bus, epoch, &seats[1], &design, "capture"));
+    assert_eq!(
+        active_holder(&bus, epoch, &design),
+        Some(Actor::Lane(seats[1].lane)),
+        "the last released output's settlement readies the Design for the input it gathered"
+    );
     clean(&root, bus);
 }
 
 #[test]
-fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
+fn recorded_rejections_close_outputs_while_the_design_waits_on_released_work() {
     let (root, bus, epoch, seats) = fixture("preparation-rejected-selection", 2);
     let design = add_controller(
         &bus,
@@ -154,18 +191,12 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
         Some(mixed_decision.clone())
     );
     assert!(
-        at(&after_mixed, &rejected)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(
-        at(&after_mixed, &rejected)
+        !at(&after_mixed, &rejected)
             .workflow
             .body
             .status
-            .is_pending()
+            .is_pending(),
+        "a veto closes the output in the decision write"
     );
     assert!(
         !at(&after_mixed, &accepted)
@@ -178,11 +209,19 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
         at(&after_mixed, &undecided).preparation_decision,
         Some(mixed_decision)
     );
+    assert!(
+        !at(&after_mixed, &undecided)
+            .workflow
+            .body
+            .status
+            .is_pending(),
+        "every output the decision did not accept is closed"
+    );
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
 
     assert!(
-        !open_workflow_waiting(&bus, epoch).contains(&design.born().expect("Design stamp")),
-        "a recorded rejection is counted input: the Design is ready for its next pass"
+        open_workflow_waiting(&bus, epoch).contains(&design.born().expect("Design stamp")),
+        "the released output is the Design's prerequisite until it settles"
     );
     let CommandAnswer::Task(answer) = assert_committed(conclude(
         &bus,
@@ -193,16 +232,17 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
     )) else {
         panic!("Design conclusion returned another answer")
     };
-    assert_eq!(answer.closed.len(), 2);
-    assert!(answer.closed.contains(&rejected));
-    assert!(answer.closed.contains(&undecided));
+    assert!(
+        answer.closed.is_empty(),
+        "conclusion finds nothing still gated by the Design"
+    );
     let settled = board(&bus, epoch, Actor::Operator);
     assert!(at(&settled, &accepted).workflow.body.status.is_pending());
     clean(&root, bus);
 }
 
 #[test]
-fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() {
+fn a_later_open_candidate_owes_a_decision_until_decided_or_withdrawn() {
     let (root, bus, epoch, seats) = fixture("preparation-reproposed-selection", 1);
     let design = add_controller(
         &bus,
@@ -213,10 +253,10 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
     );
     group_design(&bus, epoch, &design);
     claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
-    let output = add_plan_output(&bus, epoch, &design, "Re-proposed output");
+    let output = add_plan_output(&bus, epoch, &design, "Vetoed output");
     let design_stamp = design.born().expect("Design stamp");
-    let decision_of = |bus: &Bus| {
-        at(&board(bus, epoch, Actor::Operator), &output)
+    let decision_of = |bus: &Bus, task: &TaskHandle| {
+        at(&board(bus, epoch, Actor::Operator), task)
             .preparation_decision
             .clone()
     };
@@ -231,22 +271,34 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
     );
     let rejection = select_candidate_outputs(&bus, epoch, &design, first, &[], 1);
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
-    assert_eq!(decision_of(&bus), Some(rejection.clone()));
+    assert_eq!(decision_of(&bus, &output), Some(rejection.clone()));
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(
+        !at(&current, &output).workflow.body.status.is_pending(),
+        "a veto closes the output, so no later version can re-propose it"
+    );
+    assert!(
+        !open_workflow_waiting(&bus, epoch).contains(&design_stamp),
+        "a pass that released nothing leaves the Design ready for its next pass"
+    );
 
+    // The next pass proposes new work built under the renewed claim.
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    let revised = add_plan_output(&bus, epoch, &design, "Revised output");
     let (withdrawn, _) = retain_candidate_version(
         &bus,
         epoch,
         &seats[0],
         &design,
-        &[&output],
+        &[&revised],
         1_760_000_000_000_002,
     );
     assert_eq!(
         open_awaiting_selection(&bus, epoch),
         [design_stamp.clone()].into(),
-        "re-proposing a rejected output owes the operator a decision again"
+        "a new proposal owes the operator a decision"
     );
-    assert_eq!(decision_of(&bus), None);
+    assert_eq!(decision_of(&bus, &revised), None);
     assert_committed(withdraw(
         &bus,
         epoch,
@@ -257,9 +309,14 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
     ));
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
     assert_eq!(
-        decision_of(&bus),
+        decision_of(&bus, &revised),
+        None,
+        "withdrawal leaves the undecided output without a verdict"
+    );
+    assert_eq!(
+        decision_of(&bus, &output),
         Some(rejection),
-        "withdrawal restores the verdict beneath it"
+        "the earlier verdict stays on the output it closed"
     );
 
     // Withdrawal is not counted input; the operator readies the corrected pass.
@@ -276,7 +333,7 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
         epoch,
         &seats[0],
         &design,
-        &[&output],
+        &[&revised],
         1_760_000_000_000_003,
     );
     assert_eq!(
@@ -285,15 +342,11 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
     );
     let renewed = select_candidate_outputs(&bus, epoch, &design, corrected, &[], 2);
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
-    assert_eq!(decision_of(&bus), Some(renewed));
+    assert_eq!(decision_of(&bus, &revised), Some(renewed));
     let current = board(&bus, epoch, Actor::Operator);
     assert!(
-        at(&current, &output)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
+        !at(&current, &revised).workflow.body.status.is_pending(),
+        "the corrected pass's veto closes the revised output too"
     );
-    assert!(at(&current, &output).workflow.body.status.is_pending());
     clean(&root, bus);
 }

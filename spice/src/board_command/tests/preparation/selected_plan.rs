@@ -9,12 +9,11 @@ struct SelectedPlan {
     epoch: CanonicalUuid,
     design: TaskHandle,
     plan: TaskHandle,
-    sibling: TaskHandle,
     task: TaskHandle,
 }
 
-/// A Design that selected `plan` over `sibling`, and one unheld pending task
-/// `plan` prepared before its review.
+/// A Design that selected `plan` over a vetoed sibling the decision closed,
+/// and one unheld pending task `plan` prepared before its review.
 fn selected_plan_with_task(name: &str) -> SelectedPlan {
     let (root, bus, epoch, seats) = fixture(name, 2);
     let design = add_controller(
@@ -41,7 +40,6 @@ fn selected_plan_with_task(name: &str) -> SelectedPlan {
         epoch,
         design,
         plan,
-        sibling,
         task,
     }
 }
@@ -64,7 +62,6 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
         epoch,
         design,
         plan,
-        sibling,
         task,
     } = selected_plan_with_task("preparation-selected-plan-close");
     let task_stamp = task.born().expect("task stamp");
@@ -88,10 +85,9 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
     )) else {
         panic!("collapse did not answer with task state");
     };
-    assert_eq!(
-        collapsed.closed,
-        vec![sibling],
-        "collapse leaves the selected Plan's work to that Plan"
+    assert!(
+        collapsed.closed.is_empty(),
+        "the veto already closed the sibling; collapse leaves the selected Plan's work to that Plan"
     );
     assert!(open_workflow_waiting(&bus, epoch).contains(&task_stamp));
     assert!(

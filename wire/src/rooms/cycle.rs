@@ -8,9 +8,11 @@
 //! operator nudged it. After a boundary only counted input recorded later
 //! refills it: a typed contribution, an operator-authored room post, a nudge,
 //! decision feedback that returned or rejected work, or the final settlement
-//! of released work.
-//! Requests, notices, asks, leaves, group membership, and unrelated facts are
-//! inert.
+//! of released work. While work the Design released is still running, the
+//! Design waits on it whatever input arrives: an approved proposal is worked
+//! whole before another pass opens, and the released work is the Design's
+//! prerequisite set. Requests, notices, asks, leaves, group membership, and
+//! unrelated facts are inert.
 //!
 //! [`DesignCycles`] folds those authorities in journal order, one fact at a
 //! time, so replay is bounded by the facts it reads and never rescans a room.
@@ -75,7 +77,8 @@ pub enum DesignCycle {
     ReadyForProposal,
     /// A proposal the operator has not decided or its author withdrawn.
     AwaitingDecision,
-    /// Accepted work is still running and no later input arrived.
+    /// Accepted work is still running; the Design waits on it as its
+    /// prerequisites, whatever input arrives meanwhile.
     WaitingOnSelectedWork,
 }
 
@@ -172,10 +175,10 @@ impl DesignCycle {
                 },
             ),
             Self::WaitingOnSelectedWork => facts.decision.map_or_else(
-                || format!("finish the work {design} released, or add counted input"),
+                || format!("finish the work {design} released"),
                 |decision| {
                     format!(
-                        "finish the work decision {} of {design} selected, or add counted input",
+                        "finish the work decision {} of {design} selected",
                         SequenceCode::new(decision.get())
                     )
                 },
@@ -375,26 +378,28 @@ impl DesignCycleFacts {
     }
 
     /// The cycle state, given whether work this Design released is still
-    /// running, released or deferred.
+    /// running, released or deferred. Released work holds the Design until
+    /// it settles: the approved proposal is worked whole before input can
+    /// open another pass.
     #[must_use]
     pub fn cycle(self, working: bool) -> DesignCycle {
         if self.proposal.is_some() {
             DesignCycle::AwaitingDecision
-        } else if self.counted(working) {
-            DesignCycle::ReadyForProposal
         } else if working {
             DesignCycle::WaitingOnSelectedWork
+        } else if self.counted() {
+            DesignCycle::ReadyForProposal
         } else {
             DesignCycle::GatheringInput
         }
     }
 
-    fn counted(self, working: bool) -> bool {
+    fn counted(self) -> bool {
         let Some(horizon) = self.horizon else {
             return self.steeped || self.nudged;
         };
         self.input.is_some_and(|input| input > horizon)
-            || (!working && self.settled.is_some_and(|settled| settled > horizon))
+            || self.settled.is_some_and(|settled| settled > horizon)
     }
 }
 

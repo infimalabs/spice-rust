@@ -9,7 +9,7 @@ mod settlement;
 mod taste_proposal;
 pub(super) use deferral::{task_defer, task_file, task_wake};
 pub(super) use settlement::{
-    DecisionWrite, stage_conclusion, task_close, task_conclude, task_delete,
+    DecisionWrite, stage_conclusion, stage_rejection, task_close, task_conclude, task_delete,
 };
 
 #[cfg(test)]

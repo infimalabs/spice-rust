@@ -224,6 +224,16 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
             ],
         ),
         (
+            "counted input arrived while its selected output is still in progress",
+            vec![
+                design(DesignCycleFacts {
+                    input: Some(seq(20)),
+                    ..passed()
+                }),
+                selected("WAIT-selected", workflow("todo")),
+            ],
+        ),
+        (
             "an execution its positively concluded Plan released is in progress",
             vec![
                 design(passed()),
@@ -273,13 +283,9 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
 }
 
 #[test]
-fn an_open_design_is_assignable_once_its_released_work_settles_or_input_arrives() {
+fn an_open_design_is_assignable_once_its_released_work_settles() {
     let settled_since = settled_since();
     let design = waiting_design;
-    let input_since = DesignCycleFacts {
-        input: Some(seq(20)),
-        ..passed()
-    };
 
     for (reason, entries) in [
         (
@@ -299,13 +305,6 @@ fn an_open_design_is_assignable_once_its_released_work_settles_or_input_arrives(
                         "2026-08-01T06:00:00.000Z",
                     ))),
                 ),
-            ],
-        ),
-        (
-            "counted input arrived while its output is still in progress",
-            vec![
-                design(input_since),
-                selected("WAIT-selected", workflow("todo")),
             ],
         ),
         (
@@ -383,7 +382,7 @@ fn only_an_undecided_proposal_holds_the_design_for_selection() {
 }
 
 #[test]
-fn decided_rejections_end_selection_wait_without_releasing_outputs() {
+fn decided_rejections_grant_no_authority_and_released_work_outranks_input() {
     let feedback = DesignCycleFacts {
         input: Some(seq(11)),
         ..passed()
@@ -427,8 +426,13 @@ fn decided_rejections_end_selection_wait_without_releasing_outputs() {
 
     let mixed = vec![design(feedback), accepted(), rejected("DECIDE-rejected")];
     assert!(
-        first_eligible(&mixed),
-        "rejection feedback readies the Design while its accepted work runs"
+        !first_eligible(&mixed),
+        "rejection feedback is counted input, which never reopens a Design whose accepted work runs"
+    );
+    assert_eq!(
+        wait_of(&mixed, "DECIDE-design"),
+        Some(board::WorkWait::Workflow),
+        "the released work is the Design's prerequisite"
     );
     let clean = vec![design(passed()), accepted()];
     assert_eq!(
