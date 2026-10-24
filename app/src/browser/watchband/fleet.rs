@@ -279,7 +279,7 @@ fn render_team_toolbar(
     html! {
         <>
         <header class="team-toolbar">
-            {render_team_rail(team.lane, render)}
+            {render_team_rail(team.lane, standings, render)}
             <div class="app-glass-control-surface app-status-band team-status-row">
                 {view::chrome::render_team_ticker(render.runtime, team, standings)}
                 {lights}
@@ -292,12 +292,22 @@ fn render_team_toolbar(
 
 /// The fixed team total and active-task scroller remain independent of the
 /// status row. The total holds the rail's right edge and the tasks flow
-/// leftward from it in their canonical order.
-fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
-    let tasks = render
+/// leftward from it in the composers' order, each lane's tabs together and in
+/// their canonical order, so a tab stands over its own lane's composer.
+fn render_team_rail(
+    team: CanonicalUuid,
+    standings: &[Standing],
+    render: &FleetRender<'_, '_>,
+) -> Html {
+    let mut tasks = render
         .work
         .map(|work| work.scope_strip(&crate::work::WorkScope::Team { team }))
         .unwrap_or_default();
+    tasks.sort_by_key(|task| {
+        task.working_lane()
+            .and_then(|lane| standings.iter().position(|standing| standing.lane == lane))
+            .unwrap_or(standings.len())
+    });
     html! {
         <div class="team-task-rail">
             if !tasks.is_empty() {

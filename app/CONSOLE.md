@@ -143,7 +143,10 @@ Local placement follows
 [claim-bound placement](../docs/product/invariants/identity.md#work-claim-bound-work-has-two-visible-placements):
 a team strip tabs each task its lanes actively claim, Design work included, in
 that lane's accent; a group strip tabs each lane claiming work associated with
-its Designs. A local total selects exactly what its tabs stand for, and local
+its Designs. Local tabs run right to left in the order of the composers
+below, so each stands over its own column: a team's by lane, each lane's tabs
+together, and a group's by the first Design each lane's work serves. A local
+total selects exactly what its tabs stand for, and local
 strips have no stem roll-ups; each global stem tab opens its complete
 visibility-qualified stem. A team or group total spans the pip column flush
 to the console's right edge, so its badge centres over the pips and the team
