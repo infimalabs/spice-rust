@@ -4,7 +4,7 @@
 //! relocatable object that holds the staged archive in its own read-only
 //! section, `__TEXT,__spiceapp` on Mach-O and `spiceapp` on ELF and PE32+, and
 //! its length beside it. Linked before symbols, stripping, and signing, the
-//! bytes survive `strip -S` and sit inside the signed image; linker symbols
+//! bytes survive `strip` and sit inside the signed image; linker symbols
 //! expose them as an ordinary static, so nothing parses the executable at run
 //! time.
 //! Only those builds resolve this crate, so every other build links nothing.
