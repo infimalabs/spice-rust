@@ -786,8 +786,8 @@ pub fn run_cargo_gate_shard_at(
     let environment =
         Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))?;
     let runs = if shard.kind == CargoGateShardKind::Test {
-        // Compile before starting any execution clock: the workspace prebuild
-        // has its own deadline, and each test executable then gets the shard's.
+        // Compile before starting the execution clock: the workspace prebuild
+        // has its own deadline, and the shard's executables then share one.
         let messages = prebuild::capture_workspace_test_prebuild(
             root,
             &environment,
@@ -813,13 +813,21 @@ pub fn run_cargo_gate_shard_at(
     } else {
         vec![(cargo.to_owned(), shard.argv.clone(), root.to_path_buf())]
     };
+    let deadline = Instant::now() + SHARD_DEADLINE;
     for (program, arguments, cwd) in runs {
+        let remaining = shard_remaining(deadline, Instant::now()).ok_or_else(|| {
+            WorkspaceTestError::new(format!(
+                "{} ended as timeout before {} started",
+                shard.action_id,
+                Path::new(&program).display(),
+            ))
+        })?;
         let spec = process_spec(
             &program,
             arguments,
             &cwd,
             environment.clone(),
-            SHARD_DEADLINE,
+            remaining,
             Cancellation::Never,
             shard.action_id(),
         )?;
@@ -829,6 +837,14 @@ pub fn run_cargo_gate_shard_at(
         action_id: shard.action_id.clone(),
         completion: "passed".to_owned(),
     })
+}
+
+/// What is left of a shard's one execution deadline at `now`, or `None` once
+/// it is spent. Every executable of a shard runs within the same
+/// [`SHARD_DEADLINE`], so a shard's tests cannot outgrow it by splitting
+/// across targets.
+fn shard_remaining(deadline: Instant, now: Instant) -> Option<Duration> {
+    Some(deadline.saturating_duration_since(now)).filter(|remaining| !remaining.is_zero())
 }
 
 fn run_shard_process(
@@ -1224,6 +1240,25 @@ mod tests {
         assert!(
             malformed.contains("parse") && malformed.contains("src/lib.rs"),
             "unexpected malformed-source refusal: {malformed}"
+        );
+    }
+
+    #[test]
+    fn a_shards_executables_spend_one_execution_deadline() {
+        let started = Instant::now();
+        let deadline = started + SHARD_DEADLINE;
+        assert_eq!(shard_remaining(deadline, started), Some(SHARD_DEADLINE));
+        let first_used = Duration::from_secs(150);
+        assert_eq!(
+            shard_remaining(deadline, started + first_used),
+            Some(SHARD_DEADLINE - first_used),
+            "the next executable gets only what the first left"
+        );
+        assert_eq!(shard_remaining(deadline, deadline), None);
+        assert_eq!(
+            shard_remaining(deadline, deadline + Duration::from_secs(1)),
+            None,
+            "a spent deadline starts no further executable"
         );
     }
 }
