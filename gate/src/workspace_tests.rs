@@ -8,7 +8,6 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -94,21 +93,10 @@ pub fn cargo_workspace_base_inventory_required(
 /// Targets are source-weight balanced across the minimum shard count so one
 /// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
-/// A selected local run has already compiled every reached target in one shared
-/// prebuild, so its remaining Cargo frontends are launch coordinators rather
-/// than compiler work. Keep each package in fewer, broader groups to avoid
-/// spending the enclosing gate deadline on shared build-directory lock waves.
-const SELECTED_PREBUILT_TARGETS_PER_SHARD: usize = 24;
 /// Proof actions are independently bounded Cargo commands, not launches over
 /// the local coordinator's shared prebuild. Reuse the ordinary target cap so a
 /// large package cannot put a long integration tail under one shard deadline.
 const PROOF_TARGETS_PER_SHARD: usize = TARGETS_PER_SHARD;
-/// Exact selected prebuild batches share one Cargo graph and output authority.
-/// Admit only two package batches and divide the aggregate compiler grant
-/// between their stable worker lanes. This retains package overlap without
-/// recreating a four-way Cargo lock wave over their shared graph and output
-/// authority.
-const SELECTED_PREBUILD_CONCURRENCY: usize = 2;
 /// Routine selected runs execute each fully built target once. Their target
 /// budget already bounds the process count, while test-list discovery costs
 /// more than the selected harnesses it would split.
@@ -309,19 +297,9 @@ impl WorkspaceTestBudget {
         })
     }
 
-    fn prebuild_job_grants(self, active_batches: usize) -> Vec<usize> {
-        let lanes = active_batches
-            .min(self.concurrency)
-            .min(SELECTED_PREBUILD_CONCURRENCY);
-        if lanes == 0 {
-            return Vec::new();
-        }
-        let aggregate = self.concurrency.saturating_mul(self.cargo_jobs);
-        let jobs_per_lane = aggregate / lanes;
-        let remainder = aggregate % lanes;
-        (0..lanes)
-            .map(|lane| jobs_per_lane + usize::from(lane < remainder))
-            .collect()
+    /// The whole compiler grant, handed to the one workspace prebuild.
+    fn aggregate_cargo_jobs(self) -> usize {
+        self.concurrency.saturating_mul(self.cargo_jobs)
     }
 }
 
@@ -758,57 +736,40 @@ fn execute_selected_tests(
         prebuild_budget,
     } = policy;
     let execution_started = Instant::now();
-    let (environment, selected, shards) =
+    let (environment, selected) =
         prepare_selected_execution(roots, root, environment, inventory, tests, output)?;
-    let prebuilt = if let Some(reusable) = roots.reusable {
-        let started = Instant::now();
-        writeln!(
-            output,
-            "[rust-test] stage=selected-prebuild targets={} batches=0 lanes=0 source=rust-policy",
-            tests.len(),
-        )
-        .map_err(output_error)?;
-        let prebuilt = prebuilt_test_plan(&selected, reusable.cargo_artifacts())?;
-        writeln!(
-            output,
-            "[rust-test] stage=selected-prebuild-terminal elapsed_ms={} disposition=reused source=rust-policy",
-            started.elapsed().as_millis(),
-        )
-        .map_err(output_error)?;
-        output.flush().map_err(output_error)?;
-        Some(prebuilt)
-    } else if shards.len() > 1 {
-        Some(prebuild_selected_tests(
-            root,
-            &environment,
-            OsStr::new("cargo"),
-            &selected,
-            prebuild_budget,
-            policy.concurrency.min(SELECTED_PREBUILD_CONCURRENCY),
-            output,
-        )?)
+    let prebuilt = workspace_prebuilt_selection(
+        root,
+        &environment,
+        OsStr::new("cargo"),
+        inventory,
+        &selected,
+        prebuild_budget,
+        output,
+    )?;
+    if let Some(budget) = prebuild_budget {
+        policy = RunPolicy::production_prebuilt_budgeted(budget);
     } else {
-        None
-    };
-    let prebuilt = if let Some(prebuilt) = prebuilt {
-        if let Some(budget) = prebuild_budget {
-            policy = RunPolicy::production_prebuilt_budgeted(budget);
-        } else {
-            policy.shared_outputs = true;
-        }
-        let partitions_per_target = selected_partitions_per_target(routine, policy.concurrency);
-        let prebuilt = partition_largest_prebuilt_tests(
-            prebuilt,
-            &environment,
-            partitions_per_target,
-            policy.concurrency,
-            output,
-        )?;
-        Some(prebuilt)
-    } else {
-        None
-    };
-    run_selected_shards(prebuilt, shards, root, environment, policy, output)?;
+        policy.shared_outputs = true;
+    }
+    let partitions_per_target = selected_partitions_per_target(routine, policy.concurrency);
+    let prebuilt = partition_largest_prebuilt_tests(
+        prebuilt,
+        &environment,
+        partitions_per_target,
+        policy.concurrency,
+        output,
+    )?;
+    let policy = policy.for_shards(prebuilt.len());
+    Coordinator::new_prebuilt(
+        prebuilt,
+        root.to_path_buf(),
+        environment,
+        OsString::from("cargo"),
+        policy,
+        output,
+    )
+    .run()?;
     writeln!(
         output,
         "[rust-test] stage=selected-execution-terminal elapsed_ms={} disposition=success",
@@ -819,40 +780,6 @@ fn execute_selected_tests(
     Ok(())
 }
 
-fn run_selected_shards(
-    prebuilt: Option<Vec<PrebuiltTest>>,
-    shards: Vec<PackageInventory>,
-    root: &Path,
-    environment: Environment,
-    policy: RunPolicy,
-    output: &mut impl Write,
-) -> Result<(), WorkspaceTestError> {
-    let execution_shards = prebuilt.as_ref().map_or(shards.len(), Vec::len);
-    let policy = policy.for_shards(execution_shards);
-    if let Some(prebuilt) = prebuilt {
-        Coordinator::new_prebuilt(
-            prebuilt,
-            root.to_path_buf(),
-            environment,
-            OsString::from("cargo"),
-            policy,
-            output,
-        )
-        .run()?;
-    } else {
-        Coordinator::new(
-            shards,
-            root.to_path_buf(),
-            environment,
-            OsString::from("cargo"),
-            policy,
-            output,
-        )
-        .run()?;
-    }
-    Ok(())
-}
-
 fn prepare_selected_execution(
     roots: WorkspaceTestRoots<'_>,
     root: &Path,
@@ -860,7 +787,7 @@ fn prepare_selected_execution(
     inventory: &Inventory,
     tests: &[String],
     output: &mut impl Write,
-) -> Result<(Environment, Inventory, Vec<PackageInventory>), WorkspaceTestError> {
+) -> Result<(Environment, Inventory), WorkspaceTestError> {
     let setup_started = Instant::now();
     let environment = inventory.execution_environment(
         environment,
@@ -890,18 +817,8 @@ fn prepare_selected_execution(
         units_started.elapsed().as_millis(),
     )
     .map_err(output_error)?;
-    let target_partition_started = Instant::now();
-    let shards = partition_with_target_limit(&selected, SELECTED_PREBUILT_TARGETS_PER_SHARD);
-    validate_partition_with_target_limit(&selected, &shards, SELECTED_PREBUILT_TARGETS_PER_SHARD)?;
-    writeln!(
-        output,
-        "[rust-test] stage=selected-target-partition-terminal elapsed_ms={} disposition=success shards={}",
-        target_partition_started.elapsed().as_millis(),
-        shards.len(),
-    )
-    .map_err(output_error)?;
     output.flush().map_err(output_error)?;
-    Ok((environment, selected, shards))
+    Ok((environment, selected))
 }
 
 fn selected_partitions_per_target(routine: bool, execution_concurrency: usize) -> usize {

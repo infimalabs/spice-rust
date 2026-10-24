@@ -36,16 +36,11 @@ pub(in crate::toolchain) struct CompileFailure {
 
 pub(in crate::toolchain) struct CompileSuccess {
     elapsed: Duration,
-    stdout: Vec<u8>,
 }
 
 impl CompileSuccess {
     pub(super) fn elapsed(&self) -> Duration {
         self.elapsed
-    }
-
-    pub(super) fn into_stdout(self) -> Vec<u8> {
-        self.stdout
     }
 }
 
@@ -165,7 +160,7 @@ pub(in crate::toolchain) fn compile_reply(
             return Err(CompileFailure::after_wait(analysis, elapsed));
         }
     };
-    let (printed, stdout) = complete_compiler_output(
+    let printed = complete_compiler_output(
         name,
         captured,
         matches!(capture, CompileCapture::CargoJsonTail),
@@ -189,13 +184,12 @@ pub(in crate::toolchain) fn compile_reply(
                 findings,
                 exit_code: None,
                 timing: None,
-                cargo_artifacts: Vec::new(),
             },
             elapsed,
         ));
     }
     if status.success() {
-        return Ok(CompileSuccess { elapsed, stdout });
+        return Ok(CompileSuccess { elapsed });
     }
     let Some(code) = status.code() else {
         return Err(CompileFailure::after_wait(
@@ -385,16 +379,16 @@ mod tests {
     /// other capture must be whole before its silence can mean success.
     #[test]
     fn only_cargo_json_may_be_read_from_a_truncated_tail() {
-        let Ok(success) = reply(
-            CompileCapture::CargoJsonTail,
-            &exited(0),
-            stream(b"ial record\n{\"reason\":\"build-finished\"}\n", true),
-            stream(b"", false),
-        ) else {
-            panic!("a clean tail was refused");
-        };
-        assert_eq!(success.into_stdout(), b"{\"reason\":\"build-finished\"}\n");
-
+        assert!(
+            reply(
+                CompileCapture::CargoJsonTail,
+                &exited(0),
+                stream(b"ial record\n{\"reason\":\"build-finished\"}\n", true),
+                stream(b"", false),
+            )
+            .is_ok(),
+            "a clean tail was refused"
+        );
         let Err(truncated) = reply(
             CompileCapture::Prefix,
             &exited(0),

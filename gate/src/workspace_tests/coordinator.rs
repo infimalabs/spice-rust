@@ -746,7 +746,7 @@ fn wait_after_shard_stop(
         };
         let outcome = match descendants {
             Some(mut descendants) => {
-                let root_terminal = AtomicBool::new(false);
+                let root_terminal = std::sync::atomic::AtomicBool::new(false);
                 let (outcome, descendant_reap) = thread::scope(|scope| {
                     let reaper = scope.spawn(|| {
                         descendants.reap_while_root_terminates(
@@ -757,7 +757,7 @@ fn wait_after_shard_stop(
                         )
                     });
                     let outcome = running.wait();
-                    root_terminal.store(true, AtomicOrdering::Release);
+                    root_terminal.store(true, Ordering::Release);
                     (outcome, reaper.join())
                 });
                 match descendant_reap {

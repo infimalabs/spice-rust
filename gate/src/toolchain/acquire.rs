@@ -339,10 +339,9 @@ pub(crate) fn acquire_toolchain_observed(
         assert_eq!(app.id, GateId::AppWebTypecheck);
         let (rust_observation, app_observation) = thread::scope(|scope| {
             let app = scope.spawn(|| observe_declaration(app, source, contract));
-            let (rust, cargo_artifacts) =
-                observe_declaration_with_artifacts(declaration, source, contract);
+            let rust = observe_declaration(declaration, source, contract);
             let reusable_workspace = (rust.outcome == ArmOutcome::Passed).then(|| {
-                analyze::rust_analysis_workspace(source.repository(), cargo_artifacts)
+                analyze::rust_analysis_workspace(source.repository())
                     .expect("passed native Rust analysis must retain its exact reusable workspace")
             });
             completed(declaration.id, reusable_workspace);
@@ -369,41 +368,16 @@ fn observe_declaration(
     )
 }
 
-fn observe_declaration_with_artifacts(
-    declaration: ToolchainDeclaration,
-    source: &ToolchainSource<'_>,
-    contract: &Contract,
-) -> (ArmObservation, Vec<u8>) {
-    let declaration = scoped_declaration(declaration, source);
-    observe_with_artifacts(
-        declaration,
-        source,
-        contract.bounds(),
-        contract.environment_names(),
-    )
-}
-
 pub(crate) fn acquire_toolchain_arm(
     source: &ToolchainSource<'_>,
     contract: &Contract,
     gate_id: GateId,
-) -> Result<(ArmObservation, Vec<u8>), ToolchainError> {
+) -> Result<ArmObservation, ToolchainError> {
     let declaration = TOOLCHAIN_ARMS
         .into_iter()
         .find(|declaration| declaration.id == gate_id)
         .ok_or(ToolchainError::ForeignGate(gate_id))?;
-    if gate_id == GateId::RustTypecheck {
-        Ok(observe_declaration_with_artifacts(
-            declaration,
-            source,
-            contract,
-        ))
-    } else {
-        Ok((
-            observe_declaration(declaration, source, contract),
-            Vec::new(),
-        ))
-    }
+    Ok(observe_declaration(declaration, source, contract))
 }
 
 /// Probe only the external executables declared by one focused arm.
@@ -606,54 +580,29 @@ fn observe(
     bounds: &Bounds,
     environment_names: &[String],
 ) -> ArmObservation {
-    observe_with_artifacts(declaration, source, bounds, environment_names).0
-}
-
-fn observe_with_artifacts(
-    declaration: ToolchainDeclaration,
-    source: &ToolchainSource<'_>,
-    bounds: &Bounds,
-    environment_names: &[String],
-) -> (ArmObservation, Vec<u8>) {
     if let Some(analysis) = analyze::before_tools(
         declaration,
         source.root(),
         source.reached_paths(),
         source.analysis_paths(),
     ) {
-        return (observation(declaration, analysis, Vec::new()), Vec::new());
+        return observation(declaration, analysis, Vec::new());
     }
     let tools: Vec<ToolEvidence> = declaration
         .tools
         .iter()
         .map(|requirement| probe(requirement, source, bounds))
         .collect();
-    let Analysis {
-        outcome,
-        reason,
-        findings,
-        exit_code,
-        timing,
-        cargo_artifacts,
-    } = examine(declaration, source, bounds, environment_names, &tools);
-    let tools = if matches!(outcome, ArmOutcome::NotApplicable | ArmOutcome::Excluded) {
+    let analysis = examine(declaration, source, bounds, environment_names, &tools);
+    let tools = if matches!(
+        analysis.outcome,
+        ArmOutcome::NotApplicable | ArmOutcome::Excluded
+    ) {
         Vec::new()
     } else {
         tools
     };
-    let observation = observation(
-        declaration,
-        Analysis {
-            outcome,
-            reason,
-            findings,
-            exit_code,
-            timing,
-            cargo_artifacts: Vec::new(),
-        },
-        tools,
-    );
-    (observation, cargo_artifacts)
+    observation(declaration, analysis, tools)
 }
 
 fn observation(
