@@ -54,10 +54,6 @@ const SOURCE_BYTES: u64 = WINDOW_BYTES + INDEX_BYTES + RECORD_BYTES;
 const RECORDS: usize = 64 * 1024;
 /// Reads beyond the boundary retreat: the index, its extents, and the window.
 const EXTENT_PASSES: usize = 256;
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "the pass count is a few thousand"
-)]
 const PASSES: usize = (SOURCE_BYTES / listen::BOUNDARY_CHUNK_BYTES + 1) as usize + EXTENT_PASSES;
 const DURATION: Duration = Duration::from_secs(5);
 

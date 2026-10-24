@@ -89,14 +89,21 @@ pub(crate) struct DirectObserver {
 impl DirectObserver {
     pub(crate) fn arm(watched: &Path) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
-        return linux_directory_observer(watched);
+        {
+            linux_directory_observer(watched)
+        }
         #[cfg(target_os = "macos")]
-        return macos_directory_observer(watched);
-        #[allow(unreachable_code)]
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "direct directory observer is unavailable on this Unix",
-        ))
+        {
+            macos_directory_observer(watched)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = watched;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "direct directory observer is unavailable on this Unix",
+            ))
+        }
     }
 
     /// Block until the watched directory changes once.
@@ -106,14 +113,20 @@ impl DirectObserver {
     /// Returns the kernel's refusal to deliver the change.
     pub(crate) fn wait(self) -> io::Result<()> {
         #[cfg(target_os = "linux")]
-        return wait_linux_directory(self.descriptor);
+        {
+            wait_linux_directory(self.descriptor)
+        }
         #[cfg(target_os = "macos")]
-        return wait_macos_event(self.descriptor);
-        #[allow(unreachable_code)]
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "direct directory observer is unavailable on this Unix",
-        ))
+        {
+            wait_macos_event(self.descriptor)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "direct directory observer is unavailable on this Unix",
+            ))
+        }
     }
 }
 
@@ -305,18 +318,21 @@ impl ProcessExitObserver {
             if error.raw_os_error() == Some(libc::ESRCH) {
                 return Ok(Self::Ended);
             }
-            return Err(error);
+            Err(error)
         }
         #[cfg(target_os = "macos")]
         {
-            return macos_process_observer(pid)
-                .map(|descriptor| descriptor.map_or(Self::Ended, Self::Watching));
+            macos_process_observer(pid)
+                .map(|descriptor| descriptor.map_or(Self::Ended, Self::Watching))
         }
-        #[allow(unreachable_code)]
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "direct process observer is unavailable on this Unix",
-        ))
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = pid;
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "direct process observer is unavailable on this Unix",
+            ))
+        }
     }
 
     pub(crate) fn wait(self) -> io::Result<()> {
@@ -343,9 +359,14 @@ impl ProcessExitObserver {
             }
         }
         #[cfg(target_os = "macos")]
-        return wait_macos_event(*descriptor);
-        #[allow(unreachable_code)]
-        Ok(())
+        {
+            wait_macos_event(*descriptor)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = descriptor;
+            Ok(())
+        }
     }
 }
 

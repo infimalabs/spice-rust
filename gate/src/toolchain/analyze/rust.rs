@@ -12,9 +12,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-#[cfg(target_family = "unix")]
-use std::os::unix::fs::PermissionsExt as _;
-
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
     CargoSelection, CompileCapture, CompileFailure, CompileInvocation, CompileSuccess,
@@ -22,6 +19,7 @@ use super::{
     run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
+use crate::permissions::set_owner_writable;
 use crate::toolchain::{
     ArmOutcome, ArmTiming, FindingDetail, RustAnalysisWorkspace, ToolchainDeclaration,
 };
@@ -396,34 +394,16 @@ pub(in crate::toolchain) fn synchronize_source(selected: &Path, cached: &Path) -
 pub(in crate::toolchain) fn make_cache_writable(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
-        set_owner_writable(path, &metadata)?;
+        set_owner_writable(path, true)?;
         for entry in sorted_entries(path)? {
             make_cache_writable(&entry.path())?;
         }
         return Ok(());
     }
     if metadata.is_file() {
-        return set_owner_writable(path, &metadata);
+        return set_owner_writable(path, false);
     }
     Err(unsafe_cache_entry(path))
-}
-
-fn set_owner_writable(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
-    #[cfg(target_family = "unix")]
-    {
-        let mode = if metadata.is_dir() { 0o700 } else { 0o600 };
-        fs::set_permissions(path, fs::Permissions::from_mode(mode))
-    }
-    #[cfg(not(target_family = "unix"))]
-    {
-        let mut permissions = metadata.permissions();
-        #[expect(
-            clippy::permissions_set_readonly_false,
-            reason = "on Windows this clears only the read-only attribute; the world-writable hazard is Unix-only"
-        )]
-        permissions.set_readonly(false);
-        fs::set_permissions(path, permissions)
-    }
 }
 
 fn sync_directory(selected: &Path, cached: &Path) -> io::Result<()> {
