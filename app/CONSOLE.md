@@ -109,7 +109,8 @@ age aligns with the composer ages below at every width. The status band is the
 console's top edge, ruled in the soft edge tone so the open tab row meets the
 console quietly. Where two consoles touch, their bands meet flush and square
 like the tab strips above, and only the left console draws the half-width
-hairline divider in its own flavor, its top rule turning down into it. A
+hairline divider, in the page colour the open tab row shows rather than
+either console's flavor, so the head reads as continuing down the seam. A
 corner at the browser edge stays square.
 
 Pips show how many agents there are and whether each is working, stalled, or
