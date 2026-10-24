@@ -188,27 +188,6 @@ fn urgency_is_durable_queue_age_and_ignores_unrelated_edits() {
 }
 
 #[test]
-fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
-    let mut lower_statement = statement("BOARD-a1");
-    lower_statement.queue_origin = seq(101);
-    let mut assigned_workflow = workflow("todo");
-    assigned_workflow.status = wire::WorkflowStatus::assigned(Actor::Spice);
-    let lower_handle =
-        admitted(lower_statement, assigned_workflow, None, None).expect("newer assigned candidate");
-    let higher_handle = entry("BOARD-z1");
-    let ordered = [lower_handle.clone(), higher_handle.clone()];
-    let reversed = [higher_handle, lower_handle];
-
-    let outside = select(&ordered, &Actor::Spice, &all_projects(), 99).expect("eligible task");
-    assert_eq!(outside.entry().handle(), &handle("BOARD-z1"));
-    let inside = select(&ordered, &Actor::Spice, &all_projects(), 100).expect("eligible task");
-    let reversed_inside =
-        select(&reversed, &Actor::Spice, &all_projects(), 100).expect("eligible task");
-    assert_eq!(inside.entry().handle(), &handle("BOARD-a1"));
-    assert_eq!(reversed_inside.entry().handle(), inside.entry().handle(),);
-}
-
-#[test]
 fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
     let mut independent_head = statement("BOARD-a1");
     independent_head.priority = Some(wire::TaskPriority::Critical);
@@ -232,8 +211,7 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
             std::slice::from_ref(&independent),
             &prior,
             &all_projects(),
-            board::NextConfig::new(2),
-            None,
+            board::NextConfig::default(),
             &environment(),
             before,
         )
@@ -257,8 +235,7 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
             std::slice::from_ref(&independent),
             &peer,
             &all_projects(),
-            board::NextConfig::new(2),
-            None,
+            board::NextConfig::default(),
             &environment(),
             before,
         )
@@ -275,8 +252,7 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
         &entries,
         &prior,
         &all_projects(),
-        board::NextConfig::new(2),
-        None,
+        board::NextConfig::default(),
         &environment(),
         after,
     )
@@ -286,8 +262,7 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
         std::slice::from_ref(&independent),
         &prior,
         &all_projects(),
-        board::NextConfig::new(2),
-        None,
+        board::NextConfig::default(),
         &environment(),
         after,
     )
@@ -324,8 +299,7 @@ fn continuation_handoff_sticks_to_its_prior_author_then_opens_to_peers() {
         &entries,
         &prior,
         &all_projects(),
-        board::NextConfig::new(2),
-        None,
+        board::NextConfig::default(),
         &environment(),
         before,
     )
@@ -338,8 +312,7 @@ fn continuation_handoff_sticks_to_its_prior_author_then_opens_to_peers() {
             std::slice::from_ref(&continuation),
             &peer,
             &all_projects(),
-            board::NextConfig::new(2),
-            None,
+            board::NextConfig::default(),
             &environment(),
             before,
         )
@@ -351,8 +324,7 @@ fn continuation_handoff_sticks_to_its_prior_author_then_opens_to_peers() {
             std::slice::from_ref(&continuation),
             &peer,
             &all_projects(),
-            board::NextConfig::new(2),
-            None,
+            board::NextConfig::default(),
             &environment(),
             instant("2026-08-01T06:00:03.000Z"),
         )
@@ -407,9 +379,8 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
         completed, deferred, active, first, assigned, second, blocked,
     ];
 
-    let selected = select(&ordered, &Actor::Spice, &all_projects(), 2).expect("eligible task");
-    let selected_again =
-        select(&reversed, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("eligible task");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects()).expect("eligible task");
     assert_eq!(selected.entry().handle(), &handle("BOARD-a1"));
     assert_eq!(selected_again.entry().handle(), selected.entry().handle());
     assert_eq!(selected_again.urgency(), selected.urgency());
@@ -428,9 +399,8 @@ fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
     let ordered = [prerequisite.clone(), critical.clone(), medium.clone()];
     let reversed = [medium, critical, prerequisite];
 
-    let selected = select(&ordered, &Actor::Spice, &all_projects(), 2).expect("eligible task");
-    let selected_again =
-        select(&reversed, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("eligible task");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects()).expect("eligible task");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
     assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
     assert_eq!(selected_again.urgency(), selected.urgency());
@@ -451,7 +421,7 @@ fn prerequisite_inherits_priority_through_a_two_edge_chain() {
     let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
     let entries = [first, second, critical, medium];
 
-    let selected = select(&entries, &Actor::Spice, &all_projects(), 2).expect("eligible task");
+    let selected = select(&entries, &Actor::Spice, &all_projects()).expect("eligible task");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
 }
 
@@ -467,7 +437,7 @@ fn priority_inheritance_terminates_on_a_dependency_cycle() {
     let medium = entry("BOARD-m1");
 
     let entries = [first, second, medium];
-    let selected = select(&entries, &Actor::Spice, &all_projects(), 2)
+    let selected = select(&entries, &Actor::Spice, &all_projects())
         .expect("cycle leaves the independent task eligible");
     assert_eq!(selected.entry().handle(), &handle("BOARD-m1"));
 }
@@ -504,8 +474,8 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
     // Removing the downstream rung makes urgency choose BOARD-a1; retaining
     // the rung but moving it above effective priority is caught separately.
     let selected =
-        select(&ordered, &Actor::Spice, &all_projects(), 2).expect("weighted candidate is ready");
-    let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
+        select(&ordered, &Actor::Spice, &all_projects()).expect("weighted candidate is ready");
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects())
         .expect("reversed weighted candidate is ready");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
     assert_eq!(selected.entry_index(), 1);
@@ -537,7 +507,7 @@ fn effective_priority_precedes_greater_downstream_weight() {
 
     // Moving downstream weight above effective priority makes BOARD-a1 win.
     let selected =
-        select(&entries, &Actor::Spice, &all_projects(), 2).expect("priority candidate is ready");
+        select(&entries, &Actor::Spice, &all_projects()).expect("priority candidate is ready");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z9"));
     assert_eq!(selected.downstream_weight(), 0);
 }
@@ -578,9 +548,9 @@ fn downstream_weight_ignores_draft_and_settled_branches() {
     ];
     let reversed = [after_settled, settled, after_hidden, hidden, root];
 
-    let selected = select(&ordered, &Actor::Spice, &all_projects(), 2)
+    let selected = select(&ordered, &Actor::Spice, &all_projects())
         .expect("root remains an unweighted candidate");
-    let selected_again = select(&reversed, &Actor::Spice, &all_projects(), 2)
+    let selected_again = select(&reversed, &Actor::Spice, &all_projects())
         .expect("reversed root remains an unweighted candidate");
     assert_eq!(selected.entry().handle(), &handle("BOARD-a1"));
     assert_eq!(selected.downstream_weight(), 0);
@@ -602,10 +572,9 @@ fn downstream_weight_terminates_on_a_dependency_cycle() {
     let ordered = [root.clone(), first.clone(), second.clone()];
     let reversed = [second, first, root];
 
-    let selected =
-        select(&ordered, &Actor::Spice, &all_projects(), 2).expect("cycle root is ready");
+    let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("cycle root is ready");
     let selected_again =
-        select(&reversed, &Actor::Spice, &all_projects(), 2).expect("reversed cycle root is ready");
+        select(&reversed, &Actor::Spice, &all_projects()).expect("reversed cycle root is ready");
     assert_eq!(selected.entry().handle(), &handle("BOARD-z1"));
     assert_eq!(selected.downstream_weight(), 2);
     assert_eq!(selected_again.entry().handle(), selected.entry().handle(),);
@@ -681,7 +650,6 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
             &entries,
             &actor,
             &subscription(wire::intent::TeamLife::Steer),
-            2,
         )
         .is_none(),
         "Steer performs no automatic selection",
@@ -691,7 +659,6 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
             &entries,
             &actor,
             &subscription(wire::intent::TeamLife::Drain),
-            2,
         )
         .expect("Drain has all assignable work")
         .entry()

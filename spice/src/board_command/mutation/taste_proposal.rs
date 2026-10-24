@@ -22,7 +22,6 @@ pub(in crate::board_command) fn taste_proposal_add(
     command: &wire::AdmittedCommand,
     add: &TasteProposalAdd,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     if let Err(outcome) = validate_request(add) {
         return outcome;
@@ -39,7 +38,7 @@ pub(in crate::board_command) fn taste_proposal_add(
             );
         }
     };
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

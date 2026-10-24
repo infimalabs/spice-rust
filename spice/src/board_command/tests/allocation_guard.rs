@@ -19,18 +19,11 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     let entries = actor_entries(answer).expect("allocation guard board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("allocation guard board has one team subscription");
-    board::select(
-        &entries,
-        actor,
-        &subscription,
-        answer.allocation_band,
-        answer.recent_cell.as_ref(),
-        &answer.environment(),
-    )
-    .expect("allocation guard fixture selects a task")
-    .entry()
-    .handle()
-    .clone()
+    board::select(&entries, actor, &subscription, &answer.environment())
+        .expect("allocation guard fixture selects a task")
+        .entry()
+        .handle()
+        .clone()
 }
 
 fn guard_observation(

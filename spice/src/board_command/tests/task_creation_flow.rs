@@ -93,14 +93,7 @@ fn task_plan_and_design_creation_admit_authored_roots_within_the_depth_bounds() 
                 vec![Witness::Absence { task: born }],
                 &add,
             );
-            task_add(
-                &bus,
-                &command,
-                &add,
-                None,
-                &projects,
-                &board::NextConfig::default(),
-            )
+            task_add(&bus, &command, &add, None, &projects)
         };
         // Depth, not the configured stem list, bounds an authored root.
         for (label, refused) in [("shallow", "foreign"), ("deep", "foreign.one.two.three")] {
@@ -325,15 +318,9 @@ fn dependency_phase_movement_refuses_creation_with_the_stale_flow() {
         &add,
     );
 
-    let outcome = task_add_with(
-        &bus,
-        &command,
-        &add,
-        None,
-        &guard_projects(),
-        &board::NextConfig::default(),
-        || complete_review(&bus, epoch, &seats[0], &dependency),
-    );
+    let outcome = task_add_with(&bus, &command, &add, None, &guard_projects(), || {
+        complete_review(&bus, epoch, &seats[0], &dependency)
+    });
     assert!(
         matches!(outcome, Outcome::Refusal(ref refusal)
             if refusal.reason() == "board::witness-moved"),
@@ -409,15 +396,8 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
             .expect("worker subscription");
         let environment = available.environment();
         assert_eq!(
-            board::select(
-                &entries,
-                &worker,
-                &subscription,
-                available.allocation_band,
-                available.recent_cell.as_ref(),
-                &environment,
-            )
-            .map(|selection| selection.entry().born().clone()),
+            board::select(&entries, &worker, &subscription, &environment,)
+                .map(|selection| selection.entry().born().clone()),
             eligible.then(|| child_born.clone()),
             "{reason}"
         );
@@ -492,7 +472,6 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
 fn explicit_dependencies_suppress_the_ambient_link() {
     let (root, bus, epoch, seats) = fixture("ambient-plan-override", 1);
     authorize_lane_creation(&bus, epoch, &seats[0]);
-    let prerequisite = todo_task(&bus, epoch, "PLAN-prereq001", "Explicit prerequisite");
     let plan = add(
         &bus,
         epoch,
@@ -501,6 +480,7 @@ fn explicit_dependencies_suppress_the_ambient_link() {
         "Planning parent",
         Some("plan"),
     );
+    let prerequisite = todo_task(&bus, epoch, "PLAN-prereq001", "Explicit prerequisite");
     let planner = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &planner, &plan);
     let explicit_born = stamp("PLAN-explicit1");
@@ -652,7 +632,6 @@ fn ambient_plan_authority_movement_refuses_child_creation() {
             &add,
             None,
             &guard_projects(),
-            &board::NextConfig::default(),
             || match movement {
                 "statement" => add_dependency(&bus, epoch, &plan, &competing),
                 "workflow" => {

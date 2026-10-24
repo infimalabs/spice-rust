@@ -162,7 +162,6 @@ fn correction_movement_after_validation_refuses_the_whole_review() {
         &intent,
         None,
         &guard_projects(),
-        &board::NextConfig::default(),
         || connect_child(&review.bus, review.epoch, &correction, &moved_after),
     );
     assert!(
@@ -268,8 +267,6 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
         &entries,
         &review.implementer,
         &subscription,
-        available.allocation_band,
-        available.recent_cell.as_ref(),
         &available.environment(),
     )
     .expect("the correction is allocatable");

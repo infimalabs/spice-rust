@@ -313,8 +313,6 @@ fn board_response_with_requirements(
     trust: Vec<wire::intent::Positioned<wire::TrustHead>>,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let body = wire::intent::BoardAnswer {
-        allocation_band: 2,
-        recent_cell: None,
         next: None,
         offer: Vec::new(),
         blocked: Vec::new(),

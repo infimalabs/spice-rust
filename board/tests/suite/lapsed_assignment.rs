@@ -132,15 +132,7 @@ fn eligible_for(entry: &Entry, actor: &Actor) -> bool {
 }
 
 fn selected_for(entry: &Entry, actor: &Actor) -> bool {
-    board::select(
-        std::slice::from_ref(entry),
-        actor,
-        &drain(),
-        0,
-        None,
-        &environment(),
-    )
-    .is_some()
+    board::select(std::slice::from_ref(entry), actor, &drain(), &environment()).is_some()
 }
 
 #[test]

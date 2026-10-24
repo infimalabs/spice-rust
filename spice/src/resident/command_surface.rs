@@ -362,7 +362,6 @@ impl<'a> Surface<'a> {
                         request,
                         &self.config.steering,
                         &self.config.projects,
-                        &self.config.allocation,
                     );
                     (outcome, parked.into_iter().collect())
                 }
@@ -376,7 +375,6 @@ impl<'a> Surface<'a> {
                         request,
                         &self.config.steering,
                         &self.config.projects,
-                        &self.config.allocation,
                     )
                 }
                 (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
@@ -385,7 +383,6 @@ impl<'a> Surface<'a> {
                         command,
                         leave,
                         &self.config.projects,
-                        &self.config.allocation,
                     ),
                     Vec::new(),
                 ),
@@ -399,7 +396,6 @@ impl<'a> Surface<'a> {
                             artifacts: &self.paths.artifacts(),
                         }),
                         &self.config.projects,
-                        &self.config.allocation,
                     ),
                     Vec::new(),
                 ),
@@ -458,7 +454,6 @@ impl<'a> Surface<'a> {
             request,
             &self.config.steering,
             &self.config.projects,
-            &self.config.allocation,
         )
     }
 

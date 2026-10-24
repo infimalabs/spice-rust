@@ -3,7 +3,6 @@ use super::*;
 /// One reconciliation's view of the board every vacant lane selects from;
 /// `'e` is the projection the selected task borrows from.
 pub(super) struct BoardView<'a, 'e> {
-    pub(super) snapshot: &'a bus::TaskSnapshot,
     pub(super) entries: &'e [Entry],
     pub(super) selection: &'a board::SelectionIndex,
     pub(super) ready_at: &'a BTreeMap<TaskStamp, Instant>,
@@ -21,7 +20,6 @@ pub(super) fn selected_ready<'e>(
     subscription: &wire::TeamSubscription,
 ) -> CommandResult<(Option<SelectedReady>, Option<&'e Entry>)> {
     let &BoardView {
-        snapshot,
         entries,
         selection,
         ready_at,
@@ -29,14 +27,12 @@ pub(super) fn selected_ready<'e>(
         environment,
         now,
     } = view;
-    let recent_cell = snapshot.recent_claim_cell(actor);
     let satisfied = selection.resolved();
     let selected = board::select_with_index_at(
         entries,
         board::Claimant {
             actor,
             subscription,
-            recent_cell: recent_cell.as_ref(),
             environment,
             match_score: None,
         },

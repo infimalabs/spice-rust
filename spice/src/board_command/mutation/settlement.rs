@@ -185,15 +185,8 @@ pub(in crate::board_command) fn task_delete(
     command: &wire::AdmittedCommand,
     delete: &TaskDelete,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    settle(
-        bus,
-        command,
-        Settlement::Delete(delete),
-        projects,
-        allocation,
-    )
+    settle(bus, command, Settlement::Delete(delete), projects)
 }
 
 /// Close a task as completed on the operator's word, whatever phase remains.
@@ -206,9 +199,8 @@ pub(in crate::board_command) fn task_close(
     command: &wire::AdmittedCommand,
     close: &TaskClose,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    settle(bus, command, Settlement::Close(close), projects, allocation)
+    settle(bus, command, Settlement::Close(close), projects)
 }
 
 /// Conclude an open, unheld Design done or collapsed on the operator's word.
@@ -220,15 +212,8 @@ pub(in crate::board_command) fn task_conclude(
     command: &wire::AdmittedCommand,
     conclude: &TaskConclude,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    settle(
-        bus,
-        command,
-        Settlement::Conclude(conclude),
-        projects,
-        allocation,
-    )
+    settle(bus, command, Settlement::Conclude(conclude), projects)
 }
 
 /// The decision write one staged conclusion joins: its journal write, the
@@ -246,7 +231,6 @@ pub(in crate::board_command) fn stage_conclusion(
     command: &wire::AdmittedCommand,
     conclude: &TaskConclude,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     decision: DecisionWrite<'_>,
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let DecisionWrite { write, decided, at } = decision;
@@ -256,7 +240,6 @@ pub(in crate::board_command) fn stage_conclusion(
         command.actor().clone(),
         std::slice::from_ref(settlement.handle()),
         projects,
-        allocation,
     )?;
     guard_task_projection(write, snapshot.task_barrier.clone());
     let entry = admitted_entry(&snapshot, settlement)?;
@@ -286,7 +269,6 @@ pub(in crate::board_command) fn stage_rejection(
     rejected: &[TaskHandle],
     validation: &str,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     decision: DecisionWrite<'_>,
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let DecisionWrite {
@@ -294,8 +276,7 @@ pub(in crate::board_command) fn stage_rejection(
         decided: cause,
         at,
     } = decision;
-    let snapshot =
-        validated_working_snapshot(bus, command.actor().clone(), rejected, projects, allocation)?;
+    let snapshot = validated_working_snapshot(bus, command.actor().clone(), rejected, projects)?;
     guard_task_projection(write, snapshot.task_barrier.clone());
     let mut closed = Vec::with_capacity(rejected.len());
     for handle in rejected {
@@ -353,14 +334,12 @@ fn settle(
     command: &wire::AdmittedCommand,
     settlement: Settlement<'_>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(settlement.handle()),
         projects,
-        allocation,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

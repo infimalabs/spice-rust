@@ -6,5 +6,5 @@ mod allocation;
 mod coordination;
 mod lapse;
 mod lapsed_assignment;
-mod selection_locality;
+mod selection_age;
 mod selection_match;

@@ -1348,19 +1348,15 @@ pub(crate) fn dispatch(
     let allocation = board::NextConfig::default();
     if let wire::intent::Intent::WorkingGroupMove(moving) = command.body() {
         let config = steer::Config::default();
-        return Some(move_working_group(bus, command, moving, &config, &projects, &allocation).0);
+        return Some(move_working_group(bus, command, moving, &config, &projects).0);
     }
     if let wire::intent::Intent::WorkingGroupDisband(request) = command.body() {
         let config = steer::Config::default();
-        return Some(
-            disband_working_group(bus, command, request, &config, &projects, &allocation).0,
-        );
+        return Some(disband_working_group(bus, command, request, &config, &projects).0);
     }
     if let wire::intent::Intent::WorkingGroupStance(stance) = command.body() {
         let config = steer::Config::default();
-        return Some(
-            set_working_group_stance(bus, command, stance, &config, &projects, &allocation).0,
-        );
+        return Some(set_working_group_stance(bus, command, stance, &config, &projects).0);
     }
     dispatch_with_repository(bus, command, None, &projects, &allocation, None)
 }
@@ -1379,7 +1375,7 @@ fn dispatch_working_group(
 }
 
 /// Dispatch with the resident repository required by production Git boundaries
-/// and the retained session profiles `task next` ranks in-band ties by.
+/// and the retained session profiles `task next` and claims rank work by.
 pub(crate) fn dispatch_with_repository(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -1388,15 +1384,13 @@ pub(crate) fn dispatch_with_repository(
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
 ) -> Option<Outcome<CommandAnswer>> {
-    if let Some(outcome) =
-        super::dispatch_preparation(bus, command, repository, projects, allocation)
-    {
+    if let Some(outcome) = super::dispatch_preparation(bus, command, repository, projects) {
         return Some(outcome);
     }
     if let Some(outcome) = dispatch_working_group(bus, command) {
         return Some(outcome);
     }
-    if let Some(outcome) = dispatch_settlement(bus, command, projects, allocation) {
+    if let Some(outcome) = dispatch_settlement(bus, command, projects) {
         return Some(outcome);
     }
 
@@ -1405,76 +1399,53 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::BoardRead(read) => {
             read_board(bus, read, command, projects, allocation, profiles)
         }
-        wire::intent::Intent::TaskDetail(detail) => read_task_detail(
-            bus,
-            repository,
-            detail,
-            command.actor().clone(),
-            projects,
-            allocation,
-        ),
-        wire::intent::Intent::TaskRelations(relations) => read_task_relations(
-            bus,
-            relations,
-            command.actor().clone(),
-            projects,
-            allocation,
-        ),
+        wire::intent::Intent::TaskDetail(detail) => {
+            read_task_detail(bus, repository, detail, command.actor().clone(), projects)
+        }
+        wire::intent::Intent::TaskRelations(relations) => {
+            read_task_relations(bus, relations, command.actor().clone(), projects)
+        }
         wire::intent::Intent::TaskTimeline(timeline) => {
-            read_task_timeline(bus, timeline, command.actor().clone(), projects, allocation)
+            read_task_timeline(bus, timeline, command.actor().clone(), projects)
         }
         wire::intent::Intent::BoardGraph(graph) => {
-            read_graph(bus, graph, command.actor().clone(), projects, allocation)
+            read_graph(bus, graph, command.actor().clone(), projects)
         }
         wire::intent::Intent::BoardHandout(handout) => {
-            read_handout(bus, handout, command.actor().clone(), projects, allocation)
+            read_handout(bus, handout, command.actor().clone(), projects)
         }
         wire::intent::Intent::DocLedger(ledger) => {
-            read_ledger(bus, ledger, command.actor().clone(), projects, allocation)
+            read_ledger(bus, ledger, command.actor().clone(), projects)
         }
-        wire::intent::Intent::RoomPost(post) => room_post(bus, command, post, projects, allocation),
-        wire::intent::Intent::TaskAdd(add) => {
-            task_add(bus, command, add, repository, projects, allocation)
-        }
-        wire::intent::Intent::TaskOopsAdd(add) => {
-            task_oops_add(bus, command, add, projects, allocation)
-        }
+        wire::intent::Intent::RoomPost(post) => room_post(bus, command, post, projects),
+        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, repository, projects),
+        wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
         wire::intent::Intent::TasteProposalAdd(add) => {
-            taste_proposal_add(bus, command, add, projects, allocation)
+            taste_proposal_add(bus, command, add, projects)
         }
-        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
-        wire::intent::Intent::TaskEdit(edit) => {
-            task_edit(bus, command, edit, repository, projects, allocation)
-        }
+        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects),
+        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, repository, projects),
         wire::intent::Intent::TaskDefer(defer) => {
-            task_defer(bus, command, defer, repository, projects, allocation)
+            task_defer(bus, command, defer, repository, projects)
         }
-        wire::intent::Intent::TaskWake(wake) => {
-            task_wake(bus, command, wake, repository, projects, allocation)
-        }
-        wire::intent::Intent::TaskFile(file) => {
-            task_file(bus, command, file, repository, projects, allocation)
-        }
+        wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, repository, projects),
+        wire::intent::Intent::TaskFile(file) => task_file(bus, command, file, repository, projects),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
-            claim_free(bus, command, task, repository, projects, allocation)
+            claim_free(bus, command, task, repository, projects)
         }
-        wire::intent::Intent::TaskDepends(depends) => {
-            task_depends(bus, command, depends, projects, allocation)
-        }
+        wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends, projects),
         wire::intent::Intent::ClaimWin(win) => claim_win(
             bus, command, win, repository, projects, allocation, profiles,
         ),
         wire::intent::Intent::ClaimRenew(renew) if command.kind() == CommandKind::ClaimRenew => {
-            claim_reclaim(bus, command, renew, projects, allocation)
+            claim_reclaim(bus, command, renew, projects)
         }
-        wire::intent::Intent::TaskDone(done) => {
-            task_done(bus, command, done, repository, projects, allocation)
-        }
+        wire::intent::Intent::TaskDone(done) => task_done(bus, command, done, repository, projects),
         wire::intent::Intent::TaskReview(review) => {
-            task_review(bus, command, review, repository, projects, allocation)
+            task_review(bus, command, review, repository, projects)
         }
         wire::intent::Intent::DocApply(apply) => {
-            doc_apply(bus, command, apply, repository, projects, allocation)
+            doc_apply(bus, command, apply, repository, projects)
         }
         _ => return None,
     };

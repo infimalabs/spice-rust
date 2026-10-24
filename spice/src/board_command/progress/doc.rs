@@ -38,9 +38,8 @@ pub(in crate::board_command) fn doc_apply(
     apply: &DocApply,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let plan = match validate_doc_plan(bus, command, apply, projects, allocation) {
+    let plan = match validate_doc_plan(bus, command, apply, projects) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
@@ -55,7 +54,6 @@ fn validate_doc_plan(
     command: &wire::AdmittedCommand,
     apply: &DocApply,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<DocPlan, Outcome<CommandAnswer>> {
     let preview = board::Preview::classify(&apply.document).map_err(|error| {
         refusal(
@@ -72,7 +70,7 @@ fn validate_doc_plan(
         ));
     }
     let roles = principal_roles(bus)?;
-    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
+    let snapshot = validated_snapshot(bus, command.actor().clone(), projects)?;
     require_doc_barrier(command, apply, &snapshot)?;
     let project = preview
         .document()

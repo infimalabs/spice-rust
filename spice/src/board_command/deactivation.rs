@@ -27,14 +27,12 @@ impl Deactivation {
         bus: &Bus,
         design: &TaskHandle,
         projects: &ProjectPolicy,
-        allocation: &board::NextConfig,
     ) -> Result<Option<Self>, Outcome<CommandAnswer>> {
         let snapshot = validated_working_snapshot(
             bus,
             Actor::Operator,
             std::slice::from_ref(design),
             projects,
-            allocation,
         )?;
         let Some(anchor) = task_entry(&snapshot.entries, design).cloned() else {
             return Ok(None);

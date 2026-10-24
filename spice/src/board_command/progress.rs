@@ -12,9 +12,8 @@ pub(super) fn claim_reclaim(
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    claim_reclaim_with_clock(bus, command, renew, projects, allocation, current_instant)
+    claim_reclaim_with_clock(bus, command, renew, projects, current_instant)
 }
 
 pub(super) fn claim_reclaim_with_clock(
@@ -22,10 +21,9 @@ pub(super) fn claim_reclaim_with_clock(
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     clock: impl FnOnce() -> Result<Instant, Outcome<CommandAnswer>>,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match command_task_snapshot(bus, command, &renew.task, projects, allocation) {
+    let snapshot = match command_task_snapshot(bus, command, &renew.task, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -87,9 +85,8 @@ pub(super) fn task_done(
     done: &TaskDone,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match command_task_snapshot(bus, command, &done.task, projects, allocation) {
+    let snapshot = match command_task_snapshot(bus, command, &done.task, projects) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -941,16 +938,10 @@ fn prepare_review(
     review: &TaskReview,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Result<PreparedReview, Outcome<CommandAnswer>> {
     let roots = task_review_roots(review);
-    let snapshot = validated_working_snapshot_for_tasks(
-        bus,
-        command.actor().clone(),
-        &roots,
-        projects,
-        allocation,
-    )?;
+    let snapshot =
+        validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots, projects)?;
     if let Some(entry) = task_entry(&snapshot.entries, &review.task)
         && !entry.is_filed()
     {
@@ -1007,17 +998,8 @@ pub(super) fn task_review(
     review: &TaskReview,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    task_review_with(
-        bus,
-        command,
-        review,
-        repository,
-        projects,
-        allocation,
-        || {},
-    )
+    task_review_with(bus, command, review, repository, projects, || {})
 }
 
 pub(super) fn task_review_with(
@@ -1026,10 +1008,9 @@ pub(super) fn task_review_with(
     review: &TaskReview,
     repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let prepared = match prepare_review(bus, command, review, repository, projects, allocation) {
+    let prepared = match prepare_review(bus, command, review, repository, projects) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };

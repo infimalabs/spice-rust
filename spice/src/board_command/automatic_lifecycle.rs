@@ -90,13 +90,8 @@ fn prepare_claim<'a>(
         occupant,
     } = seat;
     let actor = Actor::Lane(lane);
-    let snapshot = validated_snapshot_for_automatic(
-        observed,
-        actor.clone(),
-        occupant,
-        policy.projects,
-        policy.allocation,
-    )?;
+    let snapshot =
+        validated_snapshot_for_automatic(observed, actor.clone(), occupant, policy.projects)?;
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
     let selected = select_task(&snapshot, &actor, &subscription, policy.allocation)?;
@@ -237,7 +232,6 @@ fn select_task(
         actor,
         subscription,
         *allocation,
-        snapshot.answer.recent_cell.as_ref(),
         &environment,
         now,
     )

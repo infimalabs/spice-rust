@@ -17,7 +17,7 @@ deaths = 0
 mystery = 1
 
 [board.next]
-band = -1
+band = 2
 
 [proof]
 image = "latest"
@@ -66,11 +66,7 @@ value = 1
         })
         .collect::<Vec<_>>();
     for (path, source, kind) in [
-        (
-            "board.next.band",
-            ConfigSource::Tracked,
-            IssueKind::Malformed,
-        ),
+        ("board.next.band", ConfigSource::Tracked, IssueKind::Unknown),
         ("bogus", ConfigSource::Local, IssueKind::Unknown),
         ("serve.pack.rows", ConfigSource::Tracked, IssueKind::Policy),
         ("serve.pack.rows", ConfigSource::Local, IssueKind::Malformed),

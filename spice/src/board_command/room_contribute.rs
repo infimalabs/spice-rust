@@ -21,7 +21,6 @@ pub(crate) fn room_contribute(
     contribute: &RoomContribute,
     owners: Option<SourceOwners<'_>>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let Actor::Lane(lane) = command.actor().clone() else {
         return refusal(
@@ -48,7 +47,6 @@ pub(crate) fn room_contribute(
         command.actor().clone(),
         std::slice::from_ref(&contribute.room),
         projects,
-        allocation,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

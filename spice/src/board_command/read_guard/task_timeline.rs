@@ -27,7 +27,6 @@ pub(in crate::board_command) fn read_task_timeline(
     request: &TaskTimeline,
     principal: Actor,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let lanes = match validate(request) {
         Ok(lanes) => lanes,
@@ -58,7 +57,6 @@ pub(in crate::board_command) fn read_task_timeline(
         &observed,
         principal,
         projects,
-        allocation,
         None,
         Some(&selected),
         false,

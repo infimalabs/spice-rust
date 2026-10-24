@@ -43,13 +43,8 @@ fn grant_fixture(
     fs::create_dir_all(root.join(".git")).expect("claim grant fixture is a repository");
     let resident = Repository::discover(&root).expect("claim grant fixture repository resolves");
 
-    let snapshot = validated_snapshot(
-        &bus,
-        actor.clone(),
-        &guard_projects(),
-        &board::NextConfig::default(),
-    )
-    .expect("claim grant fixture snapshot validates");
+    let snapshot = validated_snapshot(&bus, actor.clone(), &guard_projects())
+        .expect("claim grant fixture snapshot validates");
 
     let winner = guard_winner(&snapshot.answer, &actor);
     let expected = claim_expected(&snapshot.answer, &winner, &seats[seat]);
@@ -146,14 +141,9 @@ fn intermediate_dependency_movement_refuses_before_closing_a_cycle() {
         witnesses,
         &intent,
     );
-    let outcome = task_depends_with(
-        &bus,
-        &command,
-        &intent,
-        &guard_projects(),
-        &board::NextConfig::default(),
-        || connect_child(&bus, epoch, &intermediate, &target),
-    );
+    let outcome = task_depends_with(&bus, &command, &intent, &guard_projects(), || {
+        connect_child(&bus, epoch, &intermediate, &target)
+    });
     assert!(
         matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"),
         "intermediate graph movement must lose the commit race: {outcome:?}",

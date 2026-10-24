@@ -166,15 +166,6 @@ fn seed_scoped_tasks(
     same_lane: &Actor,
     cross_lane: &Actor,
 ) -> ScopedTasks {
-    let same_team = add_project(
-        bus,
-        epoch,
-        same_lane.clone(),
-        "SCOPE-manual1",
-        "Same-team work",
-        "task.manual",
-        Some("todo"),
-    );
     let cross_team = add_project(
         bus,
         epoch,
@@ -191,6 +182,16 @@ fn seed_scoped_tasks(
         "SCOPE-open001",
         "Operator work",
         "task.unrelated",
+        Some("todo"),
+    );
+    // Newest, so a widened scope selects an older row and moves the witness.
+    let same_team = add_project(
+        bus,
+        epoch,
+        same_lane.clone(),
+        "SCOPE-manual1",
+        "Same-team work",
+        "task.manual",
         Some("todo"),
     );
     ScopedTasks {

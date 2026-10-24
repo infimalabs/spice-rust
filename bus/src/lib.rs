@@ -258,15 +258,6 @@ mod runtime {
             self.dependency_standing.get(task).copied()
         }
 
-        /// Principal's most recent claim-time cell without scanning task heads.
-        #[must_use]
-        pub fn recent_claim_cell(
-            &self,
-            actor: &journal::crossing::Actor,
-        ) -> Option<journal::crossing::ClaimCell> {
-            self.facts.latest_claim(actor).map(|(_claimed, cell)| cell)
-        }
-
         /// Inconsistency detected while maintaining the live allocation index.
         #[must_use]
         pub fn allocation_fault(&self) -> Option<&AllocationFault> {

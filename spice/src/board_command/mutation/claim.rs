@@ -60,13 +60,8 @@ pub(in crate::board_command) fn claim_plan<'a>(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let snapshot = validated_working_snapshot_for_tasks(
-        bus,
-        command.actor().clone(),
-        &roots,
-        projects,
-        allocation,
-    )?;
+    let snapshot =
+        validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots, projects)?;
     let selected = claim_selection(&snapshot, command, possession, allocation, profiles)?.clone();
     // Named capture may possess a planning deliverable, but a recovery-bound
     // capture adopts implementation, so it refuses planning before Git work.
@@ -674,7 +669,6 @@ fn allocator_claim_selection<'a>(
         board::Claimant {
             actor: command.actor(),
             subscription: &subscription,
-            recent_cell: snapshot.answer.recent_cell.as_ref(),
             environment: &environment,
             match_score: matcher
                 .as_ref()

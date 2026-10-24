@@ -802,15 +802,6 @@ pub struct BoardAnswer {
     pub project_policy: BoardProjectPolicy,
     /// Complete actor-specific route captured by the snapshot authority.
     pub actor_route: BoardActorRoute,
-    /// Urgency distance the resident captured as one equivalent allocation band.
-    pub allocation_band: u64,
-    /// Principal's most recent allocator cell, included by full-board reads.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub recent_cell: Option<crate::ClaimCell>,
     /// Typed allocator decision, present only for [`BoardRead::Next`].
     #[serde(
         default,
@@ -822,8 +813,8 @@ pub struct BoardAnswer {
     /// while every other scope retains durable task-stamp order.
     pub tasks: Vec<BoardTask>,
     /// Open-read allocation order: the successive choices of the resident
-    /// allocator's own selection step for a draining lane with no locality
-    /// history, so the first stamp is the task offered next. Standing is held
+    /// allocator's own selection step for a draining lane with no session
+    /// match, so the first stamp is the task offered next. Standing is held
     /// fixed across steps. Empty for every other read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offer: Vec<crate::TaskStamp>,
