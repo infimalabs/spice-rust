@@ -12,10 +12,11 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::thread::JoinHandle;
 
+mod members;
+
 const GUARDIAN_LOCK_FD: RawFd = 3;
 const GUARDIAN_NOTICE_FD: RawFd = 4;
 const DUPLICATE_MINIMUM_FD: RawFd = 10;
-const POLL_NANOSECONDS: libc::c_long = 10_000_000;
 const READY_BYTE: u8 = 1;
 #[cfg(target_os = "linux")]
 const PROC_SELF_FD: &[u8] = b"/proc/self/fd\0";
@@ -262,24 +263,35 @@ fn guardian_main(lock: RawFd, notice: RawFd, descriptor_setup: bool) -> ! {
         wait_for_wrapper_close();
         libc::close(GUARDIAN_NOTICE_FD);
         // Only an observed absence ends this wait. The guardian exists to hold
-        // the lock for as long as any member might still be running, so a probe
-        // that established nothing is not permission to release it -- exiting
-        // there would hand the lock to the next claimant on the strength of an
-        // answer nobody got. That is the same rule `crate::surface::owner`
-        // takes, and the opposite of the one the post-signal consumers in
-        // `crate::spawn` chose, where forgiving an unreadable answer ends a wait
-        // that has already delivered its kill rather than releasing a claim.
-        // The members are not this process's children and the group gains
-        // new ones freely, so no kernel object signals its end; only the
-        // probe can.
-        while raw_group_state(pid) != ProcessState::Terminal {
-            let request = libc::timespec {
-                tv_sec: 0,
-                tv_nsec: POLL_NANOSECONDS,
-            };
-            libc::nanosleep(&request, std::ptr::null_mut());
+        // the lock for as long as any member might still be running, so a
+        // probe or listing that established nothing is not permission to
+        // release it -- exiting there would hand the lock to the next claimant
+        // on the strength of an answer nobody got. That is the same rule
+        // `crate::surface::owner` takes, and the opposite of the one the
+        // post-signal consumers in `crate::spawn` chose, where forgiving an
+        // unreadable answer ends a wait that has already delivered its kill
+        // rather than releasing a claim. With nothing it can name left to wait
+        // on, an unreadable group keeps the lock until the guardian is ended.
+        //
+        // Absence is the probe finding no group, or two consecutive complete
+        // listings finding no running member: a member that exited before
+        // the first could arm forked first, and the second lists that child.
+        // A member that exited but awaits its reaper still answers the probe,
+        // so only the listings can see past it.
+        let mut empty_before = false;
+        loop {
+            if raw_group_state(pid) == ProcessState::Terminal {
+                libc::_exit(0);
+            }
+            match members::await_exits(pid) {
+                members::Pass::Exited => empty_before = false,
+                members::Pass::Empty if empty_before => libc::_exit(0),
+                members::Pass::Empty => empty_before = true,
+                members::Pass::Unreadable => loop {
+                    libc::pause();
+                },
+            }
         }
-        libc::_exit(0);
     }
 }
 

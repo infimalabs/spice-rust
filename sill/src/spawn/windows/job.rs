@@ -9,7 +9,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_ALL, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_MORE_DATA, GENERIC_ALL, GetLastError, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, PostQueuedCompletionStatus,
@@ -17,8 +18,9 @@ use windows_sys::Win32::System::IO::{
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
-    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
+    JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectAssociateCompletionPortInformation, JobObjectBasicAccountingInformation,
+    JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation, OpenJobObjectW,
     QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::SystemServices::{JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE};
@@ -244,6 +246,55 @@ impl Job {
     pub(super) fn active_processes(&self) -> io::Result<u32> {
         self.accounting()
             .map(|information| information.ActiveProcesses)
+    }
+
+    /// The ids of the processes in the job now.
+    pub(super) fn process_ids(&self) -> io::Result<Vec<u32>> {
+        let header = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList);
+        let mut capacity = 64_usize;
+        loop {
+            let bytes = header + capacity * std::mem::size_of::<usize>();
+            // A `usize` buffer carries the list's alignment.
+            let mut buffer = vec![0_usize; bytes.div_ceil(std::mem::size_of::<usize>())];
+            let length = u32::try_from(bytes).map_err(io::Error::other)?;
+            // SAFETY: `buffer` is writable for `length` bytes and aligned for
+            // the list, and the job handle is live.
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.handle,
+                    JobObjectBasicProcessIdList,
+                    buffer.as_mut_ptr().cast(),
+                    length,
+                    std::ptr::null_mut(),
+                )
+            };
+            if queried == 0 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
+                    return Err(error);
+                }
+            }
+            let list = buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+            // SAFETY: the kernel filled the list's header inside `buffer`.
+            let (assigned, listed) = unsafe {
+                (
+                    (*list).NumberOfAssignedProcesses as usize,
+                    (*list).NumberOfProcessIdsInList as usize,
+                )
+            };
+            if queried != 0 && listed >= assigned {
+                // SAFETY: the kernel wrote `listed` ids, at most `capacity`,
+                // after the header.
+                let ids = unsafe {
+                    std::slice::from_raw_parts(
+                        std::ptr::addr_of!((*list).ProcessIdList).cast::<usize>(),
+                        listed.min(capacity),
+                    )
+                };
+                return Ok(ids.iter().map(|id| *id as u32).collect());
+            }
+            capacity = assigned.max(capacity * 2);
+        }
     }
 
     pub(super) fn usage(&self) -> io::Result<ProcessUsage> {
