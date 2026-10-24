@@ -38,6 +38,7 @@ pub(super) fn selected_ready<'e>(
             subscription,
             recent_cell: recent_cell.as_ref(),
             environment,
+            match_score: None,
         },
         allocation.band(),
         selection,

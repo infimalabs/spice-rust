@@ -39,6 +39,7 @@ pub(super) fn issue_repository<B: Serialize>(
         Some(host(repository)),
         &projects,
         &board::NextConfig::default(),
+        None,
     )
     .expect("board command owns taste-review fixture kind")
 }

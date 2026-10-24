@@ -843,7 +843,7 @@ fn supporting_evidence_is_current(
         })
 }
 
-pub(super) fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::CommandAnswer> {
+pub(crate) fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::CommandAnswer> {
     match outcome {
         Outcome::Reply(_) => unreachable!("Design recognition does not reply on failure"),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),

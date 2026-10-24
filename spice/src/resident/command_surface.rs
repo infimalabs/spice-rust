@@ -144,6 +144,7 @@ impl<'a> Surface<'a> {
             }),
             &self.config.projects,
             &self.config.allocation,
+            self.profiles.get().map(AsRef::as_ref),
         ) {
             return CommandDispatch::ordinary(outcome);
         }

@@ -1,4 +1,12 @@
 use super::*;
+use crate::resident::message_surface;
+use occupant_match::OccupantMatch;
+
+mod occupant_match;
+
+/// The resident's retained session profiles, when message startup restored
+/// them: what a running lane's `task next` ranks in-band ties by.
+pub(crate) type OccupantProfiles<'a> = Option<&'a std::sync::Mutex<message_surface::MessageState>>;
 
 /// Project and decide `task next` from the snapshot's live allocation frontier.
 ///
@@ -11,13 +19,8 @@ pub(crate) fn read_next_work(
     principal: wire::Actor,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    profiles: OccupantProfiles<'_>,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
-    let cursor = observed.cursor().ok_or_else(|| {
-        store_fault(
-            "board::cursor-missing",
-            "a running resident has no durable snapshot cursor",
-        )
-    })?;
     let residency = observed.residency().ok_or_else(|| {
         store_fault(
             "board::residency-missing",
@@ -46,6 +49,19 @@ pub(crate) fn read_next_work(
     } else {
         None
     };
+    let mut occupant_profiles = match (profiles, running_occupant(residency.body(), &principal)) {
+        (Some(profiles), Some((lane, occupant))) => Some((
+            message_surface::lock_state(profiles)
+                .map_err(crate::resident::design_awareness::command_answer_outcome)?,
+            lane,
+            occupant,
+        )),
+        _ => None,
+    };
+    let matcher = occupant_profiles.as_mut().map(|(state, lane, occupant)| {
+        OccupantMatch::new(&mut state.profiles, &entries, *lane, *occupant)
+    });
+    let match_score = |entry: &Entry| matcher.as_ref().map_or(0.0, |matcher| matcher.score(entry));
     let state = if let Some(index) = held {
         NextWorkState::Active {
             task: next_task(frontier_heads[index], &principal),
@@ -59,6 +75,9 @@ pub(crate) fn read_next_work(
             subscription: &subscription,
             recent_cell: recent_cell.as_ref(),
             environment: &environment,
+            match_score: matcher
+                .as_ref()
+                .map(|_| &match_score as &dyn Fn(&Entry) -> f64),
         },
         allocation.band(),
         &satisfied,
@@ -87,6 +106,32 @@ pub(crate) fn read_next_work(
         }
     };
 
+    next_answer(
+        observed,
+        residency,
+        &principal,
+        projects,
+        allocation,
+        recent_cell,
+        state,
+    )
+}
+
+fn next_answer(
+    observed: &bus::TaskSnapshot,
+    residency: &journal::JournalHead<wire::ResidencyHead>,
+    principal: &wire::Actor,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    recent_cell: Option<wire::ClaimCell>,
+    next: NextWorkState,
+) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
+    let cursor = observed.cursor().ok_or_else(|| {
+        store_fault(
+            "board::cursor-missing",
+            "a running resident has no durable snapshot cursor",
+        )
+    })?;
     let mut residency = positioned(residency);
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
@@ -104,10 +149,10 @@ pub(crate) fn read_next_work(
             public_min_depth: projects.public_min_depth(),
             public_max_depth: projects.public_max_depth(),
         },
-        actor_route: actor_route(&principal, &residency.body)?,
+        actor_route: actor_route(principal, &residency.body)?,
         allocation_band: allocation.band(),
         recent_cell,
-        next: Some(state),
+        next: Some(next),
         tasks: Vec::new(),
         offer: Vec::new(),
         blocked: Vec::new(),
@@ -150,21 +195,30 @@ fn project_design_request(
     residency: &wire::ResidencyHead,
     principal: &wire::Actor,
 ) -> Result<Option<wire::intent::DesignRequest>, Outcome<CommandAnswer>> {
+    running_occupant(residency, principal)
+        .map(|(lane, occupant)| {
+            crate::resident::design_awareness::project_request(
+                bus, observed, entries, lane, occupant,
+            )
+        })
+        .transpose()
+        .map(Option::flatten)
+}
+
+/// The lane and occupant seated for `principal`, when it is an occupied lane.
+fn running_occupant(
+    residency: &wire::ResidencyHead,
+    principal: &wire::Actor,
+) -> Option<(wire::CanonicalUuid, wire::CanonicalUuid)> {
     let wire::Actor::Lane(lane) = principal else {
-        return Ok(None);
+        return None;
     };
     residency
         .lanes
         .iter()
         .find(|row| row.lane == *lane && row.disposition == "occupied")
         .and_then(|row| row.occupant)
-        .map(|occupant| {
-            crate::resident::design_awareness::project_request(
-                bus, observed, entries, *lane, occupant,
-            )
-        })
-        .transpose()
-        .map(Option::flatten)
+        .map(|occupant| (*lane, occupant))
 }
 
 type FrontierProjection<'a> = (

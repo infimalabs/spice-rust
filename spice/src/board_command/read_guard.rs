@@ -12,9 +12,7 @@ mod task_relations;
 pub(super) use task_relations::read_task_relations;
 mod task_timeline;
 pub(super) use task_timeline::read_task_timeline;
-mod next_work;
-#[cfg(test)]
-pub(crate) use next_work::read_next_work;
+pub(super) mod next_work;
 mod task_selection;
 mod working;
 use context::{
@@ -702,16 +700,20 @@ pub(super) fn task_git_outcome(error: spice::task_git::Error) -> Outcome<Command
 pub(super) fn read_board(
     bus: &Bus,
     read: &BoardRead,
-    principal: wire::Actor,
+    command: &wire::AdmittedCommand,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    profiles: next_work::OccupantProfiles<'_>,
 ) -> Outcome<CommandAnswer> {
+    let principal = command.actor().clone();
     let observed = match bus.task_snapshot() {
         Ok(observed) => observed,
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
     if matches!(read, BoardRead::Next) {
-        return match next_work::read_next_work(bus, &observed, principal, projects, allocation) {
+        let next =
+            next_work::read_next_work(bus, &observed, principal, projects, allocation, profiles);
+        return match next {
             Ok(answer) => snapshot_reply(answer.cursor, CommandAnswer::Board(Box::new(answer))),
             Err(outcome) => outcome,
         };

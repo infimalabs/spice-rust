@@ -1349,6 +1349,7 @@ fn capture_lapsed_task(
         None,
         &fixture.projects,
         &board::NextConfig::default(),
+        None,
     )
     .expect("board owns capture command");
     assert!(

@@ -36,6 +36,7 @@ fn detail_with_repository(
         Some(host(repository)),
         &projects,
         &board::NextConfig::default(),
+        None,
     )
     .expect("board command owns task detail")
 }
