@@ -3,14 +3,13 @@
 use std::collections::BTreeSet;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 use std::time::{Duration, Instant};
 
 mod snapshot;
 
 use snapshot::process_snapshot;
 
-const REAP_POLL: Duration = Duration::from_millis(10);
+use crate::ProcessExitObserver;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ProcessGeneration {
@@ -47,13 +46,33 @@ pub struct DescendantGroups {
     root: u32,
     groups: BTreeSet<u32>,
     members: BTreeSet<ProcessIdentity>,
+    /// The root's exit, armed while the root can still be named.
+    root_exit: Option<ProcessExitObserver>,
+}
+
+/// The bounds of one reap, each measured from its start.
+#[derive(Clone, Copy, Debug)]
+struct ReapBounds {
+    grace: Duration,
+    reap: Duration,
+    output_drain: Duration,
+}
+
+/// What one observation found still running in the owned groups.
+#[derive(Debug, Default, Eq, PartialEq)]
+struct Live {
+    groups: BTreeSet<u32>,
+    members: Vec<u32>,
 }
 
 impl DescendantGroups {
     /// Capture the process rooted at `root` and every descendant visible now.
     pub fn discover(root: u32) -> io::Result<Self> {
+        let root_exit = ProcessExitObserver::or_ended(root)?;
         let processes = process_snapshot()?;
-        Self::from_snapshot(root, &processes)
+        let mut descendants = Self::from_snapshot(root, &processes)?;
+        descendants.root_exit = Some(root_exit);
+        Ok(descendants)
     }
 
     fn from_snapshot(root: u32, processes: &[Process]) -> io::Result<Self> {
@@ -69,6 +88,7 @@ impl DescendantGroups {
             root,
             members,
             groups: BTreeSet::new(),
+            root_exit: None,
         };
         descendants.reconcile(processes)?;
         Ok(descendants)
@@ -91,32 +111,46 @@ impl DescendantGroups {
     ) -> io::Result<()> {
         let mut snapshot = process_snapshot;
         let mut signal_group = kill_process_group;
-        self.reap_while_root_terminates_with(
-            grace,
-            reap,
-            output_drain,
+        let mut root_exit = self.root_exit.take();
+        let mut wait = |members: &[u32], deadline: Instant| {
+            await_exits(members, &mut root_exit, root_terminal, deadline)
+        };
+        let reaped = self.reap_while_root_terminates_with(
+            ReapBounds {
+                grace,
+                reap,
+                output_drain,
+            },
             root_terminal,
             &mut snapshot,
             &mut signal_group,
-        )
+            &mut wait,
+        );
+        self.root_exit = root_exit;
+        reaped
     }
 
-    fn reap_while_root_terminates_with<Snapshot, Signal>(
+    /// Observe the tree, then wait on what it found running, until the root
+    /// and tree are terminal across two consecutive observations. `wait`
+    /// blocks until every listed member and, while it runs, the root have
+    /// exited, or until the deadline it is given.
+    fn reap_while_root_terminates_with<Snapshot, Signal, Wait>(
         &mut self,
-        grace: Duration,
-        reap: Duration,
-        output_drain: Duration,
+        bounds: ReapBounds,
         root_terminal: &AtomicBool,
         snapshot: &mut Snapshot,
         signal_group: &mut Signal,
+        wait: &mut Wait,
     ) -> io::Result<()>
     where
         Snapshot: FnMut() -> io::Result<Vec<Process>>,
         Signal: FnMut(u32, libc::c_int) -> io::Result<()>,
+        Wait: FnMut(&[u32], Instant) -> io::Result<()>,
     {
         let started = Instant::now();
-        let reap_deadline = grace.saturating_add(reap);
-        let absolute_deadline = reap_deadline.saturating_add(output_drain);
+        let grace = bounds.grace;
+        let reap_deadline = grace.saturating_add(bounds.reap);
+        let absolute_deadline = reap_deadline.saturating_add(bounds.output_drain);
         let mut signal = libc::SIGTERM;
         let mut observed_terminal = false;
         loop {
@@ -127,7 +161,7 @@ impl DescendantGroups {
             }
             let root_was_terminal = root_terminal.load(Ordering::Acquire);
             let live = self.observe_and_signal(signal, false, snapshot, signal_group)?;
-            if root_was_terminal && live.is_empty() {
+            if root_was_terminal && live.groups.is_empty() {
                 if observed_terminal {
                     return Ok(());
                 }
@@ -136,9 +170,13 @@ impl DescendantGroups {
                 observed_terminal = false;
             }
             let elapsed = started.elapsed();
-            if elapsed >= absolute_deadline || (elapsed >= reap_deadline && !live.is_empty()) {
-                let detail = if !live.is_empty() {
-                    format!("process groups {} remained live", display_groups(&live))
+            if elapsed >= absolute_deadline || (elapsed >= reap_deadline && !live.groups.is_empty())
+            {
+                let detail = if !live.groups.is_empty() {
+                    format!(
+                        "process groups {} remained live",
+                        display_groups(&live.groups)
+                    )
                 } else if !root_terminal.load(Ordering::Acquire) {
                     "the action process group did not finish inside its cleanup bounds".to_owned()
                 } else {
@@ -146,13 +184,20 @@ impl DescendantGroups {
                 };
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    format!("{detail} after the {reap:?} reap deadline"),
+                    format!("{detail} after the {:?} reap deadline", bounds.reap),
                 ));
             }
-            // Descendants that outlived their parents are nobody's children
-            // here and new groups can still appear mid-shutdown, so no kernel
-            // object signals the tree's end; only the next snapshot can.
-            thread::sleep(REAP_POLL.min(absolute_deadline.saturating_sub(elapsed)));
+            if observed_terminal {
+                continue;
+            }
+            let boundary = if signal == libc::SIGTERM {
+                grace
+            } else if live.groups.is_empty() {
+                absolute_deadline
+            } else {
+                reap_deadline
+            };
+            wait(&live.members, deadline_after(started, boundary))?;
         }
     }
 
@@ -169,7 +214,7 @@ impl DescendantGroups {
         all: bool,
         snapshot: &mut Snapshot,
         signal_group: &mut Signal,
-    ) -> io::Result<BTreeSet<u32>>
+    ) -> io::Result<Live>
     where
         Snapshot: FnMut() -> io::Result<Vec<Process>>,
         Signal: FnMut(u32, libc::c_int) -> io::Result<()>,
@@ -187,7 +232,13 @@ impl DescendantGroups {
                 signal,
             )?;
         }
-        owned_live_groups(&processes, self.root, &self.groups, &self.members)
+        let groups = owned_live_groups(&processes, self.root, &self.groups, &self.members)?;
+        let members = processes
+            .iter()
+            .filter(|process| groups.contains(&process.group) && !process.terminal)
+            .map(|process| process.pid)
+            .collect();
+        Ok(Live { groups, members })
     }
 
     fn reconcile(&mut self, processes: &[Process]) -> io::Result<BTreeSet<u32>> {
@@ -216,6 +267,51 @@ impl DescendantGroups {
         }
         Ok(changed)
     }
+}
+
+/// The pids of every running process in `group`.
+pub(crate) fn live_group_members(group: u32) -> io::Result<Vec<u32>> {
+    Ok(process_snapshot()?
+        .into_iter()
+        .filter(|process| process.group == group && !process.terminal)
+        .map(|process| process.pid)
+        .collect())
+}
+
+/// Block until every one of `members` has exited and, unless it is already
+/// terminal, the root has too, or until `deadline`. The root's observed exit
+/// marks it terminal.
+fn await_exits(
+    members: &[u32],
+    root_exit: &mut Option<ProcessExitObserver>,
+    root_terminal: &AtomicBool,
+    deadline: Instant,
+) -> io::Result<()> {
+    let observers = members
+        .iter()
+        .map(|pid| ProcessExitObserver::or_ended(*pid))
+        .collect::<io::Result<Vec<_>>>()?;
+    for observer in &observers {
+        if !observer.wait_until(deadline)? {
+            return Ok(());
+        }
+    }
+    if !root_terminal.load(Ordering::Acquire)
+        && let Some(root) = root_exit
+        && root.wait_until(deadline)?
+    {
+        *root_exit = None;
+        root_terminal.store(true, Ordering::Release);
+    }
+    Ok(())
+}
+
+/// The instant `offset` after `started`, held at the farthest representable
+/// instant when the bound is effectively unbounded.
+fn deadline_after(started: Instant, offset: Duration) -> Instant {
+    started
+        .checked_add(offset)
+        .unwrap_or_else(|| started + Duration::from_secs(u64::from(u32::MAX)))
 }
 
 fn owned_processes(processes: &[Process], members: &BTreeSet<ProcessIdentity>) -> BTreeSet<u32> {
@@ -477,7 +573,8 @@ mod tests {
                 .contains(&process_identity(&late[1]).expect("fixture generation is readable")),
             "late member generation enters persistent ownership"
         );
-        assert_eq!(live, BTreeSet::from([12]));
+        assert_eq!(live.groups, BTreeSet::from([12]));
+        assert_eq!(live.members, [12]);
         assert_eq!(signals, [(12, libc::SIGTERM)]);
     }
 
@@ -505,19 +602,32 @@ mod tests {
             }
             Ok(())
         };
+        // The late member ignores the request to leave, so no exit arrives
+        // before the deadline each wait is given.
+        let (_exits, exited) = std::sync::mpsc::channel::<()>();
+        let mut waited = Vec::new();
+        let mut wait = |members: &[u32], deadline: Instant| {
+            waited.push(members.to_vec());
+            let _ = exited.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+            Ok(())
+        };
 
         descendants
             .reap_while_root_terminates_with(
-                Duration::from_millis(20),
-                Duration::from_millis(50),
-                Duration::from_millis(50),
+                ReapBounds {
+                    grace: Duration::from_millis(20),
+                    reap: Duration::from_millis(50),
+                    output_drain: Duration::from_millis(50),
+                },
                 &root_terminal,
                 &mut snapshot,
                 &mut signal_group,
+                &mut wait,
             )
             .expect("late group follows the bounded root cleanup phases");
 
         assert_eq!(signals, [(12, libc::SIGTERM), (12, libc::SIGKILL)],);
+        assert_eq!(waited.first(), Some(&vec![12]));
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -261,6 +261,16 @@ pub(crate) fn signal_group(group: u32, signal: GroupSignal) -> io::Result<()> {
             }
         }
         GroupSignal::Kill => job.terminate(),
+    }
+}
+
+/// The processes in the group a [`ProcessGroup::New`] spawn rooted at
+/// `group`; none once the job named for the group has closed.
+pub(crate) fn group_members(group: u32) -> io::Result<Vec<u32>> {
+    match Job::open(group) {
+        Ok(job) => job.process_ids(),
+        Err(error) if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) => Ok(Vec::new()),
+        Err(error) => Err(error),
     }
 }
 

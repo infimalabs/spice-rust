@@ -34,9 +34,9 @@ use capture::{CaptureHandle, FailureContext};
 #[cfg(unix)]
 use launch::spawn_inner;
 #[cfg(windows)]
-pub(crate) use windows::signal_group;
-#[cfg(windows)]
 pub use windows::{OwnedChild, Running};
+#[cfg(windows)]
+pub(crate) use windows::{group_members, signal_group};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturedOutput {
@@ -750,7 +750,7 @@ impl Running {
             outputs_drained,
         };
         // The guardian is joined here only for a group observed to have gone.
-        // [`guardian::Guardian::wait`] blocks until the guardian's own poll sees
+        // [`guardian::Guardian::wait`] blocks until the guardian itself observes
         // that absence, so joining on an answer that never established it would
         // park this caller on exactly the question the probe failed to settle.
         // A live or unreadable answer leaves the guardian to the detached reaper

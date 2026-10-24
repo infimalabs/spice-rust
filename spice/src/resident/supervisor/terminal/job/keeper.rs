@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant as Monotonic};
 
-use sill::{GroupSignal, signal_group};
+use sill::{GroupSignal, await_group_exit, signal_group};
 use wire::CanonicalUuid;
 
 use super::super::super::super::daemon::observer;
@@ -70,6 +70,7 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
                 TERMINATE_GRACE,
                 || watch(directory, &sender, Keep::woke).map(|()| stop.exists()),
                 |signal| signal_group(group, signal),
+                |deadline| await_group_exit(group, deadline),
             );
             if let Some(pump) = pump {
                 pump.settle(TERMINATE_GRACE);
@@ -242,13 +243,16 @@ fn spawn(
 /// `stop_asked` arms one watch on the job's directory and says whether a
 /// stop has been asked by now; it is consulted on every wake, so an
 /// unwatchable directory is read as a stop rather than as a command nobody
-/// can reach. `signal` reaches the command's whole group.
+/// can reach. `signal` reaches the command's whole group, and `emptied`
+/// waits until the group has no member left or the instant it is given
+/// passes, saying whether the group emptied.
 fn tend(
     receiver: &mpsc::Receiver<Keep>,
     timeout: Option<Duration>,
     grace: Duration,
     stop_asked: impl Fn() -> io::Result<bool>,
     signal: impl Fn(GroupSignal) -> io::Result<()>,
+    emptied: impl Fn(Monotonic) -> io::Result<bool>,
 ) -> Ending {
     let mut deadline = timeout.map(|timeout| Monotonic::now() + timeout);
     let mut pending: Option<Ending> = None;
@@ -266,7 +270,7 @@ fn tend(
         match receiver.recv_timeout(remaining) {
             Ok(Keep::Exited(status)) => {
                 return match pending {
-                    Some(ending) => swept(ending, grace, &signal),
+                    Some(ending) => swept(ending, grace, &signal, &emptied),
                     None => exited(status),
                 };
             }
@@ -281,7 +285,9 @@ fn tend(
                 let _ = signal(GroupSignal::Kill);
                 return match receiver.recv() {
                     Ok(Keep::Failed(reason)) => Ending::Failed { reason },
-                    Ok(_) | Err(_) => swept(pending.unwrap_or(Ending::Stopped), grace, &signal),
+                    Ok(_) | Err(_) => {
+                        swept(pending.unwrap_or(Ending::Stopped), grace, &signal, &emptied)
+                    }
                 };
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -295,18 +301,17 @@ fn tend(
 
 /// The ending of a group asked to end, once its leader has died: a leader
 /// signalled mid-fork leaves a child the signal never reached, so whoever
-/// is left in the group is asked to leave and, after the grace, killed. An
-/// empty group refuses the first signal, so the common case waits nothing.
+/// is left in the group is asked to leave and killed if still there at the
+/// grace. An empty group refuses the first signal, so the common case waits
+/// nothing; a group whose exit cannot be observed is killed at once.
 fn swept(
     ending: Ending,
     grace: Duration,
     signal: impl Fn(GroupSignal) -> io::Result<()>,
+    emptied: impl Fn(Monotonic) -> io::Result<bool>,
 ) -> Ending {
-    if signal(GroupSignal::Terminate).is_ok() {
-        // Members that outlived the leader are not this keeper's children,
-        // so nothing signals when the last one leaves; the grace is waited
-        // once, in full, rather than probed.
-        thread::sleep(grace);
+    if signal(GroupSignal::Terminate).is_ok() && !emptied(Monotonic::now() + grace).unwrap_or(false)
+    {
         let _ = signal(GroupSignal::Kill);
     }
     ending
@@ -488,6 +493,12 @@ mod tests {
             }
             Ok(())
         }
+
+        /// The fake has no clock: a group still there when its emptying is
+        /// awaited is one that stays past the deadline.
+        fn emptied(&self, _deadline: Monotonic) -> io::Result<bool> {
+            Ok(!self.alive.get())
+        }
     }
 
     #[test]
@@ -501,6 +512,7 @@ mod tests {
             GRACE,
             || Ok(true),
             |signal| group.signal(signal),
+            |deadline| group.emptied(deadline),
         );
 
         assert_eq!(ending, Ending::Stopped);
@@ -519,6 +531,7 @@ mod tests {
             GRACE,
             || Ok(false),
             |signal| group.signal(signal),
+            |deadline| group.emptied(deadline),
         );
 
         assert_eq!(ending, Ending::TimedOut);
@@ -539,6 +552,7 @@ mod tests {
             GRACE,
             || Err(io::Error::from(ErrorKind::PermissionDenied)),
             |signal| group.signal(signal),
+            |deadline| group.emptied(deadline),
         );
 
         assert_eq!(ending, Ending::Stopped);
@@ -562,9 +576,33 @@ mod tests {
             GRACE,
             || Ok(false),
             |signal| group.signal(signal),
+            |deadline| group.emptied(deadline),
         );
 
         assert_eq!(ending, Ending::Exited { code: 0 });
         assert!(group.heard.borrow().is_empty());
+    }
+
+    #[test]
+    fn members_that_outlive_the_leader_are_killed_only_if_they_stay_past_the_grace() {
+        for (empties, heard) in [
+            (true, &[GroupSignal::Terminate][..]),
+            (false, &[GroupSignal::Terminate, GroupSignal::Kill][..]),
+        ] {
+            let signals = RefCell::new(Vec::new());
+
+            let ending = swept(
+                Ending::Stopped,
+                GRACE,
+                |signal| {
+                    signals.borrow_mut().push(signal);
+                    Ok(())
+                },
+                |_deadline| Ok(empties),
+            );
+
+            assert_eq!(ending, Ending::Stopped);
+            assert_eq!(signals.borrow()[..], *heard);
+        }
     }
 }

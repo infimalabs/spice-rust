@@ -7,6 +7,7 @@ use std::path::Path;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+    WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
@@ -71,6 +72,7 @@ impl Drop for DirectObserver {
 }
 
 /// One process's exit, armed while the process can still be named.
+#[derive(Debug)]
 pub enum ProcessExitObserver {
     Watching(HANDLE),
     Ended,
@@ -132,6 +134,24 @@ impl ProcessExitObserver {
         match &self {
             Self::Watching(process) => signaled(*process),
             Self::Ended => Ok(()),
+        }
+    }
+
+    pub fn wait_until(&self, deadline: std::time::Instant) -> io::Result<bool> {
+        let Self::Watching(process) = self else {
+            return Ok(true);
+        };
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        // A partial millisecond rounds up so the wait never ends early.
+        let milliseconds = remaining
+            .as_nanos()
+            .div_ceil(1_000_000)
+            .min(u128::from(INFINITE - 1)) as u32;
+        // SAFETY: the observer owns `process` for the duration of the wait.
+        match unsafe { WaitForSingleObject(*process, milliseconds) } {
+            WAIT_OBJECT_0 => Ok(true),
+            WAIT_TIMEOUT => Ok(false),
+            _ => Err(io::Error::last_os_error()),
         }
     }
 }

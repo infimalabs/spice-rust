@@ -224,6 +224,7 @@ fn wait_macos_event(descriptor: libc::c_int) -> io::Result<()> {
 
 /// One process's exit, armed while the process can still be named.
 #[cfg(unix)]
+#[derive(Debug)]
 pub enum ProcessExitObserver {
     Watching(libc::c_int),
     Ended,
@@ -319,6 +320,74 @@ impl ProcessExitObserver {
         {
             let _ = descriptor;
             Ok(())
+        }
+    }
+
+    /// Block until the observed process has exited or `deadline` passes,
+    /// answering whether it exited. An exit, once answered, is consumed: a
+    /// later wait on the same observer runs to its deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel's refusal to deliver the exit.
+    pub fn wait_until(&self, deadline: std::time::Instant) -> io::Result<bool> {
+        let Self::Watching(descriptor) = self else {
+            return Ok(true);
+        };
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            #[cfg(target_os = "linux")]
+            let result = {
+                let mut event = libc::pollfd {
+                    fd: *descriptor,
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                // A partial millisecond rounds up so the wait never ends early.
+                let milliseconds = remaining
+                    .as_nanos()
+                    .div_ceil(1_000_000)
+                    .min(libc::c_int::MAX as u128)
+                    as libc::c_int;
+                // SAFETY: the single poll descriptor is valid and writable.
+                unsafe { libc::poll(&mut event, 1, milliseconds) }
+            };
+            #[cfg(target_os = "macos")]
+            let result = {
+                let timeout = libc::timespec {
+                    tv_sec: libc::time_t::try_from(remaining.as_secs())
+                        .unwrap_or(libc::time_t::MAX),
+                    tv_nsec: remaining.subsec_nanos().into(),
+                };
+                let mut event = std::mem::MaybeUninit::<libc::kevent>::uninit();
+                // SAFETY: the kqueue descriptor is owned, the single output
+                // slot is writable, and the timeout outlives the call.
+                unsafe {
+                    libc::kevent(
+                        *descriptor,
+                        std::ptr::null(),
+                        0,
+                        event.as_mut_ptr(),
+                        1,
+                        &timeout,
+                    )
+                }
+            };
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            let result = {
+                let _ = (descriptor, remaining);
+                1
+            };
+            match result {
+                1 => return Ok(true),
+                0 => return Ok(false),
+                _ => {
+                    let error = io::Error::last_os_error();
+                    if error.kind() != io::ErrorKind::Interrupted {
+                        return Err(error);
+                    }
+                }
+            }
         }
     }
 }

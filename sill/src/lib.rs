@@ -36,7 +36,7 @@ pub use config::{
     ConfigError, ConfiguredPath, ExitCode, ExitStatuses, LockConfig, LockTarget, ShardCount,
 };
 #[cfg(any(unix, windows))]
-pub use group::{GroupSignal, signal_group};
+pub use group::{GroupSignal, await_group_exit, signal_group};
 #[cfg(any(unix, windows))]
 pub use interface::local_addresses;
 #[cfg(windows)]
