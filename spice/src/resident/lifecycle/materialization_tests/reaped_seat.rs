@@ -347,6 +347,7 @@ fn targets<'a>(snapshot: &bus::TaskSnapshot, projection: &'a Projection) -> Vec<
         instant(50),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("lifecycle targets project")
 }

@@ -19,6 +19,7 @@ pub(super) fn selected_ready<'e>(
     view: &BoardView<'_, 'e>,
     actor: &Actor,
     subscription: &wire::TeamSubscription,
+    match_score: Option<&dyn Fn(&Entry) -> f64>,
 ) -> CommandResult<(Option<SelectedReady>, Option<&'e Entry>)> {
     let &BoardView {
         snapshot,
@@ -38,7 +39,7 @@ pub(super) fn selected_ready<'e>(
             subscription,
             recent_cell: recent_cell.as_ref(),
             environment,
-            match_score: None,
+            match_score,
         },
         *allocation,
         selection,

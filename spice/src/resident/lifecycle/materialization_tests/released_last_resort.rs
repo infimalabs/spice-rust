@@ -65,6 +65,7 @@ fn targets_at<'a>(snapshot: &bus::TaskSnapshot, projection: &'a Projection) -> V
         instant(50),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("freed targets project")
 }

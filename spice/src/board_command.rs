@@ -87,7 +87,7 @@ pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 
 #[cfg(test)]
 pub(crate) use read_guard::next_work::read_next_work;
-pub(crate) use read_guard::next_work::{OccupantMatch, OccupantProfiles};
+pub(crate) use read_guard::next_work::{OccupantMatch, OccupantProfiles, floored_standing};
 const CAPTURE_WORK_RULE: &str = "capturework";
 const RECOVER_STEAL_RULE: &str = "recoversteal";
 fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {

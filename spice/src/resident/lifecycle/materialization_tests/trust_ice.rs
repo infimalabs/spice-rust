@@ -362,6 +362,7 @@ fn assert_recovery_deadline(
                 now,
                 &Holds::new(3),
                 &board::NextConfig::default(),
+                None,
             )
             .expect("held recovery target projects");
             let expected = if second < deadline {
@@ -411,6 +412,7 @@ pub(super) fn target<'a>(snapshot: &bus::TaskSnapshot, projection: &'a Projectio
         instant(50),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("ice targets project");
     assert_eq!(targets.len(), 1);

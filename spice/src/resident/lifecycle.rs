@@ -30,7 +30,7 @@ mod launch;
 mod matching;
 mod materialization;
 use availability::{BoardView, ready_instant, selected_ready};
-use matching::match_targets;
+use matching::RetainedMatch;
 use materialization::Projection;
 pub(super) mod generation_notices;
 mod review_feedback;
@@ -395,17 +395,13 @@ impl Runtime {
             now,
             &self.holds,
             &config.allocation,
+            profiles,
         )?;
         await_regular_jobs(&mut targets, now, |lane| {
             super::supervisor::terminal::Jobs::for_lane(paths, lane).finite_horizon()
         });
         targets.retain(|target| !self.launching.contains(&target.lane));
         self.backoff.retain_targets(&targets);
-        if config.lane.wake_order() == lane::WakeOrder::BestMatch
-            && let Some(profiles) = profiles
-        {
-            match_targets(&mut targets, self.projection.entries(), profiles)?;
-        }
         let task = match resolve(&targets, &self.backoff, now, config.lane.wake_order()) {
             Resolution::Idle => None,
             Resolution::Wait { lane, deadline, .. } => {

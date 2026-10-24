@@ -16,6 +16,7 @@ use super::{Available, Backoff, Resolution, Target, Trigger, project_targets, re
 mod deferred_exit;
 mod exit_disposal;
 mod group_arrangement;
+mod matched_selection;
 mod reaped_seat;
 mod released_last_resort;
 mod selection_wait;
@@ -27,6 +28,7 @@ const TASK_MOMENT: &str = "1kKRRsDP";
 const NEWER_TASK_MOMENT: &str = "1kKRRsDT";
 const INVALID_TASK_MOMENT: &str = "1kKRRsDQ";
 const DESIGN_MOMENT: &str = "1kKRRsDV";
+const SEED_TITLE: &str = "Project incremental lifecycle";
 const SECOND_DESIGN_MOMENT: &str = "1kKRRsDW";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -341,6 +343,7 @@ fn a_lane_projects_under_its_team_policy_however_it_was_seated() {
                 instant(50),
                 &Holds::new(3),
                 &board::NextConfig::default(),
+                None,
             )
             .expect("team policy projects lifecycle targets");
             assert_eq!(
@@ -376,6 +379,7 @@ fn drive_burst_uses_the_selected_winners_ready_instant() {
         instant(8),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("drive burst targets project");
     assert_eq!(targets.len(), 1);
@@ -427,6 +431,7 @@ fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
         instant(8),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("woken Drain target projects");
     assert_eq!(targets.len(), 1);
@@ -518,6 +523,7 @@ fn projected_resolution(snapshot: &bus::TaskSnapshot, projection: &Projection) -
         now,
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("guidance lifecycle targets project");
     resolve(
@@ -648,6 +654,7 @@ fn drain_org_startup_projects_every_current_member() {
         instant(50),
         &Holds::new(3),
         &board::NextConfig::default(),
+        None,
     )
     .expect("expanded team targets project");
     assert_eq!(
@@ -703,6 +710,7 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
         now,
         &holds,
         &board::NextConfig::default(),
+        None,
     )
     .expect("wake targets project from incremental state");
     let resolution = resolve(
@@ -874,6 +882,11 @@ fn seed_write_seated(
 }
 
 fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
+    titled_ready_task_write(moment, at, "Newer ready lifecycle candidate")
+}
+
+/// A ready task whose creation fact and statement head both carry `title`.
+fn titled_ready_task_write(moment: &str, at: Instant, title: &str) -> JournalWrite {
     let task = task(moment);
     let phase = phase();
     let origin = format!("task:{}", handle(moment))
@@ -891,7 +904,7 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
                 preparation: None,
                 intent: None,
                 task: task.clone(),
-                title: "Newer ready lifecycle candidate".to_owned(),
+                title: title.to_owned(),
                 pitch: "This work keeps the fixture honest.".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
@@ -911,7 +924,7 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
             FactCause::Root,
         )
         .expect("ready task fact builds");
-    attach_task_heads(&mut write, added, task, phase, Vec::new());
+    attach_task_heads_titled(&mut write, added, task, phase, Vec::new(), PROJECT, title);
     write
 }
 
@@ -1211,13 +1224,14 @@ fn invalid_late_suffix() -> JournalWrite {
             FactCause::Pending(sent),
         )
         .expect("late-invalid task fact builds");
-    attach_task_heads_with_project(
+    attach_task_heads_titled(
         &mut write,
         added,
         invalid_task,
         phase,
         Vec::new(),
         "outside.bad-segment",
+        SEED_TITLE,
     );
     write
 }
@@ -1229,17 +1243,19 @@ fn attach_task_heads(
     phase: Phase,
     dependencies: Vec<TaskStamp>,
 ) {
-    attach_task_heads_with_project(write, added, task, phase, dependencies, PROJECT);
+    attach_task_heads_titled(write, added, task, phase, dependencies, PROJECT, SEED_TITLE);
 }
 
-fn attach_task_heads_with_project(
+fn attach_task_heads_titled(
     write: &mut JournalWrite,
     added: PendingFact,
     task: TaskStamp,
     phase: Phase,
     dependencies: Vec<TaskStamp>,
     project: &'static str,
+    title: &str,
 ) {
+    let title = title.to_owned();
     let statement_task = task.clone();
     let provenance = wire::TaskProvenance::Task(task.clone());
     write.task_head(added, move |position| TaskHead {
@@ -1247,7 +1263,7 @@ fn attach_task_heads_with_project(
         intent: None,
         born: statement_task,
         queue_origin: position,
-        title: "Project incremental lifecycle".to_owned(),
+        title,
         pitch: "This work keeps the fixture honest.".to_owned(),
         description: None,
         acceptance: Vec::new(),
