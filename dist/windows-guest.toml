@@ -45,6 +45,7 @@ url = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-
 sha256 = "303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d"
 bytes = 877373440
 network = "NetKVM/w11/ARM64"
+serial = "vioserial/w11/ARM64"
 
 [openssh]
 url = "https://github.com/PowerShell/Win32-OpenSSH/releases/download/10.0.0.0p2-Preview/OpenSSH-ARM64-v10.0.0.0.msi"

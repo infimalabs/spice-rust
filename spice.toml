@@ -109,10 +109,10 @@ env_names = [
 source_suffixes = [
     ".astro", ".bash", ".c", ".cc", ".cjs", ".cpp", ".cs", ".css", ".cts",
     ".go", ".h", ".hpp", ".html", ".java", ".js", ".json", ".jsx", ".kt",
-    ".less", ".lua", ".m", ".md", ".mjs", ".mm", ".mts", ".php", ".py",
-    ".pyi", ".rb", ".rs", ".rst", ".sass", ".scala", ".scss", ".sh", ".sql",
-    ".svelte", ".swift", ".toml", ".ts", ".tsx", ".txt", ".vue", ".xml",
-    ".yaml", ".yml", ".zsh",
+    ".less", ".lua", ".m", ".md", ".mjs", ".mm", ".mts", ".php", ".ps1",
+    ".py", ".pyi", ".rb", ".rs", ".rst", ".sass", ".scala", ".scss", ".sh",
+    ".sql", ".svelte", ".swift", ".toml", ".ts", ".tsx", ".txt", ".vue",
+    ".xml", ".yaml", ".yml", ".zsh",
 ]
 
 # Which files each language arm reads.
