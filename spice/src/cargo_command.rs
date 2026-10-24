@@ -379,7 +379,9 @@ pub(crate) fn output_lease(repository: &Repository) -> io::Result<OutputLease> {
     let mut stderr = io::stderr().lock();
     match pass {
         Pass::Ran(Ok(reclamation))
-            if !reclamation.removed.is_empty() || !reclamation.busy.is_empty() =>
+            if !reclamation.removed.is_empty()
+                || !reclamation.busy.is_empty()
+                || !reclamation.recent.is_empty() =>
         {
             let _ = writeln!(stderr, "[cargo output] {reclamation}");
         }
