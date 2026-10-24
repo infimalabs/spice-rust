@@ -174,6 +174,17 @@ impl PreparedArm<'_> {
         self.capture.staged_authority()
     }
 
+    /// Which worktree paths this arm's private snapshot left out.
+    ///
+    /// # Errors
+    ///
+    /// Refuses when the worktree cannot be compared with the snapshot.
+    pub fn worktree_divergence(&self) -> Result<::gate::tree::WorktreeDivergence, RunError> {
+        self.capture
+            .worktree_divergence()
+            .map_err(|error| RunError::refusal("gate::snapshot-divergence-refused", error))
+    }
+
     /// Compile one proof input closure from this preparation's retained tree.
     pub fn compile_action_input(
         &self,
@@ -339,6 +350,17 @@ impl PreparedBattery<'_> {
     #[must_use]
     pub fn paths(&self) -> &[String] {
         self.capture.paths()
+    }
+
+    /// Which worktree paths this battery's private snapshot left out.
+    ///
+    /// # Errors
+    ///
+    /// Refuses when the worktree cannot be compared with the snapshot.
+    pub fn worktree_divergence(&self) -> Result<::gate::tree::WorktreeDivergence, RunError> {
+        self.capture
+            .worktree_divergence()
+            .map_err(|error| RunError::refusal("gate::snapshot-divergence-refused", error))
     }
 
     /// Tracked generated-path selectors captured from this selected tree.
@@ -628,7 +650,12 @@ pub fn run_strict_at(
     })
 }
 
-fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunError> {
+/// Execute one prepared battery and publish or discard its state by verdict.
+///
+/// # Errors
+///
+/// Returns the battery refusal or the state publication failure.
+pub fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunError> {
     let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state()?;
@@ -638,66 +665,29 @@ fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunE
     Ok(report)
 }
 
-/// Execute one named canonical gate arm and retain its verifiable input context.
+/// Execute one current-source arm under the strict self-hosting contract.
+///
+/// The report comes with which worktree paths the arm's private snapshot
+/// left out, so the surface running it can say so.
 ///
 /// # Errors
 ///
 /// Returns the same acquisition and arm refusal as [`run`], without
 /// executing sibling battery arms.
-pub fn run_arm_report(
-    ambient: &Ambient,
-    selector: Selector,
-    gate_id: GateId,
-) -> Result<FocusedArmReport, RunError> {
-    run_arm_report_with_mode(ambient, selector, gate_id, InputMode::Generic)
-}
-
-/// Execute one current-source arm under the strict self-hosting contract.
 pub fn run_arm_report_strict(
     ambient: &Ambient,
     selector: Selector,
     gate_id: GateId,
-) -> Result<FocusedArmReport, RunError> {
-    run_arm_report_with_mode(ambient, selector, gate_id, InputMode::Strict)
-}
-
-fn run_arm_report_with_mode(
-    ambient: &Ambient,
-    selector: Selector,
-    gate_id: GateId,
-    input_mode: InputMode,
-) -> Result<FocusedArmReport, RunError> {
-    let mut prepared = prepare_arm_with_mode(ambient, selector, gate_id, input_mode)?;
+) -> Result<(FocusedArmReport, ::gate::tree::WorktreeDivergence), RunError> {
+    let mut prepared = prepare_arm_with_mode(ambient, selector, gate_id, InputMode::Strict)?;
+    let snapshot = prepared.worktree_divergence()?;
     let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state(StateRunScope::Partial)?;
     } else {
         prepared.reject_state()?;
     }
-    Ok(report)
-}
-
-/// Execute as [`run`] while exposing the gate-owned invocation trace.
-///
-/// This is an observation seam for tests and diagnostics. It cannot replace
-/// an arm, alter its evidence, or grant execution authority.
-///
-/// # Errors
-///
-/// Returns the same acquisition and completeness refusals as [`run`].
-pub fn run_traced(
-    ambient: &Ambient,
-    selector: Selector,
-    trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-) -> Result<BatteryReport, RunError> {
-    let mut prepared = prepare_traced(ambient, selector, trace)?;
-    let report = prepared.execute()?;
-    if report.admits() {
-        prepared.accept_state()?;
-    } else {
-        prepared.reject_state()?;
-    }
-    Ok(report)
+    Ok((report, snapshot))
 }
 
 fn capture<'trace>(

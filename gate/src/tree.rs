@@ -27,12 +27,14 @@ const STAGED_RENAME_SIMILARITY: f32 = 0.5;
 const STAGED_RENAME_LIMIT: usize = 0;
 
 mod consumer;
+mod divergence;
 mod error;
 mod materialize;
 mod source;
 mod workspace;
 
 pub(crate) use consumer::spawn as spawn_consumer;
+pub use divergence::{LeftOutPath, LeftOutState, WorktreeDivergence};
 pub use error::TreeError;
 use materialize::{
     create_private_directory_tree, create_private_workspace, make_immutable, make_removable,

@@ -566,6 +566,23 @@ impl Summary {
         self.text.push_str(&format!("\n{label}: {text}"));
     }
 
+    /// Say which private snapshot ran instead of the worktree and which
+    /// worktree paths it left out; nothing when the snapshot carries the
+    /// worktree exactly.
+    pub(super) fn snapshot(&mut self, divergence: &gate::tree::WorktreeDivergence) {
+        if divergence.is_empty() {
+            return;
+        }
+        self.closing(
+            "snapshot",
+            &format!(
+                "ran {} from a private copy, not this worktree",
+                divergence.snapshot()
+            ),
+        );
+        self.closing("left out", &divergence.left_out_summary());
+    }
+
     pub(super) fn finish(self) -> String {
         self.text
     }

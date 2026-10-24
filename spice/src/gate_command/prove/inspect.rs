@@ -9,6 +9,7 @@ pub(super) fn current(
     candidate_tree: &spice::gate::CandidateTree,
     anchor: &spice::gate::PreparedArm<'_>,
     authority: &ActionFingerprintAuthority,
+    snapshot: gate::tree::WorktreeDivergence,
 ) -> Result<ProveReport, ProveFailure> {
     let resolution = match store.lookup_fingerprint_receipts(authority) {
         Ok(Some(resolution)) => resolution,
@@ -56,6 +57,7 @@ pub(super) fn current(
     Ok(ProveReport::new(
         candidate_tree.to_string(),
         authority.source().clone(),
+        snapshot,
         actions,
     ))
 }

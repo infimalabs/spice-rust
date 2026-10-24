@@ -257,9 +257,9 @@ fn run_gate(
         }
     }
     if emit_report {
-        xtask::gate_arm_report(ambient, gate_id, output).map_err(Into::into)
+        xtask::gate_arm_report(ambient, gate_id, output, progress).map_err(Into::into)
     } else {
-        xtask::gate_arm(ambient, gate_id, output).map_err(Into::into)
+        xtask::gate_arm(ambient, gate_id, output, progress).map_err(Into::into)
     }
 }
 

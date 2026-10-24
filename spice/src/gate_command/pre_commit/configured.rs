@@ -605,6 +605,15 @@ impl<'a> Dispatch<'a> {
         self.policy.builtins || self.policy.commands.iter().any(is_source_gate_contract)
     }
 
+    /// Which worktree paths the staged snapshot this dispatch measures left out.
+    pub(super) fn worktree_divergence(
+        &self,
+    ) -> Result<gate::tree::WorktreeDivergence, ConfiguredFailure> {
+        self.anchor.worktree_divergence().map_err(|error| {
+            ConfiguredFailure::refusal("gate::snapshot-divergence-refused", error.to_string())
+        })
+    }
+
     pub(super) fn require_admission_approved(&self) -> Result<(), ConfiguredFailure> {
         if self.policy.commands.iter().any(is_source_gate_contract) {
             self.policy.require_approved(&self.repository)?;

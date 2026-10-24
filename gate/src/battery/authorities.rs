@@ -171,6 +171,19 @@ impl<'trace> BatteryCapture<'trace> {
         self.executor.staged_authority()
     }
 
+    /// Which worktree paths this capture's private snapshot left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns the repository or filesystem failure that kept the comparison
+    /// from completing.
+    pub fn worktree_divergence(&self) -> Result<crate::tree::WorktreeDivergence, BatteryError> {
+        self.executor
+            .tree()
+            .worktree_divergence()
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
     /// Compile one action closure from this capture's retained tree.
     pub fn compile_action_input(
         &self,
