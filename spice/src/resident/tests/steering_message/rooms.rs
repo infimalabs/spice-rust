@@ -1023,3 +1023,83 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
     );
     lanes.finish();
 }
+
+/// The one-read projection a catch-up plan uses yields, for every room it
+/// keeps, exactly what the per-room projection yields over the lane's latest
+/// publication; the rooms it drops are those the lane has no way to listen
+/// to: no work of its own there, no Design request about it, no live stop.
+#[test]
+fn batched_room_projection_equals_the_per_room_projection() {
+    let lanes = Lanes::new("room-catch-up-batched-projection");
+    let first_lane = test_uuid(FIRST);
+    let own = lanes.held_room("dVrD245Kc", FIRST);
+    lanes.held_room("dVrD245Kd", SECOND);
+    let idle = lanes.room("dVrD245Kg");
+    let design = lanes.seed_task(
+        "dVrD245Km",
+        "Design",
+        Some("Decide how a batched projection is proven."),
+        Some(wire::TaskIntent::Design),
+        None,
+    );
+    let design_room = design.born().expect("fixture Design has a birth");
+    record_design_request(&lanes, &design_room, &own, first_lane);
+    lanes.author(SENDER, &format!("MSG #{idle}: nobody listens here"));
+    lanes.account(SENDER);
+    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
+
+    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
+    let startup = load_startup_surface(&repository).expect("fixture surface loads");
+    let planning =
+        room_catch_up::Planning::load(&lanes.bus, &startup.config).expect("planning loads");
+    let batched = room_catch_up::project_rooms(
+        &lanes.bus,
+        &planning,
+        first_lane,
+        planning.entries.iter().map(board::Entry::born),
+        None,
+    )
+    .expect("batched projection");
+
+    assert_eq!(
+        batched
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [own.born().expect("fixture task has a birth"), design_room]
+            .into_iter()
+            .collect(),
+        "only rooms with the lane's work or a Design request are projected"
+    );
+    for entry in &planning.entries {
+        let room = entry.born().clone();
+        let latest = lanes
+            .bus
+            .read({
+                let room = room.clone();
+                move |read| read.latest_room_publication(&room, &Actor::Lane(first_lane))
+            })
+            .expect("latest publication reads");
+        let single = crate::board_command::project_attention(
+            &lanes.bus,
+            &planning.entries,
+            &planning.residency,
+            &room,
+            latest.as_slice(),
+        )
+        .expect("per-room projection");
+        match batched.get(&room) {
+            Some(attention) => assert_eq!(*attention, single, "{room}"),
+            None => assert!(
+                single
+                    .lanes
+                    .iter()
+                    .find(|row| row.lane == first_lane)
+                    .and_then(spice::rooms::RoomLaneAttention::catch_up_after)
+                    .is_none(),
+                "a dropped room admits no catch-up for the lane: {room} {single:?}"
+            ),
+        }
+    }
+    lanes.finish();
+}

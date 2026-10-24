@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rusqlite::{OptionalExtension, params};
 
 use super::commit::{decode_optional_seq, decode_seq};
@@ -101,6 +103,42 @@ impl JournalRead<'_> {
                     )));
                 }
                 Ok(head)
+            })
+            .collect()
+    }
+
+    /// Every room some live stop request is bound to, read once so a caller
+    /// projecting many rooms can skip those holding no stop without a query
+    /// per room.
+    pub fn live_stop_rooms(&self) -> Result<BTreeSet<wire::TaskStamp>, GuardError> {
+        self.require_current_steering_index()?;
+        let stop = format!("{}:%", wire::rooms::StopControl::PREFIX);
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT json_extract(CAST(body AS TEXT), '$.control') FROM steering_heads \
+                 WHERE disposition = 'live' \
+                 AND json_extract(CAST(body AS TEXT), '$.control') LIKE ?1",
+            )
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        let controls = statement
+            .query_map([stop], |row| row.get::<_, String>(0))
+            .map_err(GuardError::Store)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(GuardError::Store)?;
+        controls
+            .into_iter()
+            .map(|control| {
+                read_metrics::observe_row();
+                control
+                    .parse::<wire::rooms::StopControl>()
+                    .map(|control| control.room)
+                    .map_err(|error| {
+                        GuardError::Invalid(format!(
+                            "live stop control {control} does not parse: {error}"
+                        ))
+                    })
             })
             .collect()
     }

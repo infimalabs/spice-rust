@@ -20,11 +20,13 @@ pub mod evidence;
 pub mod nudge;
 pub mod profile;
 pub mod standing;
+mod work;
 
 pub use catch_up::{
     CatchUp, CatchUpBudget, CatchUpKind, CatchUpSource, MAX_CATCH_UP_BYTES, MAX_CATCH_UP_ITEMS,
     select_catch_up,
 };
+pub use work::RoomWork;
 
 /// Most authority signals one projection may inspect.
 pub const MAX_ROOM_ATTENTION_SIGNALS: usize = 1_024;
@@ -72,44 +74,6 @@ pub enum Declared<T> {
     Available(T),
     /// The owning authority could not supply a view.
     Unavailable { detail: String },
-}
-
-/// Current native work associated with one room and held by one lane.
-///
-/// Construction is derived from the current task/preparation and active-claim
-/// projection. It is an input reference, not a claim or membership grant.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RoomWork {
-    room: TaskStamp,
-    task: TaskStamp,
-    lane: CanonicalUuid,
-    since: Seq,
-}
-
-impl RoomWork {
-    /// Derive relevant current work from one native task-head bundle.
-    ///
-    /// The anchor itself and tasks whose explicit preparation relationship
-    /// names the anchor are relevant only while their claim remains active.
-    #[must_use]
-    pub fn from_task(room: &TaskStamp, task: &board::Entry) -> Option<Self> {
-        let statement = task.statement();
-        let related = task.born() == room
-            || statement.preparation.as_ref().is_some_and(|preparation| {
-                preparation.parent == *room
-                    || preparation.controller == *room
-                    || preparation.construction == *room
-            });
-        let claim = task
-            .claim()
-            .filter(|claim| claim.disposition == wire::ClaimDisposition::Active)?;
-        related.then(|| Self {
-            room: room.clone(),
-            task: task.born().clone(),
-            lane: claim.lane,
-            since: claim.claimed.max(statement.queue_origin),
-        })
-    }
 }
 
 /// Current standing of a room-scoped attention duty.

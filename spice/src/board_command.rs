@@ -141,7 +141,9 @@ mod report;
 use report::read_report;
 mod room;
 use room::room_post;
-pub(crate) use room::{project_attention, room_publications_after};
+pub(crate) use room::{
+    derive_attention, project_attention, read_room_duty_rows, room_duties, room_publications_after,
+};
 mod room_control;
 pub(crate) use room_control::room_control;
 mod room_leave;
