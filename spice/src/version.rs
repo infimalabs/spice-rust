@@ -36,13 +36,20 @@ static PRODUCT: LazyLock<ProductVersion> = LazyLock::new(|| {
 
 static RUNNING: LazyLock<Result<Running, Fault>> = LazyLock::new(capture);
 
-static CANVAS: LazyLock<Option<Result<EmbeddedArchive, RackError>>> = LazyLock::new(|| {
+static CANVAS: LazyLock<Option<Result<EmbeddedArchive, RackError>>> =
+    LazyLock::new(|| linked_bytes().map(EmbeddedArchive::admit));
+
+static RACK_ARCHIVE: LazyLock<Option<Digest>> =
+    LazyLock::new(|| linked_bytes().map(|bytes| Digest::compute(Domain::DistArtifact, bytes)));
+
+/// The rack archive bytes linked into this executable, if the build linked one.
+fn linked_bytes() -> Option<&'static [u8]> {
     #[cfg(feature = "canvas")]
     let linked = Some(::canvas::archive());
     #[cfg(not(feature = "canvas"))]
     let linked: Option<&'static [u8]> = None;
-    linked.map(EmbeddedArchive::admit)
-});
+    linked
+}
 
 /// The product version this executable was built as.
 ///
@@ -58,6 +65,12 @@ pub fn product() -> &'static ProductVersion {
 /// `spice dev xtask -- install` enable the `canvas` feature and link one.
 pub fn canvas() -> Option<&'static Result<EmbeddedArchive, RackError>> {
     CANVAS.as_ref()
+}
+
+/// The digest of the rack archive bytes this executable links, hashed once
+/// per process: the identity a `rack::admitted` fact names.
+pub fn rack_archive() -> Option<&'static Digest> {
+    RACK_ARCHIVE.as_ref()
 }
 
 /// The version report: the product version and the app generation it links.

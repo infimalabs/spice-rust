@@ -22,7 +22,7 @@ mod transcript;
 pub use transcript::{JournalIngested, TranscriptPosition, TranscriptSpan, TranscriptUsage};
 
 mod publication;
-pub use publication::{ProofSealed, PublishedTarget, ReleasePublished};
+pub use publication::{ProofSealed, PublishedTarget, RackAdmitted, ReleasePublished};
 
 mod task;
 pub use task::*;

@@ -553,6 +553,9 @@ vocabulary! {
 
     /// The sealed manifest and each target artifact digest published.
     ReleasePublished = "release::published" by ResidentRecognition;
+
+    /// The resident admitted the spice rack an installed executable links.
+    RackAdmitted = "rack::admitted" by ResidentRecognition;
 }
 
 impl FactKind {

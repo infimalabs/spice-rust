@@ -150,6 +150,7 @@ const PINNED: &[(&str, &str)] = &[
     ("UpDark", "up::dark"),
     ("ProofSealed", "proof::sealed"),
     ("ReleasePublished", "release::published"),
+    ("RackAdmitted", "rack::admitted"),
 ];
 
 /// What the compiled vocabulary actually crosses as, keyed by variant.

@@ -36,3 +36,16 @@ pub struct ReleasePublished {
     /// Each target entry published under its detached proof receipt.
     pub targets: Vec<PublishedTarget>,
 }
+
+/// The resident admitted the spice rack an installed executable links.
+///
+/// The fact's sequence code is the generation short code a rack URL names:
+/// one fact per distinct archive, recognized when the installed image is
+/// admitted at startup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RackAdmitted {
+    /// Digest of the linked rack archive bytes.
+    pub archive: Digest,
+    /// The app generation the rack's `app.html` declares.
+    pub generation: Digest,
+}

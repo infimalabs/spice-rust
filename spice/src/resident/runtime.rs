@@ -645,6 +645,7 @@ fn up_from_with(
         return outcome;
     }
     let startup = match commit_startup(&bus, &repository, &startup_surface.trust, epoch, migration)
+        .and_then(|startup| admit_linked_rack(&bus, epoch, &app).map(|()| startup))
     {
         Ok(startup) => startup,
         Err(outcome) => return outcome,
@@ -1043,6 +1044,50 @@ where
         first: first.unwrap_or_else(|| committed.first()),
         last: committed.last(),
     })
+}
+
+/// Admit the rack an installed executable links through one `rack::admitted`
+/// fact: the fact's sequence code is the generation short code rack URLs
+/// carry. A staged app admits nothing.
+fn admit_linked_rack(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    app: &serve::canvas::CanvasAssets,
+) -> CommandResult<()> {
+    let (Some(archive), serve::canvas::CanvasAssets::EmbeddedArchive(linked)) =
+        (spice::version::rack_archive(), app)
+    else {
+        return Ok(());
+    };
+    admit_rack(bus, epoch, archive, linked.generation()).map(|_| ())
+}
+
+/// The sequence of the fact admitting `archive`: the one already appended
+/// for that archive, or a new `rack::admitted` fact naming `generation`.
+pub(super) fn admit_rack(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    archive: &wire::Digest,
+    generation: &wire::Digest,
+) -> CommandResult<wire::Seq> {
+    let named = archive.clone();
+    let admitted = bus
+        .read(move |read| spice::rack_admission::admitted(read, &named))
+        .map_err(|error| store_fault("rack::journal-unreadable", &error.to_string()))?;
+    if let Some(admitted) = admitted {
+        return Ok(admitted);
+    }
+    let mut write = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    write
+        .fact(
+            wire::body::RackAdmitted {
+                archive: archive.clone(),
+                generation: generation.clone(),
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("journal::write-invalid", &error.to_string()))?;
+    commit(bus, write).map(|committed| seq(committed.first()))
 }
 
 pub(super) fn latest_surface_digest(bus: &Bus) -> CommandResult<Option<wire::Digest>> {
