@@ -907,7 +907,7 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
     );
 
     let steal: Name = "steal".parse().expect("steal rule");
-    assert_committed(issue(
+    let stolen = assert_committed(issue(
         &bus,
         epoch,
         rival.clone(),
@@ -918,6 +918,10 @@ fn stealing_takes_a_live_claim_at_once_where_capture_is_refused() {
             recovery: None,
         },
     ));
+    let CommandAnswer::Claim(stolen) = stolen else {
+        panic!("steal returned another answer shape: {stolen:?}");
+    };
+    assert!(!stolen.nothing_stolen, "a held claim was displaced");
 
     // The lease the holder still had did not delay the transfer, and the
     // ClaimWon naming the new holder is what tells the old one.
@@ -996,7 +1000,7 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
         ClaimDisposition::Freed
     );
     let steal: Name = "steal".parse().expect("steal rule");
-    assert_committed(issue(
+    let stolen = assert_committed(issue(
         &bus,
         epoch,
         reviewer.clone(),
@@ -1015,6 +1019,13 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
             recovery: None,
         },
     ));
+    let CommandAnswer::Claim(stolen_answer) = stolen else {
+        panic!("steal returned another answer shape: {stolen:?}");
+    };
+    assert!(
+        stolen_answer.nothing_stolen,
+        "a freed claim has no holder to displace"
+    );
 
     let after = board(&bus, epoch, reviewer.clone());
     let stolen = at(&after, &task);
@@ -1023,6 +1034,54 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
     assert_eq!(claim.body.actor, reviewer);
     assert_eq!(claim.body.disposition, ClaimDisposition::Active);
     assert_review_assignment_fact(&bus, &after, &task, &reviewer);
+    clean(&root, bus);
+}
+
+#[test]
+fn stealing_claims_a_task_nobody_holds_and_warns_nothing_was_stolen() {
+    let (root, bus, epoch, seats) = fixture("steal-unheld", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "STEAL-free01",
+        "Never claimed",
+        Some("todo"),
+    );
+
+    let available = board(&bus, epoch, lane.clone());
+    let heads = at(&available, &task);
+    assert!(heads.claim.is_none(), "the task starts unclaimed");
+    let steal: Name = "steal".parse().expect("steal rule");
+    let won = assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility {
+                rule: steal.clone(),
+            },
+            residency(&available, &seats[0]),
+        ],
+        &ClaimWin {
+            rule: steal,
+            recovery: None,
+        },
+    ));
+    let CommandAnswer::Claim(won) = won else {
+        panic!("steal returned another answer shape: {won:?}");
+    };
+    assert!(won.nothing_stolen, "nobody held the task");
+
+    let after = board(&bus, epoch, lane.clone());
+    let claim = at(&after, &task).claim.as_ref().expect("claim");
+    assert_eq!(claim.body.actor, lane);
+    assert_eq!(claim.body.disposition, ClaimDisposition::Active);
     clean(&root, bus);
 }
 

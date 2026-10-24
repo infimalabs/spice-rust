@@ -169,6 +169,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
                 room_context: None,
                 next: None,
                 phase: None,
+                nothing_stolen: false,
                 transplant: None,
             },
         )
@@ -256,6 +257,7 @@ fn free(journal: &mut Journal, command: u8) {
                 room_context: None,
                 next: None,
                 phase: None,
+                nothing_stolen: false,
                 transplant: None,
             },
         )
@@ -317,6 +319,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
                 room_context: None,
                 next: None,
                 phase: None,
+                nothing_stolen: false,
                 transplant: None,
             },
         )
@@ -1200,6 +1203,7 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
                 room_context: None,
                 next: None,
                 phase: None,
+                nothing_stolen: false,
                 transplant: None,
             },
         )

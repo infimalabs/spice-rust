@@ -350,6 +350,7 @@ fn automatic_answer(
         room_context: None,
         next: None,
         phase: None,
+        nothing_stolen: false,
         transplant: transplant.cloned(),
     }
 }
@@ -415,6 +416,7 @@ pub(crate) fn release_automatic(
         room_context: None,
         next: None,
         phase: None,
+        nothing_stolen: false,
         transplant: None,
     };
     let body = CommandAnswer::Claim(Box::new(answer));

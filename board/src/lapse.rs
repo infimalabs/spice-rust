@@ -378,6 +378,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 room_context: None,
                 next: None,
                 phase: None,
+                nothing_stolen: false,
                 transplant: None,
             },
         )
@@ -602,6 +603,7 @@ mod tests {
                     room_context: None,
                     next: None,
                     phase: None,
+                    nothing_stolen: false,
                     transplant: None,
                 },
             )
