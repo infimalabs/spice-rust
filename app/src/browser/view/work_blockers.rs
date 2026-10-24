@@ -176,7 +176,6 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
             resolves: &resolves,
         };
         let count = self.queue.len();
-        let board = runtime.and_then(AppRuntime::board);
         html! {
             <section
                 class="work-blocker-review app-sheet-overlay"
@@ -208,24 +207,23 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                         {"Every task only you can move appears here once, across the whole board. Work waiting on tasks an agent can claim or is working proceeds on its own."}
                     </p>
                     {for self.queue.waits().iter().map(|wait| {
-                        self.render_wait(wait, &controls, board, runtime, &open, can_grant, grant)
+                        self.render_wait(wait, &controls, runtime, &open, can_grant, grant)
                     })}
                 </div>
             </section>
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_wait(
         &self,
         wait: &OperatorWait<'board>,
         controls: &LineControls<'_>,
-        board: Option<&crate::runtime::BoardView>,
         runtime: Option<&AppRuntime>,
         open: &Callback<TaskStamp>,
         can_grant: bool,
         grant: &Callback<task_detail::TrustGrantRequest>,
     ) -> Html {
+        let board = runtime.and_then(AppRuntime::board);
         let tasks = self.work.tasks();
         let row = tasks[wait.task()].row();
         let statement = &row.statement.body;

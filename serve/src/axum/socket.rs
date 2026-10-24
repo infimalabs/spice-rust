@@ -172,11 +172,13 @@ impl ActiveSession {
             &mut self.lead,
             socket,
             SessionSignals::new(closed, &self.retired),
-            &mut self.broadcasts,
-            &mut self.messages,
-            &mut self.quota,
-            &mut self.commands,
-            &mut self.histories,
+            WorkSources {
+                broadcasts: &mut self.broadcasts,
+                messages: &mut self.messages,
+                quota: &mut self.quota,
+                commands: &mut self.commands,
+                histories: &mut self.histories,
+            },
             SessionReadiness { live, continuing },
         )
         .await
@@ -423,6 +425,19 @@ pub(super) struct SessionSignals<'session> {
     retired: &'session CancellationToken,
 }
 
+/// The session's own work sources beyond its socket: the fleet broadcasts it
+/// subscribed to and the operator commands and history requests it has in
+/// flight. The fair wait rotates among these and the inbound socket.
+pub(super) struct WorkSources<'session> {
+    pub(super) broadcasts: &'session mut Option<bus::BroadcastSubscriber>,
+    pub(super) messages:
+        &'session mut Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
+    pub(super) quota:
+        &'session mut Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>>,
+    pub(super) commands: &'session mut PendingCommands,
+    pub(super) histories: &'session mut PendingHistories,
+}
+
 /// Work branches enabled by the subscription's current delivery state.
 #[derive(Clone, Copy)]
 pub(super) struct SessionReadiness {
@@ -462,22 +477,21 @@ impl<'session> SessionSignals<'session> {
 /// at six iterations rather than at one source falling quiet. No source is ever
 /// disabled to make room, because a disabled broadcast receiver stops draining
 /// its channel and converts a scheduling question into a lag question.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the fair wait owns each of its seven independent work sources"
-)]
 pub(super) async fn next_event(
     lead: &mut Lead,
     socket: &mut impl Inbound,
     signals: SessionSignals<'_>,
-    broadcasts: &mut Option<bus::BroadcastSubscriber>,
-    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
-    quota: &mut Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>>,
-    commands: &mut PendingCommands,
-    histories: &mut PendingHistories,
+    sources: WorkSources<'_>,
     readiness: SessionReadiness,
 ) -> Event {
     let SessionReadiness { live, continuing } = readiness;
+    let WorkSources {
+        broadcasts,
+        messages,
+        quota,
+        commands,
+        histories,
+    } = sources;
     let journal = broadcasts.is_some() && live;
     let transcript = messages.is_some() && live;
     let quota_ready = quota.is_some() && live;

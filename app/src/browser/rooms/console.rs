@@ -466,8 +466,10 @@ fn render_publication(
                 render.runtime,
                 Some(controls),
                 render.open_message_task,
-                &channel.stamp,
-                has_current_listener,
+                card::ReadRoom {
+                    stamp: &channel.stamp,
+                    has_current_listener,
+                },
                 publication,
                 event,
                 Some(anchor),

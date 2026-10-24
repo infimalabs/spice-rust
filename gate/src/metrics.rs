@@ -28,9 +28,10 @@ pub use declaration::{
     STRUCTURAL_METRICS, ScopeDeclaration,
 };
 pub use evidence::{
-    EvidenceError, EvidenceState, FunctionKey, LatchBinding, MEASUREMENT_FINDING_LIMIT,
-    MetricEvidence, MetricFinding, MetricKey, MetricMeasurement, MetricReport, ParserEvidence,
-    RuleBinding, STRUCTURAL_METRIC_REPORT_VERSION, StructuralArmEvidence,
+    EvidenceError, EvidenceState, FunctionKey, LatchBinding, LatchLimits, LatchOutcome,
+    MEASUREMENT_FINDING_LIMIT, MetricEvidence, MetricFinding, MetricKey, MetricMeasurement,
+    MetricReport, ParserEvidence, RuleBinding, STRUCTURAL_METRIC_REPORT_VERSION,
+    StructuralArmEvidence,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use parser::{

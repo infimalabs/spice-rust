@@ -58,8 +58,10 @@ pub(in crate::browser) fn render_task_room(
                         runtime,
                         None,
                         open_task,
-                        room,
-                        has_current_listener,
+                        card::ReadRoom {
+                            stamp: room,
+                            has_current_listener,
+                        },
                         publication,
                         event,
                     );

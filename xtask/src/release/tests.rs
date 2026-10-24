@@ -587,19 +587,13 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
 }
 
 fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
-    ReleaseEnvironment::new(
-        Some(OsString::from("/tool/bin")),
-        Some(OsString::from("/home/release")),
-        Some(OsString::from("/cargo/home")),
-        None,
-        None,
-        None,
-        None,
-        None,
-        cargo_target_dir.map(OsString::from),
-        None,
-        None,
-    )
+    ReleaseEnvironment {
+        path: Some(OsString::from("/tool/bin")),
+        home: Some(OsString::from("/home/release")),
+        cargo_home: Some(OsString::from("/cargo/home")),
+        cargo_target_dir: cargo_target_dir.map(OsString::from),
+        ..ReleaseEnvironment::default()
+    }
 }
 
 /// The cleared release environment freezes the compiler discovery already made.
@@ -701,27 +695,16 @@ fn the_cargo_home_prefers_the_acquired_value_and_falls_back_to_cargos_own_rule()
         Some(OsString::from("/cargo/home")),
     );
 
-    let inherited = ReleaseEnvironment::new(
-        None,
-        Some(OsString::from("/home/release")),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    );
+    let inherited = ReleaseEnvironment {
+        home: Some(OsString::from("/home/release")),
+        ..ReleaseEnvironment::default()
+    };
     assert_eq!(
         inherited.cargo_home(),
         Some(OsString::from("/home/release/.cargo")),
     );
 
-    let bare = ReleaseEnvironment::new(
-        None, None, None, None, None, None, None, None, None, None, None,
-    );
+    let bare = ReleaseEnvironment::default();
     assert_eq!(
         bare.cargo_home(),
         None,
@@ -1125,19 +1108,11 @@ impl Drop for ConfigTree {
 /// An environment naming a `PATH` and a Cargo home, and no compiler override.
 #[cfg(unix)]
 fn resolving_environment(path: OsString, cargo_home: Option<OsString>) -> ReleaseEnvironment {
-    ReleaseEnvironment::new(
-        Some(path),
-        None,
+    ReleaseEnvironment {
+        path: Some(path),
         cargo_home,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+        ..ReleaseEnvironment::default()
+    }
 }
 
 /// Release discovery resolves the compiler from the build's exact hierarchy.
@@ -1472,19 +1447,15 @@ fn a_compiler_override_outranks_every_cargo_config() {
     ] {
         let tree = ConfigTree::new();
         tree.config("", "config.toml", "[build]\nrustc = \"/by-config\"\n");
-        let environment = ReleaseEnvironment::new(
-            Some(tree.path_with_rustc()),
-            None,
-            Some(tree.cargo_home("config.toml", "[build]\nrustc = \"/by-cargo-home\"\n")),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+        let environment = ReleaseEnvironment {
+            path: Some(tree.path_with_rustc()),
+            cargo_home: Some(
+                tree.cargo_home("config.toml", "[build]\nrustc = \"/by-cargo-home\"\n"),
+            ),
             rustc,
             build_rustc,
-        );
+            ..ReleaseEnvironment::default()
+        };
 
         assert_eq!(
             environment

@@ -558,24 +558,31 @@ fn cancel_life_preview_callback(
     })
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "watchband rendering binds team identity and interactive control state"
-)]
+/// Whether the team can take a send right now: `ready` when no life change is
+/// pending and some slot is reachable, `dormant` when the controls step back,
+/// and the slots each member offers.
+pub(super) struct SendReadiness {
+    pub(super) ready: bool,
+    pub(super) dormant: bool,
+    pub(super) slots: Vec<SendSlot>,
+}
+
 pub(super) fn render_team_controls(
-    team: CanonicalUuid,
-    authoritative_life: wire::intent::TeamLife,
-    topology_revision: u64,
+    render: &super::fleet::FleetRender<'_, '_>,
+    team_row: &crate::runtime::LaneRow,
     plane: &Plane,
-    team_controls: &UseReducerHandle<TeamControls>,
-    set_automatic_speech: &Callback<(String, bool)>,
-    sender: &SenderHandle,
-    can_configure: bool,
-    ready: bool,
-    dormant: bool,
-    slots: Vec<SendSlot>,
-    fast_mode: bool,
+    readiness: SendReadiness,
 ) -> Html {
+    let (team, authoritative_life, fast_mode) =
+        (team_row.lane, team_row.subscription, team_row.fast_mode);
+    let (topology_revision, can_configure) = (render.topology_revision, render.can_configure);
+    let (team_controls, sender) = (render.team_controls, render.sender);
+    let set_automatic_speech = &render.controls.set_automatic_speech;
+    let SendReadiness {
+        ready,
+        dormant,
+        slots,
+    } = readiness;
     let control = &plane.control;
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);

@@ -22,9 +22,7 @@ pub(crate) fn render_task_text(
     let admitted = |task: &wire::TaskHandle| task.born().is_ok_and(|stamp| resolves(&stamp));
     render(
         markdown,
-        &[],
-        &[],
-        &[],
+        super::Annotations::default(),
         &[],
         &super::QuoteAgents::new(),
         &BTreeMap::new(),

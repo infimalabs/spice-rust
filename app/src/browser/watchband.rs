@@ -236,36 +236,21 @@ impl<K: Eq + std::hash::Hash> ComposerSlots<K> {
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one team render owns its controls"
-)]
+/// One team's composer and activity plane, portalled into `composer_slot`.
 fn render_compose(
-    runtime: &AppRuntime,
+    render: &fleet::FleetRender<'_, '_>,
     team: &crate::runtime::LaneRow,
-    quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
     standings: &[Standing],
-    epoch: CanonicalUuid,
-    topology_revision: u64,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    authority: SubmissionAuthority,
-    can_arrange: bool,
-    sender: &SenderHandle,
-    composer_drag: &PrimaryComposerDragState,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    submissions: &SubmissionHandle,
-    team_controls: &UseReducerHandle<TeamControls>,
-    can_configure: bool,
-    controls: &view::AgentControls,
-    surface: &UseStateHandle<SurfaceData>,
-    select: &Callback<wire::TaskStamp>,
-    open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
     attention: &attention::TeamAttention,
     composer_slot: web_sys::HtmlElement,
 ) -> Html {
     if team.members.is_empty() {
         return empty("No agents are assigned.");
     }
+    let runtime = render.runtime;
+    let (sender, drafts, team_controls) = (render.sender, render.drafts, render.team_controls);
+    let (epoch, topology_revision, authority) =
+        (render.epoch, render.topology_revision, render.authority);
     let plane = team_controls.plane(team, runtime);
     let submit = submit_team_callback(
         &team.members,
@@ -273,66 +258,62 @@ fn render_compose(
         authority,
         sender.clone(),
         drafts.clone(),
-        submissions.clone(),
+        render.submissions.clone(),
     );
     let broadcast = broadcast_targets(&team.members, epoch, authority.send);
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
     let dormant = team_dormant(team, drafts);
     let slots = send_slots(team, standings, drafts, authority, epoch, &broadcast);
     let ready = plane.control.pending_life.is_none() && slots.iter().any(|slot| slot.reachable);
-    let cards = activity_cards(runtime, team, quote_agents);
-    let member_command = member_controls::command_callback(sender, surface, team.lane);
+    let cards = activity_cards(runtime, team, &render.quote_agents);
+    let member_command = member_controls::command_callback(sender, &render.surface, team.lane);
+    let composer_team = TeamComposer {
+        epoch,
+        topology_revision,
+        topology: &render.topology,
+        authority,
+        can_arrange: render.can_arrange_teams,
+        sender,
+        composer_drag: render.composer_drag,
+        drafts,
+        submissions: render.submissions,
+        broadcast_targets: &broadcast,
+        broadcast_help: &broadcast_help,
+    };
     let composer = html! {
         <form class="team-composer" onsubmit={submit.clone()}>
             <div class="team-agents">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                    let header = primary_composer_header(runtime, team, member.lane, standing);
                     render_agent_composer(
+                        &composer_team,
                         member,
                         standing,
-                        epoch,
-                        topology_revision,
-                        topology,
-                        standing.pending,
-                        authority,
-                        can_arrange,
                         agent_menu::render(agent_menu::AgentMenu {
                             runtime,
                             member,
                             standing,
-                            select,
+                            select: render.select_task,
                             command: &member_command,
-                            can_configure,
+                            can_configure: render.can_configure,
                             topology_revision,
-                            topology,
+                            topology: &render.topology,
                             sender,
                             attention: attention.lane(member.lane),
                         }),
                         trace::render_composer_rail(runtime, member),
-                        sender,
-                        composer_drag,
-                        drafts,
-                        submissions,
-                        &broadcast,
-                        &broadcast_help,
-                        header.stream,
-                        header.prose,
+                        primary_composer_header(runtime, team, member.lane, standing),
                     )
                 })}
             </div>
             {render_team_controls(
-                team.lane,
-                team.subscription,
-                topology_revision,
+                render,
+                team,
                 &plane,
-                team_controls,
-                &controls.set_automatic_speech,
-                sender,
-                can_configure,
-                ready,
-                dormant,
-                slots,
-                team.fast_mode,
+                controls::SendReadiness {
+                    ready,
+                    dormant,
+                    slots,
+                },
             )}
             <span id={broadcast_help} class="visually-hidden">
                 {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
@@ -344,11 +325,9 @@ fn render_compose(
             // The composer renders into its slot in the plane's scroll content.
             {yew::create_portal(composer, composer_slot.clone().into())}
             {render_activity(
+                render,
                 team,
                 &cards,
-                drafts,
-                controls,
-                open_message_task,
                 &plane,
                 HistoryPaging::of(runtime, team, sender),
                 composer_slot,
@@ -515,20 +494,15 @@ fn activity_cards(
     cards
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one team plane owns its cards and composer slot"
-)]
 fn render_activity(
+    render: &fleet::FleetRender<'_, '_>,
     team: &crate::runtime::LaneRow,
     cards: &[ActivityCard],
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    controls: &view::AgentControls,
-    open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
     plane: &controls::Plane,
     history: HistoryPaging<'_>,
     composer_slot: web_sys::HtmlElement,
 ) -> Html {
+    let (drafts, controls) = (render.drafts, render.controls);
     let empty = cards.is_empty();
     let narrate = controls.narrate.clone();
     let history_sender = HistorySender::new(history.sender.clone());
@@ -550,7 +524,7 @@ fn render_activity(
                 members={team.members.len()}
                 cards={cards.to_vec()}
                 quote_dispatcher={drafts.dispatcher()}
-                open_message_task={open_message_task.clone()}
+                open_message_task={render.open_message_task.clone()}
                 speak={controls.speak.clone()}
                 {narrate}
                 speech={plane.speech.clone()}
@@ -713,40 +687,58 @@ fn agent_team_control(
     AgentTeamControl { disabled, activate }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one member composer needs its standing and shared team interaction handles"
-)]
-fn render_agent_composer(
-    member: &crate::runtime::LaneMember,
-    standing: &Standing,
+/// What every member composer of one team shares: the session it submits
+/// under, the topology it may rearrange, the handles it edits drafts and
+/// submissions through, and the team's broadcast targets.
+#[derive(Clone, Copy)]
+struct TeamComposer<'a> {
     epoch: CanonicalUuid,
     topology_revision: u64,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    pending: usize,
+    topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
     authority: SubmissionAuthority,
     can_arrange: bool,
+    sender: &'a SenderHandle,
+    composer_drag: &'a PrimaryComposerDragState,
+    drafts: &'a UseReducerHandle<ComposerDrafts>,
+    submissions: &'a SubmissionHandle,
+    broadcast_targets: &'a [BroadcastTarget],
+    broadcast_help: &'a str,
+}
+
+fn render_agent_composer(
+    team: &TeamComposer<'_>,
+    member: &crate::runtime::LaneMember,
+    standing: &Standing,
     menu: Html,
     rail: Html,
-    sender: &SenderHandle,
-    composer_drag: &PrimaryComposerDragState,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    submissions: &SubmissionHandle,
-    broadcast_targets: &[BroadcastTarget],
-    broadcast_help: &str,
-    stream: ComposerStreamLink,
-    prose: String,
+    header: ComposerHeader,
 ) -> Html {
+    let TeamComposer {
+        epoch,
+        topology_revision,
+        topology,
+        authority,
+        can_arrange,
+        sender,
+        composer_drag,
+        drafts,
+        submissions,
+        broadcast_targets,
+        broadcast_help,
+    } = *team;
     let lane_id = member.lane;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let target = authority.target(member.occupant, member.wakeable, epoch);
     let wake = matches!(target, Some(SubmissionTarget::Vacant { .. }));
-    let command_submit_eligible = target.is_some();
-    let broadcast_target_eligible = broadcast_targets
+    let broadcast_eligible = broadcast_targets
         .iter()
         .any(|target| target.lane == lane_id);
-    let broadcast_source_eligible = broadcast_target_eligible;
+    let eligibility = ShardEligibility {
+        command_submit: target.is_some(),
+        broadcast_target: broadcast_eligible,
+        broadcast_source: broadcast_eligible,
+    };
     let onkeydown = keyboard_submit(
         lane_id,
         target,
@@ -793,22 +785,22 @@ fn render_agent_composer(
                 data-has-quote-shards={(!draft.quotes.is_empty()).to_string()}
             >
                 {render_composer_body(
-                    lane_id,
-                    &lane_key,
-                    &draft,
-                    command_submit_eligible,
-                    broadcast_target_eligible,
-                    broadcast_source_eligible,
+                    ShardDraft {
+                        lane: lane_id,
+                        lane_key: &lane_key,
+                        draft: &draft,
+                        standing,
+                        drafts,
+                    },
+                    ShardChrome {
+                        status,
+                        header,
+                        menu,
+                        rail,
+                    },
+                    eligibility,
                     broadcast_help,
-                    standing,
-                    status,
-                    pending,
-                    drafts,
                     onkeydown.clone(),
-                    menu,
-                    rail,
-                    stream,
-                    prose,
                     dragging,
                 )}
                 {render_quote_shards(
@@ -817,46 +809,78 @@ fn render_agent_composer(
                     Some(status),
                     drafts,
                     onkeydown,
-                    &composer_placeholder(standing, pending),
+                    &composer_placeholder(standing, standing.pending),
                 )}
             </div>
         </section>
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the composer body renders one target's typed state and browser callbacks"
-)]
-fn render_composer_body(
+/// The lane one primary shard composes for, with its draft and the store the
+/// shard edits it in.
+struct ShardDraft<'a> {
     lane: CanonicalUuid,
-    lane_key: &str,
-    draft: &ComposerDraft,
-    command_submit_eligible: bool,
-    broadcast_target_eligible: bool,
-    broadcast_source_eligible: bool,
-    broadcast_help: &str,
-    standing: &Standing,
+    lane_key: &'a str,
+    draft: &'a ComposerDraft,
+    standing: &'a Standing,
+    drafts: &'a UseReducerHandle<ComposerDrafts>,
+}
+
+/// The chrome around one primary shard's textarea: the lane's status, the
+/// stream link and prose in its heading, the agent menu, and the trace rail.
+struct ShardChrome {
     status: crate::runtime::LaneStatus,
-    pending: usize,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    onkeydown: Callback<KeyboardEvent>,
+    header: ComposerHeader,
     menu: Html,
     rail: Html,
-    stream: ComposerStreamLink,
-    prose: String,
+}
+
+/// What a primary shard advertises to its keyboard and drop handlers: whether
+/// Enter can submit, and whether the lane can receive or source a broadcast.
+#[derive(Clone, Copy)]
+struct ShardEligibility {
+    command_submit: bool,
+    broadcast_target: bool,
+    broadcast_source: bool,
+}
+
+fn render_composer_body(
+    shard: ShardDraft<'_>,
+    chrome: ShardChrome,
+    eligibility: ShardEligibility,
+    broadcast_help: &str,
+    onkeydown: Callback<KeyboardEvent>,
     dragging: PrimaryComposerDragging,
 ) -> Html {
+    let ShardDraft {
+        lane,
+        lane_key,
+        draft,
+        standing,
+        drafts,
+    } = shard;
+    let ShardChrome {
+        status,
+        header,
+        menu,
+        rail,
+    } = chrome;
     let onpaste = paste_images(lane_key.to_owned(), None, drafts.clone());
+    let heading = render_composer_heading(
+        status,
+        menu,
+        header,
+        render_image_indicators(lane_key, &draft.attachments, None, drafts),
+        &dragging,
+    );
     // Pointer capture stays on prose, leaving textarea editing and attachment
     // drag/drop untouched while the lifted composer can cross sibling slots.
     let PrimaryComposerDragging {
         enabled: drag_enabled,
-        start: drag_start,
         movement: drag_movement,
         finish: drag_finish,
         cancel: drag_cancel,
-        lost_capture: drag_lost_capture,
+        ..
     } = dragging;
     html! {
         <div
@@ -864,9 +888,9 @@ fn render_composer_body(
             data-shard-kind="primary"
             data-shard-target-id={lane.to_string()}
             data-primary-composer-draggable={drag_enabled.to_string()}
-            data-command-submit-eligible={command_submit_eligible.to_string()}
-            data-broadcast-target-eligible={broadcast_target_eligible.to_string()}
-            data-broadcast-source-eligible={broadcast_source_eligible.to_string()}
+            data-command-submit-eligible={eligibility.command_submit.to_string()}
+            data-broadcast-target-eligible={eligibility.broadcast_target.to_string()}
+            data-broadcast-source-eligible={eligibility.broadcast_source.to_string()}
             data-draft-unsafe={(
                 !draft.body.is_empty()
                     || !draft.quotes.is_empty()
@@ -876,16 +900,7 @@ fn render_composer_body(
             onpointerup={drag_finish}
             onpointercancel={drag_cancel}
         >
-            {render_composer_heading(
-                status,
-                menu,
-                stream,
-                prose,
-                render_image_indicators(lane_key, &draft.attachments, None, drafts),
-                drag_enabled,
-                drag_start,
-                drag_lost_capture,
-            )}
+            {heading}
             {rail}
             <ComposerTextarea
                 key={draft.body.clone()}
@@ -894,7 +909,7 @@ fn render_composer_body(
                 drafts={drafts.dispatcher()}
                 label={format!("Message for agent {lane}")}
                 body={draft.body.clone()}
-                placeholder={composer_placeholder(standing, pending)}
+                placeholder={composer_placeholder(standing, standing.pending)}
                 rows="4"
                 primary_target={Some(lane.to_string())}
                 quote_identity={None::<String>}
@@ -906,25 +921,22 @@ fn render_composer_body(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the shard heading carries one agent's prose, drafts, menu, and drag callbacks"
-)]
 fn render_composer_heading(
     status: crate::runtime::LaneStatus,
     menu: Html,
-    stream: ComposerStreamLink,
-    prose: String,
+    header: ComposerHeader,
     indicators: Html,
-    drag_enabled: bool,
-    drag_start: Callback<PointerEvent>,
-    drag_lost_capture: Callback<PointerEvent>,
+    dragging: &PrimaryComposerDragging,
 ) -> Html {
-    let ComposerStreamLink {
-        target,
-        label,
-        display_millis,
-    } = stream;
+    let ComposerHeader {
+        stream:
+            ComposerStreamLink {
+                target,
+                label,
+                display_millis,
+            },
+        prose,
+    } = header;
     html! {
         <header class="app-glass-control-surface composer-shard-heading">
             <a
@@ -940,9 +952,9 @@ fn render_composer_heading(
             <strong
                 class="composer-shard-prose"
                 title={prose.clone()}
-                data-composer-drag-handle={drag_enabled.to_string()}
-                onpointerdown={drag_start}
-                onlostpointercapture={drag_lost_capture}
+                data-composer-drag-handle={dragging.enabled.to_string()}
+                onpointerdown={dragging.start.clone()}
+                onlostpointercapture={dragging.lost_capture.clone()}
             >{prose}</strong>
             {indicators}
             {menu}

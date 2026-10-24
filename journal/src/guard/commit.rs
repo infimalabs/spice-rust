@@ -72,16 +72,8 @@ impl Journal {
             .map_err(room_refusal)?;
         crate::rooms::require_return_deliveries(&transaction, proposed()).map_err(room_refusal)?;
         crate::rooms::require_open_controllers(&transaction, proposed()).map_err(room_refusal)?;
-        apply_heads(
-            &transaction,
-            write.id,
-            &write.actor,
-            &write.facts,
-            &write.origin,
-            write.at,
-            write.heads,
-            &assigned,
-        )?;
+        let heads = std::mem::take(&mut write.heads);
+        apply_heads(&transaction, &write, heads, &assigned)?;
         crate::release_notes::apply(&transaction, proposed(), &assigned).map_err(|error| {
             match error {
                 crate::release_notes::ProjectionWriteError::Sqlite(error) => sqlite_fault(error),
@@ -748,23 +740,18 @@ fn insert_thread_index(
     Ok(())
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "every head in one transaction settles against its facts and writer"
-)]
+/// Settle every head in one transaction against the facts and writer of the
+/// write that proposed it.
 fn apply_heads(
     transaction: &Transaction<'_>,
-    write: u64,
-    actor: &wire::Actor,
-    facts: &[ProposedFact],
-    origin: &wire::Origin,
-    at: wire::Instant,
+    write: &JournalWrite,
     heads: Vec<HeadUpdate>,
     assigned: &[wire::Seq],
 ) -> Result<(), CommitError> {
-    let mut ledger = super::generation::Ledger::new(actor, facts, assigned);
+    let (facts, origin, at) = (&write.facts, &write.origin, write.at);
+    let mut ledger = super::generation::Ledger::new(&write.actor, facts, assigned);
     for head in heads {
-        if head.fact.write != write {
+        if head.fact.write != write.id {
             return Err(CommitError::Refused(GuardRefusal::new(
                 "head names a fact from another journal transaction",
             )));

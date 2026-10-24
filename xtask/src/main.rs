@@ -656,20 +656,20 @@ fn workspace_test_environment(shared_outputs: bool) -> Result<sill::Environment,
 }
 
 fn release_environment() -> xtask::ReleaseEnvironment {
-    xtask::ReleaseEnvironment::new(
-        bootstrap_environment("PATH"),
-        bootstrap_environment("HOME"),
-        bootstrap_environment("CARGO_HOME"),
-        bootstrap_environment("RUSTUP_HOME"),
-        bootstrap_environment("RUSTUP_TOOLCHAIN"),
-        bootstrap_environment("TMPDIR"),
-        bootstrap_environment("SDKROOT"),
-        bootstrap_environment("DEVELOPER_DIR"),
-        bootstrap_environment("CARGO_TARGET_DIR"),
-        bootstrap_environment("RUSTC"),
-        bootstrap_environment("CARGO_BUILD_RUSTC"),
-    )
-    .with_stage_root(bootstrap_environment("SPICE_HOSTED_STAGE")) // env-policy: allow
+    xtask::ReleaseEnvironment {
+        path: bootstrap_environment("PATH"),
+        home: bootstrap_environment("HOME"),
+        cargo_home: bootstrap_environment("CARGO_HOME"),
+        rustup_home: bootstrap_environment("RUSTUP_HOME"),
+        rustup_toolchain: bootstrap_environment("RUSTUP_TOOLCHAIN"),
+        temporary: bootstrap_environment("TMPDIR"),
+        sdk_root: bootstrap_environment("SDKROOT"),
+        developer_dir: bootstrap_environment("DEVELOPER_DIR"),
+        cargo_target_dir: bootstrap_environment("CARGO_TARGET_DIR"),
+        rustc: bootstrap_environment("RUSTC"),
+        build_rustc: bootstrap_environment("CARGO_BUILD_RUSTC"),
+        stage_root: bootstrap_environment("SPICE_HOSTED_STAGE"), // env-policy: allow
+    }
 }
 
 #[expect(

@@ -54,11 +54,13 @@ pub(crate) fn read_next_work(
         NextWorkState::DesignRequest { request }
     } else if let Some(selected) = board::select_with_satisfied_at(
         &entries,
-        &principal,
-        &subscription,
+        board::Claimant {
+            actor: &principal,
+            subscription: &subscription,
+            recent_cell: recent_cell.as_ref(),
+            environment: &environment,
+        },
         allocation.band(),
-        recent_cell.as_ref(),
-        &environment,
         &satisfied,
         now,
     ) {

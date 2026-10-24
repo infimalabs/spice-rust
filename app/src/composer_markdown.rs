@@ -383,9 +383,11 @@ pub(crate) fn render_prose_card_with_media_quotes(
 ) -> RenderedMarkdown {
     render(
         markdown,
-        classifications,
-        directives,
-        sends,
+        Annotations {
+            classifications,
+            directives,
+            sends,
+        },
         quotes,
         quote_context.agents,
         quote_context.sources,
@@ -403,9 +405,7 @@ pub(crate) fn render_prose_card_with_media_quotes(
 pub(crate) fn render_room_card(markdown: &str) -> RenderedMarkdown {
     render(
         markdown,
-        &[],
-        &[],
-        &[],
+        Annotations::default(),
         &[],
         &QuoteAgents::default(),
         &QuoteSources::new(),
@@ -429,9 +429,7 @@ fn render_quote_card_body(
 ) -> RenderedMarkdown {
     render(
         markdown,
-        &[],
-        &[],
-        &[],
+        Annotations::default(),
         quotes,
         quote_agents,
         quote_sources,
@@ -507,22 +505,32 @@ fn card_attribution() -> image_flow::Attribution {
 /// Headings in task text nest under the detail's own section headings.
 const TASK_TEXT_HEADING: HeadingLevel = HeadingLevel::H5;
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one rendering carries every resident annotation family beside its quote context"
-)]
+/// The resident's annotations of one message body: its classified spans, the
+/// directives it carried, and the sends it made. They travel together through
+/// math normalization and event parsing.
+#[derive(Clone, Copy, Default)]
+struct Annotations<'a> {
+    classifications: &'a [MessageClassification],
+    directives: &'a [MessageDirective],
+    sends: &'a [MessageSend],
+}
+
 fn render(
     markdown: &str,
-    classifications: &[MessageClassification],
-    directives: &[MessageDirective],
-    sends: &[MessageSend],
+    annotations: Annotations<'_>,
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     media_quotes: &[wire::MediaQuote],
     finish: Finish<'_>,
 ) -> RenderedMarkdown {
-    let math = math::normalize(markdown, classifications, directives, sends, OPTIONS);
+    let math = math::normalize(
+        markdown,
+        annotations.classifications,
+        annotations.directives,
+        annotations.sends,
+        OPTIONS,
+    );
     let markdown = math.markdown;
     let mut media_quotes = media_quotes::Matcher::new(media_quotes, &math.directives);
     let (events, outer_quotes) = parse_events(

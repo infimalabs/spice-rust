@@ -80,7 +80,7 @@ fn every_source_ready() -> ReadySources {
 async fn each_rotation_step_serves_its_own_source_while_all_seven_stay_ready() {
     use super::super::socket::{
         CommandCompletion, Event, Lead, PendingCommands, SessionReadiness, SessionSignals,
-        next_event,
+        WorkSources, next_event,
     };
 
     let (bus, _publisher, _quota_publisher, mut broadcasts, mut messages, mut quota) =
@@ -109,11 +109,13 @@ async fn each_rotation_step_serves_its_own_source_while_all_seven_stay_ready() {
             &mut lead,
             &mut inbound,
             SessionSignals::new(&mut closed, &retired),
-            &mut broadcasts,
-            &mut messages,
-            &mut quota,
-            &mut commands,
-            &mut histories,
+            WorkSources {
+                broadcasts: &mut broadcasts,
+                messages: &mut messages,
+                quota: &mut quota,
+                commands: &mut commands,
+                histories: &mut histories,
+            },
             SessionReadiness::live(true),
         )
         .await;
@@ -166,7 +168,7 @@ async fn each_rotation_step_serves_its_own_source_while_all_seven_stay_ready() {
 async fn close_outranks_every_ready_work_source_on_every_lead() {
     use super::super::socket::{
         CommandCompletion, Event, Lead, PendingCommands, SessionReadiness, SessionSignals,
-        next_event,
+        WorkSources, next_event,
     };
 
     let (bus, _publisher, _quota_publisher, mut broadcasts, mut messages, mut quota) =
@@ -192,11 +194,13 @@ async fn close_outranks_every_ready_work_source_on_every_lead() {
                     &mut lead,
                     &mut inbound,
                     SessionSignals::new(&mut closed, &retired),
-                    &mut broadcasts,
-                    &mut messages,
-                    &mut quota,
-                    &mut commands,
-                    &mut histories,
+                    WorkSources {
+                        broadcasts: &mut broadcasts,
+                        messages: &mut messages,
+                        quota: &mut quota,
+                        commands: &mut commands,
+                        histories: &mut histories,
+                    },
                     SessionReadiness::live(true),
                 )
                 .await,

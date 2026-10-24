@@ -795,46 +795,49 @@ mod tests {
             );
 
             let archive = headers + ELF_SECTION_HEADER_BYTES as usize;
-            assert_elf_section(
-                &object,
-                archive,
-                section_name(section_names, b"spiceapp"),
-                SHT_PROGBITS,
-                SHF_ALLOC,
-                64,
-                ARCHIVE.len() as u64,
-                0,
-                0,
-                1,
-                0,
+            assert_eq!(
+                ElfSectionHeader::read(&object, archive),
+                ElfSectionHeader {
+                    name_offset: section_name(section_names, b"spiceapp"),
+                    kind: SHT_PROGBITS,
+                    flags: SHF_ALLOC,
+                    data_offset: 64,
+                    bytes: ARCHIVE.len() as u64,
+                    link: 0,
+                    info: 0,
+                    align: 1,
+                    entry_bytes: 0,
+                }
             );
             let length = archive + ELF_SECTION_HEADER_BYTES as usize;
-            assert_elf_section(
-                &object,
-                length,
-                section_name(section_names, b".rodata.spiceapp_len"),
-                SHT_PROGBITS,
-                SHF_ALLOC,
-                length_at as u64,
-                8,
-                0,
-                0,
-                8,
-                0,
+            assert_eq!(
+                ElfSectionHeader::read(&object, length),
+                ElfSectionHeader {
+                    name_offset: section_name(section_names, b".rodata.spiceapp_len"),
+                    kind: SHT_PROGBITS,
+                    flags: SHF_ALLOC,
+                    data_offset: length_at as u64,
+                    bytes: 8,
+                    link: 0,
+                    info: 0,
+                    align: 8,
+                    entry_bytes: 0,
+                }
             );
             let symtab = archive + 3 * ELF_SECTION_HEADER_BYTES as usize;
-            assert_elf_section(
-                &object,
-                symtab,
-                section_name(section_names, b".symtab"),
-                SHT_SYMTAB,
-                0,
-                symbols as u64,
-                3 * 24,
-                5,
-                1,
-                8,
-                24,
+            assert_eq!(
+                ElfSectionHeader::read(&object, symtab),
+                ElfSectionHeader {
+                    name_offset: section_name(section_names, b".symtab"),
+                    kind: SHT_SYMTAB,
+                    flags: 0,
+                    data_offset: symbols as u64,
+                    bytes: 3 * 24,
+                    link: 5,
+                    info: 1,
+                    align: 8,
+                    entry_bytes: 24,
+                }
             );
             assert_eq!(
                 object.len(),
@@ -852,10 +855,10 @@ mod tests {
         assert_eq!(u64_at(object, offset + 16), bytes);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn assert_elf_section(
-        object: &[u8],
-        offset: usize,
+    /// The fields of one ELF64 section header, decoded for whole-record
+    /// comparison.
+    #[derive(Debug, PartialEq, Eq)]
+    struct ElfSectionHeader {
         name_offset: u32,
         kind: u32,
         flags: u64,
@@ -865,16 +868,22 @@ mod tests {
         info: u32,
         align: u64,
         entry_bytes: u64,
-    ) {
-        assert_eq!(u32_at(object, offset), name_offset);
-        assert_eq!(u32_at(object, offset + 4), kind);
-        assert_eq!(u64_at(object, offset + 8), flags);
-        assert_eq!(u64_at(object, offset + 24), data_offset);
-        assert_eq!(u64_at(object, offset + 32), bytes);
-        assert_eq!(u32_at(object, offset + 40), link);
-        assert_eq!(u32_at(object, offset + 44), info);
-        assert_eq!(u64_at(object, offset + 48), align);
-        assert_eq!(u64_at(object, offset + 56), entry_bytes);
+    }
+
+    impl ElfSectionHeader {
+        fn read(object: &[u8], offset: usize) -> Self {
+            Self {
+                name_offset: u32_at(object, offset),
+                kind: u32_at(object, offset + 4),
+                flags: u64_at(object, offset + 8),
+                data_offset: u64_at(object, offset + 24),
+                bytes: u64_at(object, offset + 32),
+                link: u32_at(object, offset + 40),
+                info: u32_at(object, offset + 44),
+                align: u64_at(object, offset + 48),
+                entry_bytes: u64_at(object, offset + 56),
+            }
+        }
     }
 
     fn section_name(table: &[u8], expected: &[u8]) -> u32 {

@@ -39,50 +39,31 @@ where
     S: Into<OsString>,
     P: Into<OsString>,
 {
-    run_bounded_process(
+    let boundary = ProcessBoundary {
         label,
-        program,
-        arguments,
         cwd,
         cancellation,
-        Some(cargo_jobs),
+        cargo_jobs: Some(cargo_jobs),
         overrides,
-        ACTION_PROCESS_BOUNDS,
-    )
+        bounds: ACTION_PROCESS_BOUNDS,
+    };
+    let spec = bounded_process_spec(&boundary, program, arguments)?;
+    let running = sill::spawn(spec).map_err(RunError::Launch)?;
+    let outcome = wait_bounded(running, cancellation, boundary.bounds)?;
+    command_run_from_outcome(label, &outcome)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the process boundary keeps cwd, cancellation, environment, and bounds explicit"
-)]
-fn run_bounded_process<I, S, P>(
-    label: &str,
-    program: P,
-    arguments: I,
-    cwd: &Path,
-    cancellation: &CancellationToken,
+/// Where, under whose cancellation, and within which bounds one verifier
+/// process runs; the program and its arguments are the only inputs that vary
+/// per call.
+#[derive(Clone, Copy)]
+struct ProcessBoundary<'a> {
+    label: &'a str,
+    cwd: &'a Path,
+    cancellation: &'a CancellationToken,
     cargo_jobs: Option<usize>,
-    overrides: &[(&str, &OsStr)],
+    overrides: &'a [(&'a str, &'a OsStr)],
     bounds: ProcessBounds,
-) -> Result<CommandRun, RunError>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-    P: Into<OsString>,
-{
-    let spec = bounded_process_spec(
-        label,
-        program,
-        arguments,
-        cwd,
-        cancellation,
-        cargo_jobs,
-        overrides,
-        bounds,
-    )?;
-    let running = sill::spawn(spec).map_err(RunError::Launch)?;
-    let outcome = wait_bounded(running, cancellation, bounds)?;
-    command_run_from_outcome(label, &outcome)
 }
 
 fn wait_bounded(
@@ -169,25 +150,24 @@ fn wait_after_stop_request(
     outcome.map_err(|error| RunError::Cleanup(error.to_string()))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the process specification binds every authority at one construction point"
-)]
 fn bounded_process_spec<I, S, P>(
-    label: &str,
+    boundary: &ProcessBoundary<'_>,
     program: P,
     arguments: I,
-    cwd: &Path,
-    cancellation: &CancellationToken,
-    cargo_jobs: Option<usize>,
-    overrides: &[(&str, &OsStr)],
-    bounds: ProcessBounds,
 ) -> Result<Spec, RunError>
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
     P: Into<OsString>,
 {
+    let ProcessBoundary {
+        label,
+        cwd,
+        cancellation,
+        cargo_jobs,
+        overrides,
+        bounds,
+    } = *boundary;
     let environment = selected_process_environment(ambient_environment()?, cargo_jobs, overrides)?;
     let deadlines =
         Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap).map_err(|error| {

@@ -161,38 +161,54 @@ pub struct LatchBinding {
     actor: Option<String>,
 }
 
+/// The limits one latch decision measured against.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LatchLimits {
+    pub base: u64,
+    pub configured_ratchet: u64,
+    pub variation_percent: u64,
+    pub ratchet: u64,
+    pub active: u64,
+    pub unlimited: bool,
+}
+
+/// How one measurement fell against its latch limits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LatchOutcome {
+    pub over_limit: bool,
+    pub over_base: bool,
+    pub ratchet_breach: bool,
+}
+
 impl LatchBinding {
     /// Bind a completed bounded-state decision.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `actor` names the source and identity that decided the bound, when one
+    /// did; the two always travel together.
     pub fn new(
         kind: impl Into<String>,
-        base_limit: u64,
-        configured_ratchet_limit: u64,
-        variation_percent: u64,
-        ratchet_limit: u64,
-        active_limit: u64,
-        unlimited: bool,
-        over_limit: bool,
-        over_base: bool,
-        ratchet_breach: bool,
+        limits: LatchLimits,
+        outcome: LatchOutcome,
         transition: impl Into<String>,
-        actor_source: Option<impl Into<String>>,
-        actor: Option<impl Into<String>>,
+        actor: Option<(impl Into<String>, impl Into<String>)>,
     ) -> Result<Self, EvidenceError> {
+        let (actor_source, actor) = actor
+            .map(|(source, actor)| (source.into(), actor.into()))
+            .unzip();
         let binding = Self {
             kind: kind.into(),
-            base_limit,
-            configured_ratchet_limit,
-            variation_percent,
-            ratchet_limit,
-            active_limit,
-            unlimited,
-            over_limit,
-            over_base,
-            ratchet_breach,
+            base_limit: limits.base,
+            configured_ratchet_limit: limits.configured_ratchet,
+            variation_percent: limits.variation_percent,
+            ratchet_limit: limits.ratchet,
+            active_limit: limits.active,
+            unlimited: limits.unlimited,
+            over_limit: outcome.over_limit,
+            over_base: outcome.over_base,
+            ratchet_breach: outcome.ratchet_breach,
             transition: transition.into(),
-            actor_source: actor_source.map(Into::into),
-            actor: actor.map(Into::into),
+            actor_source,
+            actor,
         };
         binding.validate()?;
         Ok(binding)
@@ -312,11 +328,6 @@ impl LatchBinding {
         if self.unlimited && (self.over_limit || self.over_base || self.ratchet_breach) {
             return Err(EvidenceError::InvalidBinding(
                 "an unlimited latch decision cannot report a bound breach".to_owned(),
-            ));
-        }
-        if self.actor_source.is_some() != self.actor.is_some() {
-            return Err(EvidenceError::InvalidBinding(
-                "actor source and actor must appear together".to_owned(),
             ));
         }
         if self

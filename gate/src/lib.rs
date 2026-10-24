@@ -77,7 +77,10 @@ pub use battery::{
     canonical_gate_set_digest, run_battery, run_battery_arm, run_focused_arm,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use battery::{BatteryCapture, BatteryStateRun, RepositoryExecutionEvent, StateRunScope};
+pub use battery::{
+    BatteryCapture, BatteryStateRun, CaptureAuthorities, InputMode, RepositoryExecutionEvent,
+    StateRunScope,
+};
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampProgress, CampReport,
     CampRunError, CampStanding, DistributionReport, LocusDistance, SharedBound,

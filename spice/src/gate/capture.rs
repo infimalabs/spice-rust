@@ -47,34 +47,19 @@ pub(super) fn capture_at_inner<'trace>(
         bound_claims: Vec::new(),
     };
     let hygiene = HygieneConfiguration::current();
-    match (input_mode, selected, trace) {
-        (InputMode::Generic, Some(gate_id), Some(trace)) => {
-            BatteryCapture::capture_generic_arm_traced(
-                root, &selector, claim, actor, rim, hygiene, gate_id, trace,
-            )
-        }
-        (InputMode::Strict, Some(gate_id), Some(trace)) => BatteryCapture::capture_arm_traced(
-            root, &selector, claim, actor, rim, hygiene, gate_id, trace,
-        ),
-        (InputMode::Generic, Some(gate_id), None) => BatteryCapture::capture_generic_arm(
-            root, &selector, claim, actor, rim, hygiene, gate_id,
-        ),
-        (InputMode::Strict, Some(gate_id), None) => {
-            BatteryCapture::capture_arm(root, &selector, claim, actor, rim, hygiene, gate_id)
-        }
-        (InputMode::Generic, None, Some(trace)) => BatteryCapture::capture_generic_traced(
-            root, &selector, claim, actor, rim, hygiene, trace,
-        ),
-        (InputMode::Strict, None, Some(trace)) => {
-            BatteryCapture::capture_traced(root, &selector, claim, actor, rim, hygiene, trace)
-        }
-        (InputMode::Generic, None, None) => {
-            BatteryCapture::capture_generic(root, &selector, claim, actor, rim, hygiene)
-        }
-        (InputMode::Strict, None, None) => {
-            BatteryCapture::capture(root, &selector, claim, actor, rim, hygiene)
-        }
-    }
+    BatteryCapture::capture(
+        CaptureAuthorities {
+            repository: root.to_path_buf(),
+            selector: &selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+        },
+        input_mode,
+        selected,
+        trace,
+    )
     .map_err(|error| {
         let detail = error.detail();
         let reason = if detail.starts_with("cannot load captured battery contract:") {

@@ -449,26 +449,12 @@ fn apply_task_mutation_response(
         PendingKind::TrustGrant { digest } => {
             apply_trust_grant_response(session, runtime, digest, bytes)?
         }
-        PendingKind::Close { task } => apply_settlement_response(
-            session,
-            handles,
-            runtime,
-            task,
-            bytes,
-            "close",
-            "closed",
-            "Task was not closed",
-        )?,
-        PendingKind::Delete { task } => apply_settlement_response(
-            session,
-            handles,
-            runtime,
-            task,
-            bytes,
-            "delete",
-            "deleted",
-            "Task was not deleted",
-        )?,
+        PendingKind::Close { task } => {
+            apply_settlement_response(session, handles, runtime, task, bytes, &CLOSE_WORDING)?
+        }
+        PendingKind::Delete { task } => {
+            apply_settlement_response(session, handles, runtime, task, bytes, &DELETE_WORDING)?
+        }
         PendingKind::Preparation { respond } => {
             apply_callback_reply(session, bytes, "Preparation failed", &respond)?
         }
@@ -518,22 +504,44 @@ fn apply_trust_grant_response(
     Ok(CommandApplication::ordinary(refresh))
 }
 
+/// How one settlement operation reads in its failure messages.
+#[derive(Clone, Copy)]
+struct SettlementWording {
+    /// The operation as a verb: "close".
+    operation: &'static str,
+    /// The operation in the past tense: "closed".
+    past: &'static str,
+    /// The refusal headline: "Task was not closed".
+    failure: &'static str,
+}
+
+const CLOSE_WORDING: SettlementWording = SettlementWording {
+    operation: "close",
+    past: "closed",
+    failure: "Task was not closed",
+};
+
+const DELETE_WORDING: SettlementWording = SettlementWording {
+    operation: "delete",
+    past: "deleted",
+    failure: "Task was not deleted",
+};
+
 /// A settled task clears its composer and rereads the detail; a refusal keeps
 /// the draft with the resident's reason.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one response handler keeps close and delete identity checks identical"
-)]
 fn apply_settlement_response(
     session: &Session,
     handles: &SurfaceHandles,
     runtime: &mut AppRuntime,
     task: wire::TaskStamp,
     bytes: &[u8],
-    operation: &str,
-    past: &str,
-    failure: &str,
+    wording: &SettlementWording,
 ) -> Result<CommandApplication, String> {
+    let SettlementWording {
+        operation,
+        past,
+        failure,
+    } = *wording;
     let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
     match &admitted.get().outcome {
         wire::Outcome::Reply(reply) => {

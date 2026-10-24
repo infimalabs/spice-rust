@@ -426,11 +426,13 @@ pub fn select_at<'a>(
 ) -> Option<Selection<'a>> {
     select_with_satisfied_at(
         entries,
-        actor,
-        subscription,
+        Claimant {
+            actor,
+            subscription,
+            recent_cell,
+            environment,
+        },
         band,
-        recent_cell,
-        environment,
         &resolved_tasks(entries),
         now,
     )
@@ -451,74 +453,59 @@ pub fn select_with_satisfied<'a>(
     environment: &wire::Environment,
     satisfied: &ResolvedTasks,
 ) -> Option<Selection<'a>> {
-    let candidates = candidates(
-        entries,
+    let claimant = Claimant {
         actor,
         subscription,
         recent_cell,
         environment,
-        satisfied,
-        None,
-    );
+    };
+    let candidates = candidates(entries, claimant, satisfied, None);
     choose(&candidates, band).map(|index| candidates[index])
 }
 
 /// [`select_with_satisfied`] at an explicit allocation instant.
 #[must_use]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "allocation reads the actor, team, band, recent claim, environment, and evidence independently"
-)]
 pub fn select_with_satisfied_at<'a>(
     entries: &'a [Entry],
-    actor: &Actor,
-    subscription: &TeamSubscription,
+    claimant: Claimant<'_>,
     band: u64,
-    recent_cell: Option<&ClaimCell>,
-    environment: &wire::Environment,
     satisfied: &ResolvedTasks,
     now: Instant,
 ) -> Option<Selection<'a>> {
-    let candidates = candidates(
-        entries,
-        actor,
-        subscription,
-        recent_cell,
-        environment,
-        satisfied,
-        Some(now),
-    );
+    let candidates = candidates(entries, claimant, satisfied, Some(now));
     choose(&candidates, band).map(|index| candidates[index])
 }
 
 /// [`select_with_satisfied_at`] using graph evidence already derived for this
 /// exact entry generation.
 #[must_use]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "allocation reads the actor, team, band, recent claim, environment, and index independently"
-)]
 pub fn select_with_index_at<'a>(
     entries: &'a [Entry],
-    actor: &Actor,
-    subscription: &TeamSubscription,
+    claimant: Claimant<'_>,
     band: u64,
-    recent_cell: Option<&ClaimCell>,
-    environment: &wire::Environment,
     index: &SelectionIndex,
     now: Instant,
 ) -> Option<Selection<'a>> {
     let candidates = indexed_candidates(
         entries,
-        actor,
-        subscription,
-        recent_cell,
-        environment,
+        claimant,
         index.resolved(),
         &index.scores,
         Some(now),
     );
     choose(&candidates, band).map(|candidate| candidates[candidate])
+}
+
+/// Who asks for work and from where: the allocation inputs that describe the
+/// claimant rather than the board. The actor's team subscription bounds what
+/// it may take, its most recent claim cell prices movement, and its
+/// environment decides which rows it can satisfy.
+#[derive(Clone, Copy)]
+pub struct Claimant<'a> {
+    pub actor: &'a Actor,
+    pub subscription: &'a TeamSubscription,
+    pub recent_cell: Option<&'a ClaimCell>,
+    pub environment: &'a wire::Environment,
 }
 
 /// Every task [`select`] would hand `actor`, in the order it would hand them out.
@@ -578,16 +565,14 @@ fn offer_order_at_inner<'a>(
     environment: &wire::Environment,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
-    let completed = resolved_tasks(entries);
-    let mut remaining = candidates(
-        entries,
+    let claimant = Claimant {
         actor,
         subscription,
         recent_cell,
         environment,
-        &completed,
-        now,
-    );
+    };
+    let completed = resolved_tasks(entries);
+    let mut remaining = candidates(entries, claimant, &completed, now);
     let mut order = Vec::with_capacity(remaining.len());
     while let Some(index) = choose(&remaining, band) {
         order.push(remaining.swap_remove(index));
@@ -598,40 +583,27 @@ fn offer_order_at_inner<'a>(
 /// Every subscribed, eligible, environment-satisfied entry, scored once.
 fn candidates<'a>(
     entries: &'a [Entry],
-    actor: &Actor,
-    subscription: &TeamSubscription,
-    recent_cell: Option<&ClaimCell>,
-    environment: &wire::Environment,
+    claimant: Claimant<'_>,
     completed: &ResolvedTasks,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
     let scores = RankingScores::new(entries);
-    indexed_candidates(
-        entries,
-        actor,
-        subscription,
-        recent_cell,
-        environment,
-        completed,
-        &scores,
-        now,
-    )
+    indexed_candidates(entries, claimant, completed, &scores, now)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "candidate ranking reads the actor, team, recent claim, environment, and scores independently"
-)]
 fn indexed_candidates<'a>(
     entries: &'a [Entry],
-    actor: &Actor,
-    subscription: &TeamSubscription,
-    recent_cell: Option<&ClaimCell>,
-    environment: &wire::Environment,
+    claimant: Claimant<'_>,
     completed: &ResolvedTasks,
     scores: &RankingScores,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
+    let Claimant {
+        actor,
+        subscription,
+        recent_cell,
+        environment,
+    } = claimant;
     debug_assert_eq!(entries.len(), scores.effective_priorities.len());
     debug_assert_eq!(entries.len(), scores.downstream_weights.len());
     entries

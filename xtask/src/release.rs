@@ -112,65 +112,28 @@ impl MacSymbols {
     }
 }
 
-/// Ambient process values acquired once by the xtask binary rim.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Ambient process values acquired once by the xtask binary rim. Every field
+/// is one variable the rim may or may not have found, so a caller names the
+/// ones it has and defaults the rest.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReleaseEnvironment {
-    path: Option<OsString>,
-    home: Option<OsString>,
-    cargo_home: Option<OsString>,
-    rustup_home: Option<OsString>,
-    rustup_toolchain: Option<OsString>,
-    temporary: Option<OsString>,
-    sdk_root: Option<OsString>,
-    developer_dir: Option<OsString>,
-    cargo_target_dir: Option<OsString>,
-    rustc: Option<OsString>,
-    build_rustc: Option<OsString>,
-    stage_root: Option<OsString>,
+    pub path: Option<OsString>,
+    pub home: Option<OsString>,
+    pub cargo_home: Option<OsString>,
+    pub rustup_home: Option<OsString>,
+    pub rustup_toolchain: Option<OsString>,
+    pub temporary: Option<OsString>,
+    pub sdk_root: Option<OsString>,
+    pub developer_dir: Option<OsString>,
+    pub cargo_target_dir: Option<OsString>,
+    pub rustc: Option<OsString>,
+    pub build_rustc: Option<OsString>,
+    /// An external stage root for an isolated hosted build.
+    pub stage_root: Option<OsString>,
 }
 
 impl ReleaseEnvironment {
-    /// The two compiler overrides come last because appending cannot silently
-    /// permute the arguments an existing caller already passes.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub const fn new(
-        path: Option<OsString>,
-        home: Option<OsString>,
-        cargo_home: Option<OsString>,
-        rustup_home: Option<OsString>,
-        rustup_toolchain: Option<OsString>,
-        temporary: Option<OsString>,
-        sdk_root: Option<OsString>,
-        developer_dir: Option<OsString>,
-        cargo_target_dir: Option<OsString>,
-        rustc: Option<OsString>,
-        build_rustc: Option<OsString>,
-    ) -> Self {
-        Self {
-            path,
-            home,
-            cargo_home,
-            rustup_home,
-            rustup_toolchain,
-            temporary,
-            sdk_root,
-            developer_dir,
-            cargo_target_dir,
-            rustc,
-            build_rustc,
-            stage_root: None,
-        }
-    }
-
-    /// Select an external stage root for an isolated hosted build.
-    #[must_use]
-    pub fn with_stage_root(mut self, stage_root: Option<OsString>) -> Self {
-        self.stage_root = stage_root;
-        self
-    }
-
-    fn stage_root(&self, root: &Path) -> PathBuf {
+    fn stage_root_path(&self, root: &Path) -> PathBuf {
         self.stage_root
             .as_ref()
             .map_or_else(|| root.join("dist/stage"), PathBuf::from)
@@ -308,7 +271,7 @@ pub fn stage_target(
     match stage_with_roots(
         &root,
         &environment.build_root(&root),
-        &environment.stage_root(&root),
+        &environment.stage_root_path(&root),
         target,
         &programs,
         &executor,

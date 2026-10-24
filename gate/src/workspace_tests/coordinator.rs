@@ -364,12 +364,14 @@ impl<'a, W: Write> Coordinator<'a, W> {
 
     fn launch(&mut self, index: usize, shard: ExecutionShard, targets: String, output_lane: usize) {
         let sender = self.sender.clone();
-        let root = self.root.clone();
-        let environment = self.environment.clone();
-        let cargo = self.cargo.clone();
-        let cancellation = self.cancellation.clone();
-        let policy = self.policy;
-        let launcher = Arc::clone(&self.launcher);
+        let run = ShardRun {
+            root: self.root.clone(),
+            environment: self.environment.clone(),
+            cargo: self.cargo.clone(),
+            cancellation: self.cancellation.clone(),
+            policy: self.policy,
+            launcher: Arc::clone(&self.launcher),
+        };
         let observer = Arc::new(LastTest::default());
         let worker_observer = Arc::clone(&observer);
         let panic_observer = Arc::clone(&observer);
@@ -380,18 +382,7 @@ impl<'a, W: Write> Coordinator<'a, W> {
         let started = Instant::now();
         let handle = thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_shard(
-                    index,
-                    shard,
-                    root,
-                    environment,
-                    cargo,
-                    cancellation,
-                    policy,
-                    launcher.as_ref(),
-                    worker_observer,
-                    output_lane,
-                )
+                run_shard(index, shard, run, worker_observer, output_lane)
             }))
             .unwrap_or_else(|_| {
                 failed_shard(
@@ -644,19 +635,33 @@ impl ShardLauncher for SystemShards {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_shard(
-    index: usize,
-    shard: ExecutionShard,
+/// What every shard of one run shares: the workspace, the environment and
+/// Cargo it is launched with, the run's cancellation and policy, and the
+/// launcher that crosses the process boundary.
+struct ShardRun {
     root: PathBuf,
     environment: Environment,
     cargo: OsString,
     cancellation: CancellationToken,
     policy: RunPolicy,
-    launcher: &dyn ShardLauncher,
+    launcher: Arc<dyn ShardLauncher>,
+}
+
+fn run_shard(
+    index: usize,
+    shard: ExecutionShard,
+    run: ShardRun,
     observer: Arc<LastTest>,
     output_lane: usize,
 ) -> ShardResult {
+    let ShardRun {
+        root,
+        environment,
+        cargo,
+        cancellation,
+        policy,
+        launcher,
+    } = run;
     let started = Instant::now();
     let targets = shard.target_list();
     let owner = format!("workspace test package(s) {}", shard.label());

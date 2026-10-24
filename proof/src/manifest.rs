@@ -89,24 +89,34 @@ fn admit_manifest_with(
     let root = admit_stage_root(root)?;
     let published = admit_pointer(&root)?;
     let battery = Battery::current();
+    let stage = StageIdentity {
+        root: &root,
+        manifest: &published.manifest,
+        app,
+        native,
+        battery: battery.digest(),
+    };
     let mut first_payload = None;
     for (index, (entry, expected_target)) in
         published.manifest.targets.iter().zip(TARGETS).enumerate()
     {
-        let payload = admit_target(
-            &root,
-            &published.manifest,
-            entry,
-            expected_target,
-            index,
-            app,
-            native,
-            battery.digest(),
-        )?;
+        let payload = admit_target(&stage, entry, expected_target, index)?;
         admit_shared_payload(first_payload.as_ref(), &payload)?;
         first_payload.get_or_insert(payload);
     }
     Ok(published)
+}
+
+/// The identities one release stage binds every target entry to: where its
+/// objects live, the manifest they belong to, the app generation and battery
+/// they must name, and the invoking native executable when one is selected.
+#[derive(Clone, Copy)]
+struct StageIdentity<'a> {
+    root: &'a Path,
+    manifest: &'a ReleaseManifest,
+    app: &'a Digest,
+    native: Option<(ReleaseTarget, &'a Digest)>,
+    battery: &'a Digest,
 }
 
 fn admit_stage_root(root: &Path) -> Result<PathBuf, ManifestAdmissionError> {
@@ -161,16 +171,11 @@ fn admit_pointer(root: &Path) -> Result<PublishedManifest, ManifestAdmissionErro
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn admit_target(
-    root: &Path,
-    manifest: &ReleaseManifest,
+    stage: &StageIdentity<'_>,
     entry: &ReleaseManifestTarget,
     expected_target: ReleaseTarget,
     index: usize,
-    app: &Digest,
-    native: Option<(ReleaseTarget, &Digest)>,
-    battery: &Digest,
 ) -> Result<TargetPayload, ManifestAdmissionError> {
     if entry.target != expected_target {
         return Err(ManifestAdmissionError::TargetOrder {
@@ -179,20 +184,23 @@ fn admit_target(
             observed: entry.target,
         });
     }
-    let payload = admit_target_payload(root, manifest, entry, index, app, native)?;
-    admit_target_receipt(root, entry, index, &payload, battery)?;
+    let payload = admit_target_payload(stage, entry, index)?;
+    admit_target_receipt(stage.root, entry, index, &payload, stage.battery)?;
     Ok(payload)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn admit_target_payload(
-    root: &Path,
-    manifest: &ReleaseManifest,
+    stage: &StageIdentity<'_>,
     entry: &ReleaseManifestTarget,
     index: usize,
-    app: &Digest,
-    native: Option<(ReleaseTarget, &Digest)>,
 ) -> Result<TargetPayload, ManifestAdmissionError> {
+    let StageIdentity {
+        root,
+        manifest,
+        app,
+        native,
+        ..
+    } = *stage;
     let bytes = read_regular(
         root,
         &object_path("payload", &entry.payload),
