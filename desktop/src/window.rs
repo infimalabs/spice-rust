@@ -14,6 +14,8 @@
 //! actions, which the webview answers for its focused field; Quit and Close
 //! ask the window to close, so they end the event loop exactly as its close
 //! button does and the command still settles the resident afterwards.
+//! Settings (Cmd+,) opens the console's Spice panel: the shell clicks the
+//! command bar's Spice launcher, so the panel opens exactly as a click does.
 //!
 //! The process showing the window must carry a bundle identity (see
 //! [`crate::bundle`]), or macOS dictation never attaches to its fields; the
@@ -43,7 +45,7 @@ use objc2_web_kit::{
 };
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::macos::{WindowBuilderExtMacOS, WindowExtMacOS};
 use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::window::WindowBuilder;
@@ -54,11 +56,20 @@ use crate::WindowError;
 /// The window's opening size; the operator resizes from there.
 const INITIAL_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 860.0);
 
-/// What reaches the window's event loop from the page and the synthesizer.
+/// What reaches the window's event loop from the page, the synthesizer, and
+/// the menu bar.
 enum ShellEvent {
     Titlebar(titlebar::Request),
     Speech(speech::Event),
+    /// The Settings menu item: open the console's Spice panel.
+    OpenSettings,
 }
+
+/// The console's Spice launcher, which [`ShellEvent::OpenSettings`] clicks;
+/// the app marks the command bar's launcher, not the open panel's close
+/// control, with this focus key. Opening is idempotent while the panel shows.
+const OPEN_SETTINGS_SCRIPT: &str =
+    r#"document.querySelector('.app-spice-button[data-sidebar-focus-key="spice"]')?.click()"#;
 
 pub(crate) fn show(
     title: &str,
@@ -108,7 +119,7 @@ pub(crate) fn show(
     // keeps the menu target's reference valid for exactly that span.
     let ns_window = unsafe { Retained::retain(window.ns_window().cast::<NSWindow>()) }
         .ok_or_else(|| WindowError::Platform("the window has no NSWindow".into()))?;
-    let menu_target = MenuTarget::new(main_thread, ns_window.clone());
+    let menu_target = MenuTarget::new(main_thread, ns_window.clone(), event_loop.create_proxy());
     install_main_menu(main_thread, &menu_target);
     let surface = surface::Surface::attach(
         main_thread,
@@ -137,6 +148,9 @@ pub(crate) fn show(
                 titlebar.answer(request, &window, &ns_window, &webview);
             }
             Event::UserEvent(ShellEvent::Speech(event)) => speech.answer(event, &webview),
+            Event::UserEvent(ShellEvent::OpenSettings) => {
+                let _ = webview.evaluate_script(OPEN_SETTINGS_SCRIPT);
+            }
             _ => {}
         }
     });
@@ -148,8 +162,9 @@ pub(crate) fn show(
     Ok(())
 }
 
-/// The standard menu bar: the application menu with Hide and Quit, Edit with
-/// the responder-chain editing actions, and Window with Minimize and Close.
+/// The standard menu bar: the application menu with Settings, Hide, and
+/// Quit, Edit with the responder-chain editing actions, and Window with
+/// Minimize and Close.
 ///
 /// Quit and Close are not `terminate:`: they target the shell's own window
 /// close, so `spice app` regains control after the window goes and settles
@@ -157,6 +172,14 @@ pub(crate) fn show(
 fn install_main_menu(main_thread: MainThreadMarker, target: &MenuTarget) {
     let menu = NSMenu::new(main_thread);
     let application = NSMenu::new(main_thread);
+    application.addItem(&menu_item(
+        main_thread,
+        "Settings\u{2026}",
+        sel!(openSettings:),
+        ",",
+        Some(target),
+    ));
+    application.addItem(&NSMenuItem::separatorItem(main_thread));
     application.addItem(&menu_item(
         main_thread,
         "Hide Spice",
@@ -259,6 +282,7 @@ fn submenu_item(
 
 struct MenuTargetIvars {
     window: Retained<NSWindow>,
+    events: EventLoopProxy<ShellEvent>,
 }
 
 define_class!(
@@ -278,14 +302,24 @@ define_class!(
         fn close_window(&self, _sender: Option<&AnyObject>) {
             self.ivars().window.performClose(None);
         }
+
+        /// Ask the event loop to open the console's Spice panel.
+        #[unsafe(method(openSettings:))]
+        fn open_settings(&self, _sender: Option<&AnyObject>) {
+            let _ = self.ivars().events.send_event(ShellEvent::OpenSettings);
+        }
     }
 );
 
 impl MenuTarget {
-    fn new(main_thread: MainThreadMarker, window: Retained<NSWindow>) -> Retained<Self> {
+    fn new(
+        main_thread: MainThreadMarker,
+        window: Retained<NSWindow>,
+        events: EventLoopProxy<ShellEvent>,
+    ) -> Retained<Self> {
         let target = main_thread
             .alloc::<Self>()
-            .set_ivars(MenuTargetIvars { window });
+            .set_ivars(MenuTargetIvars { window, events });
         // SAFETY: plain NSObject init on a freshly allocated instance whose
         // ivars are set.
         unsafe { msg_send![super(target), init] }
