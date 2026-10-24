@@ -152,7 +152,8 @@ fn complete_through_client(
         .expect("task done leaf parses");
     let contract = crate::cli::selected_contract(&matches).expect("task done contract is selected");
     let leaf = crate::cli::selected_matches(&matches);
-    let outcome = crate::command_client::as_lane(seat.lane, || run_at(&repository, leaf, contract));
+    let outcome =
+        crate::command_client::as_lane(seat.lane, || run_at(host(&repository), leaf, contract));
 
     let _ = stop_sender.send(());
     let bus = worker

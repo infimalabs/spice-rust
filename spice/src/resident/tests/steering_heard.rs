@@ -124,7 +124,8 @@ impl Heard {
         let message_state = std::sync::Mutex::new(MessageState::default());
         let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
         let steering = steer::Config::default();
-        let surfaces = CaptureSurfaces::new(&self.paths, &tastes, &steering, &publisher);
+        let ambient = spice::ambient::capture();
+        let surfaces = CaptureSurfaces::new(&self.paths, &tastes, &steering, &publisher, &ambient);
         message_surface::accept_capture_record(
             &self.bus,
             self.epoch,

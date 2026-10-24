@@ -5,10 +5,10 @@
 //! only the protocol lines its supervisor parses. Either way subprocess output
 //! is retained whole by digest and a failure shows only its bounded tail.
 
-use std::env;
 use std::io;
 use std::time::Duration;
 
+use spice::ambient::Ambient;
 use wire::output::Export;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply};
 
@@ -60,8 +60,11 @@ impl CurrentSourceSelectionReport {
     }
 }
 
-pub(crate) fn selection(live: bool) -> Outcome<CurrentSourceSelectionReport> {
-    let supervised = configured_selection_progress();
+pub(crate) fn selection(live: bool, ambient: &Ambient) -> Outcome<CurrentSourceSelectionReport> {
+    // The supervising pre-commit worker injects this authority into its leaf.
+    let supervised = ambient
+        .get(wire::SpiceVariable::PreCommitSource.as_str())
+        .is_some();
     let _containment = if supervised {
         match gate::measure::inherit_process_group() {
             Ok(containment) => Some(containment),
@@ -88,13 +91,13 @@ pub(crate) fn selection(live: bool) -> Outcome<CurrentSourceSelectionReport> {
     // A supervised run is watched by its pre-commit parent, which beats.
     let (result, elapsed) = if supervised {
         (
-            spice::change_gate::run_current_source(&mut log),
+            spice::change_gate::run_current_source(&mut log, ambient),
             Duration::ZERO,
         )
     } else {
         progress.watching(
             || phase.get(),
-            || spice::change_gate::run_current_source(&mut log),
+            || spice::change_gate::run_current_source(&mut log, ambient),
         )
     };
     let capture = log.into_capture();
@@ -184,12 +187,4 @@ fn summary(
     }
     summary.closing("next", "git commit");
     summary.finish()
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the configured source-gate leaf detects authority injected by its supervising worker"
-)]
-fn configured_selection_progress() -> bool {
-    env::var_os(wire::SpiceVariable::PreCommitSource.as_str()).is_some()
 }

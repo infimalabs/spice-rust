@@ -7,7 +7,7 @@ use wire::rooms::{
 };
 
 pub(super) fn dispatch_client(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Option<Outcome<CommandAnswer>> {
@@ -22,7 +22,7 @@ pub(super) fn dispatch_client(
 }
 
 pub(super) fn client_group_list(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     _matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -44,7 +44,7 @@ pub(super) fn client_group_list(
 
 /// Each available anchor's pass cycle, judged by one scoped board read.
 fn anchor_cycles(
-    repository: &Repository,
+    repository: Host<'_>,
     page: &WorkingGroupPage,
 ) -> Result<
     std::collections::BTreeMap<TaskStamp, wire::rooms::DesignCyclePresentation>,
@@ -86,7 +86,7 @@ fn anchor_cycles(
 /// Move one design into `--to GROUP`, into a fresh group with `--new`, or out
 /// of every group with neither.
 pub(super) fn client_group_move(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -145,7 +145,7 @@ pub(super) fn client_group_move(
 /// Restate the whole partition, one `GROUP=ANCHOR[,ANCHOR...]` per group in
 /// intended order.
 pub(super) fn client_group_arrange(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -177,7 +177,7 @@ pub(super) fn client_group_arrange(
 /// End one standing group at the partition revision observed immediately
 /// before the write.
 pub(super) fn client_group_disband(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -206,7 +206,7 @@ pub(super) fn client_group_disband(
 /// Set one standing group's shared activity stance at the partition revision
 /// observed immediately before the write.
 pub(super) fn client_group_stance(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -250,14 +250,14 @@ pub(super) fn client_group_stance(
 }
 
 /// The current partition a change witnesses.
-fn observed(repository: &Repository) -> Result<WorkingGroupPage, Outcome<CommandAnswer>> {
+fn observed(repository: Host<'_>) -> Result<WorkingGroupPage, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["group", "list"])
         .expect("working-group read contract is registered");
     execute_group_read(repository, contract).map(|(_, page)| page)
 }
 
 fn execute_group_read(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
 ) -> Result<(ReplyPosition, WorkingGroupPage), Outcome<CommandAnswer>> {
     match crate::command_client::execute_typed(

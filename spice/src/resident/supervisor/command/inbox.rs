@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{Mutex, PoisonError};
 
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::CanonicalUuid;
 
@@ -87,7 +88,11 @@ impl Reader {
 ///
 /// A state path that names no occupant of `lane`, or an occupant that no
 /// longer holds the lane, refuses before any media is touched.
-pub(in crate::resident::supervisor) fn run(lane: &OsString, projection: &Path) -> io::Result<()> {
+pub(in crate::resident::supervisor) fn run(
+    lane: &OsString,
+    projection: &Path,
+    ambient: &Ambient,
+) -> io::Result<()> {
     let lane = lane
         .to_str()
         .and_then(|lane| lane.parse::<CanonicalUuid>().ok())
@@ -98,7 +103,7 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, projection: &Path) -
         .map_err(|outcome| io::Error::other(format!("{outcome:?}")))?;
     let occupant = media::occupant(&paths.supervisors, lane, projection, PROJECTION_STATE)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    let inbox = crate::command_client::read_lane_inbox(&paths.serve, lane)
+    let inbox = crate::command_client::read_lane_inbox(&paths.serve, lane, ambient)
         .map_err(|outcome| io::Error::other(format!("{outcome:?}")))?;
     let pending = inbox
         .lanes

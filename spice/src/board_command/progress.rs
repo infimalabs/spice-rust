@@ -82,7 +82,7 @@ pub(super) fn task_done(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     done: &TaskDone,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -934,7 +934,7 @@ fn prepare_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     review: &TaskReview,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<PreparedReview, Outcome<CommandAnswer>> {
@@ -1000,7 +1000,7 @@ pub(super) fn task_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     review: &TaskReview,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -1019,7 +1019,7 @@ pub(super) fn task_review_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     review: &TaskReview,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
@@ -1036,7 +1036,7 @@ fn commit_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     review: &TaskReview,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     prepared: PreparedReview,
 ) -> Outcome<CommandAnswer> {

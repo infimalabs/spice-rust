@@ -2,6 +2,8 @@
 
 use std::io::Write;
 
+use spice::ambient::Ambient;
+
 use crate::GateArmError;
 
 /// Run one canonical gate arm and emit only its bounded diagnostic on refusal.
@@ -9,10 +11,14 @@ use crate::GateArmError;
 /// # Errors
 ///
 /// Returns acquisition, output, or non-admitting arm failures.
-pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
+pub fn gate_arm(
+    ambient: &Ambient,
+    gate_id: gate::GateId,
+    output: &mut impl Write,
+) -> Result<(), GateArmError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let report = spice::gate::run_arm_report_strict(gate::Selector::staged(), gate_id)
+        let report = spice::gate::run_arm_report_strict(ambient, gate::Selector::staged(), gate_id)
             .map_err(GateArmError::Run)?;
         if !report.admits() {
             output
@@ -24,7 +30,7 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (gate_id, output);
+        let _ = (ambient, gate_id, output);
         Err(GateArmError::Unavailable)
     }
 }
@@ -34,10 +40,14 @@ pub fn gate_arm(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), Ga
 /// # Errors
 ///
 /// Returns acquisition, encoding, output, or non-admitting arm failures.
-pub fn gate_arm_report(gate_id: gate::GateId, output: &mut impl Write) -> Result<(), GateArmError> {
+pub fn gate_arm_report(
+    ambient: &Ambient,
+    gate_id: gate::GateId,
+    output: &mut impl Write,
+) -> Result<(), GateArmError> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let report = spice::gate::run_arm_report_strict(gate::Selector::staged(), gate_id)
+        let report = spice::gate::run_arm_report_strict(ambient, gate::Selector::staged(), gate_id)
             .map_err(GateArmError::Run)?;
         let document = report.encode().map_err(GateArmError::Encode)?;
         output
@@ -51,7 +61,7 @@ pub fn gate_arm_report(gate_id: gate::GateId, output: &mut impl Write) -> Result
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (gate_id, output);
+        let _ = (ambient, gate_id, output);
         Err(GateArmError::Unavailable)
     }
 }

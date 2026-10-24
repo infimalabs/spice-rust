@@ -17,11 +17,12 @@ pub enum RestoreOutcome {
 /// Restore the sealed pre-claim dirty generation onto the lane HEAD without rewinding history.
 pub fn restore_recovery(
     repository: &Repository,
+    ambient: &Ambient,
     recovery: &Recovery,
 ) -> Result<RestoreOutcome, Error> {
     let root = recovery_root(repository)?;
     let mut manifest = read_expected(&root, recovery)?;
-    let worktree = repository.worktree_root();
+    let worktree = Worktree::new(repository.worktree_root(), ambient);
     let current = current_head(worktree)?;
     let forward_capable = matches!(
         manifest.state,
@@ -46,19 +47,19 @@ pub fn restore_recovery(
     };
     let mode = restore_mode(&manifest.state, &manifest.payload.head, &current, ancestry)?;
     recover_pending(worktree)?;
-    verify_rollback_surface(repository, &manifest)?;
+    verify_rollback_surface(repository, worktree, &manifest)?;
     match mode {
         RestoreMode::Exact => {
             clean_manifest_paths(worktree, &manifest.payload)?;
             restore_index(worktree, &root, &manifest.payload.index)?;
             restore_paths(worktree, &root, &manifest.payload.tracked)?;
             restore_paths(worktree, &root, &manifest.payload.untracked)?;
-            verify_original(repository, &root, &manifest)?;
+            verify_original(repository, worktree, &root, &manifest)?;
             retire_recovery(&root)?;
             Ok(RestoreOutcome::Restored)
         }
         RestoreMode::Forward { boundary, target } => {
-            restore_forward(repository, &root, &mut manifest, boundary, target)
+            restore_forward(worktree, &root, &mut manifest, boundary, target)
         }
     }
 }
@@ -145,13 +146,12 @@ pub(super) fn restore_mode(
 }
 
 pub(super) fn restore_forward(
-    repository: &Repository,
+    worktree: Worktree<'_>,
     root: &Path,
     manifest: &mut Manifest,
     boundary: Option<GitBoundary>,
     target: String,
 ) -> Result<RestoreOutcome, Error> {
-    let worktree = repository.worktree_root();
     clean_manifest_paths(worktree, &manifest.payload)?;
     let untracked = unlanded_untracked(worktree, &manifest.payload.untracked)?;
     if let Err(error) = refuse_untracked_collisions(worktree, &untracked) {
@@ -181,7 +181,7 @@ pub(super) fn restore_forward(
 
 /// Sealed untracked entries the lane HEAD does not already track byte-for-byte.
 pub(super) fn unlanded_untracked(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     untracked: &[PathState],
 ) -> Result<Vec<PathState>, Error> {
     let mut pending = Vec::new();
@@ -195,7 +195,7 @@ pub(super) fn unlanded_untracked(
     Ok(pending)
 }
 
-pub(super) fn tracked_dirty(worktree: &Path) -> Result<bool, Error> {
+pub(super) fn tracked_dirty(worktree: Worktree<'_>) -> Result<bool, Error> {
     Ok(
         !changed_paths(worktree, &["diff", "--name-only", "-z", "--cached"])?.is_empty()
             || !changed_paths(worktree, &["diff", "--name-only", "-z"])?.is_empty(),

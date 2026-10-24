@@ -12,6 +12,7 @@ use sill::{
     LockSurfaceError, LockTopology, Output, ProcessGroup, Redaction, RestartDisposition, Spec,
     StdinPolicy, StreamPolicy, WaitPolicy,
 };
+use spice::ambient::Ambient;
 use spice::config::LoadError;
 use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
@@ -47,8 +48,9 @@ pub(crate) fn report(
 pub(crate) fn run(
     matches: &clap::ArgMatches,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> RunResult {
-    match run_inner(matches, configuration) {
+    match run_inner(matches, configuration, ambient) {
         Ok(status) => RunResult::Child(status),
         Err(rejection) => {
             let Rejection { outcome, code } = *rejection;
@@ -60,6 +62,7 @@ pub(crate) fn run(
 fn run_inner(
     matches: &clap::ArgMatches,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Result<ExitStatus, Box<Rejection>> {
     let name = matches
         .get_one::<String>("NAME")
@@ -112,7 +115,7 @@ fn run_inner(
     })?;
     let spec = child_spec(
         invocation.working,
-        ambient_environment().map_err(|error| {
+        ambient.environment().map_err(|error| {
             Failure::fault(
                 FaultClass::Environment,
                 "lock::environment-unavailable",
@@ -179,14 +182,6 @@ fn child_spec(
         redaction: Redaction::None,
         grace: TERMINATION_GRACE,
     })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the native binary rim captures the exact child environment"
-)]
-fn ambient_environment() -> Result<Environment, sill::SpecError> {
-    Environment::new(std::env::vars_os())
 }
 
 fn contention(name: &str, shard: Option<u32>, kind: Contention) -> Failure {

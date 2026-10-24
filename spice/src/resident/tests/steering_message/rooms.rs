@@ -685,7 +685,8 @@ fn land_delivery(
     let generation = publisher.batch().expect("message generation begins");
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
-    let surfaces = CaptureSurfaces::new(&lanes.paths, &tastes, &steering, &generation);
+    let ambient = spice::ambient::capture();
+    let surfaces = CaptureSurfaces::new(&lanes.paths, &tastes, &steering, &generation, &ambient);
     let message_state = std::sync::Mutex::new(MessageState::default());
     let mut diagnostics = Vec::new();
     let interrupted = lanes.operator(FIRST, "interrupted delivery");

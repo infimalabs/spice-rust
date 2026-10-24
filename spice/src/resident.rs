@@ -8,6 +8,7 @@ use bus::{Bus, CommitOutcome, JournalCommit};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use spice::resident_lock::{
     AUTH_TOKEN_MAX_BYTES, AUTH_TOKEN_MIN_BYTES, ResidentAccess, ResidentLaunch,

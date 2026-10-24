@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use clap::ArgMatches;
 use serde::Serialize;
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::body::ConsentQueueCause;
 use wire::intent::{
@@ -85,7 +86,11 @@ impl fmt::Display for ConsentQueueView {
     }
 }
 
-pub(crate) fn read(matches: &ArgMatches, contract: &Contract) -> Outcome<ConsentQueueView> {
+pub(crate) fn read(
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<ConsentQueueView> {
     let page = match Page::from_matches(matches, &["consent"]) {
         Ok(page) => page,
         Err(refusal) => return Outcome::Refusal(refusal),
@@ -98,6 +103,7 @@ pub(crate) fn read(matches: &ArgMatches, contract: &Contract) -> Outcome<Consent
         &serve,
         contract,
         SelectedCommand::ConsentRead,
+        ambient,
     )) {
         Outcome::Reply(reply) => reply,
         Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
@@ -127,12 +133,12 @@ pub(crate) fn read(matches: &ArgMatches, contract: &Contract) -> Outcome<Consent
     }
 }
 
-pub(crate) fn policy(contract: &Contract) -> Outcome<ConsentPolicyAnswer> {
+pub(crate) fn policy(contract: &Contract, ambient: &Ambient) -> Outcome<ConsentPolicyAnswer> {
     let serve = match serve_path() {
         Ok(serve) => serve,
         Err(outcome) => return outcome,
     };
-    match command_client::execute(&serve, contract, SelectedCommand::ConsentPolicy) {
+    match command_client::execute(&serve, contract, SelectedCommand::ConsentPolicy, ambient) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::ConsentPolicy(body) => Outcome::Reply(Reply {
                 position: reply.position,
@@ -152,6 +158,7 @@ pub(crate) fn decide(
     matches: &ArgMatches,
     contract: &Contract,
     answer: wire::Answer,
+    ambient: &Ambient,
 ) -> Outcome<ConsentAnswer> {
     let request = match matches
         .get_one::<String>("ID")
@@ -178,6 +185,7 @@ pub(crate) fn decide(
         &serve,
         read_contract,
         SelectedCommand::ConsentRead,
+        ambient,
     )) {
         Outcome::Reply(reply) => reply.body,
         Outcome::Refusal(refusal) => return Outcome::Refusal(refusal),
@@ -210,6 +218,7 @@ pub(crate) fn decide(
             answer,
             expected,
         },
+        ambient,
     ) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Consent(body) => Outcome::Reply(Reply {

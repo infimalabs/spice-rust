@@ -5,7 +5,7 @@ use super::*;
 /// Read one task's current evidence from one immutable journal barrier.
 pub(in crate::board_command) fn read_task_detail(
     bus: &Bus,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     detail: &wire::intent::TaskDetail,
     principal: wire::Actor,
     projects: &ProjectPolicy,
@@ -283,7 +283,7 @@ fn task_step(
 }
 
 fn task_media(
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     task: &wire::TaskStamp,
 ) -> Result<Vec<wire::Media>, Outcome<CommandAnswer>> {
     let Some(repository) = repository else {

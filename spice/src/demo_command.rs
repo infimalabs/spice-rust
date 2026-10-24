@@ -11,6 +11,7 @@ use clap::ArgMatches;
 use journal::{FactCause, JournalWrite};
 use notify::{RecursiveMode, Watcher as _};
 use serde::{Deserialize, Serialize};
+use spice::ambient::Ambient;
 use wire::{
     Actor, CanonicalUuid, DemoAnswer, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
     ReplyPosition, ResidencyHead, ResidentState, TaskHead, WorkflowHead, body,
@@ -148,24 +149,26 @@ enum Event {
 }
 
 #[derive(Clone, Copy)]
-struct RunControl {
+struct RunControl<'a> {
     signals: bool,
     interrupt_after_launch: bool,
+    ambient: &'a Ambient,
 }
 
 /// Seed or run one isolated native app environment.
-pub(crate) fn run(matches: &ArgMatches) -> Outcome<DemoAnswer> {
+pub(crate) fn run(matches: &ArgMatches, ambient: &Ambient) -> Outcome<DemoAnswer> {
     run_with(
         matches,
         RunControl {
             signals: true,
             interrupt_after_launch: false,
+            ambient,
         },
         crate::command_client::system_browser,
     )
 }
 
-fn run_with<F>(matches: &ArgMatches, control: RunControl, browser: F) -> Outcome<DemoAnswer>
+fn run_with<F>(matches: &ArgMatches, control: RunControl<'_>, browser: F) -> Outcome<DemoAnswer>
 where
     F: FnOnce(&str) -> Result<(), String>,
 {
@@ -207,14 +210,7 @@ where
         return reply(&environment, "seeded", "preserved", None);
     }
     let cleanup = environment.automatic && !preserve;
-    app_environment_with(
-        environment,
-        cleanup,
-        control.signals,
-        open,
-        control.interrupt_after_launch,
-        browser,
-    )
+    app_environment_with(environment, cleanup, control, open, browser)
 }
 
 fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {

@@ -7,6 +7,7 @@ pub(crate) fn run_process<I, S, P>(
     cancellation: &CancellationToken,
     cargo_jobs: usize,
     overrides: &[(&str, &OsStr)],
+    ambient: &Ambient,
 ) -> Result<CommandRun, RunError>
 where
     I: IntoIterator<Item = S>,
@@ -14,37 +15,13 @@ where
     P: Into<OsString>,
 {
     let cwd = std::env::current_dir().map_err(RunError::Launch)?;
-    run_process_at(
-        label,
-        program,
-        arguments,
-        &cwd,
-        cancellation,
-        cargo_jobs,
-        overrides,
-    )
-}
-
-pub(crate) fn run_process_at<I, S, P>(
-    label: &str,
-    program: P,
-    arguments: I,
-    cwd: &Path,
-    cancellation: &CancellationToken,
-    cargo_jobs: usize,
-    overrides: &[(&str, &OsStr)],
-) -> Result<CommandRun, RunError>
-where
-    I: IntoIterator<Item = S>,
-    S: Into<OsString>,
-    P: Into<OsString>,
-{
     let boundary = ProcessBoundary {
         label,
-        cwd,
+        cwd: &cwd,
         cancellation,
         cargo_jobs: Some(cargo_jobs),
         overrides,
+        ambient,
         bounds: ACTION_PROCESS_BOUNDS,
     };
     let spec = bounded_process_spec(&boundary, program, arguments)?;
@@ -63,6 +40,7 @@ struct ProcessBoundary<'a> {
     cancellation: &'a CancellationToken,
     cargo_jobs: Option<usize>,
     overrides: &'a [(&'a str, &'a OsStr)],
+    ambient: &'a Ambient,
     bounds: ProcessBounds,
 }
 
@@ -166,9 +144,11 @@ where
         cancellation,
         cargo_jobs,
         overrides,
+        ambient,
         bounds,
     } = *boundary;
-    let environment = selected_process_environment(ambient_environment()?, cargo_jobs, overrides)?;
+    let environment =
+        selected_process_environment(ambient_environment(ambient)?, cargo_jobs, overrides)?;
     let deadlines =
         Deadlines::new(bounds.runtime, bounds.output_drain, bounds.reap).map_err(|error| {
             RunError::Launch(io::Error::new(
@@ -277,12 +257,8 @@ fn command_run_from_outcome(
     })
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the verifier's native process rim captures the exact child environment"
-)]
-fn ambient_environment() -> Result<Environment, RunError> {
-    Environment::new(std::env::vars_os()).map_err(|error| {
+fn ambient_environment(ambient: &Ambient) -> Result<Environment, RunError> {
+    ambient.environment().map_err(|error| {
         RunError::Launch(io::Error::new(
             io::ErrorKind::InvalidInput,
             error.to_string(),

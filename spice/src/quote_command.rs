@@ -4,6 +4,7 @@ use std::fmt;
 
 use clap::ArgMatches;
 use serde::Serialize;
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, QuoteRead};
 use wire::principal::PrincipalDirectory;
@@ -31,7 +32,11 @@ impl fmt::Display for QuoteView {
 }
 
 /// Resolve the named target; a target that names no quotable source refuses.
-pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<QuoteView> {
+pub(crate) fn run(
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<QuoteView> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return fault("quote::cwd-unavailable", &error.to_string()),
@@ -54,6 +59,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<QuoteVie
         state_paths.serve(),
         contract,
         SelectedCommand::QuoteRead { body: &body },
+        ambient,
     ) {
         Outcome::Reply(Reply {
             position,

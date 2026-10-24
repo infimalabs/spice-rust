@@ -4,6 +4,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
+use spice::ambient::Ambient;
 use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
 use spice::repository::StateError;
@@ -52,7 +53,7 @@ impl fmt::Display for PlanPreview {
     }
 }
 
-pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
+pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> Answer {
     let request = if matches.get_flag("unapply") {
         Request::Unapply
     } else if let Some(digest) = matches.get_one::<String>("apply") {
@@ -97,7 +98,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
     }
     match request {
         Request::Plan => {
-            let executable = match executable() {
+            let executable = match executable(ambient) {
                 Ok(executable) => executable,
                 Err(outcome) => return Answer::Plan(outcome),
             };
@@ -121,7 +122,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
                     )));
                 }
             };
-            let executable = match executable() {
+            let executable = match executable(ambient) {
                 Ok(executable) => executable,
                 Err(outcome) => return Answer::Receipt(outcome),
             };
@@ -189,11 +190,13 @@ fn package_failure<B>(error: &crate::install_package::Error) -> Outcome<B> {
     }
 }
 
-fn executable<B>() -> Result<PathBuf, Outcome<B>> {
+fn executable<B>(ambient: &Ambient) -> Result<PathBuf, Outcome<B>> {
     #[cfg(debug_assertions)]
-    if let Some(executable) = crate::bootstrap_environment(spice::install::TEST_EXECUTABLE) {
+    if let Some(executable) = ambient.get(spice::install::TEST_EXECUTABLE) {
         return Ok(PathBuf::from(executable));
     }
+    #[cfg(not(debug_assertions))]
+    let _ = ambient;
     std::env::current_exe().map_err(|error| {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,

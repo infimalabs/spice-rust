@@ -90,9 +90,10 @@ pub(crate) fn execute(
     journal_root: &Path,
     plan: &ReleasePlan,
     applied: &Digest,
+    ambient: &Ambient,
 ) -> Result<(), Outcome<wire::intent::RecognitionAnswer>> {
     let mut journal = FileReleaseJournal::open(journal_root, plan).map_err(journal_fault)?;
-    let mut effects = SystemEffects::new(root, journal_root).map_err(effect_outcome)?;
+    let mut effects = SystemEffects::new(root, journal_root, ambient).map_err(effect_outcome)?;
     dist::ReleaseExecutor::execute(plan, applied, &mut journal, &mut effects)
         .map(|_| ())
         .map_err(execute_outcome)

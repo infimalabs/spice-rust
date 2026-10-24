@@ -2,7 +2,6 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Write as _;
@@ -18,6 +17,7 @@ use gate::{
 use serde::{Deserialize, Serialize};
 use sill::Environment;
 
+use crate::ambient::Ambient;
 use crate::repository::Repository;
 
 mod cargo_budget;
@@ -350,6 +350,7 @@ struct ChangeGateExecution {
 }
 
 struct PartialStateContext<'a> {
+    ambient: &'a Ambient,
     selection: &'a ChangeSelectionReport,
     source: &'a wire::Digest,
     environment: &'a Environment,
@@ -369,8 +370,11 @@ struct PartialStateContext<'a> {
 ///
 /// Returns repository/environment faults, selected-source movement, incomplete
 /// test reach, or canonical focused-arm acquisition failures.
-pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, ChangeGateError> {
-    run_with_claim(progress, gate::ClaimCapture::Idle)
+pub fn run(
+    progress: &mut (impl Write + Send),
+    ambient: &Ambient,
+) -> Result<ChangeGateReport, ChangeGateError> {
+    run_with_claim(progress, ambient, gate::ClaimCapture::Idle)
 }
 
 /// Execute the staged-change gate with the board claim captured by its caller.
@@ -380,9 +384,10 @@ pub fn run(progress: &mut (impl Write + Send)) -> Result<ChangeGateReport, Chang
 /// Returns the same staged selection, test, policy, and capture failures as [`run`].
 pub fn run_with_claim(
     progress: &mut (impl Write + Send),
+    ambient: &Ambient,
     claim: gate::ClaimCapture,
 ) -> Result<ChangeGateReport, ChangeGateError> {
-    run_with_selection(progress, SelectionSurface::Packaged, claim)
+    run_with_selection(progress, ambient, SelectionSurface::Packaged, claim)
 }
 
 /// Execute the richer current-source selector from the explicit xtask rim.
@@ -395,9 +400,11 @@ pub fn run_with_claim(
 /// Returns the same staged selection, test, or policy failures as [`run`].
 pub fn run_current_source(
     progress: &mut (impl Write + Send),
+    ambient: &Ambient,
 ) -> Result<ChangeGateReport, ChangeGateError> {
     run_with_selection(
         progress,
+        ambient,
         SelectionSurface::CurrentSource,
         gate::ClaimCapture::Idle,
     )
@@ -446,8 +453,8 @@ impl StagedActionSelection {
 /// # Errors
 ///
 /// Returns the same capture and packaged-selection failures as [`run`].
-pub fn prepare_staged_actions() -> Result<StagedActionSelection, ChangeGateError> {
-    prepare_staged_actions_with_claim(gate::ClaimCapture::Idle)
+pub fn prepare_staged_actions(ambient: &Ambient) -> Result<StagedActionSelection, ChangeGateError> {
+    prepare_staged_actions_with_claim(ambient, gate::ClaimCapture::Idle)
 }
 
 /// Capture staged content for a fingerprint lookup without constructing packaged selection.
@@ -455,29 +462,31 @@ pub fn prepare_staged_actions() -> Result<StagedActionSelection, ChangeGateError
 /// # Errors
 ///
 /// Returns the same staged capture failures as [`prepare_staged_actions`].
-pub fn prepare_staged_anchor() -> Result<crate::gate::PreparedArm<'static>, ChangeGateError> {
+pub fn prepare_staged_anchor(
+    ambient: &Ambient,
+) -> Result<crate::gate::PreparedArm<'static>, ChangeGateError> {
     SelectionSurface::Packaged
-        .prepare_anchor(gate::ClaimCapture::Idle)
+        .prepare_anchor(ambient, gate::ClaimCapture::Idle)
         .map_err(ChangeGateError::gate)
 }
 
 /// Capture and select staged actions under the caller's exact board claim.
 pub fn prepare_staged_actions_with_claim(
+    ambient: &Ambient,
     claim: gate::ClaimCapture,
 ) -> Result<StagedActionSelection, ChangeGateError> {
     let anchor = SelectionSurface::Packaged
-        .prepare_anchor(claim)
+        .prepare_anchor(ambient, claim)
         .map_err(ChangeGateError::gate)?;
-    prepare_staged_actions_from_anchor(anchor)
+    prepare_staged_actions_from_anchor(ambient, anchor)
 }
 
 /// Apply packaged action selection to an already captured staged anchor.
 pub fn prepare_staged_actions_from_anchor(
+    ambient: &Ambient,
     anchor: crate::gate::PreparedArm<'static>,
 ) -> Result<StagedActionSelection, ChangeGateError> {
-    let environment = ambient_environment().map_err(|error| {
-        ChangeGateError::environment("change-gate-environment-unavailable", error)
-    })?;
+    let environment = child_environment(ambient)?;
     let (selection, tests) = select_changes(&anchor, SelectionSurface::Packaged, &environment)?;
     let cargo_tests = tests.cargo_selected(anchor.root(), anchor.changes());
     Ok(StagedActionSelection {
@@ -537,14 +546,18 @@ enum SelectionSurface {
 impl SelectionSurface {
     fn prepare_anchor(
         self,
+        ambient: &Ambient,
         claim: gate::ClaimCapture,
     ) -> Result<crate::gate::PreparedArm<'static>, crate::gate::RunError> {
         match self {
-            Self::Packaged => {
-                crate::gate::prepare_arm_with_claim(Selector::staged(), GateId::Staging, claim)
-            }
+            Self::Packaged => crate::gate::prepare_arm_with_claim(
+                ambient,
+                Selector::staged(),
+                GateId::Staging,
+                claim,
+            ),
             Self::CurrentSource => {
-                crate::gate::prepare_arm_strict(Selector::staged(), GateId::Staging)
+                crate::gate::prepare_arm_strict(ambient, Selector::staged(), GateId::Staging)
             }
         }
     }
@@ -552,6 +565,7 @@ impl SelectionSurface {
 
 fn run_with_selection(
     progress: &mut (impl Write + Send),
+    ambient: &Ambient,
     surface: SelectionSurface,
     claim: gate::ClaimCapture,
 ) -> Result<ChangeGateReport, ChangeGateError> {
@@ -560,12 +574,10 @@ fn run_with_selection(
     let capture_started = Instant::now();
     let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
     publish_budget(progress, budget, "prioritized-bounded-policy-then-tests")?;
-    let environment = ambient_environment().map_err(|error| {
-        ChangeGateError::environment("change-gate-environment-unavailable", error)
-    })?;
+    let environment = child_environment(ambient)?;
     let retry_claim = claim.clone();
     let mut anchor = surface
-        .prepare_anchor(claim)
+        .prepare_anchor(ambient, claim)
         .map_err(ChangeGateError::gate)?;
     publish_phase_terminal(progress, "capture", capture_started, "success")?;
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
@@ -641,6 +653,7 @@ fn run_with_selection(
     let policy = settle_partial_state(
         &mut anchor,
         PartialStateContext {
+            ambient,
             selection: &selection,
             source: &source,
             environment: &environment,
@@ -691,7 +704,7 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
 
                 let mut retry = context
                     .surface
-                    .prepare_anchor(context.claim.clone())
+                    .prepare_anchor(context.ambient, context.claim.clone())
                     .map_err(ChangeGateError::gate)?;
                 let (retry_selection, _) =
                     select_changes(&retry, context.surface, context.environment)?;
@@ -1381,12 +1394,10 @@ fn publish_execution_scope(
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the ordinary change-gate command rim captures the caller environment once"
-)]
-fn ambient_environment() -> Result<Environment, sill::SpecError> {
-    Environment::new(env::vars_os())
+fn child_environment(ambient: &Ambient) -> Result<Environment, ChangeGateError> {
+    ambient
+        .environment()
+        .map_err(|error| ChangeGateError::environment("change-gate-environment-unavailable", error))
 }
 
 /// Fail-closed ordinary-gate execution or report failure.

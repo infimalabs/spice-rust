@@ -2,7 +2,7 @@
 
 use super::*;
 pub(super) fn client_done(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -108,7 +108,7 @@ enum CoverRequest {
 }
 
 fn requested_disposition(
-    repository: &Repository,
+    repository: Host<'_>,
     matches: &ArgMatches,
 ) -> Result<Option<DispositionRequest>, Outcome<CommandAnswer>> {
     let cover = matches.get_one::<String>("cover");
@@ -127,7 +127,7 @@ fn requested_disposition(
         Some(written) => Some(match written.parse::<TaskHandle>() {
             Ok(task) => CoverRequest::Task(task),
             Err(_) => CoverRequest::Commit(
-                spice::task_git::resolve_landed_commit(repository, written)
+                spice::task_git::resolve_landed_commit(&repository, repository.ambient, written)
                     .map_err(task_git_outcome)?,
             ),
         }),
@@ -239,7 +239,7 @@ fn plan_disposition(
 }
 
 fn submit_completion(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     expected: Vec<Witness>,
     done: &TaskDone,
@@ -306,7 +306,7 @@ fn stable_completion_witnesses<'a>(
 }
 
 pub(super) fn client_review(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {

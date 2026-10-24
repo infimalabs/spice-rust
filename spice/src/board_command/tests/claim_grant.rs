@@ -77,7 +77,7 @@ fn a_seat_that_cannot_be_read_is_reported_before_a_boundary_that_cannot_be_captu
 
     assert_eq!(
         grant_reason(claim_git_boundary(
-            Some(&resident),
+            Some(host(&resident)),
             &snapshot,
             &command,
             &snapshot.entries[0],
@@ -91,7 +91,7 @@ fn a_seat_that_cannot_be_read_is_reported_before_a_boundary_that_cannot_be_captu
         grant_reason(claim_grant(
             &bus,
             &command,
-            Some(&resident),
+            Some(host(&resident)),
             &snapshot,
             &snapshot.entries[0],
             Possession::Next,
@@ -115,7 +115,7 @@ fn a_readable_seat_lets_the_boundary_refusal_reach_the_caller() {
         grant_reason(claim_grant(
             &bus,
             &command,
-            Some(&resident),
+            Some(host(&resident)),
             &snapshot,
             &snapshot.entries[0],
             Possession::Next,

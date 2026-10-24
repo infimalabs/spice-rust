@@ -349,6 +349,7 @@ fn recovering_submission(
         &COMMAND_CONTRACT,
         Connection::Operator,
         Ok(command),
+        &Ambient::default(),
         |fault| {
             transients.push(fault.reason.clone());
             if fault.reason == "serve::send-failed"
@@ -627,6 +628,7 @@ fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() 
         contract,
         Connection::Operator,
         Ok(mapped),
+        &Ambient::default(),
         |fault| {
             transients.push(fault.reason.clone());
             discovery
@@ -655,6 +657,7 @@ fn task_status_reports_an_absent_resident_before_command_delivery() {
         contract,
         Connection::Operator,
         Ok(mapped),
+        &Ambient::default(),
         |fault| transients.push(fault.reason.clone()),
     );
 
@@ -680,6 +683,7 @@ fn task_status_reports_a_resident_released_during_publication_handoff() {
         contract,
         Connection::Operator,
         Ok(mapped),
+        &Ambient::default(),
         |fault| {
             transients.push(fault.reason.clone());
             fixture.release_publisher();
@@ -707,6 +711,7 @@ fn task_status_keeps_an_unprobeable_resident_lock_fail_closed() {
         contract,
         Connection::Operator,
         Ok(mapped),
+        &Ambient::default(),
         |_| panic!("an unprobeable lock must not enter publication handoff"),
     );
 

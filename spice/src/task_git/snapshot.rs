@@ -17,7 +17,8 @@ pub(super) struct Rollback {
 #[derive(Debug)]
 pub(super) struct Captured {
     rollback: Rollback,
-    root: PathBuf,
+    /// The worktree's transaction marker, resolved when the snapshot was taken.
+    marker: Option<PathBuf>,
 }
 
 impl Captured {
@@ -29,7 +30,7 @@ impl Captured {
         &self.rollback
     }
 
-    pub(super) fn restore(&self, root: &Path) -> Result<(), Error> {
+    pub(super) fn restore(&self, root: Worktree<'_>) -> Result<(), Error> {
         restore(root, &self.rollback)
     }
 }
@@ -37,7 +38,7 @@ impl Captured {
 impl Drop for Captured {
     fn drop(&mut self) {
         // A failed recovery still owns its backup through the durable marker.
-        if transaction_path(&self.root).is_ok_and(|path| path.exists()) {
+        if self.marker.as_ref().is_some_and(|path| path.exists()) {
             return;
         }
         if let Some(index) = &self.rollback.index {
@@ -46,7 +47,7 @@ impl Drop for Captured {
     }
 }
 
-pub(super) fn require_releasable(root: &Path) -> Result<(), Error> {
+pub(super) fn require_releasable(root: Worktree<'_>) -> Result<(), Error> {
     require_no_open_merge(root, "task release")?;
     require_no_replay(root)?;
     let unresolved = required_read(
@@ -70,7 +71,7 @@ pub(super) fn require_releasable(root: &Path) -> Result<(), Error> {
     }
 }
 
-fn require_no_replay(root: &Path) -> Result<(), Error> {
+fn require_no_replay(root: Worktree<'_>) -> Result<(), Error> {
     let pick = try_read(
         root,
         &["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"],
@@ -86,7 +87,7 @@ fn require_no_replay(root: &Path) -> Result<(), Error> {
     }
 }
 
-pub(super) fn capture(root: &Path, head: &str) -> Result<Option<Captured>, Error> {
+pub(super) fn capture(root: Worktree<'_>, head: &str) -> Result<Option<Captured>, Error> {
     if required_read(
         root,
         &["--no-optional-locks", "status", "--porcelain"],
@@ -158,7 +159,7 @@ pub(super) fn capture(root: &Path, head: &str) -> Result<Option<Captured>, Error
                 commit,
                 index: original,
             },
-            root: root.to_path_buf(),
+            marker: transaction_path(root).ok(),
         })),
         Err(error) => {
             if let Some(original) = original {
@@ -177,7 +178,7 @@ fn checked(output: GitOutput, action: &str) -> Result<String, Error> {
     }
 }
 
-pub(super) fn restore(root: &Path, rollback: &Rollback) -> Result<(), Error> {
+pub(super) fn restore(root: Worktree<'_>, rollback: &Rollback) -> Result<(), Error> {
     checked(
         run(root, &["read-tree", "--reset", "-u", &rollback.commit])?,
         "restore dirty release worktree",
@@ -194,7 +195,7 @@ pub(super) fn restore(root: &Path, rollback: &Rollback) -> Result<(), Error> {
 }
 
 /// Apply only the snapshot's delta; neither a successful pick nor a conflict moves HEAD.
-pub(super) fn apply(root: &Path, commit: &str) -> Result<Option<TransplantConflict>, Error> {
+pub(super) fn apply(root: Worktree<'_>, commit: &str) -> Result<Option<TransplantConflict>, Error> {
     transplant::require_object(root, commit)?;
     let picked = run(root, &["cherry-pick", "--no-commit", commit])?;
     if picked.success() {
@@ -228,7 +229,7 @@ pub(super) fn apply(root: &Path, commit: &str) -> Result<Option<TransplantConfli
 }
 
 /// A real-commit conflict precedes the dirty delta; retain it until that replay settles.
-pub(super) fn defer(root: &Path, commit: &str) -> Result<(), Error> {
+pub(super) fn defer(root: Worktree<'_>, commit: &str) -> Result<(), Error> {
     write_pending(
         &transaction_path(root)?,
         &Pending::Snapshot {
@@ -237,7 +238,7 @@ pub(super) fn defer(root: &Path, commit: &str) -> Result<(), Error> {
     )
 }
 
-pub(super) fn resume(root: &Path, commit: &str, marker: &Path) -> Result<(), Error> {
+pub(super) fn resume(root: Worktree<'_>, commit: &str, marker: &Path) -> Result<(), Error> {
     require_no_replay(root)?;
     require_no_open_merge(root, "restore task snapshot")?;
     require_clean_or(

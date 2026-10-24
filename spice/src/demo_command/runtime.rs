@@ -51,9 +51,8 @@ pub(super) fn environment(
 pub(super) fn app_environment_with<F>(
     environment: Environment,
     cleanup: bool,
-    signals: bool,
+    control: RunControl<'_>,
     open: bool,
-    interrupt_after_launch: bool,
     browser: F,
 ) -> Outcome<DemoAnswer>
 where
@@ -64,11 +63,11 @@ where
         Ok(watcher) => watcher,
         Err(failure) => return preserve_environment_failure(&environment, *failure),
     };
-    let relay = match signal_relay(signals, events.clone()) {
+    let relay = match signal_relay(control.signals, events.clone()) {
         Ok(relay) => relay,
         Err(failure) => return preserve_environment_failure(&environment, *failure),
     };
-    let resident = match start_resident(&environment, events.clone()) {
+    let resident = match start_resident(&environment, events.clone(), control.ambient.clone()) {
         Ok(resident) => resident,
         Err(failure) => return preserve_environment_failure(&environment, *failure),
     };
@@ -84,7 +83,7 @@ where
         }
     };
     if interrupted_before_launch {
-        let outcome = stop_resident(&environment, &receiver);
+        let outcome = stop_resident(&environment, &receiver, control.ambient);
         drop(relay);
         return match outcome {
             Ok(()) => {
@@ -107,22 +106,22 @@ where
     let endpoint = match opened {
         Outcome::Reply(answer) => answer.body.endpoint,
         Outcome::Refusal(refusal) => {
-            let _ = stop_resident(&environment, &receiver);
+            let _ = stop_resident(&environment, &receiver, control.ambient);
             drop(relay);
             let _ = resident.join();
             return preserve_environment_failure(&environment, Outcome::Refusal(refusal));
         }
         Outcome::Fault(fault) => {
-            let _ = stop_resident(&environment, &receiver);
+            let _ = stop_resident(&environment, &receiver, control.ambient);
             drop(relay);
             let _ = resident.join();
             return preserve_environment_failure(&environment, Outcome::Fault(fault));
         }
     };
-    if interrupt_after_launch {
+    if control.interrupt_after_launch {
         let _ = events.send(Event::Signal);
     }
-    let completion = wait_for_resident(&environment, &receiver);
+    let completion = wait_for_resident(&environment, &receiver, control.ambient);
     drop(relay);
     let _ = resident.join();
     finish_app(&environment, cleanup, endpoint, completion)
@@ -215,6 +214,7 @@ pub(super) fn signal_relay(
 pub(super) fn start_resident(
     environment: &Environment,
     events: Sender<Event>,
+    ambient: Ambient,
 ) -> DemoResult<JoinHandle<()>> {
     let root = environment.root.clone();
     std::thread::Builder::new()
@@ -223,6 +223,7 @@ pub(super) fn start_resident(
             let outcome = crate::resident::up_from(
                 &root,
                 crate::resident::AppBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
+                &ambient,
             );
             let _ = events.send(Event::Resident(outcome));
         })
@@ -299,6 +300,7 @@ pub(super) fn wait_for_discovery(
 pub(super) fn wait_for_resident(
     environment: &Environment,
     receiver: &Receiver<Event>,
+    ambient: &Ambient,
 ) -> DemoResult<bool> {
     loop {
         match receiver.recv() {
@@ -306,7 +308,7 @@ pub(super) fn wait_for_resident(
             Ok(Event::Resident(Outcome::Reply(_))) => return Ok(false),
             Ok(Event::Resident(outcome)) => return Err(rebody(outcome).into()),
             Ok(Event::Signal) => {
-                stop_resident(environment, receiver)?;
+                stop_resident(environment, receiver, ambient)?;
                 return Ok(true);
             }
             Err(_) => {
@@ -323,13 +325,14 @@ pub(super) fn wait_for_resident(
 pub(super) fn stop_resident(
     environment: &Environment,
     receiver: &Receiver<Event>,
+    ambient: &Ambient,
 ) -> DemoResult<()> {
     let contract = crate::cli::contract(&["down"]).expect("down contract is registered");
     // The demo root seats no lanes, so the stop must ride the operator
     // connection: an ambient lane identity names a seat in the repository
     // that launched the agent, and honoring it here would dial a discovery
     // path the demo root cannot publish and strand the demo resident.
-    match crate::resident::down_from_operator(&environment.root, contract) {
+    match crate::resident::down_from_operator(&environment.root, contract, ambient) {
         Outcome::Reply(_) => {}
         outcome => return Err(rebody(outcome).into()),
     }

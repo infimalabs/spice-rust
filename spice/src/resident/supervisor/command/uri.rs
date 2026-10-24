@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use spice::ambient::Ambient;
 use wire::CanonicalUuid;
 
 use super::Driver;
@@ -32,27 +33,33 @@ impl Uris {
 }
 
 /// Serve `spice://` URLs as `lane`, whose checkout is `worktree` and whose
-/// occupant's session state is `environment`, resolving quote targets, CLI
-/// reads, and task text writes through the resident. A human-authored quote
-/// names its author from the principal index of the journal at `journal`.
+/// occupant's environment is `ambient`, resolving quote targets, CLI reads,
+/// and task text writes through the resident. A human-authored quote names
+/// its author from the principal index of the journal at `journal`.
 pub(super) fn resident_server(
     discovery: PathBuf,
     journal: PathBuf,
     lane: CanonicalUuid,
     worktree: PathBuf,
-    environment: crate::session_command::Environment,
+    ambient: Ambient,
 ) -> UriServer {
     let seat = crate::resource::Seat {
         worktree,
         lane,
-        environment,
+        environment: crate::session_environment(&ambient),
+        ambient,
         graphs: Default::default(),
     };
     Box::new(move |url, access| {
         seat.serve(
             url,
             access,
-            |target| match crate::command_client::read_lane_quote(&discovery, lane, target) {
+            |target| match crate::command_client::read_lane_quote(
+                &discovery,
+                lane,
+                target,
+                &seat.ambient,
+            ) {
                 Ok(resolution) => {
                     let principals = spice::quote::author_names(&journal, &resolution)?;
                     spice::quote::render(&resolution, principals.as_ref())

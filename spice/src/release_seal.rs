@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use wire::manifest::{ReleaseTarget, TargetPayload};
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, SealedManifest};
 
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 
 struct StoredProof {
@@ -60,7 +61,7 @@ struct Prepared {
     head: wire::Seq,
 }
 
-pub(crate) fn run(contract: &crate::cli::Contract) -> Outcome<SealedManifest> {
+pub(crate) fn run(contract: &crate::cli::Contract, ambient: &Ambient) -> Outcome<SealedManifest> {
     let prepared = match prepare() {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
@@ -76,6 +77,7 @@ pub(crate) fn run(contract: &crate::cli::Contract) -> Outcome<SealedManifest> {
             manifest: &prepared.published,
             head: prepared.head,
         },
+        ambient,
     );
     recognition_outcome(outcome, body)
 }

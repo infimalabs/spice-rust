@@ -36,7 +36,7 @@ pub(in crate::board_command) fn doc_apply(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -173,7 +173,7 @@ fn commit_doc_plan(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     plan: &DocPlan,
 ) -> Outcome<CommandAnswer> {
     let intrinsic = wire::TaskProvenance::Document(apply.preview.clone());
@@ -249,7 +249,7 @@ fn commit_doc_plan(
 fn doc_task_spec(
     plan: &DocPlan,
     command: &wire::AdmittedCommand,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     node: &dialect::Node,
 ) -> Result<DocTaskSpec, Outcome<CommandAnswer>> {
     let task = plan

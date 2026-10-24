@@ -169,10 +169,12 @@ fn the_root_skill_and_quote_targets_are_not_cli_reads() {
 
 #[test]
 fn the_installed_skill_resource_is_exact_bounded_and_prompt_compact() {
+    let ambient = spice::ambient::capture();
     let seat = super::Seat {
         worktree: "/".into(),
         lane: wire::CanonicalUuid::new(uuid::Uuid::from_u128(7)),
-        environment: crate::session_environment().rooted("/".into()),
+        environment: crate::session_environment(&ambient).rooted("/".into()),
+        ambient,
         graphs: Default::default(),
     };
     let read = |url: &str| {
@@ -393,10 +395,12 @@ fn a_task_text_url_names_its_field_and_the_digest_a_write_carries() {
 
 #[test]
 fn only_a_whole_task_text_takes_a_write_and_only_a_write_takes_a_digest() {
+    let ambient = spice::ambient::capture();
     let seat = super::Seat {
         worktree: "/".into(),
         lane: wire::CanonicalUuid::new(uuid::Uuid::from_u128(7)),
-        environment: crate::session_environment().rooted("/".into()),
+        environment: crate::session_environment(&ambient).rooted("/".into()),
+        ambient,
         graphs: Default::default(),
     };
     let digest = wire::Digest::compute(wire::Domain::TaskText, b"read text");
@@ -423,12 +427,14 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
     let root = std::env::temp_dir().join(format!("spice-resource-limits-{}", std::process::id()));
     fs::create_dir_all(root.join(".git")).expect("fixture Git directory exists");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
+    let ambient = spice::ambient::capture();
     let seat = super::Seat {
         worktree: root.clone(),
         lane: "ca38ffa1-2c8c-4ac2-87ae-64a413e15261"
             .parse()
             .expect("lane UUID"),
-        environment: crate::session_environment().rooted(root.clone()),
+        environment: crate::session_environment(&ambient).rooted(root.clone()),
+        ambient,
         graphs: Default::default(),
     };
     for url in [

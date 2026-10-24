@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ArgMatches;
+use spice::ambient::Ambient;
 use wire::body::{ProofSealed, PublishedTarget, ReleasePublished};
 use wire::manifest::ProductVersion;
 use wire::release::{ReleaseObservations, ReleasePlan};
@@ -70,7 +71,11 @@ pub(crate) enum RunResult {
     Published(Outcome<wire::intent::RecognitionAnswer>),
 }
 
-pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunResult {
+pub(crate) fn run(
+    matches: &ArgMatches,
+    contract: &crate::cli::Contract,
+    ambient: &Ambient,
+) -> RunResult {
     let prepared = match prepare(matches) {
         Ok(prepared) => prepared,
         Err(outcome) => return RunResult::Plan(Box::new(retag(*outcome))),
@@ -110,6 +115,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
         &prepared.operation_journal,
         &prepared.plan,
         &applied,
+        ambient,
     ) {
         return RunResult::Published(outcome);
     }
@@ -121,6 +127,7 @@ pub(crate) fn run(matches: &ArgMatches, contract: &crate::cli::Contract) -> RunR
             key: &prepared.plan.key,
             state: prepared.state,
         },
+        ambient,
     );
     RunResult::Published(recognition_outcome(outcome))
 }

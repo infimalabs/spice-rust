@@ -2,6 +2,7 @@
 
 use clap::ArgMatches;
 use serde::Serialize;
+use spice::ambient::Ambient;
 use spice::config::{LoadError, Loaded};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, TrustAnswer};
@@ -207,6 +208,7 @@ pub(crate) fn report(
     matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<TrustReport> {
     let page = match Page::from_matches(matches, &["trust"]) {
         Ok(page) => page,
@@ -220,7 +222,7 @@ pub(crate) fn report(
         Ok(state) => state,
         Err(error) => return crate::state_failure(&error).outcome(),
     };
-    let epoch = match crate::command_client::authenticate(state.serve(), contract) {
+    let epoch = match crate::command_client::authenticate(state.serve(), contract, ambient) {
         Ok(epoch) => epoch,
         Err(outcome) => return retag(outcome),
     };
@@ -228,11 +230,14 @@ pub(crate) fn report(
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };
-    let board =
-        match crate::board_command::current_board(&repository, wire::intent::BoardRead::Trust) {
-            Ok(board) => board,
-            Err(outcome) => return retag(outcome),
-        };
+    let host = crate::command_client::Host {
+        repository: &repository,
+        ambient,
+    };
+    let board = match crate::board_command::current_board(host, wire::intent::BoardRead::Trust) {
+        Ok(board) => board,
+        Err(outcome) => return retag(outcome),
+    };
     if board.residency.body.epoch != epoch {
         return refusal(
             "trust::epoch-moved",
@@ -320,6 +325,7 @@ pub(crate) fn report(
 pub(crate) fn pend(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<TrustAnswer> {
     let repository = match current_repository() {
         Ok(repository) => repository,
@@ -350,11 +356,17 @@ pub(crate) fn pend(
             digest: surface.digest(),
             worktree,
         },
+        ambient,
     ))
 }
 
 /// Apply one exact grant or revoke through the resident command path.
-pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Outcome<TrustAnswer> {
+pub(crate) fn rule(
+    matches: &ArgMatches,
+    contract: &Contract,
+    grant: bool,
+    ambient: &Ambient,
+) -> Outcome<TrustAnswer> {
     let digest = match matches
         .get_one::<String>("DIGEST")
         .expect("the generated trust syntax requires DIGEST")
@@ -387,6 +399,7 @@ pub(crate) fn rule(matches: &ArgMatches, contract: &Contract, grant: bool) -> Ou
         state.serve(),
         contract,
         selected,
+        ambient,
     ))
 }
 

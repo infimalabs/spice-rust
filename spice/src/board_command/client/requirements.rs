@@ -81,7 +81,7 @@ pub(super) fn witnesses(heads: &BoardTask) -> Vec<Witness> {
 }
 
 pub(super) fn client_require(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {

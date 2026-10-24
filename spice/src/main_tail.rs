@@ -1,19 +1,9 @@
 use super::*;
 
-/// Acquire one ambient bootstrap value before typed configuration crosses
-/// into the library graph.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the binary rim owns ambient bootstrap acquisition"
-)]
-pub fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
-    std::env::var_os(name)
-}
-
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn session_environment() -> session_command::Environment {
+pub(crate) fn session_environment(ambient: &Ambient) -> session_command::Environment {
     session_environment_from(
-        |name| bootstrap_environment(name),
+        |name| ambient.get(name).map(OsStr::to_os_string),
         std::env::current_dir().ok(),
     )
 }
@@ -66,7 +56,7 @@ pub fn terminate<B>(outcome: &Outcome<B>) -> ! {
 
 #[expect(
     clippy::disallowed_methods,
-    reason = "the binary rim alone terminates the process"
+    reason = "app_command's stdin watcher thread must end the process and cannot return an outcome to main, so every exit routes through this one call"
 )]
 pub(crate) fn terminate_code(code: i32) -> ! {
     std::process::exit(code);

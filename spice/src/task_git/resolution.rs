@@ -1,7 +1,6 @@
 //! Exact admission of one allocator-materialized merge resolution.
 
 use std::fs;
-use std::path::Path;
 
 use super::landing::{Drift, drift, integration_refusal};
 use super::transaction::{git_state_path, materialize_integration, materialize_resolution};
@@ -27,7 +26,7 @@ pub(super) struct Parents<'a> {
     pub(super) preflight: Preflight,
 }
 
-pub(super) fn has_state(root: &Path) -> Result<bool, Error> {
+pub(super) fn has_state(root: Worktree<'_>) -> Result<bool, Error> {
     // ORIG_HEAD is durable Git history and commonly survives completed merges;
     // only the three in-progress controls select resolution admission.
     for name in ["MERGE_HEAD", "MERGE_MODE", "MERGE_MSG"] {
@@ -52,7 +51,7 @@ pub(super) fn has_state(root: &Path) -> Result<bool, Error> {
 /// drifted path held as the baseline has it, and the refusal that follows
 /// leaves its resolved content staged for the claimant to own or drop.
 pub(super) fn complete(
-    root: &Path,
+    root: Worktree<'_>,
     meta: Metadata<'_>,
     active: &board::Active<'_>,
     parents: Parents<'_>,
@@ -94,7 +93,7 @@ pub(super) fn complete(
 /// Built in a private index so the lane's own index keeps the sealed
 /// resolution, which is what leaves the drifted content staged afterwards.
 fn integration_tree(
-    root: &Path,
+    root: Worktree<'_>,
     tree: &str,
     upstream: &str,
     drifted: &[(String, Drift)],
@@ -120,7 +119,7 @@ fn integration_tree(
 }
 
 fn build_integration_tree(
-    root: &Path,
+    root: Worktree<'_>,
     index: &str,
     tree: &str,
     upstream: &str,
@@ -167,7 +166,7 @@ fn build_integration_tree(
     indexed(root, index, &["write-tree"], "write integration tree")
 }
 
-fn indexed(root: &Path, index: &str, args: &[&str], action: &str) -> Result<String, Error> {
+fn indexed(root: Worktree<'_>, index: &str, args: &[&str], action: &str) -> Result<String, Error> {
     let output = run_with_environment(root, args, &[("GIT_INDEX_FILE", index)])?;
     if output.success() {
         Ok(output.stdout.trim().to_owned())
@@ -180,7 +179,7 @@ fn indexed(root: &Path, index: &str, args: &[&str], action: &str) -> Result<Stri
 }
 
 impl Preflight {
-    pub(super) fn capture(root: &Path) -> Result<Self, Error> {
+    pub(super) fn capture(root: Worktree<'_>) -> Result<Self, Error> {
         let upstream = read_state_value(root, "MERGE_HEAD")?;
         let agent = read_state_value(root, "ORIG_HEAD")?;
         require_state_file(root, "MERGE_MODE", "no-ff\n")?;
@@ -215,7 +214,7 @@ impl Preflight {
 
     fn complete(
         self,
-        root: &Path,
+        root: Worktree<'_>,
         agent: &str,
         upstream: &str,
         message: &str,
@@ -238,7 +237,12 @@ impl Preflight {
 }
 
 impl Seal {
-    fn capture(root: &Path, agent: &str, upstream: &str, message: &str) -> Result<Self, Error> {
+    fn capture(
+        root: Worktree<'_>,
+        agent: &str,
+        upstream: &str,
+        message: &str,
+    ) -> Result<Self, Error> {
         require_state_file(root, "MERGE_HEAD", &format!("{upstream}\n"))?;
         require_state_file(root, "ORIG_HEAD", &format!("{agent}\n"))?;
         require_state_file(root, "MERGE_MODE", "no-ff\n")?;
@@ -265,7 +269,7 @@ impl Seal {
         })
     }
 
-    fn verify(&self, root: &Path) -> Result<(), Error> {
+    fn verify(&self, root: Worktree<'_>) -> Result<(), Error> {
         require_state_file(root, "MERGE_HEAD", &format!("{}\n", self.upstream))?;
         require_state_file(root, "ORIG_HEAD", &format!("{}\n", self.agent))?;
         require_state_file(root, "MERGE_MODE", "no-ff\n")?;
@@ -308,7 +312,7 @@ fn require_claim(meta: Metadata<'_>, active: &board::Active<'_>) -> Result<(), E
     ))
 }
 
-fn require_state_file(root: &Path, name: &str, expected: &str) -> Result<(), Error> {
+fn require_state_file(root: Worktree<'_>, name: &str, expected: &str) -> Result<(), Error> {
     let observed = read_state_text(root, name)?;
     if observed == expected {
         return Ok(());
@@ -320,7 +324,7 @@ fn require_state_file(root: &Path, name: &str, expected: &str) -> Result<(), Err
     ))
 }
 
-fn read_state_text(root: &Path, name: &str) -> Result<String, Error> {
+fn read_state_text(root: Worktree<'_>, name: &str) -> Result<String, Error> {
     let path = git_state_path(root, name)?;
     let observed = match fs::read_to_string(&path) {
         Ok(observed) => observed,
@@ -341,7 +345,7 @@ fn read_state_text(root: &Path, name: &str) -> Result<String, Error> {
     Ok(observed)
 }
 
-fn read_state_value(root: &Path, name: &str) -> Result<String, Error> {
+fn read_state_value(root: Worktree<'_>, name: &str) -> Result<String, Error> {
     let text = read_state_text(root, name)?;
     let Some(value) = text.strip_suffix('\n') else {
         return Err(Error::refusal(
@@ -360,7 +364,7 @@ fn read_state_value(root: &Path, name: &str) -> Result<String, Error> {
     Ok(value.to_owned())
 }
 
-fn require_resolved_index(root: &Path) -> Result<(), Error> {
+fn require_resolved_index(root: Worktree<'_>) -> Result<(), Error> {
     let unresolved = required_read(
         root,
         &["ls-files", "-u", "-z"],
@@ -396,7 +400,7 @@ fn require_resolved_index(root: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn configuration(root: &Path) -> Result<String, Error> {
+fn configuration(root: Worktree<'_>) -> Result<String, Error> {
     required_read(
         root,
         &[
@@ -410,7 +414,12 @@ fn configuration(root: &Path) -> Result<String, Error> {
     )
 }
 
-fn require_equal_read(root: &Path, args: &[&str], name: &str, expected: &str) -> Result<(), Error> {
+fn require_equal_read(
+    root: Worktree<'_>,
+    args: &[&str],
+    name: &str,
+    expected: &str,
+) -> Result<(), Error> {
     let observed = required_read(root, args, &format!("recheck resolution {name}"))?;
     if observed == expected {
         Ok(())

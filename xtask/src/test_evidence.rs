@@ -11,6 +11,7 @@ use std::path::Path;
 use gate::MutationExecution;
 use gate::{TestEvidenceGraph, TestEvidenceReport};
 use sill::Environment;
+use spice::ambient::Ambient;
 
 use crate::workspace_tests;
 
@@ -34,15 +35,16 @@ const CARGO_BUILD_BUILD_DIR: &str = "CARGO_BUILD_BUILD_DIR";
 /// Returns repository discovery, source capture, workspace-test, mutation,
 /// graph-construction, report-encoding, or output failures.
 pub fn run(
-    environment: Environment,
+    ambient: &Ambient,
     progress: &mut impl Write,
     output: &mut impl Write,
 ) -> Result<TestEvidenceReport, TestEvidenceRunError> {
     let repository = spice::repository::Repository::discover(Path::new("."))
         .map_err(TestEvidenceRunError::new)?;
+    let environment = ambient.environment().map_err(TestEvidenceRunError::new)?;
     let environment = selected_test_environment(environment, repository.worktree_root())?;
-    let prepared =
-        spice::gate::prepare_strict(gate::Selector::staged()).map_err(TestEvidenceRunError::new)?;
+    let prepared = spice::gate::prepare_strict(ambient, gate::Selector::staged())
+        .map_err(TestEvidenceRunError::new)?;
     let workspace = workspace_tests::run_at(
         prepared.root(),
         environment,

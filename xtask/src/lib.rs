@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 
 use sill::CancellationToken;
+use spice::ambient::Ambient;
 
 mod app;
 #[cfg(not(target_arch = "wasm32"))]
@@ -191,9 +192,12 @@ trait Runner: Sync {
     ) -> Result<CommandRun, RunError>;
 }
 
-struct SystemRunner;
+/// Runs scoped commands as child processes of the environment `main` captured.
+struct SystemRunner<'a> {
+    ambient: &'a Ambient,
+}
 
-impl Runner for SystemRunner {
+impl Runner for SystemRunner<'_> {
     fn run_scoped(
         &self,
         command: ScopedCommand,
@@ -203,7 +207,15 @@ impl Runner for SystemRunner {
     ) -> Result<CommandRun, RunError> {
         let label = command.label(package);
         let arguments = command.arguments(package).into_iter().map(OsString::from);
-        verify_execution::run_process(&label, "cargo", arguments, cancellation, cargo_jobs, &[])
+        verify_execution::run_process(
+            &label,
+            "cargo",
+            arguments,
+            cancellation,
+            cargo_jobs,
+            &[],
+            self.ambient,
+        )
     }
 }
 
@@ -240,8 +252,12 @@ pub fn verify_child(_output: &mut impl Write) -> Result<(), VerifyError> {
 ///
 /// Returns an invalid package name or the first output, launch, or command
 /// failure.
-pub fn verify_package(package: &str, output: &mut impl Write) -> Result<(), VerifyError> {
-    verify_execution::verify_package_system(package, output)
+pub fn verify_package(
+    package: &str,
+    ambient: &Ambient,
+    output: &mut impl Write,
+) -> Result<(), VerifyError> {
+    verify_execution::verify_package_system(package, ambient, output)
 }
 
 #[cfg(test)]

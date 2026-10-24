@@ -23,6 +23,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use clap::ArgMatches;
+use spice::ambient::Ambient;
 use wire::{
     AppClosed, AppResident, Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply,
     ReplyPosition,
@@ -52,23 +53,28 @@ const WINDOW_ENTRY: &str = "__app-window";
 
 /// Open the console in a window a detached process attends, and answer with
 /// the endpoint once that window is up.
-pub(crate) fn open(leaf: &ArgMatches) -> Outcome<wire::AppOpen> {
+pub(crate) fn open(leaf: &ArgMatches, ambient: &Ambient) -> Outcome<wire::AppOpen> {
     if !cfg!(target_os = "macos") {
         return window_failure(&desktop::WindowError::Unsupported);
     }
-    resident::launch_window(leaf)
+    resident::launch_window(leaf, ambient)
 }
 
 /// Show the console in a native window and answer once it closes. Under a
 /// launcher's handoff this is the detached attendant: it takes the token
 /// privately and reports the window up before settling in.
-pub(crate) fn run(leaf: &ArgMatches) -> Outcome<AppClosed> {
-    let launch = match resident::ChildLaunch::capture() {
+pub(crate) fn run(leaf: &ArgMatches, ambient: &Ambient) -> Outcome<AppClosed> {
+    let launch = match resident::ChildLaunch::capture(ambient) {
         Ok(launch) => launch,
         Err(outcome) => return typed(outcome),
     };
     let status = launch.as_ref().map(|launch| launch.status.clone());
-    let outcome = attend(leaf, launch.and_then(|launch| launch.token), status.clone());
+    let outcome = attend(
+        leaf,
+        launch.and_then(|launch| launch.token),
+        status.clone(),
+        ambient,
+    );
     if let Some(status) = status {
         status.failed(&outcome);
     }
@@ -79,6 +85,7 @@ fn attend(
     leaf: &ArgMatches,
     handoff_token: Option<String>,
     status: Option<resident::ChildStatus>,
+    ambient: &Ambient,
 ) -> Outcome<AppClosed> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
@@ -98,7 +105,7 @@ fn attend(
             return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
-    let session = match join_or_start(&repository, leaf, handoff_token) {
+    let session = match join_or_start(&repository, leaf, handoff_token, ambient) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
@@ -106,13 +113,13 @@ fn attend(
         || session.opened.endpoint.clone(),
         |token| format!("{}#{token}", session.opened.endpoint),
     );
-    let shown = show_window(&url, repository.common_dir(), || {
+    let shown = show_window(&url, repository.common_dir(), ambient, || {
         if let Some(status) = status {
             status.opened(&session.opened);
         }
     });
     let resident = if session.started {
-        match drain(&current) {
+        match drain(&current, ambient) {
             Ok(()) => AppResident::Drained,
             Err(outcome) => return outcome,
         }
@@ -186,14 +193,20 @@ fn external_link(link: &str) {
 /// Show the window from a process carrying a bundle identity and wait for
 /// it to close; `shown` runs once the window process holds its URL.
 #[cfg(target_os = "macos")]
-fn show_window(url: &str, common: &Path, shown: impl FnOnce()) -> Result<(), desktop::WindowError> {
+fn show_window(
+    url: &str,
+    common: &Path,
+    ambient: &Ambient,
+    shown: impl FnOnce(),
+) -> Result<(), desktop::WindowError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let platform = |detail: String| desktop::WindowError::Platform(detail);
     let executable = std::env::current_exe()
         .map_err(|error| platform(format!("the running executable is unresolved: {error}")))?;
-    let home = crate::bootstrap_environment("HOME")
+    let home = ambient
+        .get("HOME")
         .filter(|home| !home.is_empty())
         .ok_or_else(|| platform("HOME names no cache directory".into()))?;
     let bundled = desktop::bundled_executable(&executable, Path::new(&home))?;
@@ -232,7 +245,12 @@ fn show_window(url: &str, common: &Path, shown: impl FnOnce()) -> Result<(), des
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_window(url: &str, common: &Path, shown: impl FnOnce()) -> Result<(), desktop::WindowError> {
+fn show_window(
+    url: &str,
+    common: &Path,
+    _ambient: &Ambient,
+    shown: impl FnOnce(),
+) -> Result<(), desktop::WindowError> {
     let _ = shown;
     desktop::show(
         &title(common),
@@ -256,6 +274,7 @@ fn join_or_start(
     repository: &spice::repository::Repository,
     leaf: &ArgMatches,
     handoff_token: Option<String>,
+    ambient: &Ambient,
 ) -> Result<Session, Outcome<AppClosed>> {
     let serve = repository
         .admit_resident_client()
@@ -266,7 +285,7 @@ fn join_or_start(
             started: false,
         });
     }
-    match resident::launch(leaf, handoff_token, false) {
+    match resident::launch(leaf, handoff_token, false, ambient) {
         Outcome::Reply(reply) => Ok(Session {
             opened: reply.body,
             started: true,
@@ -277,9 +296,9 @@ fn join_or_start(
 }
 
 /// Stop the resident this command started, through ordinary `spice down`.
-fn drain(current: &Path) -> Result<(), Outcome<AppClosed>> {
+fn drain(current: &Path, ambient: &Ambient) -> Result<(), Outcome<AppClosed>> {
     let contract = spice::cli::contract(&["down"]).expect("down is a registered command");
-    match resident::down_from(current, contract) {
+    match resident::down_from(current, contract, ambient) {
         Outcome::Reply(_) => Ok(()),
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),

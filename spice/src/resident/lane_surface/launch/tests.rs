@@ -78,7 +78,7 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
             .map(|(_, value)| value.clone());
         assert_eq!(
             carried,
-            crate::bootstrap_environment(name),
+            InertProbes.variable(name),
             "launch must carry {name} exactly when the resident has it"
         );
     }
@@ -262,6 +262,7 @@ fn launch_and_resident_start_admit_only_the_initialized_common_skill() {
         let Outcome::Refusal(start) = crate::resident::up_from(
             root,
             crate::resident::AppBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
+            &spice::ambient::capture(),
         ) else {
             panic!("resident start must refuse")
         };
@@ -365,6 +366,10 @@ impl LaunchProbes for UnreadAuthority {
 
     fn session(&self, _worktree: PathBuf) -> crate::session_command::Environment {
         panic!("a resumed launch plan read the lane's authority")
+    }
+
+    fn variable(&self, name: &str) -> Option<OsString> {
+        InertProbes.variable(name)
     }
 }
 

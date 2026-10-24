@@ -3,6 +3,8 @@
 use std::env;
 use std::time::Duration;
 
+use spice::ambient::Ambient;
+
 use sill::{
     Argv, Cancellation, CancellationToken, Completion, Deadlines, Environment, Output,
     ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
@@ -94,16 +96,7 @@ pub(crate) struct Process {
     binary: String,
     timeout: Duration,
     cancellation: CancellationToken,
-}
-
-impl Default for Process {
-    fn default() -> Self {
-        Self {
-            binary: crate::cli::JUDGE_EXECUTABLE.to_owned(),
-            timeout: ATTEMPT_TIMEOUT,
-            cancellation: CancellationToken::new(),
-        }
-    }
+    ambient: Ambient,
 }
 
 impl Process {
@@ -112,15 +105,25 @@ impl Process {
         let binary = self.binary.clone();
         let timeout = self.timeout;
         let cancellation = self.cancellation.clone();
+        let environment = self.ambient.environment().map_err(spec_error)?;
         adjudicate_with(prompts, |prompt| {
-            invoke_with(&binary, prompt, timeout, cancellation.clone())
+            invoke_with(
+                &binary,
+                prompt,
+                timeout,
+                cancellation.clone(),
+                environment.clone(),
+            )
         })
     }
 
-    pub(crate) fn with_cancellation(cancellation: CancellationToken) -> Self {
+    /// A judge whose attempts end with `cancellation` and inherit `ambient`.
+    pub(crate) fn new(cancellation: CancellationToken, ambient: Ambient) -> Self {
         Self {
+            binary: crate::cli::JUDGE_EXECUTABLE.to_owned(),
+            timeout: ATTEMPT_TIMEOUT,
             cancellation,
-            ..Self::default()
+            ambient,
         }
     }
 }
@@ -180,8 +183,9 @@ fn invoke_with(
     prompt: &str,
     timeout: Duration,
     cancellation: CancellationToken,
+    environment: Environment,
 ) -> Result<String, Error> {
-    let spec = process_spec(binary, timeout, cancellation)?;
+    let spec = process_spec(binary, timeout, cancellation, environment)?;
     let mut child = sill::spawn(spec).map_err(|error| Error {
         reason: "unavailable",
         detail: format!("could not launch {binary}: {error}"),
@@ -291,6 +295,7 @@ fn process_spec(
     binary: &str,
     timeout: Duration,
     cancellation: CancellationToken,
+    environment: Environment,
 ) -> Result<Spec, Error> {
     let capture = StreamPolicy::Capture {
         limit: MAX_REPLY_BYTES,
@@ -301,7 +306,7 @@ fn process_spec(
             reason: "judge_error",
             detail: format!("could not resolve judge working directory: {error}"),
         })?,
-        environment: ambient_environment().map_err(spec_error)?,
+        environment,
         group: ProcessGroup::New,
         deadlines: Deadlines::new(timeout, OUTPUT_DRAIN, REAP_DEADLINE).map_err(spec_error)?,
         wait: WaitPolicy::new(
@@ -314,14 +319,6 @@ fn process_spec(
         redaction: Redaction::All,
         grace: TERMINATE_GRACE,
     })
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the shared external-process rim captures the caller environment once"
-)]
-fn ambient_environment() -> Result<Environment, sill::SpecError> {
-    Environment::new(env::vars_os())
 }
 
 fn spec_error(error: sill::SpecError) -> Error {

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::cli::Contract;
 use crate::journal_lock::JournalLock;
 use sill::authority;
+use spice::ambient::Ambient;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{
@@ -31,18 +32,22 @@ pub(crate) fn backup(matches: &clap::ArgMatches) -> Outcome<JournalBackup> {
     }
 }
 
-pub(crate) fn report(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<JournalReport> {
+pub(crate) fn report(
+    matches: &clap::ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<JournalReport> {
     match Page::from_matches(matches, &["journal"])
         .map_err(Failure::Refusal)
-        .and_then(|page| report_inner(page, contract))
+        .and_then(|page| report_inner(page, contract, ambient))
     {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
 }
 
-pub(crate) fn verify(contract: &Contract) -> Outcome<JournalVerification> {
-    match verify_inner(contract) {
+pub(crate) fn verify(contract: &Contract, ambient: &Ambient) -> Outcome<JournalVerification> {
+    match verify_inner(contract, ambient) {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
@@ -55,13 +60,17 @@ pub(crate) fn reindex() -> Outcome<JournalReindex> {
     }
 }
 
-pub(crate) fn thread(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<ThreadReport> {
+pub(crate) fn thread(
+    matches: &clap::ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<ThreadReport> {
     let reference = matches
         .get_one::<String>("REF")
         .expect("the generated thread parser requires REF");
     match Page::from_matches(matches, &["thread"])
         .map_err(Failure::Refusal)
-        .and_then(|page| thread_inner(reference, page, contract))
+        .and_then(|page| thread_inner(reference, page, contract, ambient))
     {
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
@@ -188,13 +197,14 @@ fn stage_artifact_members(
 fn report_inner(
     page: Page,
     contract: &Contract,
+    ambient: &Ambient,
 ) -> Result<(ReplyPosition, JournalReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
     let text = page.limits().text;
     let retain = page.retain();
-    let (cursor, (start, rows)) = read_authenticated(&state, &reader, contract, |read| {
+    let (cursor, (start, rows)) = read_authenticated(&state, &reader, contract, ambient, |read| {
         let horizon = read
             .cursor()
             .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?
@@ -265,11 +275,14 @@ fn newest_rows(
     Ok(rows)
 }
 
-fn verify_inner(contract: &Contract) -> Result<(ReplyPosition, JournalVerification), Failure> {
+fn verify_inner(
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Result<(ReplyPosition, JournalVerification), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
     let schema = reader.schema_version().map_err(open_failure)?;
-    let (cursor, verified) = read_authenticated(&state, &reader, contract, |read| {
+    let (cursor, verified) = read_authenticated(&state, &reader, contract, ambient, |read| {
         read.verify().map_err(verify_failure)
     })?;
     Ok((
@@ -323,6 +336,7 @@ fn thread_inner(
     reference: &str,
     page: Page,
     contract: &Contract,
+    ambient: &Ambient,
 ) -> Result<(ReplyPosition, ThreadReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
@@ -340,7 +354,7 @@ fn thread_inner(
         })
         .transpose()?;
     let (cursor, (root, remaining, rows)) =
-        read_authenticated(&state, &reader, contract, |read| {
+        read_authenticated(&state, &reader, contract, ambient, |read| {
             let root = read.thread_root(reference).map_err(thread_failure)?;
             let mut rows = Vec::new();
             let mut remaining = None;
@@ -390,12 +404,13 @@ fn read_authenticated<T, F>(
     state: &StatePaths,
     reader: &journal::JournalReader,
     contract: &Contract,
+    ambient: &Ambient,
     answer: F,
 ) -> Result<(Seq, T), Failure>
 where
     F: for<'a> FnOnce(&journal::JournalRead<'a>) -> Result<T, Failure>,
 {
-    let epoch = crate::command_client::authenticate(state.serve(), contract)
+    let epoch = crate::command_client::authenticate(state.serve(), contract, ambient)
         .map_err(authentication_failure)?;
     reader
         .read_with(|read| {

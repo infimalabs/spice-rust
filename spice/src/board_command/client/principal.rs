@@ -11,7 +11,7 @@ use wire::principal::{
 
 /// Route one `principal` leaf.
 pub(super) fn dispatch_principal_client(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Option<Outcome<CommandAnswer>> {

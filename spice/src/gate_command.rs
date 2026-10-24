@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use gate::Selector;
 use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 
 mod battery;
@@ -43,6 +44,7 @@ pub(crate) fn run(
     matches: &clap::ArgMatches,
     configuration: Option<&spice::config::RepositoryCapture>,
     live: bool,
+    ambient: &Ambient,
 ) -> Outcome<BatteryRun> {
     let at = matches.get_one::<String>("at");
     let selector = at.map_or_else(Selector::staged, |revision| {
@@ -52,8 +54,9 @@ pub(crate) fn run(
         at: at.map(String::as_str),
         verbose: matches.get_flag("verbose"),
         live,
+        ambient,
     };
-    let admission = verify_claim::admit_current_worktree(configuration);
+    let admission = verify_claim::admit_current_worktree(configuration, ambient);
     match verify_claim::launch_after_admission(admission, || {
         battery::run(selector, &invocation, &output::current_captures())
     }) {
@@ -68,6 +71,7 @@ pub(crate) fn pre_commit(
     matches: &clap::ArgMatches,
     configuration: Option<&spice::config::RepositoryCapture>,
     live: bool,
+    ambient: &Ambient,
 ) -> Outcome<pre_commit::Report> {
     pre_commit::run(
         matches
@@ -75,6 +79,7 @@ pub(crate) fn pre_commit(
             .map(std::path::PathBuf::from),
         configuration,
         live,
+        ambient,
     )
 }
 
@@ -92,19 +97,22 @@ pub(crate) fn commit_message(
 
 pub(crate) fn pre_commit_worker_entry(
     arguments: impl Iterator<Item = std::ffi::OsString>,
+    ambient: &Ambient,
 ) -> Option<i32> {
     let arguments = arguments.collect::<Vec<_>>();
     let has_json = arguments
         .iter()
         .skip(1)
         .any(|argument| argument.as_os_str() == std::ffi::OsStr::new("--json"));
-    if !has_json && let Some(code) = reference_transaction::entry(arguments.iter().cloned()) {
+    if !has_json
+        && let Some(code) = reference_transaction::entry(arguments.iter().cloned(), ambient)
+    {
         return Some(code);
     }
     let reference_arguments = parser_admitted_json_reference_arguments(&arguments);
     reference_arguments
-        .and_then(|arguments| reference_transaction::entry(arguments.into_iter()))
-        .or_else(|| pre_commit::worker_entry(arguments.into_iter()))
+        .and_then(|arguments| reference_transaction::entry(arguments.into_iter(), ambient))
+        .or_else(|| pre_commit::worker_entry(arguments.into_iter(), ambient))
 }
 
 fn parser_admitted_json_reference_arguments(

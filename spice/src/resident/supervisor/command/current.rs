@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
 
+use spice::ambient::Ambient;
 use wire::CanonicalUuid;
 
 use super::Terminal;
@@ -93,6 +94,7 @@ pub(super) fn resource_server(
 pub(in crate::resident::supervisor) fn entry(
     role: &OsStr,
     arguments: &mut impl Iterator<Item = OsString>,
+    ambient: &Ambient,
 ) -> Option<i32> {
     if role == OsStr::new(SESSION_ENTRY) {
         let (Some(operation), Some(lane), None) =
@@ -101,7 +103,7 @@ pub(in crate::resident::supervisor) fn entry(
             eprintln!("lane session read takes an operation and a lane");
             return Some(2);
         };
-        return Some(match run_session(&operation, &lane) {
+        return Some(match run_session(&operation, &lane, ambient) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("lane session read failed: {error}");
@@ -116,7 +118,7 @@ pub(in crate::resident::supervisor) fn entry(
             eprintln!("lane resource reader takes a lane and a worktree");
             return Some(2);
         };
-        return Some(match resource::run(&lane, &worktree) {
+        return Some(match resource::run(&lane, &worktree, ambient) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("lane resource reader failed: {error}");
@@ -127,7 +129,7 @@ pub(in crate::resident::supervisor) fn entry(
     None
 }
 
-fn run_session(operation: &OsString, lane: &OsString) -> io::Result<()> {
+fn run_session(operation: &OsString, lane: &OsString, ambient: &Ambient) -> io::Result<()> {
     let operation = operation
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "operation is not UTF-8"))?;
@@ -136,7 +138,7 @@ fn run_session(operation: &OsString, lane: &OsString) -> io::Result<()> {
         .and_then(|lane| lane.parse::<CanonicalUuid>().ok())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "lane is not a UUID"))?;
     let worktree = std::env::current_dir()?;
-    let environment = crate::session_environment().rooted(worktree);
+    let environment = crate::session_environment(ambient).rooted(worktree);
     let rendered = match operation {
         BRIEFING => crate::session_command::lane_briefing(&environment, lane, None),
         RESUME => crate::session_command::lane_resume_notice(&environment, lane, None),

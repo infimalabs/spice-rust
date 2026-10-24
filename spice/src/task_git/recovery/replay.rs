@@ -1,17 +1,21 @@
 use super::*;
 
 /// Replay a synchronized quarantine, retaining all data on any conflict.
-pub fn replay_recovery(repository: &Repository, recovery: &Recovery) -> Result<(), Error> {
+pub fn replay_recovery(
+    repository: &Repository,
+    ambient: &Ambient,
+    recovery: &Recovery,
+) -> Result<(), Error> {
+    let worktree = Worktree::new(repository.worktree_root(), ambient);
     let root = recovery_root(repository)?;
     let mut manifest = read_expected(&root, recovery)?;
     let resuming = matches!(manifest.state, RecoveryState::Replaying { .. });
     let boundary = replay_boundary(&manifest)?;
     if resuming {
-        resume_replay_surface(repository, &manifest, &boundary)?;
+        resume_replay_surface(repository, worktree, &manifest, &boundary)?;
     } else {
-        verify_replay_surface(repository, &manifest, &boundary)?;
+        verify_replay_surface(repository, worktree, &manifest, &boundary)?;
     }
-    let worktree = repository.worktree_root();
     refuse_untracked_collisions(worktree, &manifest.payload.untracked)?;
     manifest.state = RecoveryState::Replaying {
         boundary: boundary.clone(),
@@ -71,7 +75,7 @@ pub(super) fn replay_boundary(manifest: &Manifest) -> Result<GitBoundary, Error>
 /// unstaged layer. With `skip_landed`, a layer whose reverse already applies
 /// is skipped because the target carries it.
 pub(super) fn apply_replay_patches(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     manifest: &Manifest,
     skip_landed: bool,
@@ -115,40 +119,43 @@ pub(super) fn apply_replay_patches(
 
 pub(super) fn verify_replay_surface(
     repository: &Repository,
+    worktree: Worktree<'_>,
     manifest: &Manifest,
     boundary: &GitBoundary,
 ) -> Result<(), Error> {
-    verify_replay_identity(repository, manifest, boundary)?;
-    require_clean(repository.worktree_root(), "task recovery replay")
+    verify_replay_identity(repository, worktree, manifest, boundary)?;
+    require_clean(worktree, "task recovery replay")
 }
 
 pub(super) fn resume_replay_surface(
     repository: &Repository,
+    worktree: Worktree<'_>,
     manifest: &Manifest,
     boundary: &GitBoundary,
 ) -> Result<(), Error> {
-    verify_replay_identity(repository, manifest, boundary)?;
+    verify_replay_identity(repository, worktree, manifest, boundary)?;
     refuse_unsealed_dirty_paths(
-        repository.worktree_root(),
+        worktree,
         &manifest.payload,
         "git::recovery-replay-drift",
         "preserve the retained quarantine and inspect concurrent lane edits",
     )?;
-    clean_manifest_paths(repository.worktree_root(), &manifest.payload)
+    clean_manifest_paths(worktree, &manifest.payload)
 }
 
 pub(super) fn verify_replay_identity(
     repository: &Repository,
+    worktree: Worktree<'_>,
     manifest: &Manifest,
     boundary: &GitBoundary,
 ) -> Result<(), Error> {
-    refuse_unsupported_tree_entries(repository.worktree_root())?;
+    refuse_unsupported_tree_entries(worktree)?;
     verify_manifest_identity(repository, manifest)?;
     verify_text(
         "symbolic ref",
         &manifest.payload.reference,
         &required_read(
-            repository.worktree_root(),
+            worktree,
             &["symbolic-ref", "HEAD"],
             "verify replay symbolic HEAD",
         )?,
@@ -156,17 +163,17 @@ pub(super) fn verify_replay_identity(
     verify_text(
         "configuration",
         &manifest.payload.configuration,
-        &configuration(repository.worktree_root())?,
+        &configuration(worktree)?,
     )?;
     verify_text(
         "synchronized HEAD",
         &boundary.head,
-        &current_head(repository.worktree_root())?,
+        &current_head(worktree)?,
     )
 }
 
 pub(super) fn refuse_untracked_collisions(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     paths: &[PathState],
 ) -> Result<(), Error> {
     for state in paths {
@@ -198,7 +205,7 @@ pub(super) fn refuse_untracked_collisions(
 /// Verify a replay onto `target` reproduced the sealed path sets, and the
 /// sealed patches byte-for-byte when no sealed tracked path's base changed.
 pub(super) fn verify_replayed(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     manifest: &Manifest,
     target: &str,
@@ -223,7 +230,7 @@ pub(super) fn verify_replayed(
 /// HEAD is the target, tracked changes stay within the sealed paths, and the
 /// restored untracked entries carry their sealed bytes.
 pub(super) fn verify_restored_within(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     manifest: &Manifest,
     target: &str,
@@ -252,7 +259,7 @@ pub(super) fn verify_restored_within(
 }
 
 pub(super) fn verify_untracked_restored(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     untracked: &[PathState],
 ) -> Result<(), Error> {
@@ -268,7 +275,7 @@ pub(super) fn verify_untracked_restored(
 }
 
 pub(super) fn sealed_base_changed(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     manifest: &Manifest,
     target: &str,
 ) -> Result<bool, Error> {
@@ -277,7 +284,7 @@ pub(super) fn sealed_base_changed(
 }
 
 pub(super) fn verify_unchanged_base_patches(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     root: &Path,
     manifest: &Manifest,
     target: &str,
@@ -314,7 +321,7 @@ pub(super) fn verify_unchanged_base_patches(
 }
 
 pub(super) fn base_changed(
-    worktree: &Path,
+    worktree: Worktree<'_>,
     old: &str,
     new: &str,
     paths: &[String],

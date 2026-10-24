@@ -11,6 +11,9 @@ use std::fmt;
 use std::path::Path;
 use std::process::Command;
 
+use crate::ambient::Ambient;
+use crate::cargo_isolation;
+use crate::repository::{Repository, StateError};
 use ::gate::{
     ActorCapture, BatteryCapture, BatteryReport, CaptureAuthorities, ChangeSelectionReport,
     ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, InputMode, KillRun,
@@ -18,9 +21,6 @@ use ::gate::{
 };
 use gix::bstr::ByteSlice as _;
 use wire::Digest;
-
-use crate::cargo_isolation;
-use crate::repository::{Repository, StateError};
 
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
@@ -51,13 +51,11 @@ pub use candidate_tree::CandidateTree;
 ///
 /// Returns a typed gate-rim failure when the index cannot be sealed, parsed, or
 /// represented as one canonical SHA-1 or SHA-256 tree identity.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the canonical gate command rim owns staged-index authority acquisition"
-)]
-pub fn capture_candidate_tree(repository: &Repository) -> Result<CandidateTree, RunError> {
-    let index = env::var_os("GIT_INDEX_FILE");
-    candidate_tree::capture_candidate_tree(repository, index.as_deref())
+pub fn capture_candidate_tree(
+    repository: &Repository,
+    ambient: &Ambient,
+) -> Result<CandidateTree, RunError> {
+    candidate_tree::capture_candidate_tree(repository, ambient.get("GIT_INDEX_FILE"))
 }
 
 /// One staged battery capture retained across explicit diagnostic actions.
@@ -445,24 +443,31 @@ fn bind_cargo_jobs(
 /// # Errors
 ///
 /// Returns the same rim and capture failures as [`run`].
-pub fn prepare(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
-    prepare_with_mode(selector, InputMode::Generic)
+pub fn prepare(
+    ambient: &Ambient,
+    selector: Selector,
+) -> Result<PreparedBattery<'static>, RunError> {
+    prepare_with_mode(ambient, selector, InputMode::Generic)
 }
 
 /// Capture the current source repository's strict self-hosting contract.
 ///
 /// Unlike installed generic acquisition, this requires both tracked input
 /// documents and identifies every compiled legacy parser tool before returning.
-pub fn prepare_strict(selector: Selector) -> Result<PreparedBattery<'static>, RunError> {
-    prepare_with_mode(selector, InputMode::Strict)
+pub fn prepare_strict(
+    ambient: &Ambient,
+    selector: Selector,
+) -> Result<PreparedBattery<'static>, RunError> {
+    prepare_with_mode(ambient, selector, InputMode::Strict)
 }
 
 fn prepare_with_mode(
+    ambient: &Ambient,
     selector: Selector,
     input_mode: InputMode,
 ) -> Result<PreparedBattery<'static>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture(selector, input_mode, None, None).map(|capture| PreparedBattery {
+    let compiler_environment = compiler_environment(ambient);
+    capture(ambient, selector, input_mode, None, None).map(|capture| PreparedBattery {
         capture,
         compiler_environment,
         cargo_jobs: None,
@@ -474,8 +479,12 @@ fn prepare_with_mode(
 /// # Errors
 ///
 /// Returns the same rim and selected-arm capture failures as [`run_arm_report`].
-pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'static>, RunError> {
-    prepare_arm_with_mode(selector, gate_id, InputMode::Generic)
+pub fn prepare_arm(
+    ambient: &Ambient,
+    selector: Selector,
+    gate_id: GateId,
+) -> Result<PreparedArm<'static>, RunError> {
+    prepare_arm_with_mode(ambient, selector, gate_id, InputMode::Generic)
 }
 
 /// Capture one selected arm with the board claim observed by the command rim.
@@ -484,30 +493,39 @@ pub fn prepare_arm(selector: Selector, gate_id: GateId) -> Result<PreparedArm<'s
 ///
 /// Returns the same rim and selected-arm capture failures as [`prepare_arm`].
 pub fn prepare_arm_with_claim(
+    ambient: &Ambient,
     selector: Selector,
     gate_id: GateId,
     claim: ClaimCapture,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture::capture_inner(selector, InputMode::Generic, Some(gate_id), None, claim).map(
-        |capture| PreparedArm {
-            capture,
-            gate_id,
-            compiler_environment,
-            cargo_jobs: None,
-        },
+    let compiler_environment = compiler_environment(ambient);
+    capture::capture_inner(
+        ambient,
+        selector,
+        InputMode::Generic,
+        Some(gate_id),
+        None,
+        claim,
     )
+    .map(|capture| PreparedArm {
+        capture,
+        gate_id,
+        compiler_environment,
+        cargo_jobs: None,
+    })
 }
 
 /// Capture one selected arm at an admitted directory with an exact board claim.
 pub fn prepare_arm_at_with_claim(
+    ambient: &Ambient,
     directory: &Path,
     selector: Selector,
     gate_id: GateId,
     claim: ClaimCapture,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let compiler_environment = compiler_environment();
+    let compiler_environment = compiler_environment(ambient);
     capture::capture_at_inner(
+        ambient,
         directory,
         selector,
         InputMode::Generic,
@@ -525,19 +543,21 @@ pub fn prepare_arm_at_with_claim(
 
 /// Capture one current-source arm under the strict self-hosting contract.
 pub fn prepare_arm_strict(
+    ambient: &Ambient,
     selector: Selector,
     gate_id: GateId,
 ) -> Result<PreparedArm<'static>, RunError> {
-    prepare_arm_with_mode(selector, gate_id, InputMode::Strict)
+    prepare_arm_with_mode(ambient, selector, gate_id, InputMode::Strict)
 }
 
 fn prepare_arm_with_mode(
+    ambient: &Ambient,
     selector: Selector,
     gate_id: GateId,
     input_mode: InputMode,
 ) -> Result<PreparedArm<'static>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture(selector, input_mode, Some(gate_id), None).map(|capture| PreparedArm {
+    let compiler_environment = compiler_environment(ambient);
+    capture(ambient, selector, input_mode, Some(gate_id), None).map(|capture| PreparedArm {
         capture,
         gate_id,
         compiler_environment,
@@ -555,22 +575,17 @@ fn prepare_arm_with_mode(
 ///
 /// Returns the same rim and capture failures as [`prepare`].
 pub fn prepare_traced<'trace>(
+    ambient: &Ambient,
     selector: Selector,
     trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<PreparedBattery<'trace>, RunError> {
-    prepare_traced_with_mode(selector, trace, InputMode::Generic)
-}
-
-fn prepare_traced_with_mode<'trace>(
-    selector: Selector,
-    trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    input_mode: InputMode,
-) -> Result<PreparedBattery<'trace>, RunError> {
-    let compiler_environment = compiler_environment();
-    capture(selector, input_mode, None, Some(trace)).map(|capture| PreparedBattery {
-        capture,
-        compiler_environment,
-        cargo_jobs: None,
+    let compiler_environment = compiler_environment(ambient);
+    capture(ambient, selector, InputMode::Generic, None, Some(trace)).map(|capture| {
+        PreparedBattery {
+            capture,
+            compiler_environment,
+            cargo_jobs: None,
+        }
     })
 }
 
@@ -580,8 +595,8 @@ fn prepare_traced_with_mode<'trace>(
 ///
 /// Returns the exact rim acquisition or battery refusal. No alternate command
 /// or predecessor implementation is attempted.
-pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
-    run_prepared(prepare(selector)?)
+pub fn run(ambient: &Ambient, selector: Selector) -> Result<BatteryReport, RunError> {
+    run_prepared(prepare(ambient, selector)?)
 }
 
 /// Execute the strict self-hosting battery from one explicitly admitted
@@ -591,9 +606,14 @@ pub fn run(selector: Selector) -> Result<BatteryReport, RunError> {
 ///
 /// Returns the exact rim acquisition or battery refusal. The caller-supplied
 /// directory, rather than ambient process location, owns repository discovery.
-pub fn run_strict_at(directory: &Path, selector: Selector) -> Result<BatteryReport, RunError> {
-    let compiler_environment = compiler_environment();
+pub fn run_strict_at(
+    ambient: &Ambient,
+    directory: &Path,
+    selector: Selector,
+) -> Result<BatteryReport, RunError> {
+    let compiler_environment = compiler_environment(ambient);
     let capture = capture::capture_at_inner(
+        ambient,
         directory,
         selector,
         InputMode::Strict,
@@ -624,24 +644,30 @@ fn run_prepared(mut prepared: PreparedBattery<'_>) -> Result<BatteryReport, RunE
 ///
 /// Returns the same acquisition and arm refusal as [`run`], without
 /// executing sibling battery arms.
-pub fn run_arm_report(selector: Selector, gate_id: GateId) -> Result<FocusedArmReport, RunError> {
-    run_arm_report_with_mode(selector, gate_id, InputMode::Generic)
+pub fn run_arm_report(
+    ambient: &Ambient,
+    selector: Selector,
+    gate_id: GateId,
+) -> Result<FocusedArmReport, RunError> {
+    run_arm_report_with_mode(ambient, selector, gate_id, InputMode::Generic)
 }
 
 /// Execute one current-source arm under the strict self-hosting contract.
 pub fn run_arm_report_strict(
+    ambient: &Ambient,
     selector: Selector,
     gate_id: GateId,
 ) -> Result<FocusedArmReport, RunError> {
-    run_arm_report_with_mode(selector, gate_id, InputMode::Strict)
+    run_arm_report_with_mode(ambient, selector, gate_id, InputMode::Strict)
 }
 
 fn run_arm_report_with_mode(
+    ambient: &Ambient,
     selector: Selector,
     gate_id: GateId,
     input_mode: InputMode,
 ) -> Result<FocusedArmReport, RunError> {
-    let mut prepared = prepare_arm_with_mode(selector, gate_id, input_mode)?;
+    let mut prepared = prepare_arm_with_mode(ambient, selector, gate_id, input_mode)?;
     let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state(StateRunScope::Partial)?;
@@ -660,10 +686,11 @@ fn run_arm_report_with_mode(
 ///
 /// Returns the same acquisition and completeness refusals as [`run`].
 pub fn run_traced(
+    ambient: &Ambient,
     selector: Selector,
     trace: &mut (dyn FnMut(RepositoryExecutionEvent) + Send),
 ) -> Result<BatteryReport, RunError> {
-    let mut prepared = prepare_traced(selector, trace)?;
+    let mut prepared = prepare_traced(ambient, selector, trace)?;
     let report = prepared.execute()?;
     if report.admits() {
         prepared.accept_state()?;
@@ -674,20 +701,20 @@ pub fn run_traced(
 }
 
 fn capture<'trace>(
+    ambient: &Ambient,
     selector: Selector,
     input_mode: InputMode,
     selected: Option<GateId>,
     trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
-    capture::capture_inner(selector, input_mode, selected, trace, ClaimCapture::Idle)
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the canonical gate command rim owns executable-path acquisition"
-)]
-fn search_path() -> Option<OsString> {
-    env::var_os(PROCESS_PATH)
+    capture::capture_inner(
+        ambient,
+        selector,
+        input_mode,
+        selected,
+        trace,
+        ClaimCapture::Idle,
+    )
 }
 
 fn acting_actor(repository: &Path) -> Result<String, RunError> {

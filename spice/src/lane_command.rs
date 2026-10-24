@@ -1,9 +1,10 @@
 //! CLI acquisition and typed resident mappings for lane lifecycle commands.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneEffortRetune, LaneFastRetune, LaneRecall,
@@ -18,13 +19,17 @@ mod list;
 pub(crate) mod purge;
 
 /// Execute `lane list`, whose text and JSON forms carry the same rows.
-pub(crate) fn list(matches: &ArgMatches, contract: &Contract) -> Outcome<list::LanePage> {
+pub(crate) fn list(
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<list::LanePage> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("lane::cwd-unavailable", &error.to_string()),
     };
     match Repository::discover(&current) {
-        Ok(repository) => list_at(&repository, matches, contract),
+        Ok(repository) => list_at(&repository, matches, contract, ambient),
         Err(error) => {
             environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
         }
@@ -36,8 +41,9 @@ pub(crate) fn list_at(
     repository: &Repository,
     matches: &ArgMatches,
     contract: &Contract,
+    ambient: &Ambient,
 ) -> Outcome<list::LanePage> {
-    list::run(repository, matches, contract)
+    list::run(repository, matches, contract, ambient)
 }
 
 /// Execute one landed lane-family leaf.
@@ -45,6 +51,7 @@ pub(crate) fn run(
     matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
@@ -63,7 +70,7 @@ pub(crate) fn run(
     let serve = state_paths.serve();
 
     match contract.path {
-        ["lane"] => command_client::execute(serve, contract, SelectedCommand::LaneRead),
+        ["lane"] => command_client::execute(serve, contract, SelectedCommand::LaneRead, ambient),
         ["lane", "add"] => add(
             &repository,
             serve,
@@ -71,15 +78,16 @@ pub(crate) fn run(
             matches,
             contract,
             configuration,
+            ambient,
         ),
-        ["lane", "drain"] => state(serve, matches, contract, LaneAction::Drain),
-        ["lane", "wake"] => state(serve, matches, contract, LaneAction::Wake),
-        ["lane", "model"] => model(serve, matches, contract),
-        ["lane", "effort"] => effort(serve, matches, contract),
-        ["lane", "fast"] => fast(serve, matches, contract),
-        ["lane", "remove"] => state(serve, matches, contract, LaneAction::Remove),
-        ["lane", "import"] => import(&repository, serve, &current, matches, contract),
-        ["recall"] => recall(serve, matches, contract),
+        ["lane", "drain"] => state(serve, matches, contract, LaneAction::Drain, ambient),
+        ["lane", "wake"] => state(serve, matches, contract, LaneAction::Wake, ambient),
+        ["lane", "model"] => model(serve, matches, contract, ambient),
+        ["lane", "effort"] => effort(serve, matches, contract, ambient),
+        ["lane", "fast"] => fast(serve, matches, contract, ambient),
+        ["lane", "remove"] => state(serve, matches, contract, LaneAction::Remove, ambient),
+        ["lane", "import"] => import(&repository, serve, &current, matches, contract, ambient),
+        ["recall"] => recall(serve, matches, contract, ambient),
         _ => protocol_fault(
             "lane::dispatch-gap",
             "lane command runner received a contract outside its closed family",
@@ -94,6 +102,7 @@ fn add(
     matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let requested = matches
         .get_one::<String>("WORKTREE")
@@ -138,7 +147,9 @@ fn add(
     );
     let vendor = match resolve_vendor(
         matches.get_one::<String>("vendor").map(String::as_str),
-        crate::bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
+        ambient
+            .get(wire::SpiceVariable::AgentVendor.as_str())
+            .map(OsStr::to_os_string),
         resolved.root().lane().vendor(),
     ) {
         Ok(vendor) => vendor,
@@ -160,7 +171,7 @@ fn add(
         },
         None => lane,
     };
-    let topology_revision = match observe_topology(serve) {
+    let topology_revision = match observe_topology(serve, ambient) {
         Ok(revision) => revision,
         Err(outcome) => return outcome,
     };
@@ -173,7 +184,12 @@ fn add(
         life,
         vendor,
     );
-    command_client::execute(serve, contract, SelectedCommand::LaneSeat { body: &body })
+    command_client::execute(
+        serve,
+        contract,
+        SelectedCommand::LaneSeat { body: &body },
+        ambient,
+    )
 }
 
 fn lane_seat_body(
@@ -205,8 +221,8 @@ fn lane_seat_body(
     }
 }
 
-fn observe_topology(serve: &Path) -> Result<u64, Outcome<CommandAnswer>> {
-    read_lanes(serve).map(|reply| reply.body.topology_revision)
+fn observe_topology(serve: &Path, ambient: &Ambient) -> Result<u64, Outcome<CommandAnswer>> {
+    read_lanes(serve, ambient).map(|reply| reply.body.topology_revision)
 }
 
 /// The command's required lane ID, or the protocol fault naming why it is absent.
@@ -225,15 +241,16 @@ fn lane_id<B>(matches: &ArgMatches) -> Result<CanonicalUuid, Outcome<B>> {
 fn retune_target(
     serve: &Path,
     matches: &ArgMatches,
+    ambient: &Ambient,
 ) -> Result<(CanonicalUuid, u64), Outcome<CommandAnswer>> {
-    Ok((lane_id(matches)?, observe_topology(serve)?))
+    Ok((lane_id(matches)?, observe_topology(serve, ambient)?))
 }
 
 /// Read the resident's current lane table under the lane-read contract.
-fn read_lanes<B>(serve: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
+fn read_lanes<B>(serve: &Path, ambient: &Ambient) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
     let contract = crate::cli::contract(&["lane"])
         .expect("the generated CLI registry carries the lane-read contract");
-    match command_client::execute(serve, contract, SelectedCommand::LaneRead) {
+    match command_client::execute(serve, contract, SelectedCommand::LaneRead, ambient) {
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Lane(body),
@@ -294,6 +311,7 @@ fn state(
     matches: &ArgMatches,
     contract: &Contract,
     action: LaneAction,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let lane = match lane_id(matches) {
         Ok(lane) => lane,
@@ -304,7 +322,12 @@ fn state(
         action,
         worktree: None,
     };
-    command_client::execute(serve, contract, SelectedCommand::LaneState { body: &body })
+    command_client::execute(
+        serve,
+        contract,
+        SelectedCommand::LaneState { body: &body },
+        ambient,
+    )
 }
 
 /// State the model spelling one seated lane's next launch runs.
@@ -312,8 +335,13 @@ fn state(
 /// Naming no spelling clears the seat, which is how a lane returns to the
 /// vendor's configured model: the request states the seat outright rather than
 /// describing a change to it, so absence is an instruction and not an omission.
-fn model(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let (lane, topology_revision) = match retune_target(serve, matches) {
+fn model(
+    serve: &Path,
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<CommandAnswer> {
+    let (lane, topology_revision) = match retune_target(serve, matches, ambient) {
         Ok(target) => target,
         Err(outcome) => return outcome,
     };
@@ -325,11 +353,21 @@ fn model(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Com
             .map(|model| model.trim().to_owned())
             .filter(|model| !model.is_empty()),
     };
-    command_client::execute(serve, contract, SelectedCommand::LaneRetune { body: &body })
+    command_client::execute(
+        serve,
+        contract,
+        SelectedCommand::LaneRetune { body: &body },
+        ambient,
+    )
 }
 /// State the reasoning effort one seated lane's next launch runs.
-fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let (lane, topology_revision) = match retune_target(serve, matches) {
+fn effort(
+    serve: &Path,
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<CommandAnswer> {
+    let (lane, topology_revision) = match retune_target(serve, matches, ambient) {
         Ok(target) => target,
         Err(outcome) => return outcome,
     };
@@ -355,13 +393,19 @@ fn effort(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
         serve,
         contract,
         SelectedCommand::LaneEffortRetune { body: &body },
+        ambient,
     )
 }
 
 /// Turn one seated lane's own fast-mode flag on or off. The lane still runs
 /// fast while its team's flag or the global setting is on.
-fn fast(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let (lane, topology_revision) = match retune_target(serve, matches) {
+fn fast(
+    serve: &Path,
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<CommandAnswer> {
+    let (lane, topology_revision) = match retune_target(serve, matches, ambient) {
         Ok(target) => target,
         Err(outcome) => return outcome,
     };
@@ -376,6 +420,7 @@ fn fast(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Comm
         serve,
         contract,
         SelectedCommand::LaneFastRetune { body: &body },
+        ambient,
     )
 }
 
@@ -385,6 +430,7 @@ fn import(
     current: &Path,
     matches: &ArgMatches,
     contract: &Contract,
+    ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
     let lane = match lane_id(matches) {
         Ok(lane) => lane,
@@ -429,10 +475,20 @@ fn import(
         action: LaneAction::Wake,
         worktree: Some(requested.display().to_string()),
     };
-    command_client::execute(serve, contract, SelectedCommand::LaneState { body: &body })
+    command_client::execute(
+        serve,
+        contract,
+        SelectedCommand::LaneState { body: &body },
+        ambient,
+    )
 }
 
-fn recall(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+fn recall(
+    serve: &Path,
+    matches: &ArgMatches,
+    contract: &Contract,
+    ambient: &Ambient,
+) -> Outcome<CommandAnswer> {
     let lane = match matches.get_one::<String>("LANE") {
         Some(lane) => match lane.parse::<CanonicalUuid>() {
             Ok(lane) => Some(lane),
@@ -441,7 +497,12 @@ fn recall(serve: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
         None => None,
     };
     let body = LaneRecall { lane };
-    command_client::execute(serve, contract, SelectedCommand::LaneRecall { body: &body })
+    command_client::execute(
+        serve,
+        contract,
+        SelectedCommand::LaneRecall { body: &body },
+        ambient,
+    )
 }
 
 fn refusal(

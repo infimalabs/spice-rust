@@ -26,7 +26,7 @@ pub(super) struct Replayed {
 
 /// Replay `commits` onto `onto`, stopping in the worktree at the first conflict.
 pub(super) fn replay(
-    root: &Path,
+    root: Worktree<'_>,
     commits: &[String],
     snapshot: Option<&str>,
     onto: &str,
@@ -100,7 +100,7 @@ pub(super) fn replay(
 }
 
 /// Drop any paused replay and return the lane to `before`.
-pub(super) fn abandon(root: &Path, before: &str, action: &str) -> Result<(), Error> {
+pub(super) fn abandon(root: Worktree<'_>, before: &str, action: &str) -> Result<(), Error> {
     if try_read(
         root,
         &["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"],
@@ -140,7 +140,7 @@ pub(super) fn abandon(root: &Path, before: &str, action: &str) -> Result<(), Err
     Ok(())
 }
 
-pub(super) fn require_object(root: &Path, commit: &str) -> Result<(), Error> {
+pub(super) fn require_object(root: Worktree<'_>, commit: &str) -> Result<(), Error> {
     if run(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")])?.success() {
         Ok(())
     } else {
@@ -152,7 +152,7 @@ pub(super) fn require_object(root: &Path, commit: &str) -> Result<(), Error> {
     }
 }
 
-fn advance(root: &Path, head: &str, onto: &str) -> Result<(), Error> {
+fn advance(root: Worktree<'_>, head: &str, onto: &str) -> Result<(), Error> {
     if head == onto {
         return Ok(());
     }
@@ -163,7 +163,7 @@ fn advance(root: &Path, head: &str, onto: &str) -> Result<(), Error> {
 ///
 /// The committer date is the original's too, so a claim retried over the same
 /// lane HEAD names the same commits.
-fn recommit(root: &Path, tree: &str, parent: &str, commit: &str) -> Result<String, Error> {
+fn recommit(root: Worktree<'_>, tree: &str, parent: &str, commit: &str) -> Result<String, Error> {
     let identity = required_read(
         root,
         &[
@@ -202,7 +202,7 @@ fn recommit(root: &Path, tree: &str, parent: &str, commit: &str) -> Result<Strin
 }
 
 /// Leave Git's cherry-pick of `commit`, then `remaining`, paused on its conflict.
-fn pause(root: &Path, commit: &str, remaining: &[String]) -> Result<(), Error> {
+fn pause(root: Worktree<'_>, commit: &str, remaining: &[String]) -> Result<(), Error> {
     let mut args = vec!["cherry-pick", "-m", "1", "--empty=drop", commit];
     args.extend(remaining.iter().map(String::as_str));
     let picked = run(root, &args)?;

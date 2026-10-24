@@ -222,6 +222,7 @@ pub(in crate::resident) fn present_closed_transcripts(
             &command_surface.config.taste,
             &command_surface.config.steering,
             &generation,
+            &command_surface.config.ambient,
         )
         .without_narration();
         let recognition = taste_judge.as_deref_mut().map_or(

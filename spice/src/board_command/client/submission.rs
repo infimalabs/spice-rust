@@ -4,7 +4,7 @@ use super::*;
 use base64::Engine as _;
 
 pub(super) fn client_add(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -84,7 +84,7 @@ pub(super) fn client_add(
 }
 
 pub(super) fn client_capture(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -129,7 +129,7 @@ pub(super) fn client_capture(
         },
         None => None,
     };
-    let pending = match spice::task_git::pending_recovery(repository) {
+    let pending = match spice::task_git::pending_recovery(&repository) {
         Ok(pending) => pending,
         Err(error) => return task_git_outcome(error),
     };
@@ -166,12 +166,12 @@ fn capture_new_task_fields(matches: &ArgMatches) -> bool {
 }
 
 fn capture_existing_task(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     task: TaskHandle,
     stealing: bool,
 ) -> Outcome<CommandAnswer> {
-    let dirty = match spice::task_git::has_dirty_work(repository) {
+    let dirty = match spice::task_git::has_dirty_work(&repository, repository.ambient) {
         Ok(dirty) => dirty,
         Err(error) => return task_git_outcome(error),
     };
@@ -213,7 +213,7 @@ fn capture_existing_task(
 }
 
 fn capture_new_task(
-    repository: &Repository,
+    repository: Host<'_>,
     matches: &ArgMatches,
     stealing: bool,
 ) -> Outcome<CommandAnswer> {
@@ -231,7 +231,7 @@ fn capture_new_task(
             spice::task_git::UNOWNED_WORK_REMEDY,
         );
     };
-    let dirty = match spice::task_git::has_dirty_work(repository) {
+    let dirty = match spice::task_git::has_dirty_work(&repository, repository.ambient) {
         Ok(dirty) => dirty,
         Err(error) => return task_git_outcome(error),
     };
@@ -239,7 +239,7 @@ fn capture_new_task(
     let candidate = if dirty && written_title.is_some() {
         None
     } else {
-        match spice::task_git::capture(repository) {
+        match spice::task_git::capture(&repository, repository.ambient) {
             Ok(candidate) => Some(candidate),
             Err(error) if error.reason() == "git::nothing-to-capture" && dirty => None,
             Err(error) if error.reason() == "git::nothing-to-capture" => {
@@ -335,7 +335,7 @@ fn capture_claim_answer(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswe
 }
 
 pub(super) fn client_oops(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -356,7 +356,7 @@ pub(super) fn client_oops(
 type ClientMapping = (CommandKind, Vec<Witness>, serde_json::Value);
 
 pub(super) fn submit_oops_add(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     title: String,
     origin: Option<wire::Origin>,
@@ -457,7 +457,7 @@ pub(super) fn submit_oops_add(
 }
 
 pub(crate) fn submit_task_add(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
@@ -465,7 +465,7 @@ pub(crate) fn submit_task_add(
 }
 
 pub(super) fn submit_recovery_task_add(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
@@ -473,7 +473,7 @@ pub(super) fn submit_recovery_task_add(
 }
 
 fn submit_captured_task(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     body: TaskAdd,
 ) -> Outcome<CommandAnswer> {
@@ -481,7 +481,7 @@ fn submit_captured_task(
 }
 
 fn submit_task_add_with_rule(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     body: TaskAdd,
     claim_rule: &str,
@@ -535,7 +535,7 @@ pub(in crate::board_command) fn append_preparation_witnesses(
 }
 
 fn attach_steering_origin_artifacts(
-    repository: &Repository,
+    repository: Host<'_>,
     origin: Option<&steer::Key>,
     outcome: Outcome<CommandAnswer>,
 ) -> Outcome<CommandAnswer> {
@@ -614,7 +614,7 @@ fn steering_origin_key(
 }
 
 fn steering_attachments(
-    repository: &Repository,
+    repository: Host<'_>,
     key: &steer::Key,
 ) -> Result<Vec<wire::body::DirectiveAttachment>, Outcome<CommandAnswer>> {
     let state = repository
@@ -697,7 +697,7 @@ pub(in crate::board_command) fn repository_state_failure(
 }
 
 pub(crate) fn submit_taste_proposal(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     body: TasteProposalAdd,
 ) -> Outcome<CommandAnswer> {
@@ -733,7 +733,7 @@ pub(crate) fn submit_taste_proposal(
 }
 
 pub(super) fn mutate_task<F>(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
     map: F,
@@ -747,7 +747,7 @@ where
 }
 
 pub(super) fn mutate_task_from_board<F>(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
     map: F,
@@ -771,7 +771,7 @@ where
 }
 
 pub(in crate::board_command) fn mutate_from_board<F>(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     read: BoardRead,
     map: F,
@@ -791,7 +791,7 @@ where
 }
 
 pub(crate) fn current_board(
-    repository: &Repository,
+    repository: Host<'_>,
     read: BoardRead,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["board"]).expect("board read contract is registered");

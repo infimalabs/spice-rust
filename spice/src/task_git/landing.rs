@@ -39,9 +39,8 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::path::Path;
 
-use super::{Error, required_read, run};
+use super::{Error, Worktree, required_read, run};
 
 /// Where a drifted path stood at the baseline, which decides how it is put back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,7 +66,7 @@ impl fmt::Display for Drift {
 /// it claims to carry; both are compared against `upstream_head`, the baseline
 /// the landing takes as its first parent.
 pub(super) fn require_landing_within_footprint(
-    root: &Path,
+    root: Worktree<'_>,
     label: &str,
     upstream_head: &str,
     landing: &str,
@@ -83,7 +82,7 @@ pub(super) fn require_landing_within_footprint(
 /// Every path `landing` changes against the baseline that no non-merge task
 /// commit names, classified by where it stood at the baseline.
 pub(super) fn drift(
-    root: &Path,
+    root: Worktree<'_>,
     upstream_head: &str,
     landing: &str,
     agent_head: &str,
@@ -135,7 +134,7 @@ fn footprint(log: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn read_paths(root: &Path, args: &[&str], action: &str) -> Result<BTreeSet<String>, Error> {
+fn read_paths(root: Worktree<'_>, args: &[&str], action: &str) -> Result<BTreeSet<String>, Error> {
     Ok(required_read(root, args, action)?
         .lines()
         .filter(|line| !line.is_empty())
@@ -144,7 +143,7 @@ fn read_paths(root: &Path, args: &[&str], action: &str) -> Result<BTreeSet<Strin
 }
 
 fn classify(
-    root: &Path,
+    root: Worktree<'_>,
     upstream_head: &str,
     drifted: &[String],
 ) -> Result<Vec<(String, Drift)>, Error> {

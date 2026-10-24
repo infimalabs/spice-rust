@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use gate::{BatteryReport, RepositoryExecutionEvent, Selector};
 use serde::Serialize;
+use spice::ambient::Ambient;
 
 use super::output::{self, Elapsed, Phase, Progress, Summary, family_name};
 
@@ -37,6 +38,7 @@ pub(super) struct Invocation<'a> {
     pub(super) verbose: bool,
     /// Whether progress reaches standard error (false under `--json`).
     pub(super) live: bool,
+    pub(super) ambient: &'a Ambient,
 }
 
 impl Invocation<'_> {
@@ -75,7 +77,7 @@ pub(super) fn run(
     };
     let (result, elapsed) = progress.watching(
         || phase.get(),
-        || spice::gate::run_traced(selector, &mut trace),
+        || spice::gate::run_traced(invocation.ambient, selector, &mut trace),
     );
     let verdict = match &result {
         Ok(report) if report.admits() => "admitted",

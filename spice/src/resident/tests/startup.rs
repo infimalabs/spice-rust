@@ -426,7 +426,7 @@ fn a_fresh_repository_startup_surface_stays_current_after_its_runtime_directory_
     let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
     assert!(!paths.runtime.exists(), "the repository has never started");
 
-    let Ok(startup) = prepare_startup(&repository, &paths) else {
+    let Ok(startup) = prepare_startup(&repository, &paths, &spice::ambient::capture()) else {
         panic!("a fresh repository prepares its startup surface");
     };
     assert!(paths.runtime.is_dir());

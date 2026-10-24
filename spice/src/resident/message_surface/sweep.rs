@@ -112,9 +112,9 @@ pub(super) fn present_swept<P: AgentMessagePublisher>(
     swept: &[Cow<'_, lane::capture::CaptureRecord>],
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
-    let transcript = swept
-        .first()
-        .and_then(|record| transcript_for(bus, epoch, record.lane, record.occupant));
+    let transcript = swept.first().and_then(|record| {
+        transcript_for(bus, epoch, surfaces.ambient, record.lane, record.occupant)
+    });
     for record in swept {
         recognize(bus, epoch, surfaces, recognition, record, views.diagnostic)?;
         let steering = steering_ledger(bus, record)?;
@@ -136,6 +136,7 @@ pub(super) fn present_swept<P: AgentMessagePublisher>(
 fn transcript_for(
     bus: &Bus,
     epoch: CanonicalUuid,
+    ambient: &Ambient,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Option<std::path::PathBuf> {
@@ -148,7 +149,7 @@ fn transcript_for(
         &session.identity,
         &session.vendor,
         std::path::Path::new(&session.worktree),
-        &crate::session_environment(),
+        &crate::session_environment(ambient),
     )
     .ok()
     .map(|(path, _)| path)

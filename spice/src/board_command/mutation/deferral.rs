@@ -3,7 +3,7 @@ pub(in crate::board_command) fn task_defer(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     defer: &TaskDefer,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -37,7 +37,7 @@ pub(in crate::board_command) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     wake: &TaskWake,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -71,7 +71,7 @@ pub(in crate::board_command) fn task_file(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     file: &TaskFile,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -129,7 +129,7 @@ fn validate_filing_entry(
 fn draft_filing(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     file: &TaskFile,
     statement: &mut TaskHead,
     workflow: &mut WorkflowHead,
@@ -191,15 +191,15 @@ fn draft_filing(
     Ok(dependency_witnesses)
 }
 
-fn append_filing(
+fn append_filing<'a>(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
     entry: &Entry,
     post: &Entry,
     workflow: WorkflowHead,
     statement: TaskHead,
-    atomic_claim: Option<AtomicClaim>,
-) -> Result<Option<spice::task_git::ClaimPreparation>, Outcome<CommandAnswer>> {
+    atomic_claim: Option<AtomicClaim<'a>>,
+) -> Result<Option<spice::task_git::ClaimPreparation<'a>>, Outcome<CommandAnswer>> {
     let filed = write
         .fact(
             body::TaskFiled {
@@ -246,7 +246,7 @@ fn file_unfiled(
     command: &wire::AdmittedCommand,
     snapshot: &ValidatedSnapshot,
     file: &TaskFile,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let Some(entry) = task_entry(&snapshot.entries, &file.task) else {
@@ -448,24 +448,25 @@ fn deferral_transition(
     })
 }
 
-fn prepare_deferral_release(
+fn prepare_deferral_release<'a>(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     entry: &Entry,
-    repository: Option<&Repository>,
+    repository: Option<Host<'a>>,
     releases_claim: bool,
-) -> Result<Option<spice::task_git::ParkedRelease>, Outcome<CommandAnswer>> {
+) -> Result<Option<spice::task_git::ParkedRelease<'a>>, Outcome<CommandAnswer>> {
     let Some(resident) = repository.filter(|_| releases_claim) else {
         return Ok(None);
     };
-    let lane = task_repository(snapshot, command, resident)?;
+    let lane = task_repository(snapshot, command, &resident)?;
     let claim = entry.claim().expect("release predicate requires a claim");
     let opening = snapshot
         .facts
         .at(claim.claimed)
         .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
         .and_then(|won| won.git);
-    spice::task_git::prepare_free(&lane, opening.as_ref()).map_err(task_git_outcome)
+    spice::task_git::prepare_free(&lane, resident.ambient, opening.as_ref())
+        .map_err(task_git_outcome)
 }
 
 fn append_deferral_release(
@@ -545,7 +546,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     snapshot: &ValidatedSnapshot,
     request: DeferralRequest<'_>,
     intent: B,
-    repository: Option<&Repository>,
+    repository: Option<Host<'_>>,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let DeferralRequest {

@@ -33,7 +33,7 @@ fn detail_with_repository(
     dispatch_with_repository(
         bus,
         &command,
-        Some(repository),
+        Some(host(repository)),
         &projects,
         &board::NextConfig::default(),
     )

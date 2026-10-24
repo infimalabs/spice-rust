@@ -3,7 +3,7 @@ use super::*;
 // Authored-document client operations kept beside the native board client.
 
 pub(super) fn run_doc(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
     emit: fn(&dialect::Document) -> String,

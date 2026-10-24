@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use clap::ArgMatches;
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::intent::{BoardAnswer, BoardRead, CommandAnswer};
 use wire::{
@@ -18,13 +19,17 @@ pub(super) fn run(
     repository: &Repository,
     matches: &ArgMatches,
     contract: &Contract,
+    ambient: &Ambient,
 ) -> Outcome<LanePage> {
     let options = match LaneListOptions::from_matches(matches) {
         Ok(options) => options,
         Err(outcome) => return outcome,
     };
     match command_client::execute_typed(
-        repository,
+        command_client::Host {
+            repository,
+            ambient,
+        },
         contract,
         CommandKind::BoardRead,
         Vec::new(),

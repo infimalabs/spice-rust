@@ -20,7 +20,30 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use wire::body::GitBoundary;
 
+use crate::ambient::Ambient;
 use crate::repository::Repository;
+
+/// A lane checkout and the caller's environment, which every Git and admission
+/// command under it inherits so it resolves tools as the operator's shell does.
+#[derive(Clone, Copy)]
+struct Worktree<'a> {
+    root: &'a Path,
+    ambient: &'a Ambient,
+}
+
+impl<'a> Worktree<'a> {
+    fn new(root: &'a Path, ambient: &'a Ambient) -> Self {
+        Self { root, ambient }
+    }
+}
+
+impl std::ops::Deref for Worktree<'_> {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        self.root
+    }
+}
 
 const PUBLISH_RACE_RETRY_LIMIT: usize = 5;
 const TRANSACTION_FILE: &str = "spice-task-boundary";
@@ -189,8 +212,8 @@ enum Pending {
 }
 
 /// Inspect loose commits without moving the lane, its branch, or dirty paths.
-pub fn capture(repository: &Repository) -> Result<Capture, Error> {
-    let root = repository.worktree_root();
+pub fn capture(repository: &Repository, ambient: &Ambient) -> Result<Capture, Error> {
+    let root = Worktree::new(repository.worktree_root(), ambient);
     recover_pending(root)?;
     let target = resolve_target(root)?.ok_or_else(|| {
         Error::refusal(
@@ -228,8 +251,12 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
 
 /// Resolve `revision` to the full id of a commit reachable from the lane's
 /// HEAD, so a Plan's disposition cites only history that already landed.
-pub fn resolve_landed_commit(repository: &Repository, revision: &str) -> Result<String, Error> {
-    let root = repository.worktree_root();
+pub fn resolve_landed_commit(
+    repository: &Repository,
+    ambient: &Ambient,
+    revision: &str,
+) -> Result<String, Error> {
+    let root = Worktree::new(repository.worktree_root(), ambient);
     let commit = try_read(
         root,
         &[
@@ -258,8 +285,8 @@ pub fn resolve_landed_commit(repository: &Repository, revision: &str) -> Result<
 }
 
 /// Whether the lane has tracked, staged, or non-ignored untracked changes.
-pub fn has_dirty_work(repository: &Repository) -> Result<bool, Error> {
-    let root = repository.worktree_root();
+pub fn has_dirty_work(repository: &Repository, ambient: &Ambient) -> Result<bool, Error> {
+    let root = Worktree::new(repository.worktree_root(), ambient);
     recover_pending(root)?;
     required_read(root, &["status", "--porcelain"], "inspect worktree")
         .map(|status| !status.is_empty())
@@ -270,14 +297,15 @@ pub fn has_dirty_work(repository: &Repository) -> Result<bool, Error> {
 /// The journal retains the exact commit identity. If the guarded board write
 /// refuses, `rollback` restores that commit to the lane.
 #[derive(Debug)]
-pub struct ParkedRelease {
+pub struct ParkedRelease<'a> {
     parked: wire::body::TaskParkedCommits,
     root: PathBuf,
+    ambient: &'a Ambient,
     before: String,
     snapshot: Option<snapshot::Captured>,
 }
 
-impl ParkedRelease {
+impl ParkedRelease<'_> {
     /// Exact durable payload written beside `ClaimFreed`.
     #[must_use]
     pub const fn parked(&self) -> &wire::body::TaskParkedCommits {
@@ -286,17 +314,18 @@ impl ParkedRelease {
 
     /// Undo a prepared release after its board write failed.
     pub fn rollback(self) -> Result<(), Error> {
-        let current = required_read(&self.root, &["rev-parse", "HEAD"], "read parked lane HEAD")?;
+        let root = Worktree::new(&self.root, self.ambient);
+        let current = required_read(root, &["rev-parse", "HEAD"], "read parked lane HEAD")?;
         if current != self.before {
             materialize_and_update(
-                &self.root,
+                root,
                 &self.before,
                 &current,
                 "restore lane after refused task release",
             )?;
         }
         if let Some(snapshot) = &self.snapshot {
-            snapshot.restore(&self.root)?;
+            snapshot.restore(root)?;
         }
         Ok(())
     }
@@ -307,11 +336,12 @@ impl ParkedRelease {
 /// The lane returns to the newest commit it shares with published history.
 /// Dirty work is saved as a separate dangling commit and replayed uncommitted.
 /// Open merges and paused replays must be resolved before releasing possession.
-pub fn prepare_free(
+pub fn prepare_free<'a>(
     repository: &Repository,
+    ambient: &'a Ambient,
     opening: Option<&GitBoundary>,
-) -> Result<Option<ParkedRelease>, Error> {
-    let root = repository.worktree_root();
+) -> Result<Option<ParkedRelease<'a>>, Error> {
+    let root = Worktree::new(repository.worktree_root(), ambient);
     recover_pending(root)?;
     snapshot::require_releasable(root)?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
@@ -345,28 +375,30 @@ pub fn prepare_free(
                 .map(|snapshot| snapshot.commit().to_owned()),
         },
         root: root.to_path_buf(),
+        ambient,
         before,
         snapshot,
     }))
 }
 
 /// Validate planning history before parking in-flight edits for the next phase.
-pub fn prepare_planning_free(
+pub fn prepare_planning_free<'a>(
     repository: &Repository,
+    ambient: &'a Ambient,
     phase: &str,
     opening: Option<&GitBoundary>,
-) -> Result<Option<ParkedRelease>, Error> {
-    let root = repository.worktree_root();
+) -> Result<Option<ParkedRelease<'a>>, Error> {
+    let root = Worktree::new(repository.worktree_root(), ambient);
     recover_pending(root)?;
     snapshot::require_releasable(root)?;
     require_planning_opening(phase, false, opening)?;
     let head = required_read(root, &["rev-parse", "HEAD"], "read planning lane HEAD")?;
     prepare_completion_target(root, phase, opening, &head, None)?;
-    prepare_free(repository, opening)
+    prepare_free(repository, ambient, opening)
 }
 
 fn published_reference(
-    root: &Path,
+    root: Worktree<'_>,
     opening: Option<&GitBoundary>,
 ) -> Result<Option<String>, Error> {
     let Some(target) = resolve_target(root)? else {
@@ -379,7 +411,7 @@ fn published_reference(
     )?))
 }
 
-fn rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Error> {
+fn rev_list(root: Worktree<'_>, baseline: &str, head: &str) -> Result<Vec<String>, Error> {
     let listed = required_read(
         root,
         &["rev-list", "--reverse", &format!("{baseline}..{head}")],
@@ -389,16 +421,31 @@ fn rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Erro
 }
 
 /// Safely advance a clean lane before allocator possession is minted.
-pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
-    prepare_claim_observed(repository, LooseCommits::Refuse, || Ok(()), |_| Ok(()))
+pub fn prepare_claim(repository: &Repository, ambient: &Ambient) -> Result<GitBoundary, Error> {
+    prepare_claim_observed(
+        repository,
+        ambient,
+        LooseCommits::Refuse,
+        || Ok(()),
+        |_| Ok(()),
+    )
 }
 
 /// Measure a named claim, adopting loose commits or advancing a clean lane.
 ///
 /// Explicit capture and steal use the allocator's opening-boundary transaction,
 /// but unlike allocation they may intentionally attach already-committed work.
-pub fn prepare_explicit_claim(repository: &Repository) -> Result<ClaimPreparation, Error> {
-    let boundary = prepare_claim_observed(repository, LooseCommits::Adopt, || Ok(()), |_| Ok(()))?;
+pub fn prepare_explicit_claim(
+    repository: &Repository,
+    ambient: &Ambient,
+) -> Result<ClaimPreparation<'static>, Error> {
+    let boundary = prepare_claim_observed(
+        repository,
+        ambient,
+        LooseCommits::Adopt,
+        || Ok(()),
+        |_| Ok(()),
+    )?;
     Ok(ClaimPreparation {
         boundary,
         restore: None,
@@ -406,20 +453,21 @@ pub fn prepare_explicit_claim(repository: &Repository) -> Result<ClaimPreparatio
 }
 /// Claim-side Git work prepared before the guarded claim fact commits.
 #[derive(Debug)]
-pub struct ClaimPreparation {
+pub struct ClaimPreparation<'a> {
     pub boundary: GitBoundary,
-    restore: Option<ParkedRestore>,
+    restore: Option<ParkedRestore<'a>>,
 }
 
 #[derive(Debug)]
-struct ParkedRestore {
+struct ParkedRestore<'a> {
     root: PathBuf,
+    ambient: &'a Ambient,
     before: String,
     restored: String,
     report: wire::intent::ClaimTransplant,
 }
 
-impl ClaimPreparation {
+impl ClaimPreparation<'_> {
     /// What the claim did with the task's parked commits, when it had any.
     #[must_use]
     pub fn transplant(&self) -> Option<&wire::intent::ClaimTransplant> {
@@ -431,11 +479,8 @@ impl ClaimPreparation {
         let Some(restore) = self.restore else {
             return Ok(());
         };
-        let current = required_read(
-            &restore.root,
-            &["rev-parse", "HEAD"],
-            "read restored lane HEAD",
-        )?;
+        let root = Worktree::new(&restore.root, restore.ambient);
+        let current = required_read(root, &["rev-parse", "HEAD"], "read restored lane HEAD")?;
         if current != restore.restored {
             return Err(Error::fault(
                 "git::parked-rollback-head-moved",
@@ -446,7 +491,7 @@ impl ClaimPreparation {
             ));
         }
         transplant::abandon(
-            &restore.root,
+            root,
             &restore.before,
             "restore lane after refused parked claim",
         )
@@ -458,18 +503,19 @@ impl ClaimPreparation {
 /// The commits are cherry-picked, oldest first, onto whatever HEAD the claim
 /// fast-forwarded to. A conflict does not refuse the claim: Git's cherry-pick
 /// stays paused in the worktree for the claimant, and the report says so.
-pub fn prepare_task_claim(
+pub fn prepare_task_claim<'a>(
     repository: &Repository,
+    ambient: &'a Ambient,
     parked: Option<&wire::body::TaskParkedCommits>,
-) -> Result<ClaimPreparation, Error> {
-    let root = repository.worktree_root();
+) -> Result<ClaimPreparation<'a>, Error> {
+    let root = Worktree::new(repository.worktree_root(), ambient);
     let before = required_read(root, &["rev-parse", "HEAD"], "read pre-claim lane HEAD")?;
     if let Some(parked) = parked {
         for commit in parked.commits.iter().chain(parked.snapshot.iter()) {
             transplant::require_object(root, commit)?;
         }
     }
-    let mut boundary = prepare_claim(repository)?;
+    let mut boundary = prepare_claim(repository, ambient)?;
     let Some(parked) = parked else {
         return Ok(ClaimPreparation {
             boundary,
@@ -495,6 +541,7 @@ pub fn prepare_task_claim(
         boundary,
         restore: Some(ParkedRestore {
             root: root.to_path_buf(),
+            ambient,
             before,
             restored: replayed.head,
             report: replayed.report,
@@ -518,11 +565,12 @@ enum LooseCommits {
 
 fn prepare_claim_observed(
     repository: &Repository,
+    ambient: &Ambient,
     loose_commits: LooseCommits,
     mut preflight: impl FnMut() -> Result<(), Error>,
     mut observe: impl FnMut(&GitBoundary) -> Result<(), Error>,
 ) -> Result<GitBoundary, Error> {
-    let root = repository.worktree_root();
+    let root = Worktree::new(repository.worktree_root(), ambient);
     recover_pending(root)?;
     require_clean_or(root, "task next", UNOWNED_WORK_REMEDY)?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
@@ -611,27 +659,29 @@ fn prepare_claim_observed(
 /// The resident publishes the returned note in the launch transition and in
 /// the durable session identity. GIT-04 leaves no failure to propagate, but its
 /// safe no-op is still observable rather than becoming an invisible decision.
-pub fn advance_at_launch(repository: &Repository) -> LaunchAdvance {
-    launch::advance(repository.worktree_root())
+pub fn advance_at_launch(repository: &Repository, ambient: &Ambient) -> LaunchAdvance {
+    launch::advance(Worktree::new(repository.worktree_root(), ambient))
 }
 
 /// Publish an allocator-authenticated phase, including an owned merge resolution.
 pub fn publish_claimed(
     repository: &Repository,
+    ambient: &Ambient,
     meta: Metadata<'_>,
     active: &board::Active<'_>,
     opening: Option<&GitBoundary>,
 ) -> Result<GitBoundary, Error> {
-    publish_inner(repository, meta, Some(active), opening)
+    publish_inner(repository, ambient, meta, Some(active), opening)
 }
 
 fn publish_inner(
     repository: &Repository,
+    ambient: &Ambient,
     meta: Metadata<'_>,
     resolution: Option<&board::Active<'_>>,
     opening: Option<&GitBoundary>,
 ) -> Result<GitBoundary, Error> {
-    let root = repository.worktree_root();
+    let root = Worktree::new(repository.worktree_root(), ambient);
     recover_pending(root)?;
     let open_merge = try_read(root, &["rev-parse", "--verify", "MERGE_HEAD"])?;
     let resolution_state = open_merge.is_some() || resolution::has_state(root)?;
@@ -681,7 +731,7 @@ fn publish_inner(
             },
             &message,
         )?;
-        let admission = Admission::resolve(repository, &integrated)?;
+        let admission = Admission::resolve(repository, ambient, &integrated)?;
         let (integrated, published_upstream) = publish_with_retry(
             root,
             &target,
@@ -712,7 +762,7 @@ fn publish_inner(
     let message = compose_message(meta);
     // Bind the authored tree and any non-empty lane command before the merge.
     // An empty lane declaration deliberately defers to each integrated tree.
-    let admission = Admission::resolve(repository, &agent_head)?;
+    let admission = Admission::resolve(repository, ambient, &agent_head)?;
     let integrated = integrate(root, &agent_head, &upstream_head, &message, meta.label)?;
     let (integrated, published_upstream) = publish_with_retry(
         root,
@@ -755,7 +805,7 @@ fn completion_dirty_remedy(meta: Metadata<'_>) -> String {
 }
 
 fn prepare_completion_target(
-    root: &Path,
+    root: Worktree<'_>,
     phase: &str,
     opening: Option<&GitBoundary>,
     observed_head: &str,
@@ -809,7 +859,7 @@ fn require_planning_opening(
 }
 
 fn require_planning_synchronization(
-    root: &Path,
+    root: Worktree<'_>,
     phase: &str,
     opening: Option<&GitBoundary>,
     observed_head: &str,
@@ -891,15 +941,17 @@ fn boundary(
 /// repository, so that branch is the baseline and nothing is fetched. A lane
 /// that declares no pairing integrates into `origin`'s HEAD branch; a
 /// repository with no `origin` then has no target.
-fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
+fn resolve_target(root: Worktree<'_>) -> Result<Option<Target>, Error> {
     let lane = required_read(
         root,
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
         "resolve current branch",
     )?;
-    let environment = ambient_environment()
+    let environment = root
+        .ambient
+        .environment()
         .map_err(|error| Error::fault("git::environment-invalid", error.to_string()))?;
-    let declared = crate::git_shadow::declared_pairing(root, &lane, &environment)
+    let declared = crate::git_shadow::declared_pairing(&root, &lane, &environment)
         .map_err(|error| Error::fault("git::pairing-invalid", error.to_string()))?;
     if let Some(pairing) = declared.as_ref().filter(|pairing| pairing.is_local()) {
         return Ok(Some(Target {
@@ -952,7 +1004,7 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
     }))
 }
 
-fn fetch(root: &Path, target: &Target) -> Result<(), Error> {
+fn fetch(root: Worktree<'_>, target: &Target) -> Result<(), Error> {
     if target.remote == "." {
         // The baseline is a branch of this repository: there is nothing to fetch.
         return Ok(());
@@ -980,7 +1032,7 @@ fn fetch(root: &Path, target: &Target) -> Result<(), Error> {
     }
 }
 
-fn ahead_count(root: &Path, baseline: &str) -> Result<u32, Error> {
+fn ahead_count(root: Worktree<'_>, baseline: &str) -> Result<u32, Error> {
     let value = required_read(
         root,
         &["rev-list", "--count", &format!("{baseline}..HEAD")],
@@ -992,7 +1044,7 @@ fn ahead_count(root: &Path, baseline: &str) -> Result<u32, Error> {
 }
 
 fn integrate(
-    root: &Path,
+    root: Worktree<'_>,
     agent_head: &str,
     upstream_head: &str,
     message: &str,
@@ -1040,7 +1092,7 @@ fn integrate(
 }
 
 fn synthesize_and_update(
-    root: &Path,
+    root: Worktree<'_>,
     treeish: &str,
     first_parent: &str,
     second_parent: &str,
@@ -1070,7 +1122,7 @@ fn synthesize_and_update(
 }
 
 fn create_merge_commit(
-    root: &Path,
+    root: Worktree<'_>,
     tree: &str,
     first_parent: &str,
     second_parent: &str,
@@ -1099,7 +1151,7 @@ fn create_merge_commit(
 }
 
 fn later_parent_date(
-    root: &Path,
+    root: Worktree<'_>,
     first_parent: &str,
     second_parent: &str,
 ) -> Result<String, Error> {
@@ -1112,7 +1164,7 @@ fn later_parent_date(
     })
 }
 
-fn commit_date(root: &Path, commit: &str) -> Result<(i64, String), Error> {
+fn commit_date(root: Worktree<'_>, commit: &str) -> Result<(i64, String), Error> {
     let observed = required_read(
         root,
         &["show", "-s", "--format=%ct %cI", commit],
@@ -1151,13 +1203,13 @@ struct MergeTree {
     conflicts: Vec<String>,
 }
 
-fn merge_tree(root: &Path, left: &str, right: &str) -> Result<MergeTree, Error> {
+fn merge_tree(root: Worktree<'_>, left: &str, right: &str) -> Result<MergeTree, Error> {
     merge_tree_from(root, None, left, right)
 }
 
 /// Three-way merge tree over an explicit base, or the merge base when `None`.
 fn merge_tree_from(
-    root: &Path,
+    root: Worktree<'_>,
     base: Option<&str>,
     left: &str,
     right: &str,
@@ -1196,7 +1248,7 @@ struct Publication<'a> {
 }
 
 fn publish_with_retry(
-    root: &Path,
+    root: Worktree<'_>,
     target: &Target,
     mut integrated: String,
     mut upstream_head: String,
@@ -1209,7 +1261,7 @@ fn publish_with_retry(
         label,
         admission,
     } = publication;
-    admission.admit(repository, &integrated, label)?;
+    admission.admit(repository, root.ambient, &integrated, label)?;
     let mut pushed = push(root, target, &integrated, &upstream_head)?;
     if pushed.success() {
         return Ok((integrated, upstream_head));
@@ -1233,7 +1285,7 @@ fn publish_with_retry(
         if fresh != upstream_head {
             integrated = integrate_retry(root, &integrated, &fresh, message, label)?;
             upstream_head = fresh;
-            admission.admit(repository, &integrated, label)?;
+            admission.admit(repository, root.ambient, &integrated, label)?;
         }
         pushed = push(root, target, &integrated, &upstream_head)?;
         if pushed.success() {
@@ -1264,7 +1316,7 @@ fn publish_with_retry(
 }
 
 fn integrate_retry(
-    root: &Path,
+    root: Worktree<'_>,
     integrated: &str,
     fresh: &str,
     message: &str,
@@ -1290,7 +1342,12 @@ fn integrate_retry(
     synthesize_and_update(root, &computed.tree, fresh, integrated, message, label)
 }
 
-fn push(root: &Path, target: &Target, commit: &str, expected: &str) -> Result<GitOutput, Error> {
+fn push(
+    root: Worktree<'_>,
+    target: &Target,
+    commit: &str,
+    expected: &str,
+) -> Result<GitOutput, Error> {
     if !is_ancestor(root, expected, commit)? {
         return Err(Error::refusal(
             "git::publish-non-fast-forward",

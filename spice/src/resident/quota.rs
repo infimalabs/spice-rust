@@ -15,6 +15,7 @@ use sill::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
+use spice::ambient::Ambient;
 use tokio::sync::{mpsc, watch};
 
 const RUNTIME_LIMIT: Duration = Duration::from_secs(30);
@@ -227,16 +228,13 @@ struct Settings {
 }
 
 impl Settings {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the quota probe's production rim captures the resident environment once"
-    )]
-    fn production(binary: impl Into<OsString>, extension: PathBuf) -> Self {
+    fn production(binary: impl Into<OsString>, extension: PathBuf, ambient: &Ambient) -> Self {
         Self {
             binary: binary.into(),
             extension,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            environment: Environment::new(std::env::vars_os())
+            environment: ambient
+                .environment()
                 .expect("the inherited process environment has unique nonempty keys"),
         }
     }
@@ -327,8 +325,12 @@ impl SampleFailure {
 }
 
 impl Runtime {
-    pub(super) fn start(binary: impl Into<OsString>, extension: PathBuf) -> Self {
-        let settings = Settings::production(binary, extension);
+    pub(super) fn start(
+        binary: impl Into<OsString>,
+        extension: PathBuf,
+        ambient: &Ambient,
+    ) -> Self {
+        let settings = Settings::production(binary, extension, ambient);
         Self::start_with(Arc::new(move |cancellation| {
             sample(&settings, cancellation)
         }))

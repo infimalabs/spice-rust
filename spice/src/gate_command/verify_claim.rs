@@ -10,6 +10,7 @@ use std::fmt;
 use std::path::Path;
 
 use board::Entry;
+use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::{Actor, CanonicalUuid, Instant, ResidencyHead};
 
@@ -21,6 +22,7 @@ const REPAIR: &str = "claim a task whose current workflow phase is verify in thi
 
 pub(super) fn admit_current_worktree(
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Result<(), Failure> {
     let current = std::env::current_dir().map_err(|error| Failure::Fault {
         reason: "gate::working-directory-unavailable",
@@ -30,7 +32,7 @@ pub(super) fn admit_current_worktree(
         reason: spice::repository::ResolveError::REASON,
         detail: error.to_string(),
     })?;
-    let lane = ambient_lane()?;
+    let lane = ambient_lane(ambient)?;
     let state = repository
         .admit_state()
         .map_err(|error| unavailable(error.to_string()))?;
@@ -74,8 +76,8 @@ pub(super) fn launch_after_admission<T, E>(
     Ok(launch())
 }
 
-fn ambient_lane() -> Result<CanonicalUuid, Failure> {
-    let Some(value) = crate::bootstrap_environment(wire::SpiceVariable::Lane.as_str()) else {
+fn ambient_lane(ambient: &Ambient) -> Result<CanonicalUuid, Failure> {
+    let Some(value) = ambient.get(wire::SpiceVariable::Lane.as_str()) else {
         return Err(refused(VerifyClaimRefusal::MissingLane));
     };
     let value = value

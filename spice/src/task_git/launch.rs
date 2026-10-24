@@ -15,11 +15,10 @@
 //! says why both immediately and on later reads.
 
 use std::fmt;
-use std::path::Path;
 
 use super::{
-    Error, ahead_count, fetch, is_ancestor, materialize_and_update, recover_pending, required_read,
-    resolve_target,
+    Error, Worktree, ahead_count, fetch, is_ancestor, materialize_and_update, recover_pending,
+    required_read, resolve_target,
 };
 
 /// What the launch boundary did to the lane.
@@ -76,7 +75,7 @@ impl fmt::Display for LaunchSkip {
 }
 
 /// Advance the lane if every rule allows it, reporting what happened.
-pub(super) fn advance(root: &Path) -> LaunchAdvance {
+pub(super) fn advance(root: Worktree<'_>) -> LaunchAdvance {
     match attempt(root) {
         Ok(advance) => advance,
         Err(skip) => LaunchAdvance::Skipped(skip),
@@ -89,7 +88,7 @@ pub(super) fn advance(root: &Path) -> LaunchAdvance {
 /// resolve, then clean, then fetch, then inspect, then advance. Every step that
 /// can fail names the note it fails into at the call site, so no reader has to
 /// hold the mapping in their head.
-fn attempt(root: &Path) -> Result<LaunchAdvance, LaunchSkip> {
+fn attempt(root: Worktree<'_>) -> Result<LaunchAdvance, LaunchSkip> {
     recover_pending(root).map_err(uninspectable)?;
     let target = resolve_target(root)
         .map_err(uninspectable)?
@@ -125,7 +124,7 @@ fn attempt(root: &Path) -> Result<LaunchAdvance, LaunchSkip> {
 /// Both have commits the baseline lacks, and neither can fast-forward, but they
 /// are different situations for the operator: one lane has work to publish and
 /// the other has work to publish *and* work to integrate first.
-fn ahead_or_diverged(root: &Path, baseline: &str) -> LaunchSkip {
+fn ahead_or_diverged(root: Worktree<'_>, baseline: &str) -> LaunchSkip {
     match is_ancestor(root, baseline, "HEAD") {
         Ok(true) => LaunchSkip::Ahead,
         Ok(false) => LaunchSkip::Diverged,
@@ -133,7 +132,7 @@ fn ahead_or_diverged(root: &Path, baseline: &str) -> LaunchSkip {
     }
 }
 
-fn read_commit(root: &Path, revision: &str) -> Result<String, LaunchSkip> {
+fn read_commit(root: Worktree<'_>, revision: &str) -> Result<String, LaunchSkip> {
     required_read(root, &["rev-parse", revision], "read commit").map_err(uninspectable)
 }
 

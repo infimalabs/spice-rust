@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use clap::ArgMatches;
 use serde::Serialize;
+use spice::ambient::Ambient;
 use spice::config::LoadError;
 use spice::repository::Repository;
 use wire::body::{
@@ -16,6 +17,7 @@ use wire::{
 };
 
 use crate::cli::Contract;
+use crate::command_client::Host;
 
 mod mining;
 pub(crate) mod view;
@@ -323,6 +325,7 @@ pub(crate) fn report(
     matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<view::TasteView> {
     let page = match crate::read_page::Page::from_matches(matches, &["taste"]) {
         Ok(page) => page,
@@ -374,7 +377,7 @@ pub(crate) fn report(
             }
         }
     };
-    match snapshot::<view::TasteView>(contract, configuration, query) {
+    match snapshot::<view::TasteView>(contract, configuration, query, ambient) {
         Ok((_, reply)) => match view::project(reply.body, page, name.as_ref()) {
             Ok(body) => Outcome::Reply(Reply {
                 position: reply.position,
@@ -391,6 +394,7 @@ pub(crate) fn add(
     matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<TaskAnswer> {
     let evidence = matches
         .get_one::<String>("TEXT")
@@ -425,7 +429,7 @@ pub(crate) fn add(
         evidence, surface.location, surface.digest,
     );
     submit_plan(
-        &repository,
+        Host::new(&repository, ambient),
         contract,
         TaskAdd {
             preparation: None,
@@ -460,6 +464,7 @@ pub(crate) fn drop(
     matches: &ArgMatches,
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
+    ambient: &Ambient,
 ) -> Outcome<TaskAnswer> {
     let written = matches
         .get_one::<String>("NAME")
@@ -479,11 +484,15 @@ pub(crate) fn drop(
         Ok(origin) => origin,
         Err(outcome) => return retag(outcome),
     };
-    let (repository, reply) =
-        match snapshot::<TaskAnswer>(contract, configuration, SnapshotQuery::Curation(&name)) {
-            Ok(snapshot) => snapshot,
-            Err(outcome) => return outcome,
-        };
+    let (repository, reply) = match snapshot::<TaskAnswer>(
+        contract,
+        configuration,
+        SnapshotQuery::Curation(&name),
+        ambient,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
     let Some(row) = reply.body.tastes.iter().find(|row| row.name == name) else {
         return refusal(
             "taste::unknown",
@@ -545,7 +554,7 @@ pub(crate) fn drop(
         clearances = clearances,
     );
     submit_plan(
-        &repository,
+        Host::new(&repository, ambient),
         contract,
         TaskAdd {
             preparation: None,
@@ -621,12 +630,14 @@ fn snapshot<B>(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
     query: SnapshotQuery<'_>,
+    ambient: &Ambient,
 ) -> Result<(Repository, Reply<TasteSnapshot>), Outcome<B>> {
     let repository = current_repository()?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
-    let epoch = crate::command_client::authenticate(state.serve(), contract).map_err(retag)?;
+    let epoch =
+        crate::command_client::authenticate(state.serve(), contract, ambient).map_err(retag)?;
     let surface =
         Surface::scoped(&repository, configuration).map_err(|error| load_failure(&error))?;
     let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
@@ -992,8 +1003,8 @@ fn locus_text(locus: &wire::body::TranscriptLocus) -> String {
     }
 }
 
-fn submit_plan(repository: &Repository, contract: &Contract, plan: TaskAdd) -> Outcome<TaskAnswer> {
-    match crate::board_command::submit_task_add(repository, contract, plan) {
+fn submit_plan(host: Host<'_>, contract: &Contract, plan: TaskAdd) -> Outcome<TaskAnswer> {
+    match crate::board_command::submit_task_add(host, contract, plan) {
         Outcome::Reply(reply) => match reply.body {
             CommandAnswer::Task(answer) => Outcome::Reply(Reply {
                 position: reply.position,

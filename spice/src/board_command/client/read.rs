@@ -10,10 +10,7 @@ mod room;
 pub(in crate::board_command) use room::{TaskShowRoom, claim_room_context};
 use room::{resumes_in_room, task_show_room};
 
-pub(super) fn client_status(
-    repository: &Repository,
-    contract: &Contract,
-) -> Outcome<CommandAnswer> {
+pub(super) fn client_status(repository: Host<'_>, contract: &Contract) -> Outcome<CommandAnswer> {
     match crate::command_client::execute_typed(
         repository,
         contract,
@@ -41,7 +38,7 @@ pub(super) fn client_status(
 }
 
 pub(super) fn client_list(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -76,7 +73,7 @@ pub(super) fn client_list(
 }
 
 pub(super) fn client_show(
-    repository: &Repository,
+    repository: Host<'_>,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
@@ -281,7 +278,7 @@ fn read_budget(
 }
 
 fn task_show_artifacts(
-    repository: &Repository,
+    repository: Host<'_>,
     task: &BoardTask,
 ) -> Result<Vec<artifact::Artifact>, Outcome<CommandAnswer>> {
     let state = repository
@@ -295,7 +292,7 @@ fn task_show_artifacts(
 
 /// Resolve every steering key on one task record inside one journal snapshot.
 fn task_show_origin_context(
-    repository: &Repository,
+    repository: Host<'_>,
     keys: &[&str],
 ) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {
     if keys.is_empty() {
@@ -337,7 +334,7 @@ fn task_show_origin_context(
 /// Every born principal's recorded name, read from the local journal, so a
 /// task's history names its human authors.
 fn task_show_principals(
-    repository: &Repository,
+    repository: Host<'_>,
 ) -> Result<PrincipalDirectory, Outcome<CommandAnswer>> {
     let state = repository
         .admit_state()

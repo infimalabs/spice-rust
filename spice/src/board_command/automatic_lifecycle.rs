@@ -37,7 +37,7 @@ pub(crate) struct AllocationPolicy<'a> {
 pub(crate) fn claim_automatic(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
-    repository: &Repository,
+    repository: Host<'_>,
     seat: AutomaticSeat,
     policy: AllocationPolicy<'_>,
 ) -> Result<AutomaticClaim, Outcome<CommandAnswer>> {
@@ -67,23 +67,23 @@ pub(crate) fn claim_automatic(
     }
 }
 
-struct PreparedClaim {
+struct PreparedClaim<'a> {
     write: JournalWrite,
     selected: Entry,
     entries: Vec<Entry>,
     task: TaskHandle,
     born: TaskStamp,
     actor: Actor,
-    git: spice::task_git::ClaimPreparation,
+    git: spice::task_git::ClaimPreparation<'a>,
 }
 
-fn prepare_claim(
+fn prepare_claim<'a>(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
-    repository: &Repository,
+    repository: Host<'a>,
     seat: AutomaticSeat,
     policy: AllocationPolicy<'_>,
-) -> Result<PreparedClaim, Outcome<CommandAnswer>> {
+) -> Result<PreparedClaim<'a>, Outcome<CommandAnswer>> {
     let AutomaticSeat {
         epoch,
         lane,
@@ -110,6 +110,7 @@ fn prepare_claim(
     // claim does, so a release followed by an automatic wake loses nothing.
     let git = spice::task_git::prepare_task_claim(
         &lane_repository,
+        repository.ambient,
         task_parked_commits(&snapshot, &born),
     )
     .map_err(task_git_outcome)?;
@@ -252,7 +253,7 @@ fn select_task(
 /// The lane's own repository, refused unless it is still the resident's worktree.
 /// A refusal parks only this lane; a fault would end the resident for every lane.
 fn lane_repository(
-    repository: &Repository,
+    repository: Host<'_>,
     worktree: &str,
 ) -> Result<Repository, Outcome<CommandAnswer>> {
     let lane_repository = Repository::discover(worktree)
@@ -328,7 +329,7 @@ fn automatic_answer(
 /// claim replays it again.
 pub(crate) fn release_automatic(
     bus: &Bus,
-    repository: &Repository,
+    repository: Host<'_>,
     automatic: &AutomaticClaim,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let ActiveClaim {
@@ -341,8 +342,9 @@ pub(crate) fn release_automatic(
     let at = current_instant()?;
     let origin = task_origin(&automatic.task)?;
     let lane_repository = lane_repository(repository, &worktree)?;
-    let parked = spice::task_git::prepare_free(&lane_repository, opening.as_ref())
-        .map_err(task_git_outcome)?;
+    let parked =
+        spice::task_git::prepare_free(&lane_repository, repository.ambient, opening.as_ref())
+            .map_err(task_git_outcome)?;
     let mut write = JournalWrite::new(actor.clone(), origin, at, Producer::CommandDoor);
     guard(
         &mut write,
