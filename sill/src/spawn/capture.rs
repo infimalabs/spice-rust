@@ -1,3 +1,4 @@
+use super::frame_queue::{self, FrameReceiver, FrameSender, SendError};
 use super::{CapturedOutput, IoFailure, ProcessState, WAKE_BYTE, fail_observation, platform};
 use crate::observe::{
     Observation, ObservationFailure, ObservationStall, ObservedRecord, OutputStream,
@@ -349,7 +350,7 @@ struct SelectedFramer {
     sink_deadline: Duration,
     record: Vec<u8>,
     discarding: bool,
-    sender: mpsc::SyncSender<Frame>,
+    sender: FrameSender<Frame>,
     observer: Arc<dyn RecordObserver>,
     failure: Arc<FailureContext>,
 }
@@ -366,7 +367,7 @@ impl SelectedFramer {
         let limit = observation.frame_limit();
         let capacity = observation.queue_capacity();
         let sink_deadline = observation.sink_deadline();
-        let (sender, receiver) = mpsc::sync_channel(capacity);
+        let (sender, receiver) = frame_queue::bounded(capacity);
         start_observer_worker(
             receiver,
             ObserverWorker {
@@ -448,38 +449,28 @@ impl SelectedFramer {
         self.submit(frame)
     }
 
-    fn submit(&self, mut frame: Frame) -> bool {
+    fn submit(&self, frame: Frame) -> bool {
         let started = Instant::now();
-        loop {
-            match self.sender.try_send(frame) {
-                Ok(()) => return true,
-                Err(mpsc::TrySendError::Full(returned)) => {
-                    if started.elapsed() >= self.sink_deadline {
-                        self.fail(ObservationFailure::SinkBackpressure {
-                            stream: self.stream,
-                            capacity: self.capacity,
-                            deadline: self.sink_deadline,
-                            stall: Box::new(ObservationStall {
-                                elapsed: started.elapsed(),
-                                waiting: "queue admission",
-                                stage: self.observer.stage(),
-                            }),
-                        });
-                        return false;
-                    }
-                    frame = returned;
-                    std::thread::park_timeout(
-                        self.sink_deadline
-                            .saturating_sub(started.elapsed())
-                            .min(Duration::from_millis(1)),
-                    );
-                }
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    self.fail(ObservationFailure::ObserverLost {
-                        stream: self.stream,
-                    });
-                    return false;
-                }
+        match self.sender.send_by(frame, started, self.sink_deadline) {
+            Ok(()) => true,
+            Err(SendError::Full(_)) => {
+                self.fail(ObservationFailure::SinkBackpressure {
+                    stream: self.stream,
+                    capacity: self.capacity,
+                    deadline: self.sink_deadline,
+                    stall: Box::new(ObservationStall {
+                        elapsed: started.elapsed(),
+                        waiting: "queue admission",
+                        stage: self.observer.stage(),
+                    }),
+                });
+                false
+            }
+            Err(SendError::Disconnected(_)) => {
+                self.fail(ObservationFailure::ObserverLost {
+                    stream: self.stream,
+                });
+                false
             }
         }
     }
@@ -499,7 +490,7 @@ struct ObserverWorker {
     wake: std::os::unix::net::UnixDatagram,
 }
 
-fn start_observer_worker(receiver: mpsc::Receiver<Frame>, worker: ObserverWorker) {
+fn start_observer_worker(receiver: FrameReceiver<Frame>, worker: ObserverWorker) {
     let ObserverWorker {
         stream,
         capacity,

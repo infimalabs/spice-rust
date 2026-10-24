@@ -1366,6 +1366,7 @@ mod tests {
 
 #[cfg(unix)]
 mod capture;
+mod frame_queue;
 #[cfg(unix)]
 mod guardian;
 #[cfg(unix)]
