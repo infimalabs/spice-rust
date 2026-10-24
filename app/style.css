@@ -257,22 +257,33 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-horn-tab--down { border-block-end-width: var(--message-rail); border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
 .app-horn-tab--up { border-block-start-width: var(--message-rail); border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
-/* A tab's mark is a small dot seated on its count badge's top inline-end
-   corner, as the renewal dot sits on a lane menu's corner, coloured by the most
-   actionable state its partition holds: danger for work only the operator can
-   unblock, warning for a proposal awaiting decision, live for a Design ready
-   for a new proposal, warning again for work the operator deferred. Out of
-   flow, it never changes the tab's box, badge, label, or focus ring. */
+/* A tab's mark is a small dot seated on its count badge's rim at the top
+   inline-end diagonal, its center half a pixel outside the rim, so the round
+   badge reads as cutting through it while its thin ring clears the top of a
+   second digit, as the renewal dot sits on a lane menu's corner. A badge is a
+   circle, or a pill ending in the same half-circle, so the rim at 45° lies
+   (1 - √2/2)·r inside each edge, with r half the badge size, and each pixel
+   of lift moves the center √2/2 px outward on each axis. The dot is coloured
+   by the most actionable state its partition holds: danger for work only the
+   operator can unblock, warning for a proposal awaiting decision, live for a
+   Design ready for a new proposal, warning again for work the operator
+   deferred. Out of flow, it never changes the tab's box, badge, label, or
+   focus ring. */
 .app-horn-tab[data-work-mark] .app-count-badge { position: relative; }
 .app-horn-tab[data-work-mark] .app-count-badge::after {
+  --work-mark-size: 5px;
+  --work-mark-lift: .5px;
+  --work-mark-rim-inset: calc(
+    var(--app-count-badge-size) * .1464 - var(--work-mark-size) / 2 - var(--work-mark-lift) * .7071
+  );
   position: absolute;
-  top: -2px;
-  inset-inline-end: -2px;
-  width: 5px;
-  height: 5px;
+  top: var(--work-mark-rim-inset);
+  inset-inline-end: var(--work-mark-rim-inset);
+  width: var(--work-mark-size);
+  height: var(--work-mark-size);
   border-radius: var(--app-radius-circle);
   background: var(--work-mark-color);
-  box-shadow: 0 0 0 1px var(--app-base-control);
+  box-shadow: 0 0 0 .5px var(--app-base-control);
   content: "";
   pointer-events: none;
 }
