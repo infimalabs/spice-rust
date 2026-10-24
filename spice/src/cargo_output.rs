@@ -40,6 +40,15 @@ pub const LANE_OUTPUT_BOUND: u64 = 24 << 30;
 /// Shortest pause between two reclamation passes over one worktree.
 pub const RECLAIM_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
+/// How long a unit stays out of reclamation after its last use.
+///
+/// One gate prove's build cache can exceed [`LANE_OUTPUT_BOUND`] on its own,
+/// so a pass ordered only by least recent use would empty what a prove built
+/// minutes earlier, and a retry after a timed-out prebuild would start cold. A
+/// unit used within this window is kept even while the footprint stays over
+/// the bound.
+pub const RECENT_USE: Duration = Duration::from_secs(60 * 60);
+
 /// Cargo's per-profile locks; a directory directly holding any of them is a unit.
 const CARGO_LOCKS: [&str; 3] = [".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock"];
 
@@ -90,6 +99,8 @@ pub struct Reclamation {
     pub removed: Vec<Removed>,
     /// Units a live Cargo held while the footprint was still over the bound.
     pub busy: Vec<PathBuf>,
+    /// Units used within [`RECENT_USE`] while the footprint was still over the bound.
+    pub recent: Vec<PathBuf>,
 }
 
 /// One unit a pass emptied.
@@ -138,19 +149,22 @@ pub fn measure(target: &Path, bound: u64) -> io::Result<Footprint> {
 /// Empty least recently used units until `footprint` fits its bound.
 ///
 /// A unit whose Cargo locks are not all free is left whole and reported busy.
+/// A unit used within [`RECENT_USE`] of `now` is left whole and reported recent.
 ///
 /// # Errors
 ///
 /// Returns the first refusal opening a lock or removing an entry; units
 /// emptied before it stay emptied.
-pub fn reclaim(footprint: &Footprint) -> io::Result<Reclamation> {
+pub fn reclaim(footprint: &Footprint, now: SystemTime) -> io::Result<Reclamation> {
     let mut reclamation = Reclamation {
         bound: footprint.bound,
         before: footprint.bytes,
         after: footprint.bytes,
         removed: Vec::new(),
         busy: Vec::new(),
+        recent: Vec::new(),
     };
+    let recent_since = now.checked_sub(RECENT_USE).unwrap_or(UNIX_EPOCH);
     let mut order = footprint.units.iter().collect::<Vec<_>>();
     order.sort_by(|left, right| {
         left.last_use
@@ -160,6 +174,10 @@ pub fn reclaim(footprint: &Footprint) -> io::Result<Reclamation> {
     for unit in order {
         if reclamation.after <= footprint.bound {
             break;
+        }
+        if unit.last_use >= recent_since {
+            reclamation.recent.push(unit.path.clone());
+            continue;
         }
         let Some(_held) = hold(&unit.locks)? else {
             reclamation.busy.push(unit.path.clone());
@@ -228,7 +246,7 @@ impl OutputLease {
             Ok(()) => {
                 let pass = if due(&path, now)? {
                     let reclaimed =
-                        measure(target, bound).and_then(|footprint| reclaim(&footprint));
+                        measure(target, bound).and_then(|footprint| reclaim(&footprint, now));
                     record_pass(&mut file, now)?;
                     Pass::Ran(reclaimed)
                 } else {
@@ -451,6 +469,13 @@ impl fmt::Display for Reclamation {
                 formatter,
                 "; left {} units Cargo was using",
                 self.busy.len()
+            )?;
+        }
+        if !self.recent.is_empty() {
+            write!(
+                formatter,
+                "; kept {} units used within the last hour",
+                self.recent.len()
             )?;
         }
         Ok(())

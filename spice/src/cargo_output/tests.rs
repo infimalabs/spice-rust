@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use super::{OutputLease, Pass, RECLAIM_INTERVAL, measure, reclaim};
+use super::{OutputLease, Pass, RECENT_USE, RECLAIM_INTERVAL, measure, reclaim};
 
 /// One scratch directory, removed again when the test that made it ends.
 struct Scratch(PathBuf);
@@ -59,6 +59,11 @@ fn intact(directory: &Path) -> bool {
             .is_file()
 }
 
+/// A pass time at which every unit a test just wrote is past [`RECENT_USE`].
+fn after_recent_use() -> SystemTime {
+    SystemTime::now() + RECENT_USE * 2
+}
+
 #[test]
 fn reclamation_empties_least_recent_units_until_the_footprint_fits() {
     let scratch = scratch("lru");
@@ -87,7 +92,7 @@ fn reclamation_empties_least_recent_units_until_the_footprint_fits() {
         .bytes;
     let bound = whole.bytes - oldest_bytes - 1;
     let footprint = measure(&target, bound).expect("target measures");
-    let reclamation = reclaim(&footprint).expect("reclamation runs");
+    let reclamation = reclaim(&footprint, after_recent_use()).expect("reclamation runs");
 
     assert_eq!(
         reclamation
@@ -117,6 +122,36 @@ fn reclamation_empties_least_recent_units_until_the_footprint_fits() {
 }
 
 #[test]
+fn a_unit_used_within_the_recent_window_survives_an_over_bound_pass() {
+    let scratch = scratch("recent");
+    let target = scratch.0.join("target");
+    let stale = target.join("debug");
+    let recent = target.join("cargo-build/debug");
+    unit(&stale, ".cargo-lock");
+    unit(&recent, ".cargo-build-lock");
+    let now = SystemTime::now();
+    let mut footprint = measure(&target, 0).expect("target measures");
+    for measured in &mut footprint.units {
+        if measured.path == stale {
+            measured.last_use = now - RECENT_USE - Duration::from_secs(1);
+        }
+    }
+
+    let reclamation = reclaim(&footprint, now).expect("reclamation runs");
+
+    assert!(emptied(&stale, ".cargo-lock"), "an idle unit is reclaimed");
+    assert!(
+        intact(&recent),
+        "a unit used within the window keeps its artifacts over the bound"
+    );
+    assert_eq!(reclamation.recent, std::slice::from_ref(&recent));
+    assert!(
+        reclamation.after > reclamation.bound,
+        "the pass reports the footprint it had to leave over the bound"
+    );
+}
+
+#[test]
 fn a_unit_whose_cargo_lock_is_held_is_left_whole() {
     let scratch = scratch("busy");
     let target = scratch.0.join("target");
@@ -129,14 +164,14 @@ fn a_unit_whose_cargo_lock_is_held_is_left_whole() {
     cargo.try_lock().expect("the live Cargo holds its lock");
 
     let footprint = measure(&target, 0).expect("target measures");
-    let reclamation = reclaim(&footprint).expect("reclamation runs");
+    let reclamation = reclaim(&footprint, after_recent_use()).expect("reclamation runs");
 
     assert_eq!(reclamation.busy, std::slice::from_ref(&busy));
     assert!(intact(&busy), "a held unit keeps every artifact");
     assert!(emptied(&idle, ".cargo-lock"));
     drop(cargo);
     let footprint = measure(&target, 0).expect("target remeasures");
-    let reclamation = reclaim(&footprint).expect("reclamation reruns");
+    let reclamation = reclaim(&footprint, after_recent_use()).expect("reclamation reruns");
     assert!(reclamation.busy.is_empty());
     assert!(!busy.join("deps").exists());
 }
