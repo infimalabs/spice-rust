@@ -460,15 +460,8 @@ fn test_shard(
         "--no-run".to_owned(),
         "--message-format=json-render-diagnostics".to_owned(),
     ]);
-    let relative = package.root.strip_prefix(root).map_err(|_| {
-        WorkspaceTestError::new(format!(
-            "Cargo package {:?} root {} escapes {}",
-            package.name,
-            package.root.display(),
-            root.display(),
-        ))
-    })?;
-    let manifest = path_text(&relative.join("Cargo.toml"))?;
+    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let manifest = relative_manifest(&canonical_root, package)?;
     let targets = package
         .targets
         .iter()
@@ -499,11 +492,9 @@ fn test_shard(
     // Workspace-wide feature unification lets any member manifest change the
     // features this shard's units compile with.
     for member in &inventory.packages {
-        if let Ok(relative) = member.root.strip_prefix(root) {
-            authority
-                .input_paths
-                .push(path_text(&relative.join("Cargo.toml"))?);
-        }
+        authority
+            .input_paths
+            .push(relative_manifest(&canonical_root, member)?);
     }
     authority.input_paths.sort();
     authority.input_paths.dedup();
@@ -520,6 +511,22 @@ fn test_shard(
         external_source: authority.external_source,
         reuse: authority.reuse,
     })
+}
+
+/// `package`'s manifest relative to the canonical selected root.
+fn relative_manifest(
+    canonical_root: &Path,
+    package: &PackageInventory,
+) -> Result<String, WorkspaceTestError> {
+    let relative = package.root.strip_prefix(canonical_root).map_err(|_| {
+        WorkspaceTestError::new(format!(
+            "Cargo package {:?} root {} escapes selected root {}",
+            package.name,
+            package.root.display(),
+            canonical_root.display(),
+        ))
+    })?;
+    path_text(&relative.join("Cargo.toml"))
 }
 
 struct CargoPackageInputAuthority {
