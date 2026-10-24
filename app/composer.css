@@ -491,12 +491,13 @@
    flush tab strips above them. The fleet flows right to left, so the later
    console stands to the left and its touching edge is its right one. Only the
    later console draws the dividing rule: its band and pane share one hairline
-   end border in its own soft edge tone, half the app's 1px edge, so the rule
-   wears the left console's flavor, its soft top rule turns down into it, and
-   the tab row above stays open. The earlier band has no start border. The
-   sibling selectors leave both outer fleet edges bare. */
+   end border, half the app's 1px edge, in the page colour the open tab row
+   above shows through, so the rule reads as that head continuing down the
+   seam rather than either console's flavour. The anchor token keeps the
+   body's page colour inside a flavored subtree. The earlier band has no start
+   border. The sibling selectors leave both outer fleet edges bare. */
 .team-surface + .team-surface > .team-toolbar > .team-status-row,
-.team-surface + .team-surface > .team-pane { border-inline-end: .5px solid var(--line-soft); }
+.team-surface + .team-surface > .team-pane { border-inline-end: .5px solid var(--app-anchor-page); }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);
