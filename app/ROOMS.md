@@ -128,8 +128,9 @@ Chat, whose team plane holds its history; a lane with no Chat seat stays a
 plain label.
 
 Every Work tab's count badge, the global and stem totals, a team's total, and
-a group's total, carries at most one dot on its corner, coloured by the most
-actionable state its own partition holds: danger for work only the operator
+a group's total, carries at most one dot seated on its rim at the top
+inline-end diagonal, so the round badge cuts into the dot, coloured by the
+most actionable state its own partition holds: danger for work only the operator
 can unblock (a human-actionable wall or an environment hold), warning for a
 Design whose proposal awaits the operator's decision, and the live tone for a
 Design no lane holds whose pass cycle is ready for a new proposal. A blocked
