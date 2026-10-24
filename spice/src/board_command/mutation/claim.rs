@@ -396,6 +396,8 @@ fn claim_answer(
         })),
         holder: Some(command.actor().clone()),
         expiry: None,
+        acknowledged: None,
+        held: false,
         warnings: board::claim_overlaps(selected, entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
