@@ -882,11 +882,19 @@ fn use_narration(
             ActivityCard::Lifecycle { .. } | ActivityCard::Room { .. } => None,
         })
         .filter_map(|(member, message)| {
-            let narration = crate::narration::narration_utterance(message.activity, &message.text);
             let automatic_speech = message
                 .automatic_speech
                 .as_ref()
                 .and_then(|speech| crate::narration::prepared_utterance(&speech.text));
+            // A hunk the resident classified as an acknowledgement is a direct
+            // response to steering: Narrate voices every word of it, as Speak
+            // does, rather than its edges.
+            let narration = match message.automatic_speech.as_ref().map(|speech| speech.kind) {
+                Some(wire::AutomaticSpeechKind::Acknowledgement) => automatic_speech.clone(),
+                Some(wire::AutomaticSpeechKind::Final) | None => {
+                    crate::narration::narration_utterance(message.activity, &message.text)
+                }
+            };
             (narration.is_some() || automatic_speech.is_some()).then(|| NarrationMessage {
                 lane: message.lane.to_string(),
                 worktree: member.worktree.clone(),

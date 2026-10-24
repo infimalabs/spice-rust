@@ -344,13 +344,17 @@ pub struct AgentProviderError {
     pub retryable: bool,
 }
 
-/// Why one assistant message is eligible for automatic Speak playback.
+/// Why one assistant message is eligible for automatic Speak playback, and
+/// therefore how much of it the text carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AutomaticSpeechKind {
-    /// A vendor-declared completed answer.
+    /// A vendor-declared completed answer without an acknowledged directive:
+    /// the text is its first and last meaningful paragraphs.
     Final,
-    /// One or more positively acknowledged steering directives.
+    /// A hunk answering one or more positively acknowledged steering
+    /// directives, final or not: the text is the whole hunk without its
+    /// protocol headers, and Narrate voices it in place of the card's edges.
     Acknowledgement,
 }
 

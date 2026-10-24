@@ -13,11 +13,13 @@
 //! and a quote or a fence ends the segment around it instead of joining the
 //! sentences on either side.
 //!
-//! Automatic narration speaks only a card's edge segments before its first
-//! list, the same selection the resident makes for Speak-mode utterances, so
-//! one long message cannot hold the single global voice for minutes. A card
-//! that opens with a list speaks that list's first item. Playback the operator
-//! asked for keeps every visible segment.
+//! Automatic narration speaks only a card's edge segments: the first and last
+//! meaningful paragraphs of the whole card, the same selection the resident
+//! makes for Speak-mode final answers, so one long message cannot hold the
+//! single global voice for minutes. List items are detail to read on the card:
+//! a card that opens with a list speaks that list's first item, and a closing
+//! list is never voiced. Playback the operator asked for keeps every visible
+//! segment.
 
 use wire::{AgentActivityKind, AutomaticSpeech};
 
@@ -28,17 +30,19 @@ use wire::{AgentActivityKind, AutomaticSpeech};
 /// itself. A card with one segment speaks it once rather than twice.
 #[must_use]
 pub fn narration_utterance(activity: AgentActivityKind, text: &str) -> Option<String> {
-    match card_segments(activity, text, true).as_slice() {
-        [] => None,
-        [only] => Some(only.clone()),
-        [first, .., last] => Some(format!("{first} {last}")),
-    }
+    let segments = card_segments(activity, text);
+    let first = segments.first()?;
+    let last = segments.iter().skip(1).rev().find(|segment| !segment.list);
+    Some(match last {
+        Some(last) => format!("{} {}", first.text, last.text),
+        None => first.text.clone(),
+    })
 }
 
 /// Every visible word of one rendered card, for playback the operator asked for.
 #[must_use]
 pub fn card_utterance(activity: AgentActivityKind, text: &str) -> Option<String> {
-    joined(card_segments(activity, text, false))
+    joined(card_segments(activity, text))
 }
 
 /// A resident-classified utterance held to the same visible-words contract.
@@ -49,18 +53,29 @@ pub fn card_utterance(activity: AgentActivityKind, text: &str) -> Option<String>
 /// either way; the selection the resident already made is left intact.
 #[must_use]
 pub fn prepared_utterance(prepared: &str) -> Option<String> {
-    joined(segments(prepared, false))
+    joined(segments(prepared))
 }
 
-fn joined(segments: Vec<String>) -> Option<String> {
-    (!segments.is_empty()).then(|| segments.join(" "))
+fn joined(segments: Vec<Segment>) -> Option<String> {
+    (!segments.is_empty()).then(|| {
+        segments
+            .into_iter()
+            .map(|segment| segment.text)
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
 }
 
-/// Visible agent-authored segments of one card, in reading order, ending
-/// before the first list when `until_list` is set.
-fn card_segments(activity: AgentActivityKind, text: &str, until_list: bool) -> Vec<String> {
+/// One visible paragraph, or one list item, of a card.
+struct Segment {
+    list: bool,
+    text: String,
+}
+
+/// Visible agent-authored segments of one card, in reading order.
+fn card_segments(activity: AgentActivityKind, text: &str) -> Vec<Segment> {
     match activity {
-        AgentActivityKind::Prose => segments(text, until_list),
+        AgentActivityKind::Prose => segments(text),
         AgentActivityKind::Tool
         | AgentActivityKind::Reasoning
         | AgentActivityKind::Failure
@@ -72,7 +87,7 @@ fn card_segments(activity: AgentActivityKind, text: &str, until_list: bool) -> V
     }
 }
 
-fn segments(text: &str, until_list: bool) -> Vec<String> {
+fn segments(text: &str) -> Vec<Segment> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut segments = Vec::new();
     let mut lines = Vec::new();
@@ -81,35 +96,36 @@ fn segments(text: &str, until_list: bool) -> Vec<String> {
         let trimmed = line.trim();
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             fenced = !fenced;
-            push_segment(&mut segments, &mut lines);
+            push_segment(&mut segments, &mut lines, false);
             continue;
         }
-        if fenced || trimmed.is_empty() || trimmed.starts_with('>') {
-            if !fenced {
-                push_segment(&mut segments, &mut lines);
-            }
+        if fenced {
             continue;
         }
-        if until_list && let Some(item) = AutomaticSpeech::list_item(trimmed) {
-            if segments.is_empty() && lines.is_empty() {
-                lines.push(spoken_line(item));
-            }
-            break;
+        if trimmed.is_empty() || trimmed.starts_with('>') {
+            push_segment(&mut segments, &mut lines, false);
+            continue;
+        }
+        if AutomaticSpeech::list_item(trimmed).is_some() {
+            push_segment(&mut segments, &mut lines, false);
+            lines.push(spoken_line(trimmed));
+            push_segment(&mut segments, &mut lines, true);
+            continue;
         }
         lines.push(spoken_line(trimmed));
     }
-    push_segment(&mut segments, &mut lines);
+    push_segment(&mut segments, &mut lines, false);
     segments
 }
 
-fn push_segment(segments: &mut Vec<String>, lines: &mut Vec<String>) {
-    let spoken = std::mem::take(lines)
+fn push_segment(segments: &mut Vec<Segment>, lines: &mut Vec<String>, list: bool) {
+    let text = std::mem::take(lines)
         .join(" ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if !spoken.is_empty() {
-        segments.push(spoken);
+    if !text.is_empty() {
+        segments.push(Segment { list, text });
     }
 }
 

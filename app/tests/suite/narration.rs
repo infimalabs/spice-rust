@@ -75,16 +75,31 @@ fn a_quote_between_two_runs_keeps_them_as_separate_edges() {
 }
 
 #[test]
-fn narration_edges_end_at_the_first_list_outside_a_fence() {
+fn narration_edges_skip_lists_outside_a_fence_and_reach_the_closing_paragraph() {
     let listed = "Shipped the fix.\n\n```\n- fenced, not a list\n```\n\nVerified.\n- **Change:** one `line`.\n- Checked.\n\nClosing.";
     assert_eq!(
         narration_utterance(AgentActivityKind::Prose, listed).as_deref(),
-        Some("Shipped the fix. Verified."),
+        Some("Shipped the fix. Closing."),
     );
     assert_eq!(
         card_utterance(AgentActivityKind::Prose, listed).as_deref(),
         Some("Shipped the fix. Verified. Change: one line. Checked. Closing."),
         "playback the operator asks for still reads every segment",
+    );
+    assert_eq!(
+        narration_utterance(AgentActivityKind::Prose, "Shipped the fix.\n\n- one\n- two")
+            .as_deref(),
+        Some("Shipped the fix."),
+        "a closing list is never voiced",
+    );
+    assert_eq!(
+        narration_utterance(
+            AgentActivityKind::Prose,
+            "* First item.\n* Second.\n\nAfterword."
+        )
+        .as_deref(),
+        Some("First item. Afterword."),
+        "an opening list speaks its first item",
     );
     assert_eq!(
         narration_utterance(AgentActivityKind::Prose, "* First item.\n* Second.").as_deref(),

@@ -201,10 +201,15 @@ before focusing the Chat composer.
 The speech slider reads Quiet / Speak / Narrate and the allocation slider Steer
 / Drive / Drain; Up/Right raise and Down/Left lower. A speech selection applies
 to the team's browser-local policy in the input that paints it. Quiet voices
-nothing automatically, Speak voices resident-classified final answers and
-acknowledged steering, and Narrate voices each live card edge; none reads
-fenced code or Markdown marks. A pending allocation command admits no send and
-lights no recipients. Reduced motion removes slider travel, never a state.
+nothing automatically. Speak voices resident-classified final answers and
+acknowledged steering; Narrate voices every live card. Either mode voices a
+card by two rules: a card that acknowledges a steering key is voiced in full
+with its protocol headers removed, and any other card is voiced by its first
+and last meaningful paragraphs, where list items are detail to read (a card
+that opens with a list speaks its first item; a closing list is silent). None
+reads fenced code, quoted lines, or Markdown marks. A pending allocation
+command admits no send and lights no recipients. Reduced motion removes slider
+travel, never a state.
 
 SEND is two optical layers: an emitter spreads an even diffuse field across the
 disc, ending at the glass edge with no ring or hotspot, and a frosted face

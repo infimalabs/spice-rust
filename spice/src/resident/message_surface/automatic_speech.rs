@@ -1,12 +1,15 @@
 //! Reference-equivalent automatic Speak classification for app messages.
 //!
-//! `spice-z` speaks a vendor-final answer or the bodies of positively parsed
-//! ACK packets. It keeps commentary, NAK-only prose, tool activity, history,
-//! and replay silent. Final answers use their first and last visible
-//! paragraphs before any list, or the opening item of a list that leads; ACK
-//! messages use every eligible packet body. This module makes
-//! that selection once at the resident boundary so the browser never guesses
-//! from presentation Markdown.
+//! Two rules voice one prose hunk, and the browser's narration shares them. A
+//! hunk carrying a positively acknowledged steering key is a direct response,
+//! so every visible paragraph is voiced with its protocol headers removed. Any
+//! other final answer voices its edges: the first and last meaningful
+//! paragraphs of the whole hunk, where list items are detail to read on the
+//! card, a hunk that opens with a list speaks that list's first item, and a
+//! closing list is never voiced. Commentary, NAK-only prose, tool activity,
+//! history, and replay stay silent. This module makes that selection once at
+//! the resident boundary so the browser never guesses from presentation
+//! Markdown.
 
 use super::{EventDirectives, PresentationDirectives, PresentationEvent};
 
@@ -51,23 +54,20 @@ pub(super) fn classify(
         },
     );
 
-    if final_answer {
-        let body = without_protocol_headers(&prose.text, &packets);
-        return prepared_edges(&body).map(|text| AutomaticSpeech {
-            kind: AutomaticSpeechKind::Final,
+    let acknowledged = packets.iter().any(|(_, eligible)| *eligible);
+    if !acknowledged && !final_answer {
+        return None;
+    }
+    let body = without_protocol_headers(&prose.text, &packets);
+    if acknowledged {
+        return prepared_all(&body).map(|text| AutomaticSpeech {
+            kind: AutomaticSpeechKind::Acknowledgement,
             text,
         });
     }
-
-    let acknowledged = packet_bodies(&prose.text, &packets)
-        .into_iter()
-        .filter_map(|(body, eligible)| eligible.then_some(body))
-        .filter_map(prepared_all)
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!acknowledged.is_empty()).then_some(AutomaticSpeech {
-        kind: AutomaticSpeechKind::Acknowledgement,
-        text: acknowledged,
+    prepared_edges(&body).map(|text| AutomaticSpeech {
+        kind: AutomaticSpeechKind::Final,
+        text,
     })
 }
 
@@ -77,26 +77,6 @@ impl steer::Standing for EmptyStanding {
     fn disposition(&self, _key: &steer::Key) -> Option<Disposition> {
         None
     }
-}
-
-fn packet_bodies<'a>(text: &'a str, packets: &[(Acknowledgement, bool)]) -> Vec<(&'a str, bool)> {
-    packets
-        .iter()
-        .enumerate()
-        .filter(|(_, (packet, _))| canonical_header(packet))
-        .filter_map(|(index, (packet, eligible))| {
-            let end = packets[index + 1..]
-                .iter()
-                .find(|(next, _)| canonical_header(next))
-                .map_or(text.len(), |(next, _)| next.start);
-            text.get(packet.end..end).map(|body| {
-                (
-                    body.trim_start_matches([' ', '\t', ':', '.', '-', ',']),
-                    *eligible,
-                )
-            })
-        })
-        .collect()
 }
 
 fn without_protocol_headers(text: &str, packets: &[(Acknowledgement, bool)]) -> String {
@@ -138,40 +118,30 @@ fn canonical_header(packet: &Acknowledgement) -> bool {
         })
 }
 
+/// The first and last meaningful paragraphs of a hunk.
+///
+/// The first says what the message is about and the last where it landed;
+/// everything between is detail the operator can read on the card. List items
+/// are detail too, except that a hunk opening with a list speaks that list's
+/// first item; a closing list is never voiced, and a hunk with one meaningful
+/// paragraph speaks it once.
 fn prepared_edges(raw: &str) -> Option<String> {
-    let (prefix, opening_item) = split_at_first_list(raw);
-    let mut paragraphs = speech_paragraphs(prefix);
-    if paragraphs.is_empty() {
-        paragraphs = speech_paragraphs(opening_item);
-    }
-    let selected = match paragraphs.as_slice() {
-        [] => return None,
-        [only] => only.clone(),
-        [first, .., last] => format!("{first} {last}"),
+    let segments = speech_segments(raw);
+    let first = segments.first()?;
+    let last = segments.iter().skip(1).rev().find(|segment| !segment.list);
+    let selected = match last {
+        Some(last) => format!("{} {}", first.text, last.text),
+        None => first.text.clone(),
     };
     prepared_all(&selected)
 }
 
-/// Text before the first list-item line outside a code fence, and that line's
-/// item body.
-fn split_at_first_list(raw: &str) -> (&str, &str) {
-    let mut start = 0;
-    let mut fenced = false;
-    for line in raw.split_inclusive('\n') {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-        } else if !fenced && let Some(item) = AutomaticSpeech::list_item(trimmed) {
-            return (&raw[..start], item);
-        }
-        start += line.len();
-    }
-    (raw, "")
-}
-
 fn prepared_all(raw: &str) -> Option<String> {
-    let paragraphs = speech_paragraphs(raw);
-    let joined = paragraphs.join(" ");
+    let joined = speech_segments(raw)
+        .into_iter()
+        .map(|segment| segment.text)
+        .collect::<Vec<_>>()
+        .join(" ");
     let markdown = replace_markdown(&joined);
     let dates = speak_utc_datetimes(&markdown);
     let hashes = speak_hashes(&dates);
@@ -179,29 +149,42 @@ fn prepared_all(raw: &str) -> Option<String> {
     (!collapsed.is_empty()).then_some(collapsed)
 }
 
-/// Visible paragraphs in reading order. Fenced code is shown to be read, never
-/// heard: a fence ends the paragraph around it and its contents are skipped.
-fn speech_paragraphs(raw: &str) -> Vec<String> {
+/// One visible paragraph, or one list item, in reading order.
+struct Segment {
+    list: bool,
+    text: String,
+}
+
+/// Visible paragraphs in reading order, each list item its own segment.
+/// Fenced code is shown to be read, never heard: a fence ends the paragraph
+/// around it and its contents are skipped.
+fn speech_segments(raw: &str) -> Vec<Segment> {
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
-    let mut paragraphs = Vec::new();
+    let mut segments = Vec::new();
     let mut lines = Vec::new();
     let mut fenced = false;
     for line in normalized.split('\n') {
         let trimmed = line.trim();
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             fenced = !fenced;
-            push_speech_paragraph(&mut paragraphs, &mut lines);
-        } else if !fenced && line.trim_matches([' ', '\t']).is_empty() {
-            push_speech_paragraph(&mut paragraphs, &mut lines);
-        } else if !fenced {
+            push_segment(&mut segments, &mut lines, false);
+        } else if fenced {
+            continue;
+        } else if trimmed.is_empty() {
+            push_segment(&mut segments, &mut lines, false);
+        } else if AutomaticSpeech::list_item(trimmed).is_some() {
+            push_segment(&mut segments, &mut lines, false);
+            lines.push(line);
+            push_segment(&mut segments, &mut lines, true);
+        } else {
             lines.push(line);
         }
     }
-    push_speech_paragraph(&mut paragraphs, &mut lines);
-    paragraphs
+    push_segment(&mut segments, &mut lines, false);
+    segments
 }
 
-fn push_speech_paragraph(paragraphs: &mut Vec<String>, raw_lines: &mut Vec<&str>) {
+fn push_segment(segments: &mut Vec<Segment>, raw_lines: &mut Vec<&str>, list: bool) {
     let lines = raw_lines
         .drain(..)
         .filter(|line| {
@@ -212,7 +195,10 @@ fn push_speech_paragraph(paragraphs: &mut Vec<String>, raw_lines: &mut Vec<&str>
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     if !lines.is_empty() {
-        paragraphs.push(lines.join("\n"));
+        segments.push(Segment {
+            list,
+            text: lines.join("\n"),
+        });
     }
 }
 
@@ -556,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn final_edges_end_at_the_first_list() {
+    fn final_edges_skip_lists_and_reach_the_closing_paragraph() {
         assert_eq!(
             prepared_edges(concat!(
                 "Shipped the fix.\n\n",
@@ -566,10 +552,19 @@ mod tests {
                 "- Checked both themes.\n\n",
                 "Closing paragraph after the list.",
             )),
-            Some("Shipped the fix. +1 and 1.5 hours on 2026-10-05 stay prose.".to_owned()),
+            Some("Shipped the fix. Closing paragraph after the list.".to_owned()),
+        );
+        // A closing list is never voiced; an opening list speaks its first item.
+        assert_eq!(
+            prepared_edges("Shipped the fix.\n\n- one\n- two"),
+            Some("Shipped the fix.".to_owned()),
         );
         assert_eq!(
             prepared_edges("1. First item.\n2) Second item.\n\nAfterword."),
+            Some("First item. Afterword.".to_owned()),
+        );
+        assert_eq!(
+            prepared_edges("1. First item.\n2) Second item."),
             Some("First item.".to_owned()),
         );
     }
@@ -591,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn final_answer_speaks_edges_after_removing_an_ack_header() {
+    fn an_unverified_ack_header_leaves_a_final_answer_on_its_edges() {
         let speech = classify(
             &prose(
                 "ACK 1kJK6N3R: first paragraph\n\nmiddle paragraph\n\nlast paragraph",
@@ -606,23 +601,39 @@ mod tests {
     }
 
     #[test]
-    fn speak_selects_only_positive_canonical_acknowledgement_bodies() {
+    fn an_acknowledged_hunk_is_voiced_in_full_without_its_headers_final_or_not() {
+        let text = concat!(
+            "ordinary preamble\n\n",
+            "ACK 1kJK6N3R: applied [first](https://example.test)\n\n",
+            "- a list item in the middle\n\n",
+            "NAK 1kJK7Sqy: unsafe\n\n",
+            "ACK 1kJK8Abc: applied last",
+        );
+        let known = directives(&["1kJK6N3R", "1kJK7Sqy", "1kJK8Abc"]);
+        for phase in [None, Some("final_answer")] {
+            let speech = classify(&prose(text, phase), Some(&known), event())
+                .expect("an acknowledged hunk is eligible");
+            assert_eq!(speech.kind, AutomaticSpeechKind::Acknowledgement);
+            assert_eq!(
+                speech.text,
+                "ordinary preamble applied first a list item in the middle unsafe applied last"
+            );
+        }
+    }
+
+    #[test]
+    fn a_final_answer_with_only_a_nak_speaks_its_edges() {
         let speech = classify(
             &prose(
-                concat!(
-                    "ordinary preamble\n\n",
-                    "ACK 1kJK6N3R: applied [first](https://example.test)\n\n",
-                    "NAK 1kJK7Sqy: unsafe\n\n",
-                    "ACK 1kJK8Abc: applied last",
-                ),
-                None,
+                "NAK 1kJK6N3R: declined\n\nmiddle\n\n- item\n\nlast words",
+                Some("final_answer"),
             ),
-            Some(&directives(&["1kJK6N3R", "1kJK7Sqy", "1kJK8Abc"])),
+            Some(&directives(&["1kJK6N3R"])),
             event(),
         )
-        .expect("positive acknowledgements are eligible");
-        assert_eq!(speech.kind, AutomaticSpeechKind::Acknowledgement);
-        assert_eq!(speech.text, "applied first applied last");
+        .expect("final answer is eligible");
+        assert_eq!(speech.kind, AutomaticSpeechKind::Final);
+        assert_eq!(speech.text, "declined last words");
     }
 
     #[test]
