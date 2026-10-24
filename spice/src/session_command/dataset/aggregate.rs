@@ -14,9 +14,9 @@ use super::super::project::{
 use super::super::source::ResolvedSource;
 use super::stream::{ForwardCursor, ForwardProgress, compressed};
 use super::{
-    CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery,
-    OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget,
-    admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
+    CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker,
+    MessageFilter, MessageQuery, OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork,
+    SessionWorkBudget, admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
     source_view_text_bytes, stream_records,
 };
 use crate::read_page::{Page, Paged};
@@ -33,7 +33,7 @@ const SOURCE_LIMIT: usize = 64;
 const MAX_MESSAGE_IDENTITIES: usize = 4 * 1_024;
 const WINDOW_TURN_LIMIT: usize = 4 * 1_024;
 
-impl MessageQuery {
+impl MessageFilter {
     fn matches(&self, row: &MessageRecord) -> bool {
         self.start.as_ref().is_none_or(|start| row.ts >= *start)
             && self.end.as_ref().is_none_or(|end| row.ts <= *end)
@@ -416,7 +416,7 @@ pub(super) fn scan_message_source(
             };
             markers.clear();
             for message in scratch.messages.drain(..) {
-                if dedup.admit(&message, work, &at)? && query.matches(&message) {
+                if dedup.admit(&message, work, &at)? && query.filter.matches(&message) {
                     frontier.push(message);
                 }
             }

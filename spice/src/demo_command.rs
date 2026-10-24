@@ -786,29 +786,31 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         .expect("demo OOPS report stamp is valid");
     seed_oops_task(
         journal,
-        batch.clone(),
-        wire::OOPS_DESIGN_TITLE,
-        wire::OOPS_DESIGN_PROJECT,
-        Vec::new(),
-        None,
-        Some(wire::TaskIntent::OpportunisticDesign),
-        &["design", "review"],
-        "2026-07-11T05:04:00.000000Z",
+        OopsTask {
+            born: batch.clone(),
+            title: wire::OOPS_DESIGN_TITLE,
+            project: wire::OOPS_DESIGN_PROJECT,
+            preparation: None,
+            intent: wire::TaskIntent::OpportunisticDesign,
+            flow: &["design", "review"],
+            at: "2026-07-11T05:04:00.000000Z",
+        },
     )?;
     seed_oops_task(
         journal,
-        report.clone(),
-        DEMO_OOPS_REPORT_TITLE,
-        DEMO_PROJECT,
-        Vec::new(),
-        Some(wire::TaskPreparation {
-            parent: batch.clone(),
-            controller: batch.clone(),
-            construction: report,
-        }),
-        Some(wire::TaskIntent::Plan),
-        &["plan", "review"],
-        "2026-07-11T05:05:00.000000Z",
+        OopsTask {
+            born: report.clone(),
+            title: DEMO_OOPS_REPORT_TITLE,
+            project: DEMO_PROJECT,
+            preparation: Some(wire::TaskPreparation {
+                parent: batch.clone(),
+                controller: batch.clone(),
+                construction: report,
+            }),
+            intent: wire::TaskIntent::Plan,
+            flow: &["plan", "review"],
+            at: "2026-07-11T05:05:00.000000Z",
+        },
     )?;
     let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
         .expect("demo OOPS group stamp is valid");
@@ -848,21 +850,29 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one seeded task spells each statement field the demo journal records"
-)]
-fn seed_oops_task(
-    journal: &mut journal::Journal,
+/// One seeded OOPS task: a statement without description or acceptance, in
+/// its authored flow, recorded at `at`.
+struct OopsTask<'a> {
     born: wire::TaskStamp,
-    title: &str,
-    project: &str,
-    acceptance: Vec<String>,
+    title: &'a str,
+    project: &'a str,
     preparation: Option<wire::TaskPreparation>,
-    intent: Option<wire::TaskIntent>,
-    flow: &[&str],
-    at: &str,
-) -> DemoResult<()> {
+    intent: wire::TaskIntent,
+    flow: &'a [&'a str],
+    at: &'a str,
+}
+
+fn seed_oops_task(journal: &mut journal::Journal, task: OopsTask<'_>) -> DemoResult<()> {
+    let OopsTask {
+        born,
+        title,
+        project,
+        preparation,
+        intent,
+        flow,
+        at,
+    } = task;
+    let intent = Some(intent);
     let phases = flow
         .iter()
         .map(|phase| phase.parse().expect("demo OOPS phase is valid"))
@@ -885,7 +895,7 @@ fn seed_oops_task(
                 title: title.to_owned(),
                 pitch: wire::pitch::derive(title, None),
                 description: None,
-                acceptance: acceptance.clone(),
+                acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: project.to_owned(),
                 filing: wire::TaskFiling::Filed,
@@ -918,7 +928,7 @@ fn seed_oops_task(
         title: statement_title,
         pitch: statement_pitch,
         description: None,
-        acceptance,
+        acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: statement_project,
         filing: wire::TaskFiling::Filed,

@@ -7,8 +7,8 @@ use wire::{Refusal, SpiceCommand};
 
 use super::authority::RecallAuthorities;
 use super::dataset::{
-    self, Aggregate, CommitScan, CompactionScan, MessageQuery, Recent, WindowOptions, WindowScan,
-    WindowTurn,
+    self, Aggregate, CommitScan, CompactionScan, MessageFilter, MessageQuery, Recent,
+    WindowOptions, WindowScan, WindowTurn,
 };
 use super::model::{
     ActivityView, CompactionRecord, CompactionView, DialogueLine, LiveTurnView, LiveView,
@@ -521,13 +521,15 @@ pub(crate) fn messages(
     let filters = Filters::from_matches(matches)?;
     let end = page.end(filters.end_bound())?;
     let query = MessageQuery::new(
-        filters.start,
-        end,
-        filters.contains,
-        filters.turn_ids,
-        values(matches, "side").into_iter().collect(),
-        values(matches, "phase-kind").into_iter().collect(),
-        values(matches, "flavor").into_iter().collect(),
+        MessageFilter {
+            start: filters.start,
+            end,
+            contains: filters.contains,
+            turn_ids: filters.turn_ids,
+            sides: values(matches, "side").into_iter().collect(),
+            phases: values(matches, "phase-kind").into_iter().collect(),
+            flavors: values(matches, "flavor").into_iter().collect(),
+        },
         page.frontier()?,
     )?;
     let data = dataset::messages(sources, &query)?;

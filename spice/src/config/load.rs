@@ -670,17 +670,14 @@ fn walk_to_document_parent(
         )
         .map_err(|error| AcquisitionIssue::unreadable(source, &display, error))?;
         if file_type.is_none() {
-            return missing_acquired(
-                source,
-                root,
-                relative,
-                directories,
+            let walked = OpenParent {
+                root: root_identity,
                 components,
-                root_identity,
-                directory_generations,
-                index,
-            )
-            .map(ParentCapture::Missing);
+                directories,
+                generations: directory_generations,
+            };
+            return missing_acquired(source, root, relative, walked, index)
+                .map(ParentCapture::Missing);
         }
         require_directory(source, &display, file_type.expect("component exists"))?;
         let directory = open_directory_at(
@@ -732,16 +729,7 @@ where
     )
     .map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
     let Some(file_type) = file_type else {
-        return missing_acquired(
-            source,
-            root,
-            relative,
-            parent.directories,
-            parent.components,
-            parent.root,
-            parent.generations,
-            missing,
-        );
+        return missing_acquired(source, root, relative, parent, missing);
     };
     require_regular_file(source, &path, file_type)?;
     let opened_parent = parent
@@ -768,29 +756,27 @@ where
     })
 }
 
+/// The document absent at component `missing`, below the directories `parent`
+/// opened on the way there.
 #[cfg(unix)]
-#[allow(clippy::too_many_arguments)]
 fn missing_acquired(
     source: ConfigSource,
     root: &Path,
     relative: &Path,
-    directories: Vec<File>,
-    components: Vec<OsString>,
-    root_identity: FileObject,
-    directory_generations: Vec<(OsString, FileObject)>,
+    parent: OpenParent,
     missing: usize,
 ) -> Result<Acquired, AcquisitionIssue> {
     let generation = DocumentGeneration {
-        root: root_identity,
-        directories: directory_generations,
+        root: parent.root,
+        directories: parent.generations,
         relative: relative.to_path_buf(),
         state: DocumentState::Missing { component: missing },
     };
     verify_missing(
         source,
         root,
-        &directories,
-        &components,
+        &parent.directories,
+        &parent.components,
         missing,
         &generation,
     )?;

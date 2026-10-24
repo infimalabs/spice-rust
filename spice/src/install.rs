@@ -739,19 +739,15 @@ fn append_fixed_operations(
         let (location, path, mode) = asset_contract(asset)?;
         let bytes = fixed_asset_bytes(asset, repository.common_dir())?
             .expect("the fixed asset inventory contains no variable asset");
-        let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
-        let inherited = installed.binding(&path);
-        let (previous, superseded) = reversal_context(installed, asset, observed, None);
-        operations.push(operation(
-            directories,
+        push_operation(
+            repository,
+            installed,
+            (&mut *directories, &mut *operations),
             asset,
             (location, path),
-            bound,
-            inherited,
-            previous,
-            superseded,
+            None,
             GeneratedImage::new(mode, &bytes),
-        )?);
+        )?;
     }
     Ok(())
 }
@@ -763,41 +759,38 @@ fn append_binary_operation(
     reconciled: Option<&GeneratedImage>,
     (directories, operations): PlanState<'_>,
 ) -> Result<(), InstallError> {
-    let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
-    let inherited = installed.binding(BINARY_PATH);
-    let (previous, superseded) = reversal_context(installed, Asset::Binary, observed, reconciled);
-    operations.push(operation(
-        directories,
+    push_operation(
+        repository,
+        installed,
+        (directories, operations),
         Asset::Binary,
         (Location::CommonGit, BINARY_PATH.to_owned()),
-        bound,
-        inherited,
-        previous,
-        superseded,
+        reconciled,
         GeneratedImage::new(EXECUTABLE_MODE, bytes),
-    )?);
+    )?;
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one install operation binds its asset, destination, inheritance, and three image generations"
-)]
-fn operation(
-    virtual_directories: &mut BTreeSet<(Location, String)>,
+/// Plan one operation publishing `generated` for `asset` at `path` and append
+/// it: bind the destination, carry a refresh's reversal image and directory
+/// ownership forward from `installed`, and claim each newly introduced parent
+/// once across the plan.
+fn push_operation(
+    repository: &Repository,
+    installed: &InstalledOperations<'_>,
+    (virtual_directories, operations): PlanState<'_>,
     asset: Asset,
     (location, path): (Location, String),
-    bound: BoundDestination,
-    inherited: Option<(&ParentObservation, &[String])>,
-    previous: Option<GeneratedImage>,
-    superseded: Option<GeneratedImage>,
+    reconciled: Option<&GeneratedImage>,
     generated: GeneratedImage,
-) -> Result<Operation, InstallError> {
+) -> Result<(), InstallError> {
+    let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
+    let (previous, superseded) = reversal_context(installed, asset, observed, reconciled);
     // The caller resolves where the asset lands; `validate_operation_contract`
     // refuses any operation whose location and path disagree with its contract.
     // A refresh carries the original install's directory ownership forward
     // instead of claiming that the now-present directories predated Spice.
-    let (ownership_parent, parents) = match inherited {
+    let (ownership_parent, parents) = match installed.binding(&path) {
         Some(inherited) => inherited_binding(Some(inherited)),
         None => (None, bound.introduced_parents),
     };
@@ -809,7 +802,7 @@ fn operation(
             introduced_parents.push(parent);
         }
     }
-    Ok(Operation {
+    operations.push(Operation {
         asset,
         location,
         path,
@@ -820,7 +813,8 @@ fn operation(
         superseded,
         publication_parent,
         introduced_parents,
-    })
+    });
+    Ok(())
 }
 
 fn destination_state(

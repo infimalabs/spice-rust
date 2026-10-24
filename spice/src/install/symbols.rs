@@ -22,7 +22,7 @@ use wire::{Digest, Domain};
 
 use super::{
     Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, InstalledOperations, Location,
-    Operation, PlanState, Repository, destination_state, operation, reversal_context,
+    Operation, PlanState, Repository, push_operation,
 };
 
 /// Canonical retained dSYM bundle beside the installed executable.
@@ -288,19 +288,15 @@ pub(super) fn append_operations(
     for asset in ASSETS {
         let path = path(asset).expect("symbol assets publish fixed paths");
         let bytes = source.bytes(asset).expect("symbol assets carry bytes");
-        let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-        let inherited = installed.binding(path);
-        let (previous, superseded) = reversal_context(installed, asset, observed, None);
-        operations.push(operation(
-            directories,
+        push_operation(
+            repository,
+            installed,
+            (&mut *directories, &mut *operations),
             asset,
             (Location::CommonGit, path.to_owned()),
-            bound,
-            inherited,
-            previous,
-            superseded,
+            None,
             GeneratedImage::new(DATA_MODE, bytes),
-        )?);
+        )?;
     }
     Ok(())
 }

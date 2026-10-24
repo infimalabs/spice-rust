@@ -505,11 +505,13 @@ fn a_live_foreign_resident_refuses_the_lane_before_discovery_waits() {
     let started = Instant::now();
 
     let outcome = match acquire_session_with(
-        &fixture.serve,
-        &lane_surface,
-        &resident_lock_path(&fixture.serve),
-        Some(&foreign),
-        &COMMAND_CONTRACT,
+        &SessionRoute {
+            contract: &COMMAND_CONTRACT,
+            operator_discovery: &fixture.serve,
+            discovery_path: &lane_surface,
+            resident_lock: &resident_lock_path(&fixture.serve),
+            foreign: Some(&foreign),
+        },
         FIXTURE_PEER_TIMEOUT,
         |_| panic!("a proved foreign resident does not enter publication handoff"),
     ) {
@@ -565,11 +567,13 @@ fn a_local_lane_reacquires_its_surface_from_a_live_replacement() {
     let mut transients = Vec::new();
 
     let session = acquire_session_with(
-        &fixture.serve,
-        &lane_surface,
-        &resident_lock_path(&fixture.serve),
-        None,
-        &COMMAND_CONTRACT,
+        &SessionRoute {
+            contract: &COMMAND_CONTRACT,
+            operator_discovery: &fixture.serve,
+            discovery_path: &lane_surface,
+            resident_lock: &resident_lock_path(&fixture.serve),
+            foreign: None,
+        },
         Duration::from_secs(10),
         |fault| {
             transients.push(fault.reason.clone());

@@ -5,16 +5,12 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs;
-use std::fs::File;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sill::{
-    Argv, Cancellation, Completion, Deadlines, Environment, Observation, ObserveError,
-    ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
+    Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy,
 };
 use spice::config::{PreCommitStep, pre_commit_declarations};
@@ -34,8 +30,6 @@ const SOURCE_GATE_OUTPUT_LIMIT: usize = 1024 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
-const PROGRESS_FRAME_LIMIT: usize = 16 * 1024;
-const PROGRESS_QUEUE_CAPACITY: usize = 128;
 
 const SOURCE_GATE_ARGV: [&str; 14] = [
     "spice",
@@ -729,16 +723,6 @@ impl Dispatch {
         &mut self,
         runtime: Duration,
         cancellation: Cancellation,
-        progress: &File,
-    ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
-        self.execute_configured_inner(runtime, cancellation, progress)
-    }
-
-    fn execute_configured_inner(
-        &mut self,
-        runtime: Duration,
-        cancellation: Cancellation,
-        progress: &File,
     ) -> Result<Option<ConfiguredReport>, ConfiguredFailure> {
         if !self.has_configured() {
             return Ok(None);
@@ -776,19 +760,14 @@ impl Dispatch {
             self.policy.require_approved(&self.repository)
         };
         verify()?;
-        execute_steps_with_progress(
-            &commands,
-            &source,
-            &paths,
-            &root,
-            &base,
-            spice.as_deref(),
-            ExecutionBounds::production(runtime),
+        let process = StepProcess {
+            root: &root,
+            base_environment: &base,
+            spice: spice.as_deref(),
+            bounds: ExecutionBounds::production(runtime),
             cancellation,
-            Some(progress),
-            &mut verify,
-        )
-        .map(Some)
+        };
+        execute_steps(&commands, &source, &paths, &process, &mut verify).map(Some)
     }
 }
 
@@ -828,26 +807,31 @@ pub(super) const fn cleanup_reserve() -> Duration {
         .saturating_add(TERMINATION_GRACE)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "commands, staged authority, process policy, and the movement guard are independent execution inputs"
-)]
-fn execute_steps_with_progress(
+/// How every configured step of one run is spawned: its working root, the
+/// ambient environment each step extends, the resolved `spice` wrapper, and
+/// the shared bounds and cancellation.
+struct StepProcess<'a> {
+    root: &'a Path,
+    base_environment: &'a [(OsString, OsString)],
+    spice: Option<&'a Path>,
+    bounds: ExecutionBounds,
+    cancellation: Cancellation,
+}
+
+fn execute_steps(
     commands: &[PreCommitStep],
     source: &Digest,
     staged_paths: &[String],
-    root: &Path,
-    base_environment: &[(OsString, OsString)],
-    spice: Option<&Path>,
-    bounds: ExecutionBounds,
-    cancellation: Cancellation,
-    progress: Option<&File>,
+    process: &StepProcess<'_>,
     verify: &mut impl FnMut() -> Result<(), ConfiguredFailure>,
 ) -> Result<ConfiguredReport, ConfiguredFailure> {
-    let progress = progress
-        .filter(|_| commands.iter().any(is_source_gate_contract))
-        .map(SourceGateProgressObserver::capture)
-        .transpose()?;
+    let StepProcess {
+        root,
+        base_environment,
+        spice,
+        bounds,
+        ref cancellation,
+    } = *process;
     let started = Instant::now();
     let mut reports = Vec::with_capacity(commands.len());
     for command in commands {
@@ -880,7 +864,6 @@ fn execute_steps_with_progress(
             break;
         }
         let environment = command_environment(base_environment, source, &selected_paths)?;
-        let source_gate = is_source_gate_contract(command);
         let spec = command_spec(
             command,
             &process_argv,
@@ -890,7 +873,7 @@ fn execute_steps_with_progress(
             bounds,
             cancellation.clone(),
         )?;
-        let findings = match spawn_step(spec, source_gate, progress.as_ref()) {
+        let findings = match sill::spawn(spec) {
             Ok(running) => match running.wait() {
                 Ok(waited) => classify_wait(&waited),
                 Err(error) => vec![finding(StepFindingKind::Cleanup, error.to_string())],
@@ -914,53 +897,6 @@ fn execute_steps_with_progress(
         source: source.clone(),
         steps: reports,
     })
-}
-
-struct SourceGateProgressObserver {
-    progress: Mutex<File>,
-}
-
-impl SourceGateProgressObserver {
-    fn capture(progress: &File) -> Result<Arc<Self>, ConfiguredFailure> {
-        let progress = progress.try_clone().map_err(|error| {
-            ConfiguredFailure::fault("gate::pre-commit-progress-unavailable", error.to_string())
-        })?;
-        Ok(Arc::new(Self {
-            progress: Mutex::new(progress),
-        }))
-    }
-}
-
-impl RecordObserver for SourceGateProgressObserver {
-    fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError> {
-        let mut progress = self
-            .progress
-            .lock()
-            .map_err(|error| ObserveError::new(error.to_string()))?;
-        progress
-            .write_all(record.bytes())
-            .and_then(|()| progress.flush())
-            .map_err(|error| ObserveError::new(error.to_string()))
-    }
-}
-
-fn spawn_step(
-    spec: Spec,
-    source_gate: bool,
-    progress: Option<&Arc<SourceGateProgressObserver>>,
-) -> std::io::Result<sill::Running> {
-    let Some(progress) = progress.filter(|_| source_gate) else {
-        return sill::spawn(spec);
-    };
-    let observation = Observation::new(
-        OutputStream::Stderr,
-        PROGRESS_FRAME_LIMIT,
-        PROGRESS_QUEUE_CAPACITY,
-        OUTPUT_DRAIN,
-        Arc::clone(progress) as Arc<dyn RecordObserver>,
-    )
-    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    sill::spawn_observed(spec, observation)
 }
 
 fn is_source_gate_contract(command: &PreCommitStep) -> bool {

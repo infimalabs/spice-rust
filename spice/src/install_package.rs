@@ -586,7 +586,6 @@ mod tests {
         .expect("fixture member admits")
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn target_evidence(
         target: ReleaseTarget,
         source: &Digest,
