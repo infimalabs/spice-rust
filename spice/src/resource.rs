@@ -32,7 +32,10 @@ use crate::command_client::Host;
 use crate::render::{self, Form};
 
 mod graph;
+mod lane;
 mod rack;
+
+pub(crate) use lane::{Server, lane_server, read_command};
 
 #[cfg(test)]
 mod tests;
@@ -1054,7 +1057,12 @@ impl Seat {
         }
         let document = match &request.resource {
             Resource::Index => INDEX.to_owned(),
-            Resource::Rack { namespace, path } => rack::linked(*namespace, path, url)?,
+            Resource::Rack { namespace, path } => rack::linked(*namespace, path, url, || {
+                let state = repository()?.admit_state().map_err(|error| {
+                    format!("spice cannot admit the runtime directory {url} extracts into: {error}")
+                })?;
+                Ok(state.rack().to_path_buf())
+            })?,
             Resource::Quote(target) => read_quote(target)?,
             Resource::Read(query) => {
                 let repository = repository()?;

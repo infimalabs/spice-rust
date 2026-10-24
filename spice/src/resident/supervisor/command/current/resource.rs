@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use spice::ambient::Ambient;
 use wire::CanonicalUuid;
 
-use super::super::{Terminal, uri};
+use super::super::Terminal;
 use crate::resource::Access;
 
 /// The hidden entry that keeps one current-release resource seat alive.
@@ -381,7 +381,7 @@ pub(in crate::resident::supervisor) fn run(
         spice::repository::Repository::discover(&worktree).map_err(io::Error::other)?;
     let paths = super::super::super::RuntimePaths::from_repository(&repository)
         .map_err(|outcome| io::Error::other(format!("{outcome:?}")))?;
-    let server = uri::resident_server(
+    let server = crate::resource::lane_server(
         paths.serve,
         paths.journal,
         lane,

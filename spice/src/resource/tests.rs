@@ -188,6 +188,11 @@ static RACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
     files.extend([
         ("skill/SKILL.md".to_owned(), RACK_SKILL.as_bytes().to_vec()),
         ("doc/guide.md".to_owned(), b"# guide\n".to_vec()),
+        ("doc/figure.png".to_owned(), RACK_FIGURE.to_vec()),
+        (
+            "doc/huge.png".to_owned(),
+            vec![0; super::rack::EXTRACTION_BYTES as usize + 1],
+        ),
         (
             "doc/planes/distribution.md".to_owned(),
             b"# planes\n".to_vec(),
@@ -201,18 +206,35 @@ static RACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
     .expect("fixture rack writes")
 });
 
-/// Read one rack URL the way the seat does, against the fixture rack.
-fn rack_read(url: &str) -> Result<String, String> {
+const RACK_FIGURE: &[u8] = b"\x89PNG\r\n\x1a\nfixture figure";
+
+/// A fresh directory a rack read extracts beneath.
+fn extractions() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "spice-rack-extractions-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ))
+}
+
+/// Read one rack URL the way the seat does, against the fixture rack,
+/// extracting beneath `root`.
+fn rack_read_into(url: &str, root: &std::path::Path) -> Result<String, String> {
     let rack = Rack::admit(&RACK).expect("fixture rack admits");
     let request = Request::parse(url)?;
     let Resource::Rack { namespace, path } = &request.resource else {
         panic!("{url} names no rack member: {request:?}");
     };
-    let document = super::rack::document(&rack, *namespace, path, url)?;
+    let document = super::rack::document(&rack, *namespace, path, url, || Ok(root.to_path_buf()))?;
     match &request.selector {
         Some(selector) => selector.select(&document),
         None => Ok(document),
     }
+}
+
+fn rack_read(url: &str) -> Result<String, String> {
+    rack_read_into(url, &extractions())
 }
 
 #[test]
@@ -237,7 +259,8 @@ fn rack_urls_answer_member_text_line_selections_and_listings() {
     let namespace = rack_read("spice://doc").expect("a namespace lists its members");
     assert!(
         namespace.ends_with(
-            "\nresources:\n  spice://doc/guide.md\n  spice://doc/planes/distribution.md"
+            "\nresources:\n  spice://doc/figure.png\n  spice://doc/guide.md\n  \
+             spice://doc/huge.png\n  spice://doc/planes/distribution.md"
         ),
         "{namespace}"
     );
@@ -249,7 +272,69 @@ fn rack_urls_answer_member_text_line_selections_and_listings() {
 
     rack_read("spice://doc/absent.md").expect_err("an absent member is refused");
     rack_read("spice://doc/plan").expect_err("a path prefix is no directory");
-    rack_read("spice://app/app_bg.wasm").expect_err("a member that is not text is refused");
+}
+
+#[test]
+fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
+    let root = extractions();
+    let digest = wire::Digest::compute(wire::Domain::DistArtifact, RACK_FIGURE);
+    let generation = Rack::admit(&RACK)
+        .expect("fixture rack admits")
+        .generation()
+        .clone();
+    let file = root.join(generation.as_str()).join(format!("{digest}.png"));
+    let expected = format!(
+        "image/png {} bytes digest {digest} at {}",
+        RACK_FIGURE.len(),
+        file.display()
+    );
+
+    let first = rack_read_into("spice://doc/figure.png", &root).expect("an image hands off");
+    assert_eq!(first, expected);
+    let bytes = std::fs::read(&file).expect("the handed-off file exists");
+    assert_eq!(
+        wire::Digest::compute(wire::Domain::DistArtifact, &bytes),
+        digest
+    );
+    let written = std::fs::metadata(&file).expect("handed-off metadata");
+
+    let second = rack_read_into("spice://doc/figure.png", &root).expect("a repeat hands off");
+    assert_eq!(second, expected);
+    assert_eq!(
+        std::fs::metadata(&file)
+            .and_then(|metadata| metadata.modified())
+            .ok(),
+        written.modified().ok(),
+        "a repeated read rewrote the file"
+    );
+    assert_eq!(
+        std::fs::read_dir(root.join(generation.as_str()))
+            .expect("the generation directory lists")
+            .count(),
+        1,
+        "only the digest-named file remains"
+    );
+
+    let wasm = rack_read_into("spice://app/app_bg.wasm", &root).expect("wasm hands off");
+    assert!(
+        wasm.starts_with("application/wasm 5 bytes digest "),
+        "{wasm}"
+    );
+
+    let refused = rack_read_into("spice://doc/huge.png", &root).expect_err("above the bound");
+    assert!(
+        refused.contains(&format!(
+            "above the {} byte rack extraction bound",
+            super::rack::EXTRACTION_BYTES
+        )),
+        "{refused}"
+    );
+    assert_eq!(
+        rack_read_into("spice://doc/guide.md:1", &root).as_deref(),
+        Ok("# guide")
+    );
+
+    std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 #[test]

@@ -138,7 +138,7 @@ const SUMMARIES: &[(&str, &str)] = &[
     ),
     (
         "lane purge",
-        "Retire runtime residue of lanes the resident no longer seats",
+        "Retire residue of unseated lanes and stale rack extractions",
     ),
     ("lane remove", "Remove one vacant, claim-free lane"),
     ("lane wake", "Launch a new occupant into a vacant lane seat"),
@@ -216,6 +216,11 @@ const SUMMARIES: &[(&str, &str)] = &[
     (
         "release seal",
         "Compose the release manifest after proof and record it",
+    ),
+    ("resource", "Read spice:// resources from a shell"),
+    (
+        "resource read",
+        "Print exactly what a lane's host frame carries for one spice:// URL",
     ),
     ("restore", "Verify or restore a journal backup bundle"),
     (

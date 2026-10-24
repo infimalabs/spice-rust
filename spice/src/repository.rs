@@ -109,6 +109,7 @@ pub struct StatePaths {
     install_record: PathBuf,
     local_configuration: PathBuf,
     lane_serve: PathBuf,
+    rack: PathBuf,
 }
 
 /// Worktree-local files admitted for one steering hook delivery decision.
@@ -161,6 +162,7 @@ impl StatePaths {
             install_record: runtime.join("install.json"),
             local_configuration: runtime.join("config.toml"),
             lane_serve: runtime.join("serve-lanes"),
+            rack: runtime.join("rack"),
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
             steering_media: runtime.join("steering-media"),
@@ -318,6 +320,13 @@ impl StatePaths {
         &self.lane_serve
     }
 
+    /// Parent of rack member extractions, one directory per linked rack
+    /// generation holding files named by member digest.
+    #[must_use]
+    pub fn rack(&self) -> &Path {
+        &self.rack
+    }
+
     /// Directories whose shape this runtime admits before it does any work.
     ///
     /// Admission is narrower than ownership on purpose. A path belongs here
@@ -357,9 +366,10 @@ impl StatePaths {
     #[must_use]
     pub fn owned_directories(&self) -> Vec<&Path> {
         let mut paths = self.admitted_directories();
-        let lane_serve = self.lane_serve();
-        if !paths.contains(&lane_serve) {
-            paths.push(lane_serve);
+        for path in [self.lane_serve(), self.rack()] {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
         }
         paths
     }

@@ -195,6 +195,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "spice::version"
     ),
     row!(
+        ["resource", "read"],
+        "resource read URL",
+        Lane,
+        None,
+        [],
+        [Daemonless],
+        Reply,
+        "spice::resource_read"
+    ),
+    row!(
         ["rtk", "gain"],
         "rtk gain AGENT_UUID",
         Local,
