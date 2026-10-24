@@ -54,7 +54,7 @@ const WINDOW_ENTRY: &str = "__app-window";
 /// Open the console in a window a detached process attends, and answer with
 /// the endpoint once that window is up.
 pub(crate) fn open(leaf: &ArgMatches, ambient: &Ambient) -> Outcome<wire::AppOpen> {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(any(target_os = "macos", windows)) {
         return window_failure(&desktop::WindowError::Unsupported);
     }
     resident::launch_window(leaf, ambient)
@@ -175,8 +175,10 @@ pub(crate) fn window_entry(arguments: impl Iterator<Item = OsString>) -> Option<
         crate::terminate_code(0);
     });
     let key = common.to_string_lossy();
+    // The spawning parent reported the window up once this process held its
+    // URL, so the window's own opening has no one left to tell.
     Some(
-        match desktop::show(&title(&common), &key, url.trim(), external_link) {
+        match desktop::show(&title(&common), &key, url.trim(), external_link, || {}) {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("{error}");
@@ -251,12 +253,12 @@ fn show_window(
     _ambient: &Ambient,
     shown: impl FnOnce(),
 ) -> Result<(), desktop::WindowError> {
-    let _ = shown;
     desktop::show(
         &title(common),
         &common.to_string_lossy(),
         url,
         external_link,
+        shown,
     )
 }
 
