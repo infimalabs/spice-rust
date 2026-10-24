@@ -43,7 +43,6 @@ use objc2_web_kit::{
     WKFrameInfo, WKNavigationAction, WKOpenPanelParameters, WKUIDelegate, WKWebView,
     WKWebViewConfiguration, WKWindowFeatures,
 };
-use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::platform::macos::{WindowBuilderExtMacOS, WindowExtMacOS};
@@ -51,10 +50,7 @@ use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::window::WindowBuilder;
 use wry::{WebViewBuilder, WebViewExtMacOS};
 
-use crate::WindowError;
-
-/// The window's opening size; the operator resizes from there.
-const INITIAL_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 860.0);
+use crate::{INITIAL_SIZE, WindowError};
 
 /// What reaches the window's event loop from the page, the synthesizer, and
 /// the menu bar.
@@ -76,6 +72,7 @@ pub(crate) fn show(
     key: &str,
     url: &str,
     external: impl Fn(&str) + Send + Sync + 'static,
+    opened: impl FnOnce(),
 ) -> Result<(), WindowError> {
     let mut event_loop = EventLoopBuilder::<ShellEvent>::with_user_event().build();
     let window = WindowBuilder::new()
@@ -133,6 +130,7 @@ pub(crate) fn show(
     });
     let mut titlebar = titlebar::Titlebar::default();
     titlebar.follow(&window, &ns_window, &webview);
+    opened();
     event_loop.run_return(|event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {

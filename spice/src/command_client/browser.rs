@@ -85,7 +85,16 @@ pub(super) fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> 
     Ok(command)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// The URL protocol handler `rundll32` exposes opens the default browser
+/// without a shell, so no `cmd` metacharacter in the URL is ever interpreted.
+#[cfg(windows)]
+pub(super) fn browser_command(endpoint: &str) -> Result<ProcessCommand, String> {
+    let mut command = ProcessCommand::new(r"C:\Windows\System32\rundll32.exe");
+    command.arg("url.dll,FileProtocolHandler").arg(endpoint);
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub(super) fn browser_command(_endpoint: &str) -> Result<ProcessCommand, String> {
     Err("browser launch is unsupported on this build target".to_owned())
 }

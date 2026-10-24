@@ -37,37 +37,60 @@ impl std::error::Error for WindowError {}
 mod bundle;
 #[cfg(target_os = "macos")]
 mod icon;
+#[cfg(windows)]
+mod webview2;
 #[cfg(target_os = "macos")]
 mod window;
 
 #[cfg(target_os = "macos")]
 pub use bundle::bundled_executable;
 
+/// The window's opening size; the operator resizes from there.
+#[cfg(any(target_os = "macos", windows))]
+const INITIAL_SIZE: tao::dpi::LogicalSize<f64> = tao::dpi::LogicalSize::new(1280.0, 860.0);
+
 /// Show `url` in one native window titled `title` and block until it closes.
 ///
 /// `key` names the window frame remembered between launches; one repository
-/// keeps one key.
+/// keeps one key. Only macOS remembers frames.
 ///
 /// Links the page asks to open in a new window leave through `external`, so
 /// the console's outbound links reach the system browser rather than a second
 /// webview. `external` receives the exact URL the page named.
+///
+/// `opened` runs once, after the window and its webview exist and before the
+/// operator can close them; a window that never starts never runs it.
 #[cfg(target_os = "macos")]
 pub fn show(
     title: &str,
     key: &str,
     url: &str,
     external: impl Fn(&str) + Send + Sync + 'static,
+    opened: impl FnOnce(),
 ) -> Result<(), WindowError> {
-    window::show(title, key, url, external)
+    window::show(title, key, url, external, opened)
 }
 
 /// Show `url` in one native window titled `title` and block until it closes.
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+pub fn show(
+    title: &str,
+    _key: &str,
+    url: &str,
+    external: impl Fn(&str) + Send + Sync + 'static,
+    opened: impl FnOnce(),
+) -> Result<(), WindowError> {
+    webview2::show(title, url, external, opened)
+}
+
+/// Show `url` in one native window titled `title` and block until it closes.
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn show(
     _title: &str,
     _key: &str,
     _url: &str,
     _external: impl Fn(&str) + Send + Sync + 'static,
+    _opened: impl FnOnce(),
 ) -> Result<(), WindowError> {
     Err(WindowError::Unsupported)
 }
