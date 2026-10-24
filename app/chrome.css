@@ -25,17 +25,19 @@
      only its shell publishes their width, so the browser reserves nothing. */
   --app-commandbar-inset-start: calc(var(--app-shell-edge-start) + var(--app-titlebar-inset, 0px));
   --app-commandbar-inset-end: var(--app-shell-edge-end);
-  /* The trigger clears the hanging global tabs and the rising team tabs by
-     two message-rail widths each. Centered between them, its clearance is the
-     block pad plus half the status band, less one tab height. */
+  /* The trigger clears the window's top edge and the rising team tabs by two
+     message-rail widths each; no tab row hangs above it any longer. */
   --app-spice-tab-clearance: calc(2 * var(--message-rail));
-  --app-commandbar-block-pad: calc(var(--app-spice-tab-clearance) + var(--app-horn-tab-block-size) - var(--app-status-line-band) / 2);
+  --app-commandbar-block-pad: var(--app-spice-tab-clearance);
   --app-commandbar-block-size: calc(var(--app-header-control) + 2 * var(--app-commandbar-block-pad));
   --app-commandbar-gap: 7px;
-  /* The trigger centers over the composer-control column and halfway between the
-     upper global tabs and lower team tabs. Their equal tab heights cancel. */
-  --app-spice-anchor-inset-block: calc((var(--app-commandbar-block-size) + var(--app-status-line-band) - var(--app-header-control)) / 2);
-  --app-spice-anchor-inset-inline: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2 + env(safe-area-inset-right, 0px));
+  /* The trigger centers over the composer-control column, level with the
+     command bar's one content row. */
+  --app-spice-anchor-inset-block: var(--app-commandbar-block-pad);
+  /* The launcher stands this far from the window edge, and as far from the
+     Design total before it. */
+  --app-spice-side-gap: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2);
+  --app-spice-anchor-inset-inline: calc(var(--app-spice-side-gap) + env(safe-area-inset-right, 0px));
   /* The open Spice view's settings row stands off the view's end by this inset
      and ends with the theme selector. The anchor spans from its own inset to
      the selector's start, so TURBO's start meets the selector's start. */
@@ -66,7 +68,7 @@ body:has(.shell),
 .app-commandbar-content {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr) var(--app-header-control);
+  grid-template-columns: minmax(0, 1fr) auto var(--app-header-control);
   align-items: center;
   gap: var(--app-commandbar-gap);
   min-width: 0;
@@ -77,46 +79,27 @@ body:has(.shell),
   border-radius: var(--app-radius-element);
 }
 
-
-/* The global execution and Design work rails hang mirrored horn tabs from the
-   command bar's top edge. The material itself is shared in style.css with
-   team-local work tabs. Both rails span the command bar grid, including its
-   nominal launcher column: the launcher is absolutely positioned and clears
-   the tabs vertically, while a one-column rail would strand the Design tabs
-   inward from the browser edge. */
-:is(.app-global-work-tabs, .app-design-work-tabs) {
-  grid-area: 1 / 1 / 2 / -1;
+/* The two global totals hang from the command bar's top edge immediately
+   before the Spice launcher, the same horn tabs they were when a stem row
+   followed them: material shared with team and group totals in style.css,
+   each with its bottom rail and rounded bottom corners. The task-tab gap
+   separates the two; the Design total then stands off the launcher by the
+   launcher's own side gap, so the launcher reads centered between the tabs
+   and the window edge. The launcher is absolutely positioned past the grid's
+   nominal launcher column, so the totals end that side gap short of the
+   launcher's inset rather than at the column's end. */
+.app-work-totals {
+  /* Each total keeps the team and group total footprint: half the team
+     control column. */
+  --app-total-tab-inline-size: calc(var(--app-team-control-inline-size) / 2);
+  display: flex;
+  grid-area: 1 / 2;
   align-self: start;
+  gap: var(--mosaic-gap);
   margin-block-start: calc(-1 * var(--app-commandbar-block-pad));
+  margin-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-spice-side-gap) - var(--app-commandbar-inset-end) - var(--app-commandbar-gap));
 }
-.app-global-work-tabs { justify-self: start; direction: ltr; }
-.app-design-work-tabs { justify-self: end; direction: rtl; }
-/* Each global rail is one strip. Its DOM-leading aggregate sits at the
-   anchored outside edge, flush and square against the window edge like the
-   team and group totals; named stems continue inward. Interior corners stay
-   square, the strip's inner end keeps the tab radius, and the shared bottom
-   rail runs unbroken across it. Each rail reaches out through the shell's edge
-   inset only: a native window's traffic lights and a device's safe area keep
-   their clearance. The design rail is rtl, so its inline start is the right. */
-:is(.app-global-work-tabs, .app-design-work-tabs) {
-  gap: 0;
-  margin-inline-start: calc(-1 * var(--app-shell-edge-inline));
-}
-:is(.app-global-work-tabs, .app-design-work-tabs) > .app-horn-tab {
-  border-radius: 0;
-  direction: ltr;
-}
-.app-design-work-tabs > .app-horn-tab:last-child {
-  border-end-start-radius: var(--app-radius-card);
-}
-.app-global-work-tabs > .app-horn-tab:last-child {
-  border-end-end-radius: var(--app-radius-card);
-}
-:is(.app-global-work-tabs, .app-design-work-tabs):empty { display: none; }
-.app-commandbar-content:has(> .app-design-work-tabs:not(:empty))
-  > :is(.app-global-work-tabs, .app-design-work-tabs) {
-  max-width: calc(50% - var(--mosaic-gap) / 2);
-}
+.app-work-totals:empty { display: none; }
 .app-spice-button {
   --app-spice-edge: var(--accent-slot, var(--line));
   --app-spice-rest-border: color-mix(in srgb, var(--app-spice-edge) 68%, var(--line));

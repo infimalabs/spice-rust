@@ -323,33 +323,6 @@ pub(crate) fn resolve_work_route(
     }
 }
 
-/// One visibility-qualified stem and the scoped tasks grouped beneath it.
-///
-/// Groups follow their first task in lifecycle and offer order, matching the
-/// task-strip grouping rule. Tasks inside a group retain that same order.
-#[derive(Debug)]
-pub struct StemTaskGroup<'p, 'a> {
-    stem: &'p WorkStemIdentity,
-    tasks: Vec<&'p WorkTask<'a>>,
-}
-
-impl<'p, 'a> StemTaskGroup<'p, 'a> {
-    #[must_use]
-    pub const fn stem(&self) -> &WorkStemIdentity {
-        self.stem
-    }
-
-    #[must_use]
-    pub fn tasks(&self) -> &[&'p WorkTask<'a>] {
-        &self.tasks
-    }
-
-    #[must_use]
-    pub fn counts(&self) -> WorkCounts {
-        self.tasks.iter().copied().collect()
-    }
-}
-
 /// The most actionable state one Work partition holds, which marks its tab.
 /// Variants run from most to least actionable; the first one present wins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -923,27 +896,6 @@ impl<'a> WorkProjection<'a> {
             }
         }
         (counts, workers)
-    }
-
-    /// One scope's open task strip, grouped by visibility-qualified stem.
-    ///
-    /// Groups follow their first task in [`Self::scope_strip`] order and
-    /// gather every later match without changing the tasks' relative order.
-    #[must_use]
-    pub fn stem_task_groups<'p>(&'p self, scope: &WorkScope) -> Vec<StemTaskGroup<'p, 'a>> {
-        let mut groups = Vec::<StemTaskGroup<'p, 'a>>::new();
-        for task in self.scope_strip(scope) {
-            let stem = self.task_stem(task);
-            if let Some(group) = groups.iter_mut().find(|group| group.stem == stem) {
-                group.tasks.push(task);
-            } else {
-                groups.push(StemTaskGroup {
-                    stem,
-                    tasks: vec![task],
-                });
-            }
-        }
-        groups
     }
 
     pub fn from_board(board: &'a BoardView) -> Self {

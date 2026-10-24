@@ -127,17 +127,20 @@ bare `new turn` label. An empty fleet reserves no pips and invents no status.
 
 ## Task strips
 
-The command bar has two mirrored global strips, execution at the left and
-Design at the right, each total flush and square against the window edge, a
-native window's traffic lights and the safe area still cleared; each
-team and open working group has one local strip. Every strip uses the
-horned-tab construction and leads with a badge-only total of one fixed
-footprint. The Design total opens Design-owned work: each Design past plan or
-review intake and each open task it directly controls; a Design in intake is
-execution work. Accountable ownership, never dependency reachability or group
-placement, chooses the global strip, so a Design-produced Plan stays right and
-the tasks it creates for execution go left. Local docking never removes a task
-from its global strip.
+The command bar hangs two global totals from its top edge immediately before
+the Spice button, execution then Design, one task-tab gap apart; the Design
+total stands off the button by the button's own gap from the window edge.
+Each team and open working group has one local strip. Every total and strip
+uses the horned-tab construction, and every total is badge-only with one
+fixed footprint. The
+global totals open all open execution work and all open Design work; no
+per-stem breakdown appears in the command bar, and a stem is reached through
+its Work deep link. The Design total opens Design-owned work: each Design past
+plan or review intake and each open task it directly controls; a Design in
+intake is execution work. Accountable ownership, never dependency
+reachability or group placement, chooses the global total, so a
+Design-produced Plan counts right and the tasks it creates for execution count
+left. Local docking never removes a task from its global total.
 
 Local placement follows
 [claim-bound placement](../docs/product/invariants/identity.md#work-claim-bound-work-has-two-visible-placements):
@@ -147,8 +150,7 @@ its Designs. Local tabs run right to left in the order of the composers
 below, so each stands over its own column: a team's by lane, each lane's tabs
 together, and a group's by the first Design each lane's work serves. A local
 total selects exactly what its tabs stand for, and local
-strips have no stem roll-ups; each global stem tab opens its complete
-visibility-qualified stem. A team or group total spans the pip column flush
+strips have no stem roll-ups. A team or group total spans the pip column flush
 to the console's right edge, so its badge centres over the pips and the team
 menu below them. Tabs past a total scroll under edge fades. Local tabs
 meet each other and the total without gap, border, or interior rounding; only
@@ -161,8 +163,8 @@ hover. Every count badge is one neutral
 [open-task total](../docs/product/loops.md#the-jitter-contract). Gate waits
 read the resident's
 [one classification](../docs/product/invariants/identity.md#work-gate-waits-have-one-resident-owned-classification);
-only a Blocked row is danger-coloured in detail and graphs. A global total or
-stem tab, or a team or group total, whose partition holds work only the
+only a Blocked row is danger-coloured in detail and graphs. A global, team,
+or group total whose partition holds work only the
 operator can move now (human-actionable blocked or environment-held work, or
 for a Design tab an unclaimed, undeferred Design awaiting decision) carries a
 small out-of-flow danger dot on its badge's top inline-end corner and leads its

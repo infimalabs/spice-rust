@@ -64,7 +64,7 @@
   --app-motion-pulse: 5s;
   --app-status-line-band: 32px;
   /* A work tab is a 28px tab plus one message rail on the edge it attaches
-     by: the bottom of a tab hanging from the command bar, the top of one
+     by: the bottom of a global total in the command bar, the top of a tab
      rising from a team rail. Tabs carry no inline rails. */
   --app-horn-tab-block-size: 32px;
   --app-horn-tab-inset: 10px;

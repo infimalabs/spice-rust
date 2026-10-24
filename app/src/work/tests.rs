@@ -666,6 +666,25 @@ fn a_tab_marks_only_its_partitions_most_actionable_state() {
     assert_eq!(counts(0, 0, 0, 0, 0).mark(), None);
 }
 
+/// Each stem's mark inside one scope, read from the scoped strip the stem
+/// routes open.
+fn stem_marks(
+    projection: &WorkProjection<'_>,
+    scope: &WorkScope,
+) -> BTreeMap<String, Option<(WorkMark, usize)>> {
+    let mut by_stem = BTreeMap::<String, WorkCounts>::new();
+    for task in projection.scope_strip(scope) {
+        by_stem
+            .entry(projection.task_stem(task).stem().to_owned())
+            .or_default()
+            .record(task.availability, task.proposal_ready);
+    }
+    by_stem
+        .into_iter()
+        .map(|(stem, counts)| (stem, counts.mark()))
+        .collect()
+}
+
 #[test]
 fn each_partition_marks_exactly_its_own_operator_transitions() {
     let mut in_flight = task(1, "alpha.quiet");
@@ -723,13 +742,7 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
             .insert(stamp(ready), wire::rooms::DesignCycle::ReadyForProposal);
     }
     let projection = WorkProjection::from_board(&board);
-    let marks = |scope: &WorkScope| {
-        projection
-            .stem_task_groups(scope)
-            .iter()
-            .map(|group| (group.stem().stem().to_owned(), group.counts().mark()))
-            .collect::<BTreeMap<_, _>>()
-    };
+    let marks = |scope: &WorkScope| stem_marks(&projection, scope);
 
     assert_eq!(
         marks(&WorkScope::AllOpen),
