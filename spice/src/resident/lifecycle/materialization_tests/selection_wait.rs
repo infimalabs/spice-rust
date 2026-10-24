@@ -58,6 +58,5 @@ fn resolution(bus: &Bus, projection: &Projection) -> Resolution {
         )],
         &Backoff::default(),
         instant(50),
-        lane::WakeOrder::default(),
     )
 }

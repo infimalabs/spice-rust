@@ -290,6 +290,17 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
                 && issue.path().is_some_and(|found| found.to_string() == path)
         }));
     }
+    let error = resolve(documents(
+        None,
+        Some("[lane]\nwake_order = \"most-recently-claimed\"\n"),
+    ))
+    .expect_err("the retired machine-local wake order must refuse");
+    assert!(error.issues().iter().any(|issue| {
+        issue.kind() == IssueKind::Unknown
+            && issue
+                .path()
+                .is_some_and(|found| found.to_string() == "lane.wake_order")
+    }));
 }
 
 #[test]
@@ -758,9 +769,6 @@ image = "sha256:4444444444444444444444444444444444444444444444444444444444444444
 const LOCAL_MACHINE_DOCUMENT: &str = r#"
 [rtk]
 executable = "local-rtk"
-
-[lane]
-wake_order = "most-recently-claimed"
 
 [listen]
 window = "2m"

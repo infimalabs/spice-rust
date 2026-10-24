@@ -62,4 +62,4 @@ pub mod occupant;
 pub mod renew;
 pub mod table;
 
-pub use config::{Config, WakeOrder};
+pub use config::Config;

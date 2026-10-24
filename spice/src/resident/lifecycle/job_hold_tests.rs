@@ -3,8 +3,6 @@
 use super::tests::{instant, lane};
 use super::*;
 
-const ROTATE: lane::WakeOrder = lane::WakeOrder::LeastRecentlyClaimed;
-
 /// A vacant lane with a settled held claim and other work it could take.
 fn vacant_holder() -> Target<'static> {
     Target {
@@ -21,7 +19,7 @@ fn vacant_holder() -> Target<'static> {
 }
 
 fn held(targets: &[Target], now: Instant) -> Resolution {
-    resolve(targets, &Backoff::default(), now, ROTATE)
+    resolve(targets, &Backoff::default(), now)
 }
 
 #[test]

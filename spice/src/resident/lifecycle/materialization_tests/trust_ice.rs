@@ -11,12 +11,7 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
     assert_eq!(iced_target.drain_queue, Available::None);
     assert_eq!(iced_target.available, Available::None);
     assert_eq!(
-        resolve(
-            &[iced_target],
-            &Backoff::default(),
-            instant(50),
-            lane::WakeOrder::default()
-        ),
+        resolve(&[iced_target], &Backoff::default(), instant(50),),
         Resolution::Idle
     );
 
@@ -30,7 +25,6 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
             &[target(&granted, &projection)],
             &Backoff::default(),
             instant(50),
-            lane::WakeOrder::default()
         ),
         Resolution::Attempt {
             trigger: Trigger::HeldClaim,
@@ -53,7 +47,6 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
             &[target(&directed, &projection)],
             &Backoff::default(),
             instant(50),
-            lane::WakeOrder::default()
         ),
         Resolution::Attempt {
             trigger: Trigger::PendingInbox,
@@ -227,7 +220,6 @@ fn wake(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Resolution {
         &[target(snapshot, projection)],
         &Backoff::default(),
         instant(50),
-        lane::WakeOrder::default(),
     )
 }
 
@@ -377,15 +369,7 @@ fn assert_recovery_deadline(
                     lane: lane(),
                 }
             };
-            assert_eq!(
-                resolve(
-                    &targets,
-                    &Backoff::default(),
-                    now,
-                    lane::WakeOrder::default()
-                ),
-                expected
-            );
+            assert_eq!(resolve(&targets, &Backoff::default(), now,), expected);
         }
     }
 }
