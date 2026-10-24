@@ -21,7 +21,7 @@ pub(super) fn generation(binary: &Path, bytes: &[u8]) -> Result<Digest, InstallE
         reason,
     };
     let archive = dist::linked_archive(bytes).map_err(|error| refused(error.to_string()))?;
-    let generation = serve::canvas::CanvasArchive::admit(archive)
+    let generation = serve::rack::Rack::admit(archive)
         .map_err(|error| refused(error.to_string()))?
         .generation()
         .clone();
@@ -79,10 +79,13 @@ pub(super) fn linked(generation: &Digest) -> Vec<u8> {
             } else {
                 format!("fixture {}", asset.file())
             };
-            (asset.file().to_owned(), bytes.into_bytes())
+            (
+                serve::rack::Namespace::App.member(asset.file()),
+                bytes.into_bytes(),
+            )
         })
         .collect::<Vec<_>>();
-    let archive = serve::canvas::CanvasArchive::write(
+    let archive = serve::rack::Rack::write(
         files
             .iter()
             .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),

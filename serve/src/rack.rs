@@ -1,13 +1,16 @@
-//! The canvas archive: one generation of the browser app as one deterministic
-//! ZIP whose members are gzip streams stored with method STORE.
+//! The spice rack: everything an executable ships besides its code, as one
+//! deterministic ZIP whose members are gzip streams stored with method STORE.
 //!
-//! [`CanvasArchive::write`] is the only writer and [`CanvasArchive::admit`]
-//! the only reader. Every member is one gzip stream under a fixed header, so a
-//! browser receives the stored bytes directly under `Content-Encoding: gzip`.
-//! Admission inflates only the shell; [`CanvasMember::inflate`] yields any
-//! other member's original bytes on demand. The archive bytes digest and the
-//! executable signature that carries them are the integrity authority, and the
-//! ZIP CRC fields are structural evidence compared between headers.
+//! Every member path begins with the [`Namespace`] that holds it: `app/` the
+//! browser app generation, `skill/` the agent skill, `doc/` documentation, and
+//! `tool/` tool members beside their manifests. [`Rack::write`] is the only
+//! writer and [`Rack::admit`] the only reader. Every member is one gzip stream
+//! under a fixed header, so a browser receives the stored bytes directly under
+//! `Content-Encoding: gzip`. Admission inflates only the app shell;
+//! [`RackMember::inflate`] yields any other member's original bytes on demand.
+//! The archive bytes digest and the executable signature that carries them are
+//! the integrity authority, and the ZIP CRC fields are structural evidence
+//! compared between headers.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,13 +19,72 @@ use std::io::Write as _;
 
 use flate2::{Compression, Crc, Decompress, FlushDecompress, Status};
 
-/// Most members one archive carries: the shell inventory and every renderer file.
-pub const MAX_MEMBERS: usize =
-    wire::manifest::APP_FILES.len() + wire::manifest::renderer::MAX_FILES;
+/// Most members one rack carries: every namespace's bound summed.
+pub const MAX_MEMBERS: usize = Namespace::App.max_members()
+    + Namespace::Doc.max_members()
+    + Namespace::Skill.max_members()
+    + Namespace::Tool.max_members();
 /// Largest uncompressed size one member's gzip trailer may declare.
 pub const MAX_MEMBER_BYTES: u32 = 64 * 1024 * 1024;
 /// Largest uncompressed size all members may declare together.
 pub const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+/// The member beside every tool's other members that describes the tool.
+pub const TOOL_MANIFEST: &str = "manifest.json";
+
+/// One rack namespace: the first segment of every member path it holds.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Namespace {
+    /// The browser app generation: exactly its shell's inventory.
+    App,
+    /// Tracked documentation.
+    Doc,
+    /// The agent skill.
+    Skill,
+    /// Tool members, each tool directory carrying its [`TOOL_MANIFEST`].
+    Tool,
+}
+
+impl Namespace {
+    /// Every namespace, in path order.
+    pub const ALL: [Self; 4] = [Self::App, Self::Doc, Self::Skill, Self::Tool];
+
+    /// The path segment naming this namespace.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::Doc => "doc",
+            Self::Skill => "skill",
+            Self::Tool => "tool",
+        }
+    }
+
+    /// The namespace a path segment names.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|namespace| namespace.name() == name)
+    }
+
+    /// Most members this namespace may hold, declared so that no namespace
+    /// widens another's share.
+    #[must_use]
+    pub const fn max_members(self) -> usize {
+        match self {
+            Self::App => wire::manifest::APP_FILES.len() + wire::manifest::renderer::MAX_FILES,
+            Self::Doc => 256,
+            Self::Skill => 1,
+            Self::Tool => 64,
+        }
+    }
+
+    /// The member path of `file` within this namespace.
+    #[must_use]
+    pub fn member(self, file: &str) -> String {
+        format!("{}/{file}", self.name())
+    }
+}
 
 const LOCAL_SIGNATURE: u32 = 0x0403_4b50;
 const CENTRAL_SIGNATURE: u32 = 0x0201_4b50;
@@ -44,22 +106,44 @@ const GZIP_LEVEL: u32 = 9;
 /// The shell attribute naming the generation its routes are qualified with.
 const SHELL_GENERATION: &str = "data-app-generation=\"";
 
-/// One admitted generation archive whose members borrow the archive bytes.
+/// One admitted rack whose members borrow the archive bytes.
 #[derive(Debug)]
-pub struct CanvasArchive<'a> {
+pub struct Rack<'a> {
     generation: wire::Digest,
     shell: Box<[u8]>,
-    members: BTreeMap<&'a str, CanvasMember<'a>>,
+    members: BTreeMap<&'a str, RackMember<'a>>,
 }
 
-/// One stored gzip member of an admitted archive.
+/// One stored gzip member of an admitted rack.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CanvasMember<'a> {
+pub struct RackMember<'a> {
     gzip: &'a [u8],
     size: u32,
 }
 
-impl<'a> CanvasMember<'a> {
+/// One member's content as [`Rack::write`] stores it.
+#[derive(Clone, Copy, Debug)]
+pub enum RackInput<'a> {
+    /// Original bytes, deflated into the member's gzip stream.
+    Bytes(&'a [u8]),
+    /// A member of an admitted rack, whose gzip stream is copied unchanged:
+    /// deflation is deterministic, so this is the stream its bytes would give.
+    Stored(RackMember<'a>),
+}
+
+impl<'a> From<&'a [u8]> for RackInput<'a> {
+    fn from(bytes: &'a [u8]) -> Self {
+        Self::Bytes(bytes)
+    }
+}
+
+impl<'a> From<RackMember<'a>> for RackInput<'a> {
+    fn from(member: RackMember<'a>) -> Self {
+        Self::Stored(member)
+    }
+}
+
+impl<'a> RackMember<'a> {
     /// The exact stored gzip stream, served under `Content-Encoding: gzip`.
     #[must_use]
     pub const fn gzip(self) -> &'a [u8] {
@@ -78,7 +162,7 @@ impl<'a> CanvasMember<'a> {
     /// # Errors
     ///
     /// Refuses, naming `path`, bytes that are not exactly that stream.
-    pub fn inflate(self, path: &str) -> Result<Box<[u8]>, CanvasArchiveError> {
+    pub fn inflate(self, path: &str) -> Result<Box<[u8]>, RackError> {
         let refused = || member_error(path, "is not exactly one gzip stream");
         let trailer = self.gzip.len() - GZIP_TRAILER_BYTES;
         let body = &self.gzip[GZIP_HEADER.len()..trailer];
@@ -105,46 +189,54 @@ impl<'a> CanvasMember<'a> {
     }
 }
 
-impl<'a> CanvasArchive<'a> {
-    /// Write the deterministic archive of one generation's files.
+impl<'a> Rack<'a> {
+    /// Write the deterministic rack of these members.
     ///
     /// Members are ordered by path bytes whatever the input order, so the same
-    /// files always yield the same archive bytes.
+    /// members always yield the same archive bytes.
     ///
     /// # Errors
     ///
-    /// Refuses an invalid or repeated path and a member, total, or archive
-    /// above its bound.
-    pub fn write<'f>(
-        files: impl IntoIterator<Item = (&'f str, &'f [u8])>,
-    ) -> Result<Vec<u8>, CanvasArchiveError> {
-        let mut files = files.into_iter().collect::<Vec<_>>();
+    /// Refuses an invalid or repeated path, a path outside every namespace, a
+    /// tool member without its manifest, and a member, namespace, total, or
+    /// archive above its bound.
+    pub fn write<'f, I: Into<RackInput<'f>>>(
+        files: impl IntoIterator<Item = (&'f str, I)>,
+    ) -> Result<Vec<u8>, RackError> {
+        let mut files = files
+            .into_iter()
+            .map(|(path, input)| (path, input.into()))
+            .collect::<Vec<_>>();
         let count = u16::try_from(files.len())
             .ok()
             .filter(|count| usize::from(*count) <= MAX_MEMBERS)
-            .ok_or(CanvasArchiveError::Bound(
-                "archive exceeds its member bound",
-            ))?;
+            .ok_or(RackError::Bound("archive exceeds its member bound"))?;
         files.sort_unstable_by_key(|(path, _)| *path);
         if let Some(pair) = files.windows(2).find(|pair| pair[0].0 == pair[1].0) {
             return Err(member_error(pair[0].0, "path is repeated"));
         }
+        for (path, _) in &files {
+            check_path(path)?;
+        }
+        check_namespaces(files.iter().map(|(path, _)| *path))?;
         let mut archive = Vec::new();
         let mut directory = Vec::new();
         let mut total = 0_u64;
-        for (path, bytes) in files {
-            check_path(path)?;
-            let size = u32::try_from(bytes.len())
-                .ok()
-                .filter(|size| *size <= MAX_MEMBER_BYTES)
-                .ok_or_else(|| member_error(path, "exceeds the member byte bound"))?;
+        for (path, input) in files {
+            let (stored, size) = match input {
+                RackInput::Bytes(bytes) => {
+                    let size = u32::try_from(bytes.len())
+                        .ok()
+                        .filter(|size| *size <= MAX_MEMBER_BYTES)
+                        .ok_or_else(|| member_error(path, "exceeds the member byte bound"))?;
+                    (Cow::Owned(gzip(bytes)), size)
+                }
+                RackInput::Stored(member) => (Cow::Borrowed(member.gzip), member.size),
+            };
             total += u64::from(size);
             if total > MAX_TOTAL_BYTES {
-                return Err(CanvasArchiveError::Bound(
-                    "members exceed the total byte bound",
-                ));
+                return Err(RackError::Bound("members exceed the total byte bound"));
             }
-            let stored = gzip(bytes);
             let mut crc = Crc::new();
             crc.update(&stored);
             let fields = Fields::stored(path, crc.sum(), &stored)?;
@@ -169,13 +261,13 @@ impl<'a> CanvasArchive<'a> {
         Ok(archive)
     }
 
-    /// Admit one archive, deriving its generation from the archived shell.
+    /// Admit one rack, deriving its generation from the archived app shell.
     ///
     /// # Errors
     ///
-    /// Refuses every structure, member, bound, and shell violation the module
-    /// documentation and [`CanvasArchiveError`] name.
-    pub fn admit(bytes: &'a [u8]) -> Result<Self, CanvasArchiveError> {
+    /// Refuses every structure, member, namespace, bound, and shell violation
+    /// the module documentation and [`RackError`] name.
+    pub fn admit(bytes: &'a [u8]) -> Result<Self, RackError> {
         let end = EndRecord::read(bytes)?;
         let mut walk = Walk {
             bytes,
@@ -193,23 +285,23 @@ impl<'a> CanvasArchive<'a> {
             }
             total += u64::from(member.size);
             if total > MAX_TOTAL_BYTES {
-                return Err(CanvasArchiveError::Bound(
-                    "members exceed the total byte bound",
-                ));
+                return Err(RackError::Bound("members exceed the total byte bound"));
             }
             previous = Some(path);
             members.insert(path, member);
         }
         if walk.central.at != bytes.len() - END_RECORD_BYTES || walk.local != walk.directory {
-            return Err(CanvasArchiveError::Structure(
+            return Err(RackError::Structure(
                 "bytes lie outside every member and directory record",
             ));
         }
+        check_namespaces(members.keys().copied())?;
+        let shell_path = Namespace::App.member(wire::manifest::APP_HTML);
         let shell = members
-            .get(wire::manifest::APP_HTML)
+            .get(shell_path.as_str())
             .copied()
-            .ok_or(CanvasArchiveError::Shell("archive carries no shell"))
-            .and_then(|shell| shell.inflate(wire::manifest::APP_HTML))?;
+            .ok_or(RackError::Shell("archive carries no app shell"))
+            .and_then(|shell| shell.inflate(&shell_path))?;
         let generation = shell_generation(&shell)?;
         check_inventory(&shell, &members)?;
         Ok(Self {
@@ -219,19 +311,16 @@ impl<'a> CanvasArchive<'a> {
         })
     }
 
-    /// Admit one archive whose shell must name `expected`.
+    /// Admit one rack whose app shell must name `expected`.
     ///
     /// # Errors
     ///
     /// Refuses everything [`Self::admit`] refuses and a shell naming another
     /// generation.
-    pub fn admit_generation(
-        bytes: &'a [u8],
-        expected: &wire::Digest,
-    ) -> Result<Self, CanvasArchiveError> {
+    pub fn admit_generation(bytes: &'a [u8], expected: &wire::Digest) -> Result<Self, RackError> {
         let archive = Self::admit(bytes)?;
         if archive.generation != *expected {
-            return Err(CanvasArchiveError::Generation {
+            return Err(RackError::Generation {
                 expected: expected.clone(),
                 found: archive.generation,
             });
@@ -239,40 +328,57 @@ impl<'a> CanvasArchive<'a> {
         Ok(archive)
     }
 
-    /// The generation the archived shell qualifies its routes with.
+    /// The generation the archived app shell qualifies its routes with.
     #[must_use]
     pub const fn generation(&self) -> &wire::Digest {
         &self.generation
     }
 
-    /// The inflated shell, read once at admission.
+    /// The inflated app shell, read once at admission.
     #[must_use]
     pub fn shell(&self) -> &[u8] {
         &self.shell
     }
 
-    /// The stored member at one logical path.
+    /// The stored member at one namespaced path.
     #[must_use]
-    pub fn member(&self, path: &str) -> Option<CanvasMember<'a>> {
+    pub fn member(&self, path: &str) -> Option<RackMember<'a>> {
         self.members.get(path).copied()
     }
 
     /// Every stored member in path order.
-    pub fn members(&self) -> impl Iterator<Item = (&'a str, CanvasMember<'a>)> + '_ {
+    pub fn members(&self) -> impl Iterator<Item = (&'a str, RackMember<'a>)> + '_ {
         self.members.iter().map(|(path, member)| (*path, *member))
+    }
+
+    /// The members of `namespace`, keyed by their path within it, in order.
+    pub fn namespace(
+        &self,
+        namespace: Namespace,
+    ) -> impl Iterator<Item = (&'a str, RackMember<'a>)> + '_ {
+        let prefix = Namespace::member(namespace, "");
+        self.members
+            .range::<str, _>((
+                std::ops::Bound::Included(prefix.as_str()),
+                std::ops::Bound::Unbounded,
+            ))
+            .map_while(move |(path, member)| {
+                path.strip_prefix(prefix.as_str())
+                    .map(|file| (file, *member))
+            })
     }
 }
 
-/// Why an archive cannot be written or admitted.
+/// Why a rack cannot be written or admitted.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CanvasArchiveError {
+pub enum RackError {
     /// The end record or central directory disagrees with the archive bytes.
     Structure(&'static str),
     /// One member violates the format; `path` is its stored spelling.
     Member { path: String, reason: &'static str },
     /// The members exceed a declared bound.
     Bound(&'static str),
-    /// The archived shell does not declare an admissible generation.
+    /// The archived app shell does not declare an admissible generation.
     Shell(&'static str),
     /// The shell qualifies its routes with another generation.
     Generation {
@@ -281,37 +387,33 @@ pub enum CanvasArchiveError {
     },
 }
 
-impl fmt::Display for CanvasArchiveError {
+impl fmt::Display for RackError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Structure(reason) | Self::Bound(reason) | Self::Shell(reason) => {
-                write!(formatter, "canvas archive refused: {reason}")
+                write!(formatter, "spice rack refused: {reason}")
             }
             Self::Member { path, reason } => {
-                write!(
-                    formatter,
-                    "canvas archive member {path:?} refused: {reason}"
-                )
+                write!(formatter, "spice rack member {path:?} refused: {reason}")
             }
             Self::Generation { expected, found } => write!(
                 formatter,
-                "canvas archive shell names generation {found}, expected {expected}"
+                "spice rack app shell names generation {found}, expected {expected}"
             ),
         }
     }
 }
 
-impl std::error::Error for CanvasArchiveError {}
+impl std::error::Error for RackError {}
 
-fn member_error(path: &str, reason: &'static str) -> CanvasArchiveError {
-    CanvasArchiveError::Member {
+fn member_error(path: &str, reason: &'static str) -> RackError {
+    RackError::Member {
         path: path.to_owned(),
         reason,
     }
 }
 
-const TRUNCATED: CanvasArchiveError =
-    CanvasArchiveError::Structure("an archive record is truncated");
+const TRUNCATED: RackError = RackError::Structure("an archive record is truncated");
 
 /// The header run local and central entries share, in field order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -329,7 +431,7 @@ struct Fields {
 }
 
 impl Fields {
-    fn stored(path: &str, crc: u32, stored: &[u8]) -> Result<Self, CanvasArchiveError> {
+    fn stored(path: &str, crc: u32, stored: &[u8]) -> Result<Self, RackError> {
         let length = u32::try_from(stored.len())
             .map_err(|_| member_error(path, "exceeds the archive offset range"))?;
         Ok(Self {
@@ -347,7 +449,7 @@ impl Fields {
         })
     }
 
-    fn read(cursor: &mut Cursor<'_>) -> Result<Self, CanvasArchiveError> {
+    fn read(cursor: &mut Cursor<'_>) -> Result<Self, RackError> {
         Ok(Self {
             needed: cursor.u16()?,
             flags: cursor.u16()?,
@@ -404,7 +506,7 @@ impl CentralTail {
         }
     }
 
-    fn read(cursor: &mut Cursor<'_>) -> Result<Self, CanvasArchiveError> {
+    fn read(cursor: &mut Cursor<'_>) -> Result<Self, RackError> {
         Ok(Self {
             comment: cursor.u16()?,
             disk: cursor.u16()?,
@@ -431,14 +533,13 @@ struct EndRecord {
 }
 
 impl EndRecord {
-    fn read(bytes: &[u8]) -> Result<Self, CanvasArchiveError> {
-        let start =
-            bytes
-                .len()
-                .checked_sub(END_RECORD_BYTES)
-                .ok_or(CanvasArchiveError::Structure(
-                    "archive is shorter than its end record",
-                ))?;
+    fn read(bytes: &[u8]) -> Result<Self, RackError> {
+        let start = bytes
+            .len()
+            .checked_sub(END_RECORD_BYTES)
+            .ok_or(RackError::Structure(
+                "archive is shorter than its end record",
+            ))?;
         let mut cursor = Cursor::at(bytes, start);
         let signature = cursor.u32()?;
         let disks = [cursor.u16()?, cursor.u16()?];
@@ -450,19 +551,17 @@ impl EndRecord {
         };
         let comment = cursor.u16()?;
         if signature != END_SIGNATURE || disks != [0, 0] || here != count || comment != 0 {
-            return Err(CanvasArchiveError::Structure(
+            return Err(RackError::Structure(
                 "end record is absent or not a canonical single-disk record",
             ));
         }
         if end.offset as usize + end.size as usize != start {
-            return Err(CanvasArchiveError::Structure(
+            return Err(RackError::Structure(
                 "central directory does not end at the end record",
             ));
         }
         if usize::from(end.count) > MAX_MEMBERS {
-            return Err(CanvasArchiveError::Bound(
-                "archive exceeds its member bound",
-            ));
+            return Err(RackError::Bound("archive exceeds its member bound"));
         }
         Ok(end)
     }
@@ -487,9 +586,9 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn member(&mut self) -> Result<(&'a str, CanvasMember<'a>), CanvasArchiveError> {
+    fn member(&mut self) -> Result<(&'a str, RackMember<'a>), RackError> {
         if self.central.u32()? != CENTRAL_SIGNATURE {
-            return Err(CanvasArchiveError::Structure(
+            return Err(RackError::Structure(
                 "a central directory entry has no signature",
             ));
         }
@@ -534,7 +633,7 @@ impl<'a> Walk<'a> {
         }
         self.local = local.at;
         let size = gzip_size(path, gzip)?;
-        Ok((path, CanvasMember { gzip, size }))
+        Ok((path, RackMember { gzip, size }))
     }
 }
 
@@ -549,19 +648,19 @@ impl<'a> Cursor<'a> {
         Self { bytes, at }
     }
 
-    fn take(&mut self, count: usize) -> Result<&'a [u8], CanvasArchiveError> {
+    fn take(&mut self, count: usize) -> Result<&'a [u8], RackError> {
         let end = self.at.checked_add(count).ok_or(TRUNCATED)?;
         let slice = self.bytes.get(self.at..end).ok_or(TRUNCATED)?;
         self.at = end;
         Ok(slice)
     }
 
-    fn u16(&mut self) -> Result<u16, CanvasArchiveError> {
+    fn u16(&mut self) -> Result<u16, RackError> {
         let bytes = self.take(size_of::<u16>())?;
         Ok(u16::from_le_bytes(bytes.try_into().map_err(|_| TRUNCATED)?))
     }
 
-    fn u32(&mut self) -> Result<u32, CanvasArchiveError> {
+    fn u32(&mut self) -> Result<u32, RackError> {
         let bytes = self.take(size_of::<u32>())?;
         Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| TRUNCATED)?))
     }
@@ -575,13 +674,13 @@ fn put_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-fn archive_offset(length: usize) -> Result<u32, CanvasArchiveError> {
-    u32::try_from(length).map_err(|_| CanvasArchiveError::Bound("archive exceeds its offset range"))
+fn archive_offset(length: usize) -> Result<u32, RackError> {
+    u32::try_from(length).map_err(|_| RackError::Bound("archive exceeds its offset range"))
 }
 
 /// A normalized relative logical path: slash-separated, no empty, dot,
 /// dot-dot, backslash, or NUL segment.
-fn check_path(path: &str) -> Result<(), CanvasArchiveError> {
+fn check_path(path: &str) -> Result<(), RackError> {
     if path.contains(['\\', '\0'])
         || path
             .split('/')
@@ -595,7 +694,7 @@ fn check_path(path: &str) -> Result<(), CanvasArchiveError> {
     Ok(())
 }
 
-fn admitted_path(name: &[u8]) -> Result<&str, CanvasArchiveError> {
+fn admitted_path(name: &[u8]) -> Result<&str, RackError> {
     let path = std::str::from_utf8(name)
         .map_err(|_| member_error(&String::from_utf8_lossy(name), "path is not UTF-8"))?;
     check_path(path)?;
@@ -618,7 +717,7 @@ fn gzip(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// The declared size of a stored gzip member under the fixed framing.
-fn gzip_size(path: &str, gzip: &[u8]) -> Result<u32, CanvasArchiveError> {
+fn gzip_size(path: &str, gzip: &[u8]) -> Result<u32, RackError> {
     let trailer = gzip
         .len()
         .checked_sub(GZIP_TRAILER_BYTES)
@@ -641,40 +740,72 @@ fn gzip_size(path: &str, gzip: &[u8]) -> Result<u32, CanvasArchiveError> {
     Ok(size)
 }
 
-fn shell_generation(shell: &[u8]) -> Result<wire::Digest, CanvasArchiveError> {
-    let html =
-        std::str::from_utf8(shell).map_err(|_| CanvasArchiveError::Shell("shell is not UTF-8"))?;
+fn shell_generation(shell: &[u8]) -> Result<wire::Digest, RackError> {
+    let html = std::str::from_utf8(shell).map_err(|_| RackError::Shell("shell is not UTF-8"))?;
     let mut spans = html.split(SHELL_GENERATION).skip(1);
     let value = spans
         .next()
-        .ok_or(CanvasArchiveError::Shell("shell names no generation"))?;
+        .ok_or(RackError::Shell("shell names no generation"))?;
     if spans.next().is_some() {
-        return Err(CanvasArchiveError::Shell(
-            "shell names more than one generation",
-        ));
+        return Err(RackError::Shell("shell names more than one generation"));
     }
     value
         .split_once('"')
         .and_then(|(generation, _)| generation.parse().ok())
-        .ok_or(CanvasArchiveError::Shell(
-            "shell generation is not a digest",
-        ))
+        .ok_or(RackError::Shell("shell generation is not a digest"))
 }
 
-/// The members are exactly the shell inventory and its declared renderers.
+/// Every path lies inside one namespace and within its member bound, and every
+/// tool directory carries its manifest.
+fn check_namespaces<'p>(paths: impl IntoIterator<Item = &'p str>) -> Result<(), RackError> {
+    let mut counts = BTreeMap::<Namespace, usize>::new();
+    let mut tools = BTreeMap::<&str, bool>::new();
+    for path in paths {
+        let (namespace, file) = path
+            .split_once('/')
+            .and_then(|(name, file)| Some((Namespace::parse(name)?, file)))
+            .ok_or_else(|| member_error(path, "lies outside every rack namespace"))?;
+        let count = counts.entry(namespace).or_default();
+        *count += 1;
+        if *count > namespace.max_members() {
+            return Err(member_error(path, "exceeds its namespace member bound"));
+        }
+        if namespace == Namespace::Tool {
+            let (tool, rest) = file
+                .split_once('/')
+                .ok_or_else(|| member_error(path, "lies outside every tool directory"))?;
+            *tools.entry(tool).or_default() |= rest == TOOL_MANIFEST;
+        }
+    }
+    match tools.into_iter().find(|(_, manifest)| !manifest) {
+        Some((tool, _)) => Err(member_error(
+            &Namespace::Tool.member(tool),
+            "carries no tool manifest",
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The app members are exactly the shell inventory and its declared renderers.
 fn check_inventory(
     shell: &[u8],
-    members: &BTreeMap<&str, CanvasMember<'_>>,
-) -> Result<(), CanvasArchiveError> {
-    let declared = wire::manifest::renderer::from_html(shell).map_err(CanvasArchiveError::Shell)?;
-    let expected =
-        wire::manifest::renderer::filenames(&declared).collect::<BTreeSet<Cow<'_, str>>>();
-    if let Some(path) = members.keys().find(|path| !expected.contains(**path)) {
+    members: &BTreeMap<&str, RackMember<'_>>,
+) -> Result<(), RackError> {
+    let declared = wire::manifest::renderer::from_html(shell).map_err(RackError::Shell)?;
+    let expected = wire::manifest::renderer::filenames(&declared)
+        .map(|file| Namespace::App.member(&file))
+        .collect::<BTreeSet<String>>();
+    let prefix = Namespace::App.member("");
+    if let Some(path) = members
+        .keys()
+        .filter(|path| path.starts_with(prefix.as_str()))
+        .find(|path| !expected.contains(**path))
+    {
         return Err(member_error(path, "is outside the shell inventory"));
     }
     if let Some(path) = expected
         .iter()
-        .find(|path| !members.contains_key(path.as_ref()))
+        .find(|path| !members.contains_key(path.as_str()))
     {
         return Err(member_error(path, "is declared by the shell but absent"));
     }

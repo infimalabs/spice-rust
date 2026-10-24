@@ -96,7 +96,7 @@ fn source_paths(root: &Path) -> Result<Vec<String>, AppBuildError> {
     Ok(paths)
 }
 
-fn collect_directory(
+pub(super) fn collect_directory(
     root: &Path,
     directory: &Path,
     paths: &mut Vec<String>,

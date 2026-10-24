@@ -50,10 +50,13 @@ static EMBEDDED_ARCHIVE: LazyLock<Vec<u8>> = LazyLock::new(|| {
             } else {
                 format!("fixture {}", asset.file())
             };
-            (asset.file().to_owned(), bytes.into_bytes())
+            (
+                serve::rack::Namespace::App.member(asset.file()),
+                bytes.into_bytes(),
+            )
         })
         .collect::<Vec<_>>();
-    serve::canvas::CanvasArchive::write(
+    serve::rack::Rack::write(
         files
             .iter()
             .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
@@ -114,7 +117,7 @@ fn an_installed_resident_refuses_absent_or_invalid_linked_canvas_bytes() {
     };
     assert_eq!(absent.reason, "serve::canvas-archive-absent");
 
-    let invalid = Err(serve::canvas::CanvasArchiveError::Structure(
+    let invalid = Err(serve::rack::RackError::Structure(
         "fixture archive is invalid",
     ));
     let Err(Outcome::Fault(invalid)) =

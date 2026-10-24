@@ -2,7 +2,7 @@
 //!
 //! Heavyweight build adapters live at the rim. This crate owns their order,
 //! pin admission, content identities, stage layout, receipt-free wire payload,
-//! and the embedded app ZIP. A pin mismatch returns before any builder call.
+//! and the linked spice rack. A pin mismatch returns before any builder call.
 
 mod authority;
 mod canvas;

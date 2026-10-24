@@ -347,7 +347,7 @@ impl AppSelection {
     fn resolve_with(
         self,
         worktree: &Path,
-        linked: Option<&Result<serve::canvas::EmbeddedArchive, serve::canvas::CanvasArchiveError>>,
+        linked: Option<&Result<serve::canvas::EmbeddedArchive, serve::rack::RackError>>,
     ) -> CommandResult<serve::canvas::CanvasAssets> {
         match self {
             Self::Installed => {

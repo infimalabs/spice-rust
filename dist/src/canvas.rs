@@ -1,28 +1,28 @@
-//! The app ZIP linked into one appliance executable.
+//! The spice rack linked into one appliance executable.
 //!
 //! The release target build and `spice dev xtask -- install` link one object
-//! that places the staged archive in a retained read-only section. A build
-//! reads that section back out of its final image, after symbols, stripping,
-//! and signing, and refuses unless it is exactly the archive it staged. The
-//! archive inside the section is a standard ZIP whose offsets are relative to
-//! its own start; the executable around it is not.
+//! that places the assembled rack archive in a retained read-only section. A
+//! build reads that section back out of its final image, after symbols,
+//! stripping, and signing, and refuses unless it is exactly the archive it
+//! assembled. The archive inside the section is a standard ZIP whose offsets
+//! are relative to its own start; the executable around it is not.
 mod coff;
 
 use wire::manifest::ProductVersion;
 use wire::{Digest, Domain};
 
-/// Segment holding the app ZIP section on Mach-O.
+/// Segment holding the rack section on Mach-O.
 const MACHO_SEGMENT: &[u8] = b"__TEXT";
-/// App ZIP section on Mach-O: lowercase after two underscores, as Apple's
+/// Rack section on Mach-O: lowercase after two underscores, as Apple's
 /// Mach-O File Format Reference names sections.
-const MACHO_SECTION: &[u8] = b"__spiceapp";
-/// App ZIP section on ELF: undotted, since the System V gABI reserves
+const MACHO_SECTION: &[u8] = b"__spicerack";
+/// Rack section on ELF: undotted, since the System V gABI reserves
 /// dot-prefixed section names for the system.
-const ELF_SECTION: &[u8] = b"spiceapp";
-/// First ZIP byte, as the `canvas` crate declares it.
-const ARCHIVE_SYMBOL: &[u8] = b"spiceapp";
-/// The ZIP length as a little-endian `u64`, as the `canvas` crate declares it.
-const LENGTH_SYMBOL: &[u8] = b"spiceapp_len";
+const ELF_SECTION: &[u8] = b"spicerack";
+/// First rack byte, as the `canvas` crate declares it.
+const ARCHIVE_SYMBOL: &[u8] = b"spicerack";
+/// The rack length as a little-endian `u64`, as the `canvas` crate declares it.
+const LENGTH_SYMBOL: &[u8] = b"spicerack_len";
 
 const MACHO_MAGIC_64: u32 = 0xfeed_facf;
 const MACHO_HEADER_BYTES: usize = 32;
@@ -42,7 +42,7 @@ const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHF_ALLOC: u64 = 2;
 
-/// An executable target the app ZIP object is written for.
+/// An executable target the rack object is written for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObjectTarget {
     MacAarch64,
@@ -90,7 +90,7 @@ impl ObjectTarget {
 
 /// The relocatable object that links `archive` into one executable for `target`.
 ///
-/// The app ZIP section holds the archive bytes alone, so the final image's
+/// The rack section holds the archive bytes alone, so the final image's
 /// section is byte-for-byte what [`Canvas::verify_linked`] compares; its
 /// length sits in a read-only constant section. Both are named by global data
 /// symbols the `canvas` crate declares, which is what keeps the linker from
@@ -173,7 +173,7 @@ fn macho_object(archive: &[u8], cpu: u32, subtype: u32, minos: u32) -> Vec<u8> {
 fn elf_object(archive: &[u8], machine: u16) -> Vec<u8> {
     let (section_names, section_offsets) = string_table(&[
         ELF_SECTION,
-        b".rodata.spiceapp_len",
+        b".rodata.spicerack_len",
         b".note.GNU-stack",
         b".symtab",
         b".strtab",
@@ -287,14 +287,14 @@ fn put64(out: &mut Vec<u8>, values: &[u64]) {
 }
 
 fn word(value: usize) -> u32 {
-    u32::try_from(value).expect("an app ZIP object offset fits in 32 bits")
+    u32::try_from(value).expect("a rack object offset fits in 32 bits")
 }
 
 fn wide(value: usize) -> u64 {
     value as u64
 }
 
-/// The staged app ZIP one build links: generation G and its exact bytes.
+/// The assembled rack one build links: app generation G and its exact bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Canvas {
     generation: Digest,
@@ -331,7 +331,7 @@ impl Canvas {
         self.bytes
     }
 
-    /// Refuse a final executable whose app ZIP section is not exactly this archive.
+    /// Refuse a final executable whose rack section is not exactly this archive.
     ///
     /// # Errors
     ///
@@ -406,18 +406,20 @@ impl Canvas {
     }
 }
 
-/// Why a final executable's app ZIP section was refused.
+/// Why a final executable's rack section was refused.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CanvasError {
     #[error("executable is neither a supported 64-bit Mach-O, ELF, nor PE image")]
     Format,
     #[error("executable {0} is malformed")]
     Malformed(&'static str),
-    #[error("executable carries no app ZIP section")]
+    #[error("executable carries no spice rack section")]
     Absent,
-    #[error("executable carries more than one app ZIP section")]
+    #[error("executable carries more than one spice rack section")]
     Repeated,
-    #[error("executable app ZIP section {observed} differs from the staged archive {expected}")]
+    #[error(
+        "executable spice rack section {observed} differs from the assembled archive {expected}"
+    )]
     Mismatch { expected: Digest, observed: Digest },
     #[error("Windows release policy forbids an embedded Authenticode certificate")]
     Authenticode,
@@ -429,7 +431,7 @@ pub enum CanvasError {
     ReleaseReport { expected: String, observed: String },
 }
 
-/// The archive bytes inside a final executable's app ZIP section.
+/// The archive bytes inside a final executable's rack section.
 ///
 /// # Errors
 ///
@@ -517,9 +519,7 @@ fn elf(image: &[u8]) -> Result<&[u8], CanvasError> {
             .ok_or(CanvasError::Malformed("section name"))?;
         if name == ELF_SECTION {
             if read_u32(image, section + 4)? == SHT_NOBITS {
-                return Err(CanvasError::Malformed(
-                    "app ZIP section holds no file bytes",
-                ));
+                return Err(CanvasError::Malformed("rack section holds no file bytes"));
             }
             let offset = read_u64(image, section + 24)?;
             let bytes = read_u64(image, section + 32)?;
@@ -665,9 +665,7 @@ mod tests {
             .copy_from_slice(&SHT_NOBITS.to_le_bytes());
         assert_eq!(
             linked_archive(&no_file_bytes),
-            Err(CanvasError::Malformed(
-                "app ZIP section holds no file bytes"
-            ))
+            Err(CanvasError::Malformed("rack section holds no file bytes"))
         );
     }
 
@@ -684,7 +682,7 @@ mod tests {
             let segment_bytes = length_at + 8;
             let symbols = data + segment_bytes;
             let strings_at = symbols + 2 * 16;
-            let string_table = b"\0_spiceapp\0_spiceapp_len\0";
+            let string_table = b"\0_spicerack\0_spicerack_len\0";
             let string_bytes = string_table.len().next_multiple_of(8);
 
             assert_eq!(u32_at(&object, 0), MACHO_MAGIC_64);
@@ -756,8 +754,8 @@ mod tests {
     #[test]
     fn elf_objects_expose_exact_sections_symbols_and_target_identity() {
         let section_names =
-            b"\0spiceapp\0.rodata.spiceapp_len\0.note.GNU-stack\0.symtab\0.strtab\0.shstrtab\0";
-        let symbol_names = b"\0spiceapp\0spiceapp_len\0";
+            b"\0spicerack\0.rodata.spicerack_len\0.note.GNU-stack\0.symtab\0.strtab\0.shstrtab\0";
+        let symbol_names = b"\0spicerack\0spicerack_len\0";
         for (target, machine) in [
             (ObjectTarget::LinuxAarch64, 183),
             (ObjectTarget::LinuxX86_64, 62),
@@ -784,7 +782,7 @@ mod tests {
             assert_eq!(u64_at(&object, length_at), ARCHIVE.len() as u64);
             assert_eq!(&object[symbols..symbols + 24], &[0; 24]);
             assert_elf_symbol(&object, symbols + 24, 1, 1, ARCHIVE.len() as u64);
-            assert_elf_symbol(&object, symbols + 48, 10, 2, 8);
+            assert_elf_symbol(&object, symbols + 48, 11, 2, 8);
             assert_eq!(
                 &object[symbol_names_at..symbol_names_at + symbol_names.len()],
                 symbol_names
@@ -798,7 +796,7 @@ mod tests {
             assert_eq!(
                 ElfSectionHeader::read(&object, archive),
                 ElfSectionHeader {
-                    name_offset: section_name(section_names, b"spiceapp"),
+                    name_offset: section_name(section_names, b"spicerack"),
                     kind: SHT_PROGBITS,
                     flags: SHF_ALLOC,
                     data_offset: 64,
@@ -813,7 +811,7 @@ mod tests {
             assert_eq!(
                 ElfSectionHeader::read(&object, length),
                 ElfSectionHeader {
-                    name_offset: section_name(section_names, b".rodata.spiceapp_len"),
+                    name_offset: section_name(section_names, b".rodata.spicerack_len"),
                     kind: SHT_PROGBITS,
                     flags: SHF_ALLOC,
                     data_offset: length_at as u64,

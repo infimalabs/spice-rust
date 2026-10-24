@@ -333,8 +333,7 @@ fn publication_retains_only_the_newest_generations() {
             .parse::<Digest>()
             .expect("generation names are digests");
         let archive = fs::read(archive_path(&store, &identity)).expect("archive is staged");
-        CanvasArchive::admit_generation(&archive, &identity)
-            .expect("archive admits as its generation");
+        Rack::admit_generation(&archive, &identity).expect("archive admits as its generation");
     }
     assert!(
         retained
@@ -342,6 +341,71 @@ fn publication_retains_only_the_newest_generations() {
             .any(|path| path.ends_with(current.identity().as_str()))
     );
     fs::remove_dir_all(root).expect("remove fixture");
+}
+
+/// Release assembly and a development refresh both link what
+/// `StagedCanvas::read` assembles; the same staged generation and tracked
+/// sources, written in another order, must admit as the same rack.
+#[test]
+fn the_same_generation_and_tracked_sources_assemble_one_rack() {
+    let roots = [fixture("rack-first"), fixture("rack-second")];
+    let sources: [(&str, &[u8]); 4] = [
+        ("spice/agent/SKILL.md", b"# spice\n"),
+        ("docs/README.md", b"# Docs\n"),
+        ("docs/planes/distribution.md", b"# Distribution\n"),
+        ("docs/product/rust.md", b"# Rust\n"),
+    ];
+    for (index, root) in roots.iter().enumerate() {
+        publish_fixture(root, "first");
+        let mut ordered = sources.to_vec();
+        if index == 1 {
+            ordered.reverse();
+        }
+        for (path, bytes) in ordered {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().expect("source has a parent"))
+                .expect("create source directory");
+            fs::write(path, bytes).expect("write tracked source");
+        }
+    }
+    let [first, second] = roots
+        .each_ref()
+        .map(|root| StagedCanvas::read(root).expect("rack assembles"));
+    assert_eq!(first.bytes, second.bytes);
+    assert_eq!(first.canvas(), second.canvas());
+
+    let rack = Rack::admit_generation(&first.bytes, first.canvas().generation())
+        .expect("assembled rack admits as its generation");
+    for (namespace, member, source) in [
+        (Namespace::Skill, "SKILL.md", "spice/agent/SKILL.md"),
+        (
+            Namespace::Doc,
+            "planes/distribution.md",
+            "docs/planes/distribution.md",
+        ),
+    ] {
+        let path = namespace.member(member);
+        let inflated = rack
+            .member(&path)
+            .expect("tracked source is a member")
+            .inflate(&path)
+            .expect("member inflates");
+        let expected = sources
+            .iter()
+            .find(|(candidate, _)| *candidate == source)
+            .expect("source is listed")
+            .1;
+        assert_eq!(&*inflated, expected, "{path}");
+    }
+    assert_eq!(
+        first.tree(),
+        rack.namespace(Namespace::App)
+            .map(|(_, member)| u64::from(member.size()))
+            .sum::<u64>()
+    );
+    for root in roots {
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
 }
 
 #[test]
