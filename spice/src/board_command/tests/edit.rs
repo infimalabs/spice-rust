@@ -572,7 +572,7 @@ pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Optio
 /// A recorded revision points at a durable head, so a test proving the
 /// record covers a field has to read the record rather than the rendered
 /// row that a board answer would hand back.
-fn statement_head(bus: &Bus, task: &TaskHandle) -> Positioned<TaskHead> {
+pub(super) fn statement_head(bus: &Bus, task: &TaskHandle) -> Positioned<TaskHead> {
     let snapshot = bus.task_snapshot().expect("statement head reads");
     let heads = snapshot
         .tasks()

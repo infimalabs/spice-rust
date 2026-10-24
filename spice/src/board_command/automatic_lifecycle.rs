@@ -303,6 +303,8 @@ fn automatic_answer(
         statement: None,
         holder: Some(actor),
         expiry: None,
+        acknowledged: None,
+        held: false,
         warnings: board::claim_overlaps(selected, entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
@@ -378,6 +380,8 @@ pub(crate) fn release_automatic(
         statement: None,
         holder: None,
         expiry: None,
+        acknowledged: None,
+        held: false,
         warnings: Box::default(),
         creation_context: None,
         origin_context: None,

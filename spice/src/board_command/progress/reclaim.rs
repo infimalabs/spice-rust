@@ -6,6 +6,9 @@ pub(super) struct ReclaimWindow {
     until: Instant,
     lease: LeaseHead,
     residency: ReclaimResidency,
+    /// The lease sits exactly at the indefinite approval horizon, so this
+    /// reclaim acknowledges the generation and moves no expiry.
+    held: bool,
 }
 
 #[derive(Clone)]
@@ -27,6 +30,10 @@ struct Rebound {
 impl ReclaimWindow {
     pub(super) const fn expiry(&self) -> Instant {
         self.until
+    }
+
+    pub(super) const fn held(&self) -> bool {
+        self.held
     }
 
     pub(super) const fn producer(&self) -> Producer {
@@ -77,6 +84,21 @@ pub(super) fn reclaim_window(
             )
         })?;
     let requested = instant_after(at, seconds)?;
+    // A claim iced on human approval holds its lease at the indefinite
+    // horizon, which no request can pass. An exact reclaim of that hold is
+    // the holder acknowledging the task's generation, so it is admitted and
+    // leaves the lease exactly where the hold put it: settling it to the
+    // ordinary maximum would end the approval hold an hour later.
+    if matches!(residency, ReclaimResidency::Exact)
+        && lease.expiry == spice::claim_lease::indefinite_horizon()
+    {
+        return Ok(ReclaimWindow {
+            until: lease.expiry,
+            lease: lease.clone(),
+            residency,
+            held: true,
+        });
+    }
     // Every accepted holder reclaim gets a fresh one-hour maximum. This keeps
     // the automatic-claim horizon intact while letting a manual claim roll the
     // same horizon forward without ownership churn.
@@ -99,6 +121,7 @@ pub(super) fn reclaim_window(
         until,
         lease,
         residency,
+        held: false,
     })
 }
 
@@ -191,6 +214,7 @@ pub(super) fn append_reclaim(
         until,
         lease,
         residency,
+        held: _,
     } = window;
     match residency {
         ReclaimResidency::Exact => append_renewal(write, entry, command, at, until, lease),

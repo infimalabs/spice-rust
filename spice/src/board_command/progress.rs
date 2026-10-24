@@ -48,6 +48,7 @@ pub(super) fn claim_reclaim_with_clock(
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, window.producer());
     guard(&mut write, command.expected().to_vec());
     let until = window.expiry();
+    let held = window.held();
     if let Err(outcome) = append_reclaim(&mut write, entry, command, at, window) {
         return outcome;
     }
@@ -56,6 +57,8 @@ pub(super) fn claim_reclaim_with_clock(
         statement: None,
         holder: Some(command.actor().clone()),
         expiry: Some(Box::new(until)),
+        acknowledged: Some(entry.workflow().generation),
+        held,
         warnings: Box::default(),
         creation_context: None,
         origin_context: None,
@@ -709,6 +712,8 @@ fn carried_claim_answer(
         statement: None,
         holder: Some(actor.clone()),
         expiry: Some(Box::new(until)),
+        acknowledged: None,
+        held: false,
         warnings: Box::default(),
         creation_context: None,
         origin_context: None,

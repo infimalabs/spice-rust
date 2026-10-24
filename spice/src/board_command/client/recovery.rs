@@ -583,6 +583,8 @@ fn reconcile_client_recovery(
                         statement: None,
                         holder: Some(sealed.actor),
                         expiry: None,
+                        acknowledged: None,
+                        held: false,
                         warnings: Box::default(),
                         creation_context: None,
                         origin_context: None,

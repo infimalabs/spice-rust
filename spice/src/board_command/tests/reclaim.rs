@@ -760,3 +760,171 @@ pub(super) fn assert_reclaim_survives_restart(
     );
     clean(root, reopened);
 }
+
+/// Spice ices the held task's lease at the indefinite approval horizon the
+/// way an unmet trust grant does: one statement edit under its own actor,
+/// which leaves the holder stale, with the lease head moved to the horizon.
+fn ice_held_lease(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
+    let held = board(bus, epoch, Actor::Operator);
+    let heads = at(&held, task);
+    let statement = super::edit::statement_head(bus, task);
+    let born = statement.body.born.clone();
+    let iced = spice::claim_lease::iced(&heads.lease.as_ref().expect("active lease").body);
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("task:{born}").parse().expect("task origin"),
+        fixture_instant_after(iced.start, 1),
+        Producer::CommandDoor,
+    );
+    let revision = u32::try_from(statement.position.get())
+        .expect("fixture revision")
+        .saturating_add(1);
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                intent: None,
+                task: born.clone(),
+                revision,
+                dependencies: None,
+            },
+            FactCause::Root,
+        )
+        .expect("ice edit builds");
+    let statement = statement.body;
+    write.task_head(edited, move |position| wire::TaskHead {
+        revision: position,
+        ..statement
+    });
+    write.lease_head(born, edited, move |_| iced);
+    assert!(matches!(
+        bus.commit(write).expect("iced lease commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+#[test]
+fn horizon_reclaim_acknowledges_an_edit_and_keeps_the_hold() {
+    let (root, bus, epoch, seats) = fixture("reclaim-horizon", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-ice01",
+        "Finish the iced task against the edited statement",
+        Some("todo"),
+    );
+    claim_next(&bus, epoch, &lane, &seats[0], &task);
+    ice_held_lease(&bus, epoch, &task);
+
+    let iced = board(&bus, epoch, lane.clone());
+    let heads = at(&iced, &task);
+    let claim = heads.claim.as_ref().expect("active claim");
+    let lease = heads.lease.as_ref().expect("iced lease");
+    let horizon = spice::claim_lease::indefinite_horizon();
+    assert_eq!(lease.body.expiry, horizon);
+    assert!(claim.body.is_stale(&heads.workflow.body), "{heads:?}");
+
+    let answer = assert_committed(reclaim_at(
+        &bus,
+        epoch,
+        &lane,
+        &task,
+        active_witnesses(&iced, &task, &seats[0]),
+        fixture_instant_after(lease.body.renewal, 2),
+    ));
+    let CommandAnswer::Claim(answer) = answer else {
+        panic!("reclaim returned a non-claim answer")
+    };
+    assert_eq!(answer.expiry.as_deref(), Some(&horizon));
+    assert_eq!(answer.acknowledged, Some(heads.workflow.body.generation));
+    assert!(answer.held, "{answer:?}");
+
+    let acknowledged = board(&bus, epoch, lane.clone());
+    let after = at(&acknowledged, &task);
+    let same_claim = after.claim.as_ref().expect("claim stays held");
+    assert_eq!(
+        same_claim.body,
+        wire::ClaimHead {
+            fact: same_claim.body.fact,
+            acknowledged: heads.workflow.body.generation,
+            ..claim.body.clone()
+        }
+    );
+    assert!(!same_claim.body.is_stale(&after.workflow.body));
+    let kept = after.lease.as_ref().expect("lease stays");
+    assert_eq!(kept.body.expiry, horizon);
+    assert_eq!(kept.body.maximum, horizon);
+    assert_eq!(kept.body.epoch, lease.body.epoch);
+    assert_eq!(after.workflow, heads.workflow);
+
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &acknowledged,
+            after,
+            seats[0].lane,
+            seats[0].occupant,
+            false,
+        )
+        .expect("held task has progress witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "implementation and focused checks complete".to_owned(),
+            disposition: None,
+            operation: Some(completion_operation()),
+        },
+    ));
+    clean(&root, bus);
+}
+
+#[test]
+fn ordinary_reclaim_that_does_not_pass_the_expiry_is_refused_with_it() {
+    let (root, bus, epoch, seats) = fixture("reclaim-nonextending", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-short1",
+        "Keep a short request from shortening the lease",
+        Some("todo"),
+    );
+    claim_next(&bus, epoch, &lane, &seats[0], &task);
+    reclaim_held(&bus, epoch, &lane, &seats[0], &task);
+
+    let held = board(&bus, epoch, lane.clone());
+    let lease = at(&held, &task).lease.as_ref().expect("one-hour lease");
+    assert_eq!(
+        lease.body.expiry,
+        fixture_instant_after(
+            lease.body.renewal,
+            spice::claim_lease::DEFAULT_RECLAIM_SECONDS as i64
+        )
+    );
+    let outcome = reclaim_at_for(
+        &bus,
+        epoch,
+        &lane,
+        &task,
+        active_witnesses(&held, &task, &seats[0]),
+        fixture_instant_after(lease.body.renewal, 1),
+        1,
+    );
+    let Outcome::Refusal(Refusal::Bare { diagnostic }) = outcome else {
+        panic!("a nonextending reclaim was admitted: {outcome:?}");
+    };
+    assert_eq!(diagnostic.reason(), "claim::lease-nonextending");
+    assert_eq!(
+        diagnostic.observed(),
+        Some(lease.body.expiry.to_string().as_str())
+    );
+    assert_eq!(
+        at(&board(&bus, epoch, lane), &task).lease,
+        Some(lease.clone())
+    );
+    clean(&root, bus);
+}

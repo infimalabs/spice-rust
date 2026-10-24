@@ -191,6 +191,8 @@ pub(in crate::board_command) fn claim_free(
         statement: None,
         holder: None,
         expiry: None,
+        acknowledged: None,
+        held: false,
         warnings: Box::default(),
         creation_context: None,
         origin_context: None,
