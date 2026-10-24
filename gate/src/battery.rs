@@ -22,7 +22,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use authorities::BatteryCapture;
+pub use authorities::{BatteryCapture, CaptureAuthorities, InputMode};
 pub use context::{
     ActorEvidence, BatteryContext, BatteryInputs, BatteryScope, BatteryToolEvidence,
     BoundActorInputsEvidence, BoundEvidence, ConfigurationEvidence, LatchEvidence,

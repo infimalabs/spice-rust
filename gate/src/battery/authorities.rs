@@ -26,10 +26,26 @@ use crate::state::{ActorInputs, ActorResolution, BoundDecision, StateLedger, Sta
 use crate::toolchain::RimCapture;
 use crate::tree::Selector;
 
+/// Which tracked-document grammar a capture loads its contract under.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum InputMode {
+pub enum InputMode {
+    /// The strict self-hosting contract: every tracked document must parse.
     Strict,
+    /// The installed generic policy: missing repository policy and
+    /// lower-is-better state remain typed absences.
     Generic,
+}
+
+/// The caller's authorities for one battery capture: the repository and the
+/// selection within it, and the claim, actor, command rim, and hygiene
+/// configuration observed on the live worktree.
+pub struct CaptureAuthorities<'a> {
+    pub repository: PathBuf,
+    pub selector: &'a Selector,
+    pub claim: ClaimCapture,
+    pub actor: ActorCapture,
+    pub rim: RimCapture,
+    pub hygiene: HygieneConfiguration,
 }
 
 /// Release whose grammar understood the tracked documents read here.
@@ -58,29 +74,29 @@ struct BatteryAuthorities {
 
 /// Run-wide authority that every focused arm derives from without recapturing bytes.
 #[derive(Clone)]
-struct BatterySourceCapture {
-    repository: RepositorySource,
-    actor: ActorCapture,
+pub(super) struct BatterySourceCapture {
+    pub(super) repository: RepositorySource,
+    pub(super) actor: ActorCapture,
     resolved_actor: ActorResolution,
     scope: BatteryScope,
-    state: StateLedger,
-    rim: RimCapture,
-    hygiene: HygieneConfiguration,
+    pub(super) state: StateLedger,
+    pub(super) rim: RimCapture,
+    pub(super) hygiene: HygieneConfiguration,
 }
 
 impl BatteryAuthorities {
-    /// Borrow the complete authority set as one validated input contract.
-    fn inputs(&self) -> Result<BatteryInputs<'_>, BatteryError> {
-        BatteryInputs::new(
-            &self.source,
-            &self.actor,
-            &self.scope,
-            &self.configuration,
-            &self.policy,
-            &self.state,
-            &self.bounds,
-            &self.tools,
-        )
+    /// Borrow the complete authority set as the inputs every arm reads.
+    fn inputs(&self) -> BatteryInputs<'_> {
+        BatteryInputs {
+            source: &self.source,
+            actor: &self.actor,
+            scope: &self.scope,
+            configuration: &self.configuration,
+            policy: &self.policy,
+            state: &self.state,
+            bounds: &self.bounds,
+            tools: &self.tools,
+        }
     }
 }
 
@@ -97,10 +113,10 @@ pub struct BatteryCapture<'trace> {
     state_run: BatteryStateRun,
 }
 
-impl BatteryCapture<'_> {
+impl<'trace> BatteryCapture<'trace> {
     /// Snapshot the complete current authority context without executing an arm.
     pub fn context(&self) -> Result<super::BatteryContext, BatteryError> {
-        self.authorities.inputs()?.snapshot()
+        self.authorities.inputs().snapshot()
     }
 
     /// Probe the external executables declared by this selected focused arm.
@@ -202,11 +218,14 @@ impl BatteryCapture<'_> {
 
     /// Capture one repository into a complete, runnable battery.
     ///
-    /// `claim`, `actor`, `rim`, and `hygiene` are the caller's observations of
-    /// the live worktree, which no selected tree can supply. Everything else is
-    /// read here: the policy, configuration, and tool evidence come from the
-    /// contract this capture loaded, the scope from the selector it
-    /// materialized, and the ledger from the repository it was taken from.
+    /// `authorities` carries the caller's observations of the live worktree,
+    /// which no selected tree can supply, beside the repository and selection
+    /// the capture materializes. Everything else is read here: the policy,
+    /// configuration, and tool evidence come from the contract this capture
+    /// loaded, the scope from the selector it materialized, and the ledger from
+    /// the repository it was taken from. `selected` narrows the battery to one
+    /// canonical arm, and `trace` receives every arm and family invocation
+    /// without gaining authority over execution.
     ///
     /// # Errors
     ///
@@ -215,231 +234,19 @@ impl BatteryCapture<'_> {
     /// battery report names the identity it was run by, and no other input can
     /// stand in for one.
     pub fn capture(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            None,
-            None,
-        )
-    }
-
-    /// Capture one repository with the installed generic input policy.
-    ///
-    /// Missing repository policy and lower-is-better state remain typed
-    /// absences. Present documents are parsed strictly, and selected family
-    /// arms retain sole authority to discover the tools they actually use.
-    pub fn capture_generic(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            None,
-            None,
-        )
-    }
-
-    /// Capture one repository for exactly one canonical arm.
-    ///
-    /// # Errors
-    ///
-    /// Refuses the same pre-execution failures as [`Self::capture`].
-    pub fn capture_arm(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        gate_id: crate::GateId,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            Some(gate_id),
-            None,
-        )
-    }
-
-    /// Capture exactly one canonical arm with generic installed inputs.
-    pub fn capture_generic_arm(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        gate_id: crate::GateId,
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            Some(gate_id),
-            None,
-        )
-    }
-}
-
-impl<'trace> BatteryCapture<'trace> {
-    /// Capture as [`Self::capture`] and emit every arm and family invocation to
-    /// `trace` without granting it authority over execution.
-    ///
-    /// # Errors
-    ///
-    /// Refuses the same pre-execution failures as [`Self::capture`].
-    pub fn capture_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            None,
-            Some(trace),
-        )
-    }
-
-    /// Capture a generic installed battery and expose its execution events.
-    pub fn capture_generic_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            None,
-            Some(trace),
-        )
-    }
-
-    /// Capture one canonical arm while exposing production analysis events.
-    ///
-    /// # Errors
-    ///
-    /// Refuses the same pre-execution failures as [`Self::capture_arm`].
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the selected identity and observer accompany six independent capture authorities"
-    )]
-    pub fn capture_arm_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        gate_id: crate::GateId,
-        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Strict,
-            Some(gate_id),
-            Some(trace),
-        )
-    }
-
-    /// Capture one generic installed arm while exposing analysis events.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the selected identity and observer accompany six independent capture authorities"
-    )]
-    pub fn capture_generic_arm_traced(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
-        gate_id: crate::GateId,
-        trace: &'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send),
-    ) -> Result<Self, BatteryError> {
-        Self::capture_inner(
-            repository,
-            selector,
-            claim,
-            actor,
-            rim,
-            hygiene,
-            InputMode::Generic,
-            Some(gate_id),
-            Some(trace),
-        )
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the execution mode accompanies six independent capture authorities"
-    )]
-    fn capture_inner(
-        repository: impl Into<PathBuf>,
-        selector: &Selector,
-        claim: ClaimCapture,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
+        authorities: CaptureAuthorities<'_>,
         input_mode: InputMode,
         selected: Option<crate::GateId>,
         trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
-        let repository: PathBuf = repository.into();
+        let CaptureAuthorities {
+            repository,
+            selector,
+            claim,
+            actor,
+            rim,
+            hygiene,
+        } = authorities;
         // Read before the capture consumes the observation, and both before the
         // selection is materialized: an authority that cannot be produced is a
         // refusal, and refusing it here costs no private tree.
@@ -480,12 +287,8 @@ impl<'trace> BatteryCapture<'trace> {
     ) -> Result<Self, BatteryError> {
         source_capture.repository.verify_source()?;
         let executor = RepositoryExecutor::capture_from_source(
-            &source_capture.repository,
-            source_capture.actor.clone(),
-            source_capture.rim.clone(),
-            source_capture.hygiene.clone(),
+            &source_capture,
             &state_run,
-            &source_capture.state,
             selected,
             selection,
             trace,
@@ -528,7 +331,7 @@ impl<'trace> BatteryCapture<'trace> {
                 "selected capture for {gate_id} cannot execute a complete battery"
             )));
         }
-        let inputs = self.authorities.inputs()?;
+        let inputs = self.authorities.inputs();
         run_battery(&inputs, &mut self.executor)
     }
 
@@ -543,7 +346,7 @@ impl<'trace> BatteryCapture<'trace> {
             ));
         }
         self.executor.set_compiler_environment(environment)?;
-        let inputs = self.authorities.inputs()?;
+        let inputs = self.authorities.inputs();
         run_battery(&inputs, &mut self.executor)
     }
 
@@ -576,7 +379,7 @@ impl<'trace> BatteryCapture<'trace> {
                 "arm execution for {gate_id} requires a capture selected for that arm"
             )));
         }
-        let inputs = self.authorities.inputs()?;
+        let inputs = self.authorities.inputs();
         super::run_focused_arm(&inputs, &mut self.executor, gate_id)
     }
 
@@ -613,7 +416,7 @@ impl<'trace> BatteryCapture<'trace> {
                 "structural preflight requires a complete battery capture",
             ));
         }
-        let inputs = self.authorities.inputs()?;
+        let inputs = self.authorities.inputs();
         [crate::GateId::FileShape, crate::GateId::Complexity]
             .into_iter()
             .map(|gate_id| super::run_focused_arm(&inputs, &mut self.executor, gate_id))

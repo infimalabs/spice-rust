@@ -538,19 +538,23 @@ fn package_input_authority(
         changed_sources,
     )?;
     let producers = resolved_compile_time_producers(inventory, &package.id)?;
-    let (compile_time, reuse) = compile_time_reuse(
-        inventory,
-        &canonical_root,
-        &roots,
-        selected_paths,
-        &mut inputs,
+    let unsafe_authorities = unsafe_compile_time_authorities(
         &producers,
-        source_analysis,
         CompileTimeExternal {
             local_dependencies: &external_local_dependencies,
             source: external_source,
         },
     );
+    let (compile_time, reuse) = compile_time_reuse(&unsafe_authorities, || {
+        compile_time_authorities(
+            inventory,
+            &canonical_root,
+            &roots,
+            selected_paths,
+            &mut inputs,
+            source_analysis,
+        )
+    });
     let uses_external_source = producers
         .iter()
         .any(|producer| producer.source_generation_eligible);
@@ -600,20 +604,12 @@ struct CompileTimeExternal<'a> {
     source: Option<&'a CargoExternalSourceAuthority>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "compile-time reuse joins the inventory, roots, selection, producers, and source analysis"
-)]
-fn compile_time_reuse(
-    inventory: &Inventory,
-    canonical_root: &Path,
-    roots: &BTreeSet<PathBuf>,
-    selected_paths: &[String],
-    paths: &mut BTreeSet<String>,
+/// Every producer or dependency that denies compile-time reuse, named for
+/// the refusal.
+fn unsafe_compile_time_authorities(
     producers: &[CargoCompileTimeProducer],
-    source_analysis: &mut CompileTimeSourceAnalysis,
     external: CompileTimeExternal<'_>,
-) -> (Vec<CargoCompileTimeAuthority>, CargoShardReuse) {
+) -> Vec<String> {
     let mut unsafe_authorities = producers
         .iter()
         .filter(|producer| {
@@ -643,15 +639,18 @@ fn compile_time_reuse(
                 .to_string_lossy(),
         )
     }));
+    unsafe_authorities
+}
+
+/// Decide shard reuse: an empty `unsafe_authorities` list admits the
+/// compile-time authorities `authorities` derives; anything else, or a
+/// derivation failure, makes the shard non-cacheable with that reason.
+fn compile_time_reuse(
+    unsafe_authorities: &[String],
+    authorities: impl FnOnce() -> Result<Vec<CargoCompileTimeAuthority>, WorkspaceTestError>,
+) -> (Vec<CargoCompileTimeAuthority>, CargoShardReuse) {
     if unsafe_authorities.is_empty() {
-        match compile_time_authorities(
-            inventory,
-            canonical_root,
-            roots,
-            selected_paths,
-            paths,
-            source_analysis,
-        ) {
+        match authorities() {
             Ok(authorities) => (authorities, CargoShardReuse::Reusable),
             Err(error) => (
                 Vec::new(),

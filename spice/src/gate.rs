@@ -12,9 +12,9 @@ use std::path::Path;
 use std::process::Command;
 
 use ::gate::{
-    ActorCapture, BatteryCapture, BatteryReport, ChangeSelectionReport, ClaimCapture,
-    FocusedArmReport, GateId, HygieneConfiguration, KillRun, RepositoryExecutionEvent, RimCapture,
-    Selector, StateRunScope,
+    ActorCapture, BatteryCapture, BatteryReport, CaptureAuthorities, ChangeSelectionReport,
+    ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, InputMode, KillRun,
+    RepositoryExecutionEvent, RimCapture, Selector, StateRunScope,
 };
 use gix::bstr::ByteSlice as _;
 use wire::Digest;
@@ -25,12 +25,6 @@ use crate::repository::{Repository, StateError};
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
-
-#[derive(Clone, Copy)]
-enum InputMode {
-    Generic,
-    Strict,
-}
 
 mod candidate_tree;
 mod capture;

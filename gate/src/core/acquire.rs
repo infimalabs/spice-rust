@@ -517,8 +517,7 @@ pub(crate) fn acquire_core_with_observations(
 ) -> Result<(CoreInputs, Vec<LatchObservation>), CoreInputError> {
     let configuration = ConfigurationInventorySource::capture(source)?;
     let mut arms = Vec::with_capacity(core_declarations().len());
-    let mut bounds = Vec::new();
-    let mut observations = Vec::new();
+    let mut decided = StateDecisions::default();
     for declaration in core_declarations() {
         arms.push(CoreArmInput::new(
             declaration.id(),
@@ -530,11 +529,14 @@ pub(crate) fn acquire_core_with_observations(
                 baselines,
                 Some(&configuration),
                 None,
-                &mut bounds,
-                &mut observations,
+                &mut decided,
             )?,
         )?);
     }
+    let StateDecisions {
+        bounds,
+        observations,
+    } = decided;
     CoreInputs::new(arms).map(|inputs| (inputs.with_bounds(bounds), observations))
 }
 
@@ -556,8 +558,7 @@ pub(crate) fn acquire_core_arm(
     )
     .then(|| ConfigurationInventorySource::capture(source))
     .transpose()?;
-    let mut bounds = Vec::new();
-    let mut observations = Vec::new();
+    let mut decided = StateDecisions::default();
     let observation = observe(
         declaration,
         source,
@@ -565,17 +566,24 @@ pub(crate) fn acquire_core_arm(
         baselines,
         configuration.as_ref(),
         reached,
-        &mut bounds,
-        &mut observations,
+        &mut decided,
     )?;
+    let StateDecisions {
+        bounds,
+        observations,
+    } = decided;
     CoreArmInput::new(gate_id, source.digest.clone(), observation)
         .map(|input| (input, bounds, observations))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "arm-local reach accompanies the captured source and its observation outputs"
-)]
+/// The state effects core acquisition decides while observing: the elastic
+/// bounds it settled and the latch observations it recorded.
+#[derive(Default)]
+struct StateDecisions {
+    bounds: Vec<BoundDecision>,
+    observations: Vec<LatchObservation>,
+}
+
 fn observe(
     declaration: &CoreArmDeclaration,
     source: &CoreSource,
@@ -583,8 +591,7 @@ fn observe(
     baselines: &BaselineCapture,
     configuration: Option<&ConfigurationInventorySource>,
     reached: Option<&[String]>,
-    bounds: &mut Vec<BoundDecision>,
-    observations: &mut Vec<LatchObservation>,
+    decided: &mut StateDecisions,
 ) -> Result<CoreObservation, CoreInputError> {
     Ok(match declaration.id() {
         GateId::MergeIntegrity => source.git.merge_integrity.clone().ok_or_else(|| {
@@ -597,7 +604,7 @@ fn observe(
         })?,
         GateId::ConfigKeyValidity => return config_keys(contract),
         GateId::RepoDocs => {
-            return repo_docs(source, contract, baselines, reached, bounds, observations);
+            return repo_docs(source, contract, baselines, reached, decided);
         }
         GateId::ConfigFalseDisable => {
             return configuration
@@ -622,8 +629,7 @@ fn repo_docs(
     contract: &ParsedContract,
     baselines: &BaselineCapture,
     reached: Option<&[String]>,
-    bounds: &mut Vec<BoundDecision>,
-    observations: &mut Vec<LatchObservation>,
+    decided: &mut StateDecisions,
 ) -> Result<CoreObservation, CoreInputError> {
     if let BaselineCapture::Unreachable(reason) = baselines {
         return Err(CoreInputError::new(format!(
@@ -671,8 +677,8 @@ fn repo_docs(
             committed,
         )?;
         measurements.push(measurement);
-        bounds.push(decision);
-        observations.push(observation);
+        decided.bounds.push(decision);
+        decided.observations.push(observation);
     }
     RepoDocsEvidence::new(measurements)
         .map(CoreEvidence::RepoDocs)

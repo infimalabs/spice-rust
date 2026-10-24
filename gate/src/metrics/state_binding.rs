@@ -3,8 +3,8 @@ use std::fmt;
 
 use super::declaration::metric_parser_declaration;
 use super::{
-    EvidenceError, EvidenceState, LatchBinding, MetricEvidence, MetricId, MetricKey,
-    MetricMeasurement, ParserEvidence, ResolvedMetricRule,
+    EvidenceError, EvidenceState, LatchBinding, LatchLimits, LatchOutcome, MetricEvidence,
+    MetricId, MetricKey, MetricMeasurement, ParserEvidence, ResolvedMetricRule,
 };
 use crate::state::{
     ActorInputs, ActorSource, BoundDecision, BoundError, BoundRule, KeyError, LatchEntry,
@@ -185,18 +185,26 @@ impl MetricStateBinding {
         let actor = decision.actor();
         let latch = LatchBinding::new(
             latch_kind_name(self.entry.kind()),
-            decision.base_limit(),
-            decision.configured_elastic_limit(),
-            decision.variation_percent(),
-            decision.elastic_limit(),
-            decision.active_limit(),
-            decision.unlimited(),
-            decision.over_limit(),
-            decision.over_base(),
-            decision.elastic_breach(),
+            LatchLimits {
+                base: decision.base_limit(),
+                configured_ratchet: decision.configured_elastic_limit(),
+                variation_percent: decision.variation_percent(),
+                ratchet: decision.elastic_limit(),
+                active: decision.active_limit(),
+                unlimited: decision.unlimited(),
+            },
+            LatchOutcome {
+                over_limit: decision.over_limit(),
+                over_base: decision.over_base(),
+                ratchet_breach: decision.elastic_breach(),
+            },
             transition_name(decision.latch_transition()),
-            actor.map(|actor| actor_source_name(actor.source()).to_owned()),
-            actor.map(|actor| actor.value().to_owned()),
+            actor.map(|actor| {
+                (
+                    actor_source_name(actor.source()).to_owned(),
+                    actor.value().to_owned(),
+                )
+            }),
         )
         .map_err(StateBindingError::Evidence)?;
         Ok(MetricMeasurement::new(self.value, self.parser.clone())

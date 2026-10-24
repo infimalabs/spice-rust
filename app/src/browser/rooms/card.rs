@@ -55,38 +55,44 @@ pub(super) struct Anchor<'a> {
     pub(super) island: Html,
 }
 
+/// The room a post is read in, and whether a current listener already hears
+/// it there, which decides whether the post reads as unheard.
+#[derive(Clone, Copy)]
+pub(super) struct ReadRoom<'a> {
+    pub(super) stamp: &'a wire::TaskStamp,
+    pub(super) has_current_listener: bool,
+}
+
 /// One room event as a card in a surface's list.
 pub(super) fn render_card(
     runtime: &AppRuntime,
     controls: Option<conversation::CardControls<'_>>,
     open_task: &super::OpenTask,
-    room: &wire::TaskStamp,
-    has_current_listener: bool,
+    room: ReadRoom<'_>,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
 ) -> Html {
     html! {
         <article class="room-card" key={publication.to_string()} tabindex="0">
-            {render_face(runtime, controls, open_task, room, has_current_listener, publication, event, None)}
+            {render_face(runtime, controls, open_task, room, publication, event, None)}
         </article>
     }
 }
 
 /// One room event's face, for a surface that supplies its own card.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one face binds its surface's card controls and task opener beside the event"
-)]
 pub(super) fn render_face(
     runtime: &AppRuntime,
     controls: Option<conversation::CardControls<'_>>,
     open_task: &super::OpenTask,
-    room: &wire::TaskStamp,
-    has_current_listener: bool,
+    room: ReadRoom<'_>,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
     anchor: Option<Anchor<'_>>,
 ) -> Html {
+    let ReadRoom {
+        stamp: room,
+        has_current_listener,
+    } = room;
     let unheard = runtime
         .room_projection()
         .unheard_post(room, publication, has_current_listener);

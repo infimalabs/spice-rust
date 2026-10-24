@@ -596,6 +596,23 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
     }
 }
 
+/// What the operator may do with a note composer: whether the socket is live,
+/// whether this capability may publish, and the settlement the task admits.
+#[derive(Clone, Copy)]
+pub(super) struct NoteAccess<'a> {
+    pub(super) connected: bool,
+    pub(super) can_note: bool,
+    pub(super) closure: Option<&'a TaskClosure>,
+}
+
+/// The surface callbacks a note composer wires: typed input, form submission,
+/// and the opener that expands it from its Observe control.
+pub(super) struct NoteCallbacks<'a> {
+    pub(super) input: Callback<InputEvent>,
+    pub(super) submit: &'a Callback<(TaskStamp, SubmitEvent)>,
+    pub(super) open: Callback<MouseEvent>,
+}
+
 /// The one room composer every surface showing `task` renders, bound to that
 /// task and preserving only that task's draft while feedback uses its
 /// task-owned toast. It is a single Observe control until opened, unless it
@@ -604,22 +621,24 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
 /// composer visible and read-only until it returns. Add publishes the draft as
 /// an observation in the task's room; with a `closure`, Close or Delete
 /// publishes it the same way and then settles the task on it.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one composer binds its task, capabilities, draft, and opener"
-)]
 pub(super) fn render_note_composer(
     id: String,
     handle: &str,
     task: &TaskStamp,
-    connected: bool,
-    can_note: bool,
-    closure: Option<&TaskClosure>,
+    access: NoteAccess<'_>,
     composer: &NoteComposer,
-    input: Callback<InputEvent>,
-    submit: &Callback<(TaskStamp, SubmitEvent)>,
-    open: Callback<MouseEvent>,
+    callbacks: NoteCallbacks<'_>,
 ) -> Html {
+    let NoteAccess {
+        connected,
+        can_note,
+        closure,
+    } = access;
+    let NoteCallbacks {
+        input,
+        submit,
+        open,
+    } = callbacks;
     if connected && !can_note {
         return html! {
             <p class="work-note-capability">{"This capability can read this room but cannot publish observations."}</p>

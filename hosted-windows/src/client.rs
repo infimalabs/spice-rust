@@ -165,12 +165,14 @@ pub fn windows_hosted_commands_into(
             Err(WindowsHostedError::Cancelled { run_id: None })
         } else {
             dispatch(
-                &root,
-                scratch.path(),
-                &policy.repository,
-                &source_ref,
-                &commit,
-                &request,
+                &HostedRun {
+                    root: &root,
+                    scratch: scratch.path(),
+                    repository: &policy.repository,
+                    source_ref: &source_ref,
+                    source_commit: &commit,
+                    request: &request,
+                },
                 destination.as_deref(),
                 &cancellation,
             )
@@ -188,20 +190,30 @@ pub fn windows_hosted_commands_into(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one dispatch binds its workspace, source revision, request, destination, and cancellation"
-)]
+/// One hosted run: the workspace it is driven from, the pushed source
+/// revision the provider builds, and the admitted request it executes.
+#[derive(Clone, Copy)]
+struct HostedRun<'a> {
+    root: &'a Path,
+    scratch: &'a Path,
+    repository: &'a str,
+    source_ref: &'a str,
+    source_commit: &'a str,
+    request: &'a Request,
+}
+
 fn dispatch(
-    root: &Path,
-    scratch: &Path,
-    repository: &str,
-    source_ref: &str,
-    source_commit: &str,
-    request: &Request,
+    run: &HostedRun<'_>,
     destination: Option<&Path>,
     cancellation: &Cancellation,
 ) -> Result<HostedExecution, WindowsHostedError> {
+    let HostedRun {
+        root,
+        repository,
+        source_ref,
+        request,
+        ..
+    } = *run;
     let request_json = serde_json::to_string(request).map_err(WindowsHostedError::Encode)?;
     let dispatch_input = serde_json::json!({ "request": request_json });
     let dispatched = command_with_input(
@@ -229,17 +241,7 @@ fn dispatch(
             WindowsHostedError::ProviderResponse(format!("dispatch returned no run URL: {url:?}"))
         })?;
 
-    let operation = complete_dispatched_run(
-        root,
-        scratch,
-        repository,
-        source_ref,
-        source_commit,
-        request,
-        run_id,
-        destination,
-        cancellation,
-    );
+    let operation = complete_dispatched_run(run, run_id, destination, cancellation);
     let operation = match operation {
         Err(error @ WindowsHostedError::Cancelled { .. }) => Err(error),
         Err(error) => finish_run_cleanup(Err(error), cancel_run(root, repository, run_id)),
@@ -249,31 +251,15 @@ fn dispatch(
     finish_artifact_cleanup(operation, cleanup)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one dispatched run binds its workspace, source revision, request, run, destination, and cancellation"
-)]
 fn complete_dispatched_run(
-    root: &Path,
-    scratch: &Path,
-    repository: &str,
-    source_ref: &str,
-    source_commit: &str,
-    request: &Request,
+    run: &HostedRun<'_>,
     run_id: u64,
     destination: Option<&Path>,
     cancellation: &Cancellation,
 ) -> Result<HostedExecution, WindowsHostedError> {
-    watch_run(root, repository, run_id, cancellation)?;
-    let (artifact_dir, runner_path, result_path) = download_attested_artifact(
-        root,
-        scratch,
-        repository,
-        source_ref,
-        source_commit,
-        request,
-        run_id,
-    )?;
+    let request = run.request;
+    watch_run(run.root, run.repository, run_id, cancellation)?;
+    let (artifact_dir, runner_path, result_path) = download_attested_artifact(run, run_id)?;
     let runner = digest_file(Domain::ProofNativeRunner, &runner_path)?;
     let result_bytes = fs::read(&result_path).map_err(|source| WindowsHostedError::Io {
         path: result_path.clone(),
@@ -356,14 +342,17 @@ fn finish_run_cleanup<T>(
 }
 
 fn download_attested_artifact(
-    root: &Path,
-    scratch: &Path,
-    repository: &str,
-    source_ref: &str,
-    source_commit: &str,
-    request: &Request,
+    run: &HostedRun<'_>,
     run_id: u64,
 ) -> Result<(PathBuf, PathBuf, PathBuf), WindowsHostedError> {
+    let HostedRun {
+        root,
+        scratch,
+        repository,
+        source_ref,
+        source_commit,
+        request,
+    } = *run;
     let artifact_dir = scratch.join("artifact");
     fs::create_dir(&artifact_dir).map_err(|source| WindowsHostedError::Io {
         path: artifact_dir.clone(),

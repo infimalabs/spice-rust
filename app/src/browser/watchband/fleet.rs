@@ -97,25 +97,9 @@ pub(super) fn render_populated_fleet(
                         )}
                         <div class="team-pane">
                             {render_compose(
-                                render.runtime,
+                                render,
                                 team,
-                                &render.quote_agents,
                                 &team_standings,
-                                render.epoch,
-                                render.topology_revision,
-                                &render.topology,
-                                render.authority,
-                                render.can_arrange_teams,
-                                render.sender,
-                                render.composer_drag,
-                                render.drafts,
-                                render.submissions,
-                                render.team_controls,
-                                render.can_configure,
-                                render.controls,
-                                &render.surface,
-                                render.select_task,
-                                render.open_message_task,
                                 &attention,
                                 render.composer_slots.slot(team.lane),
                             )}

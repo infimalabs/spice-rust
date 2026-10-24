@@ -272,7 +272,11 @@ async fn pump_session(
                 rearm = true;
                 probed = false;
                 if let Some(deadline) = apply_incoming_frame(
-                    frame, &session, handles, data, &principal, &mut writer, actions,
+                    frame,
+                    &session,
+                    Surface { handles, data, actions },
+                    &principal,
+                    &mut writer,
                     !hydrating,
                 ).await? {
                     lane_refresh = match deadline {
@@ -334,7 +338,6 @@ fn finish_hydration(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn service_action_wake(
     principal: &Principal,
     data: &SurfaceData,
@@ -349,17 +352,28 @@ async fn service_action_wake(
     actions.rearm().map_err(|error| error.to_string())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The surface one socket feeds: the handles it publishes to, the data it
+/// updates, and the action queue it drains.
+#[derive(Clone, Copy)]
+struct Surface<'a> {
+    handles: &'a SurfaceHandles,
+    data: &'a SurfaceData,
+    actions: &'a ActionQueue,
+}
+
 async fn apply_incoming_frame(
     frame: Option<Result<Message, WebSocketError>>,
     session: &Session,
-    handles: &SurfaceHandles,
-    data: &SurfaceData,
+    surface: Surface<'_>,
     principal: &Principal,
     writer: &mut SocketWriter,
-    actions: &ActionQueue,
     publish: bool,
 ) -> Result<Option<Option<u32>>, String> {
+    let Surface {
+        handles,
+        data,
+        actions,
+    } = surface;
     let frame = frame
         .ok_or_else(|| "resident closed the socket".to_owned())?
         .map_err(websocket_error)?;
@@ -644,12 +658,17 @@ async fn dispatch_authored_action(
                 writer,
                 actions,
                 *id,
-                *fanout,
-                *lane,
-                *occupant,
-                *epoch,
-                message,
-                attachments,
+                BorrowedSteerSend {
+                    fanout: *fanout,
+                    lane: *lane,
+                    message,
+                    attachments,
+                },
+                Witness::Residency {
+                    lane: *lane,
+                    occupant: Some(*occupant),
+                    epoch: *epoch,
+                },
             )
             .await
         }
@@ -698,38 +717,26 @@ async fn send_message_history(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Steer one lane's occupant, `residency` naming the occupancy the resident
+/// must still hold for the steer to land.
 async fn send_steer(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
     id: CanonicalUuid,
-    fanout: CanonicalUuid,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    epoch: CanonicalUuid,
-    message: &str,
-    attachments: &[DirectiveAttachment],
+    body: BorrowedSteerSend<'_>,
+    residency: Witness,
 ) -> Result<CanonicalUuid, String> {
-    let body = BorrowedSteerSend {
-        fanout,
-        lane,
-        message,
-        attachments,
-    };
-    let expected = vec![Witness::Residency {
-        lane,
-        occupant: Some(occupant),
-        epoch,
-    }];
     send_typed_as(
         principal,
         writer,
         actions,
-        id,
-        PendingKind::Steer,
-        CommandKind::SteerSend,
-        expected,
+        TrackedCommand {
+            id,
+            pending_kind: PendingKind::Steer,
+            kind: CommandKind::SteerSend,
+            expected: vec![residency],
+        },
         body,
     )
     .await
@@ -764,12 +771,14 @@ async fn drain_submissions(
             principal,
             writer,
             actions,
-            submission.id,
-            PendingKind::SteerSubmission {
-                lane: submission.lane,
+            TrackedCommand {
+                id: submission.id,
+                pending_kind: PendingKind::SteerSubmission {
+                    lane: submission.lane,
+                },
+                kind: CommandKind::SteerSend,
+                expected,
             },
-            CommandKind::SteerSend,
-            expected,
             body,
         )
         .await?;
@@ -836,10 +845,12 @@ async fn send_typed<B: Serialize>(
         principal,
         writer,
         actions,
-        id,
-        pending_kind,
-        kind,
-        expected,
+        TrackedCommand {
+            id,
+            pending_kind,
+            kind,
+            expected,
+        },
         body,
     )
     .await
@@ -863,20 +874,29 @@ async fn send_untracked_as<B: Serialize>(
         .map_err(websocket_error)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a replayed command carries its durable identity beside the ordinary typed send"
-)]
-async fn send_typed_as<B: Serialize>(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
+/// The envelope of one tracked command: the identity the queue pends it
+/// under, how the queue classifies it, the typed command it sends, and the
+/// witnesses the resident must confirm.
+struct TrackedCommand {
     id: CanonicalUuid,
     pending_kind: PendingKind,
     kind: CommandKind,
     expected: Vec<Witness>,
+}
+
+async fn send_typed_as<B: Serialize>(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    tracked: TrackedCommand,
     body: B,
 ) -> Result<CanonicalUuid, String> {
+    let TrackedCommand {
+        id,
+        pending_kind,
+        kind,
+        expected,
+    } = tracked;
     if actions.pending_contains(id) {
         return Err(format!("command identity {id} is already pending"));
     }

@@ -31,7 +31,7 @@ pub use control::{controlled_pending, controlled_pending_tasks};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    ResolvedTasks, Selection, SelectionIndex, WorkWait, blocked_handoff_until,
+    Claimant, ResolvedTasks, Selection, SelectionIndex, WorkWait, blocked_handoff_until,
     dependencies_satisfied, design_cycle, design_cycles, design_held, design_hold, eligible_entry,
     environment_satisfied, is_independent_handoff, is_released_by, offer_order, offer_order_at,
     passive_design, resolved_tasks, select, select_at, select_with_index_at, select_with_satisfied,

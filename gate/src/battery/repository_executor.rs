@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use wire::Digest;
 
-use super::authorities::InputMode;
+use super::authorities::{BatterySourceCapture, InputMode};
 use super::{
     ArmEvidence, ArmExecution, ArmFamily, BatteryContext, BatteryError, BatteryExecutor,
     BatteryInputs, BatteryStateRun, CompiledArm, inline_evidence,
@@ -243,20 +243,18 @@ impl<'trace> RepositoryExecutor<'trace> {
     /// evidence every core position projects.
     ///
     /// [`BatteryCapture`]: super::BatteryCapture
-    // The source authority is grouped already; the remaining arguments are
-    // independent arm, state, command-rim, and observation controls.
-    #[expect(clippy::too_many_arguments)]
     pub(super) fn capture_from_source(
-        repository_source: &RepositorySource,
-        actor: ActorCapture,
-        rim: RimCapture,
-        hygiene: HygieneConfiguration,
+        source_capture: &BatterySourceCapture,
         state_run: &BatteryStateRun,
-        state: &crate::StateLedger,
         selected: Option<GateId>,
         selection: Option<&ChangeSelectionReport>,
         mut trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
     ) -> Result<Self, BatteryError> {
+        let repository_source = &source_capture.repository;
+        let actor = source_capture.actor.clone();
+        let rim = source_capture.rim.clone();
+        let hygiene = source_capture.hygiene.clone();
+        let state = &source_capture.state;
         let reached_paths = path_local_reach(selected, selection)?;
         let rim = if selected.is_some() {
             reached_paths
@@ -477,11 +475,10 @@ impl<'trace> RepositoryExecutor<'trace> {
     }
 
     fn bind_inputs(&mut self, inputs: &BatteryInputs<'_>) -> Result<(), BatteryError> {
-        if inputs.source() != &self.source {
+        if inputs.source != &self.source {
             return Err(BatteryError::new(format!(
                 "battery inputs name source {}, but the executor owns {}",
-                inputs.source(),
-                self.source
+                inputs.source, self.source
             )));
         }
         let context = inputs.snapshot()?;

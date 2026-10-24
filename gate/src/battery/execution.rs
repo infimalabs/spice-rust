@@ -535,7 +535,7 @@ fn execute_arm(
         declaration: declaration.clone(),
     };
     let execution = match executor.execute(&compiled, inputs) {
-        Ok(execution) => admit_execution(execution, family, gate_id, declaration, inputs.source()),
+        Ok(execution) => admit_execution(execution, family, gate_id, declaration, inputs.source),
         Err(error) => failed_execution(
             gate_id,
             family,

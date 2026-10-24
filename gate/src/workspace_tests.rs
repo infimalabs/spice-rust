@@ -576,7 +576,7 @@ fn run_selected_at_mode(
     selected_policy: SelectedRunPolicy,
     output: &mut impl Write,
 ) -> Result<crate::TestSelectionReport, WorkspaceTestError> {
-    let (mut policy, prebuild_budget) = match selected_policy {
+    let (policy, prebuild_budget) = match selected_policy {
         SelectedRunPolicy::Legacy(concurrency) => (RunPolicy::production(concurrency)?, None),
         SelectedRunPolicy::Budgeted(budget) => {
             (RunPolicy::production_budgeted(budget), Some(budget))
@@ -615,9 +615,11 @@ fn run_selected_at_mode(
             environment,
             &inventory,
             report.tests(),
-            routine,
-            &mut policy,
-            prebuild_budget,
+            SelectedExecutionPolicy {
+                routine,
+                run: policy,
+                prebuild_budget,
+            },
             output,
         )?;
     }
@@ -729,18 +731,28 @@ fn selected_report(
     Ok(selected)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// How one selected test run is driven: whether the selection is routine, the
+/// run policy it starts under, and the prebuild budget that may replace it.
+struct SelectedExecutionPolicy {
+    routine: bool,
+    run: RunPolicy,
+    prebuild_budget: Option<WorkspaceTestBudget>,
+}
+
 fn execute_selected_tests(
     roots: WorkspaceTestRoots<'_>,
     root: &Path,
     environment: Environment,
     inventory: &Inventory,
     tests: &[String],
-    routine: bool,
-    policy: &mut RunPolicy,
-    prebuild_budget: Option<WorkspaceTestBudget>,
+    policy: SelectedExecutionPolicy,
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
+    let SelectedExecutionPolicy {
+        routine,
+        run: mut policy,
+        prebuild_budget,
+    } = policy;
     let execution_started = Instant::now();
     let (environment, selected, shards) =
         prepare_selected_execution(roots, root, environment, inventory, tests, output)?;
@@ -776,7 +788,7 @@ fn execute_selected_tests(
     };
     let prebuilt = if let Some(prebuilt) = prebuilt {
         if let Some(budget) = prebuild_budget {
-            *policy = RunPolicy::production_prebuilt_budgeted(budget);
+            policy = RunPolicy::production_prebuilt_budgeted(budget);
         } else {
             policy.shared_outputs = true;
         }
@@ -792,7 +804,7 @@ fn execute_selected_tests(
     } else {
         None
     };
-    run_selected_shards(prebuilt, shards, root, environment, *policy, output)?;
+    run_selected_shards(prebuilt, shards, root, environment, policy, output)?;
     writeln!(
         output,
         "[rust-test] stage=selected-execution-terminal elapsed_ms={} disposition=success",

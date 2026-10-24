@@ -20,10 +20,12 @@ pub(super) async fn send_task_close(
         principal,
         writer,
         actions,
-        id,
-        PendingKind::Close { task: born },
-        CommandKind::TaskClose,
-        expected.to_vec(),
+        TrackedCommand {
+            id,
+            pending_kind: PendingKind::Close { task: born },
+            kind: CommandKind::TaskClose,
+            expected: expected.to_vec(),
+        },
         close,
     )
     .await
@@ -55,10 +57,12 @@ pub(super) async fn send_task_delete(
         principal,
         writer,
         actions,
-        id,
-        PendingKind::Delete { task: born },
-        CommandKind::TaskDelete,
-        expected.to_vec(),
+        TrackedCommand {
+            id,
+            pending_kind: PendingKind::Delete { task: born },
+            kind: CommandKind::TaskDelete,
+            expected: expected.to_vec(),
+        },
         delete,
     )
     .await

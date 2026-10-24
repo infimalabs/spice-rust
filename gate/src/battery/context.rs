@@ -64,7 +64,6 @@ pub struct ConfigurationEvidence {
 
 impl ConfigurationEvidence {
     /// Bind a resolved value identity to its exact layered provenance.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         key: impl Into<String>,
         value_digest: Digest,
@@ -775,97 +774,33 @@ impl BatteryContext {
 }
 
 /// Borrowed authorities supplied unchanged to every arm execution.
+///
+/// The record is built where the authorities live; [`Self::snapshot`]
+/// validates the complete set before any run, context, or executor binding
+/// can read it.
 pub struct BatteryInputs<'a> {
-    source: &'a Digest,
-    actor: &'a ActorResolution,
-    scope: &'a BatteryScope,
-    configuration: &'a [ConfigurationEvidence],
-    policy: &'a RulePolicy,
-    state: &'a StateLedger,
-    bounds: &'a [BoundDecision],
-    tools: &'a [BatteryToolEvidence],
+    pub source: &'a Digest,
+    pub actor: &'a ActorResolution,
+    pub scope: &'a BatteryScope,
+    pub configuration: &'a [ConfigurationEvidence],
+    pub policy: &'a RulePolicy,
+    pub state: &'a StateLedger,
+    pub bounds: &'a [BoundDecision],
+    pub tools: &'a [BatteryToolEvidence],
 }
 
-impl<'a> BatteryInputs<'a> {
-    /// Bind every authority consumed by the battery before execution begins.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        source: &'a Digest,
-        actor: &'a ActorResolution,
-        scope: &'a BatteryScope,
-        configuration: &'a [ConfigurationEvidence],
-        policy: &'a RulePolicy,
-        state: &'a StateLedger,
-        bounds: &'a [BoundDecision],
-        tools: &'a [BatteryToolEvidence],
-    ) -> Result<Self, BatteryError> {
-        let inputs = Self {
-            source,
-            actor,
-            scope,
-            configuration,
-            policy,
-            state,
-            bounds,
-            tools,
-        };
-        inputs.snapshot()?.validate()?;
-        Ok(inputs)
-    }
-
-    /// Immutable selected source.
-    #[must_use]
-    pub const fn source(&self) -> &Digest {
-        self.source
-    }
-
-    /// Explicit selected actor.
-    #[must_use]
-    pub const fn actor(&self) -> &ActorResolution {
-        self.actor
-    }
-
-    /// Explicit selected scope.
-    #[must_use]
-    pub const fn scope(&self) -> &BatteryScope {
-        self.scope
-    }
-
-    /// Complete resolved configuration provenance.
-    #[must_use]
-    pub const fn configuration(&self) -> &[ConfigurationEvidence] {
-        self.configuration
-    }
-
-    /// Compiled policy authority, not a serialized approximation.
-    #[must_use]
-    pub const fn policy(&self) -> &RulePolicy {
-        self.policy
-    }
-
-    /// Current durable state authority.
-    #[must_use]
-    pub const fn state(&self) -> &StateLedger {
-        self.state
-    }
-
-    /// Complete resolved bounds.
-    #[must_use]
-    pub const fn bounds(&self) -> &[BoundDecision] {
-        self.bounds
-    }
-
-    /// Complete discovered tool evidence.
-    #[must_use]
-    pub const fn tools(&self) -> &[BatteryToolEvidence] {
-        self.tools
-    }
-
+impl BatteryInputs<'_> {
+    /// The validated context these inputs describe.
+    ///
+    /// # Errors
+    ///
+    /// Refuses inputs whose policy cannot be encoded or whose evidence breaks
+    /// a [`BatteryContext`] invariant.
     pub(super) fn snapshot(&self) -> Result<BatteryContext, BatteryError> {
         let policy = wire::encode(self.policy.document()).map_err(|error| {
             BatteryError::new(format!("cannot encode compiled policy: {error}"))
         })?;
-        Ok(BatteryContext {
+        let context = BatteryContext {
             source: self.source.clone(),
             actor: ActorEvidence::from(self.actor),
             scope: self.scope.clone(),
@@ -880,7 +815,9 @@ impl<'a> BatteryInputs<'a> {
                 .map(LatchEvidence::from)
                 .collect(),
             tools: self.tools.to_vec(),
-        })
+        };
+        context.validate()?;
+        Ok(context)
     }
 }
 

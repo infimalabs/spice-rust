@@ -1,7 +1,7 @@
 //! Client-action dispatch and topology mutation commands.
 
 use super::*;
-#[allow(clippy::too_many_arguments)]
+
 pub(super) async fn dispatch_client_action(
     principal: &Principal,
     data: &SurfaceData,
@@ -107,7 +107,6 @@ pub(super) async fn dispatch_client_action(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_trust_grant(
     principal: &Principal,
     data: &SurfaceData,

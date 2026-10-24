@@ -27,9 +27,11 @@ pub(crate) fn render_received_with_quotes(
 ) -> RenderedMarkdown {
     render(
         markdown,
-        classifications,
-        directives,
-        &[],
+        Annotations {
+            classifications,
+            directives,
+            sends: &[],
+        },
         quotes,
         quote_agents,
         quote_sources,
@@ -50,9 +52,11 @@ pub(crate) fn render_received_with_media_quotes(
 ) -> RenderedMarkdown {
     render(
         markdown,
-        classifications,
-        directives,
-        &[],
+        Annotations {
+            classifications,
+            directives,
+            sends: &[],
+        },
         quotes,
         quote_agents,
         quote_sources,
@@ -82,9 +86,11 @@ pub(crate) fn render_attributed_received_with_media_quotes(
     } = context;
     render(
         markdown,
-        classifications,
-        directives,
-        &[],
+        Annotations {
+            classifications,
+            directives,
+            sends: &[],
+        },
         quotes,
         quote_agents,
         quote_sources,

@@ -4,13 +4,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gate::battery::{ArmEvidence, ArmExecution, BatteryState};
 use gate::metrics::{
-    EvidenceState, LatchBinding, MagicFinding, MetricEvidence, MetricFinding, MetricId, MetricKey,
-    MetricMeasurement, MetricReport, MetricStateBinding, MetricUnit, ParseError, ParserEvidence,
-    ParserId, RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, ResolvedMetricRule, RuleBinding,
-    RustDocMarkdownCitationScan, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
-    measure_complexity, measure_file_shape, measure_repository_document, resolve_magic_metric,
-    resolve_metric_rule, scan_magic_regressions, scan_markdown_link_case,
-    scan_rust_doc_markdown_citations,
+    EvidenceState, LatchBinding, LatchLimits, LatchOutcome, MagicFinding, MetricEvidence,
+    MetricFinding, MetricId, MetricKey, MetricMeasurement, MetricReport, MetricStateBinding,
+    MetricUnit, ParseError, ParserEvidence, ParserId, RUST_DOC_MARKDOWN_CITATION_ALLOWANCES,
+    ResolvedMetricRule, RuleBinding, RustDocMarkdownCitationScan, STRUCTURAL_ARMS,
+    STRUCTURAL_METRICS, StructuralArmEvidence, measure_complexity, measure_file_shape,
+    measure_repository_document, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
+    scan_markdown_link_case, scan_rust_doc_markdown_citations,
 };
 use gate::state::{ActorInputs, CurrentState, LatchKind, RenameMap};
 use gate::{GateId, PolicyContext, RulePolicy};
@@ -1128,18 +1128,21 @@ fn bounded_measurement_with_parser(
         .with_latch(
             LatchBinding::new(
                 kind,
-                FIXTURE_BASE_LIMIT,
-                FIXTURE_RATCHET_LIMIT,
-                0,
-                FIXTURE_RATCHET_LIMIT,
-                FIXTURE_RATCHET_LIMIT,
-                false,
-                false,
-                false,
-                false,
+                LatchLimits {
+                    base: FIXTURE_BASE_LIMIT,
+                    configured_ratchet: FIXTURE_RATCHET_LIMIT,
+                    variation_percent: 0,
+                    ratchet: FIXTURE_RATCHET_LIMIT,
+                    active: FIXTURE_RATCHET_LIMIT,
+                    unlimited: false,
+                },
+                LatchOutcome {
+                    over_limit: false,
+                    over_base: false,
+                    ratchet_breach: false,
+                },
                 "clear",
-                None::<String>,
-                None::<String>,
+                None::<(String, String)>,
             )
             .unwrap(),
         )
@@ -1157,18 +1160,21 @@ fn file_row(metric: MetricId, path: &str, value: u64, limit: Option<u64>) -> Met
         assert!(value > limit, "a latched fixture measures past its limit");
         let latch = LatchBinding::new(
             kind,
-            FIXTURE_BASE_LIMIT,
-            limit,
-            0,
-            limit,
-            limit,
-            false,
-            true,
-            true,
-            true,
+            LatchLimits {
+                base: FIXTURE_BASE_LIMIT,
+                configured_ratchet: limit,
+                variation_percent: 0,
+                ratchet: limit,
+                active: limit,
+                unlimited: false,
+            },
+            LatchOutcome {
+                over_limit: true,
+                over_base: true,
+                ratchet_breach: true,
+            },
             "latched",
-            None::<String>,
-            None::<String>,
+            None::<(String, String)>,
         );
         measurement = measurement.with_latch(latch.unwrap());
     }

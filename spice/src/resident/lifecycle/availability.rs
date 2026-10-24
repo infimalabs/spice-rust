@@ -22,11 +22,13 @@ pub(super) fn selected_ready<'a>(
     let satisfied = selection.resolved();
     let selected = board::select_with_index_at(
         entries,
-        actor,
-        subscription,
+        board::Claimant {
+            actor,
+            subscription,
+            recent_cell: recent_cell.as_ref(),
+            environment,
+        },
         allocation.band(),
-        recent_cell.as_ref(),
-        environment,
         selection,
         now,
     );

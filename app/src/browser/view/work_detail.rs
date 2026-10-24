@@ -542,13 +542,22 @@ fn render_room(
                 note_id.clone(),
                 statement.handle.as_str(),
                 &statement.born,
-                render.connected,
-                render.can_note,
-                task_detail::closure(render.can_close, render.can_conclude, &answer.task).as_ref(),
+                task_detail::NoteAccess {
+                    connected: render.connected,
+                    can_note: render.can_note,
+                    closure: task_detail::closure(
+                        render.can_close,
+                        render.can_conclude,
+                        &answer.task,
+                    )
+                    .as_ref(),
+                },
                 &render.notes.shown(&statement.born),
-                render.notes.draft_input(&statement.born),
-                &render.submit_note,
-                render.notes.opener(&statement.born, note_id),
+                task_detail::NoteCallbacks {
+                    input: render.notes.draft_input(&statement.born),
+                    submit: &render.submit_note,
+                    open: render.notes.opener(&statement.born, note_id),
+                },
             )}
         </>
     };
