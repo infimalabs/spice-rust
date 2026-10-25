@@ -5,8 +5,10 @@
 //! exact changed paths and the source digest they came from. Changes to an
 //! authority that can alter the selector itself selects direct exhaustive
 //! execution; without repository-authored policy, an ordinary path class this
-//! build does not understand retains only the generic local-path arm. The
-//! explicit xtask current-source selector retains its richer source-tree
+//! build does not understand retains only the generic local-path arm. An
+//! unclassified path the staged tree no longer holds is a removal that owes
+//! the compile arms proving nothing still includes it. The explicit xtask
+//! current-source selector retains its richer source-tree
 //! knowledge in a separate module under the same local-only contract.
 
 use std::collections::BTreeSet;

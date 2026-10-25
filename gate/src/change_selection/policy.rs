@@ -177,6 +177,9 @@ impl ChangeSelectionPolicy {
         }
         let gates = self.gates_for_known_path(path);
         if !gates.iter().any(|gate_id| *gate_id != GateId::LocalPaths) {
+            if !contains_exact(&self.tracked_sources, path) {
+                return Ok(self.removed_path_gates());
+            }
             if !self.configured {
                 return Ok(vec![GateId::LocalPaths]);
             }
@@ -185,6 +188,23 @@ impl ChangeSelectionPolicy {
             )));
         }
         Ok(gates)
+    }
+
+    /// Gates owed by a path the staged tree no longer holds and no class names.
+    ///
+    /// Removed bytes introduce nothing to measure; what remains owed is proof
+    /// that no surviving source still compiles them in, so a Rust workspace
+    /// selects both compile arms.
+    fn removed_path_gates(&self) -> Vec<GateId> {
+        if self.rust_workspace() {
+            vec![
+                GateId::LocalPaths,
+                GateId::RustTypecheck,
+                GateId::AppWebTypecheck,
+            ]
+        } else {
+            vec![GateId::LocalPaths]
+        }
     }
 
     fn gates_for_known_path(&self, path: &str) -> Vec<GateId> {
@@ -569,5 +589,44 @@ mod tests {
             policy.gates_for_path(".gitignore").expect("ignore rules"),
             [GateId::RepoShape]
         );
+    }
+
+    #[test]
+    fn removed_paths_without_a_class_owe_compile_proof() {
+        let tracked = ["Cargo.toml".to_owned(), "src/lib.rs".to_owned()];
+        let suffixes = [".rs".to_owned()];
+        let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+            tracked_sources: &tracked,
+            policy_authorities: &[],
+            configured: true,
+            repository_documents: Some(&[]),
+            file_shape_suffixes: Some(&suffixes),
+            complexity_suffixes: Some(&suffixes),
+            magic_suffixes: Some(&suffixes),
+            package_roots: &[],
+            declared_rust_sources: &[],
+            generated_paths: &[],
+            test_paths: &[],
+        })
+        .expect("selection policy");
+
+        let report = crate::select_change_gates(
+            wire::Digest::compute(wire::Domain::GateTree, b"removed input"),
+            &["dist/VERSION".to_owned()],
+            &policy,
+        )
+        .expect("a removed unclassified path is selectable");
+
+        let mut expected = ALWAYS
+            .into_iter()
+            .chain([
+                GateId::LocalPaths,
+                GateId::RustTypecheck,
+                GateId::AppWebTypecheck,
+            ])
+            .collect::<Vec<_>>();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(report.gate_ids(), expected);
     }
 }

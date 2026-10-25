@@ -12,10 +12,13 @@ the arms and Cargo targets its compiled classification owns, and runs only that
 selection. A path whose classification is a selection authority (packaged
 policy, or repository build or test selection) selects every applicable arm at
 exhaustive reach. A path the classification cannot prove local — an
-unclassified path in a configured repository, or Rust source or a package
-manifest outside every compiled workspace root — refuses with
+unclassified path still present in a configured repository, or Rust source or
+a package manifest outside every compiled workspace root — refuses with
 `change-selection-refused` before selected work begins; uncertainty never
-impersonates exhaustive reach.
+impersonates exhaustive reach. An unclassified path the staged tree no longer
+holds is a removal: its bytes add nothing to measure, so it owes only the local
+path arm and, in a Rust workspace, the compile arms that prove no surviving
+source still includes it.
 
 The battery manifest's canonical order owns report order. Independent arms may
 run concurrently; scheduling never changes evidence identity or order. A

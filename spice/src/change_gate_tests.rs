@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[test]
 fn report_rejects_missing_and_source_mismatched_policy_evidence() {
     let source = wire::Digest::compute(wire::Domain::GateTree, b"change gate report");
-    let selection =
-        gate::select_current_source_change_gates(source.clone(), &[]).expect("empty selection");
+    let selection = gate::select_current_source_change_gates(source.clone(), &[], &[])
+        .expect("empty selection");
     let tests = gate::TestEvidenceGraph::select_tests(
         source,
         Vec::new(),
@@ -31,6 +31,7 @@ fn proof_image_definition_selects_every_current_source_gate() {
     let source = wire::Digest::compute(wire::Domain::GateTree, b"proof image definition");
     let selection = gate::select_current_source_change_gates(
         source,
+        &[],
         &["dist/proof-image/Dockerfile".to_owned()],
     )
     .expect("proof image definition selects");
@@ -152,9 +153,9 @@ fn policy_schedule_starts_known_long_arms_before_short_remainder_work() {
     assert!(policy_schedule_rank(GateId::MagicNumbers) < policy_schedule_rank(GateId::Taste));
 
     let source = wire::Digest::compute(wire::Domain::GateTree, b"policy schedule order");
-    let selection =
-        gate::select_current_source_change_gates(source, &["spice/src/change_gate.rs".to_owned()])
-            .expect("select the benchmark policy inventory");
+    let changed = ["spice/src/change_gate.rs".to_owned()];
+    let selection = gate::select_current_source_change_gates(source, &changed, &changed)
+        .expect("select the benchmark policy inventory");
     let mut scheduled = selection
         .reach()
         .iter()
