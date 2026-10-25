@@ -70,16 +70,17 @@ and admission age with the exact instant on hover. Its controls send the
 commands `spice principal` sends: **Edit profile** opens a form whose changed
 fields replace the recorded ones, **Grant operator** or **Revoke operator**
 changes the one role, and **Revoke capability** asks once more before retiring
-an issued capability. **Admit a human** takes a required name, an optional
-email, and the operator role; the reply's capability shows once above the list
-as the opening link `ORIGIN/#CAPABILITY` with **Copy link** and **Done**, held
-only in that panel and dropped with its connection. The listing re-reads on
-every `principal::` fact, so another session's change shows at once. The
-listing is operator-only: a principal without the operator role sees only their
-own row and its inbox, and a listing the resident refuses reads beneath that
-row as taking the operator role. One change is in flight at a time; its
-progress and any refusal, such as the last operator's revocation, read under
-the heading.
+an issued capability. **Admit a human**, at the heading's trailing end once the
+listing arrives, opens beneath the heading a form taking a required name, an
+optional email, and the operator role; the reply's capability shows once above
+the list as the opening link `ORIGIN/#CAPABILITY` with **Copy link** and
+**Done**, held only in that panel and dropped with its connection. The listing
+re-reads on every `principal::` fact, so another session's change shows at
+once. The listing is operator-only: a principal without the operator role sees
+only their own row and its inbox, and a listing the resident refuses reads
+beneath that row as taking the operator role. One change is in flight at a
+time; its progress and any refusal, such as the last operator's revocation,
+read under the heading.
 
 ## Jobs in the global menu
 

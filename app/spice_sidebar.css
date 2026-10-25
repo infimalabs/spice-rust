@@ -81,8 +81,10 @@
 }
 /* Each action stands as tall as two fact lines, so Edit profile sits beside
    the name and code lines and the role action beside the email and roles;
-   the column is only as wide as its longest label. */
-.app-spice-principal > .app-control-rail > button {
+   the column is only as wide as its longest label. Admit a human, at the
+   heading's trailing end, wears the same compact face. */
+.app-spice-principal > .app-control-rail > button,
+.app-spice-principals > .section-heading > .app-control-rail > button {
   flex: 0 0 auto;
   min-height: calc(2 * 1.25 * var(--app-type-meta) + 2px);
   padding: 0 8px;
