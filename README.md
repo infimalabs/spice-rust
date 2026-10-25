@@ -110,8 +110,13 @@ picker it opens, while the console's system theme keeps following macOS. It
 has no separate title bar: the traffic lights keep their standard corner
 position, as in every Mac app, inside the console's header, whose empty area
 drags the window and answers a double-click with the system's choice of zoom,
-minimize or nothing; the browser console's header is unchanged. The window is
-macOS-only (WebKit); elsewhere `spice app` refuses and `spice up --open`
+minimize or nothing; the browser console's header is unchanged. On Windows
+the window renders through Microsoft Edge WebView2 and opens centred on the
+primary screen, shrunk to fit it. It has no system title bar either: the
+header drags the window, a double-click maximizes or restores it, minimize,
+maximize and close stand in the header's trailing corner as in every Windows
+app, and every edge and corner resizes, with the shadow, rounded corners and
+Snap of a native window. Elsewhere `spice app` refuses and `spice up --open`
 remains the route. Under WebKit, the console reads `app_bg.wasm` from the
 resident twice per load, because WebKit doesn't reuse its integrity-checked
 preload. Over loopback that is one extra local read, so the preload stays for

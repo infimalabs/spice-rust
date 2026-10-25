@@ -55,7 +55,7 @@ use crate::{INITIAL_SIZE, WindowError};
 /// What reaches the window's event loop from the page, the synthesizer, and
 /// the menu bar.
 enum ShellEvent {
-    Titlebar(titlebar::Request),
+    Titlebar(crate::header::Request),
     Speech(speech::Event),
     /// The Settings menu item: open the console's Spice panel.
     OpenSettings,
@@ -86,11 +86,11 @@ pub(crate) fn show(
     let proxy = event_loop.create_proxy();
     let webview = WebViewBuilder::new()
         .with_url(url)
-        .with_initialization_script(titlebar::SCRIPT)
+        .with_initialization_script(crate::header::SCRIPT)
         .with_initialization_script(speech::SCRIPT)
         .with_ipc_handler(move |request| {
             let body = request.body();
-            let event = titlebar::Request::parse(body)
+            let event = crate::header::Request::parse(body)
                 .map(ShellEvent::Titlebar)
                 .or_else(|| speech::Event::parse(body).map(ShellEvent::Speech));
             if let Some(event) = event {

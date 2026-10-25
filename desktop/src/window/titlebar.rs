@@ -1,4 +1,4 @@
-//! The console's header is the window's title bar.
+//! The console's header is the window's title bar (see [`crate::header`]).
 //!
 //! The window paints the console under a transparent, titleless title bar, and
 //! its traffic lights keep AppKit's standard placement in the window's top
@@ -6,54 +6,15 @@
 //! width they occupy as `--app-titlebar-inset` on the document root; the header
 //! reserves that much leading space, so the browser, which never sets it,
 //! renders exactly as before. Full screen hides the traffic lights, so the
-//! shell withdraws the inset there.
-//!
-//! WKWebView takes every click over the page, so the window's own title-bar
-//! drag never sees one. The page's initialization script reports a primary
-//! mouse-down on the header's empty area, anything outside its controls, over
-//! the IPC channel; the shell starts a native window drag for it, or performs
-//! the system's title-bar double-click action for the second press.
+//! shell withdraws the inset there. A header double-click performs the
+//! system's title-bar double-click action.
 
 use objc2_app_kit::{NSWindow, NSWindowButton};
 use objc2_foundation::{NSString, NSUserDefaults};
 use tao::window::Window;
 use wry::WebView;
 
-/// The page's side: report the header's empty-area presses and ask for the
-/// inset once the document exists, including after every reload.
-pub(super) const SCRIPT: &str = r#"(() => {
-  const controls = "button, a, input, select, textarea, [tabindex], [contenteditable]";
-  addEventListener("mousedown", (event) => {
-    const target = event.target;
-    if (event.button !== 0 || !(target instanceof Element)) return;
-    if (!target.closest(".commandbar") || target.closest(controls)) return;
-    event.preventDefault();
-    window.ipc.postMessage(event.detail === 2 ? "double-click" : "drag");
-  });
-  window.ipc.postMessage("ready");
-})();"#;
-
-/// What the page asks of its window.
-pub(super) enum Request {
-    /// A document started; publish the current inset to it.
-    Ready,
-    /// The header's empty area was pressed: move the window.
-    Drag,
-    /// The header's empty area was pressed twice.
-    DoubleClick,
-}
-
-impl Request {
-    /// The request one IPC message names, if any.
-    pub(super) fn parse(message: &str) -> Option<Self> {
-        match message {
-            "ready" => Some(Self::Ready),
-            "drag" => Some(Self::Drag),
-            "double-click" => Some(Self::DoubleClick),
-            _ => None,
-        }
-    }
-}
+use crate::header::Request;
 
 /// The inset last published to the page.
 #[derive(Default)]
