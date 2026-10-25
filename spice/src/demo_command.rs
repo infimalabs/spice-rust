@@ -846,8 +846,8 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     )
 }
 
-/// One seeded OOPS task: a statement without description or acceptance, in
-/// its authored flow, recorded at `at`.
+/// One seeded OOPS task in its authored flow, recorded at `at`: the Design
+/// carries the fixed OOPS statement, a report only its derived pitch.
 struct OopsTask<'a> {
     born: wire::TaskStamp,
     title: &'a str,
@@ -868,6 +868,15 @@ fn seed_oops_task(journal: &mut journal::Journal, task: OopsTask<'_>) -> DemoRes
         flow,
         at,
     } = task;
+    let (pitch, description, acceptance) = if intent.is_opportunistic_design() {
+        (
+            wire::OOPS_DESIGN_PITCH.to_owned(),
+            Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
+            wire::OOPS_DESIGN_ACCEPTANCE.map(str::to_owned).to_vec(),
+        )
+    } else {
+        (wire::pitch::derive(title, None), None, Vec::new())
+    };
     let intent = Some(intent);
     let phases = flow
         .iter()
@@ -889,9 +898,9 @@ fn seed_oops_task(journal: &mut journal::Journal, task: OopsTask<'_>) -> DemoRes
                 intent,
                 task: born.clone(),
                 title: title.to_owned(),
-                pitch: wire::pitch::derive(title, None),
-                description: None,
-                acceptance: Vec::new(),
+                pitch: pitch.clone(),
+                description: description.clone(),
+                acceptance: acceptance.clone(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: project.to_owned(),
                 filing: wire::TaskFiling::Filed,
@@ -914,7 +923,6 @@ fn seed_oops_task(journal: &mut journal::Journal, task: OopsTask<'_>) -> DemoRes
     let statement_provenance = wire::TaskProvenance::Task(born.clone());
     let workflow_task = born;
     let statement_title = title.to_owned();
-    let statement_pitch = wire::pitch::derive(title, None);
     let statement_project = project.to_owned();
     write.task_head(added, move |revision| TaskHead {
         preparation,
@@ -922,9 +930,9 @@ fn seed_oops_task(journal: &mut journal::Journal, task: OopsTask<'_>) -> DemoRes
         born: statement_task,
         queue_origin: revision,
         title: statement_title,
-        pitch: statement_pitch,
-        description: None,
-        acceptance: Vec::new(),
+        pitch,
+        description,
+        acceptance,
         requirements: wire::EnvironmentRequirements::default(),
         project: statement_project,
         filing: wire::TaskFiling::Filed,

@@ -82,12 +82,31 @@ impl TaskIntent {
 pub const OOPS_DESIGN_PROJECT: &str = "oops.design";
 /// Fixed title of every opportunistic OOPS Design generation.
 pub const OOPS_DESIGN_TITLE: &str = "OOPS";
-/// Stable context of every opportunistic OOPS Design generation.
-pub const OOPS_DESIGN_DESCRIPTION: &str =
-    "Repository-owned opportunistic Design for unexpected-behavior line items.";
+/// Stable context of every opportunistic OOPS Design generation: the holder's
+/// job, stated so an agent works the reports as a whole.
+pub const OOPS_DESIGN_DESCRIPTION: &str = "Every `spice task oops` report lands here as a Plan \
+gated by this Design. Like any Design, it is worked once an Explore or Converge group holds it.
+
+Work the reports as a whole, not line by line. Read each pending report, its origin, and the \
+code it names. Group reports that share a cause, find the defect behind a cluster of symptoms, \
+and note reports that another task or another report already covers.
+
+Give each cause one output: rewrite its report Plan's title, description, and acceptance with \
+`spice task modify` to name the real fix, or file a better-scoped task under this Design. Name \
+in the justification every report the operator should reject, and why. Propose with \
+`spice preparation propose` only when every output carries concrete acceptance, citing the \
+evidence.";
 /// Fixed pitch of every opportunistic OOPS Design generation.
-pub const OOPS_DESIGN_PITCH: &str =
-    "Unexpected behavior gets one place to land so friction is never lost.";
+pub const OOPS_DESIGN_PITCH: &str = "Unexpected behavior lands here as reports that an agent \
+triages as a whole into one proposal of real fixes.";
+/// What every opportunistic OOPS Design generation's holder must deliver.
+pub const OOPS_DESIGN_ACCEPTANCE: [&str; 3] = [
+    "Every pending report is read and is an output with concrete acceptance, folded into one, \
+     or named for rejection with a reason.",
+    "Reports that share a cause become one output that names the cause and its fix.",
+    "The proposal justification lists the clusters, their evidence, and what was set aside and \
+     why.",
+];
 
 impl std::fmt::Display for TaskIntent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

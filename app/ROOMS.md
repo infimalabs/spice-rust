@@ -236,14 +236,6 @@ focus a console.
 
 The repository-owned OOPS Design uses the ordinary Design room and proposal
 surface. One typed repository generation authority, not the Design's title or
-project spelling, selects the current open Design. Its generated candidate
-shows each pending report Plan as one line item with its complete statement
-and an Accept or Reject verdict. No line starts decided: the operator marks
-each line, or every line with **Accept all** or **Reject all**, and
-submission refuses while any line is undecided, so no untouched line is ever
-rejected or accepted by default. Resolving the lines is the candidate's only
-decision, so the card asks no Accept-or-Return choice and offers no Return:
-every submitted line receives a disposition. Accepted lines receive ordinary
-execution authorization. Rejected and previously decided lines remain
-history, while reports arriving during a decision appear in the next
-candidate.
+project spelling, selects the current open Design. The browser composes no
+candidate for it: its report Plans wait behind it until the agent holding it
+proposes, and that proposal decides like any other, Return included.

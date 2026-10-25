@@ -208,7 +208,7 @@ fn prepare_oops_design(
         pitch: wire::OOPS_DESIGN_PITCH.to_owned(),
         project: Some(wire::OOPS_DESIGN_PROJECT.to_owned()),
         description: Some(wire::OOPS_DESIGN_DESCRIPTION.to_owned()),
-        acceptance: Vec::new(),
+        acceptance: wire::OOPS_DESIGN_ACCEPTANCE.map(str::to_owned).to_vec(),
         requirements: wire::EnvironmentRequirements::default(),
         origin: add.origin.clone(),
         flow: Some("design".to_owned()),

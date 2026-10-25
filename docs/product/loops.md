@@ -158,9 +158,10 @@ flowchart LR
   without mutation. The first report after the prior OOPS Design settles
   atomically opens a fresh generation, and concurrent first reports cannot
   open two. Each line retains its exact report, origin, and public project,
-  stays gated by the Design, and carries the contract to record an explicit
-  disposition, through `task done --disposition` when no change is warranted,
-  and to construct child work when it is.
+  stays gated by the Design until its holder's proposal is decided, and
+  carries the contract to record an explicit disposition, through `task done
+  --disposition` when no change is warranted, and to construct child work when
+  it is.
   An ordinary claimed duplicate is not a Plan disposition; remove it through
   `task delete HANDLE REASON --force-claimed`.
 - Every task statement stores a pitch: one plain, unlabeled, accessible

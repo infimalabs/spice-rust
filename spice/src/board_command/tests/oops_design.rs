@@ -1,8 +1,9 @@
 use super::*;
 
+use crate::board_command::client::{PassRecord, assemble, held_design};
 use wire::rooms::{
-    CandidateRef, DecisionOutcome, DecisionRef, OutputDecision, OutputVerdict, PreparationDecide,
-    PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomSource,
+    CandidateRef, CandidateReference, DecisionOutcome, DecisionRef, OutputDecision, OutputVerdict,
+    PreparationDecide, PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomSource,
 };
 
 fn task(micros: i64) -> TaskStamp {
@@ -201,191 +202,6 @@ fn unrelated_board_churn_does_not_refuse_oops_intake() {
     clean(&root, bus);
 }
 
-#[test]
-fn oops_decision_refuses_when_a_previewed_line_head_moves() {
-    let (root, bus, epoch, _seats) = fixture("oops-design-stale-line", 0);
-    let design_stamp = task(1_760_000_000_200_000);
-    let line_stamp = task(1_760_000_000_200_001);
-    let line = add_line(
-        &bus,
-        epoch,
-        &design_stamp,
-        line_stamp.clone(),
-        "Friction before revision",
-    );
-    let design = TaskHandle::for_project(wire::OOPS_DESIGN_PROJECT, &design_stamp);
-    let preview = board(&bus, epoch, Actor::Operator);
-    let candidate = CandidateRef {
-        controller: design_stamp.clone(),
-        candidate: RoomAuthorityStamp::for_micros(line_stamp.micros())
-            .expect("task birth instant is a room authority instant"),
-    };
-    let decision = DecisionRef {
-        controller: design_stamp.clone(),
-        decision: wire::SequenceCode::new(1),
-    };
-    let expected = vec![
-        statement_witness(at(&preview, &design)),
-        workflow_witness(at(&preview, &design)),
-        claim_witness(at(&preview, &design)),
-        statement_witness(at(&preview, &line)),
-        workflow_witness(at(&preview, &line)),
-        claim_witness(at(&preview, &line)),
-        Witness::Authorization {
-            output: line_stamp.clone(),
-            head: None,
-        },
-        Witness::Proposal {
-            proposal: ProposalRef::Candidate {
-                candidate: candidate.clone(),
-            },
-            head: None,
-        },
-        Witness::Proposal {
-            proposal: ProposalRef::Decision {
-                decision: decision.clone(),
-            },
-            head: None,
-        },
-    ];
-    let source = RoomSource::Journal {
-        fact: wire::SequenceCode::new(at(&preview, &line).statement.position.get()),
-    };
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskEdit,
-        vec![statement_witness(at(&preview, &line))],
-        &TaskEdit {
-            task: line.clone(),
-            title: Some("Friction after revision".to_owned()),
-            pitch: None,
-            description: None,
-            acceptance: Vec::new(),
-            requirements: None,
-            intent: None,
-            priority: None,
-            project: None,
-            flow: None,
-        },
-    ));
-    let facts = fact_count(&bus);
-    let refused = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::PreparationDecide,
-        expected,
-        &PreparationDecide {
-            decision: PreparationDecision {
-                decision,
-                source,
-                outcome: DecisionOutcome::Resolved {
-                    candidate,
-                    outputs: vec![OutputDecision {
-                        output: line_stamp,
-                        verdict: OutputVerdict::Accepted,
-                        comment: None,
-                    }],
-                    comment: None,
-                },
-            },
-        },
-    );
-    assert!(matches!(refused, Outcome::Refusal(_)), "{refused:?}");
-    assert_eq!(fact_count(&bus), facts);
-    assert!(
-        at(&board(&bus, epoch, Actor::Operator), &line)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    clean(&root, bus);
-}
-
-fn decide_two_lines(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    design_stamp: &TaskStamp,
-    design: &TaskHandle,
-    lines: [&TaskHandle; 2],
-    stamps: [TaskStamp; 2],
-) -> DecisionRef {
-    let [first, second] = lines;
-    let [first_stamp, second_stamp] = stamps;
-    let current = board(bus, epoch, Actor::Operator);
-    let candidate = CandidateRef {
-        controller: design_stamp.clone(),
-        candidate: RoomAuthorityStamp::for_micros(second_stamp.micros())
-            .expect("task birth instant is a room authority instant"),
-    };
-    let decision = DecisionRef {
-        controller: design_stamp.clone(),
-        decision: wire::SequenceCode::new(1),
-    };
-    let mut expected = vec![
-        statement_witness(at(&current, design)),
-        workflow_witness(at(&current, design)),
-        claim_witness(at(&current, design)),
-        statement_witness(at(&current, first)),
-        claim_witness(at(&current, first)),
-        workflow_witness(at(&current, first)),
-        statement_witness(at(&current, second)),
-        workflow_witness(at(&current, second)),
-        Witness::Authorization {
-            output: first_stamp.clone(),
-            head: None,
-        },
-        Witness::Proposal {
-            proposal: ProposalRef::Candidate {
-                candidate: candidate.clone(),
-            },
-            head: None,
-        },
-        Witness::Proposal {
-            proposal: ProposalRef::Decision {
-                decision: decision.clone(),
-            },
-            head: None,
-        },
-    ];
-    expected.sort();
-    assert_committed(issue(
-        bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::PreparationDecide,
-        expected,
-        &PreparationDecide {
-            decision: PreparationDecision {
-                decision: decision.clone(),
-                source: RoomSource::Journal {
-                    fact: wire::SequenceCode::new(at(&current, second).statement.position.get()),
-                },
-                outcome: DecisionOutcome::Resolved {
-                    candidate,
-                    outputs: vec![
-                        OutputDecision {
-                            output: first_stamp,
-                            verdict: OutputVerdict::Accepted,
-                            comment: None,
-                        },
-                        OutputDecision {
-                            output: second_stamp,
-                            verdict: OutputVerdict::Rejected,
-                            comment: None,
-                        },
-                    ],
-                    comment: None,
-                },
-            },
-        },
-    ));
-    decision
-}
-
 fn collapse_and_open_next_generation(bus: &Bus, epoch: CanonicalUuid, design: TaskHandle) {
     let before = board(bus, epoch, Actor::Operator);
     let design_heads = at(&before, &design);
@@ -438,13 +254,96 @@ fn collapse_and_open_next_generation(bus: &Bus, epoch: CanonicalUuid, design: Ta
     );
 }
 
+/// The operator's decision accepting `reports` as though `design` had
+/// composed a candidate from them, named by the newest report's birth.
+fn decide_unproposed(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    design: &TaskStamp,
+    reports: [TaskStamp; 2],
+    source: RoomSource,
+) -> Outcome<CommandAnswer> {
+    let candidate = CandidateRef {
+        controller: design.clone(),
+        candidate: RoomAuthorityStamp::for_micros(reports[1].micros())
+            .expect("task birth instant is a room authority instant"),
+    };
+    let decision = DecisionRef {
+        controller: design.clone(),
+        decision: wire::SequenceCode::new(1),
+    };
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::PreparationDecide,
+        vec![
+            Witness::Proposal {
+                proposal: ProposalRef::Candidate {
+                    candidate: candidate.clone(),
+                },
+                head: None,
+            },
+            Witness::Proposal {
+                proposal: ProposalRef::Decision {
+                    decision: decision.clone(),
+                },
+                head: None,
+            },
+        ],
+        &PreparationDecide {
+            decision: PreparationDecision {
+                decision,
+                source,
+                outcome: DecisionOutcome::Resolved {
+                    candidate,
+                    outputs: reports
+                        .map(|output| OutputDecision {
+                            output,
+                            verdict: OutputVerdict::Accepted,
+                            comment: None,
+                        })
+                        .to_vec(),
+                    comment: None,
+                },
+            },
+        },
+    )
+}
+
+/// The pass `lane` assembles for the Design it holds, citing its statement.
+fn assemble_held(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+) -> Result<wire::rooms::DesignPassBody, Outcome<CommandAnswer>> {
+    let held = board(bus, epoch, lane.clone());
+    let design = held_design(&held, None).expect("the lane holds the OOPS Design");
+    assemble(
+        design,
+        &held.tasks,
+        &PassRecord::default(),
+        None,
+        vec![CandidateReference {
+            relation: "contract".parse().expect("relation"),
+            source: RoomSource::Journal {
+                fact: wire::SequenceCode::new(design.statement.position.get()),
+            },
+        }],
+        "Both reports share one cause.".to_owned(),
+    )
+}
+
+/// Reports gather under one Design that composes no candidate of its own:
+/// deciding one refuses until a holder proposes, and the holder's pass
+/// assembles exactly the reports given acceptance as its outputs.
 #[test]
-fn oops_lines_share_one_design_and_exact_decisions_leave_new_arrivals_for_the_next_candidate() {
-    let (root, bus, epoch, _seats) = fixture("oops-design-lines", 0);
+fn oops_reports_wait_for_their_holders_proposal() {
+    let (root, bus, epoch, seats) = fixture("oops-design-lines", 1);
+    let lane = Actor::Lane(seats[0].lane);
     let design_stamp = task(1_760_000_000_000_000);
     let first_stamp = task(1_760_000_000_000_001);
     let second_stamp = task(1_760_000_000_000_002);
-    let third_stamp = task(1_760_000_000_000_003);
     let first = add_line(
         &bus,
         epoch,
@@ -481,116 +380,74 @@ fn oops_lines_share_one_design_and_exact_decisions_leave_new_arrivals_for_the_ne
         assert_eq!(association.construction, heads.statement.body.born);
     }
 
-    // This line arrives after the operator saw the candidate. Its birth is
-    // beyond that candidate's cutoff, so the exact older candidate remains
-    // decidable and the new line remains for the next pass.
-    let third = add_line(
+    // No proposal exists until a holder writes one, so the operator cannot
+    // accept the pending reports directly.
+    let facts = fact_count(&bus);
+    let source = RoomSource::Journal {
+        fact: wire::SequenceCode::new(at(&preview, &second).statement.position.get()),
+    };
+    let refused = decide_unproposed(
         &bus,
         epoch,
         &design_stamp,
-        third_stamp,
-        "Concurrent friction",
+        [first_stamp.clone(), second_stamp.clone()],
+        source,
     );
-    let _decision = decide_two_lines(
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == "preparation::candidate-missing"),
+        "{refused:?}"
+    );
+    assert_eq!(fact_count(&bus), facts);
+
+    // Its statement text amends like any Design's; its intent does not.
+    assert_committed(super::edit::correct(
         &bus,
         epoch,
-        &design_stamp,
-        &design,
-        [&first, &second],
-        [first_stamp, second_stamp],
+        Actor::Operator,
+        &TaskEdit {
+            description: Some("Triage these reports as one cluster.".to_owned()),
+            ..super::edit::only(&design)
+        },
+    ));
+    let retyped = super::edit::correct(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &TaskEdit {
+            intent: Some(wire::TaskIntentEdit::Clear {}),
+            ..super::edit::only(&design)
+        },
+    );
+    assert!(
+        matches!(&retyped, Outcome::Refusal(refusal) if refusal.reason() == "task::oops-design-internal"),
+        "{retyped:?}"
     );
 
-    let decided = board(&bus, epoch, Actor::Operator);
+    // Moved to an active group, it is claimed and worked like any Design.
+    group_design(&bus, epoch, &design);
+    super::resolution::claim_task(&bus, epoch, &seats[0], &lane, &design);
+    let accept = |report: &TaskHandle| {
+        assert_committed(super::edit::correct(
+            &bus,
+            epoch,
+            lane.clone(),
+            &TaskEdit {
+                acceptance: vec![format!("{report} names its fix.")],
+                ..super::edit::only(report)
+            },
+        ));
+    };
+    let pass = || assemble_held(&bus, epoch, &lane);
+    accept(&first);
     assert!(
-        !at(&decided, &first)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
+        matches!(pass(), Err(Outcome::Refusal(refusal)) if refusal.reason() == "preparation::output-unaccepted"),
+        "a report without acceptance is not yet an output"
     );
-    assert!(
-        at(&decided, &second)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(
-        at(&decided, &third)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(at(&decided, &design).workflow.body.status.is_pending());
+    accept(&second);
+    let body = pass().expect("a triaged pass assembles");
+    assert_eq!(body.outputs, vec![first_stamp, second_stamp]);
 
+    super::reclaim::free_active(&bus, epoch, &lane, &seats[0], &design);
     collapse_and_open_next_generation(&bus, epoch, design);
-    clean(&root, bus);
-}
-
-/// A crossed journal keeps eight-character millisecond report identities. A
-/// candidate whose newest line is retained names that line's moment, and the
-/// decision matches each line by its own identity, never a reminted one.
-#[test]
-fn retained_report_identities_are_decided_without_reminting() {
-    let (root, bus, epoch, _seats) = fixture("oops-design-retained", 0);
-    let design_stamp = task(1_759_999_999_000_000);
-    let current = task(1_759_999_999_999_999);
-    let retained: TaskStamp = "1j14rjy8".parse().expect("retained report stamp");
-    assert!(retained < current && current.birth_cmp(&retained).is_lt());
-    let first = add_line(
-        &bus,
-        epoch,
-        &design_stamp,
-        current.clone(),
-        "Current friction",
-    );
-    let second = add_line(
-        &bus,
-        epoch,
-        &design_stamp,
-        retained.clone(),
-        "Retained friction",
-    );
-    let later = add_line(
-        &bus,
-        epoch,
-        &design_stamp,
-        task(1_760_000_000_000_001),
-        "Later friction",
-    );
-    let design = TaskHandle::for_project(wire::OOPS_DESIGN_PROJECT, &design_stamp);
-    let _decision = decide_two_lines(
-        &bus,
-        epoch,
-        &design_stamp,
-        &design,
-        [&first, &second],
-        [current, retained.clone()],
-    );
-
-    let decided = board(&bus, epoch, Actor::Operator);
-    assert!(
-        !at(&decided, &first)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert_eq!(at(&decided, &second).statement.body.born, retained);
-    assert!(
-        at(&decided, &second)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
-    assert!(
-        at(&decided, &later)
-            .statement
-            .body
-            .dependencies
-            .contains(&design_stamp)
-    );
     clean(&root, bus);
 }

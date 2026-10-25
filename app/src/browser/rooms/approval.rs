@@ -5,16 +5,15 @@
 //! versions, and offers no decision.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateCoverage, CandidateCritique, CandidateRef, CandidateReference, CoverageAuthority,
-    DecisionOutcome, DesignPassProposal, DesignPassRecommendation, ExecutionAuthorization,
-    OutputVerdict, PreparationDecision, RoomAuthorityStamp, RoomSource,
+    CandidateCoverage, CandidateCritique, CandidateRef, CoverageAuthority, DecisionOutcome,
+    DesignPassProposal, DesignPassRecommendation, ExecutionAuthorization, OutputVerdict,
+    PreparationDecision, RoomSource,
 };
 use wire::{CommandKind, SequenceCode, TaskStamp};
 use yew::prelude::*;
@@ -124,12 +123,10 @@ pub(super) fn render_approval(
     let Some(board) = runtime.board() else {
         return Html::default();
     };
-    let synthetic = opportunistic_candidate(&board.tasks, preparation, design);
     let mut candidates = preparation
         .candidates
         .values()
         .filter(|positioned| positioned.value.candidate.controller == *design)
-        .chain(synthetic.iter())
         .collect::<Vec<_>>();
     candidates.sort_by_key(|candidate| candidate.position);
     if candidates.is_empty() {
@@ -323,7 +320,7 @@ fn render_justification(justification: &str) -> Html {
 }
 
 /// Journal time shown by a proposal card and used to interleave it with other
-/// activity. Synthetic opportunistic candidates fall back to their task time.
+/// activity; a candidate without its proposal record shows its stamp's time.
 pub(super) fn proposal_display_millis(
     preparation: &PreparationProjection,
     positioned: &RoomPositioned<DesignPassProposal>,
@@ -382,83 +379,6 @@ fn render_standing_badges(standing: &Standing<'_>) -> Html {
             }
         }
     }
-}
-
-fn opportunistic_candidate(
-    tasks: &[BoardTask],
-    preparation: &PreparationProjection,
-    design: &TaskStamp,
-) -> Option<RoomPositioned<DesignPassProposal>> {
-    let controller = tasks.iter().find(|task| {
-        task.statement.body.born == *design
-            && task.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
-            && task
-                .design_standing()
-                .is_some_and(|standing| standing.is_open())
-    })?;
-    let governed = preparation
-        .decisions
-        .values()
-        .filter(|decision| decision.value.decision.controller == *design)
-        .flat_map(|decision| match &decision.value.outcome {
-            DecisionOutcome::Resolved { outputs, .. } => {
-                outputs.iter().map(|output| output.output.clone()).collect()
-            }
-            DecisionOutcome::Returned { .. } | DecisionOutcome::Accepted { .. } => Vec::new(),
-        })
-        .collect::<BTreeSet<_>>();
-    let mut lines = tasks
-        .iter()
-        .filter(|task| {
-            task.workflow.body.status.is_pending()
-                && task.statement.body.intent == Some(wire::TaskIntent::Plan)
-                && task.statement.body.dependencies.contains(design)
-                && !governed.contains(&task.statement.body.born)
-        })
-        .collect::<Vec<_>>();
-    lines.sort_by(|left, right| {
-        left.statement
-            .body
-            .born
-            .birth_cmp(&right.statement.body.born)
-    });
-    let newest = lines.last()?;
-    let candidate = RoomAuthorityStamp::for_micros(newest.statement.body.born.micros())
-        .expect("a task birth instant is a room authority instant");
-    let position = lines
-        .iter()
-        .map(|line| line.statement.position)
-        .max()
-        .expect("a candidate has at least one line");
-    Some(RoomPositioned {
-        position,
-        value: DesignPassProposal {
-            candidate: CandidateRef {
-                controller: design.clone(),
-                candidate,
-            },
-            statement: controller.statement.position,
-            claim: None,
-            recommendation: DesignPassRecommendation::Work,
-            governed_inputs: Vec::new(),
-            outputs: lines
-                .iter()
-                .map(|line| line.statement.body.born.clone())
-                .collect(),
-            justification:
-                "Resolve each pending unexpected-behavior line item through an explicit verdict."
-                    .to_owned(),
-            references: lines
-                .iter()
-                .map(|line| CandidateReference {
-                    relation: "input".parse().expect("input is a wire name"),
-                    source: RoomSource::Journal {
-                        fact: SequenceCode::new(line.statement.position.get()),
-                    },
-                })
-                .collect(),
-        },
-    })
 }
 
 fn render_candidate(
@@ -942,12 +862,6 @@ fn render_controls(
     edit: &impl Fn(DraftChange) -> DraftCommand,
 ) -> Html {
     let candidate = &positioned.value;
-    let opportunistic = candidate.claim.is_none()
-        && context.controller.is_some_and(|controller| {
-            controller.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
-        });
-    // Resolving every line item is the only decision an OOPS candidate
-    // admits, so it offers no return.
     let comment = draft_text(
         context.controls,
         &candidate.candidate,
@@ -997,18 +911,16 @@ fn render_controls(
                     />
                 </label>
             }
-            if !opportunistic {
-                <label class="room-decision-reason">
-                    <span>{"Return with feedback"}</span>
-                    <input
-                        type="text"
-                        value={draft.feedback().to_owned()}
-                        oninput={feedback}
-                        disabled={locked}
-                        placeholder="What must change in the next Design pass; entering it returns this proposal"
-                    />
-                </label>
-            }
+            <label class="room-decision-reason">
+                <span>{"Return with feedback"}</span>
+                <input
+                    type="text"
+                    value={draft.feedback().to_owned()}
+                    oninput={feedback}
+                    disabled={locked}
+                    placeholder="What must change in the next Design pass; entering it returns this proposal"
+                />
+            </label>
             <div class="room-inline-actions">
                 <button
                     type="button"

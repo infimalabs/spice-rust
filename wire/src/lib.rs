@@ -102,13 +102,13 @@ pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead,
-    OOPS_DESIGN_DESCRIPTION, OOPS_DESIGN_PITCH, OOPS_DESIGN_PROJECT, OOPS_DESIGN_TITLE,
-    OopsGenerationHead, RenewalIdentity, ResidencyHead, ResidentState, StatementField,
-    SteeringHead, TapeLocus, TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation,
-    TaskPriority, TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal, TeamSubscription,
-    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
-    WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview,
-    WorkflowStatus, WorkflowStatusKind,
+    OOPS_DESIGN_ACCEPTANCE, OOPS_DESIGN_DESCRIPTION, OOPS_DESIGN_PITCH, OOPS_DESIGN_PROJECT,
+    OOPS_DESIGN_TITLE, OopsGenerationHead, RenewalIdentity, ResidencyHead, ResidentState,
+    StatementField, SteeringHead, TapeLocus, TaskFiling, TaskHead, TaskIntent, TaskIntentEdit,
+    TaskPreparation, TaskPriority, TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal,
+    TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
+    WitnessClass, WitnessHead, WorkflowCompletionReview, WorkflowConclusion, WorkflowHead,
+    WorkflowNegative, WorkflowReview, WorkflowStatus, WorkflowStatusKind,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,
