@@ -1134,9 +1134,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   top: 0;
 }
 /* The lattice still allocates each card a whole number of rows, but a prose
-   card paints only its content: pinned to its cell's top and bottom edges, it
-   takes its fit-content height and auto margins split the cell's slack above
-   and below it. A cell never grows, so its height is also the card's limit.
+   card paints only its content: pinned to its cell's edges, its auto height is
+   centered by align-self (desktop WebKit stretches fit-content between auto
+   margins). A cell never grows, so its height is also the card's limit.
    Measurement clones and the in-flow base phase measure natural height, and
    boundary rows and image covers still fill the cell they own. */
 .lane-mosaic-plane:not([data-measurement-phase="base"])
@@ -1150,9 +1150,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
       + (var(--mosaic-plane-rows) - var(--mosaic-max-row) + var(--mosaic-base))
         * var(--mosaic-module)
   );
-  height: fit-content;
+  height: auto;
   max-height: calc(var(--mosaic-rows) * var(--mosaic-module) - var(--mosaic-gap));
-  margin-block: auto;
+  align-self: center;
 }
 .lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
 .lane-mosaic-plane .mosaic-message-card.frozen { transition: none; }
