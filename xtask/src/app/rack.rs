@@ -8,19 +8,15 @@
 
 use std::path::{Component, Path};
 
-use spice::serve::rack::{Namespace, Rack, RackInput};
+use spice::serve::rack::{Namespace, Rack, RackInput, SKILL};
 
 use super::AppBuildError;
 
-/// One tracked worktree source of a namespace besides `app`, which the staged
+/// One tracked worktree source of the rack besides `app`, which the staged
 /// generation supplies.
 enum Source {
-    /// One file, stored as `member` within `namespace`.
-    File {
-        namespace: Namespace,
-        member: &'static str,
-        path: &'static str,
-    },
+    /// The agent skill, stored as the root [`SKILL`] member.
+    Skill { path: &'static str },
     /// Every regular file beneath a directory, stored at its path within it.
     Directory {
         namespace: Namespace,
@@ -28,15 +24,13 @@ enum Source {
     },
 }
 
-/// The tracked source list, keyed by namespace.
+/// The tracked source list.
 const SOURCES: [Source; 2] = [
-    Source::File {
-        namespace: Namespace::Skill,
-        member: "SKILL.md",
+    Source::Skill {
         path: "spice/agent/SKILL.md",
     },
     Source::Directory {
-        namespace: Namespace::Doc,
+        namespace: Namespace::Docs,
         path: "docs",
     },
 ];
@@ -44,27 +38,21 @@ const SOURCES: [Source; 2] = [
 /// Assemble the rack from the admitted `app` archive staged for its
 /// generation and the tracked sources under `root`.
 ///
-/// App members keep their stored gzip streams, so only the other namespaces
+/// App members keep their stored gzip streams, so only the tracked sources
 /// are deflated here.
 pub(super) fn assemble(root: &Path, app: &Rack<'_>) -> Result<Vec<u8>, AppBuildError> {
     let mut tracked = Vec::new();
     for source in &SOURCES {
         match source {
-            Source::File {
-                namespace,
-                member,
-                path,
-            } => {
+            Source::Skill { path } => {
                 let bytes = super::read_regular(&root.join(path))?;
-                if *namespace == Namespace::Skill
-                    && bytes.len() > spice::install::SKILL_BYTES_CEILING
-                {
+                if bytes.len() > spice::install::SKILL_BYTES_CEILING {
                     return Err(AppBuildError::GeneratedStage(format!(
                         "{path} exceeds the {} byte authoritative skill ceiling",
                         spice::install::SKILL_BYTES_CEILING
                     )));
                 }
-                tracked.push((namespace.member(member), bytes));
+                tracked.push((SKILL.to_owned(), bytes));
             }
             Source::Directory { namespace, path } => {
                 let directory = root.join(path);

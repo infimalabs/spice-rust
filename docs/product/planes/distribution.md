@@ -92,11 +92,12 @@ is the app's only carrier.
 
 **Invariant —** Every appliance executable produced by a current build path
 links one spice rack: a ZIP whose `app/` members are the staged generation's
-`generations/G.zip`, with stored streams copied unchanged, beside `skill/SKILL.md`
-from `spice/agent/SKILL.md` and `doc/...` from `docs/`. The Darwin, Linux, and
-Windows release builds, and `spice dev xtask -- install` on supported macOS,
-Linux, and x86-64 Windows hosts, assemble it through one path and admit it as G,
-so the same staged generation and tracked sources link the same bytes. Worktree
+`generations/G.zip`, with stored streams copied unchanged, beside the root
+`SKILL.md` from `spice/agent/SKILL.md` and `docs/...` from `docs/`. The
+Darwin, Linux, and Windows release builds, and `spice dev xtask -- install` on
+supported macOS, Linux, and x86-64 Windows hosts, assemble it through one path
+and admit it as G, so the same staged generation and tracked sources link the
+same bytes. Worktree
 dSYMs exist only on macOS, so elsewhere that command publishes without them.
 Each links it as one retained read-only section: `__TEXT,__spicezip` on Mach-O
 and `spicezip` on ELF and PE32+. The Mach-O section follows Apple's

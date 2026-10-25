@@ -10,7 +10,7 @@ use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serve::rack::{Namespace, Rack, RackMember};
+use serve::rack::{Namespace, Rack, RackMember, SKILL};
 use spice::repository::StatePaths;
 use wire::{CanonicalUuid, Digest, Domain, SequenceCode};
 
@@ -26,11 +26,18 @@ pub(super) struct Runtime {
     pub(super) code: Option<SequenceCode>,
 }
 
+/// Whether a URL whose first segment is `first` names the rack: a namespace,
+/// or the root skill member when `first` is the only segment. Either may carry
+/// an `@CODE` generation.
+pub(super) fn names_rack(first: &str, alone: bool) -> bool {
+    let name = first.split_once('@').map_or(first, |(name, _)| name);
+    Namespace::parse(name).is_some() || (alone && name == SKILL)
+}
+
 impl Request {
-    /// A rack member read: no query, and a generation only by short code.
+    /// A rack read of `written`, its decoded path: no query, and a generation
+    /// only by a trailing short code.
     pub(super) fn rack(
-        namespace: Namespace,
-        member: &str,
         written: &str,
         query: &str,
         selector: Option<Selector>,
@@ -41,14 +48,12 @@ impl Request {
                 "{url} takes no query; use a trailing line selector to bound the read"
             ));
         }
-        let generation = written
-            .rsplit_once('@')
-            .map(|(_, generation)| generation_code(url, generation))
-            .transpose()?;
-        let path = member.rsplit_once('@').map_or(member, |(path, _)| path);
+        let (path, generation) = match written.rsplit_once('@') {
+            Some((path, generation)) => (path, Some(generation_code(url, generation)?)),
+            None => (written, None),
+        };
         Ok(Self {
             resource: Resource::Rack {
-                namespace,
                 path: path.to_owned(),
                 generation,
             },
@@ -89,7 +94,6 @@ fn generation_refusal(url: &str, generation: SequenceCode, linked: Option<Sequen
 /// [`document`] against the rack linked into this executable, reading the
 /// runtime directory `state` admits for its extractions and journal.
 pub(super) fn linked(
-    namespace: Namespace,
     path: &str,
     generation: Option<SequenceCode>,
     url: &str,
@@ -108,7 +112,7 @@ pub(super) fn linked(
             ));
         }
     };
-    document(rack, namespace, path, generation, url, || {
+    document(rack, path, generation, url, || {
         let state = state()?;
         Ok(Runtime {
             extractions: state.rack().to_path_buf(),
@@ -147,18 +151,16 @@ fn admission_code(
 /// generation a URL names, or to hand off bytes under the linked code.
 pub(super) fn document(
     rack: &Rack<'_>,
-    namespace: Namespace,
     path: &str,
     generation: Option<SequenceCode>,
     url: &str,
     runtime: impl FnOnce() -> Result<Runtime, String>,
 ) -> Result<String, String> {
-    let member = namespace.member(path);
-    let media_type = serve::rack::media_type(&member);
-    let stored = rack.member(&member);
+    let media_type = serve::rack::media_type(path);
+    let stored = rack.member(path);
     let handed_off = stored.filter(|_| !serve::rack::is_text(media_type));
     if generation.is_none() && handed_off.is_none() {
-        return text_or_listing(rack, namespace, path, stored, media_type, url);
+        return text_or_listing(rack, path, stored, media_type, url);
     }
     let runtime = runtime()?;
     if let Some(generation) = generation.filter(|generation| runtime.code != Some(*generation)) {
@@ -167,47 +169,35 @@ pub(super) fn document(
     match handed_off {
         Some(stored) => {
             let directory = runtime.extractions.join(rack.generation().as_str());
-            handoff(&member, stored, media_type, &directory, runtime.code, url)
+            handoff(path, stored, media_type, &directory, runtime.code, url)
         }
-        None => text_or_listing(rack, namespace, path, stored, media_type, url),
+        None => text_or_listing(rack, path, stored, media_type, url),
     }
 }
 
 /// A text member's bytes as UTF-8, or the `resources:` footer beneath `path`.
 fn text_or_listing(
     rack: &Rack<'_>,
-    namespace: Namespace,
     path: &str,
     stored: Option<RackMember<'_>>,
     media_type: &str,
     url: &str,
 ) -> Result<String, String> {
     if let Some(stored) = stored {
-        let member = namespace.member(path);
-        let bytes = stored.inflate(&member).map_err(|error| error.to_string())?;
+        let bytes = stored.inflate(path).map_err(|error| error.to_string())?;
         return String::from_utf8(bytes.into_vec())
             .map_err(|_| format!("{url} declares {media_type} but is not UTF-8 text"));
     }
-    let directory = if path.is_empty() {
-        String::new()
-    } else {
-        format!("{path}/")
-    };
     let children = rack
-        .namespace(namespace)
-        .filter(|(file, _)| file.starts_with(directory.as_str()))
-        .map(|(file, _)| format!("{SCHEME}{}", namespace.member(file)))
+        .beneath(path)
+        .map(|(file, _)| format!("{SCHEME}{path}/{file}"))
         .collect::<Vec<_>>();
     if children.is_empty() {
         return Err(format!(
             "{url} names no member of this executable's spice rack"
         ));
     }
-    let mut document = format!(
-        "{SCHEME}{} spice rack members: {}",
-        namespace.member(&directory),
-        children.len()
-    );
+    let mut document = format!("{SCHEME}{path}/ spice rack members: {}", children.len());
     push_resources(&mut document, &children);
     Ok(document)
 }

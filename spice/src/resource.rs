@@ -2,10 +2,10 @@
 //! board, task, session, and steering state through, and the task texts it
 //! replaces by writing.
 //!
-//! A namespace URL, `spice://NS/PATH`, reads one member of the spice rack
-//! linked into this executable, and [`crate::install::SKILL_RESOURCE`]
-//! is its skill member. Every other first read URL names one existing CLI
-//! read: [`Request::parse`] maps it onto that read's arguments, and
+//! A rack URL, `spice://NS/PATH` or [`crate::install::SKILL_RESOURCE`], reads
+//! one member of the spice rack linked into this executable. Every other first
+//! read URL names one existing CLI read: [`Request::parse`] maps it onto that
+//! read's arguments, and
 //! [`Seat::serve`] runs the read in process as the lane, so authority, scoping,
 //! and refusals are the CLI's. Native graph continuations page retained
 //! validated text; other reads use the CLI's pages. Every withheld page names
@@ -22,7 +22,6 @@
 use std::path::PathBuf;
 
 use artifact::ArtifactAnswer;
-use serve::rack::Namespace;
 use spice::repository::Repository;
 use wire::intent::CommandAnswer;
 use wire::{CanonicalUuid, Digest, Outcome, TaskHandle};
@@ -46,8 +45,8 @@ pub(crate) const SCHEME: &str = "spice://";
 /// The root index: every resource shape and the CLI read it answers with.
 const INDEX: &str = "\
 spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
-spice://SKILL.md  complete authoritative agent skill from this executable's spice rack, the member spice://skill/SKILL.md names; takes line selectors but no query
-spice://NS/PATH[@CODE]  one member of this executable's spice rack (namespaces app, doc, skill, tool): text inline, other media as one line naming its type, size, digest, generation short code, and extracted file; NS or NS/DIRECTORY lists its members; CODE is the short code of the journal fact admitting the linked rack, the only generation served; takes line selectors but no query or write; a digest or UUID never names a generation
+spice://SKILL.md  complete authoritative agent skill: the root member of this executable's spice rack; takes line selectors but no query
+spice://NS/PATH[@CODE]  one member of this executable's spice rack (namespaces app, docs, tool): text inline, other media as one line naming its type, size, digest, generation short code, and extracted file; NS or NS/DIRECTORY lists its members; CODE is the short code of the journal fact admitting the linked rack, the only generation served; takes line selectors but no query or write; a digest or UUID never names a generation
 spice://board  task status
 spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
@@ -75,8 +74,7 @@ spice://quote/v1/...  a quoted message and its recorded author
 Query values percent-encode reserved bytes, ':' as %3A; a key marked ... repeats. A trailing :N, :N-M, :N+K, :-N, or comma list selects lines; :raw is the text itself.
 resources:
   spice://SKILL.md
-  spice://skill
-  spice://doc
+  spice://docs
   spice://board
   spice://task
   spice://inbox
@@ -103,11 +101,10 @@ pub(crate) struct Request {
 #[derive(Debug, PartialEq, Eq)]
 enum Resource {
     Index,
-    /// One member of this executable's spice rack, or with no such member the
-    /// members beneath `path` (empty for the whole namespace), optionally
-    /// under the generation short code the URL named.
+    /// The member of this executable's spice rack at its rack path, or with
+    /// no such member the members beneath that namespace or directory,
+    /// optionally under the generation short code the URL named.
     Rack {
-        namespace: Namespace,
         path: String,
         generation: Option<wire::SequenceCode>,
     },
@@ -638,14 +635,8 @@ impl Request {
                     selector,
                 });
             }
-            ["SKILL.md"] => {
-                return Self::rack(Namespace::Skill, "SKILL.md", path, query, selector, url);
-            }
-            [first, rest @ ..]
-                if let Some(namespace) =
-                    Namespace::parse(first.split_once('@').map_or(*first, |(name, _)| name)) =>
-            {
-                return Self::rack(namespace, &rest.join("/"), path, query, selector, url);
+            [first, rest @ ..] if rack::names_rack(first, rest.is_empty()) => {
+                return Self::rack(&words.join("/"), query, selector, url);
             }
             ["quote", ..] => {
                 return Ok(Self {
@@ -1059,11 +1050,7 @@ impl Seat {
         }
         let document = match &request.resource {
             Resource::Index => INDEX.to_owned(),
-            Resource::Rack {
-                namespace,
-                path,
-                generation,
-            } => rack::linked(*namespace, path, *generation, url, || {
+            Resource::Rack { path, generation } => rack::linked(path, *generation, url, || {
                 repository()?.admit_state().map_err(|error| {
                     format!("spice cannot admit the runtime directory {url} reads through: {error}")
                 })
