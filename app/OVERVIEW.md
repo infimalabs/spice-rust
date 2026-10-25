@@ -55,6 +55,10 @@ Lineage preserves exact task, ACK, and origin identities. Review chains keep
 author → reviewer → verdict order. Lifecycle facts keep their durable order.
 Zoom, pan, reset, and node activation never change the selection.
 
+Releasing a Design's selected outputs refreshes cached dependency enrichment
+for both the controller and the released outputs. The open graph replaces the
+old gating arrows with the released-work prerequisites without a page reload.
+
 At 100% zoom a diagram draws at no more than its natural size, shrinking only
 to fit and centered in the graph region; only zoom enlarges it. The graph is
 unframed, with a margin at every zoom that keeps outer nodes, edges, and

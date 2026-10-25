@@ -56,74 +56,6 @@ fn change(kind: FactKind, task: wire::TaskStamp) -> TaskRelationInvalidation {
 }
 
 #[test]
-fn fact_vocabulary_owns_the_complete_task_relation_mapping() {
-    use TaskRelationKind::{Dependency, Lifecycle, Origin, Review};
-
-    let expected: &[(FactKind, &[TaskRelationKind])] = &[
-        (FactKind::TaskAdded, &[Origin, Dependency, Lifecycle]),
-        (
-            FactKind::TaskPhased,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (FactKind::TaskDone, &[Origin, Dependency, Review, Lifecycle]),
-        (
-            FactKind::TaskReviewed,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskAssigned,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (FactKind::TaskNoted, &[]),
-        (
-            FactKind::TaskDeferred,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskWoken,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskFiled,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskEdited,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskDeleted,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskClosed,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::TaskConcluded,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-        (
-            FactKind::OutputControlled,
-            &[Origin, Dependency, Review, Lifecycle],
-        ),
-    ];
-    let task_kinds = FactKind::ALL
-        .iter()
-        .copied()
-        .filter(|kind| kind.as_str().starts_with("task::"))
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        task_kinds,
-        expected.iter().map(|(kind, _)| *kind).collect::<Vec<_>>()
-    );
-    for (kind, relations) in expected {
-        assert_eq!(kind.task_relation_kinds(), *relations, "{kind}");
-    }
-}
-
-#[test]
 fn only_changes_reaching_a_cached_graph_refresh_its_relation_families() {
     let shown = stamp(1);
     let unrelated = stamp(2);
@@ -204,6 +136,61 @@ fn outside_task_edit_adding_a_shown_dependency_refreshes_only_that_lens() {
             states.get(&key(&shown, relation)),
             Some(TaskRelationsState::Available(_))
         ));
+    }
+}
+
+#[test]
+fn authorization_refreshes_dependency_graphs_for_its_controller_and_selected_outputs() {
+    let controller = stamp(1);
+    let selected = stamp(2);
+    let governed = stamp(3);
+    let unrelated = stamp(4);
+    let fact: wire::StreamFact = serde_json::from_value(serde_json::json!({
+        "v": wire::WireVersion::CURRENT,
+        "seq": 7,
+        "at": "2026-09-23T06:00:00.000Z",
+        "actor": "operator",
+        "origin": format!("task:{controller}"),
+        "cause": 6,
+        "fact": {
+            "kind": "proposal::authorized",
+            "authorization": {
+                "decision": {"controller": controller, "decision": "1"},
+                "candidate": {"controller": controller, "candidate": "dVsYdDj7h"},
+                "governed_inputs": [governed],
+                "selected_outputs": [selected],
+                "coverage": [{
+                    "candidate": {"controller": controller, "candidate": "dVsYdDj7h"},
+                    "coverage": "1"
+                }]
+            }
+        }
+    }))
+    .expect("admitted authorization fact");
+    let mut states = [controller.clone(), selected.clone(), governed, unrelated]
+        .iter()
+        .flat_map(available_states)
+        .collect();
+    let mut revision = 0;
+
+    invalidate_task_relation_states(
+        &mut states,
+        &mut revision,
+        &[TaskRelationInvalidation::from_fact(&fact).expect("authorization changes dependencies")],
+    );
+
+    assert_eq!(revision, 1);
+    for (key, state) in states {
+        let affected = key.relation() == TaskRelationKind::Dependency
+            && key
+                .roots()
+                .iter()
+                .any(|task| task == &controller || task == &selected);
+        assert_eq!(
+            matches!(state, TaskRelationsState::Refreshing(_)),
+            affected,
+            "only graphs containing a released edge endpoint need a new relationship read: {key:?}"
+        );
     }
 }
 

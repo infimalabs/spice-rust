@@ -619,6 +619,7 @@ impl FactKind {
 
         match self {
             Self::TaskAdded => &[Origin, Dependency, Lifecycle],
+            Self::ExecutionAuthorized => &[Dependency],
             Self::TaskNoted => &[],
             Self::TaskPhased
             | Self::TaskDone

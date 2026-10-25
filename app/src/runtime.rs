@@ -1179,6 +1179,14 @@ impl TaskRelationInvalidation {
         if kind.task_relation_kinds().is_empty() {
             return None;
         }
+        if let Some(authorized) = fact.read::<wire::rooms::ExecutionAuthorized>() {
+            return Some(Self {
+                kind,
+                task: authorized.authorization.candidate.controller,
+                dependency_targets: authorized.authorization.selected_outputs,
+                origin_target: None,
+            });
+        }
         let task = fact.task()?;
         let dependency_field = match kind {
             FactKind::TaskAdded => Some("depends"),

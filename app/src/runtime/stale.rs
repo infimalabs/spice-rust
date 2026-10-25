@@ -93,12 +93,12 @@ impl Stale {
         if let Some(task) = fact.task() {
             self.task_details.insert(task);
         }
-        if let Some(authorized) = fact.read::<wire::rooms::ExecutionAuthorized>() {
-            let authorization = authorized.authorization;
-            self.task_details.insert(authorization.candidate.controller);
-            self.task_details.extend(authorization.selected_outputs);
-        }
         if let Some(change) = TaskRelationInvalidation::from_fact(fact) {
+            if change.kind == FactKind::ExecutionAuthorized {
+                self.task_details.insert(change.task.clone());
+                self.task_details
+                    .extend(change.dependency_targets.iter().cloned());
+            }
             self.task_relations.push(change);
         }
     }
