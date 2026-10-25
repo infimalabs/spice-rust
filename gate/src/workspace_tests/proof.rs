@@ -1,6 +1,7 @@
 //! Stable proof actions for canonical Cargo typecheck and test shards.
 
 use super::*;
+use crate::execution_diagnostics::{self, ExecutionPhase};
 
 mod input_provenance;
 
@@ -860,6 +861,7 @@ pub fn run_cargo_gate_shard_at(
     let runs = if shard.kind == CargoGateShardKind::Test {
         // Compile before starting the execution clock: the workspace prebuild
         // has its own deadline, and the shard's executables then share one.
+        let prebuild_started = Instant::now();
         let messages = prebuild::capture_workspace_test_prebuild(
             root,
             &environment,
@@ -868,6 +870,8 @@ pub fn run_cargo_gate_shard_at(
             shard.action_id(),
             output,
         )?;
+        execution_diagnostics::record_phase(ExecutionPhase::Prebuild, prebuild_started.elapsed());
+        execution_diagnostics::record_cargo_messages(&messages);
         let manifest = root.join(shard.manifest.as_deref().ok_or_else(|| {
             WorkspaceTestError::new(format!("{} names no package manifest", shard.action_id))
         })?);
@@ -885,7 +889,8 @@ pub fn run_cargo_gate_shard_at(
     } else {
         vec![(cargo.to_owned(), shard.argv.clone(), root.to_path_buf())]
     };
-    let deadline = Instant::now() + SHARD_DEADLINE;
+    let execution_started = Instant::now();
+    let deadline = execution_started + SHARD_DEADLINE;
     for (program, arguments, cwd) in runs {
         let remaining = shard_remaining(deadline, Instant::now()).ok_or_else(|| {
             WorkspaceTestError::new(format!(
@@ -905,6 +910,7 @@ pub fn run_cargo_gate_shard_at(
         )?;
         run_shard_process(shard, spec, output)?;
     }
+    execution_diagnostics::record_phase(ExecutionPhase::Execution, execution_started.elapsed());
     Ok(CargoGateShardResult {
         action_id: shard.action_id.clone(),
         completion: "passed".to_owned(),
@@ -940,6 +946,12 @@ fn run_shard_process(
                 shard.action_id,
             )));
         }
+    }
+    // A test shard runs test executables; only Cargo itself speaks its JSON.
+    if shard.kind != CargoGateShardKind::Test
+        && let Some(stdout) = outcome.stdout()
+    {
+        execution_diagnostics::record_cargo_messages(stdout.bytes());
     }
     output.flush().map_err(output_error)?;
     if !outcome.outputs_drained() {

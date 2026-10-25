@@ -318,7 +318,8 @@ fn receipt(action: &gate::ActionKey) -> PassReceipt {
         finished_at: "2026-09-05T20:00:01.000Z".parse().unwrap(),
         duration_millis: 1_000,
         artifacts: Vec::new(),
-        producer: EvidenceProducerRecord::new(None, None, None, None, None),
+        producer: EvidenceProducerRecord::default(),
+        diagnostics: None,
     })
     .unwrap()
 }

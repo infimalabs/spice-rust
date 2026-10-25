@@ -35,16 +35,15 @@ pub(super) fn run(
     progress: &Progress,
     captures: &Path,
 ) -> Result<Vec<ProveActionReport>, ProveFailure> {
-    let owner = format!(
-        "proof:{}:{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    );
+    // One identity correlates this run's leases and every receipt it mints.
+    let run = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
+    let owner = format!("proof:{}:{}", std::process::id(), run.get().simple());
     let total = actions.len();
     let mut present = Vec::new();
     let mut failure = None;
     for (index, action) in actions.into_iter().enumerate() {
         let step = format!("{}/{total} {}", index + 1, action.action);
+        let queue_started = std::time::Instant::now();
         let claimed = match claim(store, &owner, &action.action, &action.action_key) {
             Ok(claimed) => claimed,
             Err(error) => {
@@ -52,6 +51,7 @@ pub(super) fn run(
                 break;
             }
         };
+        let queued = queue_started.elapsed();
         match claimed {
             Claim::Present(report) => {
                 progress.line(format_args!("{step} reused"));
@@ -59,7 +59,8 @@ pub(super) fn run(
             }
             Claim::Lease(lease) => {
                 progress.line(format_args!("{step} started"));
-                let (executed, elapsed) = progress.during(&step, || execute(action, captures));
+                let (executed, elapsed) =
+                    progress.during(&step, || execute(action, captures, run, queued));
                 let receipt = match executed {
                     Ok(receipt) => receipt,
                     Err(error) => {
