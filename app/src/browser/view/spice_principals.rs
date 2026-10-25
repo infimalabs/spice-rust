@@ -75,7 +75,7 @@ pub(super) fn render(
                 aria-labelledby={HEADING}
                 data-principals=""
             >
-                <h2 id={HEADING}>{"Principals"}</h2>
+                <div class="section-heading"><h2 id={HEADING}>{"Principals"}</h2></div>
                 <ul class="app-spice-principal-list">
                     {render_self(None, None, inbox)}
                 </ul>
@@ -208,7 +208,7 @@ fn principals_view(props: &PrincipalsProps) -> Html {
             aria-labelledby={HEADING}
             data-principals=""
         >
-            <h2 id={HEADING}>{"Principals"}</h2>
+            <div class="section-heading"><h2 id={HEADING}>{"Principals"}</h2></div>
             {handoff_now}
             {status}
             <ul class="app-spice-principal-list">{for rows}</ul>
@@ -250,7 +250,7 @@ fn render_self(
                         <span class="app-spice-principal-own">{" (you)"}</span>
                     </strong>
                     if let Some(email) = shown.email.as_deref() {
-                        <span>{email.to_owned()}</span>
+                        <span title={email.to_owned()}>{email.to_owned()}</span>
                     }
                 </div>
             </div>
@@ -421,15 +421,24 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
                             <span class="app-spice-principal-own">{" (you)"}</span>
                         }
                     </strong>
-                    <span data-principal-code={code.to_string()}>
+                    <span
+                        data-principal-code={code.to_string()}
+                        title={format!("code {code} · {principal}")}
+                    >
                         {"code "}
                         <code>{code.to_string()}</code>
                         {format!(" · {principal}")}
                     </span>
                     if let Some(email) = head.profile.email.as_deref() {
-                        <span>{email.to_owned()}</span>
+                        <span title={email.to_owned()}>{email.to_owned()}</span>
                     }
-                    <span data-principal-roles={if operator { "operator" } else { "" }}>
+                    <span
+                        data-principal-roles={if operator { "operator" } else { "" }}
+                        title={format!(
+                            "{} · {capability} · admitted {admitted}",
+                            if operator { "operator" } else { "no role" },
+                        )}
+                    >
                         {if operator { "operator" } else { "no role" }}
                         {" · "}
                         {capability}

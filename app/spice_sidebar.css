@@ -15,30 +15,6 @@
   min-width: 0;
   padding-inline: var(--app-spice-settings-inset-inline);
 }
-.app-spice-sidebar-content > .app-sheet-section > h2,
-.app-spice-sidebar-content > .app-sheet-section > header h2 {
-  margin: 0;
-  color: color-mix(in srgb, var(--muted) 84%, var(--ink));
-  font: 700 var(--app-type-menu-kicker)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.app-spice-sidebar-content > .app-sheet-section > header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-  color: var(--muted);
-  font: var(--app-type-xs)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.app-spice-sidebar-content > .app-sheet-section > header > span {
-  min-width: 0;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* The first row holds only global TURBO, under the Spice button. */
 .app-spice-sidebar-content > .app-spice-settings {
   padding-block: 12px;
@@ -81,8 +57,9 @@
   text-align: center;
 }
 .app-spice-capacity:is([data-state="loading"], [data-state="unavailable"], [data-quota-stale]) { color: var(--muted); }
-/* Each principal is one identity row over its controls; an open form or the
-   one-time capability handoff stands beneath. */
+/* Each principal is one identity row with its controls stacked at the
+   trailing edge; an open form, the one-time capability handoff, and the
+   connected principal's inbox stand beneath across the full width. */
 .app-spice-principal-list {
   display: grid;
   gap: 10px;
@@ -90,7 +67,14 @@
   padding: 0;
   list-style: none;
 }
-.app-spice-principal { display: grid; gap: 6px; min-width: 0; }
+.app-spice-principal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.app-spice-principal > :not(.app-spice-principal-identity, .app-control-rail) { grid-column: 1 / -1; }
+.app-spice-principal > .app-control-rail { flex-direction: column; flex-wrap: nowrap; }
 .app-spice-principal-identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -98,10 +82,13 @@
   gap: 10px;
   min-width: 0;
 }
+/* The avatar stands as tall as a listed principal's four fact lines, so the
+   row keeps its height when the listing replaces the self row. */
 .app-spice-principal .operator-avatar {
-  width: 32px;
-  height: 32px;
-  font-size: var(--app-type-caption);
+  --app-spice-principal-avatar: calc(4 * 1.25 * var(--app-type-meta) + 3 * 2px);
+  flex-basis: var(--app-spice-principal-avatar);
+  width: var(--app-spice-principal-avatar);
+  height: var(--app-spice-principal-avatar);
 }
 .app-spice-principal-facts {
   display: grid;
@@ -118,8 +105,8 @@
 .app-spice-principal-facts > span,
 .app-spice-principal-own { color: var(--muted); }
 .app-spice-principal[data-state="loading"] .app-spice-principal-facts > strong { color: var(--muted); }
-/* The connected principal's inbox stands inside their own row, beneath its
-   controls, so it reads as theirs. */
+/* The connected principal's inbox stands inside their own row, beneath the
+   identity and its controls, so it reads as theirs. */
 .app-spice-principal > .room-inbox { margin-top: 4px; }
 .app-spice-principal-form,
 .app-spice-principal-handoff {
