@@ -16,6 +16,11 @@ mod path;
 pub use path::ConcretePath;
 use path::OwnedSegment;
 
+/// Retired table whose hidden-stem and project-depth keys no release reads.
+const RETIRED_TASKS_TABLE: &str = "tasks";
+/// Last release whose registry admitted [`RETIRED_TASKS_TABLE`].
+const RETIRED_TASKS_RELEASE: &str = "8aaba9962";
+
 /// One already-acquired configuration document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Document<'a> {
@@ -202,6 +207,8 @@ pub enum IssueKind {
     Syntax,
     /// A parsed table or key is outside the release registry.
     Unknown,
+    /// A table a former release owned, refused with that release.
+    Retired,
     /// A known path is forbidden in this layer.
     Policy,
     /// A known value is not admitted by its domain decoder.
@@ -542,6 +549,19 @@ fn sanitize(
         return true;
     }
 
+    if matches!(borrowed.as_slice(), [PathSegment::Key(RETIRED_TASKS_TABLE)]) {
+        issues.push(Issue::at(
+            IssueKind::Retired,
+            source,
+            document,
+            path.clone(),
+            format!(
+                "the [tasks] table was last read by release {RETIRED_TASKS_RELEASE}; projects are \
+                 now exact labels with no hidden stems or depth bounds, so delete the table"
+            ),
+        ));
+        return false;
+    }
     if !descriptors()
         .iter()
         .any(|entry| entry.template().accepts_prefix(&borrowed))

@@ -66,8 +66,10 @@
 /// Schema 96 fills a pitch on every retained task statement once, derived
 /// from its title and description. Schema 97 retires room coordination: its
 /// facts become inert evidence, its receipts move to the historical table,
-/// and its direction and shelving heads drop.
-pub const SCHEMA_VERSION: u32 = 97;
+/// and its direction and shelving heads drop. Schema 98 retires hidden
+/// projects: a retained row naming a leading-dot project refuses the crossing
+/// with the last release that admitted it.
+pub const SCHEMA_VERSION: u32 = 98;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

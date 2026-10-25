@@ -12,6 +12,7 @@ mod authorization_heads;
 mod creation_contexts;
 mod designs;
 mod formations;
+mod hidden_projects;
 mod leave_receipts;
 mod pitch;
 mod preparation_edges;

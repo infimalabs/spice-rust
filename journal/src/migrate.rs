@@ -16,6 +16,7 @@ mod design_asks;
 mod design_invitations;
 mod designs;
 mod fact_bounds;
+mod hidden_projects;
 mod leave_receipts;
 mod maturity;
 mod oops_design;
@@ -398,6 +399,7 @@ fn cross_current_rows(
     creation_contexts::cross(transaction)?;
     workflows::cross(transaction)?;
     oops_design::cross(transaction)?;
+    hidden_projects::refuse_retained(transaction)?;
     provenance::cross(transaction)?;
     task_tags::cross_heads(transaction)?;
     pitch::cross_heads(transaction)?;
