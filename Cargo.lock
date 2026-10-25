@@ -5835,6 +5835,7 @@ dependencies = [
  "blake3",
  "flate2",
  "jiff",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

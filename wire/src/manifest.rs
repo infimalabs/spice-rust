@@ -392,86 +392,45 @@ impl fmt::Display for ReleaseTarget {
 /// ignores build metadata, so it cannot be a total order consistent with
 /// equality. Compare with [`Self::precedence`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProductVersion(String);
+pub struct ProductVersion(Box<AdmittedVersion>);
+
+/// Boxed so errors and records carrying a version stay pointer-sized.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AdmittedVersion {
+    /// The admitted spelling, kept verbatim.
+    text: String,
+    version: semver::Version,
+}
 
 impl ProductVersion {
     /// Admit one canonical semantic version.
     ///
     /// # Errors
     ///
-    /// Refuses whitespace, a `v` prefix, missing core numbers, leading zeroes,
-    /// and malformed pre-release or build identifiers.
+    /// Refuses whatever `semver` refuses: whitespace, a `v` prefix, missing
+    /// core numbers, leading zeroes, and malformed pre-release or build
+    /// identifiers.
     pub fn parse(text: &str) -> Result<Self, ProductVersionError> {
-        if canonical_semver(text) {
-            Ok(Self(text.to_owned()))
-        } else {
-            Err(ProductVersionError(text.to_owned()))
-        }
+        semver::Version::parse(text)
+            .map(|version| {
+                Self(Box::new(AdmittedVersion {
+                    text: text.to_owned(),
+                    version,
+                }))
+            })
+            .map_err(|_| ProductVersionError(text.to_owned()))
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.0.text
     }
 
     /// SemVer 2.0.0 precedence: numeric core, then pre-release identifiers,
     /// with build metadata ignored.
     #[must_use]
     pub fn precedence(&self, other: &Self) -> Ordering {
-        let (core, prerelease) = precedence_parts(&self.0);
-        let (other_core, other_prerelease) = precedence_parts(&other.0);
-        core.cmp(&other_core)
-            .then_with(|| match (prerelease, other_prerelease) {
-                (None, None) => Ordering::Equal,
-                (None, Some(_)) => Ordering::Greater,
-                (Some(_), None) => Ordering::Less,
-                (Some(left), Some(right)) => left.cmp(&right),
-            })
-    }
-}
-
-fn precedence_parts(version: &str) -> (Vec<Numeric<'_>>, Option<Vec<Identifier<'_>>>) {
-    let (without_build, _) = split_once_optional(version, '+');
-    let (core, prerelease) = split_once_optional(without_build, '-');
-    (
-        core.split('.').map(Numeric).collect(),
-        prerelease.map(|value| value.split('.').map(Identifier::new).collect()),
-    )
-}
-
-/// A canonical numeric identifier; no leading zero, so length orders first.
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct Numeric<'a>(&'a str);
-
-impl Ord for Numeric<'_> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0
-            .len()
-            .cmp(&other.0.len())
-            .then_with(|| self.0.cmp(other.0))
-    }
-}
-
-impl PartialOrd for Numeric<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Numeric identifiers sort below alphanumeric ones, which compare in ASCII.
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-enum Identifier<'a> {
-    Numeric(Numeric<'a>),
-    Text(&'a str),
-}
-
-impl<'a> Identifier<'a> {
-    fn new(value: &'a str) -> Self {
-        if value.bytes().all(|byte| byte.is_ascii_digit()) {
-            Self::Numeric(Numeric(value))
-        } else {
-            Self::Text(value)
-        }
+        self.0.version.cmp_precedence(&other.0.version)
     }
 }
 
@@ -485,7 +444,7 @@ impl FromStr for ProductVersion {
 
 impl fmt::Display for ProductVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -507,46 +466,6 @@ impl<'de> Deserialize<'de> for ProductVersion {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("product version is not canonical semantic version text: {0:?}")]
 pub struct ProductVersionError(String);
-
-fn canonical_semver(text: &str) -> bool {
-    if text.is_empty() || text.trim() != text || text.starts_with('v') {
-        return false;
-    }
-    let (without_build, build) = split_once_optional(text, '+');
-    let (core, prerelease) = split_once_optional(without_build, '-');
-    let mut numbers = core.split('.');
-    let valid_core = [numbers.next(), numbers.next(), numbers.next()]
-        .into_iter()
-        .all(|number| number.is_some_and(canonical_number))
-        && numbers.next().is_none();
-    valid_core
-        && prerelease.is_none_or(|value| identifiers(value, true))
-        && build.is_none_or(|value| identifiers(value, false))
-}
-
-fn split_once_optional(text: &str, separator: char) -> (&str, Option<&str>) {
-    text.split_once(separator)
-        .map_or((text, None), |(left, right)| (left, Some(right)))
-}
-
-fn canonical_number(value: &str) -> bool {
-    !value.is_empty()
-        && value.bytes().all(|byte| byte.is_ascii_digit())
-        && (value == "0" || !value.starts_with('0'))
-}
-
-fn identifiers(value: &str, numeric_no_leading_zero: bool) -> bool {
-    !value.is_empty()
-        && value.split('.').all(|identifier| {
-            !identifier.is_empty()
-                && identifier
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                && (!numeric_no_leading_zero
-                    || !identifier.bytes().all(|byte| byte.is_ascii_digit())
-                    || canonical_number(identifier))
-        })
-}
 
 /// Exact identities required before distribution may build.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
