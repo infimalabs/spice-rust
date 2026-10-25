@@ -58,9 +58,11 @@ pub fn parse_packet_withheld_control(control: &str) -> Option<crate::body::Trans
 }
 
 /// Name the reviewed task and review fact behind one feedback directive.
+///
+/// The control is persisted in steering facts, so its position stays decimal.
 #[must_use]
 pub fn review_feedback_control(task: &TaskStamp, reviewed: Seq) -> String {
-    format!("{REVIEW_FEEDBACK_CONTROL_PREFIX}{task}:{reviewed}")
+    format!("{REVIEW_FEEDBACK_CONTROL_PREFIX}{task}:{}", reviewed.get())
 }
 
 /// Decode the reviewed task and review fact from one feedback control.

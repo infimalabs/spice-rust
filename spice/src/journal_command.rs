@@ -212,9 +212,8 @@ fn report_inner(
         let start = match page.after() {
             None => horizon,
             Some(after) => after
-                .parse::<u64>()
+                .parse::<Seq>()
                 .ok()
-                .and_then(Seq::new)
                 .filter(|seq| *seq <= horizon)
                 .ok_or_else(|| {
                     Failure::Refusal(page.cursor_refusal(&format!("SEQ from 1 to {horizon}")))
@@ -345,13 +344,7 @@ fn thread_inner(
     let cursor_refusal = || Failure::Refusal(page.cursor_refusal("SEQ of a fact in this thread"));
     let at = page
         .after()
-        .map(|after| {
-            after
-                .parse::<u64>()
-                .ok()
-                .and_then(Seq::new)
-                .ok_or_else(cursor_refusal)
-        })
+        .map(|after| after.parse::<Seq>().map_err(|_| cursor_refusal()))
         .transpose()?;
     let (cursor, (root, remaining, rows)) =
         read_authenticated(&state, &reader, contract, ambient, |read| {

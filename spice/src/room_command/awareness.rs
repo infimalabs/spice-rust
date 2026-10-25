@@ -106,10 +106,8 @@ fn awareness(
         .after()
         .map(|after| {
             after
-                .parse::<u64>()
-                .ok()
-                .and_then(Seq::new)
-                .ok_or_else(|| page.cursor_refusal(CURSOR))
+                .parse::<Seq>()
+                .map_err(|_| page.cursor_refusal(CURSOR))
         })
         .transpose()?;
     let after = requested.and_then(|seq| seq.get().checked_sub(1).and_then(Seq::new));

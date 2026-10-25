@@ -1006,9 +1006,8 @@ fn duplicate_recordings_refuse_and_a_duplicated_history_fails_verification() {
         .expect("index the duplicate");
     let violations = refused_violations(&journal);
     assert!(
-        violations
-            .iter()
-            .any(|violation| violation.subject == format!("room_authority:{seq}")),
+        violations.iter().any(|violation| violation.subject
+            == format!("room_authority:{}", wire::SequenceCode::new(seq))),
         "{violations:?}"
     );
     assert!(matches!(

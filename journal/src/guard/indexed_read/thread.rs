@@ -17,8 +17,13 @@ use super::{
 #[derive(Debug)]
 pub enum ThreadError {
     Read(GuardError),
-    NotFound { reference: String },
-    Ambiguous { reference: String, roots: Vec<u64> },
+    NotFound {
+        reference: String,
+    },
+    Ambiguous {
+        reference: String,
+        roots: Vec<wire::Seq>,
+    },
 }
 
 impl fmt::Display for ThreadError {
@@ -30,7 +35,12 @@ impl fmt::Display for ThreadError {
             }
             Self::Ambiguous { reference, roots } => write!(
                 formatter,
-                "thread reference {reference:?} names multiple roots {roots:?}"
+                "thread reference {reference:?} names multiple roots {}",
+                roots
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         }
     }
@@ -73,8 +83,8 @@ impl JournalRead<'_> {
         let horizon = self.thread_horizon().map_err(ThreadError::Read)?;
         let store = |error| ThreadError::Read(GuardError::Store(error));
         read_metrics::observe_query();
-        let roots = if let Ok(seq) = reference.parse::<u64>() {
-            let seq = i64::try_from(seq).map_err(|_| not_found())?;
+        let roots = if let Ok(seq) = reference.parse::<wire::Seq>() {
+            let seq = i64::try_from(seq.get()).map_err(|_| not_found())?;
             self.connection
                 .query_row(
                     "SELECT root FROM thread_index WHERE seq = ?1 AND seq <= ?2",
@@ -106,8 +116,9 @@ impl JournalRead<'_> {
                 reference: reference.to_owned(),
                 roots: roots
                     .iter()
-                    .filter_map(|root| u64::try_from(*root).ok())
-                    .collect(),
+                    .map(|root| indexed_seq(*root))
+                    .collect::<Result<_, _>>()
+                    .map_err(ThreadError::Read)?,
             }),
         }
     }
