@@ -739,42 +739,42 @@ fn select_changes(
     surface: SelectionSurface,
     environment: &Environment,
 ) -> Result<(ChangeSelectionReport, TestExecution), ChangeGateError> {
-    let (selection, test_execution) =
-        match surface {
-            SelectionSurface::Packaged => {
-                let policy = packaged_policy(anchor.root(), anchor.paths(), environment)?;
-                let selection = gate::select_change_gates(
-                    anchor.source().clone(),
-                    anchor.changes(),
-                    &policy.selection,
-                )
-                .and_then(|selection| {
-                    gate::compile_language_reach(
-                        anchor.root(),
-                        anchor.paths(),
-                        policy.selection.package_roots(),
-                        policy.selection.test_paths(),
-                        selection,
-                    )
-                });
-                (
+    let (selection, test_execution) = match surface {
+        SelectionSurface::Packaged => {
+            let policy = packaged_policy(anchor.root(), anchor.paths(), environment)?;
+            let selection = gate::select_change_gates(
+                anchor.source().clone(),
+                anchor.changes(),
+                &policy.selection,
+            )
+            .and_then(|selection| {
+                gate::compile_language_reach(
+                    anchor.root(),
+                    anchor.paths(),
+                    policy.selection.package_roots(),
+                    policy.selection.test_paths(),
                     selection,
-                    TestExecution::Packaged {
-                        engines: policy.test_engines,
-                    },
                 )
-            }
-            SelectionSurface::CurrentSource => {
-                let selection = gate::select_current_source_change_gates(
-                    anchor.source().clone(),
-                    anchor.changes(),
-                )
-                .and_then(|selection| {
-                    gate::compile_language_reach(anchor.root(), anchor.paths(), &[], &[], selection)
-                });
-                (selection, TestExecution::CurrentSourceCargo)
-            }
-        };
+            });
+            (
+                selection,
+                TestExecution::Packaged {
+                    engines: policy.test_engines,
+                },
+            )
+        }
+        SelectionSurface::CurrentSource => {
+            let selection = gate::select_current_source_change_gates(
+                anchor.source().clone(),
+                anchor.paths(),
+                anchor.changes(),
+            )
+            .and_then(|selection| {
+                gate::compile_language_reach(anchor.root(), anchor.paths(), &[], &[], selection)
+            });
+            (selection, TestExecution::CurrentSourceCargo)
+        }
+    };
     let selection =
         selection.map_err(|error| ChangeGateError::refusal("change-selection-refused", error))?;
     Ok((selection, test_execution))

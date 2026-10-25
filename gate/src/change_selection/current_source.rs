@@ -60,19 +60,26 @@ const RUST_COMPILER_INPUT: [GateId; 2] = [GateId::RustTypecheck, GateId::AppWebT
 /// # Errors
 ///
 /// Returns the exact staged path and classification failure for any unknown
-/// class or source outside the compiled current-source roots. Known selector
-/// authorities conservatively select direct exhaustive execution.
+/// class or source outside the compiled current-source roots. A changed path
+/// absent from `tracked_sources` that no class names is a removal and owes the
+/// compile arms instead. Known selector authorities conservatively select
+/// direct exhaustive execution.
 pub fn select_current_source_change_gates(
     source: Digest,
+    tracked_sources: &[String],
     changed_sources: &[String],
 ) -> Result<ChangeSelectionReport, ChangeSelectionError> {
     let authority_source = changed_sources.iter().find(|path| selector_authority(path));
     let exhaustive = authority_source.is_some();
+    let tracked = tracked_sources
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let mut report = select_with(source, changed_sources, GateId::BATTERY.to_vec(), |path| {
         if exhaustive {
             Ok(GateId::BATTERY.to_vec())
         } else {
-            gates_for_path(path)
+            gates_for_path(path, tracked.contains(path))
         }
     })?;
     if let Some(authority_source) = authority_source {
@@ -85,7 +92,10 @@ pub fn select_current_source_change_gates(
     Ok(report)
 }
 
-pub(crate) fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+pub(crate) fn gates_for_path(
+    path: &str,
+    tracked: bool,
+) -> Result<Vec<GateId>, ChangeSelectionError> {
     if selector_authority(path) {
         return Err(ChangeSelectionError::new(format!(
             "{path:?} changes gate or toolchain selection authority"
@@ -98,11 +108,15 @@ pub(crate) fn gates_for_path(path: &str) -> Result<Vec<GateId>, ChangeSelectionE
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    gates.extend(class_gates(path, extension.as_str())?);
+    gates.extend(class_gates(path, extension.as_str(), tracked)?);
     Ok(gates.into_iter().collect())
 }
 
-fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelectionError> {
+fn class_gates(
+    path: &str,
+    extension: &str,
+    tracked: bool,
+) -> Result<Vec<GateId>, ChangeSelectionError> {
     match extension {
         "rs" => rust_gates(path),
         "js" | "mjs" | "cjs" => Ok(with_frontend(path, &JAVASCRIPT)),
@@ -116,6 +130,7 @@ fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelecti
         "" if known_extensionless_shell(path) => Ok(SHELL.to_vec()),
         "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
         _ if frontend_path(path) => Ok(vec![GateId::AppWebTypecheck]),
+        _ if !tracked => Ok(RUST_COMPILER_INPUT.to_vec()),
         _ => Err(ChangeSelectionError::new(format!(
             "{path:?} has no compiled change-local policy class"
         ))),
@@ -298,9 +313,36 @@ mod tests {
 
     #[test]
     fn product_version_selects_both_rust_consumers() {
-        let selected = gates_for_path("dist/VERSION").expect("product version input");
+        let selected = gates_for_path("dist/VERSION", true).expect("product version input");
         assert!(selected.contains(&GateId::RustTypecheck));
         assert!(selected.contains(&GateId::AppWebTypecheck));
+    }
+
+    #[test]
+    fn removed_paths_without_a_class_owe_compile_proof_while_present_ones_refuse() {
+        let removed = ["retired/NOTICE".to_owned()];
+        let report = select_current_source_change_gates(
+            Digest::compute(wire::Domain::GateTree, b"removed input"),
+            &[],
+            &removed,
+        )
+        .expect("a removed unclassified path is selectable");
+        for gate_id in [
+            GateId::LocalPaths,
+            GateId::RustTypecheck,
+            GateId::AppWebTypecheck,
+        ] {
+            assert!(report.gate_ids().contains(&gate_id));
+        }
+
+        assert!(
+            select_current_source_change_gates(
+                Digest::compute(wire::Domain::GateTree, b"present input"),
+                &removed,
+                &removed,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -311,6 +353,7 @@ mod tests {
         ];
         let report = select_current_source_change_gates(
             Digest::compute(wire::Domain::GateTree, b"fixture source"),
+            &[],
             &sources,
         )
         .expect("authority changes admit every path into exhaustive selection");

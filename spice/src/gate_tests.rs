@@ -17,6 +17,7 @@ fn staged_renames_retain_both_owners_independent_of_git_rename_configuration() {
     let selection = ::gate::select_current_source_change_gates(
         Digest::compute(wire::Domain::GateTree, b"staged rename fixture"),
         &changes,
+        &changes,
     )
     .expect("classify both sides of staged renames");
     assert_eq!(selection.changed_sources(), expected);
