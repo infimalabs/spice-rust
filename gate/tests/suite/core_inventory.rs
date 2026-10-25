@@ -15,8 +15,8 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
     repository.write(
         "spice.toml",
         &policy_document(concat!(
-            "[tasks]\n",
-            "hidden_stems = ['sandbox']\n",
+            "[judge]\n",
+            "enabled = true\n",
             "strms = ['misspelled']\n",
         )),
     );
@@ -31,7 +31,7 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
             "unknown-key",
             None::<String>,
             concat!(
-                "tracked layer key tasks.strms is absent from the packaged ",
+                "tracked layer key judge.strms is absent from the packaged ",
                 "configuration registry",
             ),
         )

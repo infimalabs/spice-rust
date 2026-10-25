@@ -46,7 +46,6 @@ pub struct Root {
     commands: CommandMounts,
     wrappers: steer::Wrappers,
     rtk: RtkConfig,
-    tasks: TaskMetadata,
     judge: JudgeConfig,
     policy: WorkspacePolicy,
     taste: taste::Config,
@@ -80,12 +79,6 @@ impl Root {
     #[must_use]
     pub const fn rtk(&self) -> &RtkConfig {
         &self.rtk
-    }
-
-    /// Shared task scheduler declarations.
-    #[must_use]
-    pub const fn tasks(&self) -> &TaskMetadata {
-        &self.tasks
     }
 
     /// Whether this repository opts into independent maxim adjudication.
@@ -244,101 +237,6 @@ impl JudgeConfig {
     #[must_use]
     pub const fn enabled(&self) -> Option<bool> {
         self.enabled
-    }
-}
-
-/// Tracked metadata shared with the task scheduler.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct TaskMetadata {
-    hidden_stems: Vec<String>,
-    project_min_depth: u64,
-    project_max_depth: u64,
-}
-
-impl TaskMetadata {
-    /// Fully resolved hidden roots in declared order, without leading dots.
-    #[must_use]
-    pub fn hidden_stems(&self) -> &[String] {
-        &self.hidden_stems
-    }
-
-    /// One immutable classifier for board admission and allocation.
-    #[must_use]
-    pub fn project_policy(&self) -> board::ProjectPolicy {
-        board::ProjectPolicy::new(
-            self.hidden_stems.clone(),
-            self.project_min_depth,
-            self.project_max_depth,
-        )
-        .expect("admitted task metadata always reconstructs its project policy")
-    }
-
-    /// Fewest dotted segments admitted for a public project.
-    #[must_use]
-    pub const fn project_min_depth(&self) -> u64 {
-        self.project_min_depth
-    }
-
-    /// Most dotted segments admitted for a public project.
-    #[must_use]
-    pub const fn project_max_depth(&self) -> u64 {
-        self.project_max_depth
-    }
-}
-
-impl Default for TaskMetadata {
-    fn default() -> Self {
-        Self {
-            hidden_stems: board::BUILTIN_HIDDEN_STEMS
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            project_min_depth: default_project_min_depth(),
-            project_max_depth: default_project_max_depth(),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TaskMetadataInput {
-    #[serde(default)]
-    hidden_stems: Vec<String>,
-    #[serde(
-        default = "default_project_min_depth",
-        deserialize_with = "positive_depth"
-    )]
-    project_min_depth: u64,
-    #[serde(
-        default = "default_project_max_depth",
-        deserialize_with = "positive_depth"
-    )]
-    project_max_depth: u64,
-}
-
-impl<'de> Deserialize<'de> for TaskMetadata {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let input = TaskMetadataInput::deserialize(deserializer)?;
-        if input.project_min_depth > input.project_max_depth {
-            return Err(D::Error::custom(format!(
-                concat!(
-                    "tasks.project_min_depth must be less than or equal to ",
-                    "tasks.project_max_depth: {} > {}"
-                ),
-                input.project_min_depth, input.project_max_depth,
-            )));
-        }
-        let projects = board::ProjectPolicy::new(
-            input.hidden_stems,
-            input.project_min_depth,
-            input.project_max_depth,
-        )
-        .map_err(D::Error::custom)?;
-        Ok(Self {
-            hidden_stems: projects.hidden_stems().to_vec(),
-            project_min_depth: input.project_min_depth,
-            project_max_depth: input.project_max_depth,
-        })
     }
 }
 
@@ -573,23 +471,6 @@ impl TestEngine {
         match self {
             Self::CargoWorkspace => "cargo-workspace",
         }
-    }
-}
-
-const fn default_project_min_depth() -> u64 {
-    dialect::PROJECT_MIN_DEPTH as u64
-}
-
-const fn default_project_max_depth() -> u64 {
-    dialect::PROJECT_MAX_DEPTH as u64
-}
-
-fn positive_depth<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let depth = u64::deserialize(deserializer)?;
-    if depth == 0 {
-        Err(D::Error::custom("project depth must be positive"))
-    } else {
-        Ok(depth)
     }
 }
 

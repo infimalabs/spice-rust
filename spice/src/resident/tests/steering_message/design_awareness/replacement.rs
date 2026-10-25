@@ -38,7 +38,7 @@ fn a_strictly_better_match_replaces_the_owed_request() {
     let mut seated = claimant_seats();
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     let mut diagnostics = Vec::new();
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let source = conversation_source(&lanes);
     retain_conversation(&profiles, source, 0, WINDOWS_PROSE);
     let partial = lanes.design("dVrD245Kd", WINDOWS_TITLE, SIGNING_DESCRIPTION);
@@ -47,7 +47,7 @@ fn a_strictly_better_match_replaces_the_owed_request() {
         "Repair database migration",
         "Indexes transactions snapshots rollback consistency schema storage locks recovery.",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let owed = lanes
         .request(&config, FIRST)
         .expect("the partial match is owed first");
@@ -61,7 +61,7 @@ fn a_strictly_better_match_replaces_the_owed_request() {
         "Repair database migration indexes transactions snapshots rollback consistency schema \
          storage locks recovery",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let replacement = lanes
         .request(&config, FIRST)
         .expect("the strictly better match is owed");
@@ -70,7 +70,7 @@ fn a_strictly_better_match_replaces_the_owed_request() {
     assert_eq!(notices.len(), 2, "one replacing notice is recorded");
     assert_eq!(notices[1].design, stamp(&database));
 
-    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
+    let notice = pending_catch_up(&lanes, &seated, &mut diagnostics)
         .expect("room catch-up delivers the owed request");
     assert!(
         notice
@@ -104,11 +104,11 @@ fn a_match_no_better_than_the_owed_request_records_nothing() {
         .expect("awareness cursor starts");
     let mut seated = claimant_seats();
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let source = conversation_source(&lanes);
     retain_conversation(&profiles, source, 0, WINDOWS_PROSE);
     let owed = lanes.design("dVrD245Kd", WINDOWS_TITLE, WINDOWS_DESCRIPTION);
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     assert_eq!(
         lanes
             .request(&config, FIRST)
@@ -118,9 +118,9 @@ fn a_match_no_better_than_the_owed_request_records_nothing() {
     );
 
     let _twin = lanes.design("dVrD245Km", WINDOWS_TITLE, WINDOWS_DESCRIPTION);
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let _weaker = lanes.design("dVrD245Kn", WINDOWS_TITLE, SIGNING_DESCRIPTION);
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     retain_conversation(
         &profiles,
         source,
@@ -128,7 +128,7 @@ fn a_match_no_better_than_the_owed_request_records_nothing() {
         "Windows native runner archive compression headers libraries toolchain manifests \
          receipts deployment replay smoke checks",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
 
     assert_eq!(
         lanes

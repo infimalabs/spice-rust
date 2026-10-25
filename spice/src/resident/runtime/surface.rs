@@ -51,11 +51,7 @@ struct SurfaceRuntimes {
 impl SurfaceRuntimes {
     fn start(bus: &Bus, config: &SurfaceConfig, paths: &RuntimePaths) -> CommandResult<Self> {
         let timer_commits = bus.reader().subscribe();
-        let timers = timers::Runtime::start(
-            config.projects.clone(),
-            config.steering.clone(),
-            paths.supervisors.clone(),
-        )?;
+        let timers = timers::Runtime::start(config.steering.clone(), paths.supervisors.clone())?;
         let extension = quota::pin_extension(&paths.runtime).map_err(|error| {
             environment_fault("resident::quota-extension-unavailable", &error.to_string())
         })?;
@@ -816,7 +812,7 @@ impl LiveSurface<'_, '_> {
         committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
     ) -> CommandResult<()> {
         let (bus, command_surface) = (self.bus, self.command_surface);
-        let (paths, config) = (command_surface.paths, command_surface.config);
+        let paths = command_surface.paths;
         let message_state = self.message_state.as_ref();
         let commit =
             self.wakes
@@ -834,15 +830,10 @@ impl LiveSurface<'_, '_> {
             .map(|commit| room_catch_up::changes(bus, commit))
             .transpose()?;
         match &changes {
-            Some(changes) => room_catch_up::reconcile_commit(
-                bus,
-                paths,
-                config,
-                self.seats,
-                changes,
-                self.diagnostic,
-            )?,
-            None => room_catch_up::reconcile(bus, paths, config, self.seats, self.diagnostic)?,
+            Some(changes) => {
+                room_catch_up::reconcile_commit(bus, paths, self.seats, changes, self.diagnostic)?
+            }
+            None => room_catch_up::reconcile(bus, paths, self.seats, self.diagnostic)?,
         }
         message_surface::advance_profile_warming(
             &bus.reader(),
@@ -853,7 +844,6 @@ impl LiveSurface<'_, '_> {
         design_input::reconcile(
             bus,
             paths,
-            config,
             self.seats,
             &mut self.design_completions,
             message_state,

@@ -32,15 +32,6 @@ fn environment() -> wire::Environment {
         .expect("the compiled journal schema is positive")
 }
 
-fn projects() -> board::ProjectPolicy {
-    board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
-}
-
 fn all_projects() -> wire::TeamSubscription {
     wire::TeamSubscription {
         team: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
@@ -87,7 +78,7 @@ fn workflow() -> WorkflowHead {
 }
 
 fn admitted(head: TaskHead, claim: Option<ClaimHead>) -> Entry {
-    Entry::new(head, workflow(), claim, None, &projects()).expect("placed candidate")
+    Entry::new(head, workflow(), claim, None).expect("placed candidate")
 }
 
 fn entry(name: &str, project: &str, queue_origin: u64, priority: Option<TaskPriority>) -> Entry {

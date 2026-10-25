@@ -23,13 +23,6 @@ pub(crate) struct AutomaticSeat {
     pub(crate) occupant: wire::CanonicalUuid,
 }
 
-/// The board policy an automatic claim selects and admits under.
-#[derive(Clone, Copy)]
-pub(crate) struct AllocationPolicy<'a> {
-    pub(crate) projects: &'a ProjectPolicy,
-    pub(crate) allocation: &'a board::NextConfig,
-}
-
 /// Select and claim once for a vacant resident-owned lane.
 ///
 /// This is the automatic counterpart of `claim_win`: the same validated
@@ -39,7 +32,7 @@ pub(crate) fn claim_automatic(
     observed: &bus::TaskSnapshot,
     repository: Host<'_>,
     seat: AutomaticSeat,
-    policy: AllocationPolicy<'_>,
+    allocation: &board::NextConfig,
 ) -> Result<AutomaticClaim, Outcome<CommandAnswer>> {
     let PreparedClaim {
         write,
@@ -49,7 +42,7 @@ pub(crate) fn claim_automatic(
         born,
         actor,
         git,
-    } = prepare_claim(bus, observed, repository, seat, policy)?;
+    } = prepare_claim(bus, observed, repository, seat, allocation)?;
     let answer = automatic_answer(&selected, &entries, task, actor, git.transplant());
     match committed_with_task_git(
         bus,
@@ -82,7 +75,7 @@ fn prepare_claim<'a>(
     observed: &bus::TaskSnapshot,
     repository: Host<'a>,
     seat: AutomaticSeat,
-    policy: AllocationPolicy<'_>,
+    allocation: &board::NextConfig,
 ) -> Result<PreparedClaim<'a>, Outcome<CommandAnswer>> {
     let AutomaticSeat {
         epoch,
@@ -90,11 +83,10 @@ fn prepare_claim<'a>(
         occupant,
     } = seat;
     let actor = Actor::Lane(lane);
-    let snapshot =
-        validated_snapshot_for_automatic(observed, actor.clone(), occupant, policy.projects)?;
+    let snapshot = validated_snapshot_for_automatic(observed, actor.clone(), occupant)?;
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
-    let selected = select_task(&snapshot, &actor, &subscription, policy.allocation)?;
+    let selected = select_task(&snapshot, &actor, &subscription, allocation)?;
     let task = selected.handle().clone();
     let born = selected.born().clone();
     let (at, expiry, maximum) = claim_deadlines()?;

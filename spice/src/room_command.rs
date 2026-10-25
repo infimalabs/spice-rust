@@ -231,34 +231,6 @@ fn open(
     Ok((state, journal))
 }
 
-/// The working configuration's task project policy beside the admitted state
-/// and journal reader of `repository`, opened for one room page read.
-fn open_page(
-    repository: &Repository,
-) -> Result<
-    (
-        board::ProjectPolicy,
-        spice::repository::StatePaths,
-        journal::JournalReader,
-    ),
-    Failure,
-> {
-    let projects = spice::config::capture_repository_scoped(repository, &[], None)
-        .map_err(|error| {
-            fault(
-                FaultClass::Environment,
-                "room::configuration-invalid",
-                error,
-            )
-        })?
-        .resolved()
-        .root()
-        .tasks()
-        .project_policy();
-    let (state, journal) = open(repository)?;
-    Ok((projects, state, journal))
-}
-
 /// The task handle `matches` names and the birth stamp anchoring its room.
 fn named_room(matches: &ArgMatches) -> Result<(TaskHandle, TaskStamp), Failure> {
     let named = matches
@@ -279,15 +251,15 @@ pub(crate) fn run_at(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
 ) -> Outcome<RoomHistory> {
-    match open_page(repository) {
-        Ok((projects, state, journal)) => {
+    match open(repository) {
+        Ok((state, journal)) => {
             let artifacts =
                 artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
             let owners = SourceOwners {
                 tape: state.tape(),
                 artifacts: &artifacts,
             };
-            answer(&journal, owners, &projects, matches, contract.path)
+            answer(&journal, owners, matches, contract.path)
         }
         Err(failure) => failure.outcome(),
     }
@@ -298,11 +270,10 @@ pub(crate) fn run_at(
 pub(crate) fn answer(
     journal: &journal::JournalReader,
     owners: SourceOwners<'_>,
-    projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Outcome<RoomHistory> {
-    match history(journal, owners, projects, matches, path) {
+    match history(journal, owners, matches, path) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -311,7 +282,6 @@ pub(crate) fn answer(
 fn history(
     journal: &journal::JournalReader,
     owners: SourceOwners<'_>,
-    projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Result<(ReplyPosition, RoomHistory), Failure> {
@@ -331,7 +301,7 @@ fn history(
         })
         .transpose()?;
     let recorded = journal
-        .read_with(|read| recorded(read, &anchor, after.as_ref(), &page, projects, selection))
+        .read_with(|read| recorded(read, &anchor, after.as_ref(), &page, selection))
         .map_err(|error| match error {
             journal::ReadError::Journal(error) => store(error),
             journal::ReadError::Answer(failure) => failure,
@@ -452,10 +422,9 @@ fn recorded(
     anchor: &TaskStamp,
     after: Option<&RoomAuthorityStamp>,
     page: &Page,
-    projects: &board::ProjectPolicy,
     selection: Selection,
 ) -> Result<Recorded, Failure> {
-    let room = current_handle(read, anchor, projects)?;
+    let room = current_handle(read, anchor)?;
     let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
         fault(
             FaultClass::Store,
@@ -517,7 +486,6 @@ fn recorded(
 fn current_handle(
     read: &journal::JournalRead<'_>,
     anchor: &TaskStamp,
-    projects: &board::ProjectPolicy,
 ) -> Result<TaskHandle, Failure> {
     let heads = read.task_heads_for(anchor).map_err(store)?.ok_or_else(|| {
         Failure::Refusal(crate::read_page::refusal(
@@ -532,7 +500,6 @@ fn current_handle(
         heads.workflow().body().clone(),
         heads.claim().map(|head| head.body().clone()),
         heads.lease().map(|head| head.body().clone()),
-        projects,
     )
     .map_err(|error| fault(FaultClass::Store, "room::task-head-invalid", error))?
     .handle()

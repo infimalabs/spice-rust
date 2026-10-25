@@ -11,13 +11,11 @@ pub(in crate::board_command) fn task_edit(
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&edit.task),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -53,7 +51,7 @@ pub(in crate::board_command) fn task_edit(
         );
     }
     let (statement, publication) =
-        match prepare_correction(&snapshot, entry, command, edit, repository, projects) {
+        match prepare_correction(&snapshot, entry, command, edit, repository) {
             Ok(prepared) => prepared,
             Err(outcome) => return outcome,
         };
@@ -66,13 +64,12 @@ fn prepare_correction(
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Result<(TaskHead, CorrectionPublication), Outcome<CommandAnswer>> {
     validate_acceptance(&edit.acceptance)?;
     if let Some(pitch) = &edit.pitch {
         validate_pitch(pitch)?;
     }
-    let (mut statement, flow) = corrected_statement(entry, edit, projects)?;
+    let (mut statement, flow) = corrected_statement(entry, edit)?;
     // A Draft asserts nothing yet; taste policy binds when it is filed.
     let released = if entry.is_draft() {
         None
@@ -108,7 +105,6 @@ fn prepare_correction(
             .lease()
             .cloned()
             .or_else(|| entry.lease().cloned()),
-        projects,
     )
     .map_err(|error| {
         refusal(
@@ -201,7 +197,6 @@ fn review_taste(
 fn corrected_statement(
     entry: &Entry,
     edit: &TaskEdit,
-    projects: &ProjectPolicy,
 ) -> Result<(TaskHead, Option<Vec<wire::Phase>>), Outcome<CommandAnswer>> {
     if edit.title.is_none()
         && edit.pitch.is_none()
@@ -262,7 +257,7 @@ fn corrected_statement(
         statement.priority = Some(declared_priority(priority)?);
     }
     if let Some(requested) = &edit.project {
-        statement.project = corrected_project(projects, requested)?;
+        statement.project = corrected_project(requested)?;
     }
     // A Design walks one phase: judge the pair this edit leaves, so an intent
     // and a Draft route edited together are checked as they will stand.
@@ -297,21 +292,12 @@ fn declared_priority(priority: &str) -> Result<wire::TaskPriority, Outcome<Comma
     })
 }
 
-fn corrected_project(
-    projects: &ProjectPolicy,
-    requested: &str,
-) -> Result<String, Outcome<CommandAnswer>> {
-    // The destination goes through the same public creation door as `task add`.
-    let project = projects.admit_manual_creation(requested).map_err(|error| {
-        let reason = if matches!(error, ProjectError::SystemReserved(_)) {
-            "task::project-system-reserved"
-        } else {
-            "task::edit-project-refused"
-        };
+fn corrected_project(requested: &str) -> Result<String, Outcome<CommandAnswer>> {
+    let project = board::Project::admit(requested).map_err(|error| {
         refusal(
-            reason,
+            "task::edit-project-refused",
             Some(error.to_string()),
-            "name a public project this board admits for manual filing",
+            PROJECT_REPAIR,
         )
     })?;
     Ok(project.as_str().to_owned())

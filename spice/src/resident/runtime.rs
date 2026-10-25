@@ -43,7 +43,6 @@ pub(super) struct SurfaceConfig {
     pub(super) judge_enabled: bool,
     pub(super) consent: consent::Policy,
     pub(super) allocation: board::NextConfig,
-    pub(super) projects: board::ProjectPolicy,
     pub(super) lane: lane::Config,
     omp_binary: String,
     /// The process environment `main` captured, for every child and Git
@@ -122,7 +121,6 @@ fn startup_surface_from_loaded(loaded: &spice::config::Loaded, ambient: Ambient)
             judge_enabled: loaded.resolved().root().judge().enabled().unwrap_or(false),
             consent: loaded.resolved().root().consent().policy().clone(),
             allocation: *loaded.resolved().root().board().next(),
-            projects: loaded.resolved().root().tasks().project_policy(),
             lane: loaded.resolved().root().lane().clone(),
             omp_binary: loaded
                 .resolved()

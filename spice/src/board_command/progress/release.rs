@@ -8,7 +8,6 @@ struct ReleaseTransition {
 fn release_transition(
     entry: &Entry,
     actor: &Actor,
-    projects: &ProjectPolicy,
 ) -> Result<ReleaseTransition, Outcome<CommandAnswer>> {
     let Some(claim) = entry.claim() else {
         return Err(refusal(
@@ -37,7 +36,6 @@ fn release_transition(
         workflow,
         Some(post_claim),
         entry.lease().cloned(),
-        projects,
     )
     .expect("releasing a claim preserves a valid task entry")
     .with_explicit_release(true)
@@ -138,13 +136,11 @@ pub(in crate::board_command) fn claim_free(
     command: &wire::AdmittedCommand,
     task: &TaskRef,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&task.task),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -156,7 +152,7 @@ pub(in crate::board_command) fn claim_free(
             "read board and name one current task handle",
         );
     };
-    let transition = match release_transition(entry, command.actor(), projects) {
+    let transition = match release_transition(entry, command.actor()) {
         Ok(transition) => transition,
         Err(outcome) => return outcome,
     };

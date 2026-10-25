@@ -10,15 +10,6 @@ use wire::rooms::{
 mod conversation;
 pub(super) mod design_standing;
 
-fn room_projects() -> ProjectPolicy {
-    ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("room fixture project policy")
-}
-
 fn prove_seat_addresses(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
     let origin = format!("resident:{epoch}")
         .parse()
@@ -64,7 +55,7 @@ fn leave(
     let wire::intent::Intent::RoomLeave(request) = command.body() else {
         panic!("fixture command carries room leave");
     };
-    room_leave(bus, &command, request, &room_projects())
+    room_leave(bus, &command, request)
 }
 
 fn post_listeners(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> Vec<CanonicalUuid> {
@@ -276,7 +267,6 @@ fn history_page(root: &FixtureRoot, words: &[&str]) -> Value {
             tape: &tape,
             artifacts: &artifacts,
         },
-        &room_projects(),
         crate::cli::selected_matches(&matches),
         contract.path,
     );

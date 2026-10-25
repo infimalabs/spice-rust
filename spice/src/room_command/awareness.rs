@@ -77,8 +77,8 @@ pub(crate) fn run_at(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
 ) -> Outcome<DesignAwareness> {
-    match super::open_page(repository) {
-        Ok((projects, _, journal)) => answer(&journal, &projects, matches, contract.path),
+    match super::open(repository) {
+        Ok((_, journal)) => answer(&journal, matches, contract.path),
         Err(failure) => failure.outcome(),
     }
 }
@@ -86,11 +86,10 @@ pub(crate) fn run_at(
 /// One page of the awareness records of the Design `matches` names.
 pub(crate) fn answer(
     journal: &journal::JournalReader,
-    projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Outcome<DesignAwareness> {
-    match awareness(journal, projects, matches, path) {
+    match awareness(journal, matches, path) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -98,7 +97,6 @@ pub(crate) fn answer(
 
 fn awareness(
     journal: &journal::JournalReader,
-    projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Result<(ReplyPosition, DesignAwareness), Failure> {
@@ -118,7 +116,7 @@ fn awareness(
     let retain = page.retain();
     let (cursor, design, maturity, acceptance, population, rows) = journal
         .read_with(|read| -> Result<_, Failure> {
-            let design = current_handle(read, &anchor, projects)?;
+            let design = current_handle(read, &anchor)?;
             let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
                 fault(
                     FaultClass::Store,
@@ -144,7 +142,7 @@ fn awareness(
                 let fetched = read.design_notices(&anchor, from, budget).map_err(store)?;
                 let wanted = retain - rows.len();
                 for envelope in fetched.rows.into_iter().take(wanted) {
-                    rows.push(noticed(read, projects, envelope)?);
+                    rows.push(noticed(read, envelope)?);
                 }
                 match fetched.continuation {
                     Some(next) => from = Some(next),
@@ -194,7 +192,6 @@ fn awareness(
 /// The row one indexed notice envelope reads as.
 fn noticed(
     _read: &journal::JournalRead<'_>,
-    _projects: &board::ProjectPolicy,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<Noticed, Failure> {
     let Some(body) = envelope.fact.read::<DesignNoticed>() else {

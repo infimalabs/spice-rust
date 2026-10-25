@@ -83,8 +83,8 @@ pub(crate) fn run_at(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,
 ) -> Outcome<RoomRelevance> {
-    match super::open_page(repository) {
-        Ok((projects, _, journal)) => answer(&journal, &projects, matches, contract.path),
+    match super::open(repository) {
+        Ok((_, journal)) => answer(&journal, matches, contract.path),
         Err(failure) => failure.outcome(),
     }
 }
@@ -92,11 +92,10 @@ pub(crate) fn run_at(
 /// One page of the observations of the room `matches` names.
 pub(crate) fn answer(
     journal: &journal::JournalReader,
-    projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Outcome<RoomRelevance> {
-    match relevance(journal, projects, matches, path) {
+    match relevance(journal, matches, path) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -104,7 +103,6 @@ pub(crate) fn answer(
 
 fn relevance(
     journal: &journal::JournalReader,
-    projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Result<(ReplyPosition, RoomRelevance), Failure> {
@@ -121,7 +119,7 @@ fn relevance(
     let retain = page.retain();
     let (cursor, room, metrics, population, records) = journal
         .read_with(|read| -> Result<_, Failure> {
-            let room = current_handle(read, &anchor, projects)?;
+            let room = current_handle(read, &anchor)?;
             let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
                 fault(
                     FaultClass::Store,

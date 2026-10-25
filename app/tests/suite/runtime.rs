@@ -224,16 +224,8 @@ fn board_task(
     provenance: Option<&str>,
     requirements: wire::EnvironmentRequirements,
 ) -> wire::intent::BoardTask {
-    let visibility = if project.starts_with('.') {
-        wire::intent::ProjectVisibility::Hidden {
-            stem: "oops".to_owned(),
-        }
-    } else {
-        wire::intent::ProjectVisibility::Public
-    };
     let born = fixture_stamp(label);
     wire::intent::BoardTask {
-        visibility,
         origin_thread: "operator".to_owned(),
         creator_team: None,
         presentation_title: title.to_owned(),
@@ -326,10 +318,6 @@ fn board_response_with_requirements(
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,
-        project_policy: wire::intent::BoardProjectPolicy {
-            public_min_depth: 2,
-            public_max_depth: 3,
-        },
         actor_route: wire::intent::BoardActorRoute {
             actor: "operator".to_owned(),
             origin_thread: "operator".to_owned(),
@@ -1260,7 +1248,6 @@ fn browser_state_retains_drafts_with_their_authored_prose_and_public_project() {
     );
     assert_eq!(draft.statement.body.project, "app.correctness");
     assert_eq!(draft.statement.body.filing, wire::TaskFiling::Draft);
-    assert!(!draft.visibility.is_hidden());
     assert!(draft.workflow.body.status.is_pending());
     let draft_json = serde_json::to_value(draft).expect("browser row serializes");
     assert_eq!(draft_json["presentation_title"], title);
@@ -1268,7 +1255,6 @@ fn browser_state_retains_drafts_with_their_authored_prose_and_public_project() {
         board.tasks[1].presentation_title(),
         "Visible allocator work"
     );
-    assert!(!board.tasks[1].visibility.is_hidden());
     assert!(
         !board.environment_satisfies(&board.tasks[1]),
         "the app snapshot evaluates requirements against its observed schema",

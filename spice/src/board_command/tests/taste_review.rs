@@ -27,17 +27,10 @@ pub(super) fn issue_repository<B: Serialize>(
     body: &B,
 ) -> Outcome<CommandAnswer> {
     let command = fixture_command(epoch, actor, kind, expected, body);
-    let projects = ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("taste-review project policy");
     dispatch_with_repository(
         bus,
         &command,
         Some(host(repository)),
-        &projects,
         &board::NextConfig::default(),
         None,
     )

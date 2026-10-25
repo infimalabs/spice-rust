@@ -79,7 +79,7 @@ value = 1
         ("lock.beta.mystery", ConfigSource::Local, IssueKind::Unknown),
         ("policy.mode", ConfigSource::Tracked, IssueKind::Unknown),
         ("proof.image", ConfigSource::Tracked, IssueKind::Malformed),
-        ("tasks.owner", ConfigSource::Tracked, IssueKind::Unknown),
+        ("tasks", ConfigSource::Tracked, IssueKind::Unknown),
     ] {
         assert!(
             rows.iter()

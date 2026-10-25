@@ -107,7 +107,7 @@ pub enum BodyShape {
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for OOPS Design line-item intake.
     TaskOopsAdd,
-    /// [`TasteProposalAdd`], the strict body for the hidden taste-proposal route.
+    /// [`TasteProposalAdd`], the strict body for mined taste-proposal intake.
     TasteProposalAdd,
     /// [`TaskEdit`]
     TaskEdit,

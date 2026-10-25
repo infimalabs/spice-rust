@@ -213,8 +213,7 @@ mod tests {
         } else {
             (None, None)
         };
-        let projects = crate::ProjectPolicy::new(Vec::new(), 2, 8).expect("fixture policy");
-        Entry::new(statement, workflow, claim, lease, &projects).expect("fixture entry")
+        Entry::new(statement, workflow, claim, lease).expect("fixture entry")
     }
 
     /// Selected and peer statements over a board where every statement says

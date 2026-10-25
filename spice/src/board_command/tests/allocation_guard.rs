@@ -2,15 +2,6 @@ use super::*;
 
 mod trust;
 
-pub(super) fn guard_projects() -> ProjectPolicy {
-    ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("allocation guard test project policy")
-}
-
 /// The task the allocator would hand this actor from one snapshot.
 ///
 /// This is the ranking itself, through the same `board::select` the guard calls,
@@ -30,7 +21,6 @@ fn guard_observation(
     answer: &BoardAnswer,
     actor: &Actor,
     _winner: TaskHandle,
-    _projects: &ProjectPolicy,
 ) -> AllocationObservation {
     AllocationObservation {
         cursor: answer.cursor,
@@ -135,10 +125,9 @@ fn an_unmoved_observation_lets_the_allocator_write_commit() {
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
-    let projects = guard_projects();
     let answer = board(&bus, epoch, actor.clone());
     let winner = guard_winner(&answer, &actor);
-    let observed = guard_observation(&answer, &actor, winner, &projects);
+    let observed = guard_observation(&answer, &actor, winner);
 
     assert!(
         matches!(
@@ -162,10 +151,9 @@ fn a_task_added_after_the_observation_refuses_the_allocator_write() {
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
-    let projects = guard_projects();
     let answer = board(&bus, epoch, actor.clone());
     let winner = guard_winner(&answer, &actor);
-    let observed = guard_observation(&answer, &actor, winner.clone(), &projects);
+    let observed = guard_observation(&answer, &actor, winner.clone());
 
     add(&bus, epoch, actor.clone(), "GUARD-3", "arrived late", None);
 
@@ -196,10 +184,9 @@ fn a_residency_head_moved_after_the_observation_refuses_the_allocator_write() {
     add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
     add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
 
-    let projects = guard_projects();
     let answer = board(&bus, epoch, actor.clone());
     let winner = guard_winner(&answer, &actor);
-    let observed = guard_observation(&answer, &actor, winner, &projects);
+    let observed = guard_observation(&answer, &actor, winner);
 
     reseat(&bus, epoch, &seats);
 
@@ -314,7 +301,6 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
         &command,
         &next_rule(),
         None,
-        &guard_projects(),
         &board::NextConfig::default(),
         None,
     ) else {
@@ -374,15 +360,14 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
 
 /// Drive the production claim path up to the point it has decided.
 ///
-/// The project policy and allocator config are the ones `dispatch` builds, so
-/// the plan is the plan the ordinary command door would have made.
+/// The allocator config is the one `dispatch` builds, so the plan is the plan
+/// the ordinary command door would have made.
 fn plan_claim(bus: &Bus, command: &wire::AdmittedCommand) -> ClaimPlan<'static> {
     match claim_plan(
         bus,
         command,
         &next_rule(),
         None,
-        &guard_projects(),
         &board::NextConfig::default(),
         None,
     ) {
@@ -392,13 +377,7 @@ fn plan_claim(bus: &Bus, command: &wire::AdmittedCommand) -> ClaimPlan<'static> 
 }
 
 fn commit_planned_claim(bus: &Bus, command: &wire::AdmittedCommand, plan: ClaimPlan) -> String {
-    guard_refusal(commit_claim(
-        bus,
-        command,
-        &next_rule(),
-        &guard_projects(),
-        plan,
-    ))
+    guard_refusal(commit_claim(bus, command, &next_rule(), plan))
 }
 
 /// `task next` preserves the one-active-claim invariant before it mints.
@@ -490,8 +469,7 @@ fn an_active_claim_in_the_commit_read_refuses_even_when_heads_match() {
         .map(|task| task.statement.body.handle.clone())
         .find(|handle| *handle != first)
         .expect("fixture keeps another task selectable");
-    let projects = guard_projects();
-    let observed = guard_observation(&current, &actor, second, &projects);
+    let observed = guard_observation(&current, &actor, second);
     assert_eq!(
         refusal_reason(commit_guarded(&bus, epoch, observed)),
         format!("claim::active-exists: actor {actor} already holds active claim {first}")

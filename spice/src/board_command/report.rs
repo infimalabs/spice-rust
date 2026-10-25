@@ -7,7 +7,6 @@ pub(super) fn read_report(
     bus: &Bus,
     request: &ReportRead,
     command: &wire::AdmittedCommand,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     if request.version != REPORT_READ_VERSION {
         return refusal(
@@ -71,8 +70,7 @@ pub(super) fn read_report(
         );
     }
     let request = request.clone();
-    let projects = projects.clone();
-    match bus.read(move |read| page(read, request, pin, &projects)) {
+    match bus.read(move |read| page(read, request, pin)) {
         Ok(Ok(answer)) => Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(answer.upper),
             body: CommandAnswer::Report(Box::new(answer)),
@@ -86,7 +84,6 @@ fn page(
     read: &JournalRead<'_>,
     request: ReportRead,
     pin: ReportPin,
-    projects: &ProjectPolicy,
 ) -> Result<Result<ReportAnswer, wire::Refusal>, GuardError> {
     if read.cursor()?.is_none_or(|cursor| request.upper > cursor) {
         return Ok(Err(boundary_refusal(
@@ -115,8 +112,8 @@ fn page(
         let Some(task) = envelope.fact.task_subject() else {
             return true;
         };
-        match public_task(read, task, projects) {
-            Ok(public) => public,
+        match filed_task(read, task) {
+            Ok(filed) => filed,
             Err(error) => {
                 scope_error = Some(error);
                 false
@@ -148,10 +145,10 @@ fn page(
             .task
             .born()
             .map_err(|error| GuardError::Invalid(format!("report command target: {error}")))?;
-        if record.last > request.upper || !public_task(read, &born, projects)? {
+        if record.last > request.upper || !filed_task(read, &born)? {
             return Ok(Err(boundary_refusal(
                 "report::command-outside-scope",
-                "the command record must be wholly within the public study boundary",
+                "the command record must be wholly within the filed study boundary",
             )));
         }
     }
@@ -166,24 +163,13 @@ fn page(
     }))
 }
 
-fn public_task(
-    read: &JournalRead<'_>,
-    task: &wire::TaskStamp,
-    projects: &ProjectPolicy,
-) -> Result<bool, GuardError> {
+fn filed_task(read: &JournalRead<'_>, task: &wire::TaskStamp) -> Result<bool, GuardError> {
     let head = read.task_head(task)?.ok_or_else(|| {
         GuardError::Invalid(format!(
             "report task scope has no authoritative head for {task}"
         ))
     })?;
-    let project = projects
-        .admit(&head.body().project)
-        .map_err(|error| GuardError::Invalid(format!("report project scope: {error}")))?;
-    Ok(head.body().filing.is_filed()
-        && matches!(
-            project.visibility(),
-            wire::intent::ProjectVisibility::Public
-        ))
+    Ok(head.body().filing.is_filed())
 }
 
 fn boundary_refusal(reason: &str, detail: &str) -> wire::Refusal {

@@ -6,7 +6,7 @@ use super::*;
 /// freeing lane wakes for it only when no other lane can.
 #[test]
 fn a_freed_row_wakes_a_vacant_teammate_before_the_lane_that_freed_it() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
     committed(
         bus.commit(held_claim_write(&bus, instant(2), |_, _| {}))
             .expect("claim commits"),
@@ -15,7 +15,7 @@ fn a_freed_row_wakes_a_vacant_teammate_before_the_lane_that_freed_it() {
 
     let alone = bus.task_snapshot().expect("freed snapshot reads");
     projection
-        .advance(&alone, &projects)
+        .advance(&alone)
         .expect("freed projection advances");
     let targets = targets_at(&alone, &projection);
     assert!(
@@ -34,7 +34,7 @@ fn a_freed_row_wakes_a_vacant_teammate_before_the_lane_that_freed_it() {
     add_vacant_org_members(&bus, &[lane_at(2)]);
     let joined = bus.task_snapshot().expect("joined snapshot reads");
     projection
-        .advance(&joined, &projects)
+        .advance(&joined)
         .expect("joined projection advances");
     let targets = targets_at(&joined, &projection);
     assert_eq!(

@@ -1,6 +1,7 @@
 use super::{
-    AppRoute, CreatorContextTarget, OverviewRouteIntent, RouteEvidence, WorkRoute, WorkRouteStem,
-    normalize_app_location, opening_auth_token, team_stream_card_target, team_stream_card_team,
+    AppRoute, CreatorContextTarget, OverviewRouteIntent, RouteEvidence, WorkRoute,
+    WorkRouteProject, normalize_app_location, opening_auth_token, team_stream_card_target,
+    team_stream_card_team,
 };
 
 const CARD: &str = "message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
@@ -21,27 +22,29 @@ fn canonical_durable_routes_round_trip_exactly() {
 
 #[test]
 fn canonical_work_routes_round_trip_exactly() {
-    let public = || WorkRouteStem::new(false, "alpha_2".to_owned()).expect("public stem");
-    let hidden = || WorkRouteStem::new(true, "private".to_owned()).expect("hidden stem");
+    let project = |name: &str| WorkRouteProject::new(name.to_owned()).expect("fixture project");
     let team = "01234567-89ab-cdef-0123-456789abcdef"
         .parse()
         .expect("fixture team");
     let group = "dVxHkZhQY".parse().expect("fixture group");
     for (path, route) in [
         ("/work", WorkRoute::AllOpen),
-        ("/work/stem/public/alpha_2", WorkRoute::Stem(public())),
-        ("/work/stem/hidden/private", WorkRoute::Stem(hidden())),
-        ("/work/planning", WorkRoute::Planning { stem: None }),
+        ("/work/project/oops", WorkRoute::Project(project("oops"))),
         (
-            "/work/planning/public/alpha_2",
+            "/work/project/oops.design",
+            WorkRoute::Project(project("oops.design")),
+        ),
+        ("/work/planning", WorkRoute::Planning { project: None }),
+        (
+            "/work/planning/alpha_2",
             WorkRoute::Planning {
-                stem: Some(public()),
+                project: Some(project("alpha_2")),
             },
         ),
         (
-            "/work/planning/hidden/private",
+            "/work/planning/app.work.map",
             WorkRoute::Planning {
-                stem: Some(hidden()),
+                project: Some(project("app.work.map")),
             },
         ),
         (
@@ -131,14 +134,15 @@ fn malformed_locations_are_not_routes() {
         "/chat/message-agent",
         "/dash/card/message-agent",
         "/work/",
-        "/work/stem",
-        "/work/stem/public",
-        "/work/stem/public/Alpha",
-        "/work/stem/public/a.b",
-        "/work/stem/public/a%2fb",
-        "/work/stem/other/alpha",
-        "/work/planning/public",
-        "/work/planning/public/alpha/extra",
+        "/work/project",
+        "/work/project/Alpha",
+        "/work/project/a..b",
+        "/work/project/.a",
+        "/work/project/a.",
+        "/work/project/a%2fb",
+        "/work/project/a/b",
+        "/work/stem/public/alpha",
+        "/work/planning/alpha/extra",
         "/work/team",
         "/work/team/01234567-89AB-CDEF-0123-456789ABCDEF",
         "/work/group",
@@ -181,10 +185,11 @@ fn unknown_app_locations_open_chat_and_name_the_refused_input() {
         ("", "#/unknown"),
         ("", "#/work?scope=all"),
         ("", "#/work/"),
-        ("", "#/work/stem"),
-        ("", "#/work/stem/public/Alpha"),
-        ("", "#/work/stem/public/a%2fb"),
-        ("", "#/work/planning/public/alpha/extra"),
+        ("", "#/work/project"),
+        ("", "#/work/project/Alpha"),
+        ("", "#/work/project/a%2fb"),
+        ("", "#/work/stem/public/alpha"),
+        ("", "#/work/planning/alpha/extra"),
         ("", "#/card/message-agent"),
         ("", "#/work/public/a%2f"),
         ("", "#/work/team/not-a-team"),

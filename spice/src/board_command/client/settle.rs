@@ -82,14 +82,11 @@ fn client_conclude(
 pub(super) fn dispatch_settlement(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    projects: &ProjectPolicy,
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
-        wire::intent::Intent::TaskDelete(delete) => task_delete(bus, command, delete, projects),
-        wire::intent::Intent::TaskClose(close) => task_close(bus, command, close, projects),
-        wire::intent::Intent::TaskConclude(conclude) => {
-            task_conclude(bus, command, conclude, projects)
-        }
+        wire::intent::Intent::TaskDelete(delete) => task_delete(bus, command, delete),
+        wire::intent::Intent::TaskClose(close) => task_close(bus, command, close),
+        wire::intent::Intent::TaskConclude(conclude) => task_conclude(bus, command, conclude),
         _ => return None,
     })
 }

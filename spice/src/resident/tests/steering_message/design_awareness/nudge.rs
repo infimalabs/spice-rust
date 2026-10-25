@@ -133,7 +133,6 @@ impl Lanes {
             &self.bus,
             &command,
             None,
-            &config.projects,
             &config.allocation,
             None,
         )
@@ -192,7 +191,7 @@ fn a_nudge_messages_the_best_matching_free_seated_lane_whose_capture_then_wins()
         .expect("awareness cursor starts");
     let mut seated = seats(&[(FIRST, test_uuid(FIRST)), (SECOND, test_uuid(SECOND))]);
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     retain(
         &profiles,
         SECOND,
@@ -266,7 +265,7 @@ fn with_every_seated_lane_busy_the_nudge_waits_to_wake_the_best_retained_vacant_
         .expect("awareness cursor starts");
     let mut seated = seats(&[(THIRD, test_uuid(THIRD))]);
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     retain(
         &profiles,
         THIRD,

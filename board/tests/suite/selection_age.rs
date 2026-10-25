@@ -35,15 +35,6 @@ fn environment() -> wire::Environment {
         .expect("the compiled journal schema is positive")
 }
 
-fn projects() -> board::ProjectPolicy {
-    board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
-}
-
 fn all_projects() -> wire::TeamSubscription {
     wire::TeamSubscription {
         team: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
@@ -100,7 +91,7 @@ fn lease() -> LeaseHead {
 }
 
 fn placed(head: TaskHead, current: &str) -> Entry {
-    Entry::new(head, workflow(current), None, None, &projects()).expect("placed candidate")
+    Entry::new(head, workflow(current), None, None).expect("placed candidate")
 }
 
 fn placed_entry(name: &str, project: &str, current: &str, queue_origin: u64) -> Entry {
@@ -129,14 +120,7 @@ fn peer_entry(name: &str, project: &str, current: &str) -> Entry {
         disposition: ClaimDisposition::Active,
         acknowledged: 0,
     };
-    Entry::new(
-        head,
-        workflow(current),
-        Some(claim),
-        Some(lease()),
-        &projects(),
-    )
-    .expect("active peer")
+    Entry::new(head, workflow(current), Some(claim), Some(lease())).expect("active peer")
 }
 
 /// Every row scores the same, as a claimant whose profile matches nothing

@@ -75,7 +75,8 @@ fn has_credential_prefix(text: &str, prefix: &str) -> bool {
     })
 }
 
-const PROJECT: &str = "taste.policy";
+/// The project every taste curation proposal files under, mined or authored.
+pub(crate) const PROJECT: &str = "taste.policy";
 
 /// Recent fires carried per taste.
 ///

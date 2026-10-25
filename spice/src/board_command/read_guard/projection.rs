@@ -8,7 +8,6 @@ use super::*;
 /// another pass.
 pub(super) fn project_task_rows(
     observed: &bus::TaskSnapshot,
-    projects: &ProjectPolicy,
     residency: &wire::ResidencyHead,
     selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
 ) -> Result<(Vec<Entry>, Vec<BoardTask>), Outcome<CommandAnswer>> {
@@ -28,7 +27,6 @@ pub(super) fn project_task_rows(
         ),
     };
     let projection = TaskProjection {
-        projects,
         facts: observed.facts(),
         origin_threads: &origin_threads,
         creator_teams: &creator_teams,

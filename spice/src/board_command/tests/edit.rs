@@ -782,14 +782,11 @@ fn a_priority_the_allocator_does_not_score_is_refused() {
     }
 }
 
-/// A correction cannot move a task onto a resident-owned hidden route.
-///
-/// `task add` refuses to file there, so a correction that reached further
-/// than creation would be the way to put a manually filed row on a route
-/// only the resident is supposed to write.
+/// A correction refuses a malformed project without a revision and admits a
+/// well-spelled label of any run count, single-segment included.
 #[test]
-fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
-    let (_root, bus, epoch, _seats) = fixture("task-edit-project-hidden", 1);
+fn a_correction_refuses_malformed_projects_and_admits_any_exact_label() {
+    let (_root, bus, epoch, _seats) = fixture("task-edit-project-label", 1);
     let task = add(
         &bus,
         epoch,
@@ -801,10 +798,7 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
     let filed = board(&bus, epoch, Actor::Operator);
     let before = at(&filed, &task).statement.clone();
 
-    for (destination, reason) in [
-        (".oops", "task::edit-project-refused"),
-        (".sandbox.secret", "task::project-system-reserved"),
-    ] {
+    for destination in [".oops", "oops.", "oops..design", "Oops", "oops/design"] {
         let outcome = correct(
             &bus,
             epoch,
@@ -816,41 +810,35 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
         );
         assert!(
             matches!(
-                outcome,
-                Outcome::Refusal(ref refusal) if refusal.reason() == reason
+                &outcome,
+                Outcome::Refusal(refusal)
+                    if refusal.reason() == "task::edit-project-refused"
             ),
             "{destination} was not refused by name: {outcome:?}"
         );
     }
-
-    // A public destination outside the depth bounds is refused too, under a
-    // reason that says the destination rather than the route it protects.
-    let outcome = correct(
-        &bus,
-        epoch,
-        Actor::Operator,
-        &TaskEdit {
-            project: Some("nowhere.at.all.deeper".to_owned()),
-            ..only(&task)
-        },
-    );
-    assert!(
-        matches!(
-            outcome,
-            Outcome::Refusal(ref refusal)
-                if refusal.reason() == "task::edit-project-refused"
-        ),
-        "{outcome:?}"
-    );
-
-    let after = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&after, &task).statement.body.project, "board.test");
+    let refused = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&refused, &task).statement.body.project, "board.test");
     assert_eq!(
-        at(&after, &task).statement.position,
+        at(&refused, &task).statement.position,
         before.position,
         "a refused move must not cost a revision",
     );
     assert!(edit_facts(&bus, &task).is_empty());
+
+    for destination in ["oops", "nowhere.at.all.deeper"] {
+        correct(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &TaskEdit {
+                project: Some(destination.to_owned()),
+                ..only(&task)
+            },
+        );
+        let after = board(&bus, epoch, Actor::Operator);
+        assert_eq!(at(&after, &task).statement.body.project, destination);
+    }
 }
 
 /// Project correction does not move immutable creator-team allocation scope.

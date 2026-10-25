@@ -32,9 +32,9 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 17 carries each task statement's pitch, the one sentence a
-    /// surface leads with before its description.
-    pub const CURRENT: Self = Self(17);
+    /// Version 18 drops project visibility and depth policy from board
+    /// answers: a project is one exact label.
+    pub const CURRENT: Self = Self(18);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

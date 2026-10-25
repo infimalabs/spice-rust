@@ -140,8 +140,8 @@ fn run_session(operation: &OsString, lane: &OsString, ambient: &Ambient) -> io::
     let worktree = std::env::current_dir()?;
     let environment = crate::session_environment(ambient).rooted(worktree);
     let rendered = match operation {
-        BRIEFING => crate::session_command::lane_briefing(&environment, lane, None),
-        RESUME => crate::session_command::lane_resume_notice(&environment, lane, None),
+        BRIEFING => crate::session_command::lane_briefing(&environment, lane),
+        RESUME => crate::session_command::lane_resume_notice(&environment, lane),
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

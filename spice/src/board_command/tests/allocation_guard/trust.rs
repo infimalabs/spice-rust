@@ -71,14 +71,13 @@ fn environment_movement_refuses_planned_claim(rule: &str, expected: &str) {
         &command,
         &win,
         None,
-        &guard_projects(),
         &board::NextConfig::default(),
         None,
     )
     .expect("the granted task is claimable");
 
     revoke_trust(&bus, &digest);
-    let refusal = guard_refusal(commit_claim(&bus, &command, &win, &guard_projects(), plan));
+    let refusal = guard_refusal(commit_claim(&bus, &command, &win, plan));
     assert_eq!(refusal, format!("board::witness-moved: {expected}"));
     assert!(at(&board(&bus, epoch, actor), &task).claim.is_none());
     clean(&root, bus);

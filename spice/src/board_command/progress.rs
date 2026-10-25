@@ -11,19 +11,17 @@ pub(super) fn claim_reclaim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    claim_reclaim_with_clock(bus, command, renew, projects, current_instant)
+    claim_reclaim_with_clock(bus, command, renew, current_instant)
 }
 
 pub(super) fn claim_reclaim_with_clock(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     renew: &ClaimRenew,
-    projects: &ProjectPolicy,
     clock: impl FnOnce() -> Result<Instant, Outcome<CommandAnswer>>,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match command_task_snapshot(bus, command, &renew.task, projects) {
+    let snapshot = match command_task_snapshot(bus, command, &renew.task) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -84,9 +82,8 @@ pub(super) fn task_done(
     command: &wire::AdmittedCommand,
     done: &TaskDone,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match command_task_snapshot(bus, command, &done.task, projects) {
+    let snapshot = match command_task_snapshot(bus, command, &done.task) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -156,7 +153,7 @@ pub(super) fn task_done(
     let next = if carried {
         Some(claim_activation_next_action(entry))
     } else {
-        projected_done_next_action(&snapshot, entry, &transition, projects)
+        projected_done_next_action(&snapshot, entry, &transition)
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
@@ -729,7 +726,6 @@ fn projected_done_next_action(
     snapshot: &ValidatedSnapshot,
     entry: &Entry,
     transition: &board::Transition,
-    projects: &ProjectPolicy,
 ) -> Option<Box<str>> {
     let mut claim = entry
         .claim()
@@ -741,7 +737,6 @@ fn projected_done_next_action(
         transition.next().clone(),
         Some(claim),
         entry.lease().cloned(),
-        projects,
     )
     .expect("an admitted transition preserves a valid task entry")
     .with_grouped(entry.grouped())
@@ -937,11 +932,9 @@ fn prepare_review(
     command: &wire::AdmittedCommand,
     review: &TaskReview,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Result<PreparedReview, Outcome<CommandAnswer>> {
     let roots = task_review_roots(review);
-    let snapshot =
-        validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots, projects)?;
+    let snapshot = validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots)?;
     if let Some(entry) = task_entry(&snapshot.entries, &review.task)
         && !entry.is_filed()
     {
@@ -964,9 +957,7 @@ fn prepare_review(
             admit_plan_transition(&snapshot, entry, command, &transition, None)?;
             entry.statement().clone()
         }
-        body::Verdict::Finding => {
-            correction_statement(&snapshot, command, entry, review, projects)?
-        }
+        body::Verdict::Finding => correction_statement(&snapshot, command, entry, review)?,
     };
     let record = ReviewRecord {
         verdict,
@@ -997,9 +988,8 @@ pub(super) fn task_review(
     command: &wire::AdmittedCommand,
     review: &TaskReview,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    task_review_with(bus, command, review, repository, projects, || {})
+    task_review_with(bus, command, review, repository, || {})
 }
 
 pub(super) fn task_review_with(
@@ -1007,15 +997,14 @@ pub(super) fn task_review_with(
     command: &wire::AdmittedCommand,
     review: &TaskReview,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let prepared = match prepare_review(bus, command, review, repository, projects) {
+    let prepared = match prepare_review(bus, command, review, repository) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
     after_validation();
-    commit_review(bus, command, review, repository, projects, prepared)
+    commit_review(bus, command, review, repository, prepared)
 }
 
 fn commit_review(
@@ -1023,7 +1012,6 @@ fn commit_review(
     command: &wire::AdmittedCommand,
     review: &TaskReview,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
     prepared: PreparedReview,
 ) -> Outcome<CommandAnswer> {
     let PreparedReview {
@@ -1070,7 +1058,6 @@ fn commit_review(
         workflow.clone(),
         Some(claim.clone()),
         entry.lease().cloned(),
-        projects,
     )
     .expect("an admitted review preserves a valid task entry")
     .with_grouped(entry.grouped())
@@ -1091,7 +1078,6 @@ fn commit_review(
             origin: &origin,
             creation: creation.as_ref(),
             repository,
-            projects,
         },
     ) {
         return outcome;

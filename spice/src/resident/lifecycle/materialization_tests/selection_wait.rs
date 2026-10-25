@@ -3,10 +3,9 @@ use super::*;
 
 #[test]
 fn a_held_design_short_of_a_ready_pass_wakes_its_lane_only_for_operator_direction() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     commit_and_advance(
         &bus,
-        &projects,
         &mut projection,
         held_claim_write(&bus, instant(2), |statement, workflow| {
             statement.intent = Some(wire::TaskIntent::Design);
@@ -26,7 +25,7 @@ fn a_held_design_short_of_a_ready_pass_wakes_its_lane_only_for_operator_directio
     );
     assert_eq!(resolution(&bus, &projection), Resolution::Idle);
 
-    commit_and_advance(&bus, &projects, &mut projection, operator_direction_write());
+    commit_and_advance(&bus, &mut projection, operator_direction_write());
     assert_eq!(
         resolution(&bus, &projection),
         Resolution::Attempt {
@@ -38,15 +37,10 @@ fn a_held_design_short_of_a_ready_pass_wakes_its_lane_only_for_operator_directio
     bus.shutdown().expect("selection wait fixture stops");
 }
 
-fn commit_and_advance(
-    bus: &Bus,
-    projects: &ProjectPolicy,
-    projection: &mut Projection,
-    write: JournalWrite,
-) {
+fn commit_and_advance(bus: &Bus, projection: &mut Projection, write: JournalWrite) {
     committed(bus.commit(write).expect("fixture write commits"));
     projection
-        .advance(&bus.task_snapshot().expect("snapshot reads"), projects)
+        .advance(&bus.task_snapshot().expect("snapshot reads"))
         .expect("projection advances");
 }
 

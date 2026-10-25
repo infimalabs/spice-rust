@@ -241,7 +241,6 @@ fn speech_configuration_refuses_malformed_settings() {
 #[test]
 fn current_metadata_resolves_and_removed_spellings_refuse() {
     let tracked = concat!(
-        "[tasks]\nhidden_stems = ['sandbox']\n",
         "[policy]\nenv_names = ['FIXTURE_INBOX']\n",
         "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
     );
@@ -249,18 +248,6 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
 
     let current = resolve(documents(Some(tracked), Some(local)))
         .expect("current resolution admits typed shared metadata");
-    assert_eq!(
-        current.root().tasks().hidden_stems(),
-        ["maxim_proposal", "sandbox"]
-    );
-    assert_eq!(
-        current.root().tasks().project_min_depth(),
-        dialect::PROJECT_MIN_DEPTH as u64
-    );
-    assert_eq!(
-        current.root().tasks().project_max_depth(),
-        dialect::PROJECT_MAX_DEPTH as u64
-    );
     assert_eq!(current.root().policy().env_names(), ["FIXTURE_INBOX"]);
     assert_eq!(current.root().taste().bag().tastes().len(), 1);
     assert_eq!(current.root().lock().named().len(), 1);
@@ -274,8 +261,7 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
     );
 
     for (document, path) in [
-        ("[tasks]\nbase_stems = ['task']\n", "tasks.base_stems"),
-        ("[tasks]\nstems = ['rim']\n", "tasks.stems"),
+        ("[tasks]\nhidden_stems = ['maxim_proposal']\n", "tasks"),
         (
             "[policy]\npredecessor_only = ['removed']\n",
             "policy.predecessor_only",
@@ -367,15 +353,10 @@ fn every_two_layer_precedence_pair_is_deterministic() {
 }
 
 #[test]
-fn shared_metadata_is_tracked_only_and_enforces_names_and_depths() {
+fn shared_metadata_is_tracked_only_and_enforces_names() {
     let resolved = resolve(documents(
         Some(
             r#"
-[tasks]
-hidden_stems = ["sandbox", "oops", "sandbox"]
-project_min_depth = 2
-project_max_depth = 3
-
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 "#,
@@ -385,45 +366,23 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     .expect("shared tracked metadata resolves");
 
     assert_eq!(
-        resolved.root().tasks().hidden_stems(),
-        ["maxim_proposal", "sandbox", "oops"]
-    );
-    assert_eq!(resolved.root().tasks().project_min_depth(), 2);
-    assert_eq!(resolved.root().tasks().project_max_depth(), 3);
-    assert_eq!(
         resolved.root().policy().env_names(),
         ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
-    for path in [
-        "tasks.hidden_stems",
-        "tasks.project_min_depth",
-        "tasks.project_max_depth",
-        "policy.env_names",
-    ] {
-        assert_eq!(path_source(&resolved, path), ConfigSource::Tracked);
-    }
     assert_eq!(
-        path_builtin(&resolved, "tasks.hidden_stems"),
-        Some(Builtin::Strings(&["maxim_proposal"]))
+        path_source(&resolved, "policy.env_names"),
+        ConfigSource::Tracked
     );
 
     let error = resolve(documents(
         Some(
             r#"
-[tasks]
-project_min_depth = 4
-project_max_depth = 3
-
 [policy]
 env_names = ["FIXTURE_INBOX", "FIXTURE_INBOX"]
 "#,
         ),
         Some(
             r#"
-[tasks]
-project_min_depth = 1
-project_max_depth = 2
-
 [policy]
 env_names = ["LOCAL_NAME"]
 "#,
@@ -435,22 +394,7 @@ env_names = ["LOCAL_NAME"]
         (
             ConfigSource::Tracked,
             IssueKind::Malformed,
-            "tasks.project_min_depth",
-        ),
-        (
-            ConfigSource::Tracked,
-            IssueKind::Malformed,
             "policy.env_names",
-        ),
-        (
-            ConfigSource::Local,
-            IssueKind::Policy,
-            "tasks.project_min_depth",
-        ),
-        (
-            ConfigSource::Local,
-            IssueKind::Policy,
-            "tasks.project_max_depth",
         ),
         (ConfigSource::Local, IssueKind::Policy, "policy.env_names"),
     ] {
@@ -464,39 +408,6 @@ env_names = ["LOCAL_NAME"]
             }),
             "missing {source:?} {kind:?} at {path}: {:#?}",
             error.issues()
-        );
-    }
-}
-
-#[test]
-fn hidden_stems_refuse_each_malformed_value_at_its_index() {
-    for (document, index, expected) in [
-        ("[tasks]\nhidden_stems = ['']\n", 0, "must match"),
-        ("[tasks]\nhidden_stems = ['.oops']\n", 0, "must match"),
-        ("[tasks]\nhidden_stems = ['bad-stem']\n", 0, "must match"),
-        ("[tasks]\nhidden_stems = ['Bad']\n", 0, "must match"),
-        ("[tasks]\nhidden_stems = ['two.parts']\n", 0, "must match"),
-        (
-            "[tasks]\nhidden_stems = ['sandbox', 'bad-stem']\n",
-            1,
-            "must match",
-        ),
-    ] {
-        let error = resolve(documents(Some(document), None))
-            .expect_err("malformed hidden metadata must refuse");
-        let issue = error
-            .issues()
-            .iter()
-            .find(|issue| {
-                issue.kind() == IssueKind::Malformed
-                    && issue.path().is_some_and(|path| {
-                        path.to_string() == format!("tasks.hidden_stems[{index}]")
-                    })
-            })
-            .unwrap_or_else(|| panic!("missing indexed issue for {document:?}: {error}"));
-        assert!(
-            issue.message().contains(expected),
-            "{document:?}: {issue:?}"
         );
     }
 }
@@ -686,11 +597,6 @@ words = ["done"]
 message = "Done."
 enabled = false
 scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["omp"], models = ["gpt-current"], phases = ["pre-commit-success"] }
-
-[tasks]
-hidden_stems = ["sandbox"]
-project_min_depth = 2
-project_max_depth = 3
 
 [judge]
 enabled = true

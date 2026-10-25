@@ -1,5 +1,5 @@
 use super::{View, render, review_history};
-use crate::task::{Entry, ProjectPolicy};
+use crate::task::Entry;
 use wire::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, Fact, Instant, Phase, Seq, TaskHead, TaskStamp,
     WireVersion, WorkflowHead, WorkflowStatus, body,
@@ -51,8 +51,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         deferral: None,
         generation: 0,
     };
-    let projects = ProjectPolicy::new(Vec::new(), 2, 8).expect("fixture project policy");
-    Entry::new(statement, workflow, None, None, &projects).expect("fixture entry is valid")
+    Entry::new(statement, workflow, None, None).expect("fixture entry is valid")
 }
 
 fn envelope<T: Body>(position: u64, actor: Actor, body: T) -> Envelope<AnyFact> {

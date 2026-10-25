@@ -491,11 +491,10 @@ fn task_session(actor: &str) -> &str {
 }
 
 pub(super) fn compose_message(meta: Metadata<'_>) -> String {
-    let stem = meta.project.split('.').next().unwrap_or(meta.project);
-    let prefix = if stem.is_empty() {
+    let prefix = if meta.project.is_empty() {
         String::new()
     } else {
-        format!("{stem}: ")
+        format!("{}: ", meta.project)
     };
     let phase = if meta.phase == "todo" || meta.phase.is_empty() {
         String::new()

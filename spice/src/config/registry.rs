@@ -320,27 +320,6 @@ configuration_registry! {
         class: MachineLocal,
         flag: None,
     }
-    fixed "tasks.hidden_stems" {
-        kind: StringList,
-        builtin: Some(Builtin::Strings(&board::BUILTIN_HIDDEN_STEMS)),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "tasks.project_min_depth" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(dialect::PROJECT_MIN_DEPTH as u64)),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "tasks.project_max_depth" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(dialect::PROJECT_MAX_DEPTH as u64)),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
     fixed "judge.enabled" {
         kind: Boolean,
         builtin: Some(Builtin::Absent),

@@ -216,7 +216,6 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
         .born()
         .expect("fixture handle carries a birth stamp");
     serde_json::from_value(serde_json::json!({
-        "visibility": {"kind": "public"},
         "origin_thread": "operator",
         "presentation_title": "Rebuild the watchband",
         "statement": {

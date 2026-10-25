@@ -300,8 +300,7 @@ fn progress(
         states[task] = Progress::Moving;
         return Progress::Moving;
     }
-    if !entry.is_filed() || entry.project().visibility().is_hidden() || workflow.deferral.is_some()
-    {
+    if !entry.is_filed() || workflow.deferral.is_some() {
         states[task] = Progress::Distinct;
         return Progress::Distinct;
     }
@@ -783,7 +782,7 @@ impl RankingGraph {
         let mut priority_edges = Vec::new();
         let mut dependents = vec![Vec::new(); nodes];
         for (entry_index, entry) in entries.iter().enumerate() {
-            if !unsettled_public(entry) {
+            if !unsettled_filed(entry) {
                 continue;
             }
             let dependent = entry_nodes[entry_index];
@@ -884,9 +883,8 @@ fn downstream_weights(graph: &RankingGraph) -> Vec<usize> {
     weights
 }
 
-fn unsettled_public(entry: &Entry) -> bool {
-    let workflow = entry.workflow();
-    !entry.project().visibility().is_hidden() && entry.is_filed() && workflow.status.is_pending()
+fn unsettled_filed(entry: &Entry) -> bool {
+    entry.is_filed() && entry.workflow().status.is_pending()
 }
 
 /// Whether this lane may be *handed* the entry.
@@ -951,9 +949,7 @@ pub fn is_released_by(entry: &Entry, actor: &Actor) -> bool {
 /// Allocation and stealing agree on all of this and disagree on possession
 /// alone, so possession is the only thing either caller states for itself.
 fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
-    !entry.project().visibility().is_hidden()
-        && entry.is_filed()
-        && operational(entry, actor, completed)
+    entry.is_filed() && operational(entry, actor, completed)
 }
 
 fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
@@ -1112,8 +1108,7 @@ pub fn stealable_entry(
     _actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    !entry.project().visibility().is_hidden()
-        && entry.is_filed()
+    entry.is_filed()
         && operational_without_assignment(entry, satisfied)
         && environment_satisfied(entry, environment)
 }

@@ -12,15 +12,13 @@ use wire::{
     WireVersion, Witness, body, intent,
 };
 
-use crate::{Entry, ProjectPolicy};
+use crate::Entry;
 
 const CHANGED: &str = "lapse inputs changed before expiry could commit";
 
 /// Durable timer inputs for one claim expiry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Request {
-    /// Captured project vocabulary used by both expiry observations.
-    pub projects: ProjectPolicy,
     /// Identity stored with the canonical command receipt.
     pub command: CanonicalUuid,
     /// Occupant whose lease timer fired.
@@ -260,7 +258,6 @@ fn observe(
         workflow.body().clone(),
         Some(claim.body().clone()),
         Some(lease.body().clone()),
-        &request.projects,
     )
     .map_err(|error| GuardError::Invalid(format!("task {task} is invalid: {error}")))?;
     admit_expiry(claim.body(), lease.body(), request)?;
@@ -498,18 +495,8 @@ mod tests {
         "1kKRRsDP".parse().expect("task stamp")
     }
 
-    fn projects() -> crate::ProjectPolicy {
-        crate::ProjectPolicy::new(
-            Vec::new(),
-            dialect::PROJECT_MIN_DEPTH as u64,
-            dialect::PROJECT_MAX_DEPTH as u64,
-        )
-        .expect("fixture project policy")
-    }
-
     fn lapse_request(command: u8) -> Request {
         Request {
-            projects: projects(),
             command: uuid(command),
             occupant: uuid(21),
             epoch: uuid(22),

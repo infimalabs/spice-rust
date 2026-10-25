@@ -12,18 +12,17 @@ permalink, `#/chat/design/{stamp}`, is an arrival: it opens
 with `#/chat`. Every unrecognized location normalizes to Chat with the
 unavailable-location notice.
 
-Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
-header, composer, and stream without a nested vertical scroller. Side-by-side
+Consoles of every width, height, and membership keep a usable header,
+composer, and stream without a nested vertical scroller. Side-by-side
 consoles share one faint dividing edge in the left console's soft edge tone,
 painted on that console's end edge from the foot of the task band to the
 consoles' bottom, so the earlier console's controls read as in front of it.
 
-A time the console shows never reads in UTC unless UTC is the viewer's zone.
-Live text reads as relative time that advances on its own deadline, with the
-full local time on hover. Static renderings that cannot advance, such as a task
-overview's Mermaid labels, read in compact local time, so the diagram's source,
-and therefore its rendered image, stays fixed while the clock moves. Canonical
-UTC instants appear only in machine-readable attributes and payloads.
+Console times never read in UTC unless UTC is the viewer's zone. Live text is
+relative, advancing on its own deadline, with full local time on hover;
+static renderings such as a task overview's Mermaid labels use compact local
+time, so their source and image stay fixed. Canonical UTC
+instants appear only in machine-readable attributes and payloads.
 
 ## Working groups and teams
 
@@ -41,8 +40,8 @@ heading row matches Jobs, Resident topology, and Provider quota at every width.
 A design tile is an agent tile's twin: its handle in its accent, its standing
 ending line one, its title beneath, and a click opening its read view. It wears
 its console channel's accent, or the Design base while ungrouped. A
-working-group card is its Open control: click it, or focus it and press Enter
-or Space, to mount that group's console.
+working-group card is its Open control: activating it mounts that group's
+console.
 
 A group console is a team console with tasks and agents swapped: one composer
 per design, posting to that design's room, under the
@@ -113,12 +112,11 @@ The toolbar has two rows: the task strip, then a status band led by the live
 ticker and closed by presence pips directly above the composer's team menu, no
 wider than that round control, so the ticker runs on over TURBO. The ticker's
 age aligns with the composer ages below at every width. The status band is the
-console's top edge, ruled in the soft edge tone so the open tab row meets the
-console quietly. Where two consoles touch, their bands meet flush and square
-like the tab strips above, and only the left console draws the half-width
-hairline divider, in the page colour the open tab row shows rather than
-either console's flavor, so the head reads as continuing down the seam. A
-corner at the browser edge stays square.
+console's top edge, ruled in the soft edge tone. Where two consoles touch, their
+bands meet flush and square like the tab strips above, and only the left
+console draws the half-width hairline divider, in the open tab row's page
+colour, so the head reads as continuing down the seam. A corner at the browser
+edge stays square.
 
 Pips show how many agents there are and whether each is working, stalled, or
 off: one per member in canonical order, coloured by active, queued, waiting,
@@ -136,38 +134,35 @@ bare `new turn` label. An empty fleet reserves no pips and invents no status.
 
 ## Task strips
 
-The command bar hangs two global totals from its top edge immediately before
-the Spice button, execution then Design, one task-tab gap apart; the Design
-total stands off the button by the button's own gap from the window edge.
-Each team and open working group has one local strip. Every total and strip
-uses the horned-tab construction, and every total is badge-only with one
-fixed footprint. The
-global totals open all open execution work and all open Design work; no
-per-stem breakdown appears in the command bar, and a stem is reached through
-its Work deep link. The Design total opens Design-owned work: each Design past
-plan or review intake and each open task it directly controls; a Design in
-intake is execution work. Accountable ownership, never dependency
-reachability or group placement, chooses the global total, so a
-Design-produced Plan counts right and the tasks it creates for execution count
-left. Local docking never removes a task from its global total.
+The command bar hangs two global totals, execution then Design, from its top
+edge before the Spice button, one task-tab gap apart, the Design total off the
+button by the button's gap from the window edge. Each team and open
+working group has one local strip. Totals and strips use the horned-tab
+construction; every total is badge-only with one fixed footprint. The global
+totals open all open execution and Design work; the command bar breaks out no
+project, which its Work deep link reaches. The Design total opens each Design
+past plan or review intake and each open task it directly controls; a Design in
+intake is execution work. Accountable ownership, never dependency reachability
+or group placement, chooses the global total, so a Design-produced Plan counts
+right and the tasks it creates for execution count left. Local docking never
+removes a task from its global total.
 
 Local placement follows
 [claim-bound placement](../docs/product/invariants/identity.md#work-claim-bound-work-has-two-visible-placements):
 a team strip tabs each task its lanes actively claim, Design work included, in
 that lane's accent; a group strip tabs each lane claiming work associated with
-its Designs. Local tabs run right to left in the order of the composers
-below, so each stands over its own column: a team's by lane, each lane's tabs
-together, and a group's by the first Design each lane's work serves. A local
-total selects exactly what its tabs stand for, and local
-strips have no stem roll-ups. A team or group total spans the pip column flush
-to the console's right edge, so its badge centres over the pips and the team
-menu below them. Tabs past a total scroll under edge fades. Local tabs
-meet each other and the total without gap, border, or interior rounding; only
-the strip's outside ends keep the thick rail and corner.
+its Designs. Local tabs run right to left in the composers' order, each over
+its own column: a team's by lane, each lane's tabs together, and a group's by
+the first Design each lane's work serves. A local total selects exactly what
+its tabs stand for, with no project roll-ups. A team or group total spans the
+pip column flush to the console's right edge, centring its badge over the pips
+and the team menu. Tabs past a total scroll under edge fades. Local tabs meet
+each other and the total without gap, border, or interior rounding; only the
+strip's outside ends keep the thick rail and corner.
 
 An accented tab's text is accent-tinted over a 5% accent ground, 10% on hover,
-and its top rail is the accent mixed into the line color, stronger on hover.
-Unclaimed handles and totals keep the neutral rail, which undims one step on
+under a top rail of the accent mixed into the line color, stronger on hover.
+Unclaimed handles and totals keep the neutral rail, undimming one step on
 hover. Every count badge is one neutral
 [open-task total](../docs/product/loops.md#the-jitter-contract). Gate waits
 read the resident's
@@ -181,9 +176,8 @@ title and accessible name with that count; the overview's attention rail then
 reads Needs attention. Local task tabs carry no mark. Closing any overview
 returns focus to its opener.
 
-Project controls select the exact dotted project, and a relationship control
-extends the selection with that task, in the resident's offer order, possibly
-empty.
+Project controls select the exact project; a relationship control extends the
+selection with that task, in the resident's offer order, possibly empty.
 
 ## Group toolbar
 
@@ -197,16 +191,15 @@ A working group's toolbar keeps team geometry, total first and lane tabs after:
 | Ticker: newest member activity | Ticker: newest words across the group's rooms; a contribution names its lane and vote |
 
 A design pip reads concluded done, concluded collapsed, or deleted once
-terminal, even while still grouped, and open passive outside every group;
-otherwise claimed while a lane claims it for a pass, else the resident's pass
-cycle state. Its colour is the tone its Design's task-overview graph card
-wears, so it agrees with the tab marks: in flight and ready for proposal in the
-live tone, awaiting decision in warning, blocked in danger, and so on. A
-passive Design's pip is a ring in that tone; a terminal or unavailable one
-fades. An unavailable row or cycle invents no standing, and each pip's
-accessible label names it. The pips close the status row above the group menu.
-Each design's tile in the Spice menu's Working groups catalog leads with the
-same pip at an agent tile's member size, so readiness reads there without
+terminal, even while grouped, and open passive outside every group; otherwise
+claimed while a lane claims it for a pass, else the resident's pass cycle
+state. It wears its Design's task-overview graph-card tone, so it agrees with
+the tab marks: in flight and ready for proposal live, awaiting decision
+warning, blocked danger. A passive Design's pip is a ring in that
+tone; a terminal or unavailable one fades. An unavailable row or cycle invents
+no standing, and each pip's accessible label names it. The pips close the
+status row above the group menu, and each design's tile in the Working groups
+catalog leads with the same pip at member size, so readiness reads without
 opening the group.
 
 ## Team composer controls
@@ -214,37 +207,35 @@ opening the group.
 Beside the drafts, one fixed-geometry panel holds team TURBO, the arrangement
 menu, the speech and allocation sliders, and SEND. The arrangement menu opens
 swap and join beside the panel and is disabled, naming why, when no other team
-exists. Team and global TURBO are separately admitted. Every TURBO, team,
-group, or global, reads the one word TURBO. Off it rests as flush glass like the
-menu with muted lettering; on it is backlit as a lit slider is, washed in the
-amber of the sliders' high stop, pooling at its foot and leaking a dull halo
-past the edge, with ink lettering. The word is decorative; pressed state and
-label are the accessible truth.
+exists. Team and global TURBO are separately admitted; every TURBO reads the
+one word TURBO. Off, it rests as flush glass with muted lettering; on, it is
+backlit in the sliders' high-stop amber, pooling at its foot and leaking a dull
+halo past the edge, with ink lettering.
+The word is decorative; pressed state and label are the accessible truth.
 
 The team menu can hide its team surface without changing membership, lanes,
-claims, drafts, or work; activating any of its agent lane links shows it again
-before focusing the Chat composer.
+claims, drafts, or work; any of its agent lane links shows it again and focuses
+the Chat composer.
 
 The speech slider reads Quiet / Speak / Narrate and the allocation slider Steer
 / Drive / Drain; Up/Right raise and Down/Left lower. A speech selection applies
 to the team's browser-local policy in the input that paints it. Quiet voices
 nothing automatically. Speak voices resident-classified final answers and
 acknowledged steering; Narrate voices every live card. Either mode voices a
-card by two rules: a card that acknowledges a steering key is voiced in full
-with its protocol headers removed, and any other card is voiced by its first
-and last meaningful paragraphs, where list items are detail to read (a card
-that opens with a list speaks its first item; a closing list is silent). None
+steering-key acknowledgment in full without protocol headers, and any other
+card by its first and last meaningful paragraphs, where list items are detail
+(an opening list speaks its first item; a closing list is silent). None
 reads fenced code, quoted lines, or Markdown marks. A pending allocation
 command admits no send and lights no recipients. Reduced motion removes slider
 travel, never a state.
 
 SEND is two optical layers: an emitter spreads an even diffuse field across the
-disc, ending at the glass edge with no ring or hotspot, and a frosted face
-collects uneven perimeter catches, brighter low left and fainter high right, as
-the sliders are lit. Every state changes only field intensity, face pressure,
-and its own typed rims above the glass. An idle team, with no member starting or
+disc to the glass edge, with no ring or hotspot, under a frosted face
+collecting uneven perimeter catches, brighter low left and fainter high right,
+as the sliders are lit. States change only field intensity, face pressure, and
+its typed rims above the glass. An idle team, with no member starting or
 running and nothing drafted, carries no light: the emitter goes dark, SEND rests
-as flush glass like TURBO and the menu, and sliders keep their stop's accent
+as flush glass like TURBO, and sliders keep their stop's accent
 without glass catches or halo.
 
 SEND's rim is lit in its actual recipients' accents, continuous for one and
@@ -268,20 +259,19 @@ the focused agent's for a submit, the theme's ink for a broadcast.
 
 ## Speech
 
-Under `spice app` the console speaks through the desktop shell's own
-synthesizer, not the web view's `speechSynthesis`: WebKit offers a page only
-the system's built-in voices, so the premium voices an operator downloads
-would never be heard. The shell injects `window.spiceShellSpeech` at document
-start: `getVoices()` lists each voice's identifier, name, language, quality,
-and whether it is the system language's default; `speak(text, identifier,
-rate, handlers)` replaces the current utterance and calls `onstart`, `onend`,
-or `onerror` with `{error}`; `cancel()` silences it, after which its handlers
-never fire. Requests travel over the shell's IPC channel and answers arrive as
-evaluated script, so the surface needs no token and no content-security
-exception. A new document silences whatever the previous one left speaking.
-When the surface is present the speech controller uses it with the same
-queue, ownership, voice spread, and stop-all lifecycle; a browser never has
-it and keeps `speechSynthesis`.
+Under `spice app` the console speaks through the desktop shell's synthesizer,
+because WebKit's `speechSynthesis` offers only built-in voices, not an
+operator's downloaded premium voices. The shell injects
+`window.spiceShellSpeech` at document start: `getVoices()` lists each voice's
+identifier, name, language, quality, and system-default flag; `speak(text,
+identifier, rate, handlers)` replaces the current utterance and calls
+`onstart`, `onend`, or `onerror` with `{error}`; `cancel()` silences it, after
+which its handlers never fire. Requests travel over shell IPC and answers
+arrive as evaluated script, so the surface needs no token or content-security
+exception. A new document silences what the previous one left speaking. The
+speech controller uses the surface, when present, with the same queue,
+ownership, voice spread, and stop-all lifecycle; a browser keeps
+`speechSynthesis`.
 
 ## Composer and stream
 
@@ -321,8 +311,8 @@ oversized document is replaced by what fits.
 An unmodified ArrowUp with a collapsed caret on a composer's first rendered
 line recalls the previous entry with the caret at its start; ArrowDown on the
 last line moves forward with the caret at its end, finally restoring the unsent
-draft. Otherwise, with a selection or modifier, or while an input method
-composes, the arrows move the caret. Edits to a recalled entry stay with it
+draft. With a selection, a modifier, or a composing input method, the arrows
+move the caret. Edits to a recalled entry stay with it
 while walking; history changes only on send, which ends every walk and records
 a sent edit as a new entry.
 
@@ -331,10 +321,10 @@ a sent edit as a new entry.
 A lone tool image renders as a cover card. Two to four such cards in a row from
 one speaker, each at most two seconds after the previous, crystallize into one
 card at the run's first place; a fifth image, a longer gap, another speaker, or
-another card starts a new run. The crystal keeps one card's footprint, divided
-into one cell per image in capture order, following each image's decoded aspect
-and the card's box so no image is badly cropped or shrunk to a sliver; cells
-re-divide as images load and the box changes. Each cell opens its own image,
+another card starts a new run. The crystal keeps one card's footprint, one
+cell per image in capture order, sized from each image's decoded aspect and the
+card's box so none is badly cropped or shrunk to a sliver; cells re-divide as
+images load or the box changes. Each cell opens its own image,
 and hover and focus mark only that cell. With a lane image open full size,
 Right Arrow opens the next newer image and Left Arrow the previous one; each
 cell is one stop, navigation never crosses lanes, and the ends do not wrap.

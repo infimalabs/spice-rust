@@ -184,9 +184,8 @@ pub(in crate::board_command) fn task_delete(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     delete: &TaskDelete,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    settle(bus, command, Settlement::Delete(delete), projects)
+    settle(bus, command, Settlement::Delete(delete))
 }
 
 /// Close a task as completed on the operator's word, whatever phase remains.
@@ -198,9 +197,8 @@ pub(in crate::board_command) fn task_close(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     close: &TaskClose,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    settle(bus, command, Settlement::Close(close), projects)
+    settle(bus, command, Settlement::Close(close))
 }
 
 /// Conclude an open, unheld Design done or collapsed on the operator's word.
@@ -211,9 +209,8 @@ pub(in crate::board_command) fn task_conclude(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     conclude: &TaskConclude,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    settle(bus, command, Settlement::Conclude(conclude), projects)
+    settle(bus, command, Settlement::Conclude(conclude))
 }
 
 /// The decision write one staged conclusion joins: its journal write, the
@@ -230,7 +227,6 @@ pub(in crate::board_command) fn stage_conclusion(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     conclude: &TaskConclude,
-    projects: &ProjectPolicy,
     decision: DecisionWrite<'_>,
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let DecisionWrite { write, decided, at } = decision;
@@ -239,7 +235,6 @@ pub(in crate::board_command) fn stage_conclusion(
         bus,
         command.actor().clone(),
         std::slice::from_ref(settlement.handle()),
-        projects,
     )?;
     guard_task_projection(write, snapshot.task_barrier.clone());
     let entry = admitted_entry(&snapshot, settlement)?;
@@ -254,7 +249,6 @@ pub(in crate::board_command) fn stage_conclusion(
             at,
             oops_generation,
         },
-        projects,
     )
     .map(|(_, closed)| closed)
 }
@@ -268,7 +262,6 @@ pub(in crate::board_command) fn stage_rejection(
     command: &wire::AdmittedCommand,
     rejected: &[TaskHandle],
     validation: &str,
-    projects: &ProjectPolicy,
     decision: DecisionWrite<'_>,
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let DecisionWrite {
@@ -276,7 +269,7 @@ pub(in crate::board_command) fn stage_rejection(
         decided: cause,
         at,
     } = decision;
-    let snapshot = validated_working_snapshot(bus, command.actor().clone(), rejected, projects)?;
+    let snapshot = validated_working_snapshot(bus, command.actor().clone(), rejected)?;
     guard_task_projection(write, snapshot.task_barrier.clone());
     let mut closed = Vec::with_capacity(rejected.len());
     for handle in rejected {
@@ -303,7 +296,6 @@ pub(in crate::board_command) fn stage_rejection(
                 at,
                 oops_generation: None,
             },
-            projects,
         )?;
         closed.push(entry.handle().clone());
         for controlled in controlled {
@@ -321,7 +313,6 @@ pub(in crate::board_command) fn stage_rejection(
                     at,
                     oops_generation: None,
                 },
-                projects,
             )?;
             closed.push(controlled.handle().clone());
         }
@@ -333,13 +324,11 @@ fn settle(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     settlement: Settlement<'_>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(settlement.handle()),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -375,7 +364,6 @@ fn settle(
             at,
             oops_generation,
         },
-        projects,
     ) {
         Ok(staged) => staged,
         Err(outcome) => return outcome,
@@ -410,7 +398,6 @@ fn stage_with_controlled(
     entry: &Entry,
     settlement: Settlement<'_>,
     staging: Staging,
-    projects: &ProjectPolicy,
 ) -> Result<(Entry, Vec<TaskHandle>), Outcome<CommandAnswer>> {
     let controlled = if cascades_controlled(entry, settlement) {
         board::controlled_pending(&snapshot.entries, entry.born())
@@ -419,7 +406,7 @@ fn stage_with_controlled(
     };
     require_controlled_unheld(&controlled, settlement)?;
     let at = staging.at;
-    let (post, settled) = stage(write, entry, settlement, staging, projects)?;
+    let (post, settled) = stage(write, entry, settlement, staging)?;
     if controlled.is_empty() {
         return Ok((post, Vec::new()));
     }
@@ -440,7 +427,6 @@ fn stage_with_controlled(
                 at,
                 oops_generation: None,
             },
-            projects,
         )?;
         closed.push(controlled.handle().clone());
     }
@@ -454,7 +440,6 @@ fn stage(
     entry: &Entry,
     settlement: Settlement<'_>,
     staging: Staging,
-    projects: &ProjectPolicy,
 ) -> Result<(Entry, PendingFact), Outcome<CommandAnswer>> {
     let Staging {
         cause,
@@ -465,7 +450,7 @@ fn stage(
         .claim()
         .filter(|claim| claim.disposition == ClaimDisposition::Active)
         .map(|claim| claim.actor.clone());
-    let post = projected_settled_entry(entry, settlement, at, claimed.is_some(), projects);
+    let post = projected_settled_entry(entry, settlement, at, claimed.is_some());
     let settled = settlement.fact(write, entry, claimed.clone(), cause)?;
     let workflow = post.workflow().clone();
     write.workflow_head(entry.born().clone(), settled, move |_| workflow);
@@ -667,7 +652,6 @@ fn projected_settled_entry(
     settlement: Settlement<'_>,
     at: Instant,
     release_claim: bool,
-    projects: &ProjectPolicy,
 ) -> Entry {
     let mut workflow = entry.workflow().clone();
     let conclusion = match settlement {
@@ -705,7 +689,6 @@ fn projected_settled_entry(
         workflow,
         claim,
         entry.lease().cloned(),
-        projects,
     )
     .expect("settling an admitted task preserves a valid historical entry")
     .with_grouped(entry.grouped())

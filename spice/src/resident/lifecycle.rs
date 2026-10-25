@@ -389,7 +389,7 @@ impl Runtime {
         self.projection
             .observe_roles(super::principal_surface::roles(bus)?);
         loop {
-            self.projection.advance(&snapshot, &config.projects)?;
+            self.projection.advance(&snapshot)?;
             if !self.release_changed_vendor_hold(bus, epoch, &snapshot)? {
                 break;
             }
@@ -615,10 +615,7 @@ impl Runtime {
                         lane,
                         occupant,
                     },
-                    crate::board_command::AllocationPolicy {
-                        projects: &config.projects,
-                        allocation: &config.allocation,
-                    },
+                    &config.allocation,
                 )
                 .map_err(unit_outcome)?;
                 let launched = lane_surface::begin_automatic_wake(

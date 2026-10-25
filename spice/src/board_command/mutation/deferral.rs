@@ -4,13 +4,11 @@ pub(in crate::board_command) fn task_defer(
     command: &wire::AdmittedCommand,
     defer: &TaskDefer,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&defer.task),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -26,7 +24,6 @@ pub(in crate::board_command) fn task_defer(
         },
         defer.clone(),
         repository,
-        projects,
     )
 }
 
@@ -36,13 +33,11 @@ pub(in crate::board_command) fn task_wake(
     command: &wire::AdmittedCommand,
     wake: &TaskWake,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&wake.task),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -58,7 +53,6 @@ pub(in crate::board_command) fn task_wake(
         },
         wake.clone(),
         repository,
-        projects,
     )
 }
 
@@ -68,18 +62,16 @@ pub(in crate::board_command) fn task_file(
     command: &wire::AdmittedCommand,
     file: &TaskFile,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&file.task),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    file_unfiled(bus, command, &snapshot, file, repository, projects)
+    file_unfiled(bus, command, &snapshot, file, repository)
 }
 
 fn validate_filing_entry(
@@ -217,22 +209,19 @@ fn append_filing<'a>(
     }
 }
 
-/// Public project a filing lands in: the explicit admitted destination or the
-/// unfiled row's current public owner.
+/// Project a filing lands in: the explicit admitted destination or the
+/// unfiled row's current project.
 fn filing_destination(
     entry: &Entry,
     requested: Option<&str>,
-    projects: &ProjectPolicy,
 ) -> Result<board::Project, Outcome<CommandAnswer>> {
-    projects
-        .admit_manual_creation(requested.unwrap_or_else(|| entry.project().as_str()))
-        .map_err(|error| {
-            refusal(
-                "task::filing-project-refused",
-                Some(error.to_string()),
-                "name a public project this board admits for filing",
-            )
-        })
+    board::Project::admit(requested.unwrap_or_else(|| entry.project().as_str())).map_err(|error| {
+        refusal(
+            "task::filing-project-refused",
+            Some(error.to_string()),
+            PROJECT_REPAIR,
+        )
+    })
 }
 
 fn file_unfiled(
@@ -241,7 +230,6 @@ fn file_unfiled(
     snapshot: &ValidatedSnapshot,
     file: &TaskFile,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let Some(entry) = task_entry(&snapshot.entries, &file.task) else {
         return refusal(
@@ -253,7 +241,7 @@ fn file_unfiled(
     if let Err(outcome) = validate_filing_entry(entry, command) {
         return outcome;
     }
-    let project = match filing_destination(entry, file.into.as_deref(), projects) {
+    let project = match filing_destination(entry, file.into.as_deref()) {
         Ok(project) => project,
         Err(outcome) => return outcome,
     };
@@ -278,7 +266,6 @@ fn file_unfiled(
         workflow.clone(),
         entry.claim().cloned(),
         entry.lease().cloned(),
-        projects,
     ) {
         Ok(post) => post
             .with_grouped(entry.grouped())
@@ -287,7 +274,7 @@ fn file_unfiled(
             return refusal(
                 "task::filing-refused",
                 Some(error.to_string()),
-                "file the row into a valid public project with a valid flow and dependencies",
+                "file the row into a valid project with a valid flow and dependencies",
             );
         }
     };
@@ -381,7 +368,6 @@ fn deferral_transition(
     command: &wire::AdmittedCommand,
     task: &TaskHandle,
     deferral: Option<Instant>,
-    projects: &ProjectPolicy,
 ) -> Result<DeferralTransition, Outcome<CommandAnswer>> {
     // Settled work never becomes workable again.
     if !entry.workflow().status.is_pending() {
@@ -420,7 +406,6 @@ fn deferral_transition(
                 workflow.clone(),
                 entry.claim().cloned(),
                 entry.lease().cloned(),
-                projects,
             )
             .map_err(|error| {
                 refusal(
@@ -541,7 +526,6 @@ fn change_deferral<B: serde::Serialize + Clone>(
     request: DeferralRequest<'_>,
     intent: B,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let DeferralRequest {
         task,
@@ -559,7 +543,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         workflow,
         post,
         releases_claim,
-    } = match deferral_transition(entry, command, task, deferral, projects) {
+    } = match deferral_transition(entry, command, task, deferral) {
         Ok(transition) => transition,
         Err(outcome) => return outcome,
     };

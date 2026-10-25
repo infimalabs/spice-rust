@@ -1161,8 +1161,7 @@ mod tests {
             maximum: at(59),
             epoch: uuid("04"),
         });
-        let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");
-        board::Entry::new(statement, workflow, Some(claim), lease, &projects)
+        board::Entry::new(statement, workflow, Some(claim), lease)
             .expect("fixture task heads agree")
     }
 

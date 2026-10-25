@@ -7,7 +7,6 @@ use artifact::{
     Store,
 };
 use spice::cli::Contract;
-use spice::config::LoadError;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::output::Export;
 use wire::{
@@ -18,14 +17,8 @@ use wire::{
 #[cfg(test)]
 mod tests;
 
-pub(crate) fn run(
-    matches: &clap::ArgMatches,
-    contract: &Contract,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> Outcome<ArtifactAnswer> {
-    match working_repository()
-        .and_then(|repository| run_inner(&repository, matches, contract, configuration))
-    {
+pub(crate) fn run(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<ArtifactAnswer> {
+    match working_repository().and_then(|repository| run_inner(&repository, matches, contract)) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -37,7 +30,7 @@ pub(crate) fn run_at(
     matches: &clap::ArgMatches,
     contract: &Contract,
 ) -> Outcome<ArtifactAnswer> {
-    match run_inner(repository, matches, contract, None) {
+    match run_inner(repository, matches, contract) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -64,9 +57,8 @@ fn run_inner(
     repository: &Repository,
     matches: &clap::ArgMatches,
     contract: &Contract,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<(ReplyPosition, ArtifactAnswer), Failure> {
-    let snapshot = snapshot(repository, configuration)?;
+    let snapshot = snapshot(repository)?;
     let store = Store::new(
         snapshot.state.artifacts(),
         snapshot.state.locks().join("task-artifacts.lock"),
@@ -158,11 +150,7 @@ struct Snapshot {
     statuses: BTreeMap<TaskStamp, (TaskHandle, String)>,
 }
 
-fn snapshot(
-    repository: &Repository,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> Result<Snapshot, Failure> {
-    let projects = task_project_policy(repository, configuration)?;
+fn snapshot(repository: &Repository) -> Result<Snapshot, Failure> {
     let state = repository.admit_state().map_err(state_failure)?;
     let journal = journal::JournalReader::open(state.journal()).map_err(|error| {
         Failure::fault(
@@ -199,7 +187,6 @@ fn snapshot(
                         heads.workflow().body().clone(),
                         heads.claim().map(|head| head.body().clone()),
                         heads.lease().map(|head| head.body().clone()),
-                        &projects,
                     )
                     .map_err(|error| {
                         Failure::fault(
@@ -240,15 +227,6 @@ fn task_heads_failure(error: journal::GuardError) -> Failure {
         "artifact::task-heads-unreadable",
         error.to_string(),
     )
-}
-
-fn task_project_policy(
-    repository: &Repository,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> Result<board::ProjectPolicy, Failure> {
-    let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)
-        .map_err(Failure::configuration)?;
-    Ok(loaded.resolved().root().tasks().project_policy())
 }
 
 struct SelectedTask {
@@ -803,54 +781,10 @@ impl Failure {
         })
     }
 
-    fn configuration(error: LoadError) -> Self {
-        if let Some(repository) = error.repository() {
-            return Self::fault(
-                FaultClass::Environment,
-                spice::repository::ResolveError::REASON,
-                repository.to_string(),
-            );
-        }
-        let diagnostics = configuration_diagnostics(&error);
-        if error
-            .acquisition()
-            .iter()
-            .any(|issue| issue.io_error().is_some())
-        {
-            return Self::fault(
-                FaultClass::Environment,
-                "artifact::configuration-unreadable",
-                diagnostics,
-            );
-        }
-        Self::refusal(
-            "artifact::configuration-refused",
-            "one admitted tracked task-project policy and machine-local configuration",
-            diagnostics,
-            "repair the named configuration values before running the artifact command again",
-        )
-    }
-
     fn outcome(self) -> Outcome<ArtifactAnswer> {
         match self {
             Self::Refusal(refusal) => Outcome::Refusal(refusal),
             Self::Fault(fault) => Outcome::Fault(fault),
         }
-    }
-}
-
-fn configuration_diagnostics(error: &LoadError) -> String {
-    let mut diagnostics = error
-        .acquisition()
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    if let Some(resolution) = error.resolution() {
-        diagnostics.extend(resolution.issues().iter().map(ToString::to_string));
-    }
-    if diagnostics.is_empty() {
-        error.to_string()
-    } else {
-        diagnostics.join(" | ")
     }
 }

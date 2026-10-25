@@ -17,18 +17,19 @@ ordered, stable-deduplicated list derived from the locally admitted board in
 its offered order. Every selected root stays visible however large the set.
 
 Work-scope selections are durable overlay locations with one canonical grammar:
-`#/work` for all open execution work; `#/work/stem/public/{stem}` and
-`#/work/stem/hidden/{stem}` for one visibility-qualified execution stem;
-`#/work/planning` for open Designs and every open task transitively downstream
-of at least one open Design dependency; `#/work/planning/public/{stem}` and
-`#/work/planning/hidden/{stem}` for one planning stem;
-`#/work/team/{uuid}` for a team; and `#/work/group/{room-stamp}` for a working
-group. A stem is its admitted lowercase `[0-9a-z_]+` spelling and occupies one
-literal path segment. Team and group routes retain only stable identity:
-hydrated lane topology and working-group authority supply current membership,
-and subsequent authority changes refresh the open selection. All-open and
-all-planning remain valid when empty; a missing stem, team, or group returns to
-Chat once the authority that decides it is available.
+`#/work` for all open execution work; `#/work/project/{project}` for open
+execution work under one exact project; `#/work/planning` for open Designs and
+every open task transitively downstream of at least one open Design
+dependency; `#/work/planning/{project}` for that planning set within one exact
+project; `#/work/team/{uuid}` for a team; and `#/work/group/{room-stamp}` for a
+working group. A project is its complete admitted label, dot-separated nonempty
+`[0-9a-z_]+` runs, as one literal path segment: `oops` and `oops.design` are
+independent projects, and `app.one` never merges with `app.two` through `app`.
+Team and group routes retain only stable identity: hydrated lane topology and
+working-group authority supply current membership, and subsequent authority
+changes refresh the open selection. All-open and all-planning remain valid when
+empty; a missing project, team, or group returns to Chat once the authority
+that decides it is available.
 
 Opening a Work control replaces the current location with its canonical path.
 Closing that route-owned overview replaces it with `#/chat`. Opening a project,
@@ -75,8 +76,8 @@ more, so unconnected roots form a near-square grid. Row placement draws
 nothing and is never a relationship.
 
 Open work falls into the board's exclusive standings, in their precedence: a
-live claim reads **In flight**, a lapsed one **Stale**, and explicit set-asides
-read **Deferred** or **Parked**. The resident's gate then decides **Waiting**,
+live claim reads **In flight**, a lapsed one **Stale**, and an explicit
+set-aside reads **Deferred**. The resident's gate then decides **Waiting**,
 **Awaiting decision**, or **Blocked** before unclaimed review,
 environment **Held**, and **Ready** work, so each count equals `spice board`'s.
 **Waiting** means every unresolved dependency or planning-control edge still

@@ -228,9 +228,9 @@ Mutation replies are outside this contract: they stay complete and concise.
 
 Work is a durable task-set location over the always-mounted Chat surface, not a
 separate page. `#/work` names all execution work; its canonical refinements name
-a public or hidden stem, all or stem-scoped Design planning, one team UUID, or
-one working-group room stamp. Stem spelling is the admitted project root as one
-literal path segment. Team and group URLs serialize only their stable identity;
+one exact project, all or project-scoped Design planning, one team UUID, or one
+working-group room stamp. A project segment is the complete admitted label, never
+a root or prefix of one. Team and group URLs serialize only their stable identity;
 the hydrated topology or working-group partition supplies current membership.
 Missing typed identities and every malformed or query-bearing spelling return
 to `#/chat` with a visible refusal. Project, individual-task, relationship, and
@@ -242,7 +242,7 @@ The command bar hangs two global totals from its top edge immediately before
 the Spice button: all open execution work, then all open Design work. Each is
 the same badge-only horn tab as before, one task-tab gap from the other; the
 Design total stands off the button by the button's own gap from the window
-edge, with no per-stem tabs and no row reserved above the bar. Counts, danger
+edge, with no per-project tabs and no row reserved above the bar. Counts, danger
 marks, titles, and navigation retain the exact scope each total names.
 
 ## Kept jobs

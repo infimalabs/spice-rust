@@ -41,7 +41,7 @@ fn reclaim_at_for(
         expected,
         &renew,
     );
-    claim_reclaim_with_clock(bus, &command, &renew, &guard_projects(), || Ok(at))
+    claim_reclaim_with_clock(bus, &command, &renew, || Ok(at))
 }
 
 pub(super) fn renew_and_assert(

@@ -988,12 +988,11 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
         .tasks
         .iter()
         .map(|heads| {
-            Entry::from_answer(
+            Entry::new(
                 heads.client_statement(),
                 heads.workflow.body.clone(),
                 heads.claim.as_ref().map(|head| head.body.clone()),
                 heads.lease.as_ref().map(|head| head.body.clone()),
-                heads.visibility.clone(),
             )
             .map_err(|error| {
                 protocol_fault(
@@ -1171,11 +1170,10 @@ pub(super) fn actor_seat(
 
 fn sole_active(board: &BoardAnswer) -> Result<(TaskHandle, &BoardTask), Outcome<CommandAnswer>> {
     let mut held = board.tasks.iter().filter(|heads| {
-        !heads.visibility.is_hidden()
-            && heads.claim.as_ref().is_some_and(|claim| {
-                claim.body.actor == board.principal
-                    && claim.body.disposition == wire::ClaimDisposition::Active
-            })
+        heads.claim.as_ref().is_some_and(|claim| {
+            claim.body.actor == board.principal
+                && claim.body.disposition == wire::ClaimDisposition::Active
+        })
     });
     let Some(heads) = held.next() else {
         return Err(refusal(
@@ -1339,26 +1337,20 @@ pub(crate) fn dispatch(
     bus: &Bus,
     command: &wire::AdmittedCommand,
 ) -> Option<Outcome<CommandAnswer>> {
-    let projects = ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("board command test project policy");
     let allocation = board::NextConfig::default();
     if let wire::intent::Intent::WorkingGroupMove(moving) = command.body() {
         let config = steer::Config::default();
-        return Some(move_working_group(bus, command, moving, &config, &projects).0);
+        return Some(move_working_group(bus, command, moving, &config).0);
     }
     if let wire::intent::Intent::WorkingGroupDisband(request) = command.body() {
         let config = steer::Config::default();
-        return Some(disband_working_group(bus, command, request, &config, &projects).0);
+        return Some(disband_working_group(bus, command, request, &config).0);
     }
     if let wire::intent::Intent::WorkingGroupStance(stance) = command.body() {
         let config = steer::Config::default();
-        return Some(set_working_group_stance(bus, command, stance, &config, &projects).0);
+        return Some(set_working_group_stance(bus, command, stance, &config).0);
     }
-    dispatch_with_repository(bus, command, None, &projects, &allocation, None)
+    dispatch_with_repository(bus, command, None, &allocation, None)
 }
 fn dispatch_working_group(
     bus: &Bus,
@@ -1380,73 +1372,62 @@ pub(crate) fn dispatch_with_repository(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
 ) -> Option<Outcome<CommandAnswer>> {
-    if let Some(outcome) = super::dispatch_preparation(bus, command, repository, projects) {
+    if let Some(outcome) = super::dispatch_preparation(bus, command, repository) {
         return Some(outcome);
     }
     if let Some(outcome) = dispatch_working_group(bus, command) {
         return Some(outcome);
     }
-    if let Some(outcome) = dispatch_settlement(bus, command, projects) {
+    if let Some(outcome) = dispatch_settlement(bus, command) {
         return Some(outcome);
     }
 
     let outcome = match command.body() {
-        wire::intent::Intent::ReportRead(read) => read_report(bus, read, command, projects),
+        wire::intent::Intent::ReportRead(read) => read_report(bus, read, command),
         wire::intent::Intent::BoardRead(read) => {
-            read_board(bus, read, command, projects, allocation, profiles)
+            read_board(bus, read, command, allocation, profiles)
         }
         wire::intent::Intent::TaskDetail(detail) => {
-            read_task_detail(bus, repository, detail, command.actor().clone(), projects)
+            read_task_detail(bus, repository, detail, command.actor().clone())
         }
         wire::intent::Intent::TaskRelations(relations) => {
-            read_task_relations(bus, relations, command.actor().clone(), projects)
+            read_task_relations(bus, relations, command.actor().clone())
         }
         wire::intent::Intent::TaskTimeline(timeline) => {
-            read_task_timeline(bus, timeline, command.actor().clone(), projects)
+            read_task_timeline(bus, timeline, command.actor().clone())
         }
-        wire::intent::Intent::BoardGraph(graph) => {
-            read_graph(bus, graph, command.actor().clone(), projects)
-        }
+        wire::intent::Intent::BoardGraph(graph) => read_graph(bus, graph, command.actor().clone()),
         wire::intent::Intent::BoardHandout(handout) => {
-            read_handout(bus, handout, command.actor().clone(), projects)
+            read_handout(bus, handout, command.actor().clone())
         }
         wire::intent::Intent::DocLedger(ledger) => {
-            read_ledger(bus, ledger, command.actor().clone(), projects)
+            read_ledger(bus, ledger, command.actor().clone())
         }
-        wire::intent::Intent::RoomPost(post) => room_post(bus, command, post, projects),
-        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, repository, projects),
-        wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add, projects),
-        wire::intent::Intent::TasteProposalAdd(add) => {
-            taste_proposal_add(bus, command, add, projects)
-        }
-        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects),
-        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, repository, projects),
-        wire::intent::Intent::TaskDefer(defer) => {
-            task_defer(bus, command, defer, repository, projects)
-        }
-        wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, repository, projects),
-        wire::intent::Intent::TaskFile(file) => task_file(bus, command, file, repository, projects),
+        wire::intent::Intent::RoomPost(post) => room_post(bus, command, post),
+        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, repository),
+        wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add),
+        wire::intent::Intent::TasteProposalAdd(add) => taste_proposal_add(bus, command, add),
+        wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
+        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, repository),
+        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, repository),
+        wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, repository),
+        wire::intent::Intent::TaskFile(file) => task_file(bus, command, file, repository),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
-            claim_free(bus, command, task, repository, projects)
+            claim_free(bus, command, task, repository)
         }
-        wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends, projects),
-        wire::intent::Intent::ClaimWin(win) => claim_win(
-            bus, command, win, repository, projects, allocation, profiles,
-        ),
+        wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends),
+        wire::intent::Intent::ClaimWin(win) => {
+            claim_win(bus, command, win, repository, allocation, profiles)
+        }
         wire::intent::Intent::ClaimRenew(renew) if command.kind() == CommandKind::ClaimRenew => {
-            claim_reclaim(bus, command, renew, projects)
+            claim_reclaim(bus, command, renew)
         }
-        wire::intent::Intent::TaskDone(done) => task_done(bus, command, done, repository, projects),
-        wire::intent::Intent::TaskReview(review) => {
-            task_review(bus, command, review, repository, projects)
-        }
-        wire::intent::Intent::DocApply(apply) => {
-            doc_apply(bus, command, apply, repository, projects)
-        }
+        wire::intent::Intent::TaskDone(done) => task_done(bus, command, done, repository),
+        wire::intent::Intent::TaskReview(review) => task_review(bus, command, review, repository),
+        wire::intent::Intent::DocApply(apply) => doc_apply(bus, command, apply, repository),
         _ => return None,
     };
     Some(outcome)

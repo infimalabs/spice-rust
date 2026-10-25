@@ -678,12 +678,7 @@ fn validate_layer(
                 .collect::<Vec<_>>();
             merge(&mut isolated, build_units(&layer.value, &units, &mask));
             if let Err(error) = decode_root(isolated) {
-                let path = if hidden_stem_index(&error.0).is_some() {
-                    error.0
-                } else {
-                    unit.clone()
-                };
-                invalid.push((index, path, error.1));
+                invalid.push((index, unit.clone(), error.1));
             }
         }
 
@@ -695,12 +690,7 @@ fn validate_layer(
                 .map(|(index, _)| index)
                 .or_else(|| active.iter().position(|active| *active))
                 .expect("a layer decode cannot fail without authored validation units");
-            let path = if hidden_stem_index(&full_error.0).is_some() {
-                full_error.0
-            } else {
-                units[index].clone()
-            };
-            invalid.push((index, path, full_error.1));
+            invalid.push((index, units[index].clone(), full_error.1));
         }
 
         for (index, path, message) in invalid {
@@ -713,17 +703,6 @@ fn validate_layer(
                 message,
             ));
         }
-    }
-}
-
-fn hidden_stem_index(path: &ConcretePath) -> Option<usize> {
-    match path.0.as_slice() {
-        [
-            OwnedSegment::Key(tasks),
-            OwnedSegment::Key(hidden),
-            OwnedSegment::Index(index),
-        ] if tasks == "tasks" && hidden == "hidden_stems" => Some(*index),
-        _ => None,
     }
 }
 
@@ -835,16 +814,6 @@ fn merge(base: &mut Value, overlay: Value) {
 }
 
 fn decode_root(value: Value) -> Result<Root, (ConcretePath, String)> {
-    if let Some((index, message)) = invalid_hidden_stem(&value) {
-        return Err((
-            ConcretePath(vec![
-                OwnedSegment::Key("tasks".to_owned()),
-                OwnedSegment::Key("hidden_stems".to_owned()),
-                OwnedSegment::Index(index),
-            ]),
-            message,
-        ));
-    }
     if let Some(error) = invalid_pre_commit_policy(&value) {
         return Err(error);
     }
@@ -886,24 +855,6 @@ fn invalid_pre_commit_policy(value: &Value) -> Option<(ConcretePath, String)> {
         ]),
         super::pre_commit::EMPTY_PRE_COMMIT_MESSAGE.to_owned(),
     ))
-}
-
-fn invalid_hidden_stem(value: &Value) -> Option<(usize, String)> {
-    let tasks = value.get("tasks")?.as_table()?;
-    let hidden = tasks
-        .get("hidden_stems")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let error = board::ProjectPolicy::new(hidden, 1, 1).err()?;
-    match &error {
-        board::ProjectPolicyError::HiddenStem {
-            index: Some(index), ..
-        } => Some((*index, error.to_string())),
-        _ => None,
-    }
 }
 
 fn provenance(root: &Root, layers: &[Layer]) -> Vec<Provenance> {

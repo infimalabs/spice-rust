@@ -425,7 +425,7 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
         Some("todo"),
     );
     let available = board(&bus, epoch, lane.clone());
-    assert_eq!(available.active_public_tasks().count(), 2);
+    assert_eq!(available.active_tasks().count(), 2);
     let entries = actor_entries(&available).expect("capture board entries are valid");
     assert_eq!(
         board::select(
@@ -752,7 +752,7 @@ fn recovery_foreign_claim_then_free_is_explicitly_restorable() {
 }
 
 #[test]
-fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
+fn claims_warn_on_shared_statement_terms_not_a_shared_project_prefix() {
     let (root, bus, epoch, seats) = fixture("claim-overlap", 3);
     let first = add_project_with_acceptance(
         &bus,
@@ -772,7 +772,7 @@ fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
         Some("todo"),
         &["The mosaic watchband keeps focused-agent state visible"],
     );
-    let same_stem = add_project_with_acceptance(
+    let shared_prefix = add_project_with_acceptance(
         &bus,
         epoch,
         "MOSAIC-1kKQTw1W",
@@ -799,8 +799,8 @@ fn claims_warn_on_shared_statement_terms_not_shared_project_stem() {
         }]
     );
 
-    let same_stem_answer = capture_for(&bus, epoch, &seats[2], &same_stem);
-    assert!(same_stem_answer.warnings.is_empty());
+    let shared_prefix_answer = capture_for(&bus, epoch, &seats[2], &shared_prefix);
+    assert!(shared_prefix_answer.warnings.is_empty());
     clean(&root, bus);
 }
 
@@ -1164,11 +1164,9 @@ mod lapsed_review;
 // separate from it because each fact is pinned on its own.
 mod closing_boundary;
 
-// The hidden-visibility tests and the two helpers only they use. They share
-// this module's fixture harness, so the seam is the law under test rather
-// than the scaffolding.
-mod hidden;
-use hidden::*;
+// Board row fixtures the sibling modules share.
+mod fixture_rows;
+use fixture_rows::*;
 
 // Drafts are prospective work outside every execution rail until the same
 // explicit file transition admits them as ordinary work.

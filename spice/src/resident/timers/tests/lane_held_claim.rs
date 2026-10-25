@@ -27,7 +27,6 @@ fn lane_held_fixture(age_seconds: i64) -> Fixture {
         .expect("fixture lane-held authority seeds");
     Fixture {
         bus: Bus::start(journal).expect("fixture bus starts"),
-        projects: projects(),
         authority,
     }
 }
@@ -47,7 +46,7 @@ fn lane_held_claim_rolls_past_the_hour_its_allocation_minted() {
         ),
         "the fixture exercises an allocated claim, not a resident-minted automatic one",
     );
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("lane-held lease arms a renewal");
@@ -107,7 +106,7 @@ fn lane_held_claim_rolls_past_the_hour_its_allocation_minted() {
 fn lane_held_claim_stops_rolling_once_its_occupant_leaves_the_lane() {
     let fixture = lane_held_fixture(spice::claim_lease::RECLAIM_HORIZON_SECONDS - 30);
     let minted_expiry = fixture.authority.expiry;
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("lane-held lease arms a renewal");

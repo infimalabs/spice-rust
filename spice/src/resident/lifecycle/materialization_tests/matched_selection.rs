@@ -58,7 +58,7 @@ fn selected<'a>(targets: &[Target<'a>], lane: CanonicalUuid) -> &'a Entry {
 /// match and its wake rank is that row's score.
 #[test]
 fn each_vacant_lane_selects_the_task_its_retained_sessions_match() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
     add_vacant_org_members(&bus, &[lane_at(2)]);
     committed(
         bus.commit(titled_ready_task_write(
@@ -70,7 +70,7 @@ fn each_vacant_lane_selects_the_task_its_retained_sessions_match() {
     );
     let snapshot = bus.task_snapshot().expect("two-row snapshot reads");
     projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("two-row projection advances");
     let targets_with = |profiles: Option<&Mutex<MessageState>>| {
         project_targets(

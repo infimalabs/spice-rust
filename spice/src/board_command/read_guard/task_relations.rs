@@ -56,7 +56,6 @@ pub(in crate::board_command) fn read_task_relations(
     bus: &Bus,
     request: &TaskRelations,
     principal: Actor,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let (roots, relations) = match validate(request) {
         Ok(validated) => validated,
@@ -70,7 +69,6 @@ pub(in crate::board_command) fn read_task_relations(
     let snapshot = match validated_snapshot_from_with_occupant(
         &observed,
         principal,
-        projects,
         None,
         Some(&selected),
         false,

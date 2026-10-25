@@ -1,8 +1,10 @@
 use super::*;
 
+/// Every mined proposal files under the curation project its `taste add` and
+/// `taste drop` siblings use; its typed finding, never its project, groups it.
 #[derive(Clone)]
 struct ProposalObservation {
-    project: String,
+    finding: Digest,
     heads: Vec<(TaskStamp, Seq, Seq)>,
 }
 
@@ -21,28 +23,17 @@ pub(in crate::board_command) fn taste_proposal_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TasteProposalAdd,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     if let Err(outcome) = validate_request(add) {
         return outcome;
     }
-    let project = match projects.admit_system_creation(&SystemTaskRoute::proposal([
-        "taste".to_owned(),
-        add.finding.to_string(),
-    ])) {
-        Ok(project) => project,
-        Err(error) => {
-            return protocol_fault(
-                "taste::proposal-route-invalid",
-                &format!("resident-owned taste proposal route is not admitted: {error}"),
-            );
-        }
-    };
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects) {
+    let project = Project::admit(crate::taste_command::PROJECT)
+        .expect("the taste curation project is a valid label");
+    let snapshot = match validated_snapshot(bus, command.actor().clone()) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let plan = match proposal_plan(&snapshot, project.as_str(), add) {
+    let plan = match proposal_plan(&snapshot, add) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
@@ -104,7 +95,6 @@ pub(in crate::board_command) fn taste_proposal_add(
         command,
         &normalized,
         &project,
-        projects,
         TaskSeed {
             cause: origin,
             creation,
@@ -120,7 +110,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         occurrence: add.occurrence.clone(),
         recurrence: add.recurrence,
     });
-    let post = prepared_entry(&prepared, projects);
+    let post = prepared_entry(&prepared);
     commit_prepared_task(
         bus,
         command,
@@ -172,13 +162,13 @@ fn validate_request(add: &TasteProposalAdd) -> Result<(), Outcome<CommandAnswer>
 
 fn proposal_plan(
     snapshot: &ValidatedSnapshot,
-    project: &str,
     add: &TasteProposalAdd,
 ) -> Result<ProposalPlan, Outcome<CommandAnswer>> {
+    let finding = &add.finding;
     let mut matches = Vec::new();
     for (index, entry) in snapshot.entries.iter().enumerate() {
-        if entry.statement().project == project {
-            matches.push((index, proposal_metadata(entry)?));
+        if proposes(entry.statement().taste_proposal.as_ref(), finding) {
+            matches.push((index, proposal_metadata(entry, finding)?));
         }
     }
     let open = matches
@@ -186,7 +176,7 @@ fn proposal_plan(
         .filter(|(index, _)| proposal_open(&snapshot.entries[*index]))
         .collect::<Vec<_>>();
     if open.len() > 1 {
-        return Err(state_fault(project, "more than one active proposal"));
+        return Err(state_fault(finding, "has more than one active proposal"));
     }
     if let Some((index, _)) = open.first() {
         return Ok(ProposalPlan::Reuse {
@@ -199,7 +189,10 @@ fn proposal_plan(
         .filter(|(_, metadata)| metadata.occurrence == add.occurrence)
         .collect::<Vec<_>>();
     if identical.len() > 1 {
-        return Err(state_fault(project, "more than one identical occurrence"));
+        return Err(state_fault(
+            finding,
+            "has more than one identical occurrence",
+        ));
     }
     if let Some((index, _)) = identical.first() {
         return Ok(ProposalPlan::Reuse {
@@ -226,22 +219,24 @@ fn proposal_plan(
     }
     Ok(ProposalPlan::Create {
         predecessor: predecessor.map(|(index, _)| snapshot.entries[*index].handle().clone()),
-        observation: proposal_observation(snapshot, project),
+        observation: proposal_observation(snapshot, finding),
     })
 }
 
-fn proposal_metadata(entry: &Entry) -> Result<&wire::TasteProposal, Outcome<CommandAnswer>> {
+fn proposes(proposal: Option<&wire::TasteProposal>, finding: &Digest) -> bool {
+    proposal.is_some_and(|proposal| proposal.finding == *finding)
+}
+
+fn proposal_metadata<'a>(
+    entry: &'a Entry,
+    finding: &Digest,
+) -> Result<&'a wire::TasteProposal, Outcome<CommandAnswer>> {
     entry
         .statement()
         .taste_proposal
         .as_ref()
         .filter(|proposal| proposal.recurrence >= 2)
-        .ok_or_else(|| {
-            state_fault(
-                entry.statement().project.as_str(),
-                "proposal metadata is missing or invalid",
-            )
-        })
+        .ok_or_else(|| state_fault(finding, "has invalid proposal metadata"))
 }
 
 fn description_value<'a>(description: &'a str, prefix: &str) -> Option<&'a str> {
@@ -254,10 +249,10 @@ fn proposal_open(entry: &Entry) -> bool {
     entry.workflow().status.is_pending()
 }
 
-fn state_fault(project: &str, detail: &str) -> Outcome<CommandAnswer> {
+fn state_fault(finding: &Digest, detail: &str) -> Outcome<CommandAnswer> {
     store_fault(
         "taste::proposal-state-invalid",
-        &format!("hidden proposal project {project} {detail}"),
+        &format!("taste proposal finding {finding} {detail}"),
     )
 }
 
@@ -285,55 +280,64 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
     })
 }
 
-fn proposal_observation(snapshot: &ValidatedSnapshot, project: &str) -> ProposalObservation {
+fn proposal_observation(snapshot: &ValidatedSnapshot, finding: &Digest) -> ProposalObservation {
     let heads = snapshot
         .answer
         .tasks
         .iter()
-        .filter(|proposal_task| proposal_task.statement.body.project == project)
-        .map(|proposal_task| {
+        .filter(|task| proposes(task.statement.body.taste_proposal.as_ref(), finding))
+        .map(|task| {
             (
-                proposal_task.statement.body.born.clone(),
-                proposal_task.statement.position,
-                proposal_task.workflow.position,
+                task.statement.body.born.clone(),
+                task.statement.position,
+                task.workflow.position,
             )
         })
         .collect();
     ProposalObservation {
-        project: project.to_owned(),
+        finding: finding.clone(),
         heads,
     }
 }
 
 fn guard_proposal_observation(write: &mut JournalWrite, observed: ProposalObservation) {
     write.guard(JournalGuard::new(move |read| {
-        let page = read.task_project_head_page(
-            &observed.project,
-            None,
-            journal::FactReadBudget::RETAINED,
-        )?;
-        if let Some(continuation) = page.continuation {
-            return Err(GuardError::refused(format!(
-                "taste proposal project guard requires continuation after {continuation}"
-            )));
+        let mut current = Vec::new();
+        let mut after = None;
+        loop {
+            let page = read.task_project_head_page(
+                crate::taste_command::PROJECT,
+                after.as_ref(),
+                journal::FactReadBudget::RETAINED,
+            )?;
+            current.extend(
+                page.rows
+                    .into_iter()
+                    .filter(|heads| {
+                        proposes(
+                            heads.statement().body().taste_proposal.as_ref(),
+                            &observed.finding,
+                        )
+                    })
+                    .map(|heads| {
+                        (
+                            heads.statement().body().born.clone(),
+                            heads.statement().position(),
+                            heads.workflow().position(),
+                        )
+                    }),
+            );
+            match page.continuation {
+                Some(continuation) => after = Some(continuation),
+                None => break,
+            }
         }
-        let current = page
-            .rows
-            .into_iter()
-            .map(|proposal_heads| {
-                (
-                    proposal_heads.statement().body().born.clone(),
-                    proposal_heads.statement().position(),
-                    proposal_heads.workflow().position(),
-                )
-            })
-            .collect::<Vec<_>>();
         if current == observed.heads {
             Ok(())
         } else {
             Err(GuardError::refused(format!(
                 "taste::proposal-moved:{}",
-                observed.project
+                observed.finding
             )))
         }
     }));

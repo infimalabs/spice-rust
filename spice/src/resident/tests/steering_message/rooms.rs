@@ -416,8 +416,6 @@ fn resident_catch_up_starts_at_native_authority_and_skips_an_addressed_lane() {
     lanes.account(SENDER);
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
 
-    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
-    let startup = load_startup_surface(&repository).expect("fixture surface loads");
     let mut seats = Seats::new();
     for lane in [FIRST, SECOND] {
         seats
@@ -433,14 +431,8 @@ fn resident_catch_up_starts_at_native_authority_and_skips_an_addressed_lane() {
     let notice = |lane| room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, lane));
     let mut diagnostics = Vec::new();
     let before = lanes.cursor();
-    room_catch_up::reconcile(
-        &lanes.bus,
-        &lanes.paths,
-        &startup.config,
-        &seats,
-        &mut diagnostics,
-    )
-    .expect("catch-up reconciles");
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, &seats, &mut diagnostics)
+        .expect("catch-up reconciles");
     assert_eq!(
         lanes.cursor(),
         before,
@@ -460,7 +452,7 @@ fn resident_catch_up_starts_at_native_authority_and_skips_an_addressed_lane() {
         notice(second_lane).is_none(),
         "a room-scoped MSG route reaches its lane by steering, never later catch-up"
     );
-    land_delivery(&lanes, &room, &startup.config, &mut seats, &first);
+    land_delivery(&lanes, &room, &mut seats, &first);
     seats.release_all();
     lanes.finish();
 }
@@ -472,8 +464,6 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
     let lanes = Lanes::new("room-catch-up-commit-scope");
     let room = lanes.held_room("dVrD245Kc", FIRST);
     let first_lane = test_uuid(FIRST);
-    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
-    let startup = load_startup_surface(&repository).expect("fixture surface loads");
     let mut seats = Seats::new();
     seats
         .seat_detached(
@@ -485,14 +475,8 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
         )
         .expect("listener seats");
     let mut diagnostics = Vec::new();
-    room_catch_up::reconcile(
-        &lanes.bus,
-        &lanes.paths,
-        &startup.config,
-        &seats,
-        &mut diagnostics,
-    )
-    .expect("startup catch-up establishes the horizon");
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, &seats, &mut diagnostics)
+        .expect("startup catch-up establishes the horizon");
 
     let task = room.born().expect("fixture room has a birth");
     let published = append_room_publication(&lanes, &room);
@@ -510,7 +494,6 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
     room_catch_up::reconcile_commit(
         &lanes.bus,
         &lanes.paths,
-        &startup.config,
         &seats,
         &room_catch_up::changes(&lanes.bus, published).expect("publication changes classify"),
         &mut diagnostics,
@@ -546,8 +529,6 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
         None,
     );
     let first_lane = test_uuid(FIRST);
-    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
-    let startup = load_startup_surface(&repository).expect("fixture surface loads");
     let mut seats = Seats::new();
     seats
         .seat_detached(
@@ -559,14 +540,8 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
         )
         .expect("listener seat");
     let mut diagnostics = Vec::new();
-    room_catch_up::reconcile(
-        &lanes.bus,
-        &lanes.paths,
-        &startup.config,
-        &seats,
-        &mut diagnostics,
-    )
-    .expect("startup catch-up reconciles");
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, &seats, &mut diagnostics)
+        .expect("startup catch-up reconciles");
 
     append_room_publication(&lanes, &design);
     let design_stamp = design.born().expect("fixture Design has a birth");
@@ -583,15 +558,8 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
             rooms: expected_rooms,
         }
     );
-    room_catch_up::reconcile_commit(
-        &lanes.bus,
-        &lanes.paths,
-        &startup.config,
-        &seats,
-        &changes,
-        &mut diagnostics,
-    )
-    .expect("Design request room reconciles");
+    room_catch_up::reconcile_commit(&lanes.bus, &lanes.paths, &seats, &changes, &mut diagnostics)
+        .expect("Design request room reconciles");
 
     assert!(
         room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane)).is_none(),
@@ -600,15 +568,8 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
     let published = append_room_publication(&lanes, &design);
     let changes =
         room_catch_up::changes(&lanes.bus, published).expect("later publication changes classify");
-    room_catch_up::reconcile_commit(
-        &lanes.bus,
-        &lanes.paths,
-        &startup.config,
-        &seats,
-        &changes,
-        &mut diagnostics,
-    )
-    .expect("later room publication reconciles");
+    room_catch_up::reconcile_commit(&lanes.bus, &lanes.paths, &seats, &changes, &mut diagnostics)
+        .expect("later room publication reconciles");
     let notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
         .expect("asked lane receives later room context");
     assert!(notice.text.contains("appended before accounting"));
@@ -676,7 +637,6 @@ fn record_design_request(
 fn land_delivery(
     lanes: &Lanes,
     room: &wire::TaskHandle,
-    config: &SurfaceConfig,
     seats: &mut Seats,
     notice: &room_catch_up::Notice,
 ) {
@@ -735,7 +695,7 @@ fn land_delivery(
     room_catch_up::publish_notice(&landed_path, notice)
         .expect("the supervisor records exact landed evidence");
     append_room_publication(lanes, room);
-    room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seats, &mut diagnostics)
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, seats, &mut diagnostics)
         .expect("intervening commit reconciliation succeeds");
     assert_eq!(
         room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane)).as_ref(),
@@ -763,15 +723,7 @@ fn land_delivery(
         &mut diagnostics,
     )
     .expect("safe-boundary sweep accounts the delivery");
-    recognize_delivery(
-        lanes,
-        config,
-        seats,
-        &landed,
-        source_id,
-        notice,
-        &mut diagnostics,
-    );
+    recognize_delivery(lanes, seats, &landed, source_id, notice, &mut diagnostics);
     let continuation =
         room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
             .expect("the bounded continuation becomes current");
@@ -792,7 +744,6 @@ fn land_delivery(
 
 fn recognize_delivery(
     lanes: &Lanes,
-    config: &SurfaceConfig,
     seats: &mut Seats,
     landed: &lane::capture::CaptureRecord,
     source: CanonicalUuid,
@@ -823,7 +774,6 @@ fn recognize_delivery(
     room_catch_up::reconcile_commit(
         &lanes.bus,
         &lanes.paths,
-        config,
         seats,
         &room_catch_up::changes(&lanes.bus, delivered).expect("delivery changes classify"),
         diagnostics,
@@ -1049,10 +999,7 @@ fn batched_room_projection_equals_the_per_room_projection() {
     lanes.account(SENDER);
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
 
-    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
-    let startup = load_startup_surface(&repository).expect("fixture surface loads");
-    let planning =
-        room_catch_up::Planning::load(&lanes.bus, &startup.config).expect("planning loads");
+    let planning = room_catch_up::Planning::load(&lanes.bus).expect("planning loads");
     let batched = room_catch_up::project_rooms(
         &lanes.bus,
         &planning,

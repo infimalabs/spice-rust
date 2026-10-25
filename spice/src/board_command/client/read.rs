@@ -1277,7 +1277,7 @@ fn active_claimed_by_principal(board: &BoardAnswer, task: &BoardTask) -> bool {
 
 fn actor_route_filter(board: &BoardAnswer) -> String {
     format!(
-        "( visibility:public or origin_thread.is:{} )",
+        "( filing:filed or origin_thread.is:{} )",
         board.actor_route.origin_thread
     )
 }
@@ -1349,7 +1349,6 @@ pub(in crate::board_command) fn task_status(
         .collect::<String>();
     Ok(format!(
         "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
-         public task project depth {}..{} dotted segments\n\
          active {active}\nready {ready}\n\
          review {review}\nblocked {blocked}\n\
          waiting {workflow_waiting}\ndeferred {deferred}\n\
@@ -1361,8 +1360,6 @@ pub(in crate::board_command) fn task_status(
          stale {stale}\ndrafts {drafts}",
         board.actor_route.actor,
         actor_route_filter(board),
-        board.project_policy.public_min_depth,
-        board.project_policy.public_max_depth,
         status.schemas,
         board.schema,
         status.trust,

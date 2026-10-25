@@ -167,7 +167,6 @@ pub(super) fn correction_statement(
     command: &wire::AdmittedCommand,
     entry: &Entry,
     review: &TaskReview,
-    projects: &ProjectPolicy,
 ) -> Result<TaskHead, Outcome<CommandAnswer>> {
     let mut statement = entry.statement().clone();
     for followup in &review.then {
@@ -227,7 +226,6 @@ pub(super) fn correction_statement(
         entry.workflow().clone(),
         entry.claim().cloned(),
         entry.lease().cloned(),
-        projects,
     )
     .map_err(|error| {
         refusal(
@@ -359,7 +357,6 @@ pub(super) struct FollowupContext<'a> {
     pub(super) origin: &'a CreationCause,
     pub(super) creation: Option<&'a TaskCreationCapture>,
     pub(super) repository: Option<Host<'a>>,
-    pub(super) projects: &'a ProjectPolicy,
 }
 
 type FollowupPolicy = (Vec<wire::Phase>, wire::Phase, Option<wire::TasteHold>);
@@ -460,16 +457,13 @@ fn create_followup(
         ));
     }
     let requested = followup.add.project.as_deref().unwrap_or("task.private");
-    let project = context
-        .projects
-        .admit_manual_creation(requested)
-        .map_err(|error| {
-            refusal(
-                "review::followup-refused",
-                Some(error.to_string()),
-                "name a public project for each review follow-up, or leave it private",
-            )
-        })?;
+    let project = Project::admit(requested).map_err(|error| {
+        refusal(
+            "review::followup-refused",
+            Some(error.to_string()),
+            "name each review follow-up's project as dot-separated runs of [0-9a-z_]+, or leave it private",
+        )
+    })?;
     let creation = context.creation.ok_or_else(|| {
         protocol_fault(
             "review::followup-context-missing",
@@ -508,13 +502,7 @@ fn create_followup(
         deferral: None,
         generation: 0,
     };
-    if let Err(error) = Entry::new(
-        statement.clone(),
-        workflow.clone(),
-        None,
-        None,
-        context.projects,
-    ) {
+    if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None) {
         return Err(refusal(
             "review::followup-refused",
             Some(error.to_string()),

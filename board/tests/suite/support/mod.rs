@@ -1,13 +1,9 @@
-use board::{Entry, ProjectPolicy, Snapshot, TaskError};
+use board::{Entry, Snapshot, TaskError};
 use journal::Journal;
 use wire::TaskStamp;
 
 /// Build one cursor-consistent snapshot from an explicit fixture task set.
-pub fn bounded_snapshot(
-    journal: &Journal,
-    projects: &ProjectPolicy,
-    tasks: &[TaskStamp],
-) -> Result<Snapshot, TaskError> {
+pub fn bounded_snapshot(journal: &Journal, tasks: &[TaskStamp]) -> Result<Snapshot, TaskError> {
     let (cursor, heads) = journal
         .read(|read| {
             let heads = tasks
@@ -24,7 +20,7 @@ pub fn bounded_snapshot(
         .into_iter()
         .map(|heads| {
             let (statement, workflow, claim, lease) = heads.into_bodies();
-            Entry::new(statement, workflow, claim, lease, projects)
+            Entry::new(statement, workflow, claim, lease)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Snapshot::new(

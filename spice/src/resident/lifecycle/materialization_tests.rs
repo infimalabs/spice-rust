@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use board::{Entry, ProjectPolicy};
+use board::Entry;
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, Journal, JournalWrite, PendingFact};
 use lane::hold::Holds;
@@ -43,7 +43,7 @@ struct SemanticState {
 
 #[test]
 fn late_refusal_rolls_back_the_complete_projection_and_retry_is_idempotent() {
-    let (bus, projects, mut projection) = caught_up_fixture(0);
+    let (bus, mut projection) = caught_up_fixture(0);
     let before = projection.clone();
     committed(
         bus.commit(invalid_late_suffix())
@@ -52,7 +52,7 @@ fn late_refusal_rolls_back_the_complete_projection_and_retry_is_idempotent() {
     let snapshot = bus.task_snapshot().expect("late-invalid snapshot reads");
 
     let first = projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect_err("an invalid project refuses after the earlier steering fact");
     assert!(format!("{first:?}").contains("lifecycle::task-head-invalid"));
     assert_eq!(
@@ -61,7 +61,7 @@ fn late_refusal_rolls_back_the_complete_projection_and_retry_is_idempotent() {
     );
 
     let retry = projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect_err("retrying the same suffix still refuses");
     assert!(format!("{retry:?}").contains("lifecycle::task-head-invalid"));
     assert_eq!(
@@ -83,7 +83,7 @@ fn one_fact_advancement_is_suffix_bounded_and_restart_equivalent_at_different_sc
 
 #[test]
 fn allocation_index_rebuilds_only_for_changed_task_heads() {
-    let (bus, projects, mut projection) = caught_up_fixture(0);
+    let (bus, mut projection) = caught_up_fixture(0);
     assert_eq!(projection.selection_rebuilds(), 1);
 
     committed(
@@ -91,10 +91,7 @@ fn allocation_index_rebuilds_only_for_changed_task_heads() {
             .expect("unrelated journal facts commit"),
     );
     projection
-        .advance(
-            &bus.task_snapshot().expect("unrelated snapshot reads"),
-            &projects,
-        )
+        .advance(&bus.task_snapshot().expect("unrelated snapshot reads"))
         .expect("unrelated facts advance the lifecycle cursor");
     assert_eq!(
         projection.selection_rebuilds(),
@@ -107,10 +104,7 @@ fn allocation_index_rebuilds_only_for_changed_task_heads() {
             .expect("changed task heads commit"),
     );
     projection
-        .advance(
-            &bus.task_snapshot().expect("changed-task snapshot reads"),
-            &projects,
-        )
+        .advance(&bus.task_snapshot().expect("changed-task snapshot reads"))
         .expect("changed task heads advance");
     assert_eq!(
         projection.selection_rebuilds(),
@@ -122,13 +116,13 @@ fn allocation_index_rebuilds_only_for_changed_task_heads() {
 
 #[test]
 fn group_moves_refresh_a_designs_standing_incrementally() {
-    let (bus, projects, mut incremental) = caught_up_fixture(0);
+    let (bus, mut incremental) = caught_up_fixture(0);
     committed(
         bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("open Design commits"),
     );
     let design = task(DESIGN_MOMENT);
-    assert!(!standing(&bus, &projects, &mut incremental, &design));
+    assert!(!standing(&bus, &mut incremental, &design));
 
     let mut from = None;
     for (revision, second) in (1_u64..=3).zip(6..) {
@@ -149,7 +143,7 @@ fn group_moves_refresh_a_designs_standing_incrementally() {
             .expect("partition move commits"),
         );
         assert_eq!(
-            standing(&bus, &projects, &mut incremental, &design),
+            standing(&bus, &mut incremental, &design),
             to.is_some(),
             "revision {revision} leaves the Design's standing current"
         );
@@ -160,7 +154,7 @@ fn group_moves_refresh_a_designs_standing_incrementally() {
 
 #[test]
 fn stance_changes_refresh_every_design_in_the_group() {
-    let (bus, projects, mut incremental) = caught_up_fixture(0);
+    let (bus, mut incremental) = caught_up_fixture(0);
     committed(
         bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("open Design commits"),
@@ -178,7 +172,7 @@ fn stance_changes_refresh_every_design_in_the_group() {
         ))
         .expect("partition move commits"),
     );
-    assert!(projected(&bus, &projects, &mut incremental, &design).design_is_active());
+    assert!(projected(&bus, &mut incremental, &design).design_is_active());
     let partition = |revision, stance| wire::rooms::WorkingGroupPartition {
         revision,
         groups: vec![wire::rooms::WorkingGroup {
@@ -199,7 +193,7 @@ fn stance_changes_refresh_every_design_in_the_group() {
                 .expect("stance change commits"),
         );
         assert_eq!(
-            projected(&bus, &projects, &mut incremental, &design).design_is_active(),
+            projected(&bus, &mut incremental, &design).design_is_active(),
             stance.is_active(),
             "a {stance:?} stance reaches the live projection"
         );
@@ -210,7 +204,7 @@ fn stance_changes_refresh_every_design_in_the_group() {
 
 #[test]
 fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
-    let (bus, projects, mut incremental) = caught_up_fixture(0);
+    let (bus, mut incremental) = caught_up_fixture(0);
     committed(
         bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("open Design commits"),
@@ -218,14 +212,14 @@ fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
     let design = task(DESIGN_MOMENT);
     let cycle = |entry: Entry| entry.design().cycle.cycle(false);
     assert_eq!(
-        cycle(projected(&bus, &projects, &mut incremental, &design)),
+        cycle(projected(&bus, &mut incremental, &design)),
         wire::rooms::DesignCycle::GatheringInput
     );
     committed(
         bus.commit(nudge_write(&design, instant(6)))
             .expect("nudge commits"),
     );
-    let nudged = projected(&bus, &projects, &mut incremental, &design);
+    let nudged = projected(&bus, &mut incremental, &design);
     assert_eq!(
         cycle(nudged.clone()),
         wire::rooms::DesignCycle::ReadyForProposal
@@ -244,19 +238,14 @@ fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
 
 /// Advance `incremental`, prove it equals a restart rebuild, and return the
 /// entry it projects for `design`.
-fn projected(
-    bus: &Bus,
-    projects: &ProjectPolicy,
-    incremental: &mut Projection,
-    design: &TaskStamp,
-) -> Entry {
+fn projected(bus: &Bus, incremental: &mut Projection, design: &TaskStamp) -> Entry {
     let snapshot = bus.task_snapshot().expect("projection snapshot reads");
     incremental
-        .advance(&snapshot, projects)
+        .advance(&snapshot)
         .expect("incremental projection advances");
     let mut restarted = Projection::new();
     restarted
-        .advance(&snapshot, projects)
+        .advance(&snapshot)
         .expect("restart projection rebuilds");
     assert_eq!(
         (incremental.entries(), incremental.ready_at()),
@@ -273,13 +262,8 @@ fn projected(
 
 /// Whether the live projection, proven equal to a restart, stands `design`
 /// inside a working group.
-fn standing(
-    bus: &Bus,
-    projects: &ProjectPolicy,
-    incremental: &mut Projection,
-    design: &TaskStamp,
-) -> bool {
-    projected(bus, projects, incremental, design).grouped()
+fn standing(bus: &Bus, incremental: &mut Projection, design: &TaskStamp) -> bool {
+    projected(bus, incremental, design).grouped()
 }
 
 /// The operator's nudge that readies `design`'s first pass and messages lane 2.
@@ -335,7 +319,7 @@ fn a_lane_projects_under_its_team_policy_however_it_was_seated() {
                 },
             ),
         ] {
-            let (bus, _, projection) = seated_policy_fixture(policy, drain_row, seated_under);
+            let (bus, projection) = seated_policy_fixture(policy, drain_row, seated_under);
             let snapshot = bus.task_snapshot().expect("policy snapshot reads");
             let targets = project_targets(
                 &snapshot,
@@ -358,14 +342,14 @@ fn a_lane_projects_under_its_team_policy_however_it_was_seated() {
 
 #[test]
 fn drive_burst_uses_the_selected_winners_ready_instant() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
         bus.commit(ready_task_write(NEWER_TASK_MOMENT, instant(7)))
             .expect("newer ready candidate commits"),
     );
     let snapshot = bus.task_snapshot().expect("drive burst snapshot reads");
     projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("drive burst projection advances");
 
     let targets = project_targets(
@@ -395,16 +379,13 @@ fn drive_burst_uses_the_selected_winners_ready_instant() {
 
 #[test]
 fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
     committed(
         bus.commit(deferral_write(true, instant(5)))
             .expect("task deferral commits"),
     );
     projection
-        .advance(
-            &bus.task_snapshot().expect("deferred snapshot reads"),
-            &projects,
-        )
+        .advance(&bus.task_snapshot().expect("deferred snapshot reads"))
         .expect("deferred projection advances");
     committed(
         bus.commit(deferral_write(false, instant(7)))
@@ -412,7 +393,7 @@ fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
     );
     let snapshot = bus.task_snapshot().expect("woken snapshot reads");
     projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("woken projection advances");
 
     let targets = project_targets(
@@ -453,7 +434,7 @@ fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
 
 #[test]
 fn synthesized_guidance_and_peer_messages_stay_pending_without_resurrecting_a_vacant_lane() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Steer, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Steer, false);
     committed(
         bus.commit(reminder_write())
             .expect("taste reminder commits"),
@@ -464,7 +445,7 @@ fn synthesized_guidance_and_peer_messages_stay_pending_without_resurrecting_a_va
     );
     let snapshot = bus.task_snapshot().expect("reminder snapshot reads");
     projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("reminder projection advances");
     assert_eq!(projection.ledger().pending(lane()).len(), 2);
     assert_eq!(
@@ -482,7 +463,7 @@ fn synthesized_guidance_and_peer_messages_stay_pending_without_resurrecting_a_va
         .task_snapshot()
         .expect("operator direction snapshot reads");
     projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("operator direction projection advances");
     assert_eq!(
         projected_resolution(&snapshot, &projection),
@@ -611,11 +592,11 @@ fn peer_message_write() -> JournalWrite {
 
 #[test]
 fn drain_org_startup_projects_every_current_member() {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drain, false);
     add_vacant_org_members(&bus, &[lane_at(2), lane_at(3)]);
     let snapshot = bus.task_snapshot().expect("expanded team snapshot reads");
     projection
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("expanded team projection advances");
     assert_eq!(
         projection.selection_rebuilds(),
@@ -650,7 +631,7 @@ fn drain_org_startup_projects_every_current_member() {
 }
 
 fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
-    let (bus, projects, mut incremental) = caught_up_fixture(unrelated_history);
+    let (bus, mut incremental) = caught_up_fixture(unrelated_history);
     let before = bus.task_snapshot().expect("admitted snapshot reads");
     let admitted = incremental.cursor();
     let mut holds = replay_holds(before.facts().iter());
@@ -667,11 +648,11 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
     assert_eq!(holds, replay_holds(snapshot.facts().iter()));
 
     incremental
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("incremental projection advances");
     let mut restarted = Projection::new();
     restarted
-        .advance(&snapshot, &projects)
+        .advance(&snapshot)
         .expect("restart projection rebuilds");
     assert_eq!(
         incremental, restarted,
@@ -707,17 +688,13 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
     state
 }
 
-fn caught_up_fixture(unrelated_history: usize) -> (Bus, ProjectPolicy, Projection) {
+fn caught_up_fixture(unrelated_history: usize) -> (Bus, Projection) {
     let mut journal = Journal::in_memory().expect("fixture journal opens");
     journal.apply(seed_write()).expect("fixture task seeds");
     let bus = Bus::start(journal).expect("fixture bus starts");
-    let projects = projects();
     let mut projection = Projection::new();
     projection
-        .advance(
-            &bus.task_snapshot().expect("seed snapshot reads"),
-            &projects,
-        )
+        .advance(&bus.task_snapshot().expect("seed snapshot reads"))
         .expect("seed projection builds");
 
     if unrelated_history > 0 {
@@ -726,19 +703,13 @@ fn caught_up_fixture(unrelated_history: usize) -> (Bus, ProjectPolicy, Projectio
                 .expect("unrelated history commits"),
         );
         projection
-            .advance(
-                &bus.task_snapshot().expect("history snapshot reads"),
-                &projects,
-            )
+            .advance(&bus.task_snapshot().expect("history snapshot reads"))
             .expect("unrelated history advances");
     }
-    (bus, projects, projection)
+    (bus, projection)
 }
 
-fn policy_fixture(
-    policy: wire::intent::TeamLife,
-    terminal: bool,
-) -> (Bus, ProjectPolicy, Projection) {
+fn policy_fixture(policy: wire::intent::TeamLife, terminal: bool) -> (Bus, Projection) {
     seated_policy_fixture(policy, terminal, team())
 }
 
@@ -748,21 +719,17 @@ fn seated_policy_fixture(
     policy: wire::intent::TeamLife,
     terminal: bool,
     team: CanonicalUuid,
-) -> (Bus, ProjectPolicy, Projection) {
+) -> (Bus, Projection) {
     let mut journal = Journal::in_memory().expect("policy fixture journal opens");
     journal
         .apply(seed_write_seated(policy, terminal, team))
         .expect("policy fixture seeds");
     let bus = Bus::start(journal).expect("policy fixture bus starts");
-    let projects = projects();
     let mut projection = Projection::new();
     projection
-        .advance(
-            &bus.task_snapshot().expect("policy fixture snapshot reads"),
-            &projects,
-        )
+        .advance(&bus.task_snapshot().expect("policy fixture snapshot reads"))
         .expect("policy fixture projection builds");
-    (bus, projects, projection)
+    (bus, projection)
 }
 
 fn seed_write() -> JournalWrite {
@@ -1325,10 +1292,6 @@ fn committed(outcome: CommitOutcome) {
         matches!(outcome, CommitOutcome::Committed(_)),
         "fixture commit refused: {outcome:?}"
     );
-}
-
-fn projects() -> ProjectPolicy {
-    ProjectPolicy::new(Vec::new(), 2, 4).expect("fixture project policy")
 }
 
 fn handle(moment: &str) -> TaskHandle {

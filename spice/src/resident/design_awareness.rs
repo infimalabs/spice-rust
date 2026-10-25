@@ -186,7 +186,6 @@ impl CompletionCursor {
 /// while the lane holds no claim.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
-    config: &SurfaceConfig,
     seats: &Seats,
     cursor: &mut CompletionCursor,
     profiles: &std::sync::Mutex<message_surface::MessageState>,
@@ -197,7 +196,7 @@ pub(in crate::resident) fn reconcile(
     if occupied.is_empty() {
         return Ok(());
     }
-    let planning = Planning::load(bus, config)?;
+    let planning = Planning::load(bus)?;
     bind_current_sessions(planning.snapshot.facts(), &occupied, profiles)?;
     retain_completed_evidence(&completed, profiles)?;
     let requests = plan_profile_requests(bus, &planning, &occupied, cursor, profiles)?;

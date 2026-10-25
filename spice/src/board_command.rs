@@ -2,7 +2,7 @@
 
 use std::io::Read as _;
 
-use board::{Entry, Project, ProjectError, ProjectPolicy, SystemTaskRoute, View};
+use board::{Entry, Project, View};
 use bus::{Bus, CommitOutcome};
 use clap::ArgMatches;
 use journal::{FactCause, GuardError, JournalGuard, JournalRead, JournalWrite, PendingFact};
@@ -10,10 +10,10 @@ use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::body::GitBoundary;
 use wire::intent::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardTask, ClaimRenew,
-    ClaimWin, CommandAnswer, DocApply, DocLedger, NextWorkCounts, NextWorkState, NextWorkTask,
-    Positioned, ReviewFollowup, TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TaskAdd,
-    TaskClose, TaskConclude, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskFile,
+    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimRenew, ClaimWin,
+    CommandAnswer, DocApply, DocLedger, NextWorkCounts, NextWorkState, NextWorkTask, Positioned,
+    ReviewFollowup, TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TaskAdd, TaskClose,
+    TaskConclude, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskFile,
     TaskHistoryCursor, TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake,
     TasteProposalAdd, TextAnswer,
 };
@@ -121,8 +121,7 @@ mod next_action;
 use next_action::*;
 mod automatic_lifecycle;
 pub(crate) use automatic_lifecycle::{
-    AllocationPolicy, AutomaticClaim, AutomaticSeat, claim_automatic, is_automatic_claim,
-    release_automatic,
+    AutomaticClaim, AutomaticSeat, claim_automatic, is_automatic_claim, release_automatic,
 };
 mod mutation;
 use mutation::*;

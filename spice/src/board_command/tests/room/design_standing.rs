@@ -126,13 +126,7 @@ pub(super) fn move_out(
     let wire::intent::Intent::WorkingGroupMove(request) = command.body() else {
         panic!("fixture command carries a working-group move");
     };
-    crate::board_command::move_working_group(
-        bus,
-        &command,
-        request,
-        &steer::Config::default(),
-        &room_projects(),
-    )
+    crate::board_command::move_working_group(bus, &command, request, &steer::Config::default())
 }
 
 fn set_stance(
@@ -164,7 +158,6 @@ fn set_stance(
         &command,
         request,
         &steer::Config::default(),
-        &room_projects(),
     )
 }
 

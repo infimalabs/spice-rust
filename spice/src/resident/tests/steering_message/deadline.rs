@@ -1,7 +1,6 @@
 //! The resident lapses a pending operator item at its expiry exactly once and
 //! only while the head it armed from is unmoved.
 
-use board::ProjectPolicy;
 use journal::{FactCause, JournalWrite};
 use wire::rooms::{RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState};
 use wire::{Actor, Instant, Producer};
@@ -11,17 +10,8 @@ use crate::resident::timers::{Fired, RoomDue, Runtime};
 
 impl Lanes {
     pub(super) fn timers(&self) -> Runtime {
-        let mut timers = Runtime::start(
-            ProjectPolicy::new(
-                Vec::new(),
-                dialect::PROJECT_MIN_DEPTH as u64,
-                dialect::PROJECT_MAX_DEPTH as u64,
-            )
-            .expect("fixture projects"),
-            steer::Config::default(),
-            self.root.join("supervisors"),
-        )
-        .expect("timer runtime starts");
+        let mut timers = Runtime::start(steer::Config::default(), self.root.join("supervisors"))
+            .expect("timer runtime starts");
         timers.synchronize(&self.bus).expect("timers arm");
         timers
     }

@@ -93,25 +93,13 @@ impl Lanes {
                 other => panic!("room inbox answered {other:?}"),
             },
             ["room", path @ ("relevance" | "awareness")] => {
-                let projects =
-                    board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");
                 if *path == "relevance" {
-                    match crate::room_command::relevance::answer(
-                        &journal,
-                        &projects,
-                        leaf,
-                        contract.path,
-                    ) {
+                    match crate::room_command::relevance::answer(&journal, leaf, contract.path) {
                         Outcome::Reply(reply) => serde_json::to_value(&reply.body),
                         other => panic!("room relevance answered {other:?}"),
                     }
                 } else {
-                    match crate::room_command::awareness::answer(
-                        &journal,
-                        &projects,
-                        leaf,
-                        contract.path,
-                    ) {
+                    match crate::room_command::awareness::answer(&journal, leaf, contract.path) {
                         Outcome::Reply(reply) => serde_json::to_value(&reply.body),
                         other => panic!("room awareness answered {other:?}"),
                     }

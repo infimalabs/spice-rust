@@ -35,11 +35,11 @@ impl TaskOverviewContext {
         match self {
             Self::Task => "Selected task".to_owned(),
             Self::Scope(WorkScope::AllOpen) => "All open execution work".to_owned(),
-            Self::Scope(WorkScope::Stem(stem)) => stem.to_string(),
-            Self::Scope(WorkScope::Planning { stem: None }) => "All open Design work".to_owned(),
-            Self::Scope(WorkScope::Planning { stem: Some(stem) }) => {
-                format!("Design work · {stem}")
-            }
+            Self::Scope(WorkScope::Project(project)) => project.clone(),
+            Self::Scope(WorkScope::Planning { project: None }) => "All open Design work".to_owned(),
+            Self::Scope(WorkScope::Planning {
+                project: Some(project),
+            }) => format!("Design work · {project}"),
             Self::Scope(WorkScope::Team { team: id }) => format!("Team {}", team(*id)),
             Self::Scope(WorkScope::Group { group: id, designs }) => group(id, designs),
             Self::Project(project) => format!("Project {project}"),
@@ -398,49 +398,38 @@ mod tests {
                 .expect("fixture completion"),
         );
         let mut board = board(vec![
-            task(1, "alpha.first"),
-            task(2, "beta.other"),
-            task(3, "alpha.third"),
+            task(1, "alpha"),
+            task(2, "alpha.other"),
+            task(3, "alpha"),
             settled,
         ]);
         board.offer = vec![stamp(3), stamp(1), stamp(2)];
         let work = WorkProjection::from_board(&board);
-        let scope = WorkScope::Stem(super::super::WorkStemIdentity::new(
-            super::super::WorkVisibility::Public,
-            "alpha".to_owned(),
-        ));
+        let scope = WorkScope::Project("alpha".to_owned());
         assert_eq!(work.scope_tasks(&scope), vec![stamp(3), stamp(1)]);
     }
 
     #[test]
     fn global_scopes_and_project_select_the_complete_admitted_set() {
         let first = task(1, "alpha.one");
-        let hidden = task(2, ".alpha.audit");
+        let parent = task(2, "alpha");
         let other = task(3, "beta.other");
         let last = task(4, "alpha.one");
-        let mut board = board(vec![first, hidden, other, last]);
+        let mut board = board(vec![first, parent, other, last]);
         board.offer = vec![stamp(3), stamp(2), stamp(4), stamp(1)];
         let work = WorkProjection::from_board(&board);
-        let public_alpha = super::super::WorkStemIdentity::new(
-            super::super::WorkVisibility::Public,
-            "alpha".to_owned(),
-        );
-        let hidden_alpha = super::super::WorkStemIdentity::new(
-            super::super::WorkVisibility::Hidden,
-            "alpha".to_owned(),
-        );
 
         assert_eq!(
             work.overview_for_scope(WorkScope::AllOpen).tasks(),
             &[stamp(3), stamp(2), stamp(4), stamp(1)],
         );
         assert_eq!(
-            work.overview_for_scope(WorkScope::Stem(public_alpha.clone()))
+            work.overview_for_scope(WorkScope::Project("alpha.one".to_owned()))
                 .tasks(),
             &[stamp(4), stamp(1)],
         );
         assert_eq!(
-            work.overview_for_scope(WorkScope::Stem(hidden_alpha))
+            work.overview_for_scope(WorkScope::Project("alpha".to_owned()))
                 .tasks(),
             &[stamp(2)],
         );
@@ -492,7 +481,7 @@ mod tests {
         let selection = |tasks: &[i64], context| {
             TaskOverviewSelection::new(tasks.iter().copied().map(stamp), context)
         };
-        let design_scope = TaskOverviewContext::Scope(WorkScope::Planning { stem: None });
+        let design_scope = TaskOverviewContext::Scope(WorkScope::Planning { project: None });
 
         assert_eq!(
             work.overview_base(&selection(&[1, 2], TaskOverviewContext::Task)),

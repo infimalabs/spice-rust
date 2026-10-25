@@ -19,7 +19,6 @@ mod trust_ice;
 
 struct Fixture {
     bus: Bus,
-    projects: ProjectPolicy,
     authority: Authority,
 }
 
@@ -50,7 +49,7 @@ impl Authority {
 fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
     let fixture = automatic_fixture();
     let initial_expiry = fixture.authority.expiry;
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("automatic heartbeat arms");
@@ -131,7 +130,7 @@ fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
 #[test]
 fn automatic_claim_heartbeat_refuses_moved_occupant_authority() {
     let fixture = automatic_fixture();
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("automatic heartbeat arms");
@@ -165,7 +164,7 @@ fn automatic_claim_heartbeat_refuses_moved_occupant_authority() {
 #[test]
 fn automatic_claim_heartbeat_refuses_a_moved_lease_head() {
     let fixture = automatic_fixture();
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("automatic heartbeat arms");
@@ -198,7 +197,7 @@ fn automatic_claim_heartbeat_refuses_a_moved_lease_head() {
 #[test]
 fn automatic_claim_release_cancels_heartbeat_without_a_renewal() {
     let fixture = automatic_fixture();
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("automatic heartbeat arms");
@@ -226,7 +225,7 @@ fn automatic_claim_release_cancels_heartbeat_without_a_renewal() {
 #[test]
 fn expired_automatic_claim_lapses_without_arming_a_renewal_loop() {
     let fixture = automatic_fixture_with_age(61);
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("expired automatic claim folds");
@@ -295,7 +294,7 @@ fn manual_claims_never_create_resident_warning_protocol() {
         .expect("initial facts read")
         .facts()
         .len();
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
 
     timers
         .synchronize(&fixture.bus)
@@ -349,7 +348,7 @@ fn expired_commit_bearing_claim_lapses_and_returns_to_allocation() {
         .bus
         .subscribe()
         .expect("lapse commit subscription registers");
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("expired claim arms");
@@ -387,7 +386,7 @@ fn expired_claim_lapses_after_resident_epoch_and_occupant_move() {
     let successor = uuid(32);
     let successor_epoch = uuid(33);
     move_residency(&fixture, successor_epoch, successor);
-    let mut timers = start_timers(fixture.projects.clone()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers
         .synchronize(&fixture.bus)
         .expect("stale expired claim still arms");
@@ -412,7 +411,7 @@ fn expired_claim_lapses_after_resident_epoch_and_occupant_move() {
 fn task_wake_is_an_explicit_timer_event_for_the_selected_lane() {
     let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
     let lane = uuid(41);
     timers
@@ -458,7 +457,7 @@ fn due_task_deferral_wakes_the_task_into_allocator_eligibility() {
         Some(deadline),
         Vec::new(),
     );
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers.synchronize(&bus).expect("due task deferral arms");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -477,8 +476,7 @@ fn due_task_deferral_wakes_the_task_into_allocator_eligibility() {
     assert_eq!(heads.workflow().body().deferral, None);
     assert!(heads.statement().body().dependencies.is_empty());
     let (statement, workflow, claim, lease) = heads.into_bodies();
-    let entry = Entry::new(statement, workflow, claim, lease, &projects())
-        .expect("woken task remains valid");
+    let entry = Entry::new(statement, workflow, claim, lease).expect("woken task remains valid");
     assert!(
         board::eligible_entry(
             &board::resolved_tasks(std::slice::from_ref(&entry)),
@@ -549,7 +547,7 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
         dependency.clone(),
     );
 
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers.synchronize(&bus).expect("startup deferrals arm");
     assert_eq!(timers.deferrals.len(), 3, "Draft filing is not armed");
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -599,7 +597,7 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
     assert_eq!(task_woken_count(&bus), 2);
 
     drop(timers);
-    let mut restarted = start_timers(projects()).expect("replacement timer starts");
+    let mut restarted = start_timers().expect("replacement timer starts");
     restarted
         .synchronize(&bus)
         .expect("replacement observes completed catch-up");
@@ -626,8 +624,8 @@ fn duplicate_overdue_catch_up_commits_one_wake_transition() {
         Some(deadline),
         Vec::new(),
     );
-    let mut first = start_timers(projects()).expect("first timer starts");
-    let mut second = start_timers(projects()).expect("second timer starts");
+    let mut first = start_timers().expect("first timer starts");
+    let mut second = start_timers().expect("second timer starts");
     first.synchronize(&bus).expect("first catch-up arms");
     second.synchronize(&bus).expect("second catch-up arms");
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -666,7 +664,7 @@ fn duplicate_overdue_catch_up_commits_one_wake_transition() {
 fn lane_resume_is_an_explicit_timer_event_for_the_held_lane() {
     let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
     let lane = uuid(42);
     timers
@@ -694,7 +692,7 @@ fn lane_resume_is_an_explicit_timer_event_for_the_held_lane() {
 #[test]
 fn an_expired_silence_horizon_moves_one_stable_directive_and_rearms_the_next() {
     let (bus, directive, key) = steering_fixture();
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers.synchronize(&bus).expect("steering horizon arms");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -735,7 +733,7 @@ fn an_expired_silence_horizon_moves_one_stable_directive_and_rearms_the_next() {
 #[test]
 fn retirement_winning_the_race_makes_a_fired_escalation_append_nothing() {
     let (bus, directive, key) = steering_fixture();
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     timers.synchronize(&bus).expect("steering horizon arms");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -807,7 +805,7 @@ fn retirement_winning_the_race_makes_a_fired_escalation_append_nothing() {
 fn overdue_startup_catches_up_all_missing_stages_in_order_on_one_identity() {
     let overdue = horizons().last().copied().expect("a cadence with rungs") + 1;
     let (bus, directive, key) = steering_fixture_with_age(overdue);
-    let mut timers = start_timers(projects()).expect("timer runtime starts");
+    let mut timers = start_timers().expect("timer runtime starts");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("fixture async runtime builds");
@@ -948,7 +946,6 @@ fn fixture_with_expiry_at(expiry_seconds: i64, worktree: String) -> Fixture {
         .expect("fixture authority seeds");
     Fixture {
         bus: Bus::start(journal).expect("fixture bus starts"),
-        projects: projects(),
         authority,
     }
 }
@@ -978,7 +975,6 @@ fn automatic_fixture_with_age(age_seconds: i64) -> Fixture {
         .expect("fixture automatic authority seeds");
     Fixture {
         bus: Bus::start(journal).expect("fixture bus starts"),
-        projects: projects(),
         authority,
     }
 }
@@ -1280,8 +1276,7 @@ fn assert_lapsed_and_eligible(fixture: &Fixture, heads: &TaskHeads) {
         ClaimDisposition::Lapsed
     );
     let (statement, workflow, claim, lease) = heads.clone().into_bodies();
-    let entry = Entry::new(statement, workflow, claim, lease, &fixture.projects)
-        .expect("lapsed task remains valid");
+    let entry = Entry::new(statement, workflow, claim, lease).expect("lapsed task remains valid");
     assert!(
         board::eligible_entry(
             &board::resolved_tasks(std::slice::from_ref(&entry)),
@@ -1347,7 +1342,6 @@ fn capture_lapsed_task(
         &fixture.bus,
         &capture_command,
         None,
-        &fixture.projects,
         &board::NextConfig::default(),
         None,
     )
@@ -1423,21 +1417,11 @@ fn assert_commit_history(bus: &Bus) {
 }
 
 /// A timer runtime whose lanes keep no jobs.
-fn start_timers(projects: ProjectPolicy) -> CommandResult<Runtime> {
+fn start_timers() -> CommandResult<Runtime> {
     Runtime::start(
-        projects,
         steer::Config::default(),
         PathBuf::from("/nonexistent/spice-timer-supervisors"),
     )
-}
-
-fn projects() -> ProjectPolicy {
-    ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
 }
 
 fn task() -> TaskHandle {

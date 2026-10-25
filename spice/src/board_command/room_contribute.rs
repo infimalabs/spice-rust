@@ -20,7 +20,6 @@ pub(crate) fn room_contribute(
     command: &wire::AdmittedCommand,
     contribute: &RoomContribute,
     owners: Option<SourceOwners<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let Actor::Lane(lane) = command.actor().clone() else {
         return refusal(
@@ -46,7 +45,6 @@ pub(crate) fn room_contribute(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&contribute.room),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

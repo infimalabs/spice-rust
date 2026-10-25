@@ -8,7 +8,7 @@
 uses ordinary steering. Reports and recurrence mining provide evidence; they
 never add, remove, or rescope active tracked bags. Changing active taste requires
 an operator-accepted tracked change. Mining clusters recorded, answered operator
-corrections and files qualifying proposals on a hidden triage board.
+corrections and files qualifying proposals as ordinary `taste.policy` tasks.
 
 ## The three lane-integration git boundaries
 

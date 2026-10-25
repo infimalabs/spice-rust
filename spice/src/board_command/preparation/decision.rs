@@ -4,10 +4,10 @@
 use super::*;
 
 /// What one decision commits beyond its own immutable record.
-enum Consequence<'a> {
+enum Consequence {
     /// A work resolution authorizes exactly its accepted outputs and closes
     /// its rejected ones with their pending subtrees.
-    Resolve(Resolution<'a>),
+    Resolve(Resolution),
     /// A return changes no task head.
     Record(&'static str),
     /// An accepted outputless recommendation concludes its Design.
@@ -15,7 +15,6 @@ enum Consequence<'a> {
         design: TaskHandle,
         conclusion: body::DesignConclusion,
         action: &'static str,
-        projects: &'a ProjectPolicy,
     },
 }
 
@@ -25,17 +24,15 @@ type Authorization = (Vec<TaskHead>, ExecutionAuthorization);
 
 /// The heads a work resolution rewrites: accepted outputs lose their edge to
 /// the Design under one authorization; rejected outputs close.
-struct Resolution<'a> {
+struct Resolution {
     authorization: Option<Authorization>,
     rejected: Vec<TaskHandle>,
-    projects: &'a ProjectPolicy,
 }
 
 pub(super) fn decide_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let decision = &request_body.decision;
     let subject = ProposalRef::Decision {
@@ -72,7 +69,6 @@ pub(super) fn decide_preparation(
             Consequence::Resolve(Resolution {
                 authorization,
                 rejected,
-                projects,
             })
         }
         DecisionOutcome::Accepted { .. } => {
@@ -101,7 +97,6 @@ pub(super) fn decide_preparation(
                 ),
                 conclusion,
                 action,
-                projects,
             }
         }
     };
@@ -407,7 +402,7 @@ fn commit_decision(
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
     candidate: DesignPassProposal,
-    consequence: Consequence<'_>,
+    consequence: Consequence,
 ) -> Outcome<CommandAnswer> {
     let decision = &request_body.decision;
     let at = match current_instant() {
@@ -453,7 +448,6 @@ fn commit_decision(
             design,
             conclusion,
             action,
-            projects,
         } => {
             let closed = match crate::board_command::mutation::stage_conclusion(
                 bus,
@@ -462,7 +456,6 @@ fn commit_decision(
                     task: design,
                     conclusion,
                 },
-                projects,
                 crate::board_command::mutation::DecisionWrite {
                     write: &mut write,
                     decided,
@@ -511,12 +504,11 @@ fn stage_resolution(
     decided: PendingFact,
     at: wire::Instant,
     validation: &str,
-    resolution: Resolution<'_>,
+    resolution: Resolution,
 ) -> Result<String, Outcome<CommandAnswer>> {
     let Resolution {
         authorization,
         rejected,
-        projects,
     } = resolution;
     let mut parts = Vec::with_capacity(2);
     if let Some((outputs, authorization)) = authorization {
@@ -545,7 +537,6 @@ fn stage_resolution(
             command,
             &rejected,
             validation,
-            projects,
             crate::board_command::mutation::DecisionWrite { write, decided, at },
         )?;
         if !closed.is_empty() {

@@ -3,7 +3,6 @@ fn oops_snapshot(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskOopsAdd,
-    projects: &ProjectPolicy,
 ) -> Result<(ValidatedSnapshot, bool, wire::OopsGenerationHead), Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
@@ -73,7 +72,6 @@ fn oops_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&add.design),
-        projects,
     )?;
     if design.is_some_and(|heads| heads.statement().body().born != add.design) {
         return Err(protocol_fault(
@@ -103,9 +101,8 @@ pub(in crate::board_command) fn task_oops_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskOopsAdd,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let (snapshot, creates_design, generation) = match oops_snapshot(bus, command, add, projects) {
+    let (snapshot, creates_design, generation) = match oops_snapshot(bus, command, add) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -124,11 +121,11 @@ pub(in crate::board_command) fn task_oops_add(
         );
     };
     let project = match add.project.as_deref().map(|project| {
-        projects.admit_manual_creation(project).map_err(|error| {
+        Project::admit(project).map_err(|error| {
             refusal(
                 "task::oops-project-refused",
                 Some(error.to_string()),
-                "name a public project this board admits for manual task creation",
+                PROJECT_REPAIR,
             )
         })
     }) {
@@ -139,7 +136,7 @@ pub(in crate::board_command) fn task_oops_add(
             Err(outcome) => return outcome,
         },
     };
-    let design_project = match projects.admit_manual_creation(wire::OOPS_DESIGN_PROJECT) {
+    let design_project = match Project::admit(wire::OOPS_DESIGN_PROJECT) {
         Ok(project) => project,
         Err(error) => {
             return store_fault(
@@ -159,20 +156,14 @@ pub(in crate::board_command) fn task_oops_add(
         Err(outcome) => return outcome,
     };
     let design = if creates_design {
-        match prepare_oops_design(
-            add,
-            &design_project,
-            projects,
-            origin.clone(),
-            creation.clone(),
-        ) {
+        match prepare_oops_design(add, &design_project, origin.clone(), creation.clone()) {
             Ok(design) => Some(design),
             Err(outcome) => return outcome,
         }
     } else {
         None
     };
-    let report = match prepare_oops_report(add, &project, projects, origin, creation, report_born) {
+    let report = match prepare_oops_report(add, &project, origin, creation, report_born) {
         Ok(report) => report,
         Err(outcome) => return outcome,
     };
@@ -183,7 +174,6 @@ pub(in crate::board_command) fn task_oops_add(
         &snapshot,
         OopsRows { design, report },
         generation,
-        projects,
     )
 }
 
@@ -197,7 +187,6 @@ struct OopsRows {
 fn prepare_oops_design(
     add: &TaskOopsAdd,
     design_project: &Project,
-    projects: &ProjectPolicy,
     cause: CreationCause,
     creation: TaskCreationCapture,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
@@ -219,7 +208,6 @@ fn prepare_oops_design(
     prepare_task_for(
         &design_add,
         design_project,
-        projects,
         TaskSeed {
             cause,
             creation,
@@ -233,7 +221,6 @@ fn prepare_oops_design(
 fn prepare_oops_report(
     add: &TaskOopsAdd,
     project: &Project,
-    projects: &ProjectPolicy,
     cause: CreationCause,
     creation: TaskCreationCapture,
     report_born: &wire::TaskStamp,
@@ -258,7 +245,6 @@ fn prepare_oops_report(
     let mut report = prepare_task_for(
         &report_add,
         project,
-        projects,
         TaskSeed {
             cause,
             creation,
@@ -307,10 +293,9 @@ fn commit_oops_intake(
     snapshot: &ValidatedSnapshot,
     rows: OopsRows,
     generation: wire::OopsGenerationHead,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let OopsRows { design, report } = rows;
-    let post = prepared_entry(&report, projects);
+    let post = prepared_entry(&report);
     let next = next_action(snapshot, &post);
     let task = report.task.clone();
     let origin = report.origin.clone();

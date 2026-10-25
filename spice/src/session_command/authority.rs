@@ -71,7 +71,6 @@ impl RecallAuthorities {
 pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> RecallAuthorities {
     let mut recall = RecallAuthorities::empty();
 
@@ -80,12 +79,7 @@ pub(crate) fn observe(
     observe_transcript_threads(sources, thread.as_deref(), &mut recall);
 
     if let Some(thread) = thread.as_deref() {
-        observe_current_authorities(
-            Seat::Thread(thread),
-            environment,
-            &mut recall,
-            configuration,
-        );
+        observe_current_authorities(Seat::Thread(thread), environment, &mut recall);
     } else {
         unavailable_probes(
             &mut recall,
@@ -103,10 +97,9 @@ pub(crate) fn observe(
 pub(crate) fn observe_lane(
     environment: &Environment,
     lane: wire::CanonicalUuid,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> RecallAuthorities {
     let mut recall = RecallAuthorities::empty();
-    observe_current_authorities(Seat::Lane(lane), environment, &mut recall, configuration);
+    observe_current_authorities(Seat::Lane(lane), environment, &mut recall);
     recall
 }
 
@@ -133,7 +126,6 @@ fn observe_current_authorities(
     seat: Seat<'_>,
     environment: &Environment,
     recall: &mut RecallAuthorities,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) {
     let Some(current) = environment.cwd.clone() else {
         unknown(
@@ -177,13 +169,6 @@ fn observe_current_authorities(
             return;
         }
     };
-    let projects = match spice::config::capture_repository_scoped(&repository, &[], configuration) {
-        Ok(config) => Some(config.resolved().root().tasks().project_policy()),
-        Err(error) => {
-            unknown(recall, "configuration", "load-repository", &error);
-            None
-        }
-    };
     let reader = match JournalReader::open(state.journal()) {
         Ok(reader) => reader,
         Err(error) => {
@@ -192,7 +177,7 @@ fn observe_current_authorities(
             return;
         }
     };
-    match reader.read_with(|read| read_authorities(read, seat, projects.as_ref())) {
+    match reader.read_with(|read| read_authorities(read, seat)) {
         Ok(observed) => apply_observed(recall, seat, observed),
         Err(error) => {
             unknown(recall, "journal", "read-transaction", &error);
@@ -204,7 +189,6 @@ fn observe_current_authorities(
 #[derive(Debug)]
 enum AuthorityReadError {
     ResidencyMissing,
-    ProjectPolicyUnavailable,
     Journal(journal::GuardError),
     Steering(steer::directives::Refusal),
     Board(board::TaskError),
@@ -215,9 +199,6 @@ impl fmt::Display for AuthorityReadError {
         match self {
             Self::ResidencyMissing => {
                 formatter.write_str("journal snapshot has no current residency head")
-            }
-            Self::ProjectPolicyUnavailable => {
-                formatter.write_str("repository task project policy is unavailable")
             }
             Self::Journal(error) => write!(formatter, "journal heads are unavailable: {error}"),
             Self::Steering(error) => {
@@ -233,7 +214,6 @@ impl Error for AuthorityReadError {}
 fn read_authorities(
     read: &JournalRead<'_>,
     seat: Seat<'_>,
-    projects: Option<&board::ProjectPolicy>,
 ) -> Result<ObservedAuthorities, std::convert::Infallible> {
     let residency = read
         .residency_head()
@@ -283,11 +263,8 @@ fn read_authorities(
         .map_err(AuthorityReadError::Journal)
         .and_then(|heads| {
             heads.map_or(Ok(None), |heads| {
-                let Some(projects) = projects else {
-                    return Err(AuthorityReadError::ProjectPolicyUnavailable);
-                };
                 let (statement, workflow, claim, lease) = heads.into_bodies();
-                Entry::new(statement, workflow, claim, lease, projects)
+                Entry::new(statement, workflow, claim, lease)
                     .map_err(AuthorityReadError::Board)
                     .map(Some)
             })

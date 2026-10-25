@@ -104,7 +104,7 @@ fn report(
                 },
             })
             .collect(),
-        subsystems: subsystems::diagnose(repository, &configuration),
+        subsystems: subsystems::diagnose(repository),
         configuration,
         provenance,
         commands,

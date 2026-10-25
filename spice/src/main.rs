@@ -354,7 +354,7 @@ impl NativeInvocation<'_> {
             }
             ["app"] => deliver_display(&app_command::open(leaf, ambient), form),
             ["gate"] => deliver_with_reply_text(
-                &gate_command::run(leaf, configuration, live, ambient),
+                &gate_command::run(leaf, live, ambient),
                 form,
                 gate_command::BatteryRun::text,
             ),
@@ -461,10 +461,9 @@ impl NativeInvocation<'_> {
             ["task", "artifact", "add"]
             | ["task", "artifact", "list"]
             | ["task", "artifact", "show"]
-            | ["task", "artifact", "prune"] => deliver(
-                &task_artifact_command::run(leaf, contract, configuration),
-                form,
-            ),
+            | ["task", "artifact", "prune"] => {
+                deliver(&task_artifact_command::run(leaf, contract), form)
+            }
             ["room", "history"]
             | ["room", "inbox"]
             | ["room", "result"]
@@ -490,7 +489,7 @@ impl NativeInvocation<'_> {
     }
 
     fn dispatch_session_control(&self, contract: &cli::Contract) -> bool {
-        let &Self(leaf, form, configuration, ambient) = self;
+        let &Self(leaf, form, _, ambient) = self;
         match contract.path {
             ["session"]
             | ["session", "briefing"]
@@ -507,12 +506,7 @@ impl NativeInvocation<'_> {
             | ["session", "timeline"]
             | ["session", "tokens"]
             | ["session", "turns"] => deliver_with_reply_text(
-                &session_command::run(
-                    leaf,
-                    contract.path,
-                    &session_environment(ambient),
-                    configuration,
-                ),
+                &session_command::run(leaf, contract.path, &session_environment(ambient)),
                 form,
                 session_command::Report::text,
             ),

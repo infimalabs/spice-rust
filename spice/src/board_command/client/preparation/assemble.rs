@@ -78,8 +78,7 @@ fn built_outputs<'a>(
         .iter()
         .filter(|task| {
             let statement = &task.statement.body;
-            !task.visibility.is_hidden()
-                && task.workflow.body.status.is_pending()
+            task.workflow.body.status.is_pending()
                 && statement.preparation.as_ref().is_some_and(|preparation| {
                     preparation.parent == *born && preparation.construction == statement.born
                 })

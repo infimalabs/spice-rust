@@ -108,7 +108,7 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             }
             WorkAvailability::Held => DependencyWall::Environment(born),
             WorkAvailability::Deferred => DependencyWall::Deferred(born),
-            WorkAvailability::Parked | WorkAvailability::Draft => DependencyWall::Parked(born),
+            WorkAvailability::Draft => DependencyWall::Parked(born),
             WorkAvailability::Terminal => DependencyWall::Unreachable(born),
             WorkAvailability::Blocked => {
                 self.on_path[index] = true;
