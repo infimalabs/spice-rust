@@ -29,7 +29,7 @@ pub use release::{
 };
 pub use stage::{BuildError, BuildStep, Builder, Pipeline, StageError, StagedTarget};
 pub use version::{
-    Build, SOURCE_SECOND_POSITIONS, SourceMinor, SourceMinorError, TrackedVersion,
-    TrackedVersionError, admit_tracked_version, current_tracked_version,
+    Build, SourceMinor, SourceMinorError, TrackedVersion, TrackedVersionError,
+    admit_tracked_version, current_tracked_version,
 };
 pub use wire::manifest::ProductVersion;
