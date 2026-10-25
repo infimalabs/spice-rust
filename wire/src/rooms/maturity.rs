@@ -322,7 +322,8 @@ impl DesignItems {
             .collect()
     }
 
-    /// Whether some current item concurs and none is contested.
+    /// Whether every current item has been charged, one concurs, and none is
+    /// contested.
     #[must_use]
     pub fn steeped(&self, acceptance: &[String]) -> bool {
         steeped(&self.states(acceptance))
@@ -407,7 +408,10 @@ impl DesignItems {
 }
 
 fn steeped(states: &[DesignItemState]) -> bool {
-    states.contains(&DesignItemState::Concurred) && !states.contains(&DesignItemState::Contested)
+    states.contains(&DesignItemState::Concurred)
+        && !states
+            .iter()
+            .any(|state| matches!(state, DesignItemState::Quiet | DesignItemState::Contested))
 }
 
 /// One recent statement head's request and contribution evidence.
@@ -554,28 +558,26 @@ pub struct DesignItemNeed {
 
 /// Advisory state judged per current question item.
 ///
-/// Steeped iff some current item concurs and none is contested. Quiet and
-/// unopposed items never block; both states count the items still quiet, so
-/// a first pass knows what it leaves open.
+/// Steeped iff every current item has been charged, some item concurs, and
+/// none is contested. Unopposed items never block; a quiet item does, so a
+/// Design keeps its group's invite reach until every question is heard.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum DesignMaturityState {
     /// No contribution exists.
     Fresh,
-    /// No current item concurs, or one is contested.
+    /// Some current item is quiet or contested, or none concurs.
     Steeping {
-        /// The lowest-index contested item, else the lowest-index item that
-        /// is quiet or unopposed; none when the statement names no item.
+        /// The lowest-index contested item, else the lowest-index quiet item,
+        /// else the lowest-index unopposed item; none when the statement names
+        /// no item.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next: Option<DesignItemNeed>,
         /// Current items no charge has weighed.
         quiet: usize,
     },
-    /// Some current item concurs and none is contested.
-    Steeped {
-        /// Current items no charge has weighed.
-        quiet: usize,
-    },
+    /// Every current item is charged, some concurs, and none is contested.
+    Steeped,
 }
 
 impl DesignMaturityState {
@@ -584,7 +586,7 @@ impl DesignMaturityState {
     pub fn summary(&self) -> String {
         match self {
             Self::Fresh => "fresh: no contribution yet".to_owned(),
-            Self::Steeped { quiet } => format!("steeped; {} left quiet", quiet_items(*quiet)),
+            Self::Steeped => "steeped".to_owned(),
             Self::Steeping {
                 next: Some(need),
                 quiet,
@@ -705,16 +707,12 @@ impl DesignMaturity {
             .filter(|state| **state == DesignItemState::Quiet)
             .count();
         if steeped(&states) {
-            return DesignMaturityState::Steeped { quiet };
+            return DesignMaturityState::Steeped;
         }
-        let next = states
-            .iter()
-            .position(|state| *state == DesignItemState::Contested)
-            .or_else(|| {
-                states
-                    .iter()
-                    .position(|state| *state != DesignItemState::Concurred)
-            })
+        let lowest = |wanted: fn(&DesignItemState) -> bool| states.iter().position(wanted);
+        let next = lowest(|state| *state == DesignItemState::Contested)
+            .or_else(|| lowest(|state| *state == DesignItemState::Quiet))
+            .or_else(|| lowest(|state| *state != DesignItemState::Concurred))
             .and_then(|offset| {
                 let question = u16::try_from(offset + 1).ok().and_then(RoomQuestion::new)?;
                 let needs = self
@@ -1113,11 +1111,6 @@ mod tests {
         );
 
         let current = acceptance(&ITEMS);
-        assert_eq!(
-            three.state(&current),
-            DesignMaturityState::Steeped { quiet: 1 },
-            "one unanimous item steeps a Design whose other items are quiet"
-        );
         let mut contested = three;
         for (lane, value) in [(4, 1), (5, -1)] {
             contested.observe_contribution(&charge(lane, ITEMS[1], value));
@@ -1136,7 +1129,7 @@ mod tests {
     }
 
     #[test]
-    fn a_design_steeps_iff_a_current_item_concurs_and_none_is_contested() {
+    fn a_design_steeps_iff_every_current_item_is_heard_one_concurs_and_none_is_contested() {
         let mut maturity = DesignMaturity::default();
         let current = acceptance(&ITEMS);
         assert_eq!(maturity.state(&current), DesignMaturityState::Fresh);
@@ -1155,15 +1148,26 @@ mod tests {
         }
         assert_eq!(
             maturity.state(&current),
-            DesignMaturityState::Steeped { quiet: 1 },
-            "three charged posts from two lanes with a concession steep one item"
+            DesignMaturityState::Steeping {
+                next: need(2, DesignItemState::Quiet, DesignItemInput::AnyCharge),
+                quiet: 1,
+            },
+            "a quiet item keeps a Design steeping although another item concurs"
         );
 
         maturity.observe_contribution(&charge(3, ITEMS[1], 1));
         assert_eq!(
             maturity.state(&current),
-            DesignMaturityState::Steeped { quiet: 0 },
-            "an unopposed item never blocks"
+            DesignMaturityState::Steeped,
+            "once every item is heard, an unopposed item never blocks"
+        );
+        assert_eq!(
+            maturity.state(&acceptance(&[ITEMS[1], ITEMS[0], "Who else weighs it?"])),
+            DesignMaturityState::Steeping {
+                next: need(3, DesignItemState::Quiet, DesignItemInput::AnyCharge),
+                quiet: 1,
+            },
+            "a quiet item is named before a lower unopposed one"
         );
         maturity.observe_contribution(&charge(4, ITEMS[1], -1));
         assert_eq!(
@@ -1176,6 +1180,18 @@ mod tests {
                 ),
                 quiet: 0,
             }
+        );
+        assert_eq!(
+            maturity.state(&acceptance(&["Who else weighs it?", ITEMS[0], ITEMS[1]])),
+            DesignMaturityState::Steeping {
+                next: need(
+                    3,
+                    DesignItemState::Contested,
+                    DesignItemInput::NegativeAgreement
+                ),
+                quiet: 1,
+            },
+            "a contested item is named before a lower quiet one"
         );
 
         let reordered = acceptance(&["  who ANSWERS\tit? ", ITEMS[0]]);
@@ -1194,12 +1210,15 @@ mod tests {
         let reworded = acceptance(&[ITEMS[0], "Who answers it first?"]);
         assert_eq!(
             maturity.state(&reworded),
-            DesignMaturityState::Steeped { quiet: 1 },
-            "a reworded item starts a new series and the old one leaves the gate"
+            DesignMaturityState::Steeping {
+                next: need(2, DesignItemState::Quiet, DesignItemInput::AnyCharge),
+                quiet: 1,
+            },
+            "a reworded item starts a new series that must be heard again"
         );
         assert_eq!(
             maturity.state(&acceptance(&ITEMS[..1])),
-            DesignMaturityState::Steeped { quiet: 0 },
+            DesignMaturityState::Steeped,
             "a removed item leaves the gate"
         );
     }
@@ -1216,10 +1235,15 @@ mod tests {
         for lane in 1..=3 {
             maturity.observe_contribution(&charge(lane, ITEMS[0], 1));
         }
+        assert!(
+            !maturity.items.steeped(&current),
+            "a quiet item keeps the statement steeping"
+        );
+        maturity.observe_contribution(&charge(4, ITEMS[1], 1));
         assert!(maturity.items.steeped(&current));
         assert!(
             !maturity.items.all_concurred(&current),
-            "a quiet item is still open to an outside lane"
+            "an unopposed item is still open to an outside lane"
         );
         for lane in 1..=3 {
             maturity.observe_contribution(&charge(lane, ITEMS[1], -1));

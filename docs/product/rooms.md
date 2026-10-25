@@ -106,10 +106,12 @@ owns each rule summarized here.
   tie break. Each candidate owns its stance-weighted cosine floor: passive uses
   the balanced 0.15 base, Explore uses 0.10, and Converge uses 0.20. A Design
   whose maturity is steeped clears Converge's floor whatever its group's
-  stance: it is close, so it asks only the lanes Converge would, and its
-  group's floor returns as soon as a later charge contests an item or a
-  statement edit un-steeps it; the notice records Converge as the admitting
-  stance. The floor decides qualification only; finite cosine score still
+  stance: every question has been heard and it is close, so it asks only the
+  lanes Converge would. Until then, including while any question is still
+  quiet, it keeps its group's floor and reach. The group's floor returns as
+  soon as a later charge contests an item or a statement edit un-steeps it;
+  the notice records Converge as the admitting stance. The floor decides
+  qualification only; finite cosine score still
   decides ranking. One opportunity selects one Design at most; one session has
   one unanswered request at most. Whether a lane is asked is decided on the
   whole statement; what it is asked is every question item still owed to it.
@@ -170,14 +172,16 @@ owns each rule summarized here.
   opposite side's last strength-2 charge without a strength-2 charge of its
   own. Zero charges and questions never enter a series. Steeping is
   judged against the current statement's items: fresh means no
-  contribution; steeped means some current item concurs and none is
-  contested; anything else is steeping and names the lowest contested item,
-  else the lowest quiet or unopposed item, with the input it needs. Both
-  steeped and steeping report how many current items are still quiet. `spice
-  room awareness HANDLE` and the browser room show each item's state, and
-  steeped maturity makes a Design's first pass ready. Beyond that the state
-  is advisory: it never changes standing, possession, grouping, selection,
-  or authorization.
+  contribution; steeped means every current item has been charged, some
+  item concurs, and none is contested, so a quiet item blocks and an
+  unopposed one does not; anything else is steeping and names the lowest
+  contested item, else the lowest quiet item, else the lowest unopposed item,
+  with the input it needs, and counts the items still quiet. `spice room
+  awareness HANDLE` and the browser room show each item's state. Steeped
+  maturity makes a Design's first pass ready and raises its invite floor to
+  Converge's, narrowing who is asked. Beyond those two effects the state is
+  advisory: it never changes standing, possession, grouping, selection, or
+  authorization.
 
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow.
   `task design` defaults to a Design with one open `design` phase when it

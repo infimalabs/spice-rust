@@ -266,7 +266,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     assert_eq!(actual.recent_heads[0].requested_unanswered(), 0);
     assert_eq!(
         actual.state(&[ITEM.to_owned()]),
-        DesignMaturityState::Steeped { quiet: 0 }
+        DesignMaturityState::Steeped
     );
 }
 
@@ -432,10 +432,7 @@ fn retained_item_positions_cross_to_text_identities_from_their_current_statement
         "each series re-folds under its text identity"
     );
     let acceptance = items.map(str::to_owned);
-    assert_eq!(
-        crossed.state(&acceptance),
-        DesignMaturityState::Steeped { quiet: 0 }
-    );
+    assert_eq!(crossed.state(&acceptance), DesignMaturityState::Steeped);
     drop(journal);
     let reopened = Journal::open(&path).expect("crossed authority reopens");
     assert_eq!(reopened.migration(), None, "the crossing runs exactly once");

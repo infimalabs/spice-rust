@@ -191,25 +191,27 @@ fn a_steeped_design_invites_at_converges_floor_until_an_item_contests() {
 
     lanes.charge(50, SENDER, &design, 1, 1);
     lanes.charge(51, SECOND, &design, 1, 1);
-    assert_eq!(
-        floor(&lanes, &design),
-        expected(Passive),
-        "two opinions leave the item unopposed"
-    );
     lanes.charge(52, THIRD, &design, 1, 1);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Converge),
-        "three lanes concur, and a steeped Design asks as Converge does"
+        expected(Passive),
+        "three lanes concur on one item, but a quiet item keeps the group's floor"
     );
     lanes.stance(53, &config, Explore);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Converge),
-        "Explore cannot lower a steeped Design's floor"
+        expected(Explore),
+        "Explore keeps its floor while a question is unheard"
     );
 
-    lanes.charge(54, SENDER, &design, 1, -1);
+    lanes.charge(54, SECOND, &design, 2, 1);
+    assert_eq!(
+        floor(&lanes, &design),
+        expected(Converge),
+        "every item heard and one concurring steeps the Design, which asks as Converge does"
+    );
+
+    lanes.charge(55, SENDER, &design, 1, -1);
     assert_eq!(
         floor(&lanes, &design),
         expected(Explore),

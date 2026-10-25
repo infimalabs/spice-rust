@@ -458,7 +458,7 @@ fn maturity_projection_is_incremental_bounded_and_standing_neutral() {
 
     assert_eq!(
         maturity.state(&[ITEM.to_owned()]),
-        wire::rooms::DesignMaturityState::Steeped { quiet: 0 }
+        wire::rooms::DesignMaturityState::Steeped
     );
     assert_eq!(maturity.recent_heads.len(), 1);
     assert_eq!(maturity.recent_heads[0].requested_contributors(), 3);
