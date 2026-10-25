@@ -26,6 +26,16 @@ pub(crate) struct Node {
     pub(crate) kind: &'static str,
     pub(crate) label: String,
     pub(crate) detail: String,
+    /// Commit time of a non-task fact, which the evidence list renders as a
+    /// live relative time rather than as part of `detail`.
+    #[cfg_attr(
+        all(test, not(target_arch = "wasm32")),
+        expect(
+            dead_code,
+            reason = "only the wasm32 evidence list renders the fact's relative time"
+        )
+    )]
+    pub(crate) at: Option<wire::Instant>,
     pub(crate) task: Option<TaskStamp>,
     /// Workflow status the typed enrichment reports for a task the admitted
     /// board lacks, such as a completed prerequisite.
@@ -47,6 +57,7 @@ pub(crate) fn project(
     relation: TaskRelationKind,
     direction: WorkRelationshipDirection,
     selection: &TaskOverviewSelection,
+    local_time: &dyn Fn(&wire::Instant) -> String,
 ) -> Option<Presentation> {
     let enriched = answer
         .into_iter()
@@ -113,7 +124,7 @@ pub(crate) fn project(
             }
             let index = nodes.len();
             identities.insert(identity, index);
-            nodes.push(present_remote_node(node, index, selection));
+            nodes.push(present_remote_node(node, index, selection, local_time));
         }
         for edge in admitted_edges {
             let old_from = *by_identity.get(&edge.from)?;
@@ -282,6 +293,7 @@ fn present_local_node(
         diagram: format!("{label}\n{detail}"),
         label,
         detail,
+        at: None,
         task: Some(node.task().clone()),
         status,
         selected: node.selected(),
@@ -292,6 +304,7 @@ fn present_remote_node(
     node: &TaskRelationNode,
     index: usize,
     selection: &TaskOverviewSelection,
+    local_time: &dyn Fn(&wire::Instant) -> String,
 ) -> Node {
     let id = format!("n{index}");
     match node {
@@ -308,6 +321,7 @@ fn present_remote_node(
                 kind: "Related task",
                 label: format!("{handle} · {title}"),
                 detail: format!("Phase {phase} · {status}"),
+                at: None,
                 diagram: format!("{handle}\n{title}\nPhase {phase} — {status}"),
                 task: Some(task.clone()),
                 status: Some(*status),
@@ -344,8 +358,12 @@ fn present_remote_node(
                 id,
                 kind: "Lifecycle transition",
                 label: format!("{event} · {actor_label}"),
-                detail: format!("{at} · {actor} · fact {position}"),
-                diagram: format!("{event}\n{actor_label}\n{at}\nfact {position}"),
+                detail: format!("{actor} · fact {position}"),
+                at: Some(*at),
+                diagram: format!(
+                    "{event}\n{actor_label}\n{}\nfact {position}",
+                    local_time(at)
+                ),
                 task: None,
                 status: None,
                 selected: false,
@@ -377,6 +395,7 @@ fn present_remote_node(
                 kind: "Current possession",
                 label: format!("Current claim · {actor}"),
                 detail,
+                at: None,
                 diagram: format!(
                     "Current claim\n{owner}\n{disposition}\noccupant {occupant}\nfact {position}"
                 ),
@@ -423,6 +442,7 @@ fn present_origin_node(
         kind: "ACK / origin",
         label,
         detail,
+        at: None,
         diagram,
         task: None,
         status: None,
@@ -467,6 +487,7 @@ fn present_review_node(
         kind: "Completed review",
         label,
         detail,
+        at: None,
         diagram,
         task: None,
         status: None,

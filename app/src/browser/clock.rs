@@ -387,6 +387,35 @@ fn local_timestamp(instant: i64, canonical: &str, style: LocalStyle) -> AttrValu
         .into()
 }
 
+/// An instant in the viewer's local time, for static text a clock cannot
+/// advance, such as a rendered diagram label.
+pub(super) fn local_compact(instant: &wire::Instant) -> String {
+    local_timestamp(
+        instant.get().as_millisecond(),
+        &instant.to_string(),
+        LocalStyle::Compact,
+    )
+    .to_string()
+}
+
+/// An instant's full local time, for hover text beside a relative label.
+pub(super) fn local_full(instant: &wire::Instant) -> AttrValue {
+    local_timestamp(
+        instant.get().as_millisecond(),
+        &instant.to_string(),
+        LocalStyle::Full,
+    )
+}
+
+/// [`local_full`] for an epoch millisecond no wire instant carries.
+pub(super) fn local_full_millis(millis: i64) -> AttrValue {
+    local_timestamp(
+        millis,
+        &format!("{millis} Unix milliseconds"),
+        LocalStyle::Full,
+    )
+}
+
 /// The browser's current instant in epoch milliseconds.
 pub(super) fn now_millis() -> i64 {
     js_sys::Date::now() as i64

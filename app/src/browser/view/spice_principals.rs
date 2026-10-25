@@ -5,7 +5,7 @@
 //! handoff, profile edit, operator role, and capability retirement
 //! `spice principal` offers, through its commands.
 
-use super::super::clock::Age;
+use super::super::clock::{Age, local_full};
 use super::chrome::CopyButton;
 use super::*;
 use crate::client_action::{PrincipalResponse, PrincipalWrite};
@@ -384,6 +384,8 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
         (None, false) => "capability revoked",
     };
     let admitted = &row.listing.admitted;
+    let admitted_local = local_full(admitted);
+    let role_label = if operator { "operator" } else { "no role" };
     let role = {
         let send = row.send.clone();
         let reference = PrincipalRoleRef {
@@ -443,19 +445,16 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
                     }
                     <span
                         data-principal-roles={if operator { "operator" } else { "" }}
-                        title={format!(
-                            "{} · {capability} · admitted {admitted}",
-                            if operator { "operator" } else { "no role" },
-                        )}
+                        title={format!("{role_label} · {capability} · admitted {admitted_local}")}
                     >
-                        {if operator { "operator" } else { "no role" }}
+                        {role_label}
                         {" · "}
                         {capability}
                         {" · admitted "}
                         <Age
                             authored={admitted.get().as_millisecond()}
                             class={classes!("app-spice-principal-admitted")}
-                            title={AttrValue::from(admitted.to_string())}
+                            title={admitted_local}
                         />
                     </span>
                 </div>

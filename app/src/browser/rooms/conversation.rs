@@ -18,6 +18,7 @@ use yew::prelude::*;
 
 use super::card::{Badge, Face, Speaker};
 use crate::AppRuntime;
+use crate::browser::clock::{Age, Countdown, local_full};
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomControlRequest};
 use crate::runtime::{
@@ -440,14 +441,47 @@ fn item_route(act: Act<'_>, key: &RoomReceiptRef, destination: &str, lead: &str)
 /// recovery once lapsed. Its control slot keeps one height in every state, so
 /// a receipt settling never moves the cards after it.
 fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destination: &str) -> Html {
-    let (status, label) = match &item.state {
+    let none = || (Html::default(), "", None);
+    let (status, label, (clock, suffix, exact)) = match &item.state {
         RoomReceiptState::Pending { expires } => {
-            ("pending", format!("receipt pending · expires {expires}"))
+            let exact = local_full(expires);
+            (
+                "pending",
+                "receipt pending · expires in ",
+                (
+                    html! {
+                        <Countdown
+                            expiry={expires.get().as_millisecond()}
+                            class={classes!("room-receipt-time")}
+                            title={exact.clone()}
+                        />
+                    },
+                    "",
+                    Some(format!("receipt pending · expires {exact}")),
+                ),
+            )
         }
-        RoomReceiptState::Acked { .. } => ("acked", "acked".to_owned()),
-        RoomReceiptState::Declined { .. } => ("declined", "declined".to_owned()),
-        RoomReceiptState::Expired { at } => ("expired", format!("receipt expired {at}")),
-        RoomReceiptState::Cancelled { .. } => ("cancelled", "cancelled".to_owned()),
+        RoomReceiptState::Acked { .. } => ("acked", "acked", none()),
+        RoomReceiptState::Declined { .. } => ("declined", "declined", none()),
+        RoomReceiptState::Expired { at } => {
+            let exact = local_full(at);
+            (
+                "expired",
+                "receipt expired ",
+                (
+                    html! {
+                        <Age
+                            authored={at.get().as_millisecond()}
+                            class={classes!("room-receipt-time")}
+                            title={exact.clone()}
+                        />
+                    },
+                    " ago",
+                    Some(format!("receipt expired {exact}")),
+                ),
+            )
+        }
+        RoomReceiptState::Cancelled { .. } => ("cancelled", "cancelled", none()),
     };
     let control = match (&item.state, act.controls) {
         (RoomReceiptState::Pending { .. }, Some(controls)) => {
@@ -459,9 +493,10 @@ fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destinat
         _ => Html::default(),
     };
     let text = format!("{destination}: {label}");
+    let hover = format!("{destination}: {}", exact.as_deref().unwrap_or(label));
     html! {
         <li class="room-chip" data-status={status} data-item-key={key.to_string()}>
-            <span title={text.clone()}>{text}</span>
+            <span title={hover}>{text}{clock}{suffix}</span>
             <div class="room-flow-slot">{control}</div>
         </li>
     }

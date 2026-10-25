@@ -18,6 +18,13 @@ consoles share one faint dividing edge in the left console's soft edge tone,
 painted on that console's end edge from the foot of the task band to the
 consoles' bottom, so the earlier console's controls read as in front of it.
 
+A time the console shows never reads in UTC unless UTC is the viewer's zone.
+Live text reads as relative time that advances on its own deadline, with the
+full local time on hover. Static renderings that cannot advance, such as a task
+overview's Mermaid labels, read in compact local time, so the diagram's source,
+and therefore its rendered image, stays fixed while the clock moves. Canonical
+UTC instants appear only in machine-readable attributes and payloads.
+
 ## Working groups and teams
 
 A working group is a team's design-side twin: one to six ordered Designs in the

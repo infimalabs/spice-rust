@@ -54,6 +54,7 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
             TaskRelationKind::Dependency,
             WorkRelationshipDirection::Both,
             &selection,
+            &|at| at.to_string(),
         )
         .expect("overview presentation")
     };
@@ -142,6 +143,7 @@ fn design_plan_dependency_edges_do_not_shortcut_nested_work() {
             TaskRelationKind::Dependency,
             WorkRelationshipDirection::Both,
             &selection,
+            &|at| at.to_string(),
         )
         .expect("overview presentation");
         presentation
