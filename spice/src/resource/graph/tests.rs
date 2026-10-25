@@ -40,7 +40,6 @@ fn entries() -> Vec<board::Entry> {
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 dependencies: if index > 1 {
                     vec![wire::TaskStamp::for_micros(index - 1).expect("dependency")]
                 } else {

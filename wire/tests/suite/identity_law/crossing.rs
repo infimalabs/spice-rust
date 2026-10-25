@@ -365,7 +365,6 @@ fn cover_task_heads() {
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 dependencies: Vec::new(),
                 provenance: wire::TaskProvenance::Parentless,
                 creation: body::TaskCreationContext::unavailable(
@@ -390,7 +389,6 @@ fn cover_task_heads() {
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 dependencies: vec![stamp("1kKRRsDQ")],
                 provenance: "task:1kKRRsDP".parse().expect("origin"),
                 creation: body::TaskCreationContext::unavailable(

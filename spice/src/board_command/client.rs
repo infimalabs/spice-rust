@@ -187,7 +187,7 @@ pub(in crate::board_command) use submission::{
     artifact_operation_failure, repository_state_failure,
 };
 use submission::{client_add, client_capture, client_oops, submit_recovery_task_add};
-pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposal};
+pub(crate) use submission::{current_board, submit_task_add};
 use submission::{mutate_task, mutate_task_from_board};
 
 fn client_ledger(
@@ -1409,7 +1409,6 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::RoomPost(post) => room_post(bus, command, post),
         wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, repository),
         wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add),
-        wire::intent::Intent::TasteProposalAdd(add) => taste_proposal_add(bus, command, add),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, repository),
         wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, repository),

@@ -57,7 +57,6 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::DesignNudge
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
-        | CommandKind::TasteProposalAdd
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskClose

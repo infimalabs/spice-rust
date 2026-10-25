@@ -1118,7 +1118,6 @@ mod tests {
             priority: None,
             taste: None,
             document_slug: None,
-            taste_proposal: None,
             dependencies: Vec::new(),
             intent: None,
             preparation: Some(TaskPreparation {

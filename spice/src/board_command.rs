@@ -15,7 +15,7 @@ use wire::intent::{
     ReviewFollowup, TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TaskAdd, TaskClose,
     TaskConclude, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskFile,
     TaskHistoryCursor, TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake,
-    TasteProposalAdd, TextAnswer,
+    TextAnswer,
 };
 use wire::rooms::{
     RoomListenerAvailability, RoomListenerDelivery, RoomPost, RoomPostAnswer, RoomPostListener,

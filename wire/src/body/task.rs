@@ -161,13 +161,6 @@ pub struct TaskAdded {
         deserialize_with = "crate::optional::present"
     )]
     pub document_slug: Option<String>,
-    /// Evidence of a resident-filed taste proposal.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub taste_proposal: Option<crate::TasteProposal>,
     /// Tasks this one waits behind.
     pub depends: Vec<TaskStamp>,
     /// Declared Plan or Design intent the statement opens with.

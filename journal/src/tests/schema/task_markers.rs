@@ -1,10 +1,9 @@
-//! Retained document-slug and taste-proposal tags cross into typed statement
-//! fields, while every generic statement tag is discarded.
+//! A retained document-slug tag crosses into its typed statement field, while
+//! retired taste-proposal markers and every generic statement tag are discarded.
 
 use super::*;
 
 const FINDING: &str = "1111111111111111111111111111111111111111111111111111111111111111";
-const OCCURRENCE: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
 fn predecessor(head_tags: serde_json::Value, fact_tags: serde_json::Value) -> Journal {
     let journal = authority_fixture();
@@ -71,7 +70,6 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
             "taste-proposal",
             "alpha",
             format!("taste-finding:{FINDING}"),
-            format!("taste-occurrence:{OCCURRENCE}"),
             "taste-recurrence:3",
             "omega"
         ]),
@@ -92,7 +90,6 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
     let head: TaskHead = wire::decode(&body).unwrap();
     assert_no_statement_tags(&journal);
     assert_eq!(head.document_slug.as_deref(), Some("intro"));
-    assert_eq!(head.taste_proposal, None);
 
     let bytes: Vec<u8> = journal
         .connection
@@ -105,14 +102,6 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
     let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
     let added = envelope.fact.read::<wire::body::TaskAdded>().unwrap();
     assert_eq!(added.document_slug, None);
-    assert_eq!(
-        added.taste_proposal,
-        Some(wire::TasteProposal {
-            finding: FINDING.parse().unwrap(),
-            occurrence: OCCURRENCE.parse().unwrap(),
-            recurrence: 3,
-        })
-    );
 
     let crossed = rows(&journal);
     assert_eq!(
@@ -126,13 +115,7 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
 fn schema_sixty_six_lifts_every_meaning_before_discarding_tags() {
     let mut journal = predecessor(
         json!(["priority:high", "document-slug:intro", "gate-finding"]),
-        json!([
-            "taste-proposal",
-            format!("taste-finding:{FINDING}"),
-            format!("taste-occurrence:{OCCURRENCE}"),
-            "taste-recurrence:3",
-            "gate-finding"
-        ]),
+        json!(["gate-finding"]),
     );
     restore_predecessor(&journal, 66);
     crate::migrate::admit(&mut journal.connection)
@@ -151,17 +134,6 @@ fn schema_sixty_six_lifts_every_meaning_before_discarding_tags() {
     assert_eq!(head.priority, Some(wire::TaskPriority::High));
     assert_eq!(head.document_slug.as_deref(), Some("intro"));
 
-    let bytes: Vec<u8> = journal
-        .connection
-        .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE kind = 'task::added'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
-    let added = envelope.fact.read::<wire::body::TaskAdded>().unwrap();
-    assert_eq!(added.taste_proposal.as_ref().unwrap().recurrence, 3);
     assert_no_statement_tags(&journal);
 }
 
@@ -184,13 +156,6 @@ fn marker_tags_without_one_current_meaning_roll_back_the_entire_crossing() {
     for tags in [
         json!(["document-slug:a", "document-slug:b"]),
         json!(["document-slug:"]),
-        json!(["taste-proposal", format!("taste-finding:{FINDING}")]),
-        json!([
-            "taste-proposal",
-            format!("taste-finding:{FINDING}"),
-            format!("taste-occurrence:{OCCURRENCE}"),
-            "taste-recurrence:1"
-        ]),
     ] {
         let mut journal = predecessor(tags.clone(), json!([]));
         let before = rows(&journal);

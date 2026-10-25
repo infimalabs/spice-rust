@@ -98,7 +98,6 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["principal", verb @ ..] => return principal_kind_for(verb),
         ["task", verb] => return task_kind_for(verb),
         ["taste", "add"] | ["taste", "drop"] => CommandKind::TaskAdd,
-        ["taste", "mine"] => CommandKind::TasteProposalAdd,
         ["doc"] => CommandKind::DocApply,
         ["doc", "ledger"] => CommandKind::DocLedger,
         _ => return None,

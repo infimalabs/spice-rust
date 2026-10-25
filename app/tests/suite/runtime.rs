@@ -246,7 +246,6 @@ fn board_task(
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 dependencies: Vec::new(),
                 provenance: provenance
                     .map_or_else(|| format!("task:{born}"), str::to_owned)

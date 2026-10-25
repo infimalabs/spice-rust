@@ -29,6 +29,7 @@ mod settings_receipts;
 mod task_evidence;
 mod task_markers;
 mod task_standing;
+mod taste_proposals;
 mod vendor_holds;
 mod workflows;
 mod working_groups;

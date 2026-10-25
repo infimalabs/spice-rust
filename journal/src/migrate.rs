@@ -36,6 +36,7 @@ mod task_markers;
 mod task_standing;
 mod task_tags;
 mod taste_holds;
+mod taste_proposals;
 mod team_formations;
 mod workflows;
 mod working_groups;
@@ -82,9 +83,9 @@ const PREPARED: &str = "prepared";
 /// heads. Finally it crosses every retained settings command answer from the
 /// retired operator field to the current principal directory, each entry
 /// carrying its principal's code, makes retained working-group activity
-/// stance explicit, lifts task priority, taste-review standing, document slugs,
-/// and taste-proposal evidence from retired statement tags into typed fields,
-/// then discards every remaining tag before the schema identity advances. Each
+/// stance explicit, lifts task priority, taste-review standing, and document
+/// slugs from retired statement tags into typed fields, then discards every
+/// remaining tag before the schema identity advances. Each
 /// taste hold takes the matches and recheck count its retired audit notes
 /// recorded. Last, every retained task note that is not a taste-review audit
 /// joins its task's room projection at its own position, folded exactly as
@@ -417,7 +418,8 @@ fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), 
     contribution_charges::cross(transaction)?;
     contribution_items::cross(transaction)?;
     design_asks::cross(transaction)?;
-    leave_receipts::cross(transaction)
+    leave_receipts::cross(transaction)?;
+    taste_proposals::cross(transaction)
 }
 
 /// Move a finalized predecessor authority to the current schema exactly once.

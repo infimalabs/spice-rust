@@ -284,7 +284,7 @@ fn every_tracked_structural_policy_key_reaches_its_accessor() {
 }
 
 /// Each value is distinct so no reading can be satisfied by another's bytes.
-const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 11] = [
+const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 10] = [
     ("policy.repo_truth.docs", "[\"DOCTRINE.md\"]"),
     ("policy.file_shape.source_suffixes", "[\".rs\"]"),
     ("policy.languages.complexity", "[\".rs\", \".py\"]"),
@@ -292,7 +292,6 @@ const TRACKED_STRUCTURAL_DECLARATIONS: [(&str, &str); 11] = [
     ("policy.package_roots", "[\"src/sample\"]"),
     ("policy.generated_paths", "[\"build/derived\"]"),
     ("policy.name_cluster_threshold", "3"),
-    ("policy.taste_mining_threshold", "4"),
     ("policy.test_engines", "[\"cargo-workspace\"]"),
     ("policy.test_paths", "[\"suite\"]"),
     ("policy.package.boundary_underscore_pattern", "\"^[a-z]+$\""),
@@ -325,7 +324,6 @@ fn assert_structural_policy_values(policy: &spice::config::WorkspacePolicy) {
     assert_eq!(policy.package_roots(), ["src/sample".to_owned()]);
     assert_eq!(policy.generated_paths(), ["build/derived".to_owned()]);
     assert_eq!(policy.name_cluster_threshold(), Some(3));
-    assert_eq!(policy.taste_mining_threshold(), Some(4));
     assert_eq!(
         policy.test_engines(),
         [spice::config::TestEngine::CargoWorkspace]
@@ -366,11 +364,6 @@ fn a_malformed_horizon_refuses_by_its_key() {
     let horizon = decode("[board.next]\nhorizon = \"2 hours\"\n")
         .expect_err("an overdue horizon is a duration word");
     assert!(horizon.contains("board.next.horizon"), "{horizon}");
-}
-
-#[test]
-fn taste_mining_threshold_requires_real_recurrence() {
-    decode("[policy]\ntaste_mining_threshold = 1\n").expect_err("one correction is not recurrence");
 }
 
 #[test]

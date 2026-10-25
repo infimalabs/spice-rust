@@ -2,13 +2,12 @@
 
 [Product model — core](../model.md) · [Spice product model](../README.md)
 
-## Counsel and mining
+## Counsel
 
 [Counsel](../invariants/session.md#session-a-confirmed-maxim-reminder-returns-as-ordinary-steering)
-uses ordinary steering. Reports and recurrence mining provide evidence; they
-never add, remove, or rescope active tracked bags. Changing active taste requires
-an operator-accepted tracked change. Mining clusters recorded, answered operator
-corrections and files qualifying proposals as ordinary `taste.policy` tasks.
+uses ordinary steering. Reports provide evidence; they never add, remove, or
+rescope active tracked bags. Changing active taste requires an
+operator-accepted tracked change.
 
 ## The three lane-integration git boundaries
 

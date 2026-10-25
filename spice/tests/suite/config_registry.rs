@@ -26,7 +26,6 @@ test_engines = ["cargo-workspace"]
 package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
-taste_mining_threshold = 3
 test_paths = ["tests/fixture"]
 
 [policy.repo_truth]
@@ -388,7 +387,6 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "policy.package_roots",
     "policy.generated_paths",
     "policy.name_cluster_threshold",
-    "policy.taste_mining_threshold",
     "policy.test_paths",
     "policy.package.boundary_underscore_pattern",
     "policy.admission",

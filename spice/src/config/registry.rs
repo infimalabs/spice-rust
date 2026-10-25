@@ -432,13 +432,6 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
-    fixed "policy.taste_mining_threshold" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::Absent),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
     fixed "policy.test_paths" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&[])),

@@ -136,18 +136,6 @@ impl Law {
         optional: &[WitnessKind::Source],
         authority: Authority::Connected,
     };
-    /// Intended birth stamp is absent and every dependency exists at its
-    /// named workflow head. Atomic create-and-claim additionally carries the
-    /// caller's eligibility and occupied residency predicates.
-    pub const ADD: Self = Self {
-        required: &[WitnessKind::Absence],
-        optional: &[
-            WitnessKind::Workflow,
-            WitnessKind::Eligibility,
-            WitnessKind::Residency,
-        ],
-        authority: Authority::Connected,
-    };
     /// Opportunistic OOPS intake names an absent report and the exact
     /// repository generation; a current generation additionally carries its
     /// exact task and workflow heads.
@@ -599,7 +587,6 @@ impl CommandKind {
         match self {
             Self::TaskAdd => Law::TASK_ADD,
             Self::TaskOopsAdd => Law::OOPS_ADD,
-            Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
             Self::TaskClose | Self::TaskConclude => Law::CLOSE,
