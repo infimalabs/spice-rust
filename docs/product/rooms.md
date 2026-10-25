@@ -220,11 +220,13 @@ owns each rule summarized here.
   A Design is offered for a pass only when it is
   [ready](invariants/identity.md#work-a-design-schedules-each-pass-from-input-after-its-last-pass):
   its first pass needs steeped maturity or the operator's `preparation nudge
-  HANDLE`, and every later pass needs counted input recorded after the last
+  HANDLE`, except that an OOPS Design's first pass needs only one of its
+  reports, and every later pass needs counted input recorded after the last
   proposal or abandonment, with no released work still pending. Contributions,
-  operator room posts, nudges, returned or rejecting decisions, and the final
-  settlement of released work count; asks, notices, leaves, and group movement
-  do not. Released work is the Design's prerequisite set: the accepted
+  operator room posts, nudges, returned or rejecting decisions, each report
+  filed into an OOPS Design, and the final settlement of released work count;
+  asks, notices, leaves, and group movement do not.
+  Released work is the Design's prerequisite set: the accepted
   outputs it waits on, drawn as its dependencies on every graph and sheet
   without an edge the operator could edit. It settles by the fact that
   completes it: a completing `task done`, operator closure or deletion, a
@@ -371,8 +373,10 @@ owns each rule summarized here.
   candidate until it is moved to an Explore or Converge group and a holder
   proposes: the holder triages the pending reports as a whole, gives each
   cause one acceptance-bearing output, and names the reports to reject, as its
-  statement requires. The operator decides that proposal like any other,
-  Return included, and reports arriving meanwhile wait for the next pass. Its
+  statement requires. Its reports are its input, so it never waits to steep:
+  one report readies its first pass and a report filed after a pass readies
+  the next. The operator decides that proposal like any other, Return
+  included, and reports arriving meanwhile wait for the next pass. Its
   intent and project cannot be edited; its statement text can. The operator
   may collapse the Design; the next report then opens a new generation.
 

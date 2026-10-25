@@ -322,6 +322,78 @@ fn first_pass_needs_steeped_maturity_or_a_nudge() {
     assert_eq!(nudged.cycle(false), DesignCycle::ReadyForProposal);
 }
 
+/// `subject` is born with `intent`, prepared under the Design when `report`.
+fn added(subject: i64, intent: Option<crate::TaskIntent>, report: bool) -> AnyFact {
+    any(crate::body::TaskAdded {
+        task: task(subject),
+        title: "Fixture".to_owned(),
+        pitch: "Fixture pitch.".to_owned(),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: crate::EnvironmentRequirements::default(),
+        project: "oops.design".to_owned(),
+        filing: crate::TaskFiling::Filed,
+        priority: None,
+        taste: None,
+        document_slug: None,
+        depends: Vec::new(),
+        intent,
+        preparation: report.then(|| TaskPreparation {
+            parent: design(),
+            controller: design(),
+            construction: task(subject),
+        }),
+        flow: vec!["plan".parse().expect("fixture phase")],
+        phase: "plan".parse().expect("fixture phase"),
+        revision: 1,
+        creation: crate::body::TaskCreationContext::Unavailable {
+            reason: crate::body::TaskCreationUnavailable::SpiceActor,
+        },
+    })
+}
+
+#[test]
+fn an_oops_design_is_ready_from_its_reports_without_steeping() {
+    let oops = Some(crate::TaskIntent::OpportunisticDesign);
+    let mut journal = Journal::new();
+    journal.lane(&added(DESIGN, oops, false));
+    assert_eq!(journal.cycle(false), DesignCycle::GatheringInput);
+    journal.lane(&added(OUTPUT, Some(crate::TaskIntent::Plan), true));
+    assert_eq!(
+        journal.cycle(false),
+        DesignCycle::ReadyForProposal,
+        "a report readies the first pass with no charge or nudge"
+    );
+
+    journal.passed(
+        DecisionOutcome::Accepted {
+            candidate: candidate(10),
+        },
+        vec![task(OUTPUT)],
+    );
+    assert_eq!(
+        journal.cycle(false),
+        DesignCycle::GatheringInput,
+        "a pass's own reports never reopen it"
+    );
+    journal.lane(&added(SECOND, Some(crate::TaskIntent::Plan), true));
+    assert_eq!(
+        journal.cycle(false),
+        DesignCycle::ReadyForProposal,
+        "a later report readies the next pass"
+    );
+
+    let mut ordinary = Journal::new();
+    ordinary
+        .lane(&added(DESIGN, Some(crate::TaskIntent::Design), false))
+        .lane(&added(OUTPUT, Some(crate::TaskIntent::Plan), true));
+    assert_eq!(
+        ordinary.cycle(false),
+        DesignCycle::GatheringInput,
+        "an ordinary Design's first pass still needs steeping or a nudge"
+    );
+}
+
 #[test]
 fn only_counted_input_after_the_horizon_refills_a_design() {
     let accepted = || DecisionOutcome::Accepted {
