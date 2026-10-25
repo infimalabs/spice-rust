@@ -115,33 +115,6 @@ pub struct TaskOopsAdd {
     pub project: Option<String>,
 }
 
-/// File one evidence-backed taste candidate as a taste curation proposal.
-///
-/// The project and workflow are server-owned. A caller supplies the stable
-/// finding and occurrence identities plus review material, but cannot choose
-/// the project or activate tracked policy directly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TasteProposalAdd {
-    /// Stable identity of the recurring correction theme.
-    pub finding: Digest,
-    /// Identity of the exact independent-locus set this filing covers.
-    pub occurrence: Digest,
-    /// Number of independent transcript loci supporting this occurrence.
-    pub recurrence: usize,
-    /// One-line statement of the proposed review work.
-    pub title: String,
-    /// Exact cited evidence and the proposed tracked row.
-    pub description: String,
-    /// Criteria the operator-reviewed proposal must satisfy.
-    pub acceptance: Vec<String>,
-    /// Causal steering directive that supplied the oldest cited correction.
-    pub origin: Origin,
-    /// Completed predecessor, present only for a later genuine recurrence.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub depends: Vec<TaskHandle>,
-}
-
 /// Replace an unsettled task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

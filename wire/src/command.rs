@@ -95,8 +95,6 @@ pub enum CommandKind {
     TaskAdd,
     /// Add one line-item Plan to the repository OOPS Design.
     TaskOopsAdd,
-    /// File one mined taste candidate as a taste curation proposal.
-    TasteProposalAdd,
     /// Replace an unsettled task statement.
     TaskEdit,
     /// Withdraw a task from the board with a recorded reason.

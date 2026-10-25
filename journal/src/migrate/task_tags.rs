@@ -48,14 +48,8 @@ fn cross_statement(statement: &mut Map<String, Value>) -> Result<(), String> {
     insert_lifted(statement, "priority", priority, "priority")?;
     insert_lifted(statement, "taste", taste, "taste-review standing")?;
 
-    let (document_slug, taste_proposal) = task_markers::lift(&mut tags)?;
+    let document_slug = task_markers::lift(&mut tags)?;
     insert_lifted(statement, "document_slug", document_slug, "document slug")?;
-    insert_lifted(
-        statement,
-        "taste_proposal",
-        taste_proposal,
-        "taste-proposal evidence",
-    )?;
     Ok(())
 }
 

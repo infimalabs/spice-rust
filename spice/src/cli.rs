@@ -197,7 +197,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::RoomControl
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
-        | CommandKind::TasteProposalAdd
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskClose
@@ -476,7 +475,6 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["taste"]
             | ["taste", "add"]
             | ["taste", "drop"]
-            | ["taste", "mine"]
     )
 }
 

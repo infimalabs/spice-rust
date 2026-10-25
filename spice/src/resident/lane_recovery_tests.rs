@@ -120,7 +120,6 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 depends: Vec::new(),
                 flow: vec!["todo".parse().expect("fixture phase")],
                 phase: "todo".parse().expect("fixture phase"),
@@ -148,7 +147,6 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(

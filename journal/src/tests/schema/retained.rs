@@ -1062,7 +1062,7 @@ fn assert_retained_refusals(cases: &[RetainedCase]) {
 
 #[test]
 fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
-    let cases: [RetainedCase; 6] = [
+    let cases: [RetainedCase; 7] = [
         (
             "fact_envelopes",
             "ea3fe662a",
@@ -1094,6 +1094,12 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
             "command_receipts",
             "45eb87f84",
             "UPDATE command_receipts SET command_kind = 'group::put'",
+            retained_receipt,
+        ),
+        (
+            "command_receipts",
+            "e2a056064",
+            "UPDATE command_receipts SET command_kind = 'taste::proposal-add'",
             retained_receipt,
         ),
         (

@@ -44,12 +44,8 @@ deleting a row leaves its earlier facts as history that never reactivate it.
 
 `spice taste add TEXT` and `spice taste drop NAME` file curation proposals from
 the evidence that motivated them; a drop proposal carries the recent declined
-loci and recorded clearances. With tracked `policy.taste_mining_threshold` of
-at least 2, `spice taste mine` clusters recurring operator corrections from one
-journal snapshot and files or reuses `taste.policy` proposals whose origin is the
-oldest supporting `ack:` key; without it, mining refuses. A proposal inherits
-the caller's sole active claim or needs an explicit `--origin`. No proposal
-changes the tracked set.
+loci and recorded clearances. A proposal inherits the caller's sole active claim
+or needs an explicit `--origin`. No proposal changes the tracked set.
 
 The curation view derives from the journal at one snapshot: recent reminders
 per taste and vendor, confirmed and cleared provenance, how live reminders were

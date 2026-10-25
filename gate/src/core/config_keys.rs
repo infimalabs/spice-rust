@@ -60,7 +60,6 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("policy.package_roots", TRACKED),
     ConfigKeyDeclaration::new("policy.generated_paths", TRACKED),
     ConfigKeyDeclaration::new("policy.name_cluster_threshold", TRACKED),
-    ConfigKeyDeclaration::new("policy.taste_mining_threshold", TRACKED),
     ConfigKeyDeclaration::new("policy.test_paths", TRACKED),
     ConfigKeyDeclaration::new("policy.package.boundary_underscore_pattern", TRACKED),
     ConfigKeyDeclaration::new("policy.admission", TRACKED),

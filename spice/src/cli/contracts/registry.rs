@@ -1243,14 +1243,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "taste::drop"
     ),
     operator!(
-        ["taste", "mine"],
-        "taste mine",
-        Command,
-        [TaskAdded],
-        Reply,
-        "taste::mine"
-    ),
-    operator!(
         ["trust"],
         "trust [--limit N] [--max-bytes N] [--after DIGEST]",
         Read,

@@ -194,7 +194,6 @@ fn task_with_acceptance(
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 depends: dependencies.clone(),
                 flow: flow.clone(),
                 phase: current.clone(),
@@ -222,7 +221,6 @@ fn task_with_acceptance(
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies,
         provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(

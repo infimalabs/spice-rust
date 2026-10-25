@@ -501,7 +501,6 @@ mod tests {
             priority: None,
             taste: None,
             document_slug: None,
-            taste_proposal: None,
             dependencies: Vec::new(),
             provenance: wire::TaskProvenance::Task(born),
             creation: wire::body::TaskCreationContext::unavailable(

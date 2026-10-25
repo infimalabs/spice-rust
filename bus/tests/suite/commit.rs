@@ -989,7 +989,6 @@ fn retained_added(
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         depends: Vec::new(),
         flow: vec![phase.clone()],
         phase,
@@ -1016,7 +1015,6 @@ fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: journal::crossing::TaskProvenance::Parentless,
         creation: body::TaskCreationContext::unavailable(
@@ -1060,7 +1058,6 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
@@ -1089,7 +1086,6 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: journal::crossing::TaskProvenance::Task(stamp()),
         creation: body::TaskCreationContext::unavailable(

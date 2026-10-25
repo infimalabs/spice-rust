@@ -73,19 +73,6 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
-        CommandKind::TasteProposalAdd,
-        r#"{
-  "finding": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "occurrence": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  "recurrence": 3,
-  "title": "Review one mined taste candidate",
-  "description": "Finding identity: aaaa",
-  "acceptance": ["operator reviews cited evidence"],
-  "origin": "ack:1kMine01",
-  "depends": ["TASTE-1kKRRsDP"]
-}"#,
-    ),
-    (
         CommandKind::TaskEdit,
         r#"{ "task": "SPICE-1kKRRsDP", "title": "a replacement statement" }"#,
     ),
@@ -744,7 +731,6 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                     rechecks: 2,
                 }),
                 document_slug: None,
-                taste_proposal: None,
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],
                 provenance: "task:1kKRRsDP".parse().expect("an origin"),
                 creation: wire::body::TaskCreationContext::unavailable(

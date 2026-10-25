@@ -655,9 +655,6 @@ impl NativeInvocation<'_> {
                 &taste_command::drop(leaf, contract, configuration, ambient),
                 form,
             ),
-            ["taste", "mine"] => {
-                deliver(&taste_command::mine(contract, configuration, ambient), form)
-            }
             _ => {}
         }
     }

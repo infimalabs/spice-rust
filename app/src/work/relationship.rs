@@ -681,7 +681,6 @@ mod tests {
                     priority: None,
                     taste: None,
                     document_slug: None,
-                    taste_proposal: None,
                     dependencies: dependencies.iter().map(|value| stamp(*value)).collect(),
                     provenance: "ack:direction".parse().expect("fixture origin"),
                     creation: wire::body::TaskCreationContext::unavailable(

@@ -366,7 +366,6 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("taste", "Read tastes and file curation proposals"),
     ("taste add", "File a proposal to add a taste"),
     ("taste drop", "File a proposal to drop a taste"),
-    ("taste mine", "File mined taste candidates as proposals"),
     ("thread", "Read the journal facts of one thread"),
     (
         "trust",

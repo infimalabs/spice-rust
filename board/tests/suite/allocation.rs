@@ -113,7 +113,6 @@ fn fixture() -> Journal {
                     priority: Some(priority),
                     taste: None,
                     document_slug: None,
-                    taste_proposal: None,
                     depends: Vec::new(),
                     flow: flow.flow.clone(),
                     phase: flow.phase.clone(),
@@ -142,7 +141,6 @@ fn fixture() -> Journal {
             priority: Some(priority),
             taste: None,
             document_slug: None,
-            taste_proposal: None,
             dependencies: Vec::new(),
             provenance: statement_origin,
             creation: body::TaskCreationContext::unavailable(

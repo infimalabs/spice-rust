@@ -34,8 +34,8 @@ use super::{
     TaskConclude, TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone,
     TaskEdit, TaskFile, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
     TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
-    TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
-    UpChange, VendorCatalog, VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange,
+    TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    VendorCatalog, VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange,
     WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
     WorkingGroupStanceSet,
 };
@@ -107,8 +107,6 @@ pub enum BodyShape {
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for OOPS Design line-item intake.
     TaskOopsAdd,
-    /// [`TasteProposalAdd`], the strict body for mined taste-proposal intake.
-    TasteProposalAdd,
     /// [`TaskEdit`]
     TaskEdit,
     /// [`TaskDelete`]
@@ -532,7 +530,6 @@ impl CommandKind {
             | Self::DocLedger
             | Self::TaskAdd
             | Self::TaskOopsAdd
-            | Self::TasteProposalAdd
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskClose
@@ -612,7 +609,6 @@ impl CommandKind {
             | Self::DesignNudge => self.preparation_binding(),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
-            Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskClose => Binding::of(B::TaskClose, A::Task),
@@ -801,8 +797,6 @@ pub enum Intent {
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskOopsAdd`]
     TaskOopsAdd(TaskOopsAdd),
-    /// [`BodyShape::TasteProposalAdd`]
-    TasteProposalAdd(TasteProposalAdd),
     /// [`BodyShape::TaskEdit`]
     TaskEdit(TaskEdit),
     /// [`BodyShape::TaskDelete`]
@@ -949,7 +943,6 @@ impl Intent {
             | Self::DocLedger(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
-            | Self::TasteProposalAdd(_)
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
             | Self::TaskClose(_)
@@ -1018,7 +1011,6 @@ impl Intent {
             | Self::DesignNudge(_) => self.preparation_shape(),
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
-            Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskClose(_) => BodyShape::TaskClose,
@@ -1155,7 +1147,6 @@ impl BodyShape {
                 | Self::DesignNudge
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
-                | Self::TasteProposalAdd
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskClose
@@ -1209,7 +1200,6 @@ impl BodyShape {
                 | Self::DesignNudge
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
-                | Self::TasteProposalAdd
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskClose
@@ -1284,7 +1274,6 @@ impl BodyShape {
         Ok(match self {
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
-            Self::TasteProposalAdd => Intent::TasteProposalAdd(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskClose => Intent::TaskClose(crate::decode(bytes)?),

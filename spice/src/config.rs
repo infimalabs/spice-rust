@@ -257,8 +257,6 @@ pub struct WorkspacePolicy {
     generated_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     name_cluster_threshold: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    taste_mining_threshold: Option<usize>,
     test_paths: Vec<String>,
     package: gate::PackagePolicy,
     admission: Vec<String>,
@@ -280,8 +278,6 @@ struct WorkspacePolicyInput {
     package_roots: Vec<String>,
     generated_paths: Vec<String>,
     name_cluster_threshold: Option<usize>,
-    #[serde(deserialize_with = "optional_recurrence_threshold")]
-    taste_mining_threshold: Option<usize>,
     test_paths: Vec<String>,
     package: gate::PackagePolicy,
     admission: Vec<String>,
@@ -301,7 +297,6 @@ impl Default for WorkspacePolicyInput {
             package_roots: Vec::new(),
             generated_paths: Vec::new(),
             name_cluster_threshold: None,
-            taste_mining_threshold: None,
             test_paths: Vec::new(),
             package: gate::PackagePolicy::default(),
             admission: Vec::new(),
@@ -323,7 +318,6 @@ impl From<WorkspacePolicyInput> for WorkspacePolicy {
             package_roots: input.package_roots,
             generated_paths: input.generated_paths,
             name_cluster_threshold: input.name_cluster_threshold,
-            taste_mining_threshold: input.taste_mining_threshold,
             test_paths: input.test_paths,
             package: input.package,
             admission: input.admission,
@@ -420,12 +414,6 @@ impl WorkspacePolicy {
         self.name_cluster_threshold
     }
 
-    /// Independent correction loci required before taste review work is filed.
-    #[must_use]
-    pub const fn taste_mining_threshold(&self) -> Option<usize> {
-        self.taste_mining_threshold
-    }
-
     /// Roots the repository declares its tests under.
     #[must_use]
     pub fn test_paths(&self) -> &[String] {
@@ -471,19 +459,6 @@ impl TestEngine {
         match self {
             Self::CargoWorkspace => "cargo-workspace",
         }
-    }
-}
-
-fn optional_recurrence_threshold<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<usize>, D::Error> {
-    let threshold = Option::<usize>::deserialize(deserializer)?;
-    if matches!(threshold, Some(0 | 1)) {
-        Err(D::Error::custom(
-            "taste mining threshold must be at least two independent loci",
-        ))
-    } else {
-        Ok(threshold)
     }
 }
 

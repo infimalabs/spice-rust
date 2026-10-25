@@ -63,7 +63,6 @@ fn add_routed(
                 priority: None,
                 taste: None,
                 document_slug: None,
-                taste_proposal: None,
                 depends: Vec::new(),
                 flow: flow.clone(),
                 phase: current.clone(),
@@ -91,7 +90,6 @@ fn add_routed(
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(

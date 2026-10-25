@@ -696,42 +696,6 @@ pub(in crate::board_command) fn repository_state_failure(
     }
 }
 
-pub(crate) fn submit_taste_proposal(
-    repository: Host<'_>,
-    contract: &Contract,
-    body: TasteProposalAdd,
-) -> Outcome<CommandAnswer> {
-    for attempt in 0..2 {
-        let outcome = mutate_from_board(
-            repository,
-            contract,
-            BoardRead::All { family: None },
-            |board| {
-                let task = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
-                Ok((
-                    CommandKind::TasteProposalAdd,
-                    vec![Witness::Absence { task }],
-                    serde_json::to_value(body.clone()).expect("typed intent encodes"),
-                ))
-            },
-        );
-        if attempt == 0
-            && matches!(
-                &outcome,
-                Outcome::Refusal(refusal)
-                    if matches!(
-                        refusal.reason(),
-                        "board::witness-moved" | "taste::proposal-predecessor-moved"
-                    )
-            )
-        {
-            continue;
-        }
-        return outcome;
-    }
-    unreachable!("taste proposal retry loop always returns")
-}
-
 pub(super) fn mutate_task<F>(
     repository: Host<'_>,
     contract: &Contract,

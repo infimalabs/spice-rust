@@ -43,7 +43,6 @@ impl CommandKind {
         Self::VendorCatalog,
         Self::TaskAdd,
         Self::TaskOopsAdd,
-        Self::TasteProposalAdd,
         Self::TaskEdit,
         Self::TaskDelete,
         Self::TaskClose,
@@ -144,7 +143,6 @@ impl CommandKind {
             | Self::DesignNudge
             | Self::TaskAdd
             | Self::TaskOopsAdd
-            | Self::TasteProposalAdd
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskClose
@@ -243,7 +241,6 @@ impl CommandKind {
             | Self::DesignNudge => self.preparation_spelling(),
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
-            Self::TasteProposalAdd => "taste::proposal-add",
             Self::TaskEdit => "task::edit",
             Self::TaskDelete => "task::delete",
             Self::TaskClose => "task::close",

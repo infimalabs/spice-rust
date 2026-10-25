@@ -874,7 +874,6 @@ fn task_head() -> TaskHead {
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: "task:1kKRRsDP".parse().expect("provenance"),
         creation: wire::body::TaskCreationContext::unavailable(

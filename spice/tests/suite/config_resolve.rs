@@ -610,7 +610,6 @@ test_engines = ["cargo-workspace"]
 package_roots = ["src/fixture"]
 generated_paths = ["build/fixture"]
 name_cluster_threshold = 4
-taste_mining_threshold = 3
 test_paths = ["tests/fixture"]
 admission = ["fixture-load", "--offline"]
 [policy.repo_truth]

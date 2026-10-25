@@ -6,7 +6,6 @@ mod edit;
 mod oops;
 mod requirements;
 mod settlement;
-mod taste_proposal;
 pub(super) use deferral::{task_defer, task_file, task_wake};
 pub(super) use settlement::{
     DecisionWrite, stage_conclusion, stage_rejection, task_close, task_conclude, task_delete,
@@ -23,7 +22,6 @@ pub(super) use claim::{
 };
 pub(super) use edit::task_edit;
 pub(super) use oops::task_oops_add;
-pub(super) use taste_proposal::taste_proposal_add;
 
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
 pub(super) struct ValidatedSnapshot {
@@ -511,7 +509,6 @@ fn append_prepared_task(
                 priority: prepared.statement.priority,
                 taste: prepared.statement.taste.clone(),
                 document_slug: prepared.statement.document_slug.clone(),
-                taste_proposal: prepared.statement.taste_proposal.clone(),
                 depends: prepared.statement.dependencies.clone(),
                 flow: prepared.flow,
                 phase: prepared.phase,
@@ -613,7 +610,6 @@ fn prepare_task_for(
         priority: None,
         taste: None,
         document_slug: None,
-        taste_proposal: None,
         dependencies: add
             .depends
             .iter()
