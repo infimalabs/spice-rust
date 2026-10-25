@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn arrangements_refresh_designs_removed_from_and_added_to_the_partition() {
-    let (bus, projects, mut incremental) = caught_up_fixture(0);
+    let (bus, mut incremental) = caught_up_fixture(0);
     committed(
         bus.commit(design_write(DESIGN_MOMENT, instant(5)))
             .expect("first open Design commits"),
@@ -27,8 +27,8 @@ fn arrangements_refresh_designs_removed_from_and_added_to_the_partition() {
         ))
         .expect("first Design group move commits"),
     );
-    assert!(projected(&bus, &projects, &mut incremental, &removed).design_is_active());
-    assert!(!projected(&bus, &projects, &mut incremental, &added).design_is_active());
+    assert!(projected(&bus, &mut incremental, &removed).design_is_active());
+    assert!(!projected(&bus, &mut incremental, &added).design_is_active());
 
     let from = wire::rooms::WorkingGroupPartition {
         revision: 1,
@@ -52,7 +52,7 @@ fn arrangements_refresh_designs_removed_from_and_added_to_the_partition() {
         bus.commit(arranged_write(from, partition, instant(8)))
             .expect("replacement arrangement commits"),
     );
-    assert!(!projected(&bus, &projects, &mut incremental, &removed).design_is_active());
-    assert!(projected(&bus, &projects, &mut incremental, &added).design_is_active());
+    assert!(!projected(&bus, &mut incremental, &removed).design_is_active());
+    assert!(projected(&bus, &mut incremental, &added).design_is_active());
     bus.shutdown().expect("arrangement fixture bus stops");
 }

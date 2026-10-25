@@ -126,14 +126,12 @@ fn listening(
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
-    config: &SurfaceConfig,
     seats: &Seats,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     reconcile_commit(
         bus,
         paths,
-        config,
         seats,
         &Changes {
             authority: true,
@@ -150,7 +148,6 @@ pub(in crate::resident) fn reconcile(
 pub(in crate::resident) fn reconcile_commit(
     bus: &Bus,
     paths: &RuntimePaths,
-    config: &SurfaceConfig,
     seats: &Seats,
     changes: &Changes,
     diagnostic: &mut dyn io::Write,
@@ -170,7 +167,7 @@ pub(in crate::resident) fn reconcile_commit(
     if !selected_occupant {
         return Ok(());
     }
-    let planning = Planning::load(bus, config)?;
+    let planning = Planning::load(bus)?;
     for lane in seats.lanes() {
         let Some(occupant) = seats.occupant(lane).map(lane::occupant::Occupant::occupant) else {
             continue;
@@ -232,7 +229,7 @@ pub(in crate::resident) fn reconcile_commit(
 }
 
 impl Planning {
-    pub(in crate::resident) fn load(bus: &Bus, config: &SurfaceConfig) -> CommandResult<Self> {
+    pub(in crate::resident) fn load(bus: &Bus) -> CommandResult<Self> {
         let snapshot = bus.task_snapshot().map_err(|error| {
             store_fault("room::catch-up-snapshot-unreadable", &error.to_string())
         })?;
@@ -255,7 +252,6 @@ impl Planning {
                     heads.workflow().body().clone(),
                     heads.claim().map(|head| head.body().clone()),
                     heads.lease().map(|head| head.body().clone()),
-                    &config.projects,
                 )
                 .map(|entry| {
                     let statement = heads.statement().body();

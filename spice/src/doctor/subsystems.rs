@@ -4,7 +4,6 @@ use std::path::Path;
 
 use sill::authority;
 use sill::{Availability, LockFile, LockName};
-use spice::config::Root;
 use spice::install::{ApplianceState, InstallStatus, InstallTempInspection};
 use spice::repository::{Repository, StatePaths};
 use wire::{DoctorObservation, DoctorSubsystem, DoctorSubsystemDiagnosis, FactKind, ResidencyHead};
@@ -12,11 +11,8 @@ use wire::{DoctorObservation, DoctorSubsystem, DoctorSubsystemDiagnosis, FactKin
 const MAX_DISCOVERY_BYTES: u64 = 16 * 1024;
 const MAX_RESIDENT_RECORD_BYTES: u64 = 1024;
 
-pub(super) fn diagnose(
-    repository: &Repository,
-    configuration: &Root,
-) -> Vec<DoctorSubsystemDiagnosis> {
-    let context = Context::new(repository, configuration);
+pub(super) fn diagnose(repository: &Repository) -> Vec<DoctorSubsystemDiagnosis> {
+    let context = Context::new(repository);
     DoctorSubsystem::ALL
         .iter()
         .map(|subsystem| DoctorSubsystemDiagnosis {
@@ -28,21 +24,16 @@ pub(super) fn diagnose(
 
 struct Context<'a> {
     repository: &'a Repository,
-    configuration: &'a Root,
     state: Result<StateSnapshot, String>,
 }
 
 impl<'a> Context<'a> {
-    fn new(repository: &'a Repository, configuration: &'a Root) -> Self {
+    fn new(repository: &'a Repository) -> Self {
         let state = repository
             .admit_state()
             .map(StateSnapshot::new)
             .map_err(|error| format!("repository state admission failed: {error}"));
-        Self {
-            repository,
-            configuration,
-            state,
-        }
+        Self { repository, state }
     }
 
     fn observe(&self, subsystem: DoctorSubsystem) -> DoctorObservation {
@@ -70,10 +61,9 @@ impl<'a> Context<'a> {
             Ok(snapshot) => snapshot,
             Err(observation) => return observation,
         };
-        let projects = self.configuration.tasks().project_policy();
         for heads in snapshot.task_heads.iter().cloned() {
             let (statement, workflow, claim, lease) = heads.into_bodies();
-            if let Err(error) = board::Entry::new(statement, workflow, claim, lease, &projects) {
+            if let Err(error) = board::Entry::new(statement, workflow, claim, lease) {
                 return unavailable(format!("board head admission failed: {error}"));
             }
         }

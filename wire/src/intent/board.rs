@@ -190,19 +190,6 @@ pub struct Positioned<T> {
     pub body: T,
 }
 
-/// Visibility classification captured when a task project is admitted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-pub enum ProjectVisibility {
-    /// An ordinary scheduler route visible to actors and allocation.
-    Public,
-    /// A system-owned route retained as evidence but excluded from public work.
-    Hidden {
-        /// Resolved first project segment, without the leading dot.
-        stem: String,
-    },
-}
-
 /// Whether one exact task transcript coordinate can be rehydrated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -271,23 +258,6 @@ pub struct TaskGitContext {
     pub kind: TaskGitContextKind,
     /// Exact repository object identities recorded by the lifecycle fact.
     pub boundary: crate::body::GitBoundary,
-}
-
-impl ProjectVisibility {
-    /// Whether this project is system-owned hidden evidence.
-    #[must_use]
-    pub const fn is_hidden(&self) -> bool {
-        matches!(self, Self::Hidden { .. })
-    }
-
-    /// Hidden first segment, without the leading dot.
-    #[must_use]
-    pub fn hidden_stem(&self) -> Option<&str> {
-        match self {
-            Self::Public => None,
-            Self::Hidden { stem } => Some(stem),
-        }
-    }
 }
 
 /// Current task statement evidence, with the title carried once beside it.
@@ -458,8 +428,6 @@ impl BoardStatement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardTask {
-    /// Classification derived during board admission from captured policy.
-    pub visibility: ProjectVisibility,
     /// Server-resolved actor thread that created this task.
     pub origin_thread: String,
     /// Immutable creator team for lane-authored tasks.
@@ -613,18 +581,7 @@ pub enum NextWorkState {
     },
 }
 
-/// Server-resolved public project bounds for one board snapshot. Any valid
-/// root within them is admissible and readable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BoardProjectPolicy {
-    /// Fewest dotted segments admitted for a public project.
-    pub public_min_depth: u64,
-    /// Most dotted segments admitted for a public project.
-    pub public_max_depth: u64,
-}
-
-/// Server-resolved default read route for one board principal: every public
+/// Server-resolved default read route for one board principal: every filed
 /// row, plus any row created on the principal's own origin thread.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -637,13 +594,8 @@ pub struct BoardActorRoute {
 
 impl BoardTask {
     /// Project authoritative heads into one task row.
-    ///
-    /// A hidden project is one the allocator does not offer by default, not a
-    /// confidence: nothing here rewrites a title or drops authored prose, and
-    /// [`Self::is_active_public`] remains the only thing visibility decides.
     #[must_use]
     pub fn from_authoritative(
-        visibility: ProjectVisibility,
         origin_thread: String,
         creator_team: Option<crate::CanonicalUuid>,
         statement: Positioned<crate::TaskHead>,
@@ -657,7 +609,6 @@ impl BoardTask {
             body: BoardStatement::from(&statement.body),
         };
         Self {
-            visibility,
             origin_thread,
             creator_team,
             presentation_title,
@@ -748,12 +699,10 @@ impl BoardTask {
         &self.presentation_title
     }
 
-    /// Whether this filed row belongs to pending public work inventory.
+    /// Whether this row belongs to pending filed work inventory.
     #[must_use]
-    pub fn is_active_public(&self) -> bool {
-        !self.visibility.is_hidden()
-            && self.statement.body.filing.is_filed()
-            && self.workflow.body.status.is_pending()
+    pub fn is_active(&self) -> bool {
+        self.statement.body.filing.is_filed() && self.workflow.body.status.is_pending()
     }
 
     /// This Design's lifecycle standing; `None` for a task without Design
@@ -798,8 +747,6 @@ pub struct BoardAnswer {
     pub oops_generation: Option<Positioned<crate::OopsGenerationHead>>,
     /// Principal derived from the capability that requested this snapshot.
     pub principal: Actor,
-    /// Public project route captured by the authority that validated the tasks.
-    pub project_policy: BoardProjectPolicy,
     /// Complete actor-specific route captured by the snapshot authority.
     pub actor_route: BoardActorRoute,
     /// Typed allocator decision, present only for [`BoardRead::Next`].
@@ -871,9 +818,9 @@ pub struct BoardAnswer {
 }
 
 impl BoardAnswer {
-    /// Pending public routes only; hidden evidence never enters active inventory.
-    pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
-        self.tasks.iter().filter(|task| task.is_active_public())
+    /// Pending filed rows only; Drafts never enter active inventory.
+    pub fn active_tasks(&self) -> impl Iterator<Item = &BoardTask> {
+        self.tasks.iter().filter(|task| task.is_active())
     }
 
     /// Whether `task` is a Design the operator's decision holds.

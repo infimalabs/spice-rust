@@ -1116,8 +1116,7 @@ impl Seat {
                 return Ok(document);
             }
             ["session", ..] => {
-                let outcome =
-                    crate::session_command::run(leaf, contract.path, &self.environment, None);
+                let outcome = crate::session_command::run(leaf, contract.path, &self.environment);
                 let mut document = rendered(
                     &outcome,
                     render::render_with_reply_text(

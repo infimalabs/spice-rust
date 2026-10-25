@@ -5,7 +5,6 @@
 //! later authority-owning layer may act on the resulting graph.
 
 mod classifier;
-mod declared;
 mod ledger;
 mod node;
 mod refuse;
@@ -13,7 +12,6 @@ mod refuse;
 pub use classifier::{
     Classification, ClassificationContext, Warning, WarningCode, classify, classify_with_context,
 };
-pub use declared::{PROJECT_MAX_DEPTH, PROJECT_MIN_DEPTH};
 pub use ledger::emit;
 pub use node::{Document, Edge, EdgeKind, Node, NodeKind, Phase, Priority, slugify};
 pub use refuse::{Refusal, RefusalCode};

@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 
-use board::ProjectPolicy;
 use bus::timer::{TimerEvent, TimerId, TimerKind, TimerWorker};
 use bus::{Bus, CommitOutcome, JournalTransaction};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
@@ -28,7 +27,6 @@ pub(super) struct Runtime {
     worker: Option<TimerWorker>,
     events: tokio::sync::mpsc::UnboundedReceiver<TimerEvent>,
     forwarder: Option<JoinHandle<()>>,
-    projects: ProjectPolicy,
     steering: steer::Config,
     /// Root of per-lane supervisor records whose kept jobs extend a vacated
     /// lane's claim.
@@ -170,11 +168,7 @@ pub(super) enum Fired {
 }
 
 impl Runtime {
-    pub(super) fn start(
-        projects: ProjectPolicy,
-        steering: steer::Config,
-        supervisors: PathBuf,
-    ) -> CommandResult<Self> {
+    pub(super) fn start(steering: steer::Config, supervisors: PathBuf) -> CommandResult<Self> {
         let (worker, events) = TimerWorker::start()
             .map_err(|error| environment_fault("bus::timer-start-failed", &error.to_string()))?;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -200,7 +194,6 @@ impl Runtime {
             worker: Some(worker),
             events: receiver,
             forwarder: Some(forwarder),
-            projects,
             steering,
             supervisors,
             deferrals: BTreeMap::new(),
@@ -264,7 +257,7 @@ impl Runtime {
         self.horizon = snapshot.horizon;
         let tasks = snapshot.authority.tasks();
         let residency = snapshot.authority.residency();
-        let desired_deferrals = desired_deferrals(tasks, &self.projects)?;
+        let desired_deferrals = desired_deferrals(tasks);
         let desired = desired_claims(tasks, residency)?;
         let supervisors = &self.supervisors;
         let desired_renewals =
@@ -599,7 +592,6 @@ impl Runtime {
         let at = Instant::new(jiff::Timestamp::now())
             .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
         let request = board::lapse::Request {
-            projects: self.projects.clone(),
             command: new_uuid(),
             occupant: armed.authority.occupant,
             epoch: armed.authority.epoch,
@@ -911,10 +903,7 @@ impl Drop for Runtime {
     }
 }
 
-fn desired_deferrals(
-    tasks: &[journal::TaskHeads],
-    projects: &ProjectPolicy,
-) -> CommandResult<BTreeMap<TaskHandle, DeferralAuthority>> {
+fn desired_deferrals(tasks: &[journal::TaskHeads]) -> BTreeMap<TaskHandle, DeferralAuthority> {
     let mut desired = BTreeMap::new();
     for heads in tasks {
         let workflow = heads.workflow();
@@ -928,15 +917,6 @@ fn desired_deferrals(
         if statement.filing.is_draft() {
             continue;
         }
-        let project = projects.admit(&statement.project).map_err(|error| {
-            store_fault(
-                "bus::timer-project-invalid",
-                &format!("task {} has invalid project: {error}", statement.born),
-            )
-        })?;
-        if project.visibility().is_hidden() {
-            continue;
-        }
         let task = TaskHandle::for_project(&statement.project, &statement.born);
         desired.insert(
             task.clone(),
@@ -948,7 +928,7 @@ fn desired_deferrals(
             },
         );
     }
-    Ok(desired)
+    desired
 }
 
 fn deferral_guard(

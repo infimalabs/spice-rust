@@ -350,10 +350,7 @@ impl ExitFixture {
     fn projection(&self) -> Projection {
         let mut projection = Projection::new();
         projection
-            .advance(
-                &self.bus.task_snapshot().expect("snapshot reads"),
-                &projects(),
-            )
+            .advance(&self.bus.task_snapshot().expect("snapshot reads"))
             .expect("projection advances");
         projection
     }

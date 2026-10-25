@@ -13,7 +13,6 @@ pub(super) fn room_post(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     post: &RoomPost,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let content = match room_post_content(post) {
         Ok(content) => content,
@@ -23,7 +22,6 @@ pub(super) fn room_post(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&post.room),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

@@ -4,7 +4,7 @@ use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 
 use super::tests::{board, claim, design, stamp, task};
-use super::{WorkOwner, WorkProjection, WorkScope, WorkStemIdentity, WorkVisibility};
+use super::{WorkOwner, WorkProjection, WorkScope};
 
 fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("fixture uuid")
@@ -360,11 +360,8 @@ fn opportunistic_design_owns_its_complete_plan_subtree() {
         BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
         "the Design rail contains the opportunistic Design's complete dependency subtree",
     );
-    let spice = WorkScope::Stem(WorkStemIdentity::new(
-        WorkVisibility::Public,
-        "spice".to_owned(),
-    ));
-    for scope in [WorkScope::AllOpen, spice] {
+    let execution_project = WorkScope::Project("spice.app".to_owned());
+    for scope in [WorkScope::AllOpen, execution_project] {
         assert!(
             borns(&scope).is_empty(),
             "{scope:?} does not duplicate Design-gated execution work",

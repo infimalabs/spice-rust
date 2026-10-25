@@ -16,7 +16,7 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
     let root = fixture_root("exit");
     let paths = runtime_paths(&root);
     let occupant = uuid(3);
-    let (bus, projects, mut projection) = occupied_fixture(occupant);
+    let (bus, mut projection) = occupied_fixture(occupant);
     let config = lane::Config::default();
     let mut lifecycle = lifecycle::Runtime::new(&config);
     let mut diagnostic = Vec::new();
@@ -84,7 +84,7 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
 
     let reaped = bus.task_snapshot().expect("reaped snapshot reads");
     projection
-        .advance(&reaped, &projects)
+        .advance(&reaped)
         .expect("reaped projection advances");
     let reaped_targets = targets(&reaped, &projection);
     assert!(reaped_targets[0].pending_inbox);
@@ -120,7 +120,7 @@ fn a_seat_whose_ending_is_at_the_door_is_left_to_the_notice_arm() {
     let root = fixture_root("noticed");
     let paths = runtime_paths(&root);
     let occupant = uuid(4);
-    let (bus, _projects, _projection) = occupied_fixture(occupant);
+    let (bus, _projection) = occupied_fixture(occupant);
     let config = lane::Config::default();
     let mut lifecycle = lifecycle::Runtime::new(&config);
     let mut diagnostic = Vec::new();
@@ -164,7 +164,7 @@ fn a_seat_whose_failure_notice_was_lost_is_degraded_from_its_published_state() {
     let root = fixture_root("failure");
     let paths = runtime_paths(&root);
     let occupant = uuid(3);
-    let (bus, _, _) = occupied_fixture(occupant);
+    let (bus, _) = occupied_fixture(occupant);
     let config = lane::Config::default();
     let mut lifecycle = lifecycle::Runtime::new(&config);
     let mut seats = Seats::new();
@@ -255,7 +255,7 @@ pub(super) fn seat_published(paths: &RuntimePaths, bus: &Bus, occupant: Canonica
     seats
 }
 
-fn occupied_fixture(occupant: CanonicalUuid) -> (Bus, ProjectPolicy, Projection) {
+fn occupied_fixture(occupant: CanonicalUuid) -> (Bus, Projection) {
     let mut journal = Journal::in_memory().expect("occupied fixture journal opens");
     journal
         .apply(occupied_seed(occupant))
@@ -265,17 +265,15 @@ fn occupied_fixture(occupant: CanonicalUuid) -> (Bus, ProjectPolicy, Projection)
         bus.commit(operator_direction_write())
             .expect("operator direction commits"),
     );
-    let projects = projects();
     let mut projection = Projection::new();
     projection
         .advance(
             &bus.task_snapshot()
                 .expect("occupied fixture snapshot reads"),
-            &projects,
         )
         .expect("occupied fixture projection builds");
     assert!(projection.has_operator_steering(lane()));
-    (bus, projects, projection)
+    (bus, projection)
 }
 
 pub(super) fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {

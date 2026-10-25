@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, CommandAnswer, OriginRequest, Positioned,
-    ProjectVisibility, TaskDetailAnswer, TaskDetailClosure, TaskRelationEdge, TaskRelationFrontier,
-    TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation,
-    TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
+    TaskDetailAnswer, TaskDetailClosure, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind,
+    TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation, TaskRelationsAnswer,
+    TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -706,7 +706,6 @@ fn workflow_documents_refuse_contradictory_state_fields() {
 fn the_board_task_row_is_the_struct_this_crate_declares() {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
     let task = BoardTask {
-        visibility: ProjectVisibility::Public,
         origin_thread: "operator".to_owned(),
         creator_team: None,
         presentation_title: "Bind a board task".to_owned(),

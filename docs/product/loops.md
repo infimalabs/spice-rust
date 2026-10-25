@@ -137,21 +137,22 @@ flowchart LR
   and session trailers; first-parent history records mutating landings, not
   every transition.
 - `task add`, `task plan`, and `task design` share one manual-project
-  admission: any `[0-9a-z_]+` root within the configured dotted depth range, so
-  authors name their own domains; no configured root list exists. A refused
-  project names that spelling and depth range, so the author can repair it
-  without probing. Default reads (`task list`, `task status`, dry `task next`
-  counts) cover every public project plus the reader's own origin-thread rows,
-  so an authored root is never invisible to a lane that may be allocated it.
-  Hidden roots remain reserved for their typed system routes and stay out of
-  other actors' default reads.
+  admission: dot-separated nonempty `[0-9a-z_]+` runs, single-segment or
+  dotted, so authors name their own labels; no configured root list or depth
+  range exists. A project is one opaque exact label: `oops` and `oops.design`
+  are unrelated, and `task list --project` matches the complete value only. A
+  refused project names that spelling, so the author can repair it without
+  probing. Only handle rendering abbreviates a filed project to its last run.
+  Default reads (`task list`, `task status`, dry `task next` counts) cover every
+  filed row plus the reader's own origin-thread rows, so an authored project is
+  never invisible to a lane that may be allocated it.
 - Work controls project these same current tasks into durable `#/work...` deep
-  links over Chat, never into a separate page. Stem routes retain their exact
-  public or hidden root; team and working-group routes retain only stable
-  identity and re-resolve current membership after topology or partition
-  changes. All-open and all-planning scopes survive emptiness. A hydrated
-  missing identity refuses to Chat, while project, single-task, relationship,
-  and composed overview selections stay browser-local.
+  links over Chat, never into a separate page. Project routes retain the exact
+  project label; team and working-group routes retain only stable identity and
+  re-resolve current membership after topology or partition changes. All-open
+  and all-planning scopes survive emptiness. A hydrated missing identity
+  refuses to Chat, while project-wide, single-task, relationship, and composed
+  overview selections stay browser-local.
 - `task oops` files one ordinary Plan directly beneath the repository-owned
   opportunistic OOPS Design. The command uses `--project` or derives the one
   public project held by the actor; zero or multiple eligible claims refuse
@@ -525,7 +526,7 @@ distinctive quality.
   badge's top inline-end corner, and its title and accessible name lead with
   that actionable count. One holding only deferred work carries the same dot
   in the warning tone, so a set-aside project reads as deferred rather than
-  attention-free. A stem badge is content-sized, so a digit-width change
+  attention-free. Any other badge is content-sized, so a digit-width change
   may resize its tab; the total tabs reserve one minimum badge footprint.
 - **Presentation changes do not touch card identity or style.** Recolouring and
   attribution toggles force no re-measure. A member-count change that alters the

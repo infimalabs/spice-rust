@@ -224,7 +224,7 @@ fn a_new_operator_direction_releases_the_vendor_hold() {
         .expect("unchanged snapshot reads");
     lifecycle
         .projection
-        .advance(&unchanged, &projects())
+        .advance(&unchanged)
         .expect("unchanged projection advances");
     assert!(
         !lifecycle
@@ -243,7 +243,7 @@ fn a_new_operator_direction_releases_the_vendor_hold() {
     let snapshot = fixture.bus.task_snapshot().expect("changed snapshot reads");
     lifecycle
         .projection
-        .advance(&snapshot, &projects())
+        .advance(&snapshot)
         .expect("changed projection advances");
     assert!(
         lifecycle
@@ -291,7 +291,7 @@ fn cancelling_the_refused_operator_direction_releases_the_vendor_hold() {
         .expect("cancelled snapshot reads");
     lifecycle
         .projection
-        .advance(&snapshot, &projects())
+        .advance(&snapshot)
         .expect("cancelled projection advances");
     assert!(
         lifecycle
@@ -738,10 +738,7 @@ impl VendorExitFixture {
     fn projection(&self) -> Projection {
         let mut projection = Projection::new();
         projection
-            .advance(
-                &self.bus.task_snapshot().expect("snapshot reads"),
-                &projects(),
-            )
+            .advance(&self.bus.task_snapshot().expect("snapshot reads"))
             .expect("projection advances");
         projection
     }

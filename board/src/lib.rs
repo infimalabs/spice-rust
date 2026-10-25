@@ -12,7 +12,6 @@ pub mod config;
 pub mod control;
 pub mod graph;
 pub mod handout;
-pub mod inventory;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod lapse;
 pub mod next;
@@ -29,7 +28,6 @@ pub use claim::{Active, ClaimRefusal};
 pub use config::{Config, NextConfig};
 pub use control::{controlled_pending, controlled_pending_tasks};
 pub use graph::{Diagram, View};
-pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
     Claimant, ResolvedTasks, Selection, SelectionIndex, WorkWait, blocked_handoff_until,
     dependencies_satisfied, design_cycle, design_cycles, design_held, design_hold, eligible_entry,
@@ -41,8 +39,7 @@ pub use next::{
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{HANDOFF_SECONDS, NUDGE_HOLD_SECONDS, PhaseRefusal, Transition, TransitionKind};
 pub use task::{
-    BUILTIN_HIDDEN_STEMS, Dependency, Entry, Family, PhaseHandoff, PhaseHandoffKind, Project,
-    ProjectError, ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,
+    Dependency, Entry, Family, PhaseHandoff, PhaseHandoffKind, Project, ProjectError, TaskError,
 };
 pub use urgency::{
     Urgency, priority_from_authored, priority_from_document, priority_label, priority_score,

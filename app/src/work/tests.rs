@@ -13,18 +13,6 @@ pub(crate) fn stamp(value: i64) -> TaskStamp {
 pub(crate) fn task(value: i64, project: &str) -> BoardTask {
     let born = stamp(value);
     BoardTask {
-        visibility: if project.starts_with('.') {
-            ProjectVisibility::Hidden {
-                stem: project
-                    .trim_start_matches('.')
-                    .split('.')
-                    .next()
-                    .expect("hidden fixture has a stem")
-                    .to_owned(),
-            }
-        } else {
-            ProjectVisibility::Public
-        },
         origin_thread: "operator".to_owned(),
         creator_team: None,
         presentation_title: format!("task {value}"),
@@ -378,60 +366,36 @@ fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
 }
 
 #[test]
-fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
-    let mut active = task(1, "alpha.runtime");
+fn exact_projects_never_merge_through_a_shared_prefix() {
+    let mut active = task(1, "app.one");
     active.claim = Some(claim(&active, ClaimDisposition::Active));
-    let ready = task(2, "alpha.render");
-    let hidden = task(3, ".alpha.audit");
-    let mut terminal = task(4, "alpha.runtime");
+    let ready = task(2, "app.two");
+    let parent = task(3, "app");
+    let mut terminal = task(4, "app.one");
     terminal.workflow.body.status = wire::WorkflowStatus::completed(
         "2026-09-23T06:00:00.000Z"
             .parse()
             .expect("fixture completion"),
     );
-    let board = board(vec![active, ready, hidden, terminal]);
+    let board = board(vec![active, ready, parent, terminal]);
     let projection = WorkProjection::from_board(&board);
 
-    assert_eq!(projection.stems.len(), 2);
     assert_eq!(
         projection
-            .stems
-            .iter()
-            .map(|stem| (&stem.identity.visibility, stem.identity.stem.as_str()))
-            .collect::<Vec<_>>(),
-        [
-            (&WorkVisibility::Public, "alpha"),
-            (&WorkVisibility::Hidden, "alpha"),
-        ]
-    );
-    assert!(!projection.stems[0].identity.hidden());
-    assert!(projection.stems[1].identity.hidden());
-    assert_eq!(
-        projection.stems[0].counts,
-        WorkCounts {
-            in_flight: 1,
-            ready: 1,
-            terminal: 1,
-            ..WorkCounts::default()
-        }
-    );
-    assert_eq!(
-        projection.stems[1].counts,
-        WorkCounts {
-            parked: 1,
-            ..WorkCounts::default()
-        },
-        "the allocator never offers a hidden row"
-    );
-    assert_eq!(
-        projection.stems[0]
             .projects
             .iter()
-            .map(|&index| projection.projects[index].project)
+            .map(|project| project.project)
             .collect::<Vec<_>>(),
-        ["alpha.render", "alpha.runtime"]
+        ["app", "app.one", "app.two"]
     );
-    assert!(projection.stems[0].counts.has_open());
+    assert_eq!(
+        projection.project("app.one").map(WorkProject::counts),
+        Some(WorkCounts {
+            in_flight: 1,
+            terminal: 1,
+            ..WorkCounts::default()
+        })
+    );
     assert!(
         !WorkCounts {
             terminal: 1,
@@ -439,25 +403,14 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
         }
         .has_open()
     );
-    let public_scope = WorkScope::Stem(projection.stems[0].identity.clone());
-    let hidden_scope = WorkScope::Stem(projection.stems[1].identity.clone());
-    assert_eq!(
-        public_scope.stem().map(ToString::to_string).as_deref(),
-        Some("alpha.*")
-    );
-    assert_eq!(
-        hidden_scope.stem().map(ToString::to_string).as_deref(),
-        Some(".alpha.*")
-    );
-    assert_eq!(projection.contains_scope(&public_scope), Some(true));
-    assert_eq!(projection.contains_scope(&hidden_scope), Some(true));
-    assert_eq!(projection.scope_counts(&public_scope).open(), 2);
-    assert_eq!(projection.scope_counts(&hidden_scope).open(), 1);
+    for project in ["app", "app.one", "app.two"] {
+        let scope = WorkScope::Project(project.to_owned());
+        assert_eq!(scope.project(), Some(project));
+        assert_eq!(projection.contains_scope(&scope), Some(true), "{project}");
+        assert_eq!(projection.scope_counts(&scope).open(), 1, "{project}");
+    }
 
-    let absent = WorkScope::Stem(WorkStemIdentity {
-        visibility: WorkVisibility::Public,
-        stem: "gone".to_owned(),
-    });
+    let absent = WorkScope::Project("app.three".to_owned());
     assert_eq!(projection.contains_scope(&absent), Some(false));
     assert_eq!(projection.scope_counts(&absent), projection.counts());
 }
@@ -507,7 +460,6 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
 
     let lane = &projection.projects[0];
     assert_eq!(lane.project, "graph.core");
-    assert_eq!(lane.stem, 0);
     assert_eq!(
         lane.tasks
             .iter()
@@ -666,22 +618,22 @@ fn a_tab_marks_only_its_partitions_most_actionable_state() {
     assert_eq!(counts(0, 0, 0, 0, 0).mark(), None);
 }
 
-/// Each stem's mark inside one scope, read from the scoped strip the stem
-/// routes open.
-fn stem_marks(
+/// Each project's mark inside one scope, read from the scoped strip the
+/// project routes open.
+fn project_marks(
     projection: &WorkProjection<'_>,
     scope: &WorkScope,
 ) -> BTreeMap<String, Option<(WorkMark, usize)>> {
-    let mut by_stem = BTreeMap::<String, WorkCounts>::new();
+    let mut by_project = BTreeMap::<String, WorkCounts>::new();
     for task in projection.scope_strip(scope) {
-        by_stem
-            .entry(projection.task_stem(task).stem().to_owned())
+        by_project
+            .entry(projection.task_project(task).to_owned())
             .or_default()
             .record(task.availability, task.proposal_ready);
     }
-    by_stem
+    by_project
         .into_iter()
-        .map(|(stem, counts)| (stem, counts.mark()))
+        .map(|(project, counts)| (project, counts.mark()))
         .collect()
 }
 
@@ -742,18 +694,18 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
             .insert(stamp(ready), wire::rooms::DesignCycle::ReadyForProposal);
     }
     let projection = WorkProjection::from_board(&board);
-    let marks = |scope: &WorkScope| stem_marks(&projection, scope);
+    let marks = |scope: &WorkScope| project_marks(&projection, scope);
 
     assert_eq!(
         marks(&WorkScope::AllOpen),
         BTreeMap::from([
-            ("alpha".to_owned(), None),
-            ("beta".to_owned(), Some((WorkMark::Deferred, 1))),
-            ("delta".to_owned(), Some((WorkMark::Blocked, 1))),
-            ("gamma".to_owned(), Some((WorkMark::Blocked, 1))),
+            ("alpha.quiet".to_owned(), None),
+            ("beta.later".to_owned(), Some((WorkMark::Deferred, 1))),
+            ("delta.wall".to_owned(), Some((WorkMark::Blocked, 1))),
+            ("gamma.trust".to_owned(), Some((WorkMark::Blocked, 1))),
         ]),
         "in-flight, stale, review, ready, and neutral waiting need nothing now; a blocked \
-         wall, an environment hold, and work intentionally set aside mark their own stem"
+         wall, an environment hold, and work intentionally set aside mark their own project"
     );
     assert_eq!(
         projection.scope_counts(&WorkScope::AllOpen).mark(),
@@ -763,13 +715,14 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
     assert_eq!(
         marks(&WorkScope::planning()),
         BTreeMap::from([
-            ("alpha".to_owned(), Some((WorkMark::Decision, 1))),
-            ("beta".to_owned(), Some((WorkMark::Proposal, 1))),
-            ("epsilon".to_owned(), None),
-            ("gamma".to_owned(), Some((WorkMark::Proposal, 1))),
+            ("alpha.design".to_owned(), Some((WorkMark::Decision, 1))),
+            ("beta.design".to_owned(), Some((WorkMark::Proposal, 1))),
+            ("epsilon.design".to_owned(), None),
+            ("gamma.design".to_owned(), Some((WorkMark::Proposal, 1))),
         ]),
-        "a Design awaiting decision outranks a ready pass in its stem; an offered or passive \
-         Design ready for proposal marks its stem; one a lane already holds marks nothing"
+        "a Design awaiting decision outranks a ready pass in its project; an offered or \
+         passive Design ready for proposal marks its project; one a lane already holds marks \
+         nothing"
     );
     assert_eq!(
         projection.scope_counts(&WorkScope::planning()).mark(),
@@ -798,8 +751,7 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
 
 #[test]
 fn every_work_scope_writes_only_its_stable_route_identity() {
-    let public = WorkStemIdentity::new(WorkVisibility::Public, "alpha".to_owned());
-    let hidden = WorkStemIdentity::new(WorkVisibility::Hidden, "private".to_owned());
+    let route = |project: &str| WorkRouteProject::new(project.to_owned()).expect("fixture route");
     let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         .parse()
         .expect("fixture team");
@@ -807,21 +759,23 @@ fn every_work_scope_writes_only_its_stable_route_identity() {
     for (scope, route) in [
         (WorkScope::AllOpen, WorkRoute::AllOpen),
         (
-            WorkScope::Stem(public.clone()),
-            WorkRoute::Stem(WorkRouteStem::new(false, "alpha".to_owned()).expect("public stem")),
+            WorkScope::Project("oops".to_owned()),
+            WorkRoute::Project(route("oops")),
         ),
         (
-            WorkScope::Stem(hidden.clone()),
-            WorkRoute::Stem(WorkRouteStem::new(true, "private".to_owned()).expect("hidden stem")),
+            WorkScope::Project("app.work.map".to_owned()),
+            WorkRoute::Project(route("app.work.map")),
         ),
         (
-            WorkScope::Planning { stem: None },
-            WorkRoute::Planning { stem: None },
+            WorkScope::Planning { project: None },
+            WorkRoute::Planning { project: None },
         ),
         (
-            WorkScope::Planning { stem: Some(public) },
+            WorkScope::Planning {
+                project: Some("oops.design".to_owned()),
+            },
             WorkRoute::Planning {
-                stem: Some(WorkRouteStem::new(false, "alpha".to_owned()).expect("planning stem")),
+                project: Some(route("oops.design")),
             },
         ),
         (WorkScope::Team { team }, WorkRoute::Team(team)),
@@ -839,40 +793,49 @@ fn every_work_scope_writes_only_its_stable_route_identity() {
 
 #[test]
 fn durable_work_identities_resolve_only_after_their_mutable_authority_settles() {
-    let board = board(vec![task(1, "alpha.one"), task(2, ".private.two")]);
+    let board = board(vec![task(1, "oops.design"), task(2, "private.two")]);
     let pending = WorkProjection::from_board_and_lanes(&board, None);
-    let public = WorkRouteStem::new(false, "alpha".to_owned()).expect("public route stem");
-    let hidden = WorkRouteStem::new(true, "private".to_owned()).expect("hidden route stem");
-    let missing = WorkRouteStem::new(false, "missing".to_owned()).expect("missing route stem");
+    let route = |project: &str| WorkRouteProject::new(project.to_owned()).expect("fixture route");
 
     assert_eq!(
         resolve_work_route(&WorkRoute::AllOpen, None, None),
         WorkRouteResolution::Resolved(WorkScope::AllOpen)
     );
     assert_eq!(
-        resolve_work_route(&WorkRoute::Planning { stem: None }, None, None,),
+        resolve_work_route(&WorkRoute::Planning { project: None }, None, None),
         WorkRouteResolution::Resolved(WorkScope::planning())
     );
     assert_eq!(
-        resolve_work_route(&WorkRoute::Stem(public.clone()), None, None),
+        resolve_work_route(&WorkRoute::Project(route("oops.design")), None, None),
         WorkRouteResolution::Pending
     );
-    assert!(matches!(
-        resolve_work_route(&WorkRoute::Stem(public), Some(&pending), None),
-        WorkRouteResolution::Resolved(WorkScope::Stem(_))
-    ));
-    assert!(matches!(
+    assert_eq!(
         resolve_work_route(
-            &WorkRoute::Planning { stem: Some(hidden) },
+            &WorkRoute::Project(route("oops.design")),
+            Some(&pending),
+            None
+        ),
+        WorkRouteResolution::Resolved(WorkScope::Project("oops.design".to_owned()))
+    );
+    assert_eq!(
+        resolve_work_route(
+            &WorkRoute::Planning {
+                project: Some(route("private.two")),
+            },
             Some(&pending),
             None,
         ),
-        WorkRouteResolution::Resolved(WorkScope::Planning { stem: Some(_) })
-    ));
-    assert_eq!(
-        resolve_work_route(&WorkRoute::Stem(missing), Some(&pending), None),
-        WorkRouteResolution::Missing
+        WorkRouteResolution::Resolved(WorkScope::Planning {
+            project: Some("private.two".to_owned()),
+        })
     );
+    for missing in ["oops", "private"] {
+        assert_eq!(
+            resolve_work_route(&WorkRoute::Project(route(missing)), Some(&pending), None),
+            WorkRouteResolution::Missing,
+            "{missing} names no exact project"
+        );
+    }
 
     let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         .parse()

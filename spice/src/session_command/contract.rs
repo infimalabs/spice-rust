@@ -93,7 +93,6 @@ fn invoke_in(
         crate::cli::selected_matches(&matches),
         contract.path,
         &ambient,
-        None,
     );
     let rendering = render::render_with_reply_text(&outcome, form, super::Report::text)
         .expect("the session outcome renders");

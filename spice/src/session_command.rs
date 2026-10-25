@@ -161,20 +161,12 @@ enum BriefingMoment {
 
 /// The fresh-session briefing, with an explicit notice when allocation already
 /// assigned this lane a task before the agent came online.
-pub(crate) fn lane_launch_briefing(
-    environment: &Environment,
-    lane: wire::CanonicalUuid,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> String {
-    render_lane_briefing(environment, lane, configuration, BriefingMoment::Startup)
+pub(crate) fn lane_launch_briefing(environment: &Environment, lane: wire::CanonicalUuid) -> String {
+    render_lane_briefing(environment, lane, BriefingMoment::Startup)
 }
 
-pub(crate) fn lane_briefing(
-    environment: &Environment,
-    lane: wire::CanonicalUuid,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> String {
-    render_lane_briefing(environment, lane, configuration, BriefingMoment::Refresh)
+pub(crate) fn lane_briefing(environment: &Environment, lane: wire::CanonicalUuid) -> String {
+    render_lane_briefing(environment, lane, BriefingMoment::Refresh)
 }
 
 /// The short notice a resumed seat receives in place of the briefing page.
@@ -182,20 +174,15 @@ pub(crate) fn lane_briefing(
 /// The resumed agent still holds its context, so it learns only that this
 /// start is a resume, which claim it holds, and how many steering keys wait.
 /// The read skips the transcript fold that makes the full page heavy.
-pub(crate) fn lane_resume_notice(
-    environment: &Environment,
-    lane: wire::CanonicalUuid,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) -> String {
+pub(crate) fn lane_resume_notice(environment: &Environment, lane: wire::CanonicalUuid) -> String {
     let context = DeadlineContext {
         action: "resume".to_owned(),
         requested: vec![format!("lane {lane}")],
         budget: LANE_BRIEFING_DEADLINE,
     };
     let environment = environment.clone();
-    let configuration = configuration.cloned();
     let observed = run_deadline(&context, std::time::Instant::now(), move |sender| {
-        let authorities = authority::observe_lane(&environment, lane, configuration.as_ref());
+        let authorities = authority::observe_lane(&environment, lane);
         let _ = sender.send(DeadlineEvent::Complete(
             Ok(authorities),
             std::time::Instant::now(),
@@ -228,7 +215,6 @@ fn resume_page(authorities: Option<&authority::RecallAuthorities>) -> String {
 fn render_lane_briefing(
     environment: &Environment,
     lane: wire::CanonicalUuid,
-    configuration: Option<&spice::config::RepositoryCapture>,
     moment: BriefingMoment,
 ) -> String {
     let context = DeadlineContext {
@@ -237,10 +223,9 @@ fn render_lane_briefing(
         budget: LANE_BRIEFING_DEADLINE,
     };
     let environment = environment.clone();
-    let configuration = configuration.cloned();
     let started = std::time::Instant::now();
     let built = run_deadline(&context, started, move |sender| {
-        let report = lane_recall(&environment, lane, configuration.as_ref(), moment);
+        let report = lane_recall(&environment, lane, moment);
         let _ = sender.send(DeadlineEvent::Complete(report, std::time::Instant::now()));
     });
     let page = match built {
@@ -292,10 +277,9 @@ fn renewal_notice(moment: BriefingMoment, held_work: &model::HeldWorkView) -> Op
 fn lane_recall(
     environment: &Environment,
     lane: wire::CanonicalUuid,
-    configuration: Option<&spice::config::RepositoryCapture>,
     moment: BriefingMoment,
 ) -> Result<Report, Refusal> {
-    let mut authorities = authority::observe_lane(environment, lane, configuration);
+    let mut authorities = authority::observe_lane(environment, lane);
     // A fresh launch reads its lane before its own birth is recorded, so the
     // seat it sees is vacant or still its predecessor's; neither is its own.
     if matches!(moment, BriefingMoment::Startup) {
@@ -337,15 +321,14 @@ pub(crate) fn run(
     matches: &ArgMatches,
     path: &[&str],
     environment: &Environment,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<Report> {
     let action = path.get(1).copied().unwrap_or("briefing");
     let result = if action == "context" {
         context::build(matches, path, environment)
     } else if matches!(action, "briefing" | "sweep") {
-        deadline_build(matches, path, action, environment, configuration)
+        deadline_build(matches, path, action, environment)
     } else {
-        build(matches, path, action, environment, configuration)
+        build(matches, path, action, environment)
     };
     outcome(result)
 }
@@ -376,7 +359,6 @@ fn deadline_build(
     path: &[&str],
     action: &str,
     environment: &Environment,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
     let context = DeadlineContext {
         action: action.to_owned(),
@@ -391,14 +373,12 @@ fn deadline_build(
         .collect::<Vec<_>>();
     let owned_action = action.to_owned();
     let owned_environment = environment.clone();
-    let owned_configuration = configuration.cloned();
     run_deadline(&context, started, move |sender| {
         deadline_worker(
             owned_matches,
             owned_path,
             owned_action,
             owned_environment,
-            owned_configuration,
             sender,
         );
     })
@@ -432,7 +412,6 @@ fn deadline_worker(
     path: Vec<String>,
     action: String,
     environment: Environment,
-    configuration: Option<spice::config::RepositoryCapture>,
     sender: std::sync::mpsc::Sender<DeadlineEvent<Report>>,
 ) {
     let files = project::values(&matches, "FILES");
@@ -454,14 +433,7 @@ fn deadline_worker(
         return;
     }
     let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    let result = build_resolved(
-        &matches,
-        &path,
-        &action,
-        sources,
-        &environment,
-        configuration.as_ref(),
-    );
+    let result = build_resolved(&matches, &path, &action, sources, &environment);
     let _ = sender.send(DeadlineEvent::Complete(result, std::time::Instant::now()));
 }
 
@@ -557,7 +529,6 @@ fn build(
     path: &[&str],
     action: &str,
     environment: &Environment,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
     if action == "thread" {
         let raw = matches
@@ -584,7 +555,7 @@ fn build(
     }
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
-    build_resolved(matches, path, action, sources, environment, configuration)
+    build_resolved(matches, path, action, sources, environment)
 }
 
 /// Session leaves that page their records through [`crate::read_page::Page`].
@@ -607,12 +578,11 @@ fn build_resolved(
     action: &str,
     sources: Vec<source::ResolvedSource>,
     environment: &Environment,
-    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
     match action {
         "briefing" => {
             let files = project::values(matches, "FILES");
-            let authorities = authority::observe(&sources, environment, configuration);
+            let authorities = authority::observe(&sources, environment);
             return project::recall(&sources, &files, authorities);
         }
         "tokens" => {

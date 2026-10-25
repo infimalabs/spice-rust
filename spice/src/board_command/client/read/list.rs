@@ -240,27 +240,23 @@ fn task_list_continuation(
 
 fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListOptions) -> bool {
     if let Some(project) = &options.project {
-        let candidate = task.statement.body.project.as_str();
-        return candidate == project
-            || candidate
-                .strip_prefix(project)
-                .is_some_and(|suffix| suffix.starts_with('.'));
+        return task.statement.body.project == *project;
     }
     options.all || actor_route_matches(board, task)
 }
 
-/// Whether the actor may read the row by default: every filed public row,
-/// every Draft for the operator, plus hidden, OOPS, or Draft rows created on
-/// the actor's own origin thread.
+/// Whether the actor may read the row by default: every filed row, every
+/// Draft for the operator, plus every row created on the actor's own origin
+/// thread.
 ///
-/// Deliberately wider than allocation scope while keeping foreign parked
-/// evidence and other threads' Drafts out of default detailed reads.
+/// Deliberately wider than allocation scope while keeping another agent
+/// thread's Drafts out of default detailed reads.
 pub(in crate::board_command::client) fn actor_route_matches(
     board: &BoardAnswer,
     task: &BoardTask,
 ) -> bool {
     let filing = task.statement.body.filing;
-    (!task.visibility.is_hidden() && filing.is_filed())
+    filing.is_filed()
         || (filing.is_draft() && wire::principal::ActingPrincipal::of(&board.principal).is_some())
         || task.origin_thread == board.actor_route.origin_thread
 }

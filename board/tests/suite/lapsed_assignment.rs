@@ -39,15 +39,6 @@ fn environment() -> wire::Environment {
         .expect("the compiled journal schema is positive")
 }
 
-fn projects() -> board::ProjectPolicy {
-    board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
-}
-
 fn drain() -> wire::TeamSubscription {
     wire::TeamSubscription {
         team: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
@@ -123,7 +114,7 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
         maximum: instant("2026-08-01T06:30:00.000Z"),
         epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
     };
-    Entry::new(statement, workflow, Some(claim), Some(lease), &projects()).expect("review row")
+    Entry::new(statement, workflow, Some(claim), Some(lease)).expect("review row")
 }
 
 fn eligible_for(entry: &Entry, actor: &Actor) -> bool {

@@ -8,15 +8,6 @@
 # commands.
 spice = "appliance"
 
-[tasks]
-# Any `[0-9a-z_]+` root names a project; authors choose it. A root names the
-# domain that owns the work, never the work itself. Every project therefore
-# takes a child segment saying what moves inside that domain, with a third
-# available when a child needs to subdivide. A bare root would let a domain
-# accumulate rows that are distinguishable only by handle.
-project_min_depth = 2
-project_max_depth = 3
-
 [vendor.omp]
 # OMP lanes merge `.omp/lsp.json` into its built-in workspace server
 # definitions; each lane keeps the selected server in its supervised process.

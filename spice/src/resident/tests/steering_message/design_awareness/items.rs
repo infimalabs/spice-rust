@@ -47,18 +47,9 @@ fn asked(lanes: &Lanes, config: &SurfaceConfig) -> Option<Vec<(u16, DesignItemSt
 
 impl Lanes {
     /// Charge question item `question` of `design` with `value`.
-    fn charge(
-        &self,
-        id: u8,
-        config: &SurfaceConfig,
-        lane: u8,
-        design: &wire::TaskHandle,
-        question: u16,
-        value: i8,
-    ) {
+    fn charge(&self, id: u8, lane: u8, design: &wire::TaskHandle, question: u16, value: i8) {
         self.contribute_kind(
             id,
-            config,
             lane,
             design,
             wire::rooms::RoomContributionKind::charge(value),
@@ -82,7 +73,7 @@ fn one_request_asks_every_pending_item_and_one_answer_settles_the_session() {
     let opportunity = |stamp: &str, seated: &Seats, completions: &mut _| {
         let task = lanes.claimed(stamp, FIRST);
         lanes.complete(&task, &format!("{MATCHING} Completed as {stamp}."));
-        lanes.reconcile_profiles(&config, seated, completions, &profiles);
+        lanes.reconcile_profiles(seated, completions, &profiles);
     };
 
     opportunity("dVrD245Kc", &seated, &mut completions);
@@ -109,14 +100,14 @@ fn one_request_asks_every_pending_item_and_one_answer_settles_the_session() {
     }
     assert_eq!(text.matches("spice room contribute").count(), 1, "{text}");
 
-    lanes.contribute(50, &config, FIRST, &design);
+    lanes.contribute(50, FIRST, &design);
     lanes.post_listeners(51, &config, &design);
     assert!(
         asked(&lanes, &config).is_some(),
         "an open question and another actor's post leave the request owed"
     );
 
-    lanes.charge(52, &config, FIRST, &design, 2, 1);
+    lanes.charge(52, FIRST, &design, 2, 1);
     assert_eq!(
         asked(&lanes, &config),
         None,
@@ -151,7 +142,7 @@ fn a_whole_statement_match_asks_the_lowest_unheld_item_when_no_item_clears_the_f
     let lanes = Lanes::new("design-request-item-floor");
     let config = surface(&lanes);
     let design = item_design(&lanes, &UNRELATED);
-    lanes.charge(50, &config, FIRST, &design, 1, 1);
+    lanes.charge(50, FIRST, &design, 1, 1);
     align_completion_lane(&lanes);
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
@@ -159,7 +150,7 @@ fn a_whole_statement_match_asks_the_lowest_unheld_item_when_no_item_clears_the_f
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     let task = lanes.claimed("dVrD245Kc", FIRST);
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
 
     assert_eq!(
         asked(&lanes, &config),
@@ -174,9 +165,9 @@ fn a_whole_statement_match_asks_the_lowest_unheld_item_when_no_item_clears_the_f
 }
 
 /// The invitation floor the planner reads for `design` now.
-fn floor(lanes: &Lanes, config: &SurfaceConfig, design: &wire::TaskHandle) -> f64 {
+fn floor(lanes: &Lanes, design: &wire::TaskHandle) -> f64 {
     let planning =
-        crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
+        crate::resident::room_catch_up::Planning::load(&lanes.bus).expect("planning loads");
     let born = stamp(design);
     let entry = planning
         .entries
@@ -196,31 +187,31 @@ fn a_steeped_design_invites_at_converges_floor_until_an_item_contests() {
     let design = item_design(&lanes, &[UNRELATED[0], UNRELATED[1]]);
     lanes.group(30, &config, &design, Passive);
     let expected = crate::resident::design_awareness::match_score_floor;
-    assert_eq!(floor(&lanes, &config, &design), expected(Passive));
+    assert_eq!(floor(&lanes, &design), expected(Passive));
 
-    lanes.charge(50, &config, SENDER, &design, 1, 1);
-    lanes.charge(51, &config, SECOND, &design, 1, 1);
+    lanes.charge(50, SENDER, &design, 1, 1);
+    lanes.charge(51, SECOND, &design, 1, 1);
     assert_eq!(
-        floor(&lanes, &config, &design),
+        floor(&lanes, &design),
         expected(Passive),
         "two opinions leave the item unopposed"
     );
-    lanes.charge(52, &config, THIRD, &design, 1, 1);
+    lanes.charge(52, THIRD, &design, 1, 1);
     assert_eq!(
-        floor(&lanes, &config, &design),
+        floor(&lanes, &design),
         expected(Converge),
         "three lanes concur, and a steeped Design asks as Converge does"
     );
     lanes.stance(53, &config, Explore);
     assert_eq!(
-        floor(&lanes, &config, &design),
+        floor(&lanes, &design),
         expected(Converge),
         "Explore cannot lower a steeped Design's floor"
     );
 
-    lanes.charge(54, &config, SENDER, &design, 1, -1);
+    lanes.charge(54, SENDER, &design, 1, -1);
     assert_eq!(
-        floor(&lanes, &config, &design),
+        floor(&lanes, &design),
         expected(Explore),
         "a contesting charge un-steeps the Design and its stance's floor returns"
     );
@@ -235,7 +226,7 @@ fn every_item_concurring_owes_no_whole_design_ask() {
     let config = surface(&lanes);
     let design = item_design(&lanes, &[UNRELATED[0]]);
     for (id, lane) in [(50, SENDER), (51, SECOND), (52, THIRD)] {
-        lanes.charge(id, &config, lane, &design, 1, 1);
+        lanes.charge(id, lane, &design, 1, 1);
     }
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
@@ -243,7 +234,7 @@ fn every_item_concurring_owes_no_whole_design_ask() {
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     let task = lanes.claimed("dVrD245Kc", FIRST);
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert_eq!(
         lanes.request(&config, FIRST),
         None,

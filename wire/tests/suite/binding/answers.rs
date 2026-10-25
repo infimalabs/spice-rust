@@ -33,17 +33,12 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
   "schema": 1,
   "cursor": 1,
   "principal": "operator",
-  "project_policy": {
-    "public_min_depth": 2,
-    "public_max_depth": 3
-  },
   "actor_route": {
     "actor": "operator",
     "origin_thread": "operator"
   },
   "tasks": [
     {
-      "visibility": { "kind": "public" },
       "origin_thread": "operator",
       "presentation_title": "Bind a board task",
       "statement": {

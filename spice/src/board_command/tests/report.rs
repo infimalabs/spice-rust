@@ -2,22 +2,22 @@ use super::*;
 use wire::intent::{REPORT_READ_VERSION, ReportRead};
 
 #[test]
-fn report_admits_public_facts_and_refuses_a_different_generation_pin() {
-    let (_root, bus, epoch, seats) = fixture("report-public-scope", 1);
+fn report_admits_filed_facts_and_refuses_a_different_generation_pin() {
+    let (_root, bus, epoch, seats) = fixture("report-filed-scope", 1);
     let actor = Actor::Lane(seats[0].lane);
-    let public = add(
+    let filed = add(
         &bus,
         epoch,
         Actor::Operator,
-        "report-public",
+        "report-filed",
         "Visible report work",
         Some("todo"),
     );
-    let hidden = hidden::add_draft_row(
+    let draft = add_draft_row(
         &bus,
         epoch,
         Actor::Operator,
-        "report-hidden",
+        "report-draft",
         "Private friction evidence",
     );
     let at: Instant = "2026-09-30T12:00:00.000Z".parse().expect("fixture instant");
@@ -29,7 +29,7 @@ fn report_admits_public_facts_and_refuses_a_different_generation_pin() {
         at,
         Producer::BusTimer,
     );
-    for task in [&public, &hidden] {
+    for task in [&filed, &draft] {
         write
             .fact(
                 body::ClaimLapsed {
@@ -74,7 +74,7 @@ fn report_admits_public_facts_and_refuses_a_different_generation_pin() {
             .iter()
             .filter_map(wire::StreamFact::task)
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from([public.born().expect("public identity")]),
+        std::collections::BTreeSet::from([filed.born().expect("filed identity")]),
     );
     assert_eq!(
         answer

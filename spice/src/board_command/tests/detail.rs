@@ -24,17 +24,10 @@ fn detail_with_repository(
         Vec::new(),
         &wire::intent::TaskDetail { task },
     );
-    let projects = ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("board command test project policy");
     dispatch_with_repository(
         bus,
         &command,
         Some(host(repository)),
-        &projects,
         &board::NextConfig::default(),
         None,
     )

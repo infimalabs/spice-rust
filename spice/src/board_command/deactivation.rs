@@ -26,14 +26,9 @@ impl Deactivation {
     pub(super) fn read(
         bus: &Bus,
         design: &TaskHandle,
-        projects: &ProjectPolicy,
     ) -> Result<Option<Self>, Outcome<CommandAnswer>> {
-        let snapshot = validated_working_snapshot(
-            bus,
-            Actor::Operator,
-            std::slice::from_ref(design),
-            projects,
-        )?;
+        let snapshot =
+            validated_working_snapshot(bus, Actor::Operator, std::slice::from_ref(design))?;
         let Some(anchor) = task_entry(&snapshot.entries, design).cloned() else {
             return Ok(None);
         };

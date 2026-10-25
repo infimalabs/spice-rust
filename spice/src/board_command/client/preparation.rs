@@ -272,8 +272,7 @@ pub(in crate::board_command) fn held_design<'a>(
         return Ok(heads);
     }
     let mut held = board.tasks.iter().filter(|heads| {
-        !heads.visibility.is_hidden()
-            && held_by_caller(heads)
+        held_by_caller(heads)
             && wire::intent::is_open_design(heads.statement.body.intent, &heads.workflow.body)
     });
     let Some(heads) = held.next() else {

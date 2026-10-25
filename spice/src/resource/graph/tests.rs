@@ -21,7 +21,6 @@ fn next(document: &str) -> Option<Query> {
 }
 
 fn entries() -> Vec<board::Entry> {
-    let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("projects");
     (1..=8)
         .map(|index| {
             let born = wire::TaskStamp::for_micros(index).expect("stamp");
@@ -60,7 +59,7 @@ fn entries() -> Vec<board::Entry> {
                 deferral: None,
                 generation: 0,
             };
-            board::Entry::new(statement, workflow, None, None, &projects).expect("entry")
+            board::Entry::new(statement, workflow, None, None).expect("entry")
         })
         .collect()
 }

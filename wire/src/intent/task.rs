@@ -115,11 +115,11 @@ pub struct TaskOopsAdd {
     pub project: Option<String>,
 }
 
-/// File one evidence-backed taste candidate through the fixed hidden proposal route.
+/// File one evidence-backed taste candidate as a taste curation proposal.
 ///
-/// The route and workflow are server-owned. A caller supplies the stable finding
-/// and occurrence identities plus review material, but cannot target an
-/// arbitrary hidden project or activate tracked policy directly.
+/// The project and workflow are server-owned. A caller supplies the stable
+/// finding and occurrence identities plus review material, but cannot choose
+/// the project or activate tracked policy directly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TasteProposalAdd {

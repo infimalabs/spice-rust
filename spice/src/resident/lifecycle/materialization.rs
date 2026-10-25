@@ -111,15 +111,11 @@ impl Projection {
         &self.ready_at
     }
 
-    pub(super) fn advance(
-        &mut self,
-        snapshot: &bus::TaskSnapshot,
-        projects: &board::ProjectPolicy,
-    ) -> CommandResult<()> {
+    pub(super) fn advance(&mut self, snapshot: &bus::TaskSnapshot) -> CommandResult<()> {
         let Some((cursor, delta)) = self.committed_delta(snapshot)? else {
             return Ok(());
         };
-        let plan = self.prepare(snapshot, projects, cursor, &delta)?;
+        let plan = self.prepare(snapshot, cursor, &delta)?;
 
         // This is the final fallible operation. `Ledger::advance` rolls its
         // touched keys back on refusal, and applying the prepared plan below is
@@ -174,7 +170,6 @@ impl Projection {
     fn prepare(
         &self,
         snapshot: &bus::TaskSnapshot,
-        projects: &board::ProjectPolicy,
         cursor: Seq,
         delta: &[&wire::Envelope<wire::AnyFact>],
     ) -> CommandResult<AdvancePlan> {
@@ -197,7 +192,7 @@ impl Projection {
                 task.map(|task| (task, envelope.seq))
             })
             .collect::<BTreeMap<_, _>>();
-        let entries = self.entry_updates(snapshot, projects, &changed, &creator_teams)?;
+        let entries = self.entry_updates(snapshot, &changed, &creator_teams)?;
         let affected = self.affected_tasks(&changed, &entries);
         let fact_instants = delta
             .iter()
@@ -294,7 +289,6 @@ impl Projection {
     fn entry_updates(
         &self,
         snapshot: &bus::TaskSnapshot,
-        projects: &board::ProjectPolicy,
         changed: &BTreeSet<TaskStamp>,
         creator_teams: &BTreeMap<TaskStamp, Option<CanonicalUuid>>,
     ) -> CommandResult<BTreeMap<TaskStamp, EntryUpdate>> {
@@ -321,7 +315,7 @@ impl Projection {
             let explicit_release = heads
                 .claim()
                 .is_some_and(|claim| snapshot.facts().is_explicit_release(task, claim.position()));
-            let entry = entry(&heads, projects)?
+            let entry = entry(&heads)?
                 .with_creator_team(creator_team)
                 .with_explicit_release(explicit_release)
                 .with_phase_handoff(phase_handoff)
@@ -502,13 +496,12 @@ impl Projection {
     }
 }
 
-fn entry(heads: &TaskHeads, projects: &board::ProjectPolicy) -> CommandResult<Entry> {
+fn entry(heads: &TaskHeads) -> CommandResult<Entry> {
     Entry::new(
         heads.statement().body().clone(),
         heads.workflow().body().clone(),
         heads.claim().map(|head| head.body().clone()),
         heads.lease().map(|head| head.body().clone()),
-        projects,
     )
     .map_err(|error| {
         store_fault(

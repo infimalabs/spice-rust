@@ -18,7 +18,6 @@ pub(crate) fn read_next_work(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
@@ -37,7 +36,7 @@ pub(crate) fn read_next_work(
         });
     }
     let (entries, satisfied, origin_threads, frontier_heads, _work) =
-        project_frontier(observed, projects, residency.body())?;
+        project_frontier(observed, residency.body())?;
 
     let held = held_index(&entries, &principal)?;
 
@@ -100,14 +99,13 @@ pub(crate) fn read_next_work(
         }
     };
 
-    next_answer(observed, residency, &principal, projects, state)
+    next_answer(observed, residency, &principal, state)
 }
 
 fn next_answer(
     observed: &bus::TaskSnapshot,
     residency: &journal::JournalHead<wire::ResidencyHead>,
     principal: &wire::Actor,
-    projects: &ProjectPolicy,
     next: NextWorkState,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
@@ -129,10 +127,6 @@ fn next_answer(
         cursor,
         oops_generation: observed.oops_generation().map(positioned),
         principal: principal.clone(),
-        project_policy: BoardProjectPolicy {
-            public_min_depth: projects.public_min_depth(),
-            public_max_depth: projects.public_max_depth(),
-        },
         actor_route: actor_route(principal, &residency.body)?,
         next: Some(next),
         tasks: Vec::new(),
@@ -200,7 +194,6 @@ type FrontierProjection<'a> = (
 /// rows need not include the work those Designs released.
 pub(in crate::board_command) fn scoped_design_cycles(
     observed: &bus::TaskSnapshot,
-    projects: &ProjectPolicy,
     snapshot: &ValidatedSnapshot,
 ) -> Result<
     std::collections::BTreeMap<wire::TaskStamp, wire::rooms::DesignCycle>,
@@ -213,13 +206,12 @@ pub(in crate::board_command) fn scoped_design_cycles(
     {
         return Ok(std::collections::BTreeMap::new());
     }
-    let (_, live, ..) = project_frontier(observed, projects, &snapshot.answer.residency.body)?;
+    let (_, live, ..) = project_frontier(observed, &snapshot.answer.residency.body)?;
     Ok(board::design_cycles(&snapshot.entries, &live))
 }
 
 pub(in crate::board_command) fn project_frontier<'a>(
     observed: &'a bus::TaskSnapshot,
-    projects: &ProjectPolicy,
     residency: &wire::ResidencyHead,
 ) -> Result<FrontierProjection<'a>, Outcome<CommandAnswer>> {
     let allocation = observed.allocation_read();
@@ -293,7 +285,6 @@ pub(in crate::board_command) fn project_frontier<'a>(
             heads.workflow().body().clone(),
             heads.claim().map(|head| head.body().clone()),
             heads.lease().map(|head| head.body().clone()),
-            projects,
         )
         .map_err(|error| {
             store_fault(
@@ -391,15 +382,14 @@ fn dry_counts(
     counts
 }
 
-/// The default read route: every filed public row, plus rows created on the
+/// The default read route: every filed row, plus rows created on the
 /// principal's own origin thread.
 fn actor_route_matches_entry(
     entry: &Entry,
     origin_thread: &str,
     route: &wire::intent::BoardActorRoute,
 ) -> bool {
-    (!entry.project().visibility().is_hidden() && entry.is_filed())
-        || origin_thread == route.origin_thread
+    entry.is_filed() || origin_thread == route.origin_thread
 }
 
 fn task_origin_thread(

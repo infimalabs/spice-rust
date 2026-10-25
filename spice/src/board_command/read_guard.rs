@@ -48,12 +48,11 @@ pub(super) fn task_flow(
 pub(super) fn validated_snapshot(
     bus: &Bus,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
         .map_err(|error| store_fault("board::heads-unreadable", &error.to_string()))?;
-    validated_snapshot_from(&observed, principal, projects)
+    validated_snapshot_from(&observed, principal)
 }
 
 /// The principal role heads an author-naming read resolves fact actors
@@ -68,15 +67,13 @@ pub(super) fn principal_roles(
 pub(super) fn validated_snapshot_from(
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
-    validated_snapshot_from_with_occupant(observed, principal, projects, None, None, true)
+    validated_snapshot_from_with_occupant(observed, principal, None, None, true)
 }
 
 fn validated_snapshot_from_with_occupant(
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
     prospective_occupant: Option<wire::CanonicalUuid>,
     selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
     retain_facts: bool,
@@ -98,7 +95,7 @@ fn validated_snapshot_from_with_occupant(
         .map_err(Outcome::Fault)?
         .product
         .clone();
-    let (entries, mut tasks) = project_task_rows(observed, projects, &residency.body, selected)?;
+    let (entries, mut tasks) = project_task_rows(observed, &residency.body, selected)?;
     for task in &mut tasks {
         withhold_taste_findings(&principal, &mut task.statement.body.taste);
     }
@@ -129,10 +126,6 @@ fn validated_snapshot_from_with_occupant(
             cursor,
             oops_generation: observed.oops_generation().map(positioned),
             principal,
-            project_policy: BoardProjectPolicy {
-                public_min_depth: projects.public_min_depth(),
-                public_max_depth: projects.public_max_depth(),
-            },
             actor_route,
             next: None,
             tasks,
@@ -159,7 +152,6 @@ fn validated_snapshot_from_with_occupant(
 /// The maps are built once per snapshot, so projecting a row is a lookup
 /// rather than another pass over the fact log.
 struct TaskProjection<'a> {
-    projects: &'a ProjectPolicy,
     origin_threads: &'a std::collections::BTreeMap<wire::TaskStamp, String>,
     creator_teams: &'a std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
     claim_contexts: &'a ClaimContexts,
@@ -213,7 +205,6 @@ impl TaskProjection<'_> {
             workflow.body.clone(),
             claim.as_ref().map(|head| head.body.clone()),
             lease.as_ref().map(|head| head.body.clone()),
-            self.projects,
         )
         .map_err(|error| {
             store_fault(
@@ -228,7 +219,6 @@ impl TaskProjection<'_> {
         .with_design(design)
         .with_preparation_decision(preparation_decision.clone())
         .with_queued_at(queued_at(self.facts, &statement.body));
-        let visibility = entry.project().visibility().clone();
         let origin_thread = self
             .origin_threads
             .get(&statement.body.born)
@@ -240,7 +230,6 @@ impl TaskProjection<'_> {
                 )
             })?;
         let task = BoardTask::from_authoritative(
-            visibility,
             origin_thread,
             creator_team,
             statement,
@@ -689,7 +678,6 @@ pub(super) fn read_board(
     bus: &Bus,
     read: &BoardRead,
     command: &wire::AdmittedCommand,
-    projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     profiles: next_work::OccupantProfiles<'_>,
 ) -> Outcome<CommandAnswer> {
@@ -699,8 +687,7 @@ pub(super) fn read_board(
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
     if matches!(read, BoardRead::Next) {
-        let next =
-            next_work::read_next_work(bus, &observed, principal, projects, allocation, profiles);
+        let next = next_work::read_next_work(bus, &observed, principal, allocation, profiles);
         return match next {
             Ok(answer) => snapshot_reply(answer.cursor, CommandAnswer::Board(Box::new(answer))),
             Err(outcome) => outcome,
@@ -717,7 +704,6 @@ pub(super) fn read_board(
     let mut snapshot = match validated_snapshot_from_with_occupant(
         &observed,
         principal,
-        projects,
         None,
         selected.as_ref(),
         false,
@@ -740,11 +726,11 @@ pub(super) fn read_board(
         }
         snapshot.answer.design_cycles = board::design_cycles(&snapshot.entries, &resolved);
     } else {
-        snapshot.answer.design_cycles =
-            match next_work::scoped_design_cycles(&observed, projects, &snapshot) {
-                Ok(cycles) => cycles,
-                Err(outcome) => return outcome,
-            };
+        snapshot.answer.design_cycles = match next_work::scoped_design_cycles(&observed, &snapshot)
+        {
+            Ok(cycles) => cycles,
+            Err(outcome) => return outcome,
+        };
     }
     if matches!(read, BoardRead::Open) {
         snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);
@@ -828,7 +814,6 @@ pub(super) fn read_graph(
     bus: &Bus,
     graph: &BoardGraph,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &graph.at {
         return refusal(
@@ -852,9 +837,9 @@ pub(super) fn read_graph(
         }
     };
     let snapshot = match if graph.all {
-        validated_snapshot(bus, principal, projects)
+        validated_snapshot(bus, principal)
     } else {
-        validated_working_snapshot(bus, principal, &[], projects)
+        validated_working_snapshot(bus, principal, &[])
     } {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -889,7 +874,6 @@ pub(super) fn read_handout(
     bus: &Bus,
     handout: &BoardHandout,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     if let Some(at) = &handout.at {
         return refusal(
@@ -905,7 +889,7 @@ pub(super) fn read_handout(
             "name an output path or -",
         );
     }
-    let snapshot = match validated_snapshot(bus, principal, projects) {
+    let snapshot = match validated_snapshot(bus, principal) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -946,13 +930,12 @@ pub(super) fn read_ledger(
     bus: &Bus,
     ledger: &DocLedger,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let roles = match principal_roles(bus) {
         Ok(roles) => roles,
         Err(outcome) => return outcome,
     };
-    let snapshot = match validated_snapshot(bus, principal, projects) {
+    let snapshot = match validated_snapshot(bus, principal) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };

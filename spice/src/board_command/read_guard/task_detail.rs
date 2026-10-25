@@ -8,7 +8,6 @@ pub(in crate::board_command) fn read_task_detail(
     repository: Option<Host<'_>>,
     detail: &wire::intent::TaskDetail,
     principal: wire::Actor,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let observed = match bus.task_snapshot() {
         Ok(observed) => observed,
@@ -19,7 +18,6 @@ pub(in crate::board_command) fn read_task_detail(
     let snapshot = match validated_snapshot_from_with_occupant(
         &observed,
         principal,
-        projects,
         None,
         Some(&projection),
         false,

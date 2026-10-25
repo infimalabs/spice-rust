@@ -35,22 +35,9 @@ fn handle(text: &str) -> TaskHandle {
     TaskHandle::for_project("board.allocate", &stamp(text))
 }
 
-fn projects() -> board::ProjectPolicy {
-    board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
-}
-
 fn snapshot(journal: &Journal) -> Snapshot {
-    support::bounded_snapshot(
-        journal,
-        &projects(),
-        &[stamp("BOARD-b2"), stamp("BOARD-a1")],
-    )
-    .expect("fixture board entries")
+    support::bounded_snapshot(journal, &[stamp("BOARD-b2"), stamp("BOARD-a1")])
+        .expect("fixture board entries")
 }
 
 fn workflow() -> WorkflowHead {

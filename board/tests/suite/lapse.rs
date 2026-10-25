@@ -33,17 +33,8 @@ fn task() -> TaskHandle {
     TaskHandle::for_project("board.possession", &born())
 }
 
-fn projects() -> board::ProjectPolicy {
-    board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
-}
-
 fn snapshot(journal: &Journal) -> Snapshot {
-    support::bounded_snapshot(journal, &projects(), &[born()]).expect("fixture board entry")
+    support::bounded_snapshot(journal, &[born()]).expect("fixture board entry")
 }
 fn allocatable(snapshot: &Snapshot) -> bool {
     board::eligible_entry(
@@ -335,7 +326,6 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
 
 fn lapse_request(command: u8, expiry: u8) -> Request {
     Request {
-        projects: projects(),
         command: uuid(command),
         occupant: uuid(21),
         epoch: uuid(22),

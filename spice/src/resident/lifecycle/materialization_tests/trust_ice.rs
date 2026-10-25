@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_held_work() {
     let digest = digest();
-    let (bus, projects, mut projection) = iced_fixture(&digest);
+    let (bus, mut projection) = iced_fixture(&digest);
     let snapshot = bus.task_snapshot().expect("iced snapshot reads");
     let iced_target = target(&snapshot, &projection);
     assert!(!iced_target.pending_inbox);
@@ -18,7 +18,7 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
     committed(bus.commit(grant_write(&digest)).expect("grant commits"));
     let granted = bus.task_snapshot().expect("granted snapshot reads");
     projection
-        .advance(&granted, &projects)
+        .advance(&granted)
         .expect("grant projection advances");
     assert_eq!(
         resolve(
@@ -33,14 +33,14 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
     );
     bus.shutdown().expect("grant fixture stops");
 
-    let (bus, projects, mut projection) = iced_fixture(&digest);
+    let (bus, mut projection) = iced_fixture(&digest);
     committed(
         bus.commit(operator_direction_write())
             .expect("operator direction commits"),
     );
     let directed = bus.task_snapshot().expect("directed snapshot reads");
     projection
-        .advance(&directed, &projects)
+        .advance(&directed)
         .expect("direction projection advances");
     assert_eq!(
         resolve(
@@ -60,7 +60,7 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
 #[test]
 fn a_turn_end_parks_held_work_on_its_ungranted_configuration_until_the_grant_lands() {
     let digest = digest();
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     assert!(
         !reconcile(&bus, PRODUCER, Some(&digest)),
         "a lane without a claim parks nothing"
@@ -95,14 +95,14 @@ fn a_turn_end_parks_held_work_on_its_ungranted_configuration_until_the_grant_lan
     assert!(spice::claim_lease::is_indefinite(lease));
     assert_eq!(lease.start, instant(3));
     projection
-        .advance(&parked, &projects)
+        .advance(&parked)
         .expect("parked projection advances");
     assert_eq!(wake(&parked, &projection), Resolution::Idle);
 
     committed(bus.commit(grant_write(&digest)).expect("grant commits"));
     let granted = bus.task_snapshot().expect("granted snapshot reads");
     projection
-        .advance(&granted, &projects)
+        .advance(&granted)
         .expect("grant projection advances");
     assert_eq!(wake(&granted, &projection), held_wake());
     assert!(
@@ -116,7 +116,7 @@ fn a_turn_end_parks_held_work_on_its_ungranted_configuration_until_the_grant_lan
 #[test]
 fn a_turn_end_drops_a_park_its_worktree_no_longer_needs() {
     let (abandoned, granted) = (digest(), other_digest());
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
         bus.commit(claim_write_until(&bus, instant(3), instant(40), |_, _| {}))
             .expect("claim commits"),
@@ -137,7 +137,7 @@ fn a_turn_end_drops_a_park_its_worktree_no_longer_needs() {
     );
     let dropped = bus.task_snapshot().expect("dropped snapshot reads");
     projection
-        .advance(&dropped, &projects)
+        .advance(&dropped)
         .expect("dropped projection advances");
     assert_eq!(wake(&dropped, &projection), held_wake());
 
@@ -155,7 +155,7 @@ fn a_turn_end_drops_a_park_its_worktree_no_longer_needs() {
 #[test]
 fn a_turn_end_replaces_its_worktrees_older_park_but_never_another_worktrees() {
     let (older, newer) = (digest(), other_digest());
-    let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    let (bus, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
         bus.commit(held_claim_write(&bus, instant(3), |_, _| {}))
             .expect("claim commits"),
@@ -165,7 +165,7 @@ fn a_turn_end_replaces_its_worktrees_older_park_but_never_another_worktrees() {
     assert_eq!(required(&bus), Some(newer.clone()));
     bus.shutdown().expect("replacement fixture stops");
 
-    let (bus, _, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
+    let (bus, _) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
         bus.commit(pend_write(&older, "/other/worktree", instant(2)))
             .expect("foreign pend commits"),
@@ -280,16 +280,16 @@ fn other_digest() -> wire::Digest {
 #[test]
 fn held_recovery_preserves_the_ready_deadline_across_projection_restart() {
     let digest = digest();
-    let (bus, projects, mut projection) = iced_fixture(&digest);
+    let (bus, mut projection) = iced_fixture(&digest);
     committed(bus.commit(grant_write(&digest)).expect("grant commits"));
-    assert_recovery_deadline(&bus, &projects, &mut projection, 4);
+    assert_recovery_deadline(&bus, &mut projection, 4);
     bus.shutdown().expect("held recovery fixture stops");
 }
 
 #[test]
 fn reclaiming_a_released_task_preserves_its_new_ready_origin() {
     let digest = digest();
-    let (bus, projects, mut projection) = iced_fixture(&digest);
+    let (bus, mut projection) = iced_fixture(&digest);
     committed(bus.commit(grant_write(&digest)).expect("grant commits"));
     let snapshot = bus.task_snapshot().expect("held snapshot reads");
     let heads = &snapshot.tasks()[0];
@@ -320,29 +320,24 @@ fn reclaiming_a_released_task_preserves_its_new_ready_origin() {
     });
     committed(bus.commit(release).expect("release commits"));
     projection
-        .advance(&bus.task_snapshot().expect("released snapshot"), &projects)
+        .advance(&bus.task_snapshot().expect("released snapshot"))
         .expect("release projects");
     committed(
         bus.commit(iced_claim_write(&bus, &digest, instant(6)))
             .expect("new claim commits"),
     );
-    assert_recovery_deadline(&bus, &projects, &mut projection, 8);
+    assert_recovery_deadline(&bus, &mut projection, 8);
     bus.shutdown().expect("reclaimed fixture stops");
 }
 
-fn assert_recovery_deadline(
-    bus: &Bus,
-    projects: &ProjectPolicy,
-    projection: &mut Projection,
-    deadline: u8,
-) {
+fn assert_recovery_deadline(bus: &Bus, projection: &mut Projection, deadline: u8) {
     let snapshot = bus.task_snapshot().expect("held snapshot reads");
     projection
-        .advance(&snapshot, projects)
+        .advance(&snapshot)
         .expect("grant projection advances");
     let mut restarted = Projection::new();
     restarted
-        .advance(&snapshot, projects)
+        .advance(&snapshot)
         .expect("restarted projection rehydrates");
 
     for projection in [&*projection, &restarted] {
@@ -374,19 +369,16 @@ fn assert_recovery_deadline(
     }
 }
 
-fn iced_fixture(digest: &wire::Digest) -> (Bus, ProjectPolicy, Projection) {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
+fn iced_fixture(digest: &wire::Digest) -> (Bus, Projection) {
+    let (bus, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
         bus.commit(iced_claim_write(&bus, digest, instant(2)))
             .expect("iced claim commits"),
     );
     projection
-        .advance(
-            &bus.task_snapshot().expect("iced snapshot reads"),
-            &projects,
-        )
+        .advance(&bus.task_snapshot().expect("iced snapshot reads"))
         .expect("iced projection advances");
-    (bus, projects, projection)
+    (bus, projection)
 }
 
 pub(super) fn target<'a>(snapshot: &bus::TaskSnapshot, projection: &'a Projection) -> Target<'a> {

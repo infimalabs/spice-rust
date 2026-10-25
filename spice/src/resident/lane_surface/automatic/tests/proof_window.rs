@@ -390,9 +390,7 @@ fn assert_successor_renews(
     successor: CanonicalUuid,
     carried_expiry: wire::Instant,
 ) {
-    let projects = board::ProjectPolicy::new(Vec::new(), 2, 4).expect("fixture project policy");
     let mut timers = crate::resident::timers::Runtime::start(
-        projects,
         steer::Config::default(),
         window.fixture.paths.supervisors.clone(),
     )

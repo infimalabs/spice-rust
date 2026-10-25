@@ -84,9 +84,7 @@ enum EvidenceError {
     AnswerMismatch(CanonicalUuid),
     DuplicateAnswer(CanonicalUuid),
     TooMany(usize),
-    ProposalFinding(TaskHandle),
     ProposalStanding(TaskHandle),
-    ProposalEvidence(TaskHandle),
 }
 
 struct MiningSnapshot {
@@ -96,7 +94,7 @@ struct MiningSnapshot {
     cursor: Seq,
 }
 
-/// Mine recurring corrections and file only hidden, operator-reviewed work.
+/// Mine recurring corrections and file them as operator-reviewed proposals.
 pub(crate) fn mine(
     contract: &Contract,
     configuration: Option<&spice::config::RepositoryCapture>,
@@ -125,10 +123,7 @@ pub(crate) fn mine(
         .iter()
         .filter_map(|envelope| {
             let added = envelope.fact.read::<TaskAdded>()?;
-            added
-                .project
-                .starts_with(".maxim_proposal.taste.")
-                .then_some(added.task)
+            added.taste_proposal.is_some().then_some(added.task)
         })
         .collect();
     let board = match crate::board_command::current_board(
@@ -607,26 +602,23 @@ fn prior_proposals(
         let Some(added) = envelope.fact.read::<TaskAdded>() else {
             continue;
         };
-        let Some(finding_text) = added.project.strip_prefix(".maxim_proposal.taste.") else {
+        let Some(proposal) = added.taste_proposal else {
             continue;
         };
         let fallback = TaskHandle::for_project(&added.project, &added.task);
-        let finding = finding_text
-            .parse::<Digest>()
-            .map_err(|_| EvidenceError::ProposalFinding(fallback.clone()))?;
         let (handle, completed) = completion
             .get(&added.task)
             .cloned()
-            .ok_or_else(|| EvidenceError::ProposalStanding(fallback.clone()))?;
-        let proposal = added
-            .taste_proposal
-            .ok_or_else(|| EvidenceError::ProposalEvidence(handle.clone()))?;
-        proposals.entry(finding).or_default().push(PriorProposal {
-            completed,
-            handle,
-            occurrence: proposal.occurrence,
-            recurrence: proposal.recurrence,
-        });
+            .ok_or(EvidenceError::ProposalStanding(fallback))?;
+        proposals
+            .entry(proposal.finding)
+            .or_default()
+            .push(PriorProposal {
+                completed,
+                handle,
+                occurrence: proposal.occurrence,
+                recurrence: proposal.recurrence,
+            });
     }
     Ok(proposals)
 }
@@ -779,14 +771,8 @@ fn evidence_fault(error: EvidenceError) -> Outcome<TasteMiningReport> {
         EvidenceError::TooMany(count) => format!(
             "{count} operator steering directives exceed the bounded mining limit {MAX_AUTHORED_CORRECTIONS}"
         ),
-        EvidenceError::ProposalFinding(task) => {
-            format!("hidden taste proposal {task} carries an invalid finding route")
-        }
         EvidenceError::ProposalStanding(task) => {
-            format!("hidden taste proposal {task} has no current workflow standing")
-        }
-        EvidenceError::ProposalEvidence(task) => {
-            format!("hidden taste proposal {task} carries no proposal evidence")
+            format!("taste proposal {task} has no current workflow standing")
         }
     };
     fault(FaultClass::Store, "taste::mining-evidence-invalid", detail)

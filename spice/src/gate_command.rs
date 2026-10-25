@@ -42,7 +42,6 @@ fn proof_absent(reason: &str) -> bool {
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(
     matches: &clap::ArgMatches,
-    configuration: Option<&spice::config::RepositoryCapture>,
     live: bool,
     ambient: &Ambient,
 ) -> Outcome<BatteryRun> {
@@ -56,7 +55,7 @@ pub(crate) fn run(
         live,
         ambient,
     };
-    let admission = verify_claim::admit_current_worktree(configuration, ambient);
+    let admission = verify_claim::admit_current_worktree(ambient);
     match verify_claim::launch_after_admission(admission, || {
         battery::run(selector, &invocation, &output::current_captures())
     }) {

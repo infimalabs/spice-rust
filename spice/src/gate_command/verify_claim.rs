@@ -20,10 +20,7 @@ const EXPECTED: &str =
     "one occupied current-worktree lane holding one coherent unexpired task claim at phase verify";
 const REPAIR: &str = "claim a task whose current workflow phase is verify in this worktree, then rerun the full gate";
 
-pub(super) fn admit_current_worktree(
-    configuration: Option<&spice::config::RepositoryCapture>,
-    ambient: &Ambient,
-) -> Result<(), Failure> {
+pub(super) fn admit_current_worktree(ambient: &Ambient) -> Result<(), Failure> {
     let current = std::env::current_dir().map_err(|error| Failure::Fault {
         reason: "gate::working-directory-unavailable",
         detail: error.to_string(),
@@ -36,9 +33,6 @@ pub(super) fn admit_current_worktree(
     let state = repository
         .admit_state()
         .map_err(|error| unavailable(error.to_string()))?;
-    let loaded = spice::config::capture_repository_scoped(&repository, &[], configuration)
-        .map_err(|error| unavailable(error.to_string()))?;
-    let projects = loaded.resolved().root().tasks().project_policy();
     let reader = journal::JournalReader::open(state.journal())
         .map_err(|error| unavailable(error.to_string()))?;
     let actor = Actor::Lane(lane);
@@ -50,9 +44,7 @@ pub(super) fn admit_current_worktree(
         .ok_or_else(|| refused(VerifyClaimRefusal::MissingResidency))?;
     let entry = heads
         .map(journal::TaskHeads::into_bodies)
-        .map(|(statement, workflow, claim, lease)| {
-            Entry::new(statement, workflow, claim, lease, &projects)
-        })
+        .map(|(statement, workflow, claim, lease)| Entry::new(statement, workflow, claim, lease))
         .transpose()
         .map_err(|error| unavailable(error.to_string()))?;
     let at =

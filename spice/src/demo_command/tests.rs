@@ -370,7 +370,7 @@ fn seeded_roots_are_born_on_one_commit_wherever_they_are_created() {
 }
 
 /// Advance a seeded root the way working lanes do: a commit on its branch, an
-/// edited project policy, and a residency that seats one more lane.
+/// edited repository policy, and a residency that seats one more lane.
 fn advance_seeded_root(environment: &Environment) {
     let repository = gix::open(&environment.root).unwrap();
     let tree = repository.write_object(gix::objs::Tree::default()).unwrap();
@@ -385,7 +385,7 @@ fn advance_seeded_root(environment: &Environment) {
         .unwrap();
     fs::write(
         environment.root.join(wire::TRACKED_POLICY_FILE),
-        b"[tasks]\nproject_max_depth = 4\n",
+        b"[judge]\nenabled = true\n",
     )
     .unwrap();
 

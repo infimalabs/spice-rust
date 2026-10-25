@@ -647,7 +647,7 @@ fn finish_graph(
 mod tests {
     use super::*;
     use crate::runtime::BoardView;
-    use wire::intent::{BoardStatement, BoardTask, Positioned, ProjectVisibility};
+    use wire::intent::{BoardStatement, BoardTask, Positioned};
     use wire::{Environment, EnvironmentRequirements};
 
     fn seq(value: u64) -> wire::Seq {
@@ -661,7 +661,6 @@ mod tests {
     fn task(value: i64, dependencies: &[i64]) -> BoardTask {
         let born = stamp(value);
         BoardTask {
-            visibility: ProjectVisibility::Public,
             origin_thread: "operator".to_owned(),
             creator_team: None,
             presentation_title: format!("task {value}"),

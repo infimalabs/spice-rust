@@ -23,17 +23,14 @@ pub(in crate::board_command) fn claim_win(
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
 ) -> Outcome<CommandAnswer> {
-    let plan = match claim_plan(
-        bus, command, win, repository, projects, allocation, profiles,
-    ) {
+    let plan = match claim_plan(bus, command, win, repository, allocation, profiles) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
-    commit_claim(bus, command, win, projects, plan)
+    commit_claim(bus, command, win, plan)
 }
 
 /// Decide one claim against a single board read.
@@ -45,7 +42,6 @@ pub(in crate::board_command) fn claim_plan<'a>(
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
     repository: Option<Host<'a>>,
-    projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     profiles: OccupantProfiles<'_>,
 ) -> Result<ClaimPlan<'a>, Outcome<CommandAnswer>> {
@@ -60,8 +56,7 @@ pub(in crate::board_command) fn claim_plan<'a>(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let snapshot =
-        validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots, projects)?;
+    let snapshot = validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots)?;
     let selected = claim_selection(&snapshot, command, possession, allocation, profiles)?.clone();
     // Named capture may possess a planning deliverable, but a recovery-bound
     // capture adopts implementation, so it refuses planning before Git work.
@@ -431,7 +426,6 @@ pub(in crate::board_command) fn commit_claim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     win: &ClaimWin,
-    projects: &ProjectPolicy,
     plan: ClaimPlan,
 ) -> Outcome<CommandAnswer> {
     let ClaimPlan {
@@ -459,7 +453,7 @@ pub(in crate::board_command) fn commit_claim(
         Err(outcome) => return outcome,
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard_claim(&mut write, &snapshot, command, possession, &task, projects);
+    guard_claim(&mut write, &snapshot, command, possession, &task);
     if let Err(outcome) = mint_claim(
         &mut write,
         board::allocate::Mint {
@@ -1073,7 +1067,6 @@ fn guard_claim(
     command: &wire::AdmittedCommand,
     possession: Possession,
     _task: &TaskHandle,
-    _projects: &ProjectPolicy,
 ) {
     let expected = command.expected().to_vec();
     if possession.named() {

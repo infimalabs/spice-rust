@@ -85,7 +85,6 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
     write(
         root.join("spice.toml"),
         concat!(
-            "[tasks]\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
             "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
         ),
@@ -99,10 +98,6 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
     let before = snapshot(scratch.path());
     let resolved =
         load_repository(&repository, &[]).expect("repository loader admits current typed metadata");
-    assert_eq!(
-        resolved.root().tasks().hidden_stems(),
-        ["maxim_proposal", "sandbox"]
-    );
     assert!(resolved.root().policy().env_names().is_empty());
     assert_eq!(resolved.root().taste().bag().tastes().len(), 1);
     assert_eq!(resolved.root().lock().named().len(), 1);
@@ -506,9 +501,7 @@ fn symlink_acquisition_and_other_layer_decode_issue_are_both_returned() {
     let resolution = error.resolution().expect("other layer was still decoded");
     assert!(resolution.issues().iter().any(|issue| {
         issue.source() == ConfigSource::Local
-            && issue
-                .path()
-                .is_some_and(|path| path.to_string() == "tasks.owner")
+            && issue.path().is_some_and(|path| path.to_string() == "tasks")
     }));
 }
 

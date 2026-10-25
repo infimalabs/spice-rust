@@ -330,11 +330,9 @@ fn claim_eligibility_ignores_unrelated_history_but_keeps_a_settled_prerequisite(
     connect_child(&bus, epoch, &target, &prerequisite);
     super::read_scope::append_terminal_tasks(&bus, 64);
 
-    let projects = guard_projects();
-    let complete = validated_snapshot(&bus, lane.clone(), &projects).expect("complete projection");
-    let scoped =
-        validated_working_snapshot(&bus, lane.clone(), std::slice::from_ref(&target), &projects)
-            .expect("working projection");
+    let complete = validated_snapshot(&bus, lane.clone()).expect("complete projection");
+    let scoped = validated_working_snapshot(&bus, lane.clone(), std::slice::from_ref(&target))
+        .expect("working projection");
     assert_eq!(at(&scoped.answer, &target), at(&complete.answer, &target));
     assert_eq!(
         at(&scoped.answer, &prerequisite),
@@ -430,7 +428,7 @@ fn omitted_intermediate_witness_refuses_after_the_graph_moves_toward_a_cycle() {
         &intent,
     );
 
-    let outcome = task_depends_with(&bus, &command, &intent, &guard_projects(), || {
+    let outcome = task_depends_with(&bus, &command, &intent, || {
         connect_child(&bus, epoch, &intermediate, &target)
     });
     assert!(

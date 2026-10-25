@@ -25,7 +25,7 @@ use recovery::{preserve_environment_failure, preserve_failure, require_utf8, she
 
 const MANIFEST_NAME: &str = ".spice-demo.json";
 const TRANSCRIPT_NAME: &str = "spice-demo-transcript.jsonl";
-const CONFIG_BYTES: &[u8] = b"[tasks]\nproject_max_depth = 3\n";
+const CONFIG_BYTES: &[u8] = b"# Demo repository policy: every key keeps its built-in value.\n";
 const DEMO_TASK: &str = "DEMO-1kKRRsDP";
 const DEMO_STAMP: &str = "1kKRRsDP";
 const DEMO_TITLE: &str = "Add machine-readable status output";

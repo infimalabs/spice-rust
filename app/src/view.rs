@@ -122,8 +122,8 @@ pub(crate) enum AppRoute {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkRoute {
     AllOpen,
-    Stem(WorkRouteStem),
-    Planning { stem: Option<WorkRouteStem> },
+    Project(WorkRouteProject),
+    Planning { project: Option<WorkRouteProject> },
     Team(wire::CanonicalUuid),
     Group(wire::rooms::RoomAuthorityStamp),
 }
@@ -136,29 +136,21 @@ pub(crate) enum OverviewRouteIntent {
     Close,
 }
 
-/// One visibility-qualified project stem in a Work route.
+/// One exact project label in a Work route.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct WorkRouteStem {
-    hidden: bool,
-    stem: String,
-}
+pub(crate) struct WorkRouteProject(String);
 
 #[cfg(any(target_arch = "wasm32", test))]
-impl WorkRouteStem {
+impl WorkRouteProject {
     #[must_use]
-    pub(crate) fn new(hidden: bool, stem: String) -> Option<Self> {
-        valid_work_stem(&stem).then_some(Self { hidden, stem })
+    pub(crate) fn new(project: String) -> Option<Self> {
+        valid_work_project(&project).then_some(Self(project))
     }
 
     #[must_use]
-    pub(crate) const fn hidden(&self) -> bool {
-        self.hidden
-    }
-
-    #[must_use]
-    pub(crate) fn stem(&self) -> &str {
-        &self.stem
+    pub(crate) fn project(&self) -> &str {
+        &self.0
     }
 }
 
@@ -201,15 +193,15 @@ impl AppRoute {
                 return Self::card(target.to_owned());
             }
             ("work", None, None, None, None) => Self::work(WorkRoute::AllOpen),
-            ("work", Some("stem"), Some(visibility), Some(stem), None) => {
-                Self::work(WorkRoute::Stem(parse_work_stem(visibility, stem)?))
-            }
+            ("work", Some("project"), Some(project), None, None) => Self::work(WorkRoute::Project(
+                WorkRouteProject::new(project.to_owned())?,
+            )),
             ("work", Some("planning"), None, None, None) => {
-                Self::work(WorkRoute::Planning { stem: None })
+                Self::work(WorkRoute::Planning { project: None })
             }
-            ("work", Some("planning"), Some(visibility), Some(stem), None) => {
+            ("work", Some("planning"), Some(project), None, None) => {
                 Self::work(WorkRoute::Planning {
-                    stem: Some(parse_work_stem(visibility, stem)?),
+                    project: Some(WorkRouteProject::new(project.to_owned())?),
                 })
             }
             ("work", Some("team"), Some(team), None, None) => {
@@ -285,44 +277,26 @@ impl WorkRoute {
     pub(crate) fn path(&self) -> String {
         match self {
             Self::AllOpen => "/work".to_owned(),
-            Self::Stem(stem) => format!(
-                "/work/stem/{}/{}",
-                work_visibility_segment(stem),
-                stem.stem()
-            ),
-            Self::Planning { stem: None } => "/work/planning".to_owned(),
-            Self::Planning { stem: Some(stem) } => format!(
-                "/work/planning/{}/{}",
-                work_visibility_segment(stem),
-                stem.stem()
-            ),
+            Self::Project(project) => format!("/work/project/{}", project.project()),
+            Self::Planning { project: None } => "/work/planning".to_owned(),
+            Self::Planning {
+                project: Some(project),
+            } => format!("/work/planning/{}", project.project()),
             Self::Team(team) => format!("/work/team/{team}"),
             Self::Group(group) => format!("/work/group/{group}"),
         }
     }
 }
 
+/// One exact project label: dot-separated nonempty `[0-9a-z_]+` runs.
 #[cfg(any(target_arch = "wasm32", test))]
-fn parse_work_stem(visibility: &str, stem: &str) -> Option<WorkRouteStem> {
-    let hidden = match visibility {
-        "public" => false,
-        "hidden" => true,
-        _ => return None,
-    };
-    WorkRouteStem::new(hidden, stem.to_owned())
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn work_visibility_segment(stem: &WorkRouteStem) -> &'static str {
-    if stem.hidden { "hidden" } else { "public" }
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn valid_work_stem(stem: &str) -> bool {
-    !stem.is_empty()
-        && stem
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+fn valid_work_project(project: &str) -> bool {
+    project.split('.').all(|run| {
+        !run.is_empty()
+            && run
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    })
 }
 
 #[cfg(any(target_arch = "wasm32", test))]

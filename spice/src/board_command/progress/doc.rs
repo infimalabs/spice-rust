@@ -37,9 +37,8 @@ pub(in crate::board_command) fn doc_apply(
     command: &wire::AdmittedCommand,
     apply: &DocApply,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let plan = match validate_doc_plan(bus, command, apply, projects) {
+    let plan = match validate_doc_plan(bus, command, apply) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
     };
@@ -53,7 +52,6 @@ fn validate_doc_plan(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
-    projects: &ProjectPolicy,
 ) -> Result<DocPlan, Outcome<CommandAnswer>> {
     let preview = board::Preview::classify(&apply.document).map_err(|error| {
         refusal(
@@ -70,18 +68,18 @@ fn validate_doc_plan(
         ));
     }
     let roles = principal_roles(bus)?;
-    let snapshot = validated_snapshot(bus, command.actor().clone(), projects)?;
+    let snapshot = validated_snapshot(bus, command.actor().clone())?;
     require_doc_barrier(command, apply, &snapshot)?;
     let project = preview
         .document()
         .project
         .as_deref()
         .unwrap_or("task.document");
-    projects.admit(project).map_err(|error| {
+    Project::admit(project).map_err(|error| {
         refusal(
             "doc::project-refused",
             Some(error.to_string()),
-            "author a project admitted by the captured task metadata",
+            "author the project as dot-separated runs of [0-9a-z_]+",
         )
     })?;
     let touched = document_handles(

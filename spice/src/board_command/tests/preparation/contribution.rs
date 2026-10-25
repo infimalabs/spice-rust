@@ -13,15 +13,6 @@ use wire::rooms::{
 
 use crate::room_command::SourceOwners;
 
-fn projects() -> ProjectPolicy {
-    ProjectPolicy::new(
-        ["sandbox".to_owned()],
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("contribution fixture project policy")
-}
-
 /// The task artifact store under `root`.
 fn artifacts(root: &Path) -> artifact::Store {
     fs::create_dir_all(root.join("artifacts")).expect("artifact directory exists");
@@ -92,7 +83,6 @@ pub(super) fn contribute(
             tape: &tape,
             artifacts: &store,
         }),
-        &projects(),
     )
 }
 
@@ -126,7 +116,6 @@ pub(super) fn history(root: &Path, artifacts_root: &Path, words: &[&str]) -> Val
             tape: &tape,
             artifacts: &store,
         },
-        &projects(),
         crate::cli::selected_matches(&matches),
         contract.path,
     );
@@ -703,7 +692,6 @@ fn assert_exact_source_refusals(
             tape: &tape,
             artifacts: &store,
         }),
-        &projects(),
     );
     assert_eq!(refused(&unwitnessed), "room::contribution-source-witness");
 }

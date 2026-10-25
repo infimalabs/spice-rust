@@ -156,14 +156,9 @@ fn correction_movement_after_validation_refuses_the_whole_review() {
         &review.reviewed,
     )
     .clone();
-    let outcome = task_review_with(
-        &review.bus,
-        &command,
-        &intent,
-        None,
-        &guard_projects(),
-        || connect_child(&review.bus, review.epoch, &correction, &moved_after),
-    );
+    let outcome = task_review_with(&review.bus, &command, &intent, None, || {
+        connect_child(&review.bus, review.epoch, &correction, &moved_after)
+    });
     assert!(
         matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"),
         "moved correction must lose the guarded commit: {outcome:?}",

@@ -16,7 +16,6 @@ pub(crate) fn room_leave(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     leave: &RoomLeave,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let Actor::Lane(lane) = command.actor().clone() else {
         return refusal(
@@ -37,7 +36,6 @@ pub(crate) fn room_leave(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&leave.room),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

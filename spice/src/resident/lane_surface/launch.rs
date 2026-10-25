@@ -337,7 +337,7 @@ fn launch_plan(
         let session = probes.session(repository.worktree_root().to_path_buf());
         prompt.push_str("\n\n");
         prompt.push_str(&crate::session_command::lane_launch_briefing(
-            &session, lane, None,
+            &session, lane,
         ));
     }
     if let Some(running) = running {

@@ -142,7 +142,6 @@ impl<'a> Surface<'a> {
                 repository: self.repository,
                 ambient: &self.config.ambient,
             }),
-            &self.config.projects,
             &self.config.allocation,
             self.profiles.get().map(AsRef::as_ref),
         ) {
@@ -361,7 +360,6 @@ impl<'a> Surface<'a> {
                         command,
                         request,
                         &self.config.steering,
-                        &self.config.projects,
                     );
                     (outcome, parked.into_iter().collect())
                 }
@@ -374,16 +372,10 @@ impl<'a> Surface<'a> {
                         command,
                         request,
                         &self.config.steering,
-                        &self.config.projects,
                     )
                 }
                 (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
-                    crate::board_command::room_leave(
-                        self.bus,
-                        command,
-                        leave,
-                        &self.config.projects,
-                    ),
+                    crate::board_command::room_leave(self.bus, command, leave),
                     Vec::new(),
                 ),
                 (CommandKind::RoomContribute, Intent::RoomContribute(contribute)) => (
@@ -395,7 +387,6 @@ impl<'a> Surface<'a> {
                             tape: &self.paths.tape,
                             artifacts: &self.paths.artifacts(),
                         }),
-                        &self.config.projects,
                     ),
                     Vec::new(),
                 ),
@@ -453,7 +444,6 @@ impl<'a> Surface<'a> {
             command,
             request,
             &self.config.steering,
-            &self.config.projects,
         )
     }
 

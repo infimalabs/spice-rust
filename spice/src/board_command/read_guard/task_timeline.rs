@@ -26,7 +26,6 @@ pub(in crate::board_command) fn read_task_timeline(
     bus: &Bus,
     request: &TaskTimeline,
     principal: Actor,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let lanes = match validate(request) {
         Ok(lanes) => lanes,
@@ -56,7 +55,6 @@ pub(in crate::board_command) fn read_task_timeline(
     let snapshot = match validated_snapshot_from_with_occupant(
         &observed,
         principal,
-        projects,
         None,
         Some(&selected),
         false,

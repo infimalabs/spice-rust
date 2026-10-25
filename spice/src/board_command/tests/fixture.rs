@@ -40,12 +40,6 @@ pub(super) fn lapse_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &T
         .body
         .expiry;
     let request = board::lapse::Request {
-        projects: ProjectPolicy::new(
-            ["sandbox".to_owned()],
-            dialect::PROJECT_MIN_DEPTH as u64,
-            dialect::PROJECT_MAX_DEPTH as u64,
-        )
-        .expect("board command test project policy"),
         command: completion_operation(),
         occupant: seat.occupant,
         epoch,

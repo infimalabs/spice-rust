@@ -777,7 +777,6 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
         "claim -",
         "taste-review -",
         "actor operator",
-        "public task project depth 2..3 dotted segments",
         "active 0",
         "ready 1",
         "review 1",
@@ -1016,7 +1015,10 @@ fn assert_task_list_queries(
     );
     assert!(project.starts_with("scope explicit-project project:task.cli\n"));
     assert!(project.contains(first.as_str()));
-    assert!(project.contains(descendant.as_str()));
+    assert!(
+        !project.contains(descendant.as_str()),
+        "--project task.cli is exact: task.cli.deep is a different label\n{project}"
+    );
     assert!(!project.contains(waiting.as_str()));
 
     let waiting_only = task_list(

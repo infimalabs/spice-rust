@@ -66,21 +66,8 @@ fn select<'a>(
     board::select(entries, actor, subscription, &environment())
 }
 
-fn projects() -> board::ProjectPolicy {
-    board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy")
-}
-
-fn snapshot_for(
-    journal: &Journal,
-    projects: &board::ProjectPolicy,
-    task: &TaskStamp,
-) -> Result<Snapshot, board::TaskError> {
-    support::bounded_snapshot(journal, projects, std::slice::from_ref(task))
+fn snapshot_for(journal: &Journal, task: &TaskStamp) -> Result<Snapshot, board::TaskError> {
+    support::bounded_snapshot(journal, std::slice::from_ref(task))
 }
 
 fn admitted(
@@ -89,7 +76,7 @@ fn admitted(
     claim: Option<ClaimHead>,
     lease: Option<LeaseHead>,
 ) -> Result<Entry, board::TaskError> {
-    Entry::new(statement, workflow, claim, lease, &projects())
+    Entry::new(statement, workflow, claim, lease)
 }
 
 fn statement(name: &str) -> TaskHead {
@@ -237,18 +224,6 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
 
     assert_eq!(entry.project().as_str(), "board.kernel");
     assert_eq!(entry.family().as_str(), "KERNEL");
-    let projects = board::ProjectPolicy::new(
-        Vec::new(),
-        dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
-    )
-    .expect("fixture project policy");
-    assert!(projects.admit(".maxim_proposal.workflow").is_ok());
-    assert!(
-        projects
-            .admit("agent.019fbbde510575a3a76a722afde1e407.task")
-            .is_ok()
-    );
     assert_eq!(
         entry.dependencies().collect::<Vec<_>>(),
         vec![
@@ -487,174 +462,30 @@ fn live_graphs_exclude_settled_history_but_name_direct_dependencies() {
 }
 
 #[test]
-fn project_policy_admits_only_resolved_hidden_roots() {
-    let projects = board::ProjectPolicy::new(["sandbox".to_owned(), "sandbox".to_owned()], 2, 3)
-        .expect("hidden additions resolve");
-    assert_eq!(projects.hidden_stems(), ["maxim_proposal", "sandbox"]);
-
-    for (project, stem) in [
-        (".maxim_proposal", "maxim_proposal"),
-        (".maxim_proposal.theme_2", "maxim_proposal"),
-        (".sandbox.deep.audit_1", "sandbox"),
-    ] {
-        let admitted = projects.admit(project).expect("resolved hidden project");
-        assert_eq!(admitted.as_str(), project);
-        assert_eq!(admitted.visibility().hidden_stem(), Some(stem));
-        assert!(matches!(
-            projects.admit_manual_creation(project),
-            Err(board::ProjectError::SystemReserved(ref reserved)) if reserved == stem
-        ));
-    }
-    for (route, expected) in [
-        (
-            board::SystemTaskRoute::proposal(["theme_2".to_owned()]),
-            ".maxim_proposal.theme_2",
-        ),
-        (
-            board::SystemTaskRoute::configured(
-                "sandbox",
-                ["deep".to_owned(), "audit_1".to_owned()],
-            ),
-            ".sandbox.deep.audit_1",
-        ),
+fn a_project_is_one_exact_label_of_any_run_count() {
+    for label in [
+        "oops",
+        "oops.design",
+        "app.work.map",
+        "agent.019fbbde510575a3a76a722afde1e407.task",
     ] {
         assert_eq!(
-            projects
-                .admit_system_creation(&route)
-                .expect("server route derives one resolved hidden project")
-                .as_str(),
-            expected,
+            board::Project::admit(label).expect("valid label").as_str(),
+            label
         );
     }
-    {
-        let stem = "maxim_proposal";
-        assert!(matches!(
-            projects.admit_system_creation(&board::SystemTaskRoute::configured(
-                stem,
-                ["cross_target".to_owned()],
-            )),
-            Err(board::ProjectError::SystemRouteCollision(ref owner)) if owner == stem
-        ));
-    }
-    assert!(matches!(
-        projects.admit(".unknown.work"),
-        Err(board::ProjectError::UnknownHiddenStem(stem)) if stem == "unknown"
-    ));
     for malformed in [
+        "",
         ".",
-        ".sandbox.",
-        ".sandbox..work",
-        ".sandbox.bad-stem",
-        ".sandbox.Bad",
+        ".oops.design",
+        "oops.",
+        "oops..design",
+        "board.bad-stem",
+        "Foreign.work",
+        "app/work",
     ] {
-        assert!(matches!(
-            projects.admit(malformed),
-            Err(board::ProjectError::HiddenSpelling(_))
-        ));
+        assert!(board::Project::admit(malformed).is_err(), "{malformed:?}");
     }
-}
-
-#[test]
-fn project_policy_admits_any_public_root_within_the_depth_bounds() {
-    let projects =
-        board::ProjectPolicy::new(Vec::<String>::new(), 2, 3).expect("public fixture policy");
-    // Every root shares one public law: spelling and both depth bounds decide.
-    for public in [
-        "board.work",
-        "board.deep_work.unit2",
-        "foreign.work",
-        "foreign.deep_work.unit2",
-    ] {
-        let admitted = projects.admit(public).expect("current public project");
-        assert!(!admitted.visibility().is_hidden());
-        assert_eq!(
-            projects
-                .admit_manual_creation(public)
-                .expect("manual creation keeps public admission"),
-            admitted,
-        );
-    }
-    for (shallow, deep) in [
-        ("board", "board.one.two.three"),
-        ("foreign", "foreign.one.two.three"),
-    ] {
-        for refused in [shallow, deep] {
-            assert!(
-                matches!(
-                    projects.admit_manual_creation(refused),
-                    Err(board::ProjectError::PublicDepth { .. })
-                ),
-                "{refused}"
-            );
-        }
-    }
-    for malformed in ["board.bad-stem", "Foreign.work", "foreign..work"] {
-        assert!(
-            matches!(
-                projects.admit_manual_creation(malformed),
-                Err(board::ProjectError::PublicSpelling(_))
-            ),
-            "{malformed}"
-        );
-    }
-}
-
-#[test]
-fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
-    let projects = board::ProjectPolicy::new(["sandbox".to_owned()], 2, 3).expect("fixture policy");
-    let admitted = |name: &str, project: &str, critical: bool| {
-        let mut head = statement(name);
-        head.project = project.to_owned();
-        if critical {
-            head.priority = Some(wire::TaskPriority::Critical);
-        }
-        Entry::new(head, workflow("todo"), None, None, &projects).expect("fixture entry")
-    };
-    let public = admitted("BOARD-public", "board.visibility", false);
-    let draft = {
-        let mut head = statement("BOARD-draft");
-        head.project = "board.correctness".to_owned();
-        head.filing = wire::TaskFiling::Draft;
-        head.priority = Some(wire::TaskPriority::Critical);
-        Entry::new(head, workflow("todo"), None, None, &projects).expect("Draft fixture entry")
-    };
-    let hidden_maxim = admitted("BOARD-maxim", ".maxim_proposal.theme_2", true);
-    let hidden_sandbox = admitted("BOARD-sandbox", ".sandbox.audit", true);
-    let entries = vec![hidden_sandbox, draft, public, hidden_maxim];
-    let public_handle = entries[2].handle().clone();
-    let satisfied = board::resolved_tasks(&entries);
-
-    let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
-    for actor in [Actor::Spice, Actor::Operator, Actor::Lane(lane)] {
-        assert_eq!(
-            select(&entries, &actor, &all_projects())
-                .expect("public task remains eligible")
-                .entry()
-                .handle(),
-            &public_handle
-        );
-        for hidden in [&entries[0], &entries[1], &entries[3]] {
-            assert!(!board::eligible_entry(
-                &satisfied,
-                hidden,
-                &actor,
-                &environment()
-            ));
-        }
-    }
-
-    let inventory = board::Inventory::new(&entries);
-    assert_eq!(inventory.public().len(), 1);
-    assert_eq!(inventory.public()[0].handle(), &public_handle);
-    assert_eq!(inventory.drafts().len(), 1);
-    assert_eq!(inventory.drafts()[0].handle(), entries[1].handle());
-    assert_eq!(
-        inventory
-            .hidden()
-            .map(|group| (group.stem().to_owned(), group.entries().len()))
-            .collect::<Vec<_>>(),
-        vec![("maxim_proposal".to_owned(), 1), ("sandbox".to_owned(), 1),]
-    );
 }
 
 #[test]
@@ -866,8 +697,7 @@ fn snapshot_is_a_schema_and_cursor_bounded_head_answer() {
 fn durable_snapshot_owns_one_validated_journal_answer() {
     let snapshot = {
         let journal = journal_with_heads(statement("BOARD-a1"), workflow("todo"));
-        snapshot_for(&journal, &projects(), &stamp("BOARD-a1"))
-            .expect("authoritative board snapshot")
+        snapshot_for(&journal, &stamp("BOARD-a1")).expect("authoritative board snapshot")
     };
 
     assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
@@ -883,7 +713,7 @@ fn durable_snapshot_names_the_task_whose_heads_violate_board_policy() {
     let journal = journal_with_heads(statement("BOARD-a1"), invalid);
 
     assert_eq!(
-        snapshot_for(&journal, &projects(), &stamp("BOARD-a1")),
+        snapshot_for(&journal, &stamp("BOARD-a1")),
         Err(board::TaskError::EmptyFlow)
     );
 }

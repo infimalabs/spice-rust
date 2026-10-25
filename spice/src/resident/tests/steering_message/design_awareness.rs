@@ -241,10 +241,9 @@ impl Lanes {
         .expect("command admits")
     }
 
-    fn contribute(&self, id: u8, config: &SurfaceConfig, lane: u8, design: &wire::TaskHandle) {
+    fn contribute(&self, id: u8, lane: u8, design: &wire::TaskHandle) {
         self.contribute_kind(
             id,
-            config,
             lane,
             design,
             wire::rooms::RoomContributionKind::Question,
@@ -255,7 +254,6 @@ impl Lanes {
     fn contribute_kind(
         &self,
         id: u8,
-        config: &SurfaceConfig,
         lane: u8,
         design: &wire::TaskHandle,
         kind: wire::rooms::RoomContributionKind,
@@ -291,20 +289,14 @@ impl Lanes {
             ],
             &request,
         );
-        let outcome = crate::board_command::room_contribute(
-            &self.bus,
-            &command,
-            &request,
-            None,
-            &config.projects,
-        );
+        let outcome = crate::board_command::room_contribute(&self.bus, &command, &request, None);
         assert!(
             matches!(outcome, Outcome::Reply(_)),
             "contribution commits: {outcome:?}"
         );
     }
 
-    fn leave(&self, id: u8, config: &SurfaceConfig, lane: u8, design: &wire::TaskHandle) {
+    fn leave(&self, id: u8, lane: u8, design: &wire::TaskHandle) {
         let request = wire::intent::RoomLeave {
             room: design.clone(),
             clause: "not my problem space".to_owned(),
@@ -316,8 +308,7 @@ impl Lanes {
             Vec::new(),
             &request,
         );
-        let outcome =
-            crate::board_command::room_leave(&self.bus, &command, &request, &config.projects);
+        let outcome = crate::board_command::room_leave(&self.bus, &command, &request);
         assert!(
             matches!(outcome, Outcome::Reply(_)),
             "leave commits: {outcome:?}"
@@ -356,7 +347,6 @@ impl Lanes {
             &self.bus,
             &command,
             None,
-            &config.projects,
             &config.allocation,
             None,
         )
@@ -413,7 +403,6 @@ impl Lanes {
             &command,
             &request,
             &config.steering,
-            &config.projects,
         );
         assert!(
             matches!(outcome, Outcome::Reply(_)),
@@ -449,7 +438,6 @@ impl Lanes {
             &command,
             &request,
             &config.steering,
-            &config.projects,
         );
         assert!(
             matches!(outcome, Outcome::Reply(_)),
@@ -459,18 +447,16 @@ impl Lanes {
 
     fn reconcile_completions(
         &self,
-        config: &SurfaceConfig,
         seats: &Seats,
         completions: &mut crate::resident::design_awareness::CompletionCursor,
     ) {
         let profiles =
             std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
-        self.reconcile_profiles(config, seats, completions, &profiles);
+        self.reconcile_profiles(seats, completions, &profiles);
     }
 
     fn reconcile_profiles(
         &self,
-        config: &SurfaceConfig,
         seats: &Seats,
         completions: &mut crate::resident::design_awareness::CompletionCursor,
         profiles: &std::sync::Mutex<crate::resident::message_surface::MessageState>,
@@ -478,7 +464,6 @@ impl Lanes {
         let mut diagnostics = Vec::new();
         crate::resident::design_awareness::reconcile(
             &self.bus,
-            config,
             seats,
             completions,
             profiles,
@@ -498,7 +483,6 @@ impl Lanes {
             &self.bus,
             &observed,
             Actor::Lane(test_uuid(lane)),
-            &config.projects,
             &config.allocation,
             None,
         )
@@ -549,7 +533,7 @@ fn every_open_design_stance_is_invitation_eligible() {
         let mut seated = claimant_seats();
 
         lanes.complete(&task, MATCHING);
-        lanes.reconcile_completions(&config, &seated, &mut completions);
+        lanes.reconcile_completions(&seated, &mut completions);
         let request = lanes
             .request(&config, FIRST)
             .expect("a filed open Design can be requested in every stance");
@@ -603,7 +587,7 @@ fn a_completion_profile_opportunity_selects_the_best_single_design() {
     );
 
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_completions(&config, &seated, &mut completions);
+    lanes.reconcile_completions(&seated, &mut completions);
     let request = lanes
         .request(&config, FIRST)
         .expect("completion returns its owed Design");
@@ -674,7 +658,7 @@ fn profile_selection_uses_the_shared_tfidf_statement_window() {
     let mut seated = claimant_seats();
 
     lanes.complete(&task, "Catchup pagination snapshot.");
-    lanes.reconcile_completions(&config, &seated, &mut completions);
+    lanes.reconcile_completions(&seated, &mut completions);
     let request = lanes
         .request(&config, FIRST)
         .expect("resident choice is returned by task next");
@@ -700,7 +684,7 @@ fn resident_records_one_request_before_task_next_reads_it() {
         .expect("completion cursor starts");
     let mut seated = claimant_seats();
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_completions(&config, &seated, &mut completions);
+    lanes.reconcile_completions(&seated, &mut completions);
     let request = lanes
         .request(&config, FIRST)
         .expect("task next returns the resident's request");
@@ -722,14 +706,14 @@ fn contribution_discharges_the_request_for_the_continuing_session() {
     let mut seated = claimant_seats();
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_some());
 
-    lanes.contribute(50, &config, FIRST, &design);
+    lanes.contribute(50, FIRST, &design);
     assert!(lanes.request(&config, FIRST).is_none());
     let later = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&later, &format!("{MATCHING} Paged again."));
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_none(),
         "a continuing session is not asked again about a Design it published in"
@@ -751,13 +735,13 @@ fn compaction_preserves_participation_and_settled_request_history() {
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
 
     lanes.complete(&first, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert_eq!(lanes.noticed().len(), 1);
-    lanes.contribute(50, &config, FIRST, &design);
+    lanes.contribute(50, FIRST, &design);
     assert!(lanes.request(&config, FIRST).is_none());
 
     let compacted = lanes.compact(FIRST);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     let snapshot = lanes.bus.task_snapshot().expect("task snapshot reads");
     let context = snapshot.facts();
     let first_notice = lanes.noticed().into_iter().next().expect("first notice");
@@ -780,7 +764,7 @@ fn compaction_preserves_participation_and_settled_request_history() {
 
     let after = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&after, &format!("{MATCHING} Paged again."));
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert_eq!(
         lanes.noticed().len(),
         1,
@@ -804,17 +788,17 @@ fn compaction_preserves_one_unanswered_request() {
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
 
     lanes.complete(&first, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     let expected = lanes
         .request(&config, FIRST)
         .map(|request| spice::rooms::awareness::request_text(&request))
         .expect("the first opportunity records one request");
 
     lanes.compact(FIRST);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     let after = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&after, &format!("{MATCHING} Paged after compaction."));
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
 
     assert_eq!(lanes.noticed().len(), 1);
     assert_eq!(
@@ -832,7 +816,6 @@ fn compaction_preserves_one_unanswered_request() {
 fn renewal_with_a_fresh_vendor_identity_can_reoffer_a_settled_design() {
     let lanes = Lanes::new("design-request-renewal-decay");
     align_completion_lane(&lanes);
-    let config = surface(&lanes);
     let first = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
@@ -841,8 +824,8 @@ fn renewal_with_a_fresh_vendor_identity_can_reoffer_a_settled_design() {
     let mut seated = claimant_seats();
 
     lanes.complete(&first, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
-    lanes.leave(60, &config, FIRST, &design);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
+    lanes.leave(60, FIRST, &design);
     assert_eq!(lanes.noticed().len(), 1);
 
     seated.release_all();
@@ -859,7 +842,7 @@ fn renewal_with_a_fresh_vendor_identity_can_reoffer_a_settled_design() {
         Some(test_uuid(FIRST)),
     );
     lanes.complete(&after, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
 
     let notices = lanes.noticed();
     assert_eq!(notices.len(), 2);
@@ -873,7 +856,6 @@ fn renewal_with_a_fresh_vendor_identity_can_reoffer_a_settled_design() {
 fn occupant_replacement_and_restart_preserve_same_context_suppression() {
     let lanes = Lanes::new("design-request-resume-suppression");
     align_completion_lane(&lanes);
-    let config = surface(&lanes);
     let first = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
@@ -882,8 +864,8 @@ fn occupant_replacement_and_restart_preserve_same_context_suppression() {
     let mut seated = claimant_seats();
 
     lanes.complete(&first, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
-    lanes.leave(70, &config, FIRST, &design);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
+    lanes.leave(70, FIRST, &design);
     assert_eq!(lanes.noticed().len(), 1);
 
     seated.release_all();
@@ -905,7 +887,7 @@ fn occupant_replacement_and_restart_preserve_same_context_suppression() {
         Some(test_uuid(FIRST)),
     );
     lanes.complete(&after, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut restarted, &restarted_profiles);
+    lanes.reconcile_profiles(&seated, &mut restarted, &restarted_profiles);
     assert_eq!(
         lanes.noticed().len(),
         1,
@@ -918,11 +900,10 @@ fn occupant_replacement_and_restart_preserve_same_context_suppression() {
 /// Plan room catch-up for the seated lanes and read FIRST's pending notice.
 fn pending_catch_up(
     lanes: &Lanes,
-    config: &SurfaceConfig,
     seated: &Seats,
     diagnostics: &mut Vec<u8>,
 ) -> Option<room_catch_up::Notice> {
-    room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seated, diagnostics)
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, seated, diagnostics)
         .expect("room catch-up reconciles");
     room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, test_uuid(FIRST)))
 }
@@ -940,7 +921,7 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
     let mut seated = claimant_seats();
     let mut diagnostics = Vec::new();
     assert!(
-        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        pending_catch_up(&lanes, &seated, &mut diagnostics).is_none(),
         "nothing is owed before completion"
     );
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
@@ -948,7 +929,7 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_completions(&config, &seated, &mut completions);
+    lanes.reconcile_completions(&seated, &mut completions);
 
     let request = lanes
         .request(&config, FIRST)
@@ -965,8 +946,8 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
         panic!("a completion records task evidence");
     };
     assert_eq!(recorded_task, &evidence_task);
-    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
-        .expect("the seated occupant is told");
+    let notice =
+        pending_catch_up(&lanes, &seated, &mut diagnostics).expect("the seated occupant is told");
     assert_eq!(notice.occupant, test_uuid(FIRST));
     let shown = spice::rooms::awareness::request_text(&request);
     assert!(
@@ -995,7 +976,7 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
 
     land_catch_up(&lanes, &notice, &mut diagnostics);
     assert!(
-        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        pending_catch_up(&lanes, &seated, &mut diagnostics).is_none(),
         "a landed invitation is not delivered again"
     );
     assert_eq!(
@@ -1054,9 +1035,9 @@ fn a_resumed_occupant_is_told_the_owed_request_once() {
     let task = lanes.claimed("dVrD245Kc", FIRST);
     lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_completions(&config, &seated, &mut completions);
-    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
-        .expect("the first occupant is told");
+    lanes.reconcile_completions(&seated, &mut completions);
+    let notice =
+        pending_catch_up(&lanes, &seated, &mut diagnostics).expect("the first occupant is told");
     land_catch_up(&lanes, &notice, &mut diagnostics);
 
     seated.release_all();
@@ -1069,7 +1050,7 @@ fn a_resumed_occupant_is_told_the_owed_request_once() {
         let mut completions =
             crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
                 .expect("restarted completion cursor starts");
-        lanes.reconcile_completions(&config, seated, &mut completions);
+        lanes.reconcile_completions(seated, &mut completions);
     };
     restart(&seated);
     let notices = lanes.noticed();
@@ -1087,8 +1068,8 @@ fn a_resumed_occupant_is_told_the_owed_request_once() {
     let restated = lanes
         .request(&config, FIRST)
         .expect("task next shows the restated request");
-    let resumed = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
-        .expect("the resumed occupant is told");
+    let resumed =
+        pending_catch_up(&lanes, &seated, &mut diagnostics).expect("the resumed occupant is told");
     assert_eq!(resumed.occupant, successor);
     let shown = spice::rooms::awareness::request_text(&restated);
     assert!(resumed.text.contains(&shown), "{}", resumed.text);
@@ -1117,18 +1098,18 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
     assert!(lanes.post_listeners(70, &config, &design).is_empty());
 
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_some());
     assert_eq!(
         lanes.post_listeners(71, &config, &design),
         vec![test_uuid(FIRST)]
     );
 
-    lanes.leave(72, &config, FIRST, &design);
+    lanes.leave(72, FIRST, &design);
     assert!(lanes.post_listeners(73, &config, &design).is_empty());
     let later = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&later, &format!("{MATCHING} Paged after leaving."));
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_none());
     assert!(lanes.post_listeners(74, &config, &design).is_empty());
     seated.release_all();
@@ -1153,7 +1134,7 @@ fn stance_changes_preserve_an_unanswered_open_design_request() {
         .expect("completion cursor starts");
     let mut seated = claimant_seats();
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_completions(&config, &seated, &mut completions);
+    lanes.reconcile_completions(&seated, &mut completions);
     assert_eq!(
         lanes
             .request(&config, FIRST)
@@ -1191,14 +1172,14 @@ fn a_design_edit_releases_the_request_without_reopening_it() {
     let mut seated = claimant_seats();
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_some(),
         "the completion owes its Design"
     );
 
     lanes.retitle(&design, "Page room catch-up by cursor");
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_none(),
         "a replaced Design statement releases the exact request"
@@ -1222,7 +1203,7 @@ fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed
     let mut seated = claimant_seats();
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
 
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     lanes.account(FIRST);
     let source = lanes
         .bus
@@ -1257,14 +1238,14 @@ fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed
             spice::rooms::profile::Inserted::Stored
         );
     }
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
 
     let design = lanes.design(
         "dVrD245Kd",
         "Validate Windows native runner archives",
         "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
 
     let request = lanes
         .request(&config, FIRST)
@@ -1278,13 +1259,13 @@ fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed
         request.evidence,
         wire::rooms::DesignNoticeEvidence::Conversation { .. }
     ));
-    lanes.contribute(80, &config, FIRST, &design);
+    lanes.contribute(80, FIRST, &design);
     let message_design = lanes.design(
         "dVrD245Km",
         "Repair database migration replay",
         "Indexes transactions snapshots rollback consistency schema storage locks recovery checks.",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let message = spice::rooms::evidence::Conversation::read(
         "Database migration replay indexes transactions snapshots rollback consistency schema \
          storage locks recovery checks",
@@ -1310,7 +1291,7 @@ fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed
             spice::rooms::profile::Inserted::Stored
         );
     }
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     let request = lanes
         .request(&config, FIRST)
         .expect("settled conversation evaluates the session profile");
@@ -1366,11 +1347,11 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
     let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     let mut diagnostics = Vec::new();
     assert!(
-        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        pending_catch_up(&lanes, &seated, &mut diagnostics).is_none(),
         "nothing is owed before a Design is selected"
     );
 
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     lanes.account(FIRST);
     let source = lanes
         .bus
@@ -1389,7 +1370,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         "Validate Windows native runner archives",
         "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     assert_eq!(
         lanes
             .request(&config, FIRST)
@@ -1403,7 +1384,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         "Validate another Windows native runner",
         "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     assert_eq!(
         lanes
             .request(&config, FIRST)
@@ -1421,7 +1402,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
             .request(&config, FIRST)
             .expect("task next shows the conversation request"),
     );
-    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
+    let notice = pending_catch_up(&lanes, &seated, &mut diagnostics)
         .expect("room catch-up delivers the request while its source is current");
     assert!(
         notice.text.contains(&shown),
@@ -1447,7 +1428,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         "task next drops evidence from the replaced source"
     );
     assert!(
-        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        pending_catch_up(&lanes, &seated, &mut diagnostics).is_none(),
         "room catch-up drops evidence from the replaced source"
     );
     retain_conversation(
@@ -1457,7 +1438,7 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         "A second Windows native runner validates archive compression headers libraries \
          toolchain manifests receipts deployment replay smoke",
     );
-    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.reconcile_profiles(&seated, &mut cursor, &profiles);
     assert_eq!(
         lanes
             .request(&config, FIRST)

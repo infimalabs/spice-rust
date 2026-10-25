@@ -22,8 +22,7 @@ pub(super) fn nudge(
     request: &wire::rooms::DesignNudge,
 ) -> (Outcome<CommandAnswer>, Option<CanonicalUuid>) {
     crate::board_command::design_nudge(bus, command, request, &config.steering, |design, holder| {
-        recipient(bus, config, profiles, design, holder)
-            .map_err(design_awareness::command_answer_outcome)
+        recipient(bus, profiles, design, holder).map_err(design_awareness::command_answer_outcome)
     })
 }
 
@@ -36,12 +35,11 @@ pub(super) fn nudge(
 /// retained profile to score.
 fn recipient(
     bus: &Bus,
-    config: &SurfaceConfig,
     profiles: Option<&std::sync::Mutex<message_surface::MessageState>>,
     design: &TaskStamp,
     holder: Option<CanonicalUuid>,
 ) -> CommandResult<Option<Recipient>> {
-    let planning = Planning::load(bus, config)?;
+    let planning = Planning::load(bus)?;
     let Some(entry) = planning.entries.iter().find(|entry| entry.born() == design) else {
         return Ok(None);
     };

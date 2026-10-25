@@ -21,14 +21,12 @@ impl Lanes {
         let contract = crate::cli::selected_contract(&matches).expect("room history is registered");
         let journal =
             journal::JournalReader::open(&self.paths.journal).expect("the journal opens to read");
-        let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");
         crate::room_command::answer(
             &journal,
             crate::room_command::SourceOwners {
                 tape: &self.paths.tape,
                 artifacts: &self.paths.artifacts(),
             },
-            &projects,
             crate::cli::selected_matches(&matches),
             contract.path,
         )

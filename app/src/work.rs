@@ -30,14 +30,13 @@ mod team_scope_tests;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::{self, Display, Formatter};
 
 use wire::head::ClaimDisposition;
-use wire::intent::{BoardTask, ProjectVisibility};
+use wire::intent::BoardTask;
 use wire::{Actor, TaskStamp};
 
 use crate::runtime::{BoardView, LaneMember, LaneView};
-use crate::view::{WorkRoute, WorkRouteStem};
+use crate::view::{WorkRoute, WorkRouteProject};
 use crate::watchband;
 
 /// One mutually exclusive task lifecycle in the current board projection,
@@ -69,8 +68,6 @@ pub enum WorkAvailability {
     Held,
     /// Open and unclaimed, with an explicit wakeable deferral.
     Deferred,
-    /// Open and unclaimed internal row outside public allocation scope.
-    Parked,
     /// Editable prospective work that is not filed yet. It is not work: no
     /// strip, count, or allocator ever includes it.
     Draft,
@@ -93,7 +90,6 @@ impl WorkAvailability {
             Self::Selection => "selection",
             Self::Held => "held",
             Self::Deferred => "deferred",
-            Self::Parked => "parked",
             Self::Draft => "draft",
             Self::Terminal => "terminal",
         }
@@ -109,20 +105,6 @@ impl WorkAvailability {
     }
 }
 
-/// Exact public or hidden stem identity.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct WorkStemIdentity {
-    visibility: WorkVisibility,
-    stem: String,
-}
-
-/// Visibility is part of identity: hidden and public stems never collapse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum WorkVisibility {
-    Public,
-    Hidden,
-}
-
 /// Current UI-placement home, separate from immutable creator provenance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkOwner {
@@ -136,16 +118,16 @@ pub enum WorkOwner {
 /// Browser-local policy selecting a complete set for the unified overview.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum WorkScope {
-    /// Every open execution task across every visibility-qualified stem.
+    /// Every open execution task across every project.
     #[default]
     AllOpen,
-    /// Open execution tasks under one exact public or hidden stem.
+    /// Open execution tasks under one exact project.
     ///
     /// Work gated by an open Design uses [`Self::Planning`] even when it shares
-    /// the same project stem.
-    Stem(WorkStemIdentity),
+    /// the same project.
+    Project(String),
     /// Open Designs and every task transitively gated by an open Design.
-    Planning { stem: Option<WorkStemIdentity> },
+    Planning { project: Option<String> },
     /// Open execution tasks currently worked by one team's members.
     Team { team: wire::CanonicalUuid },
     /// Open tasks currently worked within any Design of one working group, as
@@ -166,48 +148,18 @@ pub(crate) enum WorkRouteResolution {
     Resolved(WorkScope),
 }
 
-impl WorkStemIdentity {
-    #[must_use]
-    pub const fn new(visibility: WorkVisibility, stem: String) -> Self {
-        Self { visibility, stem }
-    }
-
-    #[must_use]
-    pub const fn visibility(&self) -> WorkVisibility {
-        self.visibility
-    }
-
-    #[must_use]
-    pub fn stem(&self) -> &str {
-        &self.stem
-    }
-
-    #[must_use]
-    pub const fn hidden(&self) -> bool {
-        matches!(self.visibility, WorkVisibility::Hidden)
-    }
-}
-impl Display for WorkStemIdentity {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        if self.hidden() {
-            formatter.write_str(".")?;
-        }
-        write!(formatter, "{}.*", self.stem)
-    }
-}
-
 impl WorkScope {
-    /// The exact stem this scope narrows to, alone or within the
+    /// The exact project this scope narrows to, alone or within the
     /// Design-planning rail.
     #[must_use]
-    pub const fn stem(&self) -> Option<&WorkStemIdentity> {
+    pub fn project(&self) -> Option<&str> {
         match self {
-            Self::Stem(identity)
+            Self::Project(project)
             | Self::Planning {
-                stem: Some(identity),
-            } => Some(identity),
+                project: Some(project),
+            } => Some(project),
             Self::AllOpen
-            | Self::Planning { stem: None }
+            | Self::Planning { project: None }
             | Self::Team { .. }
             | Self::Group { .. } => None,
         }
@@ -216,14 +168,14 @@ impl WorkScope {
     /// Every open Design-owned planning task.
     #[must_use]
     pub const fn planning() -> Self {
-        Self::Planning { stem: None }
+        Self::Planning { project: None }
     }
 
     #[must_use]
     pub const fn team(&self) -> Option<wire::CanonicalUuid> {
         match self {
             Self::Team { team } => Some(*team),
-            Self::AllOpen | Self::Stem(_) | Self::Planning { .. } | Self::Group { .. } => None,
+            Self::AllOpen | Self::Project(_) | Self::Planning { .. } | Self::Group { .. } => None,
         }
     }
 }
@@ -235,9 +187,9 @@ impl WorkScope {
     pub(crate) fn route(&self) -> WorkRoute {
         match self {
             Self::AllOpen => WorkRoute::AllOpen,
-            Self::Stem(stem) => WorkRoute::Stem(stem.route_stem()),
-            Self::Planning { stem } => WorkRoute::Planning {
-                stem: stem.as_ref().map(WorkStemIdentity::route_stem),
+            Self::Project(project) => WorkRoute::Project(route_project(project)),
+            Self::Planning { project } => WorkRoute::Planning {
+                project: project.as_deref().map(route_project),
             },
             Self::Team { team } => WorkRoute::Team(*team),
             Self::Group { group, .. } => WorkRoute::Group(group.clone()),
@@ -245,11 +197,8 @@ impl WorkScope {
     }
 }
 
-impl WorkStemIdentity {
-    fn route_stem(&self) -> WorkRouteStem {
-        WorkRouteStem::new(self.hidden(), self.stem.clone())
-            .expect("an admitted board project has a canonical stem")
-    }
+fn route_project(project: &str) -> WorkRouteProject {
+    WorkRouteProject::new(project.to_owned()).expect("an admitted board project is canonical")
 }
 
 /// Resolve a durable Work identity through current board, topology, and group
@@ -260,32 +209,24 @@ pub(crate) fn resolve_work_route(
     work: Option<&WorkProjection<'_>>,
     groups: Option<&wire::rooms::WorkingGroupPartition>,
 ) -> WorkRouteResolution {
-    let stem = |stem: &WorkRouteStem| {
-        WorkStemIdentity::new(
-            if stem.hidden() {
-                WorkVisibility::Hidden
-            } else {
-                WorkVisibility::Public
-            },
-            stem.stem().to_owned(),
-        )
-    };
     match route {
         WorkRoute::AllOpen => WorkRouteResolution::Resolved(WorkScope::AllOpen),
-        WorkRoute::Planning { stem: None } => WorkRouteResolution::Resolved(WorkScope::planning()),
-        WorkRoute::Stem(route_stem)
+        WorkRoute::Planning { project: None } => {
+            WorkRouteResolution::Resolved(WorkScope::planning())
+        }
+        WorkRoute::Project(route_project)
         | WorkRoute::Planning {
-            stem: Some(route_stem),
+            project: Some(route_project),
         } => {
             let Some(work) = work else {
                 return WorkRouteResolution::Pending;
             };
-            let identity = stem(route_stem);
-            let scope = if matches!(route, WorkRoute::Stem(_)) {
-                WorkScope::Stem(identity)
+            let project = route_project.project().to_owned();
+            let scope = if matches!(route, WorkRoute::Project(_)) {
+                WorkScope::Project(project)
             } else {
                 WorkScope::Planning {
-                    stem: Some(identity),
+                    project: Some(project),
                 }
             };
             if work.contains_scope(&scope) == Some(true) {
@@ -364,7 +305,6 @@ pub struct WorkCounts {
     selection: usize,
     held: usize,
     deferred: usize,
-    parked: usize,
     terminal: usize,
     /// Overlaps `ready` and `passive`; never part of [`Self::open`].
     proposal_ready: usize,
@@ -384,7 +324,6 @@ impl WorkCounts {
             WorkAvailability::Selection => self.selection += 1,
             WorkAvailability::Held => self.held += 1,
             WorkAvailability::Deferred => self.deferred += 1,
-            WorkAvailability::Parked => self.parked += 1,
             WorkAvailability::Terminal => self.terminal += 1,
             WorkAvailability::Draft => {}
         }
@@ -436,15 +375,10 @@ impl WorkCounts {
 
     /// Open work no agent is offered until its workflow or the operator moves:
     /// neutral Plan/Design sequencing, environment holds, a passive Design,
-    /// selection, deferral, or hidden parked work.
+    /// selection, or deferral.
     #[must_use]
     pub const fn waiting(self) -> usize {
-        self.workflow_waiting
-            + self.held
-            + self.passive
-            + self.selection
-            + self.deferred
-            + self.parked
+        self.workflow_waiting + self.held + self.passive + self.selection + self.deferred
     }
 
     /// The partition's tab mark and how many tasks carry it: work only the
@@ -675,12 +609,10 @@ impl<'a> WorkTask<'a> {
     }
 }
 
-/// One full dotted project in the stem-ordered project grouping.
+/// One exact project in the lexically ordered project grouping.
 #[derive(Debug)]
 pub struct WorkProject<'a> {
     project: &'a str,
-    /// Stem bucket in [`WorkProjection::stems`].
-    stem: usize,
     counts: WorkCounts,
     /// Deterministically ranked indexes into [`WorkProjection::tasks`].
     tasks: Vec<usize>,
@@ -690,11 +622,6 @@ impl<'a> WorkProject<'a> {
     #[must_use]
     pub const fn project(&self) -> &'a str {
         self.project
-    }
-
-    #[must_use]
-    pub const fn stem(&self) -> usize {
-        self.stem
     }
 
     #[must_use]
@@ -708,39 +635,12 @@ impl<'a> WorkProject<'a> {
     }
 }
 
-/// One visibility-qualified stem scope shared with the chrome pills.
-#[derive(Debug)]
-pub struct WorkStem {
-    identity: WorkStemIdentity,
-    counts: WorkCounts,
-    /// Lexically ordered indexes into [`WorkProjection::projects`].
-    projects: Vec<usize>,
-}
-
-impl WorkStem {
-    #[must_use]
-    pub const fn identity(&self) -> &WorkStemIdentity {
-        &self.identity
-    }
-
-    #[must_use]
-    pub const fn counts(&self) -> WorkCounts {
-        self.counts
-    }
-
-    #[must_use]
-    pub fn projects(&self) -> &[usize] {
-        &self.projects
-    }
-}
-
 /// Complete client-side Work model for one admitted board snapshot.
 #[derive(Debug)]
 pub struct WorkProjection<'a> {
     counts: WorkCounts,
     tasks: Vec<WorkTask<'a>>,
     projects: Vec<WorkProject<'a>>,
-    stems: Vec<WorkStem>,
     /// Every task index in the resident's offer order, then every task the
     /// allocator does not offer in lifecycle and queue order.
     offered: Vec<usize>,
@@ -763,17 +663,17 @@ impl<'a> WorkProjection<'a> {
     }
 
     #[must_use]
-    pub fn stems(&self) -> &[WorkStem] {
-        &self.stems
-    }
-    #[must_use]
     pub const fn counts(&self) -> WorkCounts {
         self.counts
     }
 
+    /// The exact project grouping named `project`, if any task carries it.
     #[must_use]
-    pub fn stem(&self, identity: &WorkStemIdentity) -> Option<&WorkStem> {
-        self.stems.iter().find(|stem| stem.identity == *identity)
+    pub fn project(&self, project: &str) -> Option<&WorkProject<'a>> {
+        self.projects
+            .binary_search_by(|candidate| candidate.project.cmp(project))
+            .ok()
+            .map(|index| &self.projects[index])
     }
 
     /// Whether the projection holds `scope`; `None` while a team scope waits
@@ -781,11 +681,11 @@ impl<'a> WorkProjection<'a> {
     #[must_use]
     pub fn contains_scope(&self, scope: &WorkScope) -> Option<bool> {
         match scope {
-            WorkScope::AllOpen | WorkScope::Planning { stem: None } => Some(true),
-            WorkScope::Stem(identity)
+            WorkScope::AllOpen | WorkScope::Planning { project: None } => Some(true),
+            WorkScope::Project(project)
             | WorkScope::Planning {
-                stem: Some(identity),
-            } => Some(self.stem(identity).is_some()),
+                project: Some(project),
+            } => Some(self.project(project).is_some()),
             WorkScope::Team { team } => self.teams.as_ref().map(|teams| teams.contains(team)),
             WorkScope::Group { .. } => Some(true),
         }
@@ -805,8 +705,8 @@ impl<'a> WorkProjection<'a> {
             return counts;
         }
         match scope {
-            WorkScope::Stem(_) => self.scope_counts(&WorkScope::AllOpen),
-            WorkScope::Planning { stem: Some(_) } => self.scope_counts(&WorkScope::planning()),
+            WorkScope::Project(_) => self.scope_counts(&WorkScope::AllOpen),
+            WorkScope::Planning { project: Some(_) } => self.scope_counts(&WorkScope::planning()),
             _ => WorkCounts::default(),
         }
     }
@@ -815,19 +715,19 @@ impl<'a> WorkProjection<'a> {
     ///
     /// A team holds exactly what its member lanes actively claim, whatever the
     /// task's accountable owner, so a member-claimed Design shows in both its
-    /// team and Planning while staying out of All open and its stem.
+    /// team and Planning while staying out of All open and its project.
     #[must_use]
     pub fn in_scope(&self, task: &WorkTask<'_>, scope: &WorkScope) -> bool {
         match scope {
             WorkScope::AllOpen => !task.belongs_to_design(),
-            WorkScope::Stem(identity) => {
-                !task.belongs_to_design() && self.task_stem(task) == identity
+            WorkScope::Project(project) => {
+                !task.belongs_to_design() && self.task_project(task) == project
             }
-            WorkScope::Planning { stem } => {
+            WorkScope::Planning { project } => {
                 task.belongs_to_design()
-                    && stem
-                        .as_ref()
-                        .is_none_or(|stem| self.task_stem(task) == stem)
+                    && project
+                        .as_deref()
+                        .is_none_or(|project| self.task_project(task) == project)
             }
             WorkScope::Team { team } => task
                 .working_lane()
@@ -842,10 +742,10 @@ impl<'a> WorkProjection<'a> {
         }
     }
 
-    /// The exact stem holding one task.
+    /// The exact project holding one task.
     #[must_use]
-    pub fn task_stem(&self, task: &WorkTask<'_>) -> &WorkStemIdentity {
-        &self.stems[self.projects[task.project].stem].identity
+    pub fn task_project(&self, task: &WorkTask<'_>) -> &'a str {
+        self.projects[task.project].project
     }
 
     /// One scope's open tasks in strip order: in-flight, ready, review,
@@ -855,14 +755,12 @@ impl<'a> WorkProjection<'a> {
     #[must_use]
     pub fn scope_strip<'p>(&'p self, scope: &WorkScope) -> Vec<&'p WorkTask<'a>> {
         use WorkAvailability::{
-            Blocked, Deferred, Held, InFlight, Parked, Passive, Ready, Review, Selection, Stale,
-            Waiting,
+            Blocked, Deferred, Held, InFlight, Passive, Ready, Review, Selection, Stale, Waiting,
         };
 
         let mut strip = Vec::new();
         for availability in [
             InFlight, Ready, Review, Stale, Blocked, Waiting, Passive, Selection, Held, Deferred,
-            Parked,
         ] {
             strip.extend(
                 self.offered
@@ -948,15 +846,10 @@ impl<'a> WorkProjection<'a> {
         let offer_ranks = offer_ranks(board, &by_born);
 
         let mut counts = WorkCounts::default();
-        let mut stem_builders = BTreeMap::<StemKey<'a>, StemBuilder<'a>>::new();
+        let mut project_builders = BTreeMap::<&'a str, ProjectBuilder>::new();
         for (index, task) in board.tasks.iter().enumerate() {
             counts.record(availability[index], proposal_ready[index]);
-            let key = stem_key(task);
-            let stem = stem_builders.entry(key).or_default();
-            stem.counts
-                .record(availability[index], proposal_ready[index]);
-            let project = stem
-                .projects
+            let project = project_builders
                 .entry(task.statement.body.project.as_str())
                 .or_default();
             project
@@ -965,35 +858,19 @@ impl<'a> WorkProjection<'a> {
             project.tasks.push(index);
         }
 
-        let mut projects = Vec::new();
-        let mut stems = Vec::with_capacity(stem_builders.len());
+        let mut projects = Vec::with_capacity(project_builders.len());
         let mut project_by_task = vec![0; board.tasks.len()];
-        for (key, stem_builder) in stem_builders {
-            let stem_index = stems.len();
-            let mut project_indexes = Vec::with_capacity(stem_builder.projects.len());
-            for (project, mut builder) in stem_builder.projects {
-                builder.tasks.sort_by(|left, right| {
-                    compare_tasks(&board.tasks, &availability, *left, *right)
-                });
-                let project_index = projects.len();
-                for &task in &builder.tasks {
-                    project_by_task[task] = project_index;
-                }
-                project_indexes.push(project_index);
-                projects.push(WorkProject {
-                    project,
-                    stem: stem_index,
-                    counts: builder.counts,
-                    tasks: builder.tasks,
-                });
+        for (project, mut builder) in project_builders {
+            builder
+                .tasks
+                .sort_by(|left, right| compare_tasks(&board.tasks, &availability, *left, *right));
+            for &task in &builder.tasks {
+                project_by_task[task] = projects.len();
             }
-            stems.push(WorkStem {
-                identity: WorkStemIdentity {
-                    visibility: key.visibility,
-                    stem: key.stem.to_owned(),
-                },
-                counts: stem_builder.counts,
-                projects: project_indexes,
+            projects.push(WorkProject {
+                project,
+                counts: builder.counts,
+                tasks: builder.tasks,
             });
         }
 
@@ -1031,7 +908,6 @@ impl<'a> WorkProjection<'a> {
             counts,
             tasks,
             projects,
-            stems,
             offered,
             teams,
             member_teams,
@@ -1218,18 +1094,6 @@ pub fn owner_label(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct StemKey<'a> {
-    visibility: WorkVisibility,
-    stem: &'a str,
-}
-
-#[derive(Default)]
-struct StemBuilder<'a> {
-    counts: WorkCounts,
-    projects: BTreeMap<&'a str, ProjectBuilder>,
-}
-
 #[derive(Default)]
 struct ProjectBuilder {
     counts: WorkCounts,
@@ -1286,32 +1150,11 @@ fn design_owned_indexes(board: &BoardView, dependents: &[Vec<usize>]) -> Vec<boo
     owned
 }
 
-fn stem_key(task: &BoardTask) -> StemKey<'_> {
-    match &task.visibility {
-        ProjectVisibility::Public => StemKey {
-            visibility: WorkVisibility::Public,
-            stem: task
-                .statement
-                .body
-                .project
-                .trim_start_matches('.')
-                .split('.')
-                .next()
-                .filter(|stem| !stem.is_empty())
-                .unwrap_or("task"),
-        },
-        ProjectVisibility::Hidden { stem } => StemKey {
-            visibility: WorkVisibility::Hidden,
-            stem,
-        },
-    }
-}
-
 /// Task status's standing precedence: possession and distinct set-aside
 /// states, then the resident-owned selection/workflow/blocker partition, then
 /// review and environment readiness. The resident judges closed gates over
 /// terminal evidence the open board does not carry; this surface only consumes
-/// that answer, and the allocator never offers a hidden row.
+/// that answer.
 fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
     let workflow = &task.workflow.body;
     if !workflow.status.is_pending() {
@@ -1322,11 +1165,6 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     }
     match task.claim.as_ref().map(|claim| claim.body.disposition) {
         Some(ClaimDisposition::Active) => return WorkAvailability::InFlight,
-        _ if task.statement.body.filing.is_draft()
-            || matches!(task.visibility, ProjectVisibility::Hidden { .. }) =>
-        {
-            return WorkAvailability::Parked;
-        }
         // A passive Design still holding an output for the operator's
         // selection waits on that decision, not on grouping.
         _ if task.design_standing() == Some(wire::intent::DesignStanding::Passive) => {

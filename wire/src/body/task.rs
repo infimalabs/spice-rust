@@ -135,7 +135,7 @@ pub struct TaskAdded {
         deserialize_with = "crate::EnvironmentRequirements::present"
     )]
     pub requirements: crate::EnvironmentRequirements,
-    /// Dotted project stem.
+    /// Exact project label.
     pub project: String,
     /// Initial filing standing.
     #[serde(default, skip_serializing_if = "crate::TaskFiling::is_filed")]

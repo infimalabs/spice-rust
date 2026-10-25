@@ -144,7 +144,6 @@ const fn set_aside(availability: WorkAvailability) -> bool {
         availability,
         WorkAvailability::Terminal
             | WorkAvailability::Draft
-            | WorkAvailability::Parked
             | WorkAvailability::Deferred
             | WorkAvailability::Passive
     )

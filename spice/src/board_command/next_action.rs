@@ -163,11 +163,10 @@ fn principal_can_progress(
     let sole = entries
         .iter()
         .filter(|candidate| {
-            !candidate.project().visibility().is_hidden()
-                && candidate.claim().is_some_and(|candidate_claim| {
-                    candidate_claim.actor == *principal
-                        && candidate_claim.disposition == ClaimDisposition::Active
-                })
+            candidate.claim().is_some_and(|candidate_claim| {
+                candidate_claim.actor == *principal
+                    && candidate_claim.disposition == ClaimDisposition::Active
+            })
         })
         .count()
         == 1;

@@ -13,11 +13,6 @@ release = ["tool", "release"]
 [wrappers]
 spice = "appliance"
 
-[tasks]
-hidden_stems = ["oops", "sandbox", "sandbox"]
-project_min_depth = 2
-project_max_depth = 3
-
 [judge]
 enabled = true
 
@@ -247,12 +242,6 @@ fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
             "[policy]\nenv_names = [\"FIXTURE_PROOF\", \"FIXTURE_PROOF\"]\n",
             "unique",
         ),
-        ("[tasks]\nproject_min_depth = 0\n", "positive"),
-        ("[tasks]\nproject_max_depth = 0\n", "positive"),
-        (
-            "[tasks]\nproject_min_depth = 4\nproject_max_depth = 3\n",
-            "less than or equal",
-        ),
         ("[tasks]\nunknown = true\n", "unknown"),
         ("[wrappers]\nunknown = \"appliance\"\n", "unknown"),
         ("[wrappers]\nspice = \"ambient\"\n", "unknown variant"),
@@ -383,9 +372,6 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "commands.<name>",
     "wrappers.spice",
     "rtk.executable",
-    "tasks.hidden_stems",
-    "tasks.project_min_depth",
-    "tasks.project_max_depth",
     "judge.enabled",
     "policy.env_names",
     "policy.pre_commit_builtins",

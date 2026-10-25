@@ -95,9 +95,8 @@ pub(super) fn task_add(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    task_add_with(bus, command, add, repository, projects, || {})
+    task_add_with(bus, command, add, repository, || {})
 }
 
 pub(super) fn task_add_with(
@@ -105,13 +104,12 @@ pub(super) fn task_add_with(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
     if let Err(outcome) = draft_creation_admitted(add) {
         return outcome;
     }
-    create_task(bus, command, add, repository, projects, after_validation)
+    create_task(bus, command, add, repository, after_validation)
 }
 
 /// A Draft names its exact public project and enters no claim or preparation.
@@ -145,12 +143,12 @@ fn draft_creation_admitted(add: &TaskAdd) -> Result<(), Outcome<CommandAnswer>> 
     Ok(())
 }
 
-fn manual_project_repair(projects: &ProjectPolicy) -> String {
-    format!(
-        "name --project PROJECT with {}..={} dotted segments of [0-9a-z_]+ without a leading dot",
-        projects.public_min_depth(),
-        projects.public_max_depth(),
-    )
+const PROJECT_REPAIR: &str = "name --project PROJECT as dot-separated runs of [0-9a-z_]+";
+
+/// Admit one manually named project, refusing a malformed label.
+fn admit_manual_project(requested: &str) -> Result<Project, Outcome<CommandAnswer>> {
+    Project::admit(requested)
+        .map_err(|error| refusal("task::add-refused", Some(error.to_string()), PROJECT_REPAIR))
 }
 
 fn oops_claim_project(
@@ -162,53 +160,36 @@ fn oops_claim_project(
         .filter(|entry| {
             entry.claim().is_some_and(|claim| {
                 claim.actor == *actor && claim.disposition == wire::ClaimDisposition::Active
-            }) && matches!(
-                entry.project().visibility(),
-                wire::intent::ProjectVisibility::Public
-            )
+            })
         })
         .map(|entry| entry.project().clone());
     let Some(project) = projects.next() else {
         return Err(refusal(
             "task::oops-project-required",
             Some(actor.to_string()),
-            "pass --project because this actor has no active public claim",
+            "pass --project because this actor has no active claim",
         ));
     };
     if projects.next().is_some() {
         return Err(refusal(
             "task::oops-project-ambiguous",
             Some(actor.to_string()),
-            "pass --project because this actor has more than one active public claim",
+            "pass --project because this actor has more than one active claim",
         ));
     }
     Ok(project)
 }
 /// Admit one manual creation's project and read the actor's board against the
-/// tasks the request names, refusing a project the board does not admit for
-/// manual creation or a dependency on an unfiled Draft.
+/// tasks the request names, refusing a malformed project or a dependency on an
+/// unfiled Draft.
 fn admit_add_project(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    projects: &ProjectPolicy,
 ) -> Result<(Project, ValidatedSnapshot), Outcome<CommandAnswer>> {
-    let requested = add.project.as_deref().unwrap_or("task.private");
-    let project = projects.admit_manual_creation(requested).map_err(|error| {
-        let reason = if matches!(error, ProjectError::SystemReserved(_)) {
-            "task::project-system-reserved"
-        } else {
-            "task::add-refused"
-        };
-        refusal(
-            reason,
-            Some(error.to_string()),
-            &manual_project_repair(projects),
-        )
-    })?;
+    let project = admit_manual_project(add.project.as_deref().unwrap_or("task.private"))?;
     let roots = task_add_roots(add);
-    let snapshot =
-        validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots, projects)?;
+    let snapshot = validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots)?;
     let unfiled = referenced_unfiled(&snapshot.entries, add.depends.iter());
     if !unfiled.is_empty() {
         return Err(unfiled_dependency_refusal(&unfiled));
@@ -224,10 +205,9 @@ fn create_task(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
-    let (project, snapshot) = match admit_add_project(bus, command, add, projects) {
+    let (project, snapshot) = match admit_add_project(bus, command, add) {
         Ok(admitted) => admitted,
         Err(outcome) => return outcome,
     };
@@ -265,7 +245,6 @@ fn create_task(
         command,
         add,
         &project,
-        projects,
         TaskSeed {
             cause: origin,
             creation,
@@ -303,7 +282,7 @@ fn create_task(
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
     }
-    let post = prepared_entry(&prepared, projects);
+    let post = prepared_entry(&prepared);
     let added_claim = if add.claim {
         match prepare_capture_claim(bus, command, repository, &snapshot, &post) {
             Ok(claim) => Some(claim),
@@ -552,13 +531,12 @@ fn append_prepared_task(
     Ok(added)
 }
 
-fn prepared_entry(prepared: &PreparedTask, projects: &ProjectPolicy) -> Entry {
+fn prepared_entry(prepared: &PreparedTask) -> Entry {
     Entry::new(
         prepared.statement.clone(),
         prepared.workflow.clone(),
         None,
         None,
-        projects,
     )
     .expect("prepared task already passed entry validation")
     .with_creator_team(prepared.creation.creator_team())
@@ -578,7 +556,6 @@ fn prepare_task(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     project: &Project,
-    projects: &ProjectPolicy,
     seed: TaskSeed,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
@@ -595,13 +572,12 @@ fn prepare_task(
             "task add requires exactly one intended absent birth stamp",
         ));
     };
-    prepare_task_for(add, project, projects, seed, born.clone())
+    prepare_task_for(add, project, seed, born.clone())
 }
 
 fn prepare_task_for(
     add: &TaskAdd,
     project: &Project,
-    projects: &ProjectPolicy,
     seed: TaskSeed,
     born: wire::TaskStamp,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
@@ -661,7 +637,7 @@ fn prepare_task_for(
         deferral: None,
         generation: 0,
     };
-    if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None, projects) {
+    if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None) {
         return Err(refusal(
             "task::add-refused",
             Some(error.to_string()),
@@ -789,7 +765,6 @@ pub(super) fn task_note(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     note: &TaskNote,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let content = match room::authored_observation(&note.note, &note.task) {
         Ok(content) => content,
@@ -799,7 +774,6 @@ pub(super) fn task_note(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&note.task),
-        projects,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -861,23 +835,20 @@ pub(super) fn task_depends(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    task_depends_with(bus, command, depends, projects, || {})
+    task_depends_with(bus, command, depends, || {})
 }
 
 pub(super) fn task_depends_with(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
-    projects: &ProjectPolicy,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
     let roots = std::iter::once(depends.task.clone())
         .chain(depends.after.iter().cloned())
         .collect::<Vec<_>>();
-    let snapshot = match validated_working_snapshot(bus, command.actor().clone(), &roots, projects)
-    {
+    let snapshot = match validated_working_snapshot(bus, command.actor().clone(), &roots) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -904,7 +875,6 @@ pub(super) fn task_depends_with(
         entry.workflow().clone(),
         entry.claim().cloned(),
         entry.lease().cloned(),
-        projects,
     ) {
         Ok(post) => post
             .with_grouped(entry.grouped())

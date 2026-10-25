@@ -71,9 +71,8 @@ fn complete_review(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHand
 }
 
 #[test]
-fn task_plan_and_design_creation_admit_authored_roots_within_the_depth_bounds() {
+fn task_plan_and_design_creation_admit_every_well_spelled_project_at_any_depth() {
     let (root, bus, epoch, _) = fixture("creation-authored-root", 1);
-    let projects = guard_projects();
     for (name, intent, flow) in [
         ("ordinary", None, "todo,review"),
         ("plan", Some(wire::TaskIntent::Plan), "plan,review"),
@@ -93,13 +92,17 @@ fn task_plan_and_design_creation_admit_authored_roots_within_the_depth_bounds() 
                 vec![Witness::Absence { task: born }],
                 &add,
             );
-            task_add(&bus, &command, &add, None, &projects)
+            task_add(&bus, &command, &add, None)
         };
-        // Depth, not the configured stem list, bounds an authored root.
-        for (label, refused) in [("shallow", "foreign"), ("deep", "foreign.one.two.three")] {
+        // Spelling alone bounds a project; its dotted depth carries no meaning.
+        for (label, refused) in [
+            ("upper", "Foreign"),
+            ("empty_run", "foreign..work"),
+            ("leading_dot", ".foreign"),
+        ] {
             let before = board(&bus, epoch, Actor::Operator).tasks.len();
             let Outcome::Refusal(refusal) = create(label, refused) else {
-                panic!("{name} creation admitted out-of-depth {refused}");
+                panic!("{name} creation admitted malformed {refused}");
             };
             assert_eq!(refusal.reason(), "task::add-refused");
             assert_eq!(
@@ -109,9 +112,9 @@ fn task_plan_and_design_creation_admit_authored_roots_within_the_depth_bounds() 
             );
         }
         for (label, project) in [
-            ("configured", "board.work"),
-            ("unconfigured", "foreign.work"),
-            ("unconfigured_deep", "foreign.deep_work.unit2"),
+            ("single", "foreign"),
+            ("dotted", "foreign.work"),
+            ("deep", "foreign.one.two.three.four"),
         ] {
             assert_committed(create(label, project));
             assert!(
@@ -318,7 +321,7 @@ fn dependency_phase_movement_refuses_creation_with_the_stale_flow() {
         &add,
     );
 
-    let outcome = task_add_with(&bus, &command, &add, None, &guard_projects(), || {
+    let outcome = task_add_with(&bus, &command, &add, None, || {
         complete_review(&bus, epoch, &seats[0], &dependency)
     });
     assert!(
@@ -626,57 +629,44 @@ fn ambient_plan_authority_movement_refuses_child_creation() {
             &add,
         );
 
-        let outcome = task_add_with(
-            &bus,
-            &command,
-            &add,
-            None,
-            &guard_projects(),
-            || match movement {
-                "statement" => add_dependency(&bus, epoch, &plan, &competing),
-                "workflow" => {
-                    assert_committed(issue(
-                        &bus,
-                        epoch,
-                        lane.clone(),
-                        CommandKind::TaskDone,
-                        progress_witnesses(
-                            &held,
-                            at(&held, &plan),
-                            seat.lane,
-                            seat.occupant,
-                            false,
-                        )
+        let outcome = task_add_with(&bus, &command, &add, None, || match movement {
+            "statement" => add_dependency(&bus, epoch, &plan, &competing),
+            "workflow" => {
+                assert_committed(issue(
+                    &bus,
+                    epoch,
+                    lane.clone(),
+                    CommandKind::TaskDone,
+                    progress_witnesses(&held, at(&held, &plan), seat.lane, seat.occupant, false)
                         .expect("held plan witnesses"),
-                        &TaskDone {
-                            task: plan.clone(),
-                            validation: "execution contract is explicit".to_owned(),
-                            disposition: None,
-                            operation: Some(completion_operation()),
+                    &TaskDone {
+                        task: plan.clone(),
+                        validation: "execution contract is explicit".to_owned(),
+                        disposition: None,
+                        operation: Some(completion_operation()),
+                    },
+                ));
+            }
+            "claim" => {
+                let heads = at(&held, &plan);
+                assert_committed(issue(
+                    &bus,
+                    epoch,
+                    lane.clone(),
+                    CommandKind::ClaimFree,
+                    vec![
+                        claim_witness(heads),
+                        Witness::Lease {
+                            task: heads.statement.body.born.clone(),
+                            head: heads.lease.as_ref().expect("lease head").position,
                         },
-                    ));
-                }
-                "claim" => {
-                    let heads = at(&held, &plan);
-                    assert_committed(issue(
-                        &bus,
-                        epoch,
-                        lane.clone(),
-                        CommandKind::ClaimFree,
-                        vec![
-                            claim_witness(heads),
-                            Witness::Lease {
-                                task: heads.statement.body.born.clone(),
-                                head: heads.lease.as_ref().expect("lease head").position,
-                            },
-                            residency(&held, seat),
-                        ],
-                        &TaskRef { task: plan.clone() },
-                    ));
-                }
-                _ => unreachable!(),
-            },
-        );
+                        residency(&held, seat),
+                    ],
+                    &TaskRef { task: plan.clone() },
+                ));
+            }
+            _ => unreachable!(),
+        });
         assert!(
             matches!(&outcome, Outcome::Refusal(refusal)
                 if refusal.reason() == "board::witness-moved"),

@@ -15,11 +15,10 @@ pub(super) fn dispatch_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
         wire::intent::Intent::DesignPropose(proposal) => {
-            propose_design(bus, command, proposal, repository, projects)
+            propose_design(bus, command, proposal, repository)
         }
         wire::intent::Intent::CandidateCritiqueRecord(critique) => {
             record_critique(bus, command, critique)
@@ -28,7 +27,7 @@ pub(super) fn dispatch_preparation(
             record_coverage(bus, command, coverage)
         }
         wire::intent::Intent::PreparationDecide(decision) => {
-            decision::decide_preparation(bus, command, decision, projects)
+            decision::decide_preparation(bus, command, decision)
         }
         wire::intent::Intent::OutputAdopt(adopt) => adopt_output(bus, command, adopt),
         wire::intent::Intent::CandidateWithdraw(withdraw) => {
@@ -211,7 +210,6 @@ pub(super) fn propose_design(
     command: &wire::AdmittedCommand,
     request_body: &DesignPropose,
     repository: Option<Host<'_>>,
-    projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let proposal = &request_body.candidate;
     let subject = ProposalRef::Candidate {
@@ -234,12 +232,8 @@ pub(super) fn propose_design(
         .chain(proposal.governed_inputs.iter().cloned())
         .chain(proposal.outputs.iter().cloned())
         .collect::<Vec<_>>();
-    let snapshot = match validated_working_snapshot_for_tasks(
-        bus,
-        command.actor().clone(),
-        &roots,
-        projects,
-    ) {
+    let snapshot = match validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots)
+    {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
