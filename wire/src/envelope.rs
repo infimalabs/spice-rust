@@ -62,9 +62,21 @@ impl Seq {
     }
 }
 
+/// Every text rendering of a position, for humans and agents alike, is its
+/// condensed base52 sequence code. Serde keeps the transparent integer.
 impl fmt::Display for Seq {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.0)
+        fmt::Display::fmt(&crate::SequenceCode::new(self.get()), formatter)
+    }
+}
+
+/// Text names a position only in its canonical base52 spelling: decimal
+/// digits are themselves base52 digits, so no second spelling is admitted.
+impl FromStr for Seq {
+    type Err = crate::SequenceCodeError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::new(text.parse::<crate::SequenceCode>()?.get()).ok_or(crate::SequenceCodeError)
     }
 }
 

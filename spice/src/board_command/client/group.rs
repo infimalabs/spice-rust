@@ -350,7 +350,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
         }) => {
             let mut text = format!(
                 "revision {} {}",
-                change.revision,
+                wire::SequenceCode::new(change.revision),
                 match change.status {
                     wire::intent::WorkingGroupChangeStatus::Moved => "moved",
                     wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
@@ -387,7 +387,7 @@ fn render_groups(
     page: &WorkingGroupPage,
     cycles: &std::collections::BTreeMap<TaskStamp, wire::rooms::DesignCyclePresentation>,
 ) -> String {
-    let mut text = format!("revision {}\n", page.revision);
+    let mut text = format!("revision {}\n", wire::SequenceCode::new(page.revision));
     if page.groups.is_empty() {
         text.push_str("no working groups\n");
     }

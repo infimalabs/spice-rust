@@ -10,10 +10,13 @@ fn thread_pages_resume_at_the_first_withheld_member_and_decode_only_the_page() {
             .read(|read| Ok(read.thread_root(reference)))
             .expect("thread index reads")
     };
-    assert_eq!(resolve("150").expect("descendant resolves"), seq(1));
+    assert_eq!(
+        resolve(&seq(150).to_string()).expect("descendant resolves"),
+        seq(1)
+    );
     assert_eq!(resolve("task:1kKRRsDP").expect("origin resolves"), seq(1));
     assert!(matches!(
-        resolve("201"),
+        resolve(&seq(201).to_string()),
         Err(crate::ThreadError::NotFound { .. })
     ));
     let page = |at, rows| {
@@ -86,6 +89,7 @@ fn an_origin_that_names_multiple_roots_is_ambiguous_in_root_order() {
         .expect("thread index reads");
     assert!(matches!(
         resolved,
-        Err(crate::ThreadError::Ambiguous { roots, .. }) if roots == vec![1, 2]
+        Err(crate::ThreadError::Ambiguous { roots, .. })
+            if roots.iter().map(|root| root.get()).collect::<Vec<_>>() == [1, 2]
     ));
 }

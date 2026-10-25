@@ -58,6 +58,12 @@ same envelope with their own `kind`. Selecting `--json` changes only the
 document shape, never the exit code or stream: replies go to standard output,
 refusals and faults to standard error.
 
+Text output, for humans and agents alike, spells every journal position as
+its condensed base-52 sequence code, and every position or cursor a command
+takes back as text (`--after`, a thread reference) admits only that spelling.
+The JSON outcome and wire payloads keep positions as integers. Persisted
+control strings keep their recorded decimal spelling.
+
 ## Room and preparation commands
 
 The [room loop](rooms.md#l-room--conversation-at-a-task) states what these
