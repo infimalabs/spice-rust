@@ -352,6 +352,7 @@ fn present_remote_node(
             event,
             ..
         } => {
+            let position = wire::SequenceCode::new(position.get());
             let actor_label = compact_actor(actor);
             let event = lifecycle_label(*event);
             Node {
@@ -377,6 +378,7 @@ fn present_remote_node(
             disposition,
             ..
         } => {
+            let position = wire::SequenceCode::new(position.get());
             let actor_is_resident_lane =
                 matches!(actor, Actor::Lane(actor_lane) if actor_lane == lane);
             let actor = compact_actor(actor);
@@ -459,6 +461,7 @@ fn present_review_node(
     reviewer: &Actor,
     verdict: Verdict,
 ) -> Node {
+    let position = wire::SequenceCode::new(position.get());
     let reviewer_label = compact_actor(reviewer);
     let verdict = verdict_label(verdict);
     let (label, detail, diagram) = match implemented {

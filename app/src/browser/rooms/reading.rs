@@ -200,7 +200,7 @@ fn render_maturity(
 fn render_head(head: &DesignMaturityHead) -> Html {
     html! {
         <p>
-            <code>{head.statement.to_string()}</code>
+            <code>{wire::SequenceCode::new(head.statement.get()).to_string()}</code>
             <span>
                 {format!(
                     "{} asked · {} contributed · {} declined · {} unanswered{}",

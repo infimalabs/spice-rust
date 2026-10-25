@@ -425,7 +425,7 @@ fn render_candidate(
     let edit = editor(context.controls, &candidate.candidate);
     let claim = candidate.claim.map_or_else(
         || html! { <span>{" · historical claim not witnessed"}</span> },
-        |claim| html! { <span>{" · claim "}<code>{claim.to_string()}</code></span> },
+        |claim| html! { <span>{" · claim "}<code>{SequenceCode::new(claim.get()).to_string()}</code></span> },
     );
     let lines = crate::task_sheet::proposal_lines(candidate);
     html! {
@@ -448,7 +448,7 @@ fn render_candidate(
                     {" · "}{context.task(context.design).map_or("", |task| task.statement.body.pitch.as_str())}
                 </p>
                 <p class="room-approval-facts">
-                    {"statement "}<code>{candidate.statement.to_string()}</code>
+                    {"statement "}<code>{SequenceCode::new(candidate.statement.get()).to_string()}</code>
                     {claim}
                 </p>
             </div>
@@ -822,8 +822,11 @@ fn render_decision_history(
         <div class="room-approval-history">
             <strong>{"Decision history"}</strong>
             <ol>
-                {for rows.into_iter().map(|(position, text, notes)| html! {
-                    <li key={position.to_string()} data-fact={SequenceCode::new(position.get()).to_string()} tabindex="-1"><code>{position.to_string()}</code>{" · "}{text}{notes}</li>
+                {for rows.into_iter().map(|(position, text, notes)| {
+                    let fact = SequenceCode::new(position.get()).to_string();
+                    html! {
+                        <li key={position.to_string()} data-fact={fact.clone()} tabindex="-1"><code>{fact}</code>{" · "}{text}{notes}</li>
+                    }
                 })}
             </ol>
         </div>

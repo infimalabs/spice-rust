@@ -791,7 +791,7 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
             </header>
             {for records.into_iter().map(|(position, kind, body)| html! {
                 <article class="room-card room-preparation-card" key={position.to_string()} tabindex="0">
-                    <header><strong>{kind}</strong><code>{position.to_string()}</code></header>
+                    <header><strong>{kind}</strong><code>{wire::SequenceCode::new(position.get()).to_string()}</code></header>
                     <pre>{body}</pre>
                 </article>
             })}

@@ -36,7 +36,7 @@ impl JournalCursor {
         if connection != ConnectionState::Online {
             return None;
         }
-        let value = cursor.map(|cursor| cursor.to_string());
+        let value = cursor.map(|cursor| wire::SequenceCode::new(cursor.get()).to_string());
         Some(Self {
             accessible: value.as_ref().map_or_else(
                 || "journal cursor not yet admitted".to_owned(),
@@ -252,8 +252,8 @@ mod tests {
         assert_eq!(
             JournalCursor::resolve(ConnectionState::Online, Some(cursor)),
             Some(JournalCursor {
-                value: Some("42".to_owned()),
-                accessible: "journal cursor 42".to_owned(),
+                value: Some("p".to_owned()),
+                accessible: "journal cursor p".to_owned(),
             })
         );
         assert_eq!(

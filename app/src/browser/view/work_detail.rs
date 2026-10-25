@@ -465,7 +465,7 @@ fn facts(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDetailAns
             "Claim fact",
             row.claim
                 .as_ref()
-                .map_or_else(|| ABSENT.to_owned(), |claim| claim.position.to_string()),
+                .map_or_else(|| ABSENT.to_owned(), |claim| sequence(claim.position)),
         ),
         instant_fact("Lease start", lease.map(|lease| &lease.body.start)),
         html_fact(
@@ -479,9 +479,9 @@ fn facts(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDetailAns
         ),
         fact("Origin thread", row.origin_thread.clone()),
         creator_team_fact(row.creator_team, render),
-        fact("Queue fact", statement.queue_origin.to_string()),
-        fact("Statement revision", statement.revision.to_string()),
-        fact("Workflow fact", row.workflow.position.to_string()),
+        fact("Queue fact", sequence(statement.queue_origin)),
+        fact("Statement revision", sequence(statement.revision)),
+        fact("Workflow fact", sequence(row.workflow.position)),
     ]);
     claim_context_facts(&mut facts, row, render);
     git_context_facts(&mut facts, row);
@@ -874,7 +874,7 @@ fn claim_context_facts(
         None => format!("Resident {}", crate::watchband::short(context.epoch)),
     };
     facts.extend([
-        fact("Claimed fact", context.claimed.to_string()),
+        fact("Claimed fact", sequence(context.claimed)),
         html_fact("Claim lane", actor_link(&lane, render)),
         html_fact(
             "Occupant",
@@ -894,7 +894,7 @@ fn git_context_facts(facts: &mut Vec<Html>, row: &wire::intent::BoardTask) {
     };
     facts.extend([
         fact("Repository lifecycle", context.kind.as_str().to_owned()),
-        fact("Repository fact", context.fact.to_string()),
+        fact("Repository fact", sequence(context.fact)),
         fact("Head", context.boundary.head.clone()),
         fact("Integrated", context.boundary.integrated.clone()),
         fact(
@@ -907,4 +907,9 @@ fn git_context_facts(facts: &mut Vec<Html>, row: &wire::intent::BoardTask) {
         ),
         fact("Local commits", context.boundary.local_commits.to_string()),
     ]);
+}
+
+/// A journal position in the condensed base52 spelling every surface reads.
+fn sequence(position: wire::Seq) -> String {
+    wire::SequenceCode::new(position.get()).to_string()
 }
