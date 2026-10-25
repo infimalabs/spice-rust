@@ -22,9 +22,9 @@ execution work under one exact project; `#/work/planning` for open Designs and
 every open task transitively downstream of at least one open Design
 dependency; `#/work/planning/{project}` for that planning set within one exact
 project; `#/work/team/{uuid}` for a team; and `#/work/group/{room-stamp}` for a
-working group. A project is its complete admitted label, dot-separated nonempty
-`[0-9a-z_]+` runs, as one literal path segment: `oops` and `oops.design` are
-independent projects, and `app.one` never merges with `app.two` through `app`.
+working group. A project is its complete admitted label as one literal path
+segment, compared whole: it never merges with another project that shares its
+leading text.
 Team and group routes retain only stable identity: hydrated lane topology and
 working-group authority supply current membership, and subsequent authority
 changes refresh the open selection. All-open and all-planning remain valid when

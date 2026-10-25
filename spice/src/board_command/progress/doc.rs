@@ -79,7 +79,7 @@ fn validate_doc_plan(
         refusal(
             "doc::project-refused",
             Some(error.to_string()),
-            "author the project as dot-separated runs of [0-9a-z_]+",
+            "author the project as one lowercase word of [0-9a-z_]",
         )
     })?;
     let touched = document_handles(

@@ -2,6 +2,9 @@
 
 use clap::Command;
 
+/// Project guidance shared by every command that names one.
+const PROJECT_HELP: &str = "One lowercase word naming the project";
+
 /// One command path, long option name, and its help row.
 const OPTIONS: &[(&str, &str, &str)] = &[
     ("", "json", "Answer in machine-readable JSON"),
@@ -83,6 +86,12 @@ const OPTIONS: &[(&str, &str, &str)] = &[
         "description",
         "How the work is done: need, mechanism, invariants; the why belongs in --pitch",
     ),
+    ("task add", "project", PROJECT_HELP),
+    ("task plan", "project", PROJECT_HELP),
+    ("task design", "project", PROJECT_HELP),
+    ("task capture", "project", PROJECT_HELP),
+    ("task modify", "project", PROJECT_HELP),
+    ("task oops", "project", PROJECT_HELP),
     (
         "task plan",
         "pitch",

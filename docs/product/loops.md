@@ -137,12 +137,13 @@ flowchart LR
   and session trailers; first-parent history records mutating landings, not
   every transition.
 - `task add`, `task plan`, and `task design` share one manual-project
-  admission: dot-separated nonempty `[0-9a-z_]+` runs, single-segment or
-  dotted, so authors name their own labels; no configured root list or depth
-  range exists. A project is one opaque exact label: `oops` and `oops.design`
-  are unrelated, and `task list --project` matches the complete value only. A
-  refused project names that spelling, so the author can repair it without
-  probing. Only handle rendering abbreviates a filed project to its last run.
+  admission: authors name the project as one lowercase word of `[0-9a-z_]`,
+  and no configured root list exists. A project is one opaque label compared
+  whole, never a scope over others that share its leading text, and
+  `task list --project` matches the complete value only; a retained label
+  admitted with dots compares whole the same way. A refused project names that
+  spelling, so the author can repair it without probing. Only handle rendering
+  abbreviates a filed project, to its last dot-separated run.
   Default reads (`task list`, `task status`, dry `task next` counts) cover every
   filed row plus the reader's own origin-thread rows, so an authored project is
   never invisible to a lane that may be allocated it.
