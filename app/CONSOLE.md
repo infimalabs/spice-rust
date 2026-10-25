@@ -26,7 +26,9 @@ instants appear only in machine-readable attributes and payloads.
 
 Journal positions, such as facts, statement revisions, claim heads and the
 journal cursor, read as their condensed base52 sequence codes, never as decimal
-integers.
+integers. The Preparation authority menu follows the same rule inside its
+displayed records; wire and journal payloads retain their machine encoding.
+Authored numbers, counts, and transcript offsets are not journal positions.
 
 ## Working groups and teams
 
