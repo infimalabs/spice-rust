@@ -341,15 +341,29 @@ focuses a draft's composer; a draft whose lane no console shows says so, and
 
 ## Version identity
 
-`spice --version`, `spice version`, and the app menu report the tracked version
-from `dist/VERSION`; an installed pre-release extends it with a source stamp
-that orders successive builds of tied commits. The stamp follows the locally
-available first-parent chain, treating a declared shallow boundary as the end
-of that history while refusing an unexpectedly missing commit. The version
-never carries the executable digest: the native-binary identity is the running
+`spice --version`, `spice version`, the app menu, and the Spice header report
+one product version that every build path derives the same way from the tree it
+builds. `dist/VERSION` holds only the major number, the one number a person sets.
+The minor is the source commit's committer second times ten plus its position
+(0–9) among same-second first-parent ancestors, so two commits differ in minor
+and a later commit sorts above an earlier one. The patch is 0. On a patch line,
+`dist/VERSION` instead holds a full `MAJOR.MINOR.PATCH` pin, which is the
+version verbatim, because a patch commit's own instant would move the minor.
+
+A build that does not pass through release staging
+(`spice dev xtask -- install`, `spice dev xtask -- windows-appliance`) appends
+`-dev`, so it sorts below its own commit's staged `stage-target` payload, which
+carries no marker. Every position must be the same in every checkout of a
+commit. The walk therefore stops at a declared shallow boundary only when it
+lies in an earlier second than HEAD. It refuses a boundary inside HEAD's
+second, an eleventh same-second commit, a backward clock, and an unexpectedly
+missing commit. A plain Cargo build bound to no commit reports
+`MAJOR.0.0-dev`, below every derived version of its major. The version never
+carries the executable digest: the native-binary identity is the running
 executable's complete digest, so identical bytes keep one identity without a
 Git checkout. `spice --version` ends with `app G` when the executable links
 generation G's archive.
 
-Owners: [`spice/src/version.rs`](../../spice/src/version.rs) and
-[`xtask/src/develop/native.rs`](../../xtask/src/develop/native.rs).
+Owners: [`dist/src/version.rs`](../../dist/src/version.rs),
+[`spice/src/version.rs`](../../spice/src/version.rs), and
+[`spice/src/version/source.rs`](../../spice/src/version/source.rs).

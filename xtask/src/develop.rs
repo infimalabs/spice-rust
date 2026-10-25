@@ -100,8 +100,8 @@ pub enum RefreshError {
     LaneSeated(String),
     /// `cargo build` reported failure.
     Build,
-    /// The source commit's committer instant could not order this build.
-    SourceStamp(String),
+    /// The source checkout could not derive this build's product version.
+    SourceVersion(String),
     /// The current browser app did not build and publish.
     App(crate::AppBuildError),
     /// `cargo build` succeeded without naming a `spice` executable.
@@ -173,7 +173,7 @@ impl fmt::Display for RefreshError {
                 "resident::operator-install-only; lane {lane} is seated in this repository, and only the operator republishes its appliance or stops and restarts its resident: run the install from an operator shell, or refresh a scratch repository that has never seated this lane"
             ),
             Self::Build => write!(formatter, "cargo build failed"),
-            Self::SourceStamp(detail) => write!(formatter, "source stamp refused: {detail}"),
+            Self::SourceVersion(detail) => write!(formatter, "product version refused: {detail}"),
             Self::App(error) => write!(formatter, "app build failed: {error}"),
             Self::BuildOutputSilent => {
                 write!(formatter, "cargo build named no spice executable")

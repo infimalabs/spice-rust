@@ -61,15 +61,15 @@ pub enum SpiceVariable {
     /// Immutable staged-source digest supplied to every configured pre-commit step.
     #[serde(rename = "SPICE_PRE_COMMIT_SOURCE")] // env-policy: allow
     PreCommitSource,
+    /// Product version derived from `dist/VERSION` and the source commit, sealed into the appliance.
+    #[serde(rename = "SPICE_PRODUCT_VERSION")] // env-policy: allow
+    ProductVersion,
     /// Exact RTK executable selected for supervised shell rewriting.
     #[serde(rename = "SPICE_RTK_EXECUTABLE")] // env-policy: allow
     RtkExecutable,
     /// Session identity a lane pinned for a vendor that exports none of its own.
     #[serde(rename = "SPICE_SESSION")] // env-policy: allow
     Session,
-    /// Source clock with first-parent timestamp ties ordered, sealed into the appliance version.
-    #[serde(rename = "SPICE_SOURCE_STAMP")] // env-policy: allow
-    SourceStamp,
     /// Exact installed Spice executable selected by the agent-shell wrapper route.
     #[serde(rename = "SPICE_WRAPPER_SPICE")] // env-policy: allow
     WrapperSpice,
@@ -97,9 +97,9 @@ impl SpiceVariable {
         Self::NativeShell,
         Self::PreCommitPaths,
         Self::PreCommitSource,
+        Self::ProductVersion,
         Self::RtkExecutable,
         Self::Session,
-        Self::SourceStamp,
         Self::WrapperSpice,
     ];
 
@@ -125,9 +125,9 @@ impl SpiceVariable {
             Self::NativeShell => "SPICE_NATIVE_SHELL", // env-policy: allow
             Self::PreCommitPaths => "SPICE_PRE_COMMIT_PATHS", // env-policy: allow
             Self::PreCommitSource => "SPICE_PRE_COMMIT_SOURCE", // env-policy: allow
+            Self::ProductVersion => "SPICE_PRODUCT_VERSION", // env-policy: allow
             Self::RtkExecutable => "SPICE_RTK_EXECUTABLE", // env-policy: allow
             Self::Session => "SPICE_SESSION", // env-policy: allow
-            Self::SourceStamp => "SPICE_SOURCE_STAMP", // env-policy: allow
             Self::WrapperSpice => "SPICE_WRAPPER_SPICE", // env-policy: allow
         }
     }
@@ -784,7 +784,7 @@ mod tests {
                     observation: DoctorObservation::Ready {},
                 },
                 DoctorEnvironment {
-                    variable: SpiceVariable::SourceStamp,
+                    variable: SpiceVariable::ProductVersion,
                     observation: DoctorObservation::Unavailable {
                         reason: reason("absent"),
                     },
@@ -830,7 +830,7 @@ mod tests {
         );
         assert!(page.contains(SpiceVariable::Session.as_str()), "{page}");
         assert!(
-            !page.contains(SpiceVariable::SourceStamp.as_str()),
+            !page.contains(SpiceVariable::ProductVersion.as_str()),
             "an absent optional variable is no finding: {page}"
         );
     }

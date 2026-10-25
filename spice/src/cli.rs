@@ -565,15 +565,24 @@ fn leaf_help(path: &[&str]) -> Option<&'static str> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn product_version() -> String {
+    crate::version::product().to_string()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn product_version() -> String {
+    dist::current_tracked_version()
+        .expect("the tracked product version is validated by the repository gate")
+        .product(None, dist::Build::Dev)
+        .to_string()
+}
+
 fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
         .after_help(OUTPUT_POLICY)
-        .version(
-            dist::current_product_version()
-                .expect("the tracked product version is validated by the repository gate")
-                .to_string(),
-        )
+        .version(product_version())
         .subcommand_required(true)
         .arg_required_else_help(true)
         .disable_help_subcommand(true)

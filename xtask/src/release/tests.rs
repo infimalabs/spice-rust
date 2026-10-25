@@ -226,11 +226,7 @@ impl Executor for FakeExecutor {
             "app-build" | "dsym-generate" | "native-strip" => {
                 format!("{} complete\n", command.label).into_bytes()
             }
-            "canvas-version" => format!(
-                "spice {} app {GENERATION}\n",
-                dist::current_product_version().expect("tracked fixture version is canonical")
-            )
-            .into_bytes(),
+            "canvas-version" => format!("spice {FIXTURE_VERSION} app {GENERATION}\n").into_bytes(),
             "source-status" if self.tracked_dirty.get() => b" M xtask/src/lib.rs\n".to_vec(),
             "source-status" => self.untracked.borrow().clone().into_bytes(),
             label => panic!("unexpected command label {label}"),

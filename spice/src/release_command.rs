@@ -506,16 +506,19 @@ fn resolve_external_preconditions(
     })
 }
 
+/// The requested version, the version this executable's compiled
+/// `dist/VERSION` derives for the release commit, and the version the checked
+/// out `dist/VERSION` derives for it. Release never edits `dist/VERSION`.
 fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions, String> {
-    let source_version = dist::current_product_version().map_err(|error| error.to_string())?;
+    let source_minor = spice::version::source_minor(root)?;
+    let source_version = dist::current_tracked_version()
+        .map_err(|error| error.to_string())?
+        .product(Some(source_minor), dist::Build::Staged);
+    let release_version = spice::version::source_version(root, dist::Build::Staged)?;
     let requested_version = matches.get_one::<String>("version").map_or_else(
-        || Ok(source_version.clone()),
+        || Ok(release_version.clone()),
         |requested| ProductVersion::parse(requested).map_err(|error| error.to_string()),
     )?;
-    let release_version_text = fs::read_to_string(root.join("dist/VERSION"))
-        .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
-    let release_version =
-        ProductVersion::parse(release_version_text.trim()).map_err(|error| error.to_string())?;
     Ok(ReleaseVersions {
         requested: requested_version,
         source: source_version,

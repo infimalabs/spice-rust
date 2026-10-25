@@ -57,12 +57,15 @@ parallel verification or publication body would be a second release authority.
 
 ### A versioned commit is sealed before publication
 
-**Invariant —** Version activation is an ordinary task landing. Release
-requires clean HEAD at the release commit, already integrated in the
-tracked source branch, with requested, compiled, and tracked product versions
-in agreement; every other shape refuses. Release never edits `dist/VERSION`,
-synthesizes a commit, or infers task ownership from the board, and a red
-candidate publishes nothing.
+**Invariant —** Every landing is a version: its product version is derived from
+`dist/VERSION` and the commit's own instant, as described under Version
+identity in the Rust profile. Release requires clean HEAD at the release
+commit, already integrated in the tracked source branch, with requested,
+compiled, and tracked product versions in agreement. Compiled is this
+executable's `dist/VERSION` applied to the release commit, and tracked is the
+checked-out `dist/VERSION` applied to it. Every other shape refuses. Release
+never edits `dist/VERSION`, synthesizes a commit, or infers task ownership from
+the board, and a red candidate publishes nothing.
 
 **Invariant —** A release whose package is not yet visible executes the
 complete canonical strict battery over the exact source commit the plan names,
