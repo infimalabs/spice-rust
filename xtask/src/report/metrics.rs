@@ -70,7 +70,7 @@ pub(super) fn measure(study: &Study, outcomes: &Outcomes) -> Result<Vec<Quantity
             "Delivery composition",
             "Selected deliveries",
             "tasks",
-            "Safe aggregate domains from admission-time project roots; no worker or model ranking.",
+            "Fixed public categories from an exact-label allowlist; other project markers are redacted into a generic category, with no worker or model ranking.",
             study.selected.len(),
             domain_counts(study),
         ),
@@ -79,7 +79,7 @@ pub(super) fn measure(study: &Study, outcomes: &Outcomes) -> Result<Vec<Quantity
             "Acquisition coverage",
             "Authenticated, publication-admitted historical export",
             "facts",
-            "Ordered typed facts in the consumed vocabulary at or below the fixed horizon. Unrelated ingestion and hidden task facts are excluded.",
+            "Ordered typed facts in the consumed vocabulary at or below the fixed horizon. Unrelated ingestion and unfiled Draft facts are excluded.",
             study.manifest.fact_count,
             [(
                 "Admitted retained facts".to_owned(),

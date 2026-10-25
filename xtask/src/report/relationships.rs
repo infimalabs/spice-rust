@@ -27,12 +27,7 @@ struct Board {
 }
 #[derive(Deserialize)]
 struct Row {
-    visibility: Visibility,
     statement: Statement,
-}
-#[derive(Deserialize)]
-struct Visibility {
-    kind: String,
 }
 #[derive(Deserialize)]
 struct Statement {
@@ -125,11 +120,7 @@ fn public_statements(study: &Study, directory: &Path) -> Result<BTreeMap<String,
         return Err("relationship oracle does not name the frozen horizon".into());
     }
     let mut public = BTreeMap::new();
-    for row in board
-        .tasks
-        .into_iter()
-        .filter(|row| row.visibility.kind == "public")
-    {
+    for row in board.tasks {
         if row.statement.position > study.manifest.upper {
             return Err("relationship statement is above horizon".into());
         }

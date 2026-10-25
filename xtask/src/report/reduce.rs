@@ -96,7 +96,6 @@ struct OracleBody {
 struct OracleTask {
     statement: Positioned<OracleStatement>,
     workflow: Positioned<OracleWorkflow>,
-    visibility: OracleVisibility,
 }
 
 #[derive(Deserialize)]
@@ -113,11 +112,6 @@ struct OracleStatement {
 #[derive(Deserialize)]
 struct OracleWorkflow {
     status: String,
-}
-
-#[derive(Deserialize)]
-struct OracleVisibility {
-    kind: String,
 }
 
 pub(super) fn analyze(directory: &Path, output: &mut dyn Write) -> Result<()> {
@@ -472,7 +466,7 @@ fn reconcile(
     let mut observed = oracle
         .tasks
         .iter()
-        .filter(|task| task.visibility.kind == "public" && task.workflow.body.status == "completed")
+        .filter(|task| task.workflow.body.status == "completed")
         .collect::<Vec<_>>();
     observed.sort_by(|left, right| {
         left.workflow
