@@ -79,12 +79,11 @@ baseline beside it, since the title already names the product; a header too
 narrow for it hides the plain version. Beneath them the current connection
 state is the header's status line: it runs under the theme selector and TURBO
 and ends in an ellipsis before the weekly percentage. An available update reads
-as the version
-in the focus accent with a reload mark and stays actionable: where the header
-is too narrow for the version beside the kicker, on a phone or beside the
-Windows caption buttons, the update takes the status line's place while the
-state stays announced. The admitted journal stream cursor is in the connection
-state's hover title and accessible name, and only while the resident
+as the version in the focus accent with a reload mark and stays actionable:
+where the header is too narrow for the version beside the title, on a phone or
+beside the Windows caption buttons, the update takes the status line's place
+while the state stays announced. The admitted journal stream cursor is in the
+connection state's hover title and accessible name, and only while the resident
 connection is current; startup and reconnect states never present a retained
 runtime's cursor as live.
 

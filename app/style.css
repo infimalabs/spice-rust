@@ -717,8 +717,9 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   align-items: baseline;
   min-width: 0;
 }
-/* The kicker shrinks only where the header's text room cannot hold it, such
-   as beside the Windows caption buttons. */
+/* The kicker is the open Spice view's title, so it reads lowercase where other
+   kickers read uppercase, and it shrinks only where the header's text room
+   cannot hold it, such as beside the Windows caption buttons. */
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-kicker {
   font-size: min(calc(var(--app-type-copy) * 1.5), 29cqi);
   line-height: var(--app-header-control);
