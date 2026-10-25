@@ -113,7 +113,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
     });
     sidebar::Content {
         label: "Task overview".into(),
-        title: overview_title(render.selection, render.runtime).into(),
+        heading: sidebar::Heading::Title(overview_title(render.selection, render.runtime).into()),
         width: sidebar::Width::Large,
         base_accent: base_accent(&render),
         body,

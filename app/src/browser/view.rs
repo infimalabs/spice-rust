@@ -223,12 +223,7 @@ fn render_spice_sidebar(
     let standings = spice_standings(render, runtime).map(Rc::new);
     let body = html! {
         <div class="app-spice-sidebar-content">
-            {spice_sidebar::render_global_settings(
-                render.connection,
-                runtime.and_then(AppRuntime::resume).map(|cursor| cursor.seq),
-                (**render.identity).as_ref(),
-                (**render.app_update).as_ref(),
-            )}
+            {spice_sidebar::render_global_settings(runtime, render.sender)}
             {spice_principals::render(
                 render.connection,
                 runtime,
@@ -248,7 +243,7 @@ fn render_spice_sidebar(
                 class="app-spice-sidebar-readouts"
                 inert={(!render.sidebar_presented || render.sidebar_closing).then_some("true")}
             >
-                {spice_sidebar::render_global_turbo(runtime, render.sender)}
+                {spice_sidebar::render_theme_selector()}
                 {spice_sidebar::render_capacity(runtime)}
             </div>
             {chrome::render_spice_button(chrome::SpiceButton {
@@ -263,7 +258,14 @@ fn render_spice_sidebar(
     };
     sidebar::Content {
         label: "Spice".into(),
-        title: "Operator, resident & teams".into(),
+        heading: sidebar::Heading::Beside(spice_sidebar::render_resident_summary(
+            render.connection,
+            runtime
+                .and_then(AppRuntime::resume)
+                .map(|cursor| cursor.seq),
+            (**render.identity).as_ref(),
+            (**render.app_update).as_ref(),
+        )),
         width: sidebar::Width::Small,
         base_accent: None,
         body,

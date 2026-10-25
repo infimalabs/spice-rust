@@ -842,7 +842,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* Flush button material is shared by the primary panel and the separately
    admitted global fast-mode control. */
 .team-composer .team-composer-controls,
-.app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button {
+.app-spice-settings .app-spice-turbo, .agent-menu > .agent-menu-button {
   --team-control-face: linear-gradient(145deg, color-mix(in srgb, var(--app-highlight-source) 8.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2%, transparent));
   --team-control-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 24%, transparent);
   --team-control-rest: inset 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--app-highlight-source) 8%, transparent);
@@ -873,7 +873,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* Global TURBO keeps its own admission and layout while reusing the production
    Flush face, edge, contact, and selected-state treatment below. */
-.app-spice-sidebar-anchor .app-spice-turbo {
+.app-spice-settings .app-spice-turbo {
   --team-control-button-size: var(--app-round-control-size);
   --team-send-command-ring: 0 0 0 0 transparent;
   --inactive-lane-opacity: .72;
@@ -881,7 +881,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .app-turbo-button .fit-word { inline-size: 26px; block-size: 10px; }
 /* Flush controls are transmitted glass, with no opaque accent face or dome. */
 .team-composer :is(.team-send, .team-turbo, .team-menu),
-.app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button {
+.app-spice-settings .app-spice-turbo, .agent-menu > .agent-menu-button {
   --team-send-command-accent: var(--focus); --team-send-command-ring: 0 0 0 0 transparent;
   position: relative; display: grid; place-items: center; overflow: hidden; place-self: center;
   width: var(--team-control-button-size); min-width: var(--team-control-button-size); max-width: var(--team-control-button-size); height: var(--team-control-button-size); min-height: var(--team-control-button-size); margin: 0; padding: 0;
@@ -903,9 +903,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   -webkit-backdrop-filter: blur(2px) saturate(1.45) brightness(1.08) contrast(1.22);
 }
 .team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):hover,
-.app-spice-sidebar-anchor .app-spice-turbo:not(:disabled):hover, .agent-menu > .agent-menu-button:hover { background-color: color-mix(in srgb, var(--app-highlight-source) 7.5%, transparent); }
+.app-spice-settings .app-spice-turbo:not(:disabled):hover, .agent-menu > .agent-menu-button:hover { background-color: color-mix(in srgb, var(--app-highlight-source) 7.5%, transparent); }
 .team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):is(:active, [data-touch-contact]),
-.app-spice-sidebar-anchor .app-spice-turbo:not(:disabled):active, .agent-menu > .agent-menu-button:active {
+.app-spice-settings .app-spice-turbo:not(:disabled):active, .agent-menu > .agent-menu-button:active {
   transform: translateY(1.5px); box-shadow: var(--team-send-command-ring), var(--team-control-contact), var(--team-send-glass-catch, 0 0 0 0 transparent);
 }
 /* A lit TURBO is backlit the way a lit slider is: the amber of the sliders' high stop washes the glass, pools at its foot, and leaks a dull halo past the edge; the lettering stays the one word TURBO in ink. */
@@ -937,7 +937,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send[data-full-send="true"] .team-send-label { --team-send-full-opacity: 1; --team-send-full-scale: .5; --team-send-word-offset: 2ch; --team-send-word-scale: .5; }
 .team-composer .team-turbo:disabled,
 .team-composer .team-menu:disabled,
-.app-spice-sidebar-anchor .app-spice-turbo:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
+.app-spice-settings .app-spice-turbo:disabled { opacity: var(--inactive-lane-opacity); cursor: not-allowed; }
 .fit-word {
   display: block; overflow: hidden; pointer-events: none;
   fill: currentColor; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 800; text-transform: uppercase;
@@ -1009,12 +1009,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 /* With no agent running and nothing drafted, the team's knobs step back like
    an inactive lane without compositing their shared field surface. */
 .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
-.app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button {
+.app-spice-settings .app-spice-turbo, .agent-menu > .agent-menu-button {
   transition: opacity var(--app-motion-settle) var(--app-ease-standard), color var(--app-motion-settle) var(--app-ease-standard), background-color var(--app-motion-settle) var(--app-ease-standard), transform var(--app-motion-fast) var(--app-ease-standard), box-shadow var(--app-motion-fast) var(--app-ease-standard);
 }
 @media (prefers-reduced-motion: reduce) {
   .team-composer .team-composer-controls > :is(.team-send, .team-turbo, .team-menu, .team-slider),
-  .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
+  .app-spice-settings .app-spice-turbo, .agent-menu > .agent-menu-button, .team-slider::after, .team-slider .team-slider-words, .team-slider-words > span { transition: none; }
   .team-composer :is(.team-send-full, .team-send-word) { transition: none; }
 }
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
