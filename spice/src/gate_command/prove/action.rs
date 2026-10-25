@@ -67,7 +67,7 @@ pub(super) fn prepare(
         runner: "spice-focused-gate".to_owned(),
         runner_version: RUNNER_VERSION,
         declaration: declaration.to_owned(),
-        argv: vec!["gate".to_owned(), gate_id.to_string()],
+        argv: argv(gate_id),
         cwd: ".".to_owned(),
         environment_names,
         tools,
@@ -99,6 +99,20 @@ pub(super) fn prepare(
             cargo_home,
         },
     })
+}
+
+/// The runner's dispatch, then a toolchain arm's declared analyses, so an arm
+/// whose declared commands change answers a new specification and no receipt
+/// minted under the earlier commands satisfies it.
+fn argv(gate_id: GateId) -> Vec<String> {
+    let analysis = gate::TOOLCHAIN_ARMS
+        .iter()
+        .find(|declaration| declaration.id() == gate_id)
+        .map_or(&[][..], |declaration| declaration.analysis());
+    ["gate".to_owned(), gate_id.to_string()]
+        .into_iter()
+        .chain(analysis.iter().map(|&command| command.to_owned()))
+        .collect()
 }
 
 fn inventory(
