@@ -22,11 +22,10 @@ pub(crate) enum ConnectionState {
     Offline,
 }
 
-/// The journal cursor shown beside the connection label while that connection
+/// The journal cursor the connection label's hover names while that connection
 /// proves the retained app runtime is current.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCursor {
-    pub(crate) label: String,
     pub(crate) value: Option<String>,
     pub(crate) accessible: String,
 }
@@ -39,10 +38,6 @@ impl JournalCursor {
         }
         let value = cursor.map(|cursor| cursor.to_string());
         Some(Self {
-            label: value.as_ref().map_or_else(
-                || "cursor —".to_owned(),
-                |cursor| format!("cursor {cursor}"),
-            ),
             accessible: value.as_ref().map_or_else(
                 || "journal cursor not yet admitted".to_owned(),
                 |cursor| format!("journal cursor {cursor}"),
@@ -257,7 +252,6 @@ mod tests {
         assert_eq!(
             JournalCursor::resolve(ConnectionState::Online, Some(cursor)),
             Some(JournalCursor {
-                label: "cursor 42".to_owned(),
                 value: Some("42".to_owned()),
                 accessible: "journal cursor 42".to_owned(),
             })
@@ -265,7 +259,6 @@ mod tests {
         assert_eq!(
             JournalCursor::resolve(ConnectionState::Online, None),
             Some(JournalCursor {
-                label: "cursor —".to_owned(),
                 value: None,
                 accessible: "journal cursor not yet admitted".to_owned(),
             })
