@@ -23,6 +23,8 @@ pub mod core;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod evidence_store;
 #[cfg(not(target_arch = "wasm32"))]
+mod execution_diagnostics;
+#[cfg(not(target_arch = "wasm32"))]
 mod held_root;
 pub mod hygiene;
 pub mod input;
@@ -117,6 +119,11 @@ pub use evidence_store::{
     EvidenceLease, EvidenceStore, EvidenceStoreError, LeaseAcquisition, PassReceipt,
     PassReceiptFields, ProducerRecord as EvidenceProducerRecord,
     Publication as EvidencePublication, ReceiptExpectation, ReceiptId, derive_action_key,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use execution_diagnostics::{
+    CargoArtifactCounts, ExecutionDiagnostics, ExecutionPhase, OUTPUT_TAIL_LIMIT, PhaseTiming,
+    observe_execution,
 };
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,

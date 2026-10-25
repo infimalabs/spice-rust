@@ -36,11 +36,17 @@ pub(in crate::toolchain) struct CompileFailure {
 
 pub(in crate::toolchain) struct CompileSuccess {
     elapsed: Duration,
+    output: String,
 }
 
 impl CompileSuccess {
     pub(super) fn elapsed(&self) -> Duration {
         self.elapsed
+    }
+
+    /// The complete printed output of the passing compiler.
+    pub(super) fn output(&self) -> &str {
+        &self.output
     }
 }
 
@@ -189,7 +195,10 @@ pub(in crate::toolchain) fn compile_reply(
         ));
     }
     if status.success() {
-        return Ok(CompileSuccess { elapsed });
+        return Ok(CompileSuccess {
+            elapsed,
+            output: printed,
+        });
     }
     let Some(code) = status.code() else {
         return Err(CompileFailure::after_wait(

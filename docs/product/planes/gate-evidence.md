@@ -25,6 +25,17 @@ proof-aware runner. A shell transcript, test output, a copied exit status, or a
 hand-written receipt is not proof: none establishes source, declaration,
 command, environment, tool, and result as one execution.
 
+A receipt also carries diagnostics that never enter its `action_key`, input
+manifest, or typed result: the lease wait before execution, per-phase wall time
+(the app arm's clippy and trunk; a test shard's workspace prebuild and test
+execution), Cargo's fresh and rebuilt artifact counts, a bounded tail of the
+trunk log, and a producer naming the executing appliance's executable digest,
+target, profile, and run. Phase time belongs to the receipt whose execution
+spent it, so a prebuild an earlier shard already completed shows as fresh units
+rather than a share of that shard's compile. Two receipts that differ only in
+diagnostics prove the same thing, and receipts written before diagnostics
+existed still decode and reuse.
+
 A packaged toolchain arm's action specification carries the commands its
 declaration states, so changing what an arm runs changes its key: the app arm
 runs WASM clippy and a development `trunk build` without `--release`, and no

@@ -846,10 +846,18 @@ fn normalized_search_path(value: &OsStr) -> OsString {
 
 /// Produce one receipt. Subprocess output is retained under `captures`, never
 /// streamed; a failure carries its bounded tail.
-fn execute(action: PreparedAction, captures: &Path) -> Result<PendingReceipt, ProveFailure> {
+///
+/// `queued` is the lease wait before execution, recorded beside the execution
+/// time rather than inside it.
+fn execute(
+    action: PreparedAction,
+    captures: &Path,
+    run: wire::CanonicalUuid,
+    queued: Duration,
+) -> Result<PendingReceipt, ProveFailure> {
     let started_at = now()?;
     let started = MonotonicInstant::now();
-    let (typed_result, capture) = match action.execution {
+    let (executed, mut diagnostics) = gate::observe_execution(|| match action.execution {
         PreparedExecution::Gate {
             arm,
             tools: expected_tools,
@@ -857,12 +865,14 @@ fn execute(action: PreparedAction, captures: &Path) -> Result<PendingReceipt, Pr
         } => {
             let result = tools::execute(*arm, expected_tools, captures)?;
             drop(cargo_home);
-            (result, None)
+            Ok((result, None))
         }
-        PreparedExecution::Cargo(execution) => cargo::execute(*execution, captures)?,
-    };
+        PreparedExecution::Cargo(execution) => cargo::execute(*execution, captures),
+    });
+    let (typed_result, capture) = executed?;
     let duration_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let finished_at = now()?;
+    diagnostics.queue_millis = Some(u64::try_from(queued.as_millis()).unwrap_or(u64::MAX));
     let receipt = PassReceipt::new(PassReceiptFields {
         action_key: action.action_key.clone(),
         action_spec: action.action_spec,
@@ -872,7 +882,8 @@ fn execute(action: PreparedAction, captures: &Path) -> Result<PendingReceipt, Pr
         finished_at,
         duration_millis,
         artifacts: Vec::new(),
-        producer: EvidenceProducerRecord::new(None, None, None, None, None),
+        producer: producer(run),
+        diagnostics: Some(diagnostics),
     })
     .map_err(ProveFailure::store)?;
     Ok(PendingReceipt {
@@ -881,6 +892,30 @@ fn execute(action: PreparedAction, captures: &Path) -> Result<PendingReceipt, Pr
         receipt,
         capture,
     })
+}
+
+/// The executing appliance and the proving run it serves.
+fn producer(run: wire::CanonicalUuid) -> EvidenceProducerRecord {
+    EvidenceProducerRecord {
+        appliance_generation: spice::version::running()
+            .ok()
+            .map(|running| running.binary.clone()),
+        target: Some(format!(
+            "{}-{}",
+            std::env::consts::ARCH,
+            std::env::consts::OS
+        )),
+        profile: Some(
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            }
+            .to_owned(),
+        ),
+        run: Some(run),
+        ..EvidenceProducerRecord::default()
+    }
 }
 
 fn requested_actions(

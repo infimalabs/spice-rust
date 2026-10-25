@@ -8,6 +8,7 @@ use sill::Environment;
 
 use super::build_root::{AppSource, AppWorkspace};
 use super::*;
+use crate::execution_diagnostics::{self, ExecutionPhase};
 
 /// Run the declared app checks in order and stop at the first non-clean one.
 ///
@@ -140,24 +141,37 @@ fn app_analysis(
         Err(reason) => return Analysis::terminal(ArmOutcome::ParseFailure, reason),
     };
     let invocations = [
-        CompileInvocation {
-            name: "cargo app-wasm-typecheck",
-            program: cargo,
-            arguments: CARGO_WASM_ARGUMENTS,
-            cwd: source,
-            capture: CompileCapture::Prefix,
-        },
-        CompileInvocation {
-            name: "trunk app build",
-            program: trunk,
-            arguments: TRUNK_BUILD_ARGUMENTS,
-            cwd: app.as_path(),
-            capture: CompileCapture::Prefix,
-        },
+        (
+            ExecutionPhase::Clippy,
+            CompileInvocation {
+                name: "cargo app-wasm-typecheck",
+                program: cargo,
+                arguments: CARGO_WASM_ARGUMENTS,
+                cwd: source,
+                capture: CompileCapture::Prefix,
+            },
+        ),
+        (
+            ExecutionPhase::Trunk,
+            CompileInvocation {
+                name: "trunk app build",
+                program: trunk,
+                arguments: TRUNK_BUILD_ARGUMENTS,
+                cwd: app.as_path(),
+                capture: CompileCapture::Prefix,
+            },
+        ),
     ];
-    for invocation in invocations {
-        if let Err(failure) = run(source, invocation, &environment) {
-            return *failure.analysis;
+    for (phase, invocation) in invocations {
+        match run(source, invocation, &environment) {
+            Ok(success) => {
+                execution_diagnostics::record_phase(phase, success.elapsed());
+                if phase == ExecutionPhase::Trunk {
+                    // Trunk's own log is the only Cargo/bindgen breakdown.
+                    execution_diagnostics::record_output_tail(success.output());
+                }
+            }
+            Err(failure) => return *failure.analysis,
         }
     }
     Analysis::terminal(
@@ -348,9 +362,18 @@ mod tests {
         assert_eq!(refused.outcome, ArmOutcome::NonzeroAnalysis);
         assert_eq!(refused.exit_code, Some(17));
 
-        let (passed, ran) = analyze(None);
+        let ((passed, ran), observed) = execution_diagnostics::observe_execution(|| analyze(None));
         assert_eq!(ran, ["cargo app-wasm-typecheck", "trunk app build"]);
         assert_eq!(passed.outcome, ArmOutcome::Passed);
+        assert_eq!(
+            observed
+                .phases
+                .iter()
+                .map(|timing| timing.phase)
+                .collect::<Vec<_>>(),
+            [ExecutionPhase::Clippy, ExecutionPhase::Trunk]
+        );
+        assert_eq!(observed.output_tail.as_deref(), Some("compiling fixture\n"));
 
         fs::remove_dir_all(&scratch).expect("remove app fixture");
     }

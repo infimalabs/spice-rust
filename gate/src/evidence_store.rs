@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use sill::{LockFile, LockName};
 use wire::{Actor, CanonicalUuid, Digest, Domain, Instant, TaskHandle};
 
+use crate::execution_diagnostics::{ExecutionDiagnostics, OUTPUT_TAIL_LIMIT};
+
 mod admission;
 mod consumption;
 mod fingerprint;
@@ -35,7 +37,12 @@ pub use fingerprint::{
 /// Current on-disk evidence-store schema.
 pub const EVIDENCE_STORE_VERSION: u64 = 1;
 /// Current immutable receipt envelope schema.
-pub const EVIDENCE_RECEIPT_VERSION: u64 = 1;
+///
+/// Version 2 adds execution diagnostics and the producer's target, profile,
+/// and run. Version-1 receipts carry neither and still decode and reuse.
+pub const EVIDENCE_RECEIPT_VERSION: u64 = 2;
+/// The receipt schema before execution diagnostics, still admitted on read.
+const PREVIOUS_RECEIPT_VERSION: u64 = 1;
 
 const LEASE_VERSION: u64 = 1;
 const MAX_RECEIPT_BYTES: usize = 4 * 1024 * 1024;
@@ -89,37 +96,38 @@ impl fmt::Display for ReceiptId {
 }
 
 /// Audit and credit metadata attached by the proof-aware runner.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// Like every diagnostic, the producer never enters an action key, input
+/// manifest, or typed result.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProducerRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    lane: Option<CanonicalUuid>,
+    pub lane: Option<CanonicalUuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    session: Option<CanonicalUuid>,
+    pub session: Option<CanonicalUuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    task: Option<TaskHandle>,
+    pub task: Option<TaskHandle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    actor: Option<Actor>,
+    pub actor: Option<Actor>,
+    /// Digest of the executing appliance's executable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    appliance_generation: Option<Digest>,
+    pub appliance_generation: Option<Digest>,
+    /// `ARCH-OS` of the executing appliance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Build profile of the executing appliance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Correlates every receipt one proving run produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<CanonicalUuid>,
 }
 
 impl ProducerRecord {
-    #[must_use]
-    pub const fn new(
-        lane: Option<CanonicalUuid>,
-        session: Option<CanonicalUuid>,
-        task: Option<TaskHandle>,
-        actor: Option<Actor>,
-        appliance_generation: Option<Digest>,
-    ) -> Self {
-        Self {
-            lane,
-            session,
-            task,
-            actor,
-            appliance_generation,
-        }
+    /// Whether this record names anything the previous receipt schema could not.
+    const fn carries_execution_identity(&self) -> bool {
+        self.target.is_some() || self.profile.is_some() || self.run.is_some()
     }
 }
 
@@ -135,6 +143,7 @@ pub struct PassReceiptFields {
     pub duration_millis: u64,
     pub artifacts: Vec<Digest>,
     pub producer: ProducerRecord,
+    pub diagnostics: Option<ExecutionDiagnostics>,
 }
 
 /// Immutable passing receipt validated against the approved evidence contract.
@@ -152,6 +161,8 @@ pub struct PassReceipt {
     duration_millis: u64,
     artifacts: Vec<Digest>,
     producer: ProducerRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diagnostics: Option<ExecutionDiagnostics>,
 }
 
 impl PassReceipt {
@@ -169,6 +180,7 @@ impl PassReceipt {
             duration_millis: fields.duration_millis,
             artifacts: fields.artifacts,
             producer: fields.producer,
+            diagnostics: fields.diagnostics,
         };
         receipt.validate()?;
         Ok(receipt)
@@ -198,6 +210,18 @@ impl PassReceipt {
         &self.typed_result
     }
 
+    /// Who produced this receipt.
+    #[must_use]
+    pub const fn producer(&self) -> &ProducerRecord {
+        &self.producer
+    }
+
+    /// Where the execution's time went, when the producer recorded it.
+    #[must_use]
+    pub const fn diagnostics(&self) -> Option<&ExecutionDiagnostics> {
+        self.diagnostics.as_ref()
+    }
+
     /// Canonical receipt envelope bytes.
     pub fn encode(&self) -> Result<Vec<u8>, EvidenceStoreError> {
         self.validate()?;
@@ -213,7 +237,7 @@ impl PassReceipt {
         Ok(bytes)
     }
 
-    /// Admit only the current schema in its one canonical spelling.
+    /// Admit the current or previous schema in its one canonical spelling.
     pub fn decode(bytes: &[u8]) -> Result<Self, EvidenceStoreError> {
         if bytes.len() > MAX_RECEIPT_BYTES {
             return Err(EvidenceStoreError::new(
@@ -235,13 +259,27 @@ impl PassReceipt {
     }
 
     fn validate(&self) -> Result<(), EvidenceStoreError> {
-        if self.version != EVIDENCE_RECEIPT_VERSION {
+        let previous_schema = self.diagnostics.is_none()
+            && !self.producer.carries_execution_identity()
+            && self.version == PREVIOUS_RECEIPT_VERSION;
+        if self.version != EVIDENCE_RECEIPT_VERSION && !previous_schema {
             return Err(EvidenceStoreError::new(
                 "gate-evidence::receipt-version-unsupported",
                 format!(
                     "receipt version {} is not {EVIDENCE_RECEIPT_VERSION}",
                     self.version
                 ),
+            ));
+        }
+        if self
+            .diagnostics
+            .as_ref()
+            .and_then(|diagnostics| diagnostics.output_tail.as_ref())
+            .is_some_and(|tail| tail.len() > OUTPUT_TAIL_LIMIT)
+        {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::receipt-diagnostics-invalid",
+                format!("receipt output tail exceeds {OUTPUT_TAIL_LIMIT} bytes"),
             ));
         }
         if !self.passed {
@@ -1225,7 +1263,11 @@ mod invariant_fixture {
             finished_at: "2026-09-04T12:00:00.100Z".parse().unwrap(),
             duration_millis: 100,
             artifacts: Vec::new(),
-            producer: ProducerRecord::new(None, None, None, Some(Actor::Spice), None),
+            producer: ProducerRecord {
+                actor: Some(Actor::Spice),
+                ..ProducerRecord::default()
+            },
+            diagnostics: None,
         })
         .expect("construct evidence fixture receipt")
     }
@@ -1320,5 +1362,110 @@ mod invariant_tests {
             assert!(store.lookup(action).unwrap().is_none());
             assert!(!store.layout.object_path(&receipt.id().unwrap()).exists());
         }
+    }
+
+    /// Reuse resolves `receipt` alone in a fresh store by its exact authority.
+    fn reused_alone(receipt: &PassReceipt) -> Option<ReceiptId> {
+        let fixture = Fixture::new("receipt-reuse");
+        let store = fixture.store();
+        store.publish(receipt).unwrap();
+        let expected = ReceiptExpectation::new(
+            "fixture-action",
+            receipt.action().clone(),
+            receipt.action_spec().clone(),
+            receipt.input_manifest().clone(),
+        )
+        .unwrap();
+        store
+            .lookup_batch_exact(&[expected])
+            .unwrap()
+            .remove(0)
+            .map(|action| action.receipt().clone())
+    }
+
+    #[test]
+    fn execution_diagnostics_and_producer_never_change_what_a_receipt_proves() {
+        use crate::execution_diagnostics::{
+            CargoArtifactCounts, ExecutionDiagnostics, ExecutionPhase, PhaseTiming,
+        };
+
+        let action = derive_action_key(b"diagnosed action");
+        let bare = receipt(&action, b"result");
+        let diagnosed = PassReceipt::new(PassReceiptFields {
+            action_key: action.clone(),
+            action_spec: bare.action_spec().clone(),
+            input_manifest: bare.input_manifest().clone(),
+            typed_result: bare.typed_result().clone(),
+            started_at: "2026-09-04T13:00:00.000Z".parse().unwrap(),
+            finished_at: "2026-09-04T13:02:31.361Z".parse().unwrap(),
+            duration_millis: 151_361,
+            artifacts: Vec::new(),
+            producer: ProducerRecord {
+                appliance_generation: Some(Digest::compute(Domain::DistArtifact, b"appliance")),
+                target: Some("aarch64-macos".to_owned()),
+                profile: Some("release".to_owned()),
+                run: Some("00000000-0000-4000-8000-000000000001".parse().unwrap()),
+                ..ProducerRecord::default()
+            },
+            diagnostics: Some(ExecutionDiagnostics {
+                queue_millis: Some(3),
+                phases: vec![
+                    PhaseTiming {
+                        phase: ExecutionPhase::Prebuild,
+                        millis: 151_292,
+                    },
+                    PhaseTiming {
+                        phase: ExecutionPhase::Execution,
+                        millis: 30,
+                    },
+                ],
+                cargo: Some(CargoArtifactCounts {
+                    fresh: 12,
+                    rebuilt: 340,
+                }),
+                output_tail: Some("Finished `release` profile".to_owned()),
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(
+            PassReceipt::decode(&diagnosed.encode().unwrap()).unwrap(),
+            diagnosed
+        );
+        assert_ne!(bare.id().unwrap(), diagnosed.id().unwrap());
+        assert_eq!(bare.action(), diagnosed.action());
+        assert_eq!(bare.input_manifest(), diagnosed.input_manifest());
+        assert_eq!(bare.typed_result(), diagnosed.typed_result());
+        for receipt in [&bare, &diagnosed] {
+            assert_eq!(reused_alone(receipt), Some(receipt.id().unwrap()));
+        }
+    }
+
+    #[test]
+    fn previous_schema_receipts_still_decode_and_reuse() {
+        let previous = concat!(
+            r#"{"version":1,"#,
+            r#""action_key":"f65ceae6081109908b53d4c58d48bfe9b27736dfb5f8ca93265e2a2ace336870","#,
+            r#""action_spec":"51647a7f95f6e401f92bd96072beb9d299f0133765ad49bcade245d40d2e6128","#,
+            r#""input_manifest":"00beea5eb2009c20076a9bc0719221989e242bd6d57c09ad91ca6e19b3d0e57e","#,
+            r#""typed_result":"8eeb8f0c935a2057198df9d90a81b90a93d3d74eedb1712414de8a50676a13e5","#,
+            r#""passed":true,"started_at":"2026-10-25T19:17:23.442Z","#,
+            r#""finished_at":"2026-10-25T19:17:50.381Z","duration_millis":26938,"#,
+            r#""artifacts":[],"producer":{}}"#,
+        );
+        let receipt = PassReceipt::decode(previous.as_bytes()).unwrap();
+        assert_eq!(receipt.encode().unwrap(), previous.as_bytes());
+        assert_eq!(reused_alone(&receipt), Some(receipt.id().unwrap()));
+
+        let mislabeled = previous.replace(
+            r#""producer":{}"#,
+            r#""producer":{"run":"00000000-0000-4000-8000-000000000001"}"#,
+        );
+        assert_eq!(
+            PassReceipt::decode(mislabeled.as_bytes())
+                .unwrap_err()
+                .reason(),
+            "gate-evidence::receipt-version-unsupported"
+        );
     }
 }
