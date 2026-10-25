@@ -28,14 +28,14 @@ requires `spice task reclaim`.
 
 ## Steering and rooms
 
-For pending keys, lead the next working message with visible `ACK KEY [KEY
-...]: CLAUSE` or `NAK KEY: CLAUSE`. With a tool call, begin its first intent
-with the same header as fallback. It retires the key on landing: no command or
-confirmation. Never stop unfinished work just to ACK. Evidence is verbatim
-visible assistant text or tool intent, not reasoning, arguments, quotes,
-buried/described headers. A post-ACK reminder only warrants an inbox check; an
-empty inbox is valid. `[STALE]` marks possibly obsolete direction: check current
-task and steering state first.
+Lead the next working message for pending keys with `ACK KEY [KEY
+...]: CLAUSE` or `NAK KEY: CLAUSE`. A `#` on each key is accepted; bare is
+canonical. Tool fallback: start its intent with the header. Landing retires the
+key; no command or confirmation. Do not stop unfinished work just
+to ACK. Evidence must be verbatim visible assistant text or tool intent, never
+reasoning, arguments, quotes, or buried/described headers. After an ACK
+reminder, check the inbox; empty is valid. `[STALE]` means possibly obsolete
+direction: check current task and steering state first.
 
 Use addresses from briefing/`spice lane list`, never UUID/name;
 `unavailable:REASON` means vacant. `MSG SELECTOR...: BODY` sends only from

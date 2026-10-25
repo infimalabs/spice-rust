@@ -74,13 +74,18 @@ fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
     }
 }
 
-/// Separator punctuation and emphasis are presentation around one key grammar.
+/// Separator punctuation, decoration, and emphasis share one key grammar.
 #[test]
 fn current_header_forms_share_one_packet_grammar() {
     for (prose, expected, separator) in [
         ("ACK 1kJK6N3R: applied.", "1:5 1kJK6N3R acked", Some(':')),
         ("ACK 1kJK6N3R. applied.", "1:5 1kJK6N3R acked", Some('.')),
         ("ACK 1kJK6N3R applied.", "1:5 1kJK6N3R acked", None),
+        (
+            "NAK #1kJK7Sqy: declined.",
+            "1:6 1kJK7Sqy declined",
+            Some(':'),
+        ),
         (
             "**ACK 1kJK6N3R:** applied.",
             "1:7 1kJK6N3R acked",
@@ -193,17 +198,17 @@ fn one_distributed_message_extracts_every_acknowledgement_once() {
     );
 }
 
-/// Keys listed with commas are the same header as keys listed with spaces;
-/// a comma that nothing keyed follows is the header's separator, as before.
+/// A copied MSG hash decorates a key without changing a mixed key list;
+/// a comma that nothing keyed follows remains the header separator.
 #[test]
 fn a_comma_between_keys_lists_them_and_a_comma_after_the_last_key_separates() {
     let board = board();
 
     assert_eq!(
-        report(&scan("ACK 1kJK6N3R, 1kJK6M0V: both handled.", &board)),
+        report(&scan("ACK #1kJK6N3R, 1kJK6M0V: both handled.", &board)),
         vec![
-            "1:5 1kJK6N3R acked".to_owned(),
-            "1:15 1kJK6M0V acked".to_owned(),
+            "1:6 1kJK6N3R acked".to_owned(),
+            "1:16 1kJK6M0V acked".to_owned(),
         ],
     );
     let packets = scan_acknowledgements("ACK 1kJK6N3R, then the rest.", &board);

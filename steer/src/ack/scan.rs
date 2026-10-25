@@ -729,17 +729,17 @@ fn tokens_after(prose: &str, marker_end: usize) -> Option<Header> {
     let mut tokens = Vec::new();
     let mut header_end = cursor;
     loop {
-        let token_start = skip_emphasis(prose, cursor);
+        let token_start = skip_key_decoration(prose, cursor);
         let Some(end) = key_token_end(prose, token_start, !tokens.is_empty()) else {
             break;
         };
         tokens.push((token_start, end));
-        header_end = skip_emphasis(prose, end);
+        header_end = skip_key_decoration(prose, end);
         cursor = skip_header_space(prose, header_end);
         // A comma between keys lists them; before anything else it separates.
         if prose.as_bytes().get(cursor) == Some(&b',') {
             let listed = skip_header_space(prose, cursor + 1);
-            if key_token_end(prose, skip_emphasis(prose, listed), true).is_some() {
+            if key_token_end(prose, skip_key_decoration(prose, listed), true).is_some() {
                 cursor = listed;
             }
         }
@@ -748,7 +748,7 @@ fn tokens_after(prose: &str, marker_end: usize) -> Option<Header> {
         return None;
     }
 
-    let mut probe = skip_emphasis(prose, header_end);
+    let mut probe = skip_key_decoration(prose, header_end);
     probe = skip_header_space(prose, probe);
     let separator = prose.get(probe..)?.chars().next().filter(|character| {
         matches!(
@@ -758,7 +758,7 @@ fn tokens_after(prose: &str, marker_end: usize) -> Option<Header> {
     });
     if let Some(separator) = separator {
         probe += separator.len_utf8();
-        probe = skip_emphasis(prose, probe);
+        probe = skip_key_decoration(prose, probe);
         header_end = probe;
     }
 
@@ -832,6 +832,18 @@ fn skip_emphasis(prose: &str, mut cursor: usize) -> usize {
         .as_bytes()
         .get(cursor)
         .is_some_and(|byte| matches!(byte, b'*' | b'_'))
+    {
+        cursor += 1;
+    }
+    cursor
+}
+
+/// Markdown emphasis or a copied MSG selector marker around one ACK/NAK key.
+fn skip_key_decoration(prose: &str, mut cursor: usize) -> usize {
+    while prose
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(|byte| matches!(byte, b'*' | b'_' | b'#'))
     {
         cursor += 1;
     }
