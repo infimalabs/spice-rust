@@ -155,7 +155,7 @@ fn render_maturity(
     let state = match judged {
         DesignMaturityState::Fresh => "fresh",
         DesignMaturityState::Steeping { .. } => "steeping",
-        DesignMaturityState::Steeped { .. } => "steeped",
+        DesignMaturityState::Steeped => "steeped",
     };
     html! {
         <section
