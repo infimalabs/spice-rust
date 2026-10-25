@@ -137,7 +137,7 @@ impl Default for OmpConfig {
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
             effort: Effort::High,
             fast_mode: false,
-            lsp: false,
+            lsp: true,
             auto_compact_window_tokens: None,
         }
     }
@@ -170,9 +170,9 @@ impl OmpConfig {
 
     /// Whether omp's own language-server tooling is admitted for this lane.
     ///
-    /// Off by default: the tool starts language servers, and a worktree that
-    /// wants them states so alongside the `.omp/lsp.json` describing what to
-    /// start. Nothing here names a server or a toolchain.
+    /// On by default: the lane takes the tool and the language servers its
+    /// worktree's `.omp/lsp.json` describes; policy declines with
+    /// `lsp = false`. Nothing here names a server or a toolchain.
     #[must_use]
     pub const fn lsp(&self) -> bool {
         self.lsp
