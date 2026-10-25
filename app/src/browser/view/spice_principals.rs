@@ -185,7 +185,7 @@ fn principals_view(props: &PrincipalsProps) -> Html {
                 },
                 _ => Html::default(),
             };
-            (vec![own_self()], note, Html::default())
+            (vec![own_self()], note, Default::default())
         }
     };
     let status = progress_now.map(|progress| match progress {
@@ -202,18 +202,22 @@ fn principals_view(props: &PrincipalsProps) -> Html {
         .as_ref()
         .filter(|shown| shown.scope == props.scope)
         .map(|shown| render_handoff(shown, &handoff));
+    let (admit_control, admit_form) = admit;
     html! {
         <section
             class="app-sheet-section app-spice-principals"
             aria-labelledby={HEADING}
             data-principals=""
         >
-            <div class="section-heading"><h2 id={HEADING}>{"Principals"}</h2></div>
+            <div class="section-heading">
+                <h2 id={HEADING}>{"Principals"}</h2>
+                {admit_control}
+            </div>
+            {admit_form}
             {handoff_now}
             {status}
             <ul class="app-spice-principal-list">{for rows}</ul>
             {note}
-            {admit}
         </section>
     }
 }
@@ -561,25 +565,31 @@ fn render_deauthorize(row: &PrincipalRow<'_>, name: &str) -> Html {
     }
 }
 
+/// The Admit a human toggle for the Principals heading, and the admission
+/// form that stands beneath the heading while it is open.
 fn render_admit(
     open: bool,
     ready: bool,
     scope: SessionScope,
     set_open: &OpenState,
     send: &Send,
-) -> Html {
+) -> (Html, Html) {
     let toggle = {
         let set_open = set_open.clone();
         Callback::from(move |_: MouseEvent| set_open.set((!open).then_some((scope, Open::Admit))))
     };
+    let control = html! {
+        <div class="app-control-rail">
+            <button
+                type="button"
+                aria-expanded={if open { "true" } else { "false" }}
+                disabled={!ready}
+                onclick={toggle.clone()}
+            >{"Admit a human"}</button>
+        </div>
+    };
     if !open {
-        return html! {
-            <div class="app-control-rail">
-                <button type="button" disabled={!ready} onclick={toggle}>
-                    {"Admit a human"}
-                </button>
-            </div>
-        };
+        return (control, Html::default());
     }
     let name_ref = NodeRef::default();
     let email_ref = NodeRef::default();
@@ -609,7 +619,7 @@ fn render_admit(
             send.emit(("Admitting", PrincipalWrite::Admit(admit)));
         })
     };
-    html! {
+    let form = html! {
         <form class="app-spice-principal-form" data-principal-admit="" {onsubmit}>
             <label>
                 <span>{"Name"}</span>
@@ -628,7 +638,8 @@ fn render_admit(
                 <button type="button" onclick={toggle}>{"Cancel"}</button>
             </div>
         </form>
-    }
+    };
+    (control, form)
 }
 
 /// A trimmed, non-empty input value.
