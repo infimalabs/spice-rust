@@ -245,7 +245,7 @@ fn render_self(
             <div class="app-spice-principal-identity">
                 {super::render_operator_avatar(shown)}
                 <div class="app-spice-principal-facts">
-                    <strong>
+                    <strong title={format!("{name} (you)")}>
                         {name}
                         <span class="app-spice-principal-own">{" (you)"}</span>
                     </strong>
@@ -405,6 +405,11 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
         Some(Open::Deauthorize(open)) if open == principal => render_deauthorize(row, &name),
         _ => Html::default(),
     };
+    let name_title = if row.own {
+        format!("{name} (you)")
+    } else {
+        name.clone()
+    };
     html! {
         <li
             class="app-spice-principal"
@@ -415,7 +420,7 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
             <div class="app-spice-principal-identity">
                 {super::render_operator_avatar(&identity)}
                 <div class="app-spice-principal-facts">
-                    <strong title={principal.to_string()}>
+                    <strong title={name_title}>
                         {name}
                         if row.own {
                             <span class="app-spice-principal-own">{" (you)"}</span>
