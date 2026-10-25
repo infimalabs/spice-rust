@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::mpsc;
 
 use super::*;
+use spice::serve::rack::SKILL;
 
 fn fixture(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -376,15 +377,13 @@ fn the_same_generation_and_tracked_sources_assemble_one_rack() {
 
     let rack = Rack::admit_generation(&first.bytes, first.canvas().generation())
         .expect("assembled rack admits as its generation");
-    for (namespace, member, source) in [
-        (Namespace::Skill, "SKILL.md", "spice/agent/SKILL.md"),
+    for (path, source) in [
+        (SKILL.to_owned(), "spice/agent/SKILL.md"),
         (
-            Namespace::Doc,
-            "planes/distribution.md",
+            Namespace::Docs.member("planes/distribution.md"),
             "docs/planes/distribution.md",
         ),
     ] {
-        let path = namespace.member(member);
         let inflated = rack
             .member(&path)
             .expect("tracked source is a member")

@@ -162,8 +162,8 @@ the generation's files under `app/`. G is the identity the shell names in every
 qualified route, not the archive digest.
 
 Every appliance executable links one spice rack in the same format: `app/`
-members copied unchanged from `G.zip`, `skill/SKILL.md`, `doc/...` from
-`docs/`, and `tool/NAME/...` beside each tool's `tool/NAME/manifest.json`.
+members copied unchanged from `G.zip`, the root member `SKILL.md`, `docs/...`
+from `docs/`, and `tool/NAME/...` beside each tool's `tool/NAME/manifest.json`.
 Members are sorted by logical path. Each member is one deterministic gzip
 stream (fixed header, one pinned deflate implementation and level) stored in
 ZIP with method STORE and the fixed 1980-01-01 time. The archive has no data
@@ -172,20 +172,21 @@ therefore a pure function of its members, and an app member's stored bytes are
 served as-is under `Content-Encoding: gzip`. Admission parses the
 end-of-central-directory record and the central directory once. It refuses,
 naming the member, any byte outside the records, header disagreement, path
-outside every namespace or outside the app shell inventory, a tool without its
-manifest, framing violation, or exceeded bound. Member bounds are declared per
-namespace and summed; member and total byte bounds cover the whole rack. It
-derives G from the app shell, the only member it inflates. Integrity rests on
+outside every namespace other than `SKILL.md` or outside the app shell
+inventory, a tool without its manifest, framing violation, or exceeded bound.
+Member bounds are declared per namespace and summed; member and total byte
+bounds cover the whole rack. It derives G from the app shell, the only member
+it inflates. Integrity rests on
 the archive digest, not on ZIP CRC fields. Owners:
 [`serve/src/rack.rs`](../../serve/src/rack.rs) writes and admits racks,
 [`xtask/src/app.rs`](../../xtask/src/app.rs) stages `G.zip`, and
 [`xtask/src/app/rack.rs`](../../xtask/src/app/rack.rs) assembles the linked
 rack from its tracked source list.
 
-A resident reads rack members as `spice://NS/PATH` with the line selectors the
-other resources take; `spice://SKILL.md` is `spice://skill/SKILL.md`, and a
-namespace or directory read lists its members. At startup an installed
-executable admits the rack it links through one `rack::admitted` fact naming
+A resident reads rack members as `spice://SKILL.md` and `spice://NS/PATH` with
+the line selectors the other resources take, and a namespace or directory read
+lists its members. At startup an installed executable admits the rack it links
+through one `rack::admitted` fact naming
 the rack archive digest and its app generation, appended once per distinct
 archive; that fact's sequence code is the generation short code a rack URL
 names: `spice://NS/PATH@CODE` answers exactly what `spice://NS/PATH` answers

@@ -186,15 +186,15 @@ static RACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
         })
         .collect::<Vec<_>>();
     files.extend([
-        ("skill/SKILL.md".to_owned(), RACK_SKILL.as_bytes().to_vec()),
-        ("doc/guide.md".to_owned(), b"# guide\n".to_vec()),
-        ("doc/figure.png".to_owned(), RACK_FIGURE.to_vec()),
+        ("SKILL.md".to_owned(), RACK_SKILL.as_bytes().to_vec()),
+        ("docs/guide.md".to_owned(), b"# guide\n".to_vec()),
+        ("docs/figure.png".to_owned(), RACK_FIGURE.to_vec()),
         (
-            "doc/huge.png".to_owned(),
+            "docs/huge.png".to_owned(),
             vec![0; super::rack::EXTRACTION_BYTES as usize + 1],
         ),
         (
-            "doc/planes/distribution.md".to_owned(),
+            "docs/planes/distribution.md".to_owned(),
             b"# planes\n".to_vec(),
         ),
     ]);
@@ -230,15 +230,10 @@ fn rack_read_coded(
 ) -> Result<String, String> {
     let rack = Rack::admit(&RACK).expect("fixture rack admits");
     let request = Request::parse(url)?;
-    let Resource::Rack {
-        namespace,
-        path,
-        generation,
-    } = &request.resource
-    else {
+    let Resource::Rack { path, generation } = &request.resource else {
         panic!("{url} names no rack member: {request:?}");
     };
-    let document = super::rack::document(&rack, *namespace, path, *generation, url, || {
+    let document = super::rack::document(&rack, path, *generation, url, || {
         Ok(super::rack::Runtime {
             extractions: root.to_path_buf(),
             code,
@@ -264,35 +259,38 @@ fn rack_urls_answer_member_text_line_selections_and_listings() {
         rack_read(spice::install::SKILL_RESOURCE).as_deref(),
         Ok(RACK_SKILL)
     );
-    assert_eq!(
-        rack_read("spice://skill/SKILL.md").as_deref(),
-        Ok(RACK_SKILL)
-    );
+    for retired in [
+        "spice://skill/SKILL.md",
+        "spice://doc/guide.md",
+        "spice://doc",
+    ] {
+        refusal(retired);
+    }
     assert_eq!(
         rack_read("spice://SKILL.md:1-2").as_deref(),
         Ok("# skill\nline two")
     );
     assert_eq!(
-        rack_read("spice://doc/guide.md").as_deref(),
+        rack_read("spice://docs/guide.md").as_deref(),
         Ok("# guide\n")
     );
 
-    let namespace = rack_read("spice://doc").expect("a namespace lists its members");
+    let namespace = rack_read("spice://docs").expect("a namespace lists its members");
     assert!(
         namespace.ends_with(
-            "\nresources:\n  spice://doc/figure.png\n  spice://doc/guide.md\n  \
-             spice://doc/huge.png\n  spice://doc/planes/distribution.md"
+            "\nresources:\n  spice://docs/figure.png\n  spice://docs/guide.md\n  \
+             spice://docs/huge.png\n  spice://docs/planes/distribution.md"
         ),
         "{namespace}"
     );
-    let directory = rack_read("spice://doc/planes/").expect("a directory lists its members");
+    let directory = rack_read("spice://docs/planes/").expect("a directory lists its members");
     assert!(
-        directory.ends_with("\nresources:\n  spice://doc/planes/distribution.md"),
+        directory.ends_with("\nresources:\n  spice://docs/planes/distribution.md"),
         "{directory}"
     );
 
-    rack_read("spice://doc/absent.md").expect_err("an absent member is refused");
-    rack_read("spice://doc/plan").expect_err("a path prefix is no directory");
+    rack_read("spice://docs/absent.md").expect_err("an absent member is refused");
+    rack_read("spice://docs/plan").expect_err("a path prefix is no directory");
 }
 
 #[test]
@@ -310,7 +308,7 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
         file.display()
     );
 
-    let first = rack_read_into("spice://doc/figure.png", &root).expect("an image hands off");
+    let first = rack_read_into("spice://docs/figure.png", &root).expect("an image hands off");
     assert_eq!(first, expected);
     let bytes = std::fs::read(&file).expect("the handed-off file exists");
     assert_eq!(
@@ -319,7 +317,7 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
     );
     let written = std::fs::metadata(&file).expect("handed-off metadata");
 
-    let second = rack_read_into("spice://doc/figure.png", &root).expect("a repeat hands off");
+    let second = rack_read_into("spice://docs/figure.png", &root).expect("a repeat hands off");
     assert_eq!(second, expected);
     assert_eq!(
         std::fs::metadata(&file)
@@ -342,7 +340,7 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
         "{wasm}"
     );
 
-    let refused = rack_read_into("spice://doc/huge.png", &root).expect_err("above the bound");
+    let refused = rack_read_into("spice://docs/huge.png", &root).expect_err("above the bound");
     assert!(
         refused.contains(&format!(
             "above the {} byte rack extraction bound",
@@ -351,7 +349,7 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
         "{refused}"
     );
     assert_eq!(
-        rack_read_into("spice://doc/guide.md:1", &root).as_deref(),
+        rack_read_into("spice://docs/guide.md:1", &root).as_deref(),
         Ok("# guide")
     );
 
@@ -361,35 +359,35 @@ fn non_text_rack_members_hand_off_digest_named_bytes_once_within_a_bound() {
 #[test]
 fn rack_urls_serve_only_the_linked_generation_by_its_admitting_short_code() {
     let root = extractions();
-    let plain = rack_read_into("spice://doc/guide.md", &root).expect("the member reads");
+    let plain = rack_read_into("spice://docs/guide.md", &root).expect("the member reads");
     assert_eq!(
-        rack_read_into(&format!("spice://doc/guide.md@{RACK_CODE}"), &root).as_deref(),
+        rack_read_into(&format!("spice://docs/guide.md@{RACK_CODE}"), &root).as_deref(),
         Ok(plain.as_str())
     );
     assert_eq!(
-        rack_read_into(&format!("spice://doc@{RACK_CODE}"), &root),
-        rack_read_into("spice://doc", &root)
+        rack_read_into(&format!("spice://docs@{RACK_CODE}"), &root),
+        rack_read_into("spice://docs", &root)
     );
     assert_eq!(
-        rack_read_into(&format!("spice://doc/guide.md@{RACK_CODE}:1"), &root).as_deref(),
+        rack_read_into(&format!("spice://docs/guide.md@{RACK_CODE}:1"), &root).as_deref(),
         Ok("# guide")
     );
 
     let other = wire::SequenceCode::new(43);
-    let refused = rack_read_into(&format!("spice://doc/guide.md@{other}"), &root)
+    let refused = rack_read_into(&format!("spice://docs/guide.md@{other}"), &root)
         .expect_err("another code is refused");
     assert!(
         refused.contains(&format!("links generation {RACK_CODE}")),
         "{refused}"
     );
 
-    let unadmitted = rack_read_coded(&format!("spice://doc/guide.md@{RACK_CODE}"), &root, None)
+    let unadmitted = rack_read_coded(&format!("spice://docs/guide.md@{RACK_CODE}"), &root, None)
         .expect_err("no fact admits the rack");
     assert!(
         unadmitted.contains("no journal fact admits"),
         "{unadmitted}"
     );
-    let pointer = rack_read_coded("spice://doc/figure.png", &root, None).expect("hands off");
+    let pointer = rack_read_coded("spice://docs/figure.png", &root, None).expect("hands off");
     assert!(
         !pointer.contains("generation") && pointer.contains(" at "),
         "{pointer}"
@@ -402,20 +400,20 @@ fn rack_urls_serve_only_the_linked_generation_by_its_admitting_short_code() {
 fn rack_urls_refuse_queries_writes_and_digest_or_uuid_generations() {
     for url in [
         "spice://SKILL.md?release=current",
-        "spice://skill/SKILL.md?release=current",
-        "spice://doc?limit=3",
+        "spice://SKILL.md@7?release=current",
+        "spice://docs?limit=3",
     ] {
         assert!(refusal(url).contains("takes no query"), "{url}");
     }
     let digest = wire::Digest::compute(wire::Domain::DistArtifact, b"a generation");
     for url in [
-        format!("spice://doc/guide.md@{digest}"),
-        "spice://doc@11111111-2222-3333-4444-555555555555".to_owned(),
+        format!("spice://docs/guide.md@{digest}"),
+        "spice://docs@11111111-2222-3333-4444-555555555555".to_owned(),
     ] {
         assert!(refusal(&url).contains("journal short code"), "{url}");
     }
     assert!(
-        refusal("spice://doc/guide.md@not-a-code").contains("no journal short code"),
+        refusal("spice://docs/guide.md@not-a-code").contains("no journal short code"),
         "other text is no code"
     );
 
@@ -428,7 +426,7 @@ fn rack_urls_refuse_queries_writes_and_digest_or_uuid_generations() {
         graphs: Default::default(),
     };
     let refused = seat
-        .serve("spice://skill/SKILL.md", Access::Write("# skill\n"), |_| {
+        .serve("spice://docs/guide.md", Access::Write("# guide\n"), |_| {
             panic!("no quote is read")
         })
         .expect_err("a rack member takes no write");

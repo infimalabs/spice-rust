@@ -3,7 +3,7 @@ use std::io::Read as _;
 use wire::manifest::renderer::{self, File, Kind, Member};
 use wire::{Digest, Domain};
 
-use super::{MAX_MEMBER_BYTES, Namespace, Rack, RackError, RackInput};
+use super::{MAX_MEMBER_BYTES, Namespace, Rack, RackError, RackInput, SKILL};
 
 const LOCAL_FLAGS: usize = 6;
 const LOCAL_METHOD: usize = 8;
@@ -173,20 +173,23 @@ fn archives_are_a_pure_function_of_their_files() {
 
 #[test]
 fn writing_refuses_repeated_unnormalized_and_unnamespaced_paths() {
-    let repeated = [("doc/a.md", b"a".as_slice()), ("doc/a.md", b"b".as_slice())];
-    assert!(matches!(
-        Rack::write(repeated),
-        Err(RackError::Member { path, .. }) if path == "doc/a.md"
-    ));
+    for repeated in ["docs/a.md", SKILL] {
+        assert!(matches!(
+            Rack::write([(repeated, b"a".as_slice()), (repeated, b"b".as_slice())]),
+            Err(RackError::Member { path, .. }) if path == repeated
+        ));
+    }
     for path in [
-        "/doc/a.md",
-        "doc//b",
-        "doc/./a",
-        "doc/a/..",
-        "doc/a\\b",
-        "doc/a\0b",
+        "/docs/a.md",
+        "docs//b",
+        "docs/./a",
+        "docs/a/..",
+        "docs/a\\b",
+        "docs/a\0b",
         "a.md",
-        "docs/a.md",
+        "skill.md",
+        "doc/a.md",
+        "skill/SKILL.md",
     ] {
         assert!(
             matches!(
@@ -201,8 +204,8 @@ fn writing_refuses_repeated_unnormalized_and_unnamespaced_paths() {
 #[test]
 fn stored_members_copy_the_stream_their_bytes_would_deflate_to() {
     let mut files = files(Some(&generation()));
-    files.push(("doc/guide.md".to_owned(), b"# Guide\n".repeat(32)));
-    files.push(("skill/SKILL.md".to_owned(), b"# Skill\n".to_vec()));
+    files.push(("docs/guide.md".to_owned(), b"# Guide\n".repeat(32)));
+    files.push((SKILL.to_owned(), b"# Skill\n".to_vec()));
     let bytes = archive_of(&files);
     let admitted = Rack::admit(&bytes).expect("rack admits");
     let copied = Rack::write(
@@ -214,7 +217,7 @@ fn stored_members_copy_the_stream_their_bytes_would_deflate_to() {
     assert_eq!(copied, bytes);
     assert_eq!(
         admitted
-            .namespace(Namespace::Doc)
+            .namespace(Namespace::Docs)
             .map(|(path, _)| path)
             .collect::<Vec<_>>(),
         ["guide.md"]
@@ -236,9 +239,16 @@ fn namespaces_hold_their_declared_member_bounds_and_tool_manifests() {
                 .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
         )
     };
+    let docs = (0..=Namespace::Docs.max_members())
+        .map(|index| (format!("docs/{index:03}.md"), b"d".as_slice()))
+        .collect::<Vec<_>>();
+    let docs = docs
+        .iter()
+        .map(|(path, bytes)| (path.as_str(), *bytes))
+        .collect::<Vec<_>>();
     assert!(matches!(
-        with(&[("skill/A.md", b"a"), ("skill/B.md", b"b")]),
-        Err(RackError::Member { path, .. }) if path == "skill/B.md"
+        with(&docs),
+        Err(RackError::Member { path, .. }) if path == "docs/256.md"
     ));
     assert!(matches!(
         with(&[("tool/grep/run.wasm", b"\0asm")]),

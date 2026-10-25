@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use spice::serve::rack::{Namespace, Rack};
+use spice::serve::rack::{Namespace, Rack, SKILL};
 
 use super::*;
 
@@ -57,14 +57,10 @@ impl Fixture {
         )
         .expect("write lane app archive");
         for (source, member, contents) in [
-            (
-                "spice/agent/SKILL.md",
-                Namespace::Skill.member("SKILL.md"),
-                b"# skill\n",
-            ),
+            ("spice/agent/SKILL.md", SKILL.to_owned(), b"# skill\n"),
             (
                 "docs/guide.md",
-                Namespace::Doc.member("guide.md"),
+                Namespace::Docs.member("guide.md"),
                 b"# guide\n",
             ),
         ] {

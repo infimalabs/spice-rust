@@ -1,12 +1,13 @@
 //! The spice rack: everything an executable ships besides its code, as one
 //! deterministic ZIP whose members are gzip streams stored with method STORE.
 //!
-//! Every member path begins with the [`Namespace`] that holds it: `app/` the
-//! browser app generation, `skill/` the agent skill, `doc/` documentation, and
-//! `tool/` tool members beside their manifests. [`Rack::write`] is the only
-//! writer and [`Rack::admit`] the only reader. Every member is one gzip stream
-//! under a fixed header, so a browser receives the stored bytes directly under
-//! `Content-Encoding: gzip`. Admission inflates only the app shell;
+//! Every member path but one begins with the [`Namespace`] that holds it:
+//! `app/` the browser app generation, `docs/` documentation, and `tool/` tool
+//! members beside their manifests. The agent skill is the one root member,
+//! [`SKILL`]. [`Rack::write`] is the only writer and [`Rack::admit`] the only
+//! reader. Every member is one gzip stream under a fixed header, so a browser
+//! receives the stored bytes directly under `Content-Encoding: gzip`.
+//! Admission inflates only the app shell;
 //! [`RackMember::inflate`] yields any other member's original bytes on demand.
 //! The archive bytes digest and the executable signature that carries them are
 //! the integrity authority, and the ZIP CRC fields are structural evidence
@@ -19,17 +20,19 @@ use std::io::Write as _;
 
 use flate2::{Compression, Crc, Decompress, FlushDecompress, Status};
 
-/// Most members one rack carries: every namespace's bound summed.
+/// Most members one rack carries: every namespace's bound summed, and the skill.
 pub const MAX_MEMBERS: usize = Namespace::App.max_members()
-    + Namespace::Doc.max_members()
-    + Namespace::Skill.max_members()
-    + Namespace::Tool.max_members();
+    + Namespace::Docs.max_members()
+    + Namespace::Tool.max_members()
+    + 1;
 /// Largest uncompressed size one member's gzip trailer may declare.
 pub const MAX_MEMBER_BYTES: u32 = 64 * 1024 * 1024;
 /// Largest uncompressed size all members may declare together.
 pub const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// The member beside every tool's other members that describes the tool.
 pub const TOOL_MANIFEST: &str = "manifest.json";
+/// The agent skill: the one member outside every namespace, at the rack root.
+pub const SKILL: &str = "SKILL.md";
 
 /// One rack namespace: the first segment of every member path it holds.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -37,24 +40,21 @@ pub enum Namespace {
     /// The browser app generation: exactly its shell's inventory.
     App,
     /// Tracked documentation.
-    Doc,
-    /// The agent skill.
-    Skill,
+    Docs,
     /// Tool members, each tool directory carrying its [`TOOL_MANIFEST`].
     Tool,
 }
 
 impl Namespace {
     /// Every namespace, in path order.
-    pub const ALL: [Self; 4] = [Self::App, Self::Doc, Self::Skill, Self::Tool];
+    pub const ALL: [Self; 3] = [Self::App, Self::Docs, Self::Tool];
 
     /// The path segment naming this namespace.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::App => "app",
-            Self::Doc => "doc",
-            Self::Skill => "skill",
+            Self::Docs => "docs",
             Self::Tool => "tool",
         }
     }
@@ -73,8 +73,7 @@ impl Namespace {
     pub const fn max_members(self) -> usize {
         match self {
             Self::App => wire::manifest::APP_FILES.len() + wire::manifest::renderer::MAX_FILES,
-            Self::Doc => 256,
-            Self::Skill => 1,
+            Self::Docs => 256,
             Self::Tool => 64,
         }
     }
@@ -389,7 +388,13 @@ impl<'a> Rack<'a> {
         &self,
         namespace: Namespace,
     ) -> impl Iterator<Item = (&'a str, RackMember<'a>)> + '_ {
-        let prefix = Namespace::member(namespace, "");
+        self.beneath(namespace.name())
+    }
+
+    /// The members beneath the rack directory `directory`, keyed by their path
+    /// within it, in order.
+    pub fn beneath(&self, directory: &str) -> impl Iterator<Item = (&'a str, RackMember<'a>)> + '_ {
+        let prefix = format!("{directory}/");
         self.members
             .range::<str, _>((
                 std::ops::Bound::Included(prefix.as_str()),
@@ -788,12 +793,12 @@ fn shell_generation(shell: &[u8]) -> Result<wire::Digest, RackError> {
         .ok_or(RackError::Shell("shell generation is not a digest"))
 }
 
-/// Every path lies inside one namespace and within its member bound, and every
-/// tool directory carries its manifest.
+/// Every path but [`SKILL`] lies inside one namespace and within its member
+/// bound, and every tool directory carries its manifest.
 fn check_namespaces<'p>(paths: impl IntoIterator<Item = &'p str>) -> Result<(), RackError> {
     let mut counts = BTreeMap::<Namespace, usize>::new();
     let mut tools = BTreeMap::<&str, bool>::new();
-    for path in paths {
+    for path in paths.into_iter().filter(|path| *path != SKILL) {
         let (namespace, file) = path
             .split_once('/')
             .and_then(|(name, file)| Some((Namespace::parse(name)?, file)))
