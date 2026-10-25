@@ -261,7 +261,6 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
     );
 
     for (document, path) in [
-        ("[tasks]\nhidden_stems = ['maxim_proposal']\n", "tasks"),
         (
             "[policy]\npredecessor_only = ['removed']\n",
             "policy.predecessor_only",

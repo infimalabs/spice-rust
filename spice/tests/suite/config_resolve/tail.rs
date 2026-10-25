@@ -79,7 +79,7 @@ value = 1
         ("lock.beta.mystery", ConfigSource::Local, IssueKind::Unknown),
         ("policy.mode", ConfigSource::Tracked, IssueKind::Unknown),
         ("proof.image", ConfigSource::Tracked, IssueKind::Malformed),
-        ("tasks", ConfigSource::Tracked, IssueKind::Unknown),
+        ("tasks", ConfigSource::Tracked, IssueKind::Retired),
     ] {
         assert!(
             rows.iter()
@@ -106,6 +106,15 @@ value = 1
             .unwrap_or_else(|| panic!("{path} refuses in the wrong layer"));
         assert!(refusal.message().contains(home), "{path} names its home");
     }
+    let retired = error
+        .issues()
+        .iter()
+        .find(|issue| issue.kind() == IssueKind::Retired)
+        .expect("the retained tasks table refuses as retired");
+    assert!(
+        retired.message().contains("release 8aaba9962"),
+        "the retired table names its owning release"
+    );
     assert!(error.issues().windows(2).all(|pair| {
         pair[0].path().map(ToString::to_string) <= pair[1].path().map(ToString::to_string)
     }));

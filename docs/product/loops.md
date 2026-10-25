@@ -143,6 +143,11 @@ flowchart LR
   are unrelated, and `task list --project` matches the complete value only. A
   refused project names that spelling, so the author can repair it without
   probing. Only handle rendering abbreviates a filed project to its last run.
+  Hidden leading-dot projects and the `[tasks]` configuration table were last
+  admitted by release `8aaba9962`: a retained `[tasks]` table refuses
+  configuration as retired with that release, and a journal whose task or
+  claim heads, facts, command receipts, or landings still name a leading-dot
+  project refuses its schema 98 crossing atomically with that release.
   Default reads (`task list`, `task status`, dry `task next` counts) cover every
   filed row plus the reader's own origin-thread rows, so an authored project is
   never invisible to a lane that may be allocated it.
