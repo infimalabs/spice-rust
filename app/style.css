@@ -699,43 +699,66 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   place-items: center;
   transition: var(--app-side-view-fade);
 }
-/* With the Spice controls anchored in the header, it keeps to one row level
-   with them: the kicker and what stands beside it share a line centered on the
-   round controls, and the header ends just past the weekly percentage under
-   the Spice button. */
+/* With the Spice controls anchored in the header, its height is fixed: a row
+   level with the round controls holds the kicker with the product version on
+   its baseline, and a foot as tall as the weekly percentage beneath the Spice
+   button holds the status line. The status line runs under the theme selector
+   and TURBO and truncates just before the Spice button, so the percentage
+   stays clear of it. */
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
   container: spice-header / inline-size;
-  padding-block: var(--app-spice-anchor-inset-block) calc(var(--app-spice-capacity-gap) + var(--app-type-control) + 6px);
+  padding-block: var(--app-spice-anchor-inset-block) 0;
   padding-inline-end: var(--app-spice-header-reserve);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: var(--app-header-control) var(--app-spice-header-foot);
   align-items: baseline;
-  gap: 10px;
   min-width: 0;
-  min-height: var(--app-header-control);
-  align-content: center;
-  flex-wrap: wrap;
 }
-/* A header too narrow for the whole summary shows less of it: below 12rem
-   only the status remains (an update stays actionable), and below 8rem, on a
-   phone or beside the Windows caption buttons, that status moves under the
-   kicker, clear of the weekly percentage. */
+/* The kicker shrinks only where the header's text room cannot hold it, such
+   as beside the Windows caption buttons. */
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-kicker {
+  font-size: min(calc(var(--app-type-copy) * 1.5), 29cqi);
+  line-height: var(--app-header-control);
+  white-space: nowrap;
+}
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-resident-summary { display: contents; }
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-product-version {
+  grid-area: 1 / 2;
+  justify-self: start;
+  max-inline-size: calc(100% - 10px);
+  margin-inline-start: 10px;
+  font-size: var(--app-type-section);
+}
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-resident-status {
+  grid-area: 2 / 1 / 3 / -1;
+  align-self: center;
+  margin-inline-end: calc(-1 * var(--app-spice-status-overhang));
+}
+/* A header too narrow for the version beside the kicker, on a phone or beside
+   the Windows caption buttons, hides the plain version. An available update
+   stays actionable by taking the status line's place, and the status stays
+   announced. */
 @container spice-header (max-width: 12rem) {
   .app-sidebar-header .app-resident-summary > strong.app-product-version { display: none; }
-}
-@container spice-header (max-width: 8rem) {
-  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div {
-    display: grid;
-    grid-template-rows: var(--app-header-control) auto;
-    row-gap: var(--app-spice-capacity-gap);
+  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-product-version--update {
+    grid-area: 2 / 1 / 3 / -1;
+    align-self: center;
+    max-inline-size: calc(100% + var(--app-spice-status-overhang));
+    margin-inline-start: 0;
+    font-size: inherit;
   }
-  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div > .app-sidebar-kicker { align-self: center; }
-  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div > .app-resident-summary { margin-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-header-control) + 8px - var(--app-spice-header-reserve)); }
+  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div:has(.app-product-version--update) .app-resident-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
 }
-/* The Spice view's kicker names the product beside the resident summary, at
-   least as large as the view's section headings. */
-.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-kicker { font-size: var(--app-type-copy); }
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
   backdrop-filter: none;

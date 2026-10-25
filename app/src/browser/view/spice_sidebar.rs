@@ -263,7 +263,7 @@ fn render_product_version(identity: Option<&AppIdentity>, update: Option<&AppUpd
         );
         html! {
             <button
-                class="app-product-version app-product-version--update app-compact-control"
+                class="app-product-version app-product-version--update"
                 type="button"
                 aria-label={update_accessible}
                 title={update_details}

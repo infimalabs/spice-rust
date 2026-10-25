@@ -36,8 +36,11 @@
   /* The trigger centers over the composer-control column, level with the
      command bar's one content row. */
   --app-spice-anchor-inset-block: var(--app-commandbar-block-pad);
-  /* The weekly percentage hangs this far under the open view's Spice button. */
-  --app-spice-capacity-gap: 2px;
+  /* The weekly percentage hangs this far under the open view's Spice button,
+     within the header's foot: the band beneath the round controls that also
+     holds the status line, which fixes the header's height. */
+  --app-spice-capacity-gap: 6px;
+  --app-spice-header-foot: calc(var(--app-type-control) + 8px);
   /* The launcher stands this far from the window edge, and as far from the
      Design total before it. */
   --app-spice-side-gap: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2);
@@ -53,6 +56,9 @@
   /* The open view's header keeps its text this far from its end, clear of the
      anchor. */
   --app-spice-header-reserve: calc(var(--app-spice-anchor-inset-inline) + var(--app-spice-anchor-inline-size) + 20px);
+  /* The open view's status line runs this far past the header's text room,
+     under the theme selector and TURBO, ending short of the Spice button. */
+  --app-spice-status-overhang: calc(var(--app-spice-header-reserve) - var(--app-spice-anchor-inset-inline) - var(--app-header-control) - 8px);
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
 }
