@@ -18,9 +18,18 @@ impl Width {
     }
 }
 
+/// What stands beside the kicker in a sidebar's header.
+pub(super) enum Heading {
+    /// The sheet's title, which names the dialog.
+    Title(AttrValue),
+    /// Content the sidebar supplies in the title's place; the kicker names the
+    /// dialog.
+    Beside(Html),
+}
+
 pub(super) struct Content {
     pub label: AttrValue,
-    pub title: AttrValue,
+    pub heading: Heading,
     pub width: Width,
     /// The palette index the whole sheet, header and body, wears as its base;
     /// `None` keeps the page's.
@@ -92,8 +101,20 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
                     >
                         <header class="app-sidebar-header">
                             <div>
-                                <p class="app-sidebar-kicker">{render.content.label}</p>
-                                <h2 id="app-sidebar-title">{render.content.title}</h2>
+                                {match render.content.heading {
+                                    Heading::Title(title) => html! {
+                                        <>
+                                            <p class="app-sidebar-kicker">{render.content.label}</p>
+                                            <h2 id="app-sidebar-title">{title}</h2>
+                                        </>
+                                    },
+                                    Heading::Beside(beside) => html! {
+                                        <>
+                                            <p id="app-sidebar-title" class="app-sidebar-kicker">{render.content.label}</p>
+                                            {beside}
+                                        </>
+                                    },
+                                }}
                             </div>
                             if !anchored {
                                 <button

@@ -39,16 +39,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The first row keeps resident state and product identity beside the theme
-   selector, with no heading or diagnostic identifiers consuming space. */
+/* The first row holds only global TURBO, under the Spice button. */
 .app-spice-sidebar-content > .app-spice-settings {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
   padding-block: 12px;
+  padding-inline-end: var(--app-spice-anchor-inset-inline);
 }
+.app-spice-sidebar-content > .app-spice-settings > .app-spice-turbo { justify-self: end; }
+/* Beside the kicker, the resident summary takes the header's remaining width
+   and truncates rather than wrapping under it. */
 .app-resident-summary {
   display: grid;
+  flex: 1 1 0;
   gap: 3px;
   min-width: 0;
   color: var(--muted);

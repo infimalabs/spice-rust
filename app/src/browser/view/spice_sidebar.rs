@@ -85,9 +85,10 @@ pub(super) fn render_arrangement(
     })
 }
 
-/// The first row: resident state and its current admitted journal cursor beside
-/// product identity, all opposite the theme selector.
-pub(super) fn render_global_settings(
+/// The resident summary the open view's header carries beside its kicker:
+/// resident state and its current admitted journal cursor over the product
+/// version, which the kicker beside it already names.
+pub(super) fn render_resident_summary(
     connection: &Connection,
     cursor: Option<wire::Seq>,
     identity: Option<&AppIdentity>,
@@ -116,33 +117,37 @@ pub(super) fn render_global_settings(
         Connection::Offline(reason) => ("Reconnecting", format!("Reconnecting / {reason}")),
     };
     html! {
-        <section
-            class="app-sheet-section app-spice-settings"
-            aria-label="Resident and global settings"
+        <div
+            class="app-resident-summary"
             data-connection={connection.indicator_state()}
             data-journal-cursor={cursor.as_ref().and_then(|cursor| cursor.value.clone())}
         >
-            <div class="app-resident-summary">
-                <span
-                    class="app-resident-status"
-                    role="status"
-                    aria-label={status_details.clone()}
-                    title={status_details}
-                >
-                    {status}
-                    if let Some(cursor) = cursor {
-                        <span class="app-resident-cursor">{format!(" · {}", cursor.label)}</span>
-                    }
-                </span>
-                {render_product_version(identity, update)}
-            </div>
-            {render_theme_selector()}
+            <span
+                class="app-resident-status"
+                role="status"
+                aria-label={status_details.clone()}
+                title={status_details}
+            >
+                {status}
+                if let Some(cursor) = cursor {
+                    <span class="app-resident-cursor">{format!(" · {}", cursor.label)}</span>
+                }
+            </span>
+            {render_product_version(identity, update)}
+        </div>
+    }
+}
+
+/// The first row: global TURBO at its trailing edge, under the Spice button.
+pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+    html! {
+        <section class="app-sheet-section app-spice-settings" aria-label="Global settings">
+            {render_global_turbo(runtime, sender)}
         </section>
     }
 }
 
-/// Global TURBO, beside the Spice button in the open view's header.
-pub(super) fn render_global_turbo(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+fn render_global_turbo(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let enabled = settings.is_some()
@@ -182,7 +187,7 @@ pub(super) fn render_global_turbo(runtime: Option<&AppRuntime>, sender: &SenderH
 }
 
 /// The cumulative plan-weighted weekly quota remaining across accounts,
-/// stacked above the open sidebar's Spice button. Its fixed-width fallback
+/// hanging under the open sidebar's Spice button. Its fixed-width fallback
 /// keeps the button still while quota state loads.
 pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     let generation = runtime.and_then(AppRuntime::quota);
@@ -315,7 +320,7 @@ struct IdentityPresentation {
 fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation {
     let Some(identity) = identity else {
         return IdentityPresentation {
-            label: "Spice".to_owned(),
+            label: "…".to_owned(),
             details: None,
             accessible: "Spice product identity is loading".to_owned(),
         };
@@ -333,14 +338,14 @@ fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation
     }
     let details = rows.join("\n");
     IdentityPresentation {
-        label: format!("Spice {}", identity.version.product),
+        label: identity.version.product.to_string(),
         accessible: details.replace('\n', "; "),
         details: Some(details),
     }
 }
 
-/// The one theme selector, ending the resident settings row.
-fn render_theme_selector() -> Html {
+/// The one theme selector, beside the open view's Spice button.
+pub(super) fn render_theme_selector() -> Html {
     let selected = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.document_element())
