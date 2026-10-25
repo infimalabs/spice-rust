@@ -73,10 +73,12 @@ and zero is explicit. Reconnect keeps the last count marked stale until current
 data returns. Speech never retitles the tab.
 
 The global Spice summary stands in the open Spice view's header beside its
-kicker: the current connection state and admitted journal stream cursor on one
-line over the bare product version, which the kicker already names. The cursor
-appears only while the resident connection is current; startup and reconnect
-states never present a retained runtime's cursor as live.
+kicker: the current connection state over the bare product version, which the
+kicker already names. The admitted journal stream cursor is in the connection
+state's hover title and accessible name, and only while the resident connection
+is current; startup and reconnect states never present a retained runtime's
+cursor as live. A header too narrow for the summary shows less of it: the
+plain version line goes first, then the state moves under the kicker.
 
 ## Composer images
 

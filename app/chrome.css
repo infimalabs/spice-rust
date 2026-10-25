@@ -43,14 +43,16 @@
   --app-spice-side-gap: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2);
   --app-spice-anchor-inset-inline: calc(var(--app-spice-side-gap) + env(safe-area-inset-right, 0px) + var(--app-titlebar-inset-end, 0px));
   /* The open Spice view's sections stand off the view's edges by this inset. */
-  --app-spice-settings-inset-inline: 22px;
-  /* The open view's anchor holds the theme selector this far before the Spice
-     button; TURBO ends the settings row below under that button, sharing the
-     anchor's inset. Beside the Windows caption buttons the anchor, and TURBO
-     with it, moves with the Spice button. */
+  --app-spice-section-inset-inline: 22px;
+  /* The open view's anchor holds the theme selector, then TURBO, then the
+     Spice button, each this far from the next. Beside the Windows caption
+     buttons the whole anchor moves with the Spice button. */
   --app-theme-selector-inline-size: 88px;
   --app-spice-anchor-gap: 12px;
-  --app-spice-anchor-inline-size: calc(var(--app-theme-selector-inline-size) + var(--app-spice-anchor-gap) + var(--app-header-control));
+  --app-spice-anchor-inline-size: calc(var(--app-theme-selector-inline-size) + var(--app-round-control-size) + var(--app-header-control) + 2 * var(--app-spice-anchor-gap));
+  /* The open view's header keeps its text this far from its end, clear of the
+     anchor. */
+  --app-spice-header-reserve: calc(var(--app-spice-anchor-inset-inline) + var(--app-spice-anchor-inline-size) + 20px);
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
 }

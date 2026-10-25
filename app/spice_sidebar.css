@@ -13,16 +13,10 @@
   gap: 10px;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  padding-inline: var(--app-spice-settings-inset-inline);
+  padding-inline: var(--app-spice-section-inset-inline);
 }
-/* The first row holds only global TURBO, under the Spice button. */
-.app-spice-sidebar-content > .app-spice-settings {
-  padding-block: 12px;
-  padding-inline-end: var(--app-spice-anchor-inset-inline);
-}
-.app-spice-sidebar-content > .app-spice-settings > .app-spice-turbo { justify-self: end; }
 /* Beside the kicker, the resident summary takes the header's remaining width
-   and truncates rather than wrapping under it. */
+   and truncates; a header too narrow for it moves it under the controls. */
 .app-resident-summary {
   display: grid;
   flex: 1 1 0;
@@ -38,10 +32,6 @@
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.app-resident-cursor {
-  color: var(--muted);
-  font-weight: 600;
 }
 /* The fixed-width weekly percentage stands centered under the Spice button,
    outside the anchor's box, so the button never moves as quota state loads or

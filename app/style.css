@@ -679,8 +679,8 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 @media (prefers-reduced-motion: no-preference) {
   .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface, .app-spice-sidebar-readouts) { opacity: 0; }
 }
-/* The theme selector stands beside the Spice button; the weekly percentage
-   hangs under the button outside this box. */
+/* The theme selector and TURBO stand beside the Spice button; the weekly
+   percentage hangs under the button outside this box. */
 .app-spice-sidebar-anchor {
   position: absolute;
   z-index: 3;
@@ -694,6 +694,8 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 }
 .app-spice-sidebar-readouts {
   display: grid;
+  grid-auto-flow: column;
+  gap: var(--app-spice-anchor-gap);
   place-items: center;
   transition: var(--app-side-view-fade);
 }
@@ -702,8 +704,9 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
    round controls, and the header ends just past the weekly percentage under
    the Spice button. */
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
+  container: spice-header / inline-size;
   padding-block: var(--app-spice-anchor-inset-block) calc(var(--app-spice-capacity-gap) + var(--app-type-control) + 6px);
-  padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-spice-anchor-inline-size) + 20px);
+  padding-inline-end: var(--app-spice-header-reserve);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div {
   display: flex;
@@ -714,16 +717,25 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   align-content: center;
   flex-wrap: wrap;
 }
-.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header h2 {
-  margin: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: var(--app-type-detail);
-  font-weight: 600;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* A header too narrow for the whole summary shows less of it: below 12rem
+   only the status remains (an update stays actionable), and below 8rem, on a
+   phone or beside the Windows caption buttons, that status moves under the
+   kicker, clear of the weekly percentage. */
+@container spice-header (max-width: 12rem) {
+  .app-sidebar-header .app-resident-summary > strong.app-product-version { display: none; }
 }
+@container spice-header (max-width: 8rem) {
+  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div {
+    display: grid;
+    grid-template-rows: var(--app-header-control) auto;
+    row-gap: var(--app-spice-capacity-gap);
+  }
+  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div > .app-sidebar-kicker { align-self: center; }
+  .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header > div > .app-resident-summary { margin-inline-end: calc(var(--app-spice-anchor-inset-inline) + var(--app-header-control) + 8px - var(--app-spice-header-reserve)); }
+}
+/* The Spice view's kicker names the product beside the resident summary, at
+   least as large as the view's section headings. */
+.app-sidebar-layer[data-sidebar-anchored] .app-sidebar-kicker { font-size: var(--app-type-copy); }
 :root:has(dialog:modal) .app-sidebar-backdrop {
   background: transparent;
   backdrop-filter: none;

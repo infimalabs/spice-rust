@@ -129,25 +129,15 @@ pub(super) fn render_resident_summary(
                 title={status_details}
             >
                 {status}
-                if let Some(cursor) = cursor {
-                    <span class="app-resident-cursor">{format!(" · {}", cursor.label)}</span>
-                }
             </span>
             {render_product_version(identity, update)}
         </div>
     }
 }
 
-/// The first row: global TURBO at its trailing edge, under the Spice button.
-pub(super) fn render_global_settings(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
-    html! {
-        <section class="app-sheet-section app-spice-settings" aria-label="Global settings">
-            {render_global_turbo(runtime, sender)}
-        </section>
-    }
-}
-
-fn render_global_turbo(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+/// Global TURBO, between the theme selector and the Spice button in the open
+/// view's header.
+pub(super) fn render_global_turbo(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let enabled = settings.is_some()

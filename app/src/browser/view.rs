@@ -223,7 +223,6 @@ fn render_spice_sidebar(
     let standings = spice_standings(render, runtime).map(Rc::new);
     let body = html! {
         <div class="app-spice-sidebar-content">
-            {spice_sidebar::render_global_settings(runtime, render.sender)}
             {spice_principals::render(
                 render.connection,
                 runtime,
@@ -244,6 +243,7 @@ fn render_spice_sidebar(
                 inert={(!render.sidebar_presented || render.sidebar_closing).then_some("true")}
             >
                 {spice_sidebar::render_theme_selector()}
+                {spice_sidebar::render_global_turbo(runtime, render.sender)}
                 {spice_sidebar::render_capacity(runtime)}
             </div>
             {chrome::render_spice_button(chrome::SpiceButton {
