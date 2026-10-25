@@ -13,7 +13,7 @@ pub struct Project(String);
 
 impl Project {
     /// The project a task files under when its author names none.
-    pub const PRIVATE: &str = "private";
+    pub const DEFAULT: &str = "task";
 
     /// Admit one project spelling.
     ///

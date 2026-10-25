@@ -456,12 +456,12 @@ fn create_followup(
             "each review follow-up requires its own intended absent birth stamp",
         ));
     }
-    let requested = followup.add.project.as_deref().unwrap_or(Project::PRIVATE);
+    let requested = followup.add.project.as_deref().unwrap_or(Project::DEFAULT);
     let project = Project::admit(requested).map_err(|error| {
         refusal(
             "review::followup-refused",
             Some(error.to_string()),
-            "name each review follow-up's project as one lowercase word of [0-9a-z_], or leave it private",
+            "name each review follow-up's project as one lowercase word of [0-9a-z_], or omit it for the default project task",
         )
     })?;
     let creation = context.creation.ok_or_else(|| {
