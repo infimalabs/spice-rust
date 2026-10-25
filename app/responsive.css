@@ -44,7 +44,6 @@
 }
 
 @media (max-width: 560px) {
-  .app-product-version--update { padding-inline: 5px; }
   .content { padding: 18px 14px 28px; }
   .team-toolbar { --team-chamber-inset: 4px; }
   .team-task-member { max-width: 100%; }
