@@ -21,10 +21,12 @@
   --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
-  /* The native window's traffic lights stand in the header's leading edge;
-     only its shell publishes their width, so the browser reserves nothing. */
+  /* The native window's own controls stand in the header: macOS's traffic
+     lights at its leading edge, the Windows shell's caption buttons at its
+     trailing edge. Only that shell publishes their width, so the browser
+     reserves nothing. */
   --app-commandbar-inset-start: calc(var(--app-shell-edge-start) + var(--app-titlebar-inset, 0px));
-  --app-commandbar-inset-end: var(--app-shell-edge-end);
+  --app-commandbar-inset-end: calc(var(--app-shell-edge-end) + var(--app-titlebar-inset-end, 0px));
   /* The trigger clears the window's top edge and the rising team tabs by two
      message-rail widths each; no tab row hangs above it any longer. */
   --app-spice-tab-clearance: calc(2 * var(--message-rail));
@@ -39,13 +41,15 @@
   /* The launcher stands this far from the window edge, and as far from the
      Design total before it. */
   --app-spice-side-gap: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2);
-  --app-spice-anchor-inset-inline: calc(var(--app-spice-side-gap) + env(safe-area-inset-right, 0px));
+  --app-spice-anchor-inset-inline: calc(var(--app-spice-side-gap) + env(safe-area-inset-right, 0px) + var(--app-titlebar-inset-end, 0px));
   /* The open Spice view's settings row stands off the view's end by this inset
      and ends with the theme selector. The anchor spans from its own inset to
-     the selector's start, so TURBO's start meets the selector's start. */
+     the selector's start, so TURBO's start meets the selector's start. Beside
+     the Windows caption buttons the anchor keeps that width and moves with
+     the Spice button. */
   --app-spice-settings-inset-inline: 22px;
   --app-theme-selector-inline-size: 88px;
-  --app-spice-anchor-inline-size: calc(var(--app-spice-settings-inset-inline) + var(--app-theme-selector-inline-size) - var(--app-spice-anchor-inset-inline));
+  --app-spice-anchor-inline-size: calc(var(--app-spice-settings-inset-inline) + var(--app-titlebar-inset-end, 0px) + var(--app-theme-selector-inline-size) - var(--app-spice-anchor-inset-inline));
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
 }
