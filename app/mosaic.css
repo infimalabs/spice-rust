@@ -1133,26 +1133,24 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
 .lane-mosaic-plane[data-measurement-phase="base"] .mosaic-message-card {
   top: 0;
 }
-/* The lattice still allocates each card a whole number of rows, but a prose
-   card paints only its content: pinned to its cell's edges, its auto height is
-   centered by align-self (desktop WebKit stretches fit-content between auto
-   margins). A cell never grows, so its height is also the card's limit.
-   Measurement clones and the in-flow base phase measure natural height, and
-   boundary rows and image covers still fill the cell they own. */
+/* Prose cards fit their content, capped at their lattice cell. Anchor the
+   card's midpoint to the cell's midpoint: opposing insets plus align-self
+   collapse the nested clipping grid in WebKit. Measurement clones and the
+   in-flow base phase keep natural geometry; boundaries and covers fill cells. */
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card[data-layout-phase="committed"]:not(
     [data-mosaic-measurement-active="true"],
     .mosaic-compaction-card,
     .mosaic-message-card--image-cover
   ) {
-  bottom: calc(
+  top: calc(
     var(--mosaic-edge-gutter)
-      + (var(--mosaic-plane-rows) - var(--mosaic-max-row) + var(--mosaic-base))
-        * var(--mosaic-module)
+      + (var(--mosaic-max-row) - var(--mosaic-base) - var(--mosaic-rows) / 2)
+        * var(--mosaic-module) - var(--mosaic-gap) / 2
   );
   height: auto;
   max-height: calc(var(--mosaic-rows) * var(--mosaic-module) - var(--mosaic-gap));
-  align-self: center;
+  translate: 0 -50%;
 }
 .lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity var(--app-motion-settle) var(--app-ease-standard); }
 .lane-mosaic-plane .mosaic-message-card.frozen { transition: none; }

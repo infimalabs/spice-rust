@@ -30,6 +30,15 @@ returned `colorScheme` and `colorSchemeSource` report the value and whether it
 came from `"system"` or `"explicit"`. A stored `spice:app-theme` preference
 still wins over the browser preference.
 
+## Mosaic card sizing
+
+Prose cards fit their content and sit vertically centered in their allocated
+lattice cells, capped at the cell height. Check the real message structure,
+including its `.mosaic-message-content` clipping grid, prose, quotes and controls:
+bare text in a card does not exercise the nested grid's intrinsic sizing.
+Measurement cards keep natural height; boundary rows and image covers fill their
+cells.
+
 ## Theme selector material
 
 The Spice sidebar keeps Light, System, and Dark as three pressed buttons in one
