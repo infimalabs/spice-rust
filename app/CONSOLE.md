@@ -24,6 +24,10 @@ static renderings such as a task overview's Mermaid labels use compact local
 time, so their source and image stay fixed. Canonical UTC
 instants appear only in machine-readable attributes and payloads.
 
+Journal positions, such as facts, statement revisions, claim heads and the
+journal cursor, read as their condensed base52 sequence codes, never as decimal
+integers.
+
 ## Working groups and teams
 
 A working group is a team's design-side twin: one to six ordered Designs in the
