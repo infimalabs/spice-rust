@@ -422,6 +422,9 @@ path.image-annotation-hit { fill: none; }
 }
 /* The fleet meets the viewport edges, so its focus ring paints inside it. */
 .team-fleet:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); outline-offset: -2px; }
+/* No watchband scrollbar covers activity traces; important outranks message strips' thin bars. */
+.team-fleet, .team-fleet * { scrollbar-width: none !important; }
+.team-fleet::-webkit-scrollbar, .team-fleet ::-webkit-scrollbar { display: none; }
 
 .team-surface {
   --inactive-lane-opacity: .72;
@@ -772,7 +775,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
 }
 .composer-shard-image-indicator {
   position: relative;

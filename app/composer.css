@@ -356,8 +356,6 @@
   line-height: 1.35;
 }
 .team-surface .mosaic-composer textarea:focus-visible { outline: none; }
-/* A composer wraps its lines, so a sideways scrollbar carries nothing. */
-.team-surface .mosaic-composer textarea::-webkit-scrollbar:horizontal { height: 0; }
 .composer-shard-prose[data-composer-drag-handle="true"] {
   cursor: grab;
   touch-action: none;
