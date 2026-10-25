@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn a_landing_lands_past_main_and_never_before_its_task_commit() {
+    assert_eq!(
+        landing_date(1_792_729_149, 1_792_728_997).as_deref(),
+        Some("@1792729150 +0000"),
+        "an older task commit still advances main's clock"
+    );
+    assert_eq!(
+        landing_date(1_792_729_149, 1_792_729_149).as_deref(),
+        Some("@1792729150 +0000")
+    );
+    assert_eq!(
+        landing_date(1_792_728_614, 1_792_729_149).as_deref(),
+        Some("@1792729149 +0000"),
+        "a newer task commit keeps its own second"
+    );
+    assert_eq!(landing_date(i64::MAX, 0), None);
+}
+
+#[test]
 fn planning_publication_requires_a_clean_captured_opening() {
     let clean = GitBoundary {
         head: "opening-head".to_owned(),

@@ -23,9 +23,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-          # The product version's minor orders HEAD among same-second
-          # first-parent ancestors, which a depth-1 boundary hides.
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Materialize request
         id: request

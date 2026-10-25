@@ -1128,12 +1128,20 @@ fn create_merge_commit(
     second_parent: &str,
     message: &str,
 ) -> Result<GitOutput, Error> {
-    // A retry over the same immutable parents must name the same commit. Git's
-    // default wall clock made an otherwise identical synthesized landing gain
-    // a new identity on every task-boundary retry. The later parent clock is
-    // equally deterministic and prevents one old integrated-parent timestamp
-    // from propagating through every later task landing.
-    let date = later_parent_date(root, first_parent, second_parent)?;
+    // A retry over the same immutable parents must name the same commit, so
+    // the date is a function of the parents alone, never the wall clock. It
+    // lands one second past the first parent at least, so main's first-parent
+    // seconds strictly increase and HEAD's second alone orders a build.
+    let date = landing_date(
+        commit_seconds(root, first_parent)?,
+        commit_seconds(root, second_parent)?,
+    )
+    .ok_or_else(|| {
+        Error::fault(
+            "git::commit-date-invalid",
+            format!("task merge parent {first_parent} has no later committer second"),
+        )
+    })?;
     run_with_environment(
         root,
         &[
@@ -1150,39 +1158,25 @@ fn create_merge_commit(
     )
 }
 
-fn later_parent_date(
-    root: Worktree<'_>,
-    first_parent: &str,
-    second_parent: &str,
-) -> Result<String, Error> {
-    let first = commit_date(root, first_parent)?;
-    let second = commit_date(root, second_parent)?;
-    Ok(if second.0 > first.0 {
-        second.1
-    } else {
-        first.1
-    })
+/// The landing's date: the landed commit's second, or one past the first
+/// parent's when that is later.
+fn landing_date(first_parent: i64, second_parent: i64) -> Option<String> {
+    let seconds = first_parent.checked_add(1)?.max(second_parent);
+    Some(format!("@{seconds} +0000"))
 }
 
-fn commit_date(root: Worktree<'_>, commit: &str) -> Result<(i64, String), Error> {
+fn commit_seconds(root: Worktree<'_>, commit: &str) -> Result<i64, Error> {
     let observed = required_read(
         root,
-        &["show", "-s", "--format=%ct %cI", commit],
+        &["show", "-s", "--format=%ct", commit],
         "read task merge parent timestamp",
     )?;
-    let Some((seconds, date)) = observed.split_once(' ') else {
-        return Err(Error::fault(
-            "git::commit-date-invalid",
-            format!("commit {commit} returned malformed timestamp {observed:?}"),
-        ));
-    };
-    let seconds = seconds.parse::<i64>().map_err(|error| {
+    observed.parse::<i64>().map_err(|error| {
         Error::fault(
             "git::commit-date-invalid",
-            format!("commit {commit} returned invalid epoch {seconds:?}: {error}"),
+            format!("commit {commit} returned invalid epoch {observed:?}: {error}"),
         )
-    })?;
-    Ok((seconds, date.to_owned()))
+    })
 }
 
 fn with_retry_remedy(mut error: Error, label: &str) -> Error {

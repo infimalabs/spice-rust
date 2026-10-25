@@ -13,8 +13,6 @@ use wire::manifest::ProductVersion;
 use crate::authority::{AuthorityError, tracked_text_line};
 
 const VERSION_TEXT: &str = ::std::include_str!("../VERSION");
-/// Same-second first-parent positions one committer second can order.
-pub const SOURCE_SECOND_POSITIONS: u64 = 10;
 const DEV: &str = "dev";
 
 /// The hand-set part of the product version that `dist/VERSION` tracks.
@@ -83,47 +81,27 @@ impl fmt::Display for TrackedVersion {
 #[error("tracked version is neither a canonical major number nor MAJOR.MINOR.PATCH: {0:?}")]
 pub struct TrackedVersionError(String);
 
-/// A source commit's minor version: its committer second times
-/// [`SOURCE_SECOND_POSITIONS`] plus its position among same-second
-/// first-parent ancestors.
+/// A source commit's minor version: its committer second.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SourceMinor(u64);
 
 impl SourceMinor {
-    /// Order a commit by its committer second and same-second position.
+    /// Order a commit by its committer second.
     ///
     /// # Errors
     ///
-    /// Refuses a negative second, a position the second cannot order, and a
-    /// minor that overflows.
-    pub fn new(seconds: i64, position: u64) -> Result<Self, SourceMinorError> {
-        let seconds = u64::try_from(seconds).map_err(|_| SourceMinorError::Negative(seconds))?;
-        if position >= SOURCE_SECOND_POSITIONS {
-            return Err(SourceMinorError::Positions(seconds));
-        }
-        seconds
-            .checked_mul(SOURCE_SECOND_POSITIONS)
-            .and_then(|minor| minor.checked_add(position))
+    /// Refuses a second before the Unix epoch.
+    pub fn new(seconds: i64) -> Result<Self, SourceMinorError> {
+        u64::try_from(seconds)
             .map(Self)
-            .ok_or(SourceMinorError::Overflow(seconds))
-    }
-
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
+            .map_err(|_| SourceMinorError(seconds))
     }
 }
 
 /// Why a source commit has no minor.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum SourceMinorError {
-    #[error("committer instant {0}s precedes the Unix epoch")]
-    Negative(i64),
-    #[error("more than {SOURCE_SECOND_POSITIONS} first-parent commits share committer second {0}s")]
-    Positions(u64),
-    #[error("committer instant {0}s overflows the minor version")]
-    Overflow(u64),
-}
+#[error("committer instant {0}s precedes the Unix epoch")]
+pub struct SourceMinorError(i64);
 
 /// Whether a build passed through release staging.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,8 +145,8 @@ mod tests {
 
     use super::*;
 
-    fn minor(seconds: i64, position: u64) -> SourceMinor {
-        SourceMinor::new(seconds, position).expect("orderable instant")
+    fn minor(seconds: i64) -> SourceMinor {
+        SourceMinor::new(seconds).expect("orderable instant")
     }
 
     #[test]
@@ -176,7 +154,7 @@ mod tests {
         assert_eq!(TrackedVersion::parse("0"), Ok(TrackedVersion::Major(0)));
         assert_eq!(TrackedVersion::parse("12"), Ok(TrackedVersion::Major(12)));
         assert!(matches!(
-            TrackedVersion::parse("0.17900000010.1"),
+            TrackedVersion::parse("0.1790000001.1"),
             Ok(TrackedVersion::Pin(_))
         ));
         for refused in [
@@ -198,40 +176,28 @@ mod tests {
     }
 
     #[test]
-    fn a_source_minor_is_its_second_and_same_second_position() {
-        assert_eq!(minor(1_790_000_001, 0).get(), 17_900_000_010);
-        assert_eq!(minor(1_790_000_001, 9).get(), 17_900_000_019);
-        assert_eq!(
-            SourceMinor::new(1_790_000_001, SOURCE_SECOND_POSITIONS),
-            Err(SourceMinorError::Positions(1_790_000_001))
-        );
-        assert_eq!(SourceMinor::new(-1, 0), Err(SourceMinorError::Negative(-1)));
-        assert!(SourceMinor::new(i64::MAX, 0).is_err());
-    }
-
-    #[test]
-    fn derived_versions_spell_major_minor_and_dev_marker() {
+    fn derived_versions_spell_major_second_and_dev_marker() {
         let major = TrackedVersion::Major(0);
-        let source = Some(minor(1_790_000_001, 0));
+        let source = Some(minor(1_790_000_001));
         assert_eq!(
             major.product(source, Build::Staged).as_str(),
-            "0.17900000010.0"
+            "0.1790000001.0"
         );
         assert_eq!(
             major.product(source, Build::Dev).as_str(),
-            "0.17900000010.0-dev"
+            "0.1790000001.0-dev"
         );
         assert_eq!(major.product(None, Build::Dev).as_str(), "0.0.0-dev");
-        let pin = TrackedVersion::parse("0.17900000010.1").expect("pin");
+        let pin = TrackedVersion::parse("0.1790000001.1").expect("pin");
         assert_eq!(
             pin.product(source, Build::Staged).as_str(),
-            "0.17900000010.1"
+            "0.1790000001.1"
         );
         assert_eq!(
-            pin.product(Some(minor(1_790_000_999, 3)), Build::Dev)
-                .as_str(),
-            "0.17900000010.1-dev"
+            pin.product(Some(minor(1_790_000_999)), Build::Dev).as_str(),
+            "0.1790000001.1-dev"
         );
+        assert_eq!(SourceMinor::new(-1), Err(SourceMinorError(-1)));
     }
 
     #[test]
@@ -240,12 +206,11 @@ mod tests {
         let ascending = [
             ProductVersion::parse("0.2.0-dev.0").expect("old"),
             ProductVersion::parse("0.2.0-dev.0.dWwsmCFhc").expect("old stamped"),
-            major.product(Some(minor(1_790_000_001, 0)), Build::Dev),
-            major.product(Some(minor(1_790_000_001, 0)), Build::Staged),
-            major.product(Some(minor(1_790_000_001, 1)), Build::Dev),
-            major.product(Some(minor(1_790_000_001, 1)), Build::Staged),
-            major.product(Some(minor(1_790_000_002, 0)), Build::Dev),
-            TrackedVersion::parse("0.17900000020.1")
+            major.product(Some(minor(1_790_000_001)), Build::Dev),
+            major.product(Some(minor(1_790_000_001)), Build::Staged),
+            major.product(Some(minor(1_790_000_002)), Build::Dev),
+            major.product(Some(minor(1_790_000_002)), Build::Staged),
+            TrackedVersion::parse("0.1790000002.1")
                 .expect("patch pin")
                 .product(None, Build::Staged),
         ];
