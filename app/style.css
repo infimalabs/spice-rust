@@ -723,6 +723,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   font-size: min(calc(var(--app-type-copy) * 1.5), 29cqi);
   line-height: var(--app-header-control);
   white-space: nowrap;
+  text-transform: lowercase;
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-resident-summary { display: contents; }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-product-version {

@@ -73,11 +73,13 @@ and zero is explicit. Reconnect keeps the last count marked stale until current
 data returns. Speech never retitles the tab.
 
 The global Spice summary stands in the open Spice view's header, which keeps
-one fixed height. The bare product version sits on the kicker's baseline beside
-it, since the kicker already names the product; a header too narrow for it
-hides the plain version. Beneath them the current connection state is the
-header's status line: it runs under the theme selector and TURBO and ends in an
-ellipsis before the weekly percentage. An available update reads as the version
+one fixed height. Its title reads `spice` in lowercase; ordinary sidebar and
+sheet kickers retain uppercase. The bare product version sits on the title's
+baseline beside it, since the title already names the product; a header too
+narrow for it hides the plain version. Beneath them the current connection
+state is the header's status line: it runs under the theme selector and TURBO
+and ends in an ellipsis before the weekly percentage. An available update reads
+as the version
 in the focus accent with a reload mark and stays actionable: where the header
 is too narrow for the version beside the kicker, on a phone or beside the
 Windows caption buttons, the update takes the status line's place while the
