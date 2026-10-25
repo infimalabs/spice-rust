@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::clock::{Age, Countdown};
+use crate::browser::clock::{Age, Countdown, local_full_millis};
 
 pub(super) fn render_sidebar(runtime: Option<&AppRuntime>) -> Html {
     render(
@@ -251,19 +251,15 @@ fn render_reset(window: Option<&wire::QuotaWindow>) -> Html {
     let label = window.and_then(|window| window.reset_label.clone());
     match window.and_then(|window| window.resets_at) {
         Some(at) => {
-            let exact = iso_time(at);
-            let title = label.map_or_else(|| exact.clone(), |label| format!("{label} · {exact}"));
+            let exact = local_full_millis(at);
+            let title = match label {
+                Some(label) => AttrValue::from(format!("{label} · {exact}")),
+                None => exact,
+            };
             html! { <><span class="visually-hidden">{"resets "}</span><Countdown expiry={at} class={classes!("app-quota-age")} title={title} /></> }
         }
         None => html! { {label.unwrap_or_default()} },
     }
-}
-
-fn iso_time(milliseconds: i64) -> String {
-    js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(milliseconds as f64))
-        .to_iso_string()
-        .as_string()
-        .unwrap_or_else(|| milliseconds.to_string())
 }
 
 fn iso_millis(value: &str) -> Option<i64> {

@@ -1,6 +1,10 @@
 use super::*;
 use wire::intent::{LaneJobAnswer, LaneJobPhase};
 
+use crate::browser::clock::{
+    TaskTimePresentation, local_full_millis, now_millis, task_time_millis,
+};
+
 const REFRESH_MILLIS: u32 = 3_000;
 
 #[derive(Properties, PartialEq)]
@@ -31,7 +35,7 @@ struct Evidence {
     output: AttrValue,
     summary: Html,
     truncated: bool,
-    observed: String,
+    observed: AttrValue,
 }
 
 impl From<LaneJobAnswer> for Evidence {
@@ -62,25 +66,24 @@ impl From<LaneJobAnswer> for Evidence {
             output: answer.output.into(),
             summary,
             truncated: answer.output_truncated,
-            observed: js_sys::Date::new_0()
-                .to_iso_string()
-                .as_string()
-                .expect("an ISO date is a string"),
+            observed: local_full_millis(now_millis()),
         }
     }
 }
 
-fn timestamp(millis: Option<u64>) -> String {
+fn timestamp(millis: Option<u64>) -> Html {
     let Some(millis) = millis else {
-        return "Not observed".to_owned();
+        return html! { "Not observed" };
     };
-    let date = js_sys::Date::new(&JsValue::from_f64(millis as f64));
-    if date.get_time().is_finite() {
-        date.to_iso_string()
-            .as_string()
-            .expect("an ISO date is a string")
-    } else {
-        format!("{millis} Unix milliseconds")
+    match i64::try_from(millis) {
+        Ok(instant)
+            if js_sys::Date::new(&JsValue::from_f64(millis as f64))
+                .get_time()
+                .is_finite() =>
+        {
+            task_time_millis(instant, TaskTimePresentation::Elapsed)
+        }
+        _ => html! { format!("{millis} Unix milliseconds") },
     }
 }
 

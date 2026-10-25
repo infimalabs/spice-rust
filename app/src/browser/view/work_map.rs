@@ -9,6 +9,7 @@ use wire::intent::{
 };
 use yew::prelude::*;
 
+use crate::browser::clock::{TaskTimePresentation, local_compact, task_time};
 use crate::work::{
     TaskOverviewSelection, WorkAvailability, WorkMark, WorkProjection, WorkRelationshipDirection,
     lens,
@@ -156,6 +157,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
         render.state.lens.relation(),
         render.state.direction,
         render.selection,
+        &local_compact,
     );
     let controls = render_controls(
         render.state,
@@ -486,7 +488,13 @@ fn render_relationship_list(presentation: &lens::Presentation, active_lens: Work
                 <article key={node.id.clone()} class="work-map-fact">
                     <span>{node.kind}</span>
                     <strong>{node.label.clone()}</strong>
-                    <small>{node.detail.clone()}</small>
+                    <small>
+                        if let Some(at) = &node.at {
+                            {task_time(at, TaskTimePresentation::Elapsed)}
+                            {" · "}
+                        }
+                        {node.detail.clone()}
+                    </small>
                 </article>
             }
         })
