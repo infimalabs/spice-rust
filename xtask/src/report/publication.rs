@@ -356,8 +356,9 @@ pub(super) fn route(task: &Task) -> &'static str {
     }
 }
 
+/// Fixed public categories recognize whole labels; every other marker is redacted.
 pub(super) fn domain(project: &str) -> &'static str {
-    match project.split('.').next().unwrap_or_default() {
+    match project {
         "app" | "canvas" => "Interface",
         "gate" | "proof" => "Validation",
         "task" | "board" | "scheduler" => "Work coordination",
@@ -438,3 +439,6 @@ pub(super) fn quantity(
             .collect(),
     }
 }
+
+#[cfg(test)]
+mod tests;

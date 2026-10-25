@@ -25,11 +25,11 @@ const DIRTY_ROWS: usize = 24;
 /// Newest commits the working-state glance keeps.
 const COMMIT_ROWS: usize = 8;
 
-/// Pending public execution work no actor holds, counted by phase.
+/// Pending execution work no actor holds, counted by phase.
 ///
-/// Hidden projects, Design roots, and unauthorized outputs controlled by a
-/// Design stay on their dedicated operator-facing surfaces rather than being
-/// presented as a lane's next work.
+/// Design roots and unauthorized outputs controlled by a Design stay on their
+/// dedicated operator-facing surfaces rather than being presented as a lane's
+/// next work.
 pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardError> {
     let mut unclaimed = BTreeMap::<String, usize>::new();
     let mut resolved = board::ResolvedTasks::new();
@@ -46,7 +46,6 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
                 .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active);
             if held
                 || !workflow.status.is_pending()
-                || statement.project.starts_with('.')
                 || speculative_design_work(
                     read,
                     statement,
