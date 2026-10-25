@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 atomic = { path = "../atomic" }
+jiff = "0.2.35"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.19"

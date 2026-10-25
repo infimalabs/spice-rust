@@ -510,10 +510,10 @@ fn resolve_external_preconditions(
 /// `dist/VERSION` derives for the release commit, and the version the checked
 /// out `dist/VERSION` derives for it. Release never edits `dist/VERSION`.
 fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions, String> {
-    let source_minor = spice::version::source_minor(root)?;
+    let source_instant = spice::version::source_instant(root)?;
     let source_version = dist::current_tracked_version()
         .map_err(|error| error.to_string())?
-        .product(Some(source_minor), dist::Build::Staged);
+        .product(Some(source_instant), dist::Build::Staged);
     let release_version = spice::version::source_version(root, dist::Build::Staged)?;
     let requested_version = matches.get_one::<String>("version").map_or_else(
         || Ok(release_version.clone()),

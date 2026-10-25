@@ -345,25 +345,28 @@ focuses a draft's composer; a draft whose lane no console shows says so, and
 
 `spice --version`, `spice version`, the app menu, and the Spice header report
 one product version that every build path derives the same way from the tree it
-builds. `dist/VERSION` holds only the major number, the one number a person sets.
-The minor is HEAD's committer second, and nothing past HEAD is read, so a
-depth-1 checkout derives it. Spice task landings date themselves at least one
-second past main's previous head, so main's first-parent seconds strictly
-increase and a later landing sorts above an earlier one. A commit made outside
-a landing in its parent's second shares its parent's version, as do past
-commits that predate this rule. The patch is 0. On a patch line,
-`dist/VERSION` instead holds a full `MAJOR.MINOR.PATCH` pin, which is the
-version verbatim, because a patch commit's own instant would move the minor.
+builds. On main `dist/VERSION` reads `calendar`, and the version is HEAD's
+committer instant in UTC: the major is the two-digit year followed by the day of
+the year, the minor is the second of that day, and the patch is 0, so a commit
+at 2026-10-25T09:38:24Z is `26298.34704.0`. Nothing past HEAD is read, so a
+depth-1 checkout derives it, and instants outside 2000 through 2099 are refused
+because the two-digit year would wrap. Spice task landings date themselves at
+least one second past main's previous head, so main's first-parent seconds
+strictly increase and a later landing sorts above an earlier one. A commit made
+outside a landing in its parent's second shares its parent's version. On a
+patch line, `dist/VERSION` instead holds the full release version with a
+nonzero patch, counting up from 1 on its base (`26298.34704.1`), because a patch
+commit's own instant would move the major and minor; a patch release sorts
+after its base and before the next second's landing.
 
 A build that does not pass through release staging
 (`spice dev xtask -- install`, `spice dev xtask -- windows-appliance`) appends
 `-dev`, so it sorts below its own commit's staged `stage-target` payload, which
-carries no marker. A plain Cargo build bound to no commit reports
-`MAJOR.0.0-dev`, below every derived version of its major. The version never
-carries the executable digest: the native-binary identity is the running
-executable's complete digest, so identical bytes keep one identity without a
-Git checkout. `spice --version` ends with `app G` when the executable links
-generation G's archive.
+carries no marker. A plain Cargo build bound to no commit reports `0.0.0-dev`,
+below every derived version. The version never carries the executable digest:
+the native-binary identity is the running executable's complete digest, so
+identical bytes keep one identity without a Git checkout. `spice --version`
+ends with `app G` when the executable links generation G's archive.
 
 Owners: [`dist/src/version.rs`](../../dist/src/version.rs),
 [`spice/src/version.rs`](../../spice/src/version.rs), and

@@ -820,6 +820,7 @@ name = "dist"
 version = "0.0.0"
 dependencies = [
  "atomic",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
