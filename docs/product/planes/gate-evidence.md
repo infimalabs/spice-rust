@@ -25,6 +25,12 @@ proof-aware runner. A shell transcript, test output, a copied exit status, or a
 hand-written receipt is not proof: none establishes source, declaration,
 command, environment, tool, and result as one execution.
 
+A packaged toolchain arm's action specification carries the commands its
+declaration states, so changing what an arm runs changes its key: the app arm
+runs WASM clippy and a development `trunk build` without `--release`, and no
+receipt minted when it bundled with `wasm-opt` satisfies it. Optimized bundling
+belongs to release and install builds, which keep `--release`.
+
 ## Action classes
 
 A `cacheable` action's result is determined by staged content and declared

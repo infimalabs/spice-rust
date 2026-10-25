@@ -313,7 +313,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         tools: APP_TOOLS,
         analysis: &[
             "cargo clippy --locked --package app --target wasm32-unknown-unknown -- -D warnings",
-            "trunk build index.html --release --locked --filehash=false",
+            "trunk build index.html --locked --filehash=false (development bundle: no --release, no wasm-opt)",
         ],
     },
     ToolchainDeclaration {

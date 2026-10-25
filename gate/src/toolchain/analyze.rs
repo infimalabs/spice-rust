@@ -330,14 +330,9 @@ const CARGO_WASM_ARGUMENTS: &[&str] = &[
     "warnings",
 ];
 
-/// The second app analysis, kept in its declaration order.
-const TRUNK_BUILD_ARGUMENTS: &[&str] = &[
-    "build",
-    "index.html",
-    "--release",
-    "--locked",
-    "--filehash=false",
-];
+/// The second app analysis, kept in its declaration order: a development
+/// bundle, so no proof pays for the `wasm-opt` pass only releases ship.
+const TRUNK_BUILD_ARGUMENTS: &[&str] = &["build", "index.html", "--locked", "--filehash=false"];
 
 /// The flag that makes the formatter name differing files instead of diffing.
 ///
