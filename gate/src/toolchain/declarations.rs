@@ -285,7 +285,7 @@ pub const TOOLCHAIN_ARMS: [ToolchainDeclaration; 10] = [
         tools: RUST_TYPECHECK_TOOLS,
         analysis: &[
             "cargo clippy --locked --package <one reached package> <one exact reached target flag> <--features exact package-qualified required features> <--profile test for a test-enabled target> --message-format=json-render-diagnostics -- -D warnings",
-            "cargo clippy --locked --package <spice or sill> <--bin spice or --tests> --target x86_64-pc-windows-msvc --message-format=json-render-diagnostics -- -D warnings when the complete staged tree declares dist/windows-msvc.toml",
+            "cargo check --locked --package <spice or sill> <--bin spice or --tests> --target x86_64-pc-windows-msvc --message-format=json-render-diagnostics with -D warnings appended to the encoded rustflags when the complete staged tree declares dist/windows-msvc.toml",
         ],
     },
     ToolchainDeclaration {
