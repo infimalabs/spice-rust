@@ -10,10 +10,11 @@ mod notes;
 mod pins;
 mod release;
 mod stage;
+mod version;
 
 pub use authority::{
     AuthorityError, GitCommand, GitMutation, RefState, ReleaseAuthority, ReleaseRefs,
-    admit_authority, admit_workspace_publish_policy, current_authority, current_product_version,
+    admit_authority, admit_workspace_publish_policy, current_authority,
 };
 pub use canvas::{Canvas, CanvasError, ObjectTarget, canvas_object, linked_archive};
 pub use notes::{
@@ -27,4 +28,8 @@ pub use release::{
     gate_receipt, plan_release, verify_plan,
 };
 pub use stage::{BuildError, BuildStep, Builder, Pipeline, StageError, StagedTarget};
+pub use version::{
+    Build, SOURCE_SECOND_POSITIONS, SourceMinor, SourceMinorError, TrackedVersion,
+    TrackedVersionError, admit_tracked_version, current_tracked_version,
+};
 pub use wire::manifest::ProductVersion;

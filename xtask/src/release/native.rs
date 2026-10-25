@@ -3,20 +3,23 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use wire::manifest::ReleaseTarget;
+use wire::manifest::{ProductVersion, ReleaseTarget};
 
-/// Ask Cargo for the exact linked binary carrying `canvas`, retaining line
-/// tables for targets whose declared debug artifact consumes them. The
-/// macOS executable must leave the link unstripped: `dsymutil` follows the
-/// symbol table's object-file entries to assemble the dSYM, after which the
-/// builder strips the executable itself. Linux declares no debug artifact,
-/// so its symbol table goes at link. MSVC receives no strip setting because
-/// rustc spells one as `/DEBUG:NONE`, which would suppress the declared PDB.
-/// `cargo rustc` hands the link argument to the final executable alone, so no
-/// dependency rebuilds when the archive changes.
+/// Ask Cargo for the exact linked binary carrying `canvas` and reporting
+/// `version`, retaining line tables for targets whose declared debug artifact
+/// consumes them. The version reaches the compiler through Cargo's `[env]`
+/// table, which Cargo also tracks for rebuilds, so the argument vector alone
+/// names the whole build. The macOS executable must leave the link unstripped:
+/// `dsymutil` follows the symbol table's object-file entries to assemble the
+/// dSYM, after which the builder strips the executable itself. Linux declares
+/// no debug artifact, so its symbol table goes at link. MSVC receives no strip
+/// setting because rustc spells one as `/DEBUG:NONE`, which would suppress the
+/// declared PDB. `cargo rustc` hands the link argument to the final executable
+/// alone, so no dependency rebuilds when the archive changes.
 pub(super) fn cargo_arguments(
     target: ReleaseTarget,
     target_dir: &Path,
+    version: &ProductVersion,
     canvas: &crate::app::StagedCanvas,
 ) -> Result<Vec<OsString>, crate::app::AppBuildError> {
     let object = match target {
@@ -41,6 +44,14 @@ pub(super) fn cargo_arguments(
     ]);
     arguments.push(target_dir.as_os_str().to_owned());
     arguments.push(OsString::from("--message-format=json-render-diagnostics"));
+    arguments.extend([
+        OsString::from("--config"),
+        OsString::from(format!(
+            "env.{}={:?}",
+            spice::version::SOURCE_VERSION_ENV,
+            version.as_str()
+        )),
+    ]);
     if target.debug_path().is_some() {
         arguments.extend([
             OsString::from("--config"),

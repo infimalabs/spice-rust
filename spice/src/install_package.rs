@@ -119,9 +119,8 @@ fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
     let admitted =
         proof::admit_package_tree(&members).map_err(|error| Error::input(error.to_string()))?;
     let candidate = &admitted.document().product_version;
-    let current = dist::current_product_version()
-        .expect("the compiled distribution product version is canonical");
-    if candidate.precedence(&current).is_le() {
+    let current = spice::version::product();
+    if candidate.precedence(current).is_le() {
         return Err(Error::input(format!(
             "package version {candidate} is not newer than installed appliance version {current}"
         )));
@@ -522,7 +521,7 @@ mod tests {
             targets: manifest_targets,
         })
         .expect("manifest encodes");
-        let current = dist::current_product_version().expect("current product version");
+        let current = spice::version::product();
         let major = current
             .as_str()
             .split('.')

@@ -105,7 +105,7 @@ pub enum TargetBuildError {
     Application(crate::app::AppBuildError),
     Build(dist::BuildError),
     Pins(dist::PinError),
-    Authority(dist::AuthorityError),
+    SourceVersion(String),
     Stage(dist::StageError),
 }
 
@@ -169,7 +169,7 @@ impl fmt::Display for TargetBuildError {
             ),
             Self::Application(error) => write!(formatter, "app build failed: {error}"),
             Self::Build(error) => write!(formatter, "native build failed: {error}"),
-            Self::Authority(source) => write!(formatter, "release authority refused: {source}"),
+            Self::SourceVersion(detail) => write!(formatter, "product version refused: {detail}"),
             Self::Pins(source) => write!(formatter, "release pin refused: {source}"),
             Self::Stage(source) => write!(formatter, "release stage failed: {source}"),
         }
@@ -186,7 +186,6 @@ impl Error for TargetBuildError {
             Self::Spec(source) => Some(source),
             Self::Application(source) => Some(source),
             Self::Build(source) => Some(source),
-            Self::Authority(source) => Some(source),
             Self::Pins(source) => Some(source),
             Self::Stage(source) => Some(source),
             _ => None,
@@ -200,11 +199,6 @@ impl From<sill::SpecError> for TargetBuildError {
     }
 }
 
-impl From<dist::AuthorityError> for TargetBuildError {
-    fn from(source: dist::AuthorityError) -> Self {
-        Self::Authority(source)
-    }
-}
 impl From<dist::PinError> for TargetBuildError {
     fn from(source: dist::PinError) -> Self {
         Self::Pins(source)

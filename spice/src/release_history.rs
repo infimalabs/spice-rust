@@ -48,8 +48,8 @@ fn draft_with_release(
     let release_commit = projected_release.unwrap_or(&history_commit).to_owned();
     let release_version = match requested_version {
         Some(version) => version.to_owned(),
-        None => dist::current_product_version()
-            .map_err(|error| Error::Encoding(error.to_string()))?
+        None => spice::version::source_version(root, dist::Build::Staged)
+            .map_err(Error::Encoding)?
             .to_string(),
     };
     let current_tag = format!("v{release_version}");

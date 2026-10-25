@@ -6,6 +6,7 @@ pub(super) struct CommandBuilder<'a, E> {
     pub(super) target: ReleaseTarget,
     pub(super) target_dir: &'a Path,
     pub(super) programs: &'a Programs,
+    pub(super) version: &'a ProductVersion,
     pub(super) executor: &'a E,
     #[cfg(unix)]
     pub(super) source: &'a SourceGuard,
@@ -46,7 +47,8 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         let native = self.run(CommandSpec::new(
             "native-build",
             &self.programs.cargo,
-            native::cargo_arguments(target, self.target_dir, staged).map_err(build_error)?,
+            native::cargo_arguments(target, self.target_dir, self.version, staged)
+                .map_err(build_error)?,
         ))?;
         let executable = cargo_executable(&native.stdout)?;
         #[cfg(unix)]

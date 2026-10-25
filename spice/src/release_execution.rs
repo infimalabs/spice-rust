@@ -495,10 +495,8 @@ impl dist::EffectPort for SystemEffects<'_> {
         }
         let head = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
         let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
-        let version = fs::read_to_string(self.root.join("dist/VERSION"))
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let version = dist::ProductVersion::parse(version.trim())
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let version = spice::version::source_version(&self.root, dist::Build::Staged)
+            .map_err(dist::EffectError::Environment)?;
         if !admitted_local_progress(plan, &head, &version, &status) {
             observed.head = head.clone();
             observed.clean = status.is_empty();

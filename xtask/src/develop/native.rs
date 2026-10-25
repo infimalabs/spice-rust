@@ -14,14 +14,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use gate::test_support::gix;
-
 use spice::install::{self, InstallError};
 use spice::repository::Repository;
 use spice::resident_lock::{
     ResidentAccess, ResidentLaunch, auth_token_is_valid, holder_epoch, holder_launch,
 };
-use wire::{Digest, TaskStamp};
+use wire::Digest;
+use wire::manifest::ProductVersion;
 
 use super::{RefreshError, RefreshReport, RefreshRequest};
 
@@ -35,10 +34,6 @@ const NEXT_ROLLBACK: &str = "spice.rollback.next";
 const RESIDENT_ROLLBACK: &str = "spice.resident.rollback";
 /// Staging copy used to atomically replace the serving executable authority.
 const NEXT_RESIDENT_ROLLBACK: &str = "spice.resident.rollback.next";
-/// Compile-time source stamp read by `spice::version`.
-const SOURCE_STAMP_ENV: &str = "SPICE_SOURCE_STAMP"; // env-policy: allow
-/// Ordered source-stamp positions available within one Git committer second.
-const SOURCE_SECOND_MICROS: i64 = 1_000_000;
 /// Maximum resident bootstrap response accepted while reconciling a restart.
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
@@ -94,13 +89,14 @@ pub(super) fn perform(
     writeln!(output, "building app")?;
     crate::app(environment, output)?;
     let canvas = crate::app::StagedCanvas::read(repository.worktree_root())?;
-    let stamp = source_stamp(repository.worktree_root())?;
-    writeln!(output, "source stamp {stamp}")?;
+    let version = spice::version::source_version(repository.worktree_root(), dist::Build::Dev)
+        .map_err(RefreshError::SourceVersion)?;
+    writeln!(output, "product version {version}")?;
     let build_root = environment.build_root(repository.worktree_root());
     let built = build(
         request.release,
         request.symbols,
-        &stamp,
+        &version,
         &canvas,
         &build_root,
         output,
@@ -370,92 +366,6 @@ pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest,
     Ok(digest)
 }
 
-/// Order this build by its source commit's clock and first-parent tie position.
-fn source_stamp(root: &Path) -> Result<TaskStamp, RefreshError> {
-    let repository = gix::open_opts(root, gix::open::Options::isolated()).map_err(|error| {
-        RefreshError::SourceStamp(format!("repository could not open: {error}"))
-    })?;
-    let head = repository
-        .head_id()
-        .map_err(|error| {
-            RefreshError::SourceStamp(format!("HEAD does not name a commit: {error}"))
-        })?
-        .detach();
-    let shallow = repository.shallow_commits().map_err(|error| {
-        RefreshError::SourceStamp(format!("shallow boundaries could not be read: {error}"))
-    })?;
-    stamp_from_committer_seconds(first_parent_seconds(&repository, head, shallow.as_ref()))
-        .map_err(RefreshError::SourceStamp)
-}
-
-/// Committer seconds of `head` and each first-parent ancestor, read lazily so
-/// a caller that stops early never visits the rest of history. A shallow
-/// boundary is a complete local history even though its commit names a parent
-/// object that is intentionally absent.
-fn first_parent_seconds<'repository>(
-    repository: &'repository gix::Repository,
-    head: gix::ObjectId,
-    shallow: Option<&'repository gix::shallow::Commits>,
-) -> impl Iterator<Item = Result<i64, String>> + 'repository {
-    let mut next = Some(head);
-    std::iter::from_fn(move || {
-        let id = next.take()?;
-        Some(
-            repository
-                .find_commit(id)
-                .map_err(|error| format!("commit {id} could not be read: {error}"))
-                .and_then(|commit| {
-                    if !shallow.is_some_and(|commits| commits.binary_search(&id).is_ok()) {
-                        next = commit.parent_ids().next().map(gix::Id::detach);
-                    }
-                    commit
-                        .time()
-                        .map(|time| time.seconds)
-                        .map_err(|error| format!("commit {id} has no committer instant: {error}"))
-                }),
-        )
-    })
-}
-
-/// Stamp HEAD from its committer second and its position in a same-second
-/// first-parent chain. Git stores only seconds, and deterministic task landings
-/// inherit the later parent's clock. Each tied descendant therefore advances
-/// one microsecond. The whole tied prefix is needed so repeated landings cannot
-/// reuse their parent's adjusted stamp; nothing past the first earlier
-/// ancestor is read. Refuse backward clocks and chains that exhaust the
-/// second's precision rather than overlap the next second.
-fn stamp_from_committer_seconds(
-    instants: impl IntoIterator<Item = Result<i64, String>>,
-) -> Result<TaskStamp, String> {
-    let mut instants = instants.into_iter();
-    let head = instants
-        .next()
-        .ok_or_else(|| "HEAD has no committer instant".to_owned())??;
-    let micros = head
-        .checked_mul(SOURCE_SECOND_MICROS)
-        .ok_or_else(|| format!("committer instant {head}s overflows microseconds"))?;
-    let mut ties = 0;
-    for parent in instants {
-        let parent = parent?;
-        if head < parent {
-            return Err(format!(
-                "HEAD committer instant {head}s is earlier than its first-parent ancestor's {parent}s"
-            ));
-        }
-        if head > parent {
-            break;
-        }
-        ties += 1;
-        if ties >= SOURCE_SECOND_MICROS {
-            return Err("same-second first-parent chain exhausts microsecond precision".to_owned());
-        }
-    }
-    let ordered = micros.checked_add(ties).ok_or_else(|| {
-        format!("committer instant {head}s with {ties} ties overflows microseconds")
-    })?;
-    TaskStamp::for_micros(ordered).map_err(|error| error.to_string())
-}
-
 /// Build `spice` linking `canvas`, and answer the final executable Cargo
 /// reported for it once it links and reports that exact archive.
 ///
@@ -466,23 +376,25 @@ fn stamp_from_committer_seconds(
 fn build(
     release: bool,
     symbols: bool,
-    stamp: &TaskStamp,
+    version: &ProductVersion,
     canvas: &crate::app::StagedCanvas,
     build_root: &Path,
     output: &mut impl Write,
 ) -> Result<PathBuf, RefreshError> {
     writeln!(output, "building spice profile={}", build_profile(release))?;
     let mut command = Command::new("cargo");
-    command.env(SOURCE_STAMP_ENV, stamp.as_str()).args([
-        "rustc",
-        "--locked",
-        "--package",
-        "spice",
-        "--bin",
-        "spice",
-        "--message-format",
-        "json-render-diagnostics",
-    ]);
+    command
+        .env(spice::version::SOURCE_VERSION_ENV, version.as_str())
+        .args([
+            "rustc",
+            "--locked",
+            "--package",
+            "spice",
+            "--bin",
+            "spice",
+            "--message-format",
+            "json-render-diagnostics",
+        ]);
     if release {
         command.arg("--release");
     }

@@ -1,36 +1,41 @@
 //! Product identity shared by native version surfaces.
 
+mod source;
+
 use std::fs::File;
 use std::sync::LazyLock;
 
 use serve::canvas::EmbeddedArchive;
 use serve::rack::RackError;
 use wire::manifest::ProductVersion;
-use wire::{Digest, Domain, Fault, FaultClass, TaskStamp};
+use wire::{Digest, Domain, Fault, FaultClass};
 
-/// Base-52 source clock with first-parent timestamp ties ordered, injected only by
-/// `spice dev xtask -- install`. Every other build is unbound to a commit.
-const SOURCE_STAMP: Option<&str> = option_env!("SPICE_SOURCE_STAMP"); // env-policy: allow
+pub use source::{SOURCE_VERSION_ENV, source_minor, source_version};
+
+/// The product version derived from `dist/VERSION` and the source commit,
+/// injected by every repository build path. A build unbound to any commit
+/// reports its tracked major as minor 0, marked `-dev`.
+const SOURCE_VERSION: Option<&str> = option_env!("SPICE_PRODUCT_VERSION"); // env-policy: allow
 
 /// Identity of the executable this process is running.
 #[derive(Debug)]
 pub struct Running {
     /// Digest of the executable bytes.
     pub binary: Digest,
-    /// Tracked release version, extended by the source stamp.
+    /// Product version derived from the tracked version and source commit.
     pub product: ProductVersion,
 }
 
 static PRODUCT: LazyLock<ProductVersion> = LazyLock::new(|| {
-    let stamp = SOURCE_STAMP.map(|stamp| {
-        stamp
-            .parse::<TaskStamp>()
-            .expect("xtask injects a canonical source stamp")
-    });
-    qualify(
-        &dist::current_product_version()
-            .expect("the compiled product version is repository-validated"),
-        stamp.as_ref(),
+    SOURCE_VERSION.map_or_else(
+        || {
+            dist::current_tracked_version()
+                .expect("the compiled tracked version is repository-validated")
+                .product(None, dist::Build::Dev)
+        },
+        |version| {
+            ProductVersion::parse(version).expect("the build injects a canonical product version")
+        },
     )
 });
 
@@ -103,28 +108,6 @@ fn capture() -> Result<Running, Fault> {
     })
 }
 
-/// Extend a pre-release with the source stamp.
-///
-/// A release version is ordered by its core alone: a stamp would make it a
-/// pre-release of itself, so a stamp extends only an existing pre-release.
-/// The executable digest stays out of the version; `Running::binary` carries it.
-fn qualify(version: &ProductVersion, stamp: Option<&TaskStamp>) -> ProductVersion {
-    let text = version.as_str();
-    let (base, build) = text
-        .split_once('+')
-        .map_or((text, None), |(base, build)| (base, Some(build)));
-    let Some(stamp) = stamp.filter(|_| base.contains('-')) else {
-        return version.clone();
-    };
-    let mut qualified = format!("{base}.{stamp}");
-    if let Some(build) = build {
-        qualified.push('+');
-        qualified.push_str(build);
-    }
-    ProductVersion::parse(&qualified)
-        .expect("a canonical version extended by a source stamp stays canonical")
-}
-
 /// Hash the executable without consulting a repository or retaining its bytes.
 fn binary_digest() -> Result<Digest, Fault> {
     let executable = std::env::current_exe().map_err(|error| Fault {
@@ -142,33 +125,4 @@ fn binary_digest() -> Result<Digest, Fault> {
         reason: "version::binary-unreadable".to_owned(),
         detail: format!("{}: {error}", executable.display()),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cmp::Ordering;
-
-    use super::*;
-
-    fn version(text: &str) -> ProductVersion {
-        ProductVersion::parse(text).expect("fixture version")
-    }
-
-    #[test]
-    fn a_source_stamp_orders_prereleases_and_never_demotes_a_release() {
-        let earlier = TaskStamp::for_micros(1_790_000_000_000_000).expect("stamp");
-        let later = TaskStamp::for_micros(1_790_000_001_000_000).expect("stamp");
-        let dev = version("0.2.0-dev.0+vendor.01");
-        let unbound = qualify(&dev, None);
-        let first = qualify(&dev, Some(&earlier));
-        let second = qualify(&dev, Some(&later));
-        assert_eq!(first.as_str(), format!("0.2.0-dev.0.{earlier}+vendor.01"));
-        assert_eq!(unbound.precedence(&first), Ordering::Less);
-        assert_eq!(first.precedence(&second), Ordering::Less);
-
-        let release = version("0.2.0");
-        let stamped = qualify(&release, Some(&later));
-        assert_eq!(stamped.as_str(), "0.2.0");
-        assert_eq!(second.precedence(&stamped), Ordering::Less);
-    }
 }

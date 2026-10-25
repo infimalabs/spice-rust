@@ -18,7 +18,7 @@ use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
-use wire::manifest::{BuildPins, ReleaseTarget};
+use wire::manifest::{BuildPins, ProductVersion, ReleaseTarget};
 use wire::{Digest, Domain};
 
 mod builder;
@@ -266,6 +266,8 @@ pub fn stage_target(
 ) -> Result<TargetBuild, TargetBuildError> {
     let target = parse_target(spelling)?;
     let root = workspace_root()?;
+    let version = spice::version::source_version(&root, dist::Build::Staged)
+        .map_err(TargetBuildError::SourceVersion)?;
     let programs = Programs::discover(&root, &environment, target)?;
     let executor = SystemExecutor::new(&root, &environment, &programs.rustc)?;
     match stage_with_roots(
@@ -273,6 +275,7 @@ pub fn stage_target(
         &environment.build_root(&root),
         &environment.stage_root_path(&root),
         target,
+        &version,
         &programs,
         &executor,
     ) {
@@ -287,6 +290,10 @@ pub fn stage_target(
     }
 }
 
+/// The staged product version every test stage builds and reports.
+#[cfg(test)]
+const FIXTURE_VERSION: &str = "0.17900000010.0";
+
 #[cfg(test)]
 fn stage_with<E: Executor>(
     root: &Path,
@@ -300,6 +307,7 @@ fn stage_with<E: Executor>(
         build_root,
         &root.join("dist/stage"),
         target,
+        &ProductVersion::parse(FIXTURE_VERSION).expect("fixture version is canonical"),
         programs,
         executor,
     )
@@ -310,6 +318,7 @@ fn stage_with_roots<E: Executor>(
     build_root: &Path,
     stage_root: &Path,
     target: ReleaseTarget,
+    version: &ProductVersion,
     programs: &Programs,
     executor: &E,
 ) -> Result<TargetBuild, TargetBuildError> {
@@ -319,13 +328,14 @@ fn stage_with_roots<E: Executor>(
     let required = RequiredPins::new(required)?;
     required.verify(&observed)?;
 
-    let pipeline = Pipeline::new(required.clone(), dist::current_product_version()?);
+    let pipeline = Pipeline::new(required.clone(), version.clone());
     let target_dir = build_root.join("release-appliance");
     let mut builder = CommandBuilder {
         root,
         target,
         target_dir: &target_dir,
         programs,
+        version,
         executor,
         #[cfg(unix)]
         source: &source,

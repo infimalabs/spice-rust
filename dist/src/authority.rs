@@ -4,10 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wire::manifest::{ProductVersion, ProductVersionError};
+use wire::manifest::ProductVersion;
+
+use crate::version::TrackedVersionError;
 
 const AUTHORITY_BYTES: &[u8] = ::std::include_bytes!("../release-authority.json");
-const VERSION_TEXT: &str = ::std::include_str!("../VERSION");
 const AUTHORITY_SCHEMA: u16 = 1;
 const PACKAGE_NAME: &str = "spice";
 const REMOTE: &str = "origin";
@@ -74,7 +75,6 @@ impl ReleaseRefs {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReleaseAuthority {
     document: AuthorityDocument,
-    version: ProductVersion,
 }
 
 impl ReleaseAuthority {
@@ -86,11 +86,6 @@ impl ReleaseAuthority {
     #[must_use]
     pub fn remote(&self) -> &str {
         &self.document.remote
-    }
-
-    #[must_use]
-    pub const fn version(&self) -> &ProductVersion {
-        &self.version
     }
 
     #[must_use]
@@ -257,40 +252,24 @@ impl GitCommand {
     }
 }
 
-/// Admit the tracked authority and product version compiled into this crate.
+/// Admit the tracked authority compiled into this crate.
 ///
 /// # Errors
 ///
-/// Refuses either tracked document when it is malformed or noncanonical, or
-/// when any workspace crate is externally publishable.
+/// Refuses the tracked document when it is malformed or noncanonical, or when
+/// any workspace crate is externally publishable.
 pub fn current_authority(workspace: &Path) -> Result<ReleaseAuthority, AuthorityError> {
     admit_workspace_publish_policy(workspace)?;
-    admit_authority(
-        tracked_line(AUTHORITY_BYTES, "release authority")?,
-        tracked_text_line(VERSION_TEXT, "product version")?,
-    )
+    admit_authority(tracked_line(AUTHORITY_BYTES, "release authority")?)
 }
 
-/// Product version compiled into this distribution generation.
-///
-/// # Errors
-///
-/// Refuses a malformed tracked version instead of giving consumers a second
-/// file-macro authority for the same release identity.
-pub fn current_product_version() -> Result<ProductVersion, AuthorityError> {
-    Ok(ProductVersion::parse(tracked_text_line(
-        VERSION_TEXT,
-        "product version",
-    )?)?)
-}
-
-/// Admit one exact authority document and product version.
+/// Admit one exact authority document.
 ///
 /// # Errors
 ///
 /// Refuses malformed or noncanonical JSON and any authority outside the one
 /// Git topology this release supports.
-pub fn admit_authority(bytes: &[u8], version: &str) -> Result<ReleaseAuthority, AuthorityError> {
+pub fn admit_authority(bytes: &[u8]) -> Result<ReleaseAuthority, AuthorityError> {
     let document: AuthorityDocument =
         wire::decode(bytes).map_err(|error| AuthorityError::Decode(error.to_string()))?;
     let canonical =
@@ -307,10 +286,7 @@ pub fn admit_authority(bytes: &[u8], version: &str) -> Result<ReleaseAuthority, 
         return Err(AuthorityError::SourceRef(document.source));
     }
     disjoint(&document)?;
-    Ok(ReleaseAuthority {
-        document,
-        version: ProductVersion::parse(version)?,
-    })
+    Ok(ReleaseAuthority { document })
 }
 
 /// Prove no workspace package can be sent to a Cargo registry.
@@ -383,7 +359,10 @@ fn tracked_line<'a>(bytes: &'a [u8], label: &'static str) -> Result<&'a [u8], Au
     }
 }
 
-fn tracked_text_line<'a>(text: &'a str, label: &'static str) -> Result<&'a str, AuthorityError> {
+pub(crate) fn tracked_text_line<'a>(
+    text: &'a str,
+    label: &'static str,
+) -> Result<&'a str, AuthorityError> {
     let line = text
         .strip_suffix('\n')
         .ok_or(AuthorityError::TrackedLine(label))?;
@@ -530,7 +509,7 @@ pub enum AuthorityError {
     #[error("release authority field {0} differs from the fixed Git topology")]
     Fixed(&'static str),
     #[error(transparent)]
-    Version(#[from] ProductVersionError),
+    Version(#[from] TrackedVersionError),
     #[error("release ref template must contain VERSION exactly once: {0}")]
     Template(String),
     #[error("release ref is not canonical: {0}")]
@@ -576,22 +555,9 @@ mod tests {
     fn tracked_authority_is_canonical_fixed_and_non_publishable() {
         let authority = current_authority(workspace()).expect("tracked authority admits");
         assert_eq!(authority.package_name(), "spice");
-        assert_eq!(authority.version().as_str(), "0.2.0-dev.0");
-        assert_eq!(
-            current_product_version().expect("tracked version admits"),
-            *authority.version(),
-        );
         assert!(tracked_line(AUTHORITY_BYTES, "authority").is_ok());
-        assert!(tracked_text_line(VERSION_TEXT, "version").is_ok());
         assert!(tracked_line(b"{}\n\n", "authority").is_err());
-        assert!(tracked_text_line("1.2.3\n\n", "version").is_err());
-        assert!(matches!(
-            admit_authority(
-                tracked_line(AUTHORITY_BYTES, "authority").expect("tracked line"),
-                tracked_text_line("1.2.3 \n", "version").expect("one framed line"),
-            ),
-            Err(AuthorityError::Version(_))
-        ));
+        assert!(tracked_text_line("1\n\n", "version").is_err());
     }
 
     #[test]
@@ -702,7 +668,7 @@ mod tests {
         let mut whitespace = canonical.to_vec();
         whitespace.push(b'\n');
         assert!(matches!(
-            admit_authority(&whitespace, "1.2.3"),
+            admit_authority(&whitespace),
             Err(AuthorityError::NonCanonical)
         ));
 
@@ -710,7 +676,7 @@ mod tests {
             .expect("fixture JSON")
             .replace("refs/heads/main", "refs/heads/release");
         assert!(matches!(
-            admit_authority(moved.as_bytes(), "1.2.3"),
+            admit_authority(moved.as_bytes()),
             Err(AuthorityError::Fixed("source"))
         ));
 
@@ -718,10 +684,7 @@ mod tests {
             serde_json::from_slice(canonical).expect("fixture authority");
         unknown["ambient_remote_url"] = serde_json::Value::Bool(true);
         assert!(matches!(
-            admit_authority(
-                &serde_json::to_vec(&unknown).expect("changed authority"),
-                "1.2.3"
-            ),
+            admit_authority(&serde_json::to_vec(&unknown).expect("changed authority")),
             Err(AuthorityError::Decode(_))
         ));
     }

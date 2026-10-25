@@ -22,80 +22,12 @@ fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
     assert!(!schema_rollback_safe(Some(CURRENT), None));
 }
 
-fn stamp(seconds: &[i64]) -> Result<TaskStamp, String> {
-    stamp_from_committer_seconds(seconds.iter().copied().map(Ok))
-}
-
+/// The real repository walk derives one minor for every checkout of a commit:
+/// a shallow boundary in an earlier second matches the full history, and a
+/// boundary inside HEAD's second refuses.
 #[test]
-fn source_stamps_order_first_parent_commits_even_when_their_seconds_tie() {
-    let head = stamp(&[1_790_000_001, 1_790_000_000]).expect("later commit stamps");
-    assert_eq!(
-        head,
-        TaskStamp::for_micros(1_790_000_001_000_000).expect("stamp")
-    );
-    assert_eq!(
-        stamp(&[1_790_000_001]),
-        Ok(head.clone()),
-        "a root commit has no parent to precede"
-    );
-    let tied = stamp(&[1_790_000_001, 1_790_000_001, 1_790_000_000])
-        .expect("same-second descendant stamps");
-    let next = stamp(&[1_790_000_001, 1_790_000_001, 1_790_000_001, 1_790_000_000])
-        .expect("another same-second descendant stamps");
-    assert_eq!(tied.micros(), head.micros() + 1);
-    assert_eq!(next.micros(), tied.micros() + 1);
-    let later = stamp(&[
-        1_790_000_002,
-        1_790_000_001,
-        1_790_000_001,
-        1_790_000_001,
-        1_790_000_000,
-    ])
-    .expect("later second stamps");
-    assert!(head < tied && tied < next && next < later);
-    assert_eq!(
-        stamp(&[1_790_000_001, 1_790_000_001]),
-        Ok(tied),
-        "a tied root has the same first-parent position"
-    );
-    for refused in [
-        &[1_790_000_000, 1_790_000_001][..],
-        &[1_790_000_000, 1_790_000_000, 1_790_000_001],
-        &[],
-        &[-1],
-        &[i64::MAX],
-    ] {
-        assert!(stamp(refused).is_err(), "{refused:?} must not stamp");
-    }
-}
-
-/// Only the tied prefix and the first earlier ancestor are read, however long
-/// the history behind them, and an unreadable commit inside that prefix
-/// refuses rather than stamping short.
-#[test]
-fn source_stamps_read_no_history_past_the_first_earlier_ancestor() {
-    let mut read = 0;
-    let history = [1_790_000_001, 1_790_000_001, 1_790_000_000]
-        .into_iter()
-        .chain(std::iter::repeat(1_789_999_999))
-        .inspect(|_| read += 1)
-        .map(Ok);
-    assert_eq!(
-        stamp_from_committer_seconds(history).map(|stamp| stamp.micros()),
-        Ok(1_790_000_001_000_001)
-    );
-    assert_eq!(read, 3, "the walk stops at the first earlier ancestor");
-
-    let unreadable = [Ok(1_790_000_001), Err("commit unreadable".to_owned())];
-    assert_eq!(
-        stamp_from_committer_seconds(unreadable),
-        Err("commit unreadable".to_owned())
-    );
-}
-
-#[test]
-fn source_stamp_stops_at_a_declared_shallow_boundary() {
-    let fixture = Fixture::new("source-stamp-shallow");
+fn source_minor_matches_full_history_only_past_the_head_second() {
+    let fixture = Fixture::new("source-minor-shallow");
     let repository = gix::open_opts(&fixture.0, gix::open::Options::isolated())
         .expect("open in-process scratch repository");
     let tree = repository
@@ -106,52 +38,55 @@ fn source_stamp_stops_at_a_declared_shallow_boundary() {
         .expect("write empty tree")
         .detach();
     let signature = |time| gix::actor::SignatureRef {
-        name: "Source Stamp Fixture".into(),
-        email: "source-stamp@example.invalid".into(),
+        name: "Source Minor Fixture".into(),
+        email: "source-minor@example.invalid".into(),
         time,
     };
-    let root = repository
-        .commit_as(
-            signature("1790000000 +0000"),
-            signature("1790000000 +0000"),
-            "refs/heads/main",
-            "root",
-            tree,
-            None::<gix::ObjectId>,
-        )
-        .expect("write root commit")
-        .detach();
-    let head = repository
-        .commit_as(
-            signature("1790000001 +0000"),
-            signature("1790000001 +0000"),
-            "refs/heads/main",
-            "shallow head",
-            tree,
-            Some(root),
-        )
-        .expect("write head commit")
-        .detach();
+    let mut parent = None::<gix::ObjectId>;
+    let mut commits = Vec::new();
+    for (time, message) in [
+        ("1789999999 +0000", "ancient"),
+        ("1790000000 +0000", "boundary"),
+        ("1790000001 +0000", "first"),
+        ("1790000001 +0000", "tied head"),
+    ] {
+        let id = repository
+            .commit_as(
+                signature(time),
+                signature(time),
+                "refs/heads/main",
+                message,
+                tree,
+                parent,
+            )
+            .expect("write fixture commit")
+            .detach();
+        commits.push(id);
+        parent = Some(id);
+    }
     drop(repository);
+    let full = spice::version::source_minor(&fixture.0).expect("full history orders HEAD");
+    assert_eq!(full.get(), 17_900_000_011);
 
-    let root_hex = root.to_string();
+    let ancient = commits[0].to_string();
     fs::remove_file(
         fixture
             .0
             .join(".git/objects")
-            .join(&root_hex[..2])
-            .join(&root_hex[2..]),
+            .join(&ancient[..2])
+            .join(&ancient[2..]),
     )
     .expect("remove the parent object hidden beyond the shallow boundary");
-    fs::write(fixture.0.join(".git/shallow"), format!("{head}\n"))
-        .expect("declare the head as the shallow boundary");
-
+    let shallow = fixture.0.join(".git/shallow");
+    fs::write(&shallow, format!("{}\n", commits[1])).expect("declare an earlier boundary");
     assert_eq!(
-        source_stamp(&fixture.0)
-            .expect("a declared shallow boundary is a complete local history")
-            .micros(),
-        1_790_000_001_000_000
+        spice::version::source_minor(&fixture.0),
+        Ok(full),
+        "a boundary in an earlier second is a complete local history"
     );
+
+    fs::write(&shallow, format!("{}\n", commits[2])).expect("declare a same-second boundary");
+    assert!(spice::version::source_minor(&fixture.0).is_err());
 }
 
 #[test]

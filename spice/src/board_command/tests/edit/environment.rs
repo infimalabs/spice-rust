@@ -63,7 +63,8 @@ fn appliance_requirement_holds_a_task_until_a_later_appliance_runs() {
         "the running appliance is not later than itself"
     );
 
-    let earlier = wire::manifest::ProductVersion::parse("0.0.0").expect("earlier version");
+    // The lowest SemVer precedence, earlier than any running appliance.
+    let earlier = wire::manifest::ProductVersion::parse("0.0.0-0").expect("earliest version");
     let heads = at(&blocked, &task);
     assert_committed(issue(
         &bus,

@@ -11,7 +11,8 @@ use super::{
 };
 
 /// Cross-build the complete development Windows appliance with the current
-/// staged canvas, without staging a release payload or receipt.
+/// staged canvas, without staging a release payload or receipt. It reports the
+/// source checkout's `-dev` product version.
 pub fn build_windows_appliance(
     release: ReleaseEnvironment,
     ambient: Environment,
@@ -19,10 +20,12 @@ pub fn build_windows_appliance(
 ) -> Result<PathBuf, TargetBuildError> {
     let target = ReleaseTarget::X86_64PcWindowsMsvc;
     let root = workspace_root()?;
+    let version = spice::version::source_version(&root, dist::Build::Dev)
+        .map_err(TargetBuildError::SourceVersion)?;
     crate::app(&release, output).map_err(TargetBuildError::Application)?;
     let canvas = crate::app::StagedCanvas::read(&root).map_err(TargetBuildError::Application)?;
     let target_dir = root.join("target");
-    let arguments = native::cargo_arguments(target, &target_dir, &canvas)
+    let arguments = native::cargo_arguments(target, &target_dir, &version, &canvas)
         .map_err(TargetBuildError::Application)?;
     let spice = find_program(
         release
@@ -52,7 +55,7 @@ pub fn build_windows_appliance(
         .map_err(TargetBuildError::Build)?;
     writeln!(
         output,
-        "[windows-appliance] executable={} canvas={}",
+        "[windows-appliance] executable={} version={version} canvas={}",
         executable.display(),
         canvas.canvas().generation()
     )
