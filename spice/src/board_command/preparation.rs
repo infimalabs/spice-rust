@@ -1,9 +1,9 @@
 use super::*;
 use wire::rooms::{
     CandidateCoverageRecord, CandidateCovered, CandidateCritiqueRecord, CandidateCritiqued,
-    CandidateReference, CoverageAuthority, DecisionOutcome, DesignPassProposal, DesignPropose,
-    DesignProposed, ExecutionAuthorization, ExecutionAuthorized, OutputAdopt, OutputControlled,
-    OutputDecision, PreparationDecide, PreparationDecided, ProposalRef, RoomSource,
+    CoverageAuthority, DecisionOutcome, DesignPassProposal, DesignPropose, DesignProposed,
+    ExecutionAuthorization, ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide,
+    PreparationDecided, ProposalRef,
 };
 
 mod decision;

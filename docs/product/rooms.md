@@ -366,16 +366,15 @@ owns each rule summarized here.
   shelving is still owed; setting the group Passive again shelves it. Explore
   or Converge makes it eligible again with its room, candidates, outputs,
   history, and authorization unchanged.
-- **Opportunistic OOPS Design.** Its read-only candidate is the birth-ordered
-  set of current pending line-item Plans not named by an earlier decision.
-  Preview presents Accept or Reject for every line, none decided until the
-  operator marks it singly or all at once, and refuses while any line is
-  undecided. Submission snapshots that exact candidate and its complete
-  verdict atomically; accepted Plans receive ordinary execution authorization,
-  rejected Plans remain historical, and a concurrently added report remains
-  for the next candidate. Room observations and typed contributions remain
-  Design feedback. The operator may collapse the Design; the next report then
-  opens a new generation.
+- **Opportunistic OOPS Design.** Every `task oops` report is a Plan prepared
+  under it, so it is an ordinary Design with automatic intake. It has no
+  candidate until it is moved to an Explore or Converge group and a holder
+  proposes: the holder triages the pending reports as a whole, gives each
+  cause one acceptance-bearing output, and names the reports to reject, as its
+  statement requires. The operator decides that proposal like any other,
+  Return included, and reports arriving meanwhile wait for the next pass. Its
+  intent and project cannot be edited; its statement text can. The operator
+  may collapse the Design; the next report then opens a new generation.
 
 Every read — `spice room history|inbox|relevance|status`,
 `spice preparation show`, `spice group list`, and their `spice://` resources —

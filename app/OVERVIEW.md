@@ -257,8 +257,8 @@ admits it.
 
 `spice task oops` instead records a filed Plan directly under the current
 repository-owned OOPS Design. Those Plans stay behind that Design's ordinary
-dependency edge until the operator accepts or rejects each line in its
-composed candidate; there is no separate OOPS filing state or filing action.
+dependency edge until an agent holding it triages them into a proposal the
+operator decides; there is no separate OOPS filing state or filing action.
 
 The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
 operator can read, then keeps the Task/Plan/Design creator behind one compact

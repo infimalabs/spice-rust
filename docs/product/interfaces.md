@@ -138,17 +138,6 @@ handle.
   "candidate": …, "reason": TEXT}`; the nonblank material feedback records
   durably without authorizing or concluding. Historical selected, returned,
   and collapse records remain readable after migration.
-  The repository-owned opportunistic OOPS Design is the one exception to a
-  separately recorded `propose`: its read-only candidate identity is the
-  native stamp naming the newest included line-item Plan's birth moment. Its
-  lines are the pending Plans born at or before that moment, ordered by birth
-  moment with stamp spelling breaking a same-moment tie across widths.
-  `decide` must repeat every displayed line in that order, each by its own
-  birth stamp, as accepted or rejected, cite the newest line's statement
-  fact as `source`, and carry the exact Design and line statement/workflow
-  witnesses. It records the immutable proposal and complete decision together;
-  Return is not admitted, no Design claim is completed, and a newer report
-  remains outside the submitted cutoff for the next candidate.
 - **`withdraw WITHDRAWAL_JSON`.** `candidate` (`{"controller": STAMP,
   "candidate": STAMP}`) names the author's own undecided candidate and
   `reason` is nonblank, such as which version corrects it.

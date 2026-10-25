@@ -38,15 +38,18 @@ pub(in crate::board_command) fn task_edit(
             "correct a statement only while the task is pending",
         );
     }
-    if entry
-        .statement()
-        .intent
-        .is_some_and(wire::TaskIntent::is_opportunistic_design)
+    // The OOPS generation names one open opportunistic Design in its fixed
+    // project; its statement text amends like any Design's.
+    if (edit.intent.is_some() || edit.project.is_some())
+        && entry
+            .statement()
+            .intent
+            .is_some_and(wire::TaskIntent::is_opportunistic_design)
     {
         return refusal(
             "task::oops-design-internal",
             Some(entry.handle().to_string()),
-            "the repository-owned OOPS Design statement cannot be edited",
+            "the OOPS Design keeps its intent and project; amend its text instead",
         );
     }
     let (statement, publication) =

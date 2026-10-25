@@ -390,8 +390,6 @@ fn decision_witnesses(
     outcome: &DecisionOutcome,
     tasks: &[BoardTask],
 ) -> Result<Vec<Witness>, String> {
-    let opportunistic = design.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
-        && candidate.claim.is_none();
     let mut expected = transition_witnesses(design);
     expected.push(Witness::Proposal {
         proposal: ProposalRef::Decision {
@@ -403,18 +401,8 @@ fn decision_witnesses(
         proposal: ProposalRef::Candidate {
             candidate: candidate.candidate.clone(),
         },
-        head: (!opportunistic).then_some(candidate_position),
+        head: Some(candidate_position),
     });
-    if opportunistic {
-        for output in &candidate.outputs {
-            let task = find_task(tasks, output).ok_or_else(|| {
-                format!(
-                    "preparation::output-unavailable: OOPS line item {output} is not on the board"
-                )
-            })?;
-            expected.extend(transition_witnesses(task));
-        }
-    }
     if outcome.accepted_outputs().next().is_none() {
         return Ok(expected);
     }
