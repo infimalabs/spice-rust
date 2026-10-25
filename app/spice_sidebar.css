@@ -74,7 +74,21 @@
   min-width: 0;
 }
 .app-spice-principal > :not(.app-spice-principal-identity, .app-control-rail) { grid-column: 1 / -1; }
-.app-spice-principal > .app-control-rail { flex-direction: column; flex-wrap: nowrap; }
+.app-spice-principal > .app-control-rail {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-self: center;
+}
+/* Each action stands as tall as two fact lines, so Edit profile sits beside
+   the name and code lines and the role action beside the email and roles;
+   the column is only as wide as its longest label. */
+.app-spice-principal > .app-control-rail > button {
+  flex: 0 0 auto;
+  min-height: calc(2 * 1.25 * var(--app-type-meta) + 2px);
+  padding: 0 8px;
+  font-size: var(--app-type-control);
+  line-height: 1.2;
+}
 .app-spice-principal-identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
