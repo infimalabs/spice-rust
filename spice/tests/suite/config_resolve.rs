@@ -875,7 +875,7 @@ fn all_four_layers_use_one_leaf_order() {
 #[test]
 fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
     let resolved = resolve(documents(
-        Some("[vendor.omp]\nlsp = true\n"),
+        Some("[vendor.omp]\nlsp = false\n"),
         Some(concat!(
             "[vendor.omp]\nmodel = \"omp-current\"\n",
             "[lock]\nbusy = 70\ntaken = 71\nfull = 72\n",
@@ -886,7 +886,7 @@ fn tables_merge_recursively_and_dynamic_lock_rows_keep_typed_paths() {
     ))
     .expect("tables merge across layers");
 
-    assert!(resolved.root().vendor().omp().lsp());
+    assert!(!resolved.root().vendor().omp().lsp());
     assert_eq!(resolved.root().vendor().omp().model(), "omp-current");
     assert_eq!(
         path_source(&resolved, "vendor.omp.lsp"),

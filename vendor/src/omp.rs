@@ -125,11 +125,11 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 /// so a tool omp adds later joins only by being named.
 pub const TOOLS: &str = "read,write,edit,glob,grep,web_search";
 
-/// [`TOOLS`] plus omp's language-server tool, for a lane whose repository
-/// policy admits it.
+/// [`TOOLS`] plus omp's language-server tool, for a lane whose policy admits
+/// it, as the built-in default does.
 ///
-/// The tool starts language servers, which is why it is named only on that
-/// explicit disposition rather than sitting in the roster above. The servers
+/// The tool starts language servers, which is why it rides on that policy
+/// disposition rather than sitting in the roster above. The servers
 /// stay inside the occupant's own process tree: [`config_overlay`] declines
 /// omp's shared broker, and resident launch composition separately disables
 /// the external lspmux route through its child environment.

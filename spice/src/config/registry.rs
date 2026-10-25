@@ -686,7 +686,7 @@ configuration_registry! {
     }
     fixed "vendor.omp.lsp" {
         kind: Boolean,
-        builtin: Some(Builtin::Boolean(false)),
+        builtin: Some(Builtin::Boolean(true)),
         layers: TRACKED,
         class: Policy,
         flag: None,
