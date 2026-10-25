@@ -143,7 +143,7 @@ fn draft_creation_admitted(add: &TaskAdd) -> Result<(), Outcome<CommandAnswer>> 
     Ok(())
 }
 
-const PROJECT_REPAIR: &str = "name --project PROJECT as dot-separated runs of [0-9a-z_]+";
+const PROJECT_REPAIR: &str = "name --project PROJECT as one lowercase word of [0-9a-z_]";
 
 /// Admit one manually named project, refusing a malformed label.
 fn admit_manual_project(requested: &str) -> Result<Project, Outcome<CommandAnswer>> {
@@ -187,7 +187,7 @@ fn admit_add_project(
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
 ) -> Result<(Project, ValidatedSnapshot), Outcome<CommandAnswer>> {
-    let project = admit_manual_project(add.project.as_deref().unwrap_or("task.private"))?;
+    let project = admit_manual_project(add.project.as_deref().unwrap_or(Project::PRIVATE))?;
     let roots = task_add_roots(add);
     let snapshot = validated_working_snapshot_for_tasks(bus, command.actor().clone(), &roots)?;
     let unfiled = referenced_unfiled(&snapshot.entries, add.depends.iter());

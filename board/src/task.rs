@@ -12,6 +12,9 @@ use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, TaskStamp, WorkflowHead};
 pub struct Project(String);
 
 impl Project {
+    /// The project a task files under when its author names none.
+    pub const PRIVATE: &str = "private";
+
     /// Admit one project spelling.
     ///
     /// # Errors
@@ -46,7 +49,7 @@ impl fmt::Display for ProjectError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "project must be dot-separated runs of [0-9a-z_]+: {:?}",
+            "project must be one lowercase word of [0-9a-z_]: {:?}",
             self.0
         )
     }

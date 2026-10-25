@@ -1283,7 +1283,7 @@ pub(super) fn progress_witnesses(
 
 #[cfg(test)]
 pub(super) fn mint_handle_at(project: Option<&str>, _title: &str, epoch_micros: i64) -> TaskHandle {
-    let project = project.unwrap_or("task.private");
+    let project = project.unwrap_or(board::Project::PRIVATE);
     let stamp = wire::TaskStamp::for_micros(epoch_micros)
         .expect("the current epoch microsecond fits the task stamp codec");
     TaskHandle::for_project(project, &stamp)
