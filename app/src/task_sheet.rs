@@ -4,10 +4,12 @@
 //! followed by its reference count and collapsed justification.
 
 use wire::TaskStamp;
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 use wire::intent::BoardStatement;
 use wire::rooms::DesignPassProposal;
 
 /// One closed `details` block beneath the sheet's title and pitch.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SheetBlock {
     /// The summary's label.
@@ -20,6 +22,7 @@ pub struct SheetBlock {
 
 /// The sheet's blocks in reading order: Description, then Acceptance (or a
 /// Design's Questions), then History over `history_facts` scalar facts.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub fn sheet_blocks(statement: &BoardStatement, history_facts: usize) -> [SheetBlock; 3] {
     let design = statement.intent == Some(wire::TaskIntent::Design);
     [
@@ -51,6 +54,7 @@ pub fn sheet_blocks(statement: &BoardStatement, history_facts: usize) -> [SheetB
 
 /// How many prose lines a description carries; blank lines separate, they
 /// do not count.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub fn description_lines(description: Option<&str>) -> usize {
     description.map_or(0, |text| {
         text.lines().filter(|line| !line.trim().is_empty()).count()
@@ -58,6 +62,7 @@ pub fn description_lines(description: Option<&str>) -> usize {
 }
 
 /// One line of a proposal beneath its pitch-and-recommendation head.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProposalLine<'a> {
     /// A proposed output: its handle, pitch, and verdict control stay uncollapsed.
@@ -72,6 +77,7 @@ pub enum ProposalLine<'a> {
 
 /// A proposal's lines in reading order: every output, every governed input,
 /// the reference count, then the justification.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub fn proposal_lines(candidate: &DesignPassProposal) -> Vec<ProposalLine<'_>> {
     candidate
         .outputs
@@ -83,6 +89,46 @@ pub fn proposal_lines(candidate: &DesignPassProposal) -> Vec<ProposalLine<'_>> {
             ProposalLine::Justification(&candidate.justification),
         ])
         .collect()
+}
+
+/// Preparation-menu JSON is display text, not the proposal's wire encoding.
+/// Convert only typed journal positions; authored numbers and source offsets
+/// retain their exact meaning.
+pub(crate) fn proposal_record(proposal: &DesignPassProposal) -> String {
+    #[derive(serde::Serialize)]
+    struct Display<'a> {
+        candidate: &'a wire::rooms::CandidateRef,
+        statement: wire::SequenceCode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        claim: Option<wire::SequenceCode>,
+        recommendation: &'a wire::rooms::DesignPassRecommendation,
+        governed_inputs: &'a [TaskStamp],
+        outputs: &'a [TaskStamp],
+        justification: &'a str,
+        references: &'a [wire::rooms::CandidateReference],
+    }
+
+    let DesignPassProposal {
+        candidate,
+        statement,
+        claim,
+        recommendation,
+        governed_inputs,
+        outputs,
+        justification,
+        references,
+    } = proposal;
+    serde_json::to_string(&Display {
+        candidate,
+        statement: wire::SequenceCode::new(statement.get()),
+        claim: claim.map(|claim| wire::SequenceCode::new(claim.get())),
+        recommendation,
+        governed_inputs,
+        outputs,
+        justification,
+        references,
+    })
+    .expect("proposal display encodes")
 }
 
 #[cfg(test)]

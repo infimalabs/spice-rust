@@ -715,7 +715,7 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
         records.push((
             positioned.position,
             "Design pass proposal",
-            serde_json::to_string(&positioned.value).expect("proposal authority encodes"),
+            crate::task_sheet::proposal_record(&positioned.value),
         ));
     }
     for positioned in authority
