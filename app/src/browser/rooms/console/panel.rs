@@ -63,9 +63,10 @@ pub(super) fn submit(postables: &[Postable]) -> Callback<SubmitEvent> {
 }
 
 /// The panel: TURBO, the arrangement menu where the team menu stands, the
-/// speech slider, the stance slider in the allocation slot, and SEND. With no
-/// quote drafted and no post in flight it rests exactly as an idle team's
-/// panel does.
+/// speech slider, the stance slider in the allocation slot, and SEND. A group
+/// is on while any lane claims its designs' work, as a team is while a member
+/// runs; with no claimant, no quote drafted, and no post in flight it rests
+/// exactly as an idle team's panel does.
 pub(super) fn render(
     render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
@@ -109,7 +110,8 @@ pub(super) fn render(
         })
         .collect::<Vec<_>>();
     let ready = postables.iter().any(|postable| postable.available);
-    let dormant = !posting && !postables.iter().any(|postable| postable.attached);
+    let dormant =
+        claimants.is_empty() && !posting && !postables.iter().any(|postable| postable.attached);
     let open = controls.arranging.as_ref() == Some(group);
     let menu = {
         let arranging = controls.arranging.clone();

@@ -65,7 +65,11 @@ The group control panel keeps the team panel's frame and maps each control:
   its own room. Its rim shows those designs' accents; it reads `FULL SEND`
   exactly when every open design of a multi-design group is drafted, and is
   disabled while no room takes a post. A settled design takes no post. Command
-  or Control and Enter posts one composer alone. Idle follows the team rule.
+  or Control and Enter posts one composer alone. The panel is on while any
+  lane claims work associated with the group's Designs, the lanes whose tabs
+  stand above it, as a team's is while a member starts or runs; with no
+  claimant, no post in flight, and nothing drafted it rests idle by the team
+  rule.
 - **The group menu** replaces the arrangement menu in place: it moves this
   browser's console left or right, closes it, or **Disband working group**,
   whose `group::disband` result shows in the catalog notice. There is no swap
