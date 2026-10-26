@@ -7,12 +7,15 @@ use wire::manifest::ReleaseTarget;
 
 use super::{
     CommandSpec, Executor as _, ReleaseEnvironment, SystemExecutor, TargetBuildError, build_error,
-    cargo_executable, find_program, native, read_regular, successful, workspace_root,
+    cargo_executable, find_program, native, read_regular, source, successful, workspace_root,
 };
 
-/// Cross-build the complete development Windows appliance with the current
-/// staged canvas, without staging a release payload or receipt. It reports the
-/// source checkout's `-dev` product version.
+/// Cross-build the complete Windows appliance with the current staged canvas,
+/// without staging a release payload or receipt. Until hosted Windows staging
+/// is usable, this local build is the Windows release route: a checkout equal
+/// to HEAD (release output aside) reports the release product version, and any
+/// other checkout reports the `-dev` version so no release version vouches for
+/// uncommitted source.
 pub fn build_windows_appliance(
     release: ReleaseEnvironment,
     ambient: Environment,
@@ -20,27 +23,37 @@ pub fn build_windows_appliance(
 ) -> Result<PathBuf, TargetBuildError> {
     let target = ReleaseTarget::X86_64PcWindowsMsvc;
     let root = workspace_root()?;
-    let version = spice::version::source_version(&root, dist::Build::Dev)
-        .map_err(TargetBuildError::SourceVersion)?;
+    let path = release
+        .path
+        .as_deref()
+        .ok_or(TargetBuildError::MissingProgram("PATH"))?;
+    let native_executor = SystemExecutor::ambient(&root, ambient);
+    let build = match source::verify_checkout(&native_executor, &find_program(path, "git")?) {
+        Ok(()) => dist::Build::Staged,
+        Err(TargetBuildError::SourceDirty(reason)) => {
+            writeln!(
+                output,
+                "[windows-appliance] {reason}; building the -dev version"
+            )
+            .map_err(TargetBuildError::Output)?;
+            dist::Build::Dev
+        }
+        Err(error) => return Err(error),
+    };
+    let version =
+        spice::version::source_version(&root, build).map_err(TargetBuildError::SourceVersion)?;
     crate::app(&release, output).map_err(TargetBuildError::Application)?;
     let canvas = crate::app::StagedCanvas::read(&root).map_err(TargetBuildError::Application)?;
     let target_dir = root.join("target");
     let arguments = native::cargo_arguments(target, &target_dir, &version, &canvas)
         .map_err(TargetBuildError::Application)?;
-    let spice = find_program(
-        release
-            .path
-            .as_deref()
-            .ok_or(TargetBuildError::MissingProgram("PATH"))?,
-        "spice",
-    )?;
+    let spice = find_program(path, "spice")?;
     let mut wrapped_arguments = vec![
         OsString::from("dev"),
         OsString::from("cargo"),
         OsString::from("--"),
     ];
     wrapped_arguments.extend(arguments);
-    let native_executor = SystemExecutor::ambient(&root, ambient);
     let native = successful(native_executor.execute(CommandSpec::new(
         "native-build",
         &spice,

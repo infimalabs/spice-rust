@@ -141,10 +141,11 @@ impl SourceInstant {
 #[error("committer instant {0}s falls outside 2000 through 2099 UTC")]
 pub struct SourceInstantError(i64);
 
-/// Whether a build passed through release staging.
+/// Whether a build carries the unmarked release version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Build {
-    /// A `stage-target` payload.
+    /// A `stage-target` payload, or the local Windows appliance built from a
+    /// checkout equal to HEAD.
     Staged,
     /// Any other build, marked `-dev`.
     Dev,
@@ -206,7 +207,12 @@ mod tests {
     fn tracked_versions_admit_a_major_or_a_patch_slot_pin_only() {
         assert_eq!(TrackedVersion::parse("0"), Ok(TrackedVersion::Major(0)));
         assert_eq!(TrackedVersion::parse("12"), Ok(TrackedVersion::Major(12)));
-        for admitted in ["0.26298.347041", "0.26298.347049", "1.27005.1", "0.26298.863999"] {
+        for admitted in [
+            "0.26298.347041",
+            "0.26298.347049",
+            "1.27005.1",
+            "0.26298.863999",
+        ] {
             assert_eq!(pin(admitted).as_str(), admitted);
         }
         for refused in [
@@ -255,9 +261,7 @@ mod tests {
             "1.26298.347040"
         );
         assert_eq!(
-            TrackedVersion::Major(0)
-                .product(None, Build::Dev)
-                .as_str(),
+            TrackedVersion::Major(0).product(None, Build::Dev).as_str(),
             "0.0.0-dev"
         );
         let patch = TrackedVersion::Pin(pin("0.26298.347041"));

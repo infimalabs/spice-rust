@@ -212,7 +212,7 @@ then build the complete executable with the current staged canvas:
 ```sh
 spice dev xtask -- windows-msvc
 spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p spice --bin spice
-spice dev xtask -- windows-appliance
+spice dev xtask -- windows-appliance --unsigned
 ```
 
 Every Gate selection reached by Rust source, a Cargo manifest, `Cargo.lock`, or
@@ -260,7 +260,7 @@ receipt and archive check admits it to `xtask report`.
 The release stage is:
 
 ```sh
-spice dev xtask -- stage-target x86_64-pc-windows-msvc
+spice dev xtask -- stage-target x86_64-pc-windows-msvc --unsigned
 ```
 
 It packages `bin/spice.exe`, `symbols/spice.pdb`, the target payload, and the
@@ -352,10 +352,12 @@ counting up from 1 through 9 (`0.26298.347041`), because a patch commit's own
 instant would move the minor and patch; a patch release sorts after its base
 and before the next second's landing.
 
-A build that does not pass through release staging
-(`spice dev xtask -- install`, `spice dev xtask -- windows-appliance`) appends
-`-dev`, so it sorts below its own commit's staged `stage-target` payload, which
-carries no marker. A plain Cargo build bound to no commit reports
+A build that does not pass through release staging (`spice dev xtask --
+install`) appends `-dev`, so it sorts below its own commit's staged
+`stage-target` payload, which carries no marker. `spice dev xtask --
+windows-appliance --unsigned`, today's Windows release route, carries the
+unmarked release version only from a checkout equal to HEAD and appends `-dev`
+otherwise. A plain Cargo build bound to no commit reports
 `MAJOR.0.0-dev`, `0.0.0-dev` on main, below every derived version of its major.
 The version never carries the executable digest:
 the native-binary identity is the running executable's complete digest, so
