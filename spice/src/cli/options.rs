@@ -77,6 +77,16 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ("lane add", "model", "Launch with this model"),
     ("lane add", "effort", "Launch with this reasoning effort"),
     (
+        "lane model",
+        "clear",
+        "Remove the lane's override and launch with the vendor's model",
+    ),
+    (
+        "lane effort",
+        "clear",
+        "Remove the lane's override and launch with the vendor's effort",
+    ),
+    (
         "task add",
         "pitch",
         "One plain sentence saying why this task matters, at most 160 characters",
