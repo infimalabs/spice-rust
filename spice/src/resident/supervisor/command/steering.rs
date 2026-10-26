@@ -203,7 +203,11 @@ impl<W: Write + Send + 'static> Driver<W> {
             *delivered = Some(rendered);
         }
     }
-    fn delivery_calls(&self, human_due: bool, peer_due: bool) -> (Vec<Handle>, Vec<Handle>) {
+    pub(super) fn delivery_calls(
+        &self,
+        human_due: bool,
+        peer_due: bool,
+    ) -> (Vec<Handle>, Vec<Handle>) {
         let calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
         let human = if human_due {
             calls.values().map(|call| call.handle.clone()).collect()

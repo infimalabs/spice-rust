@@ -65,12 +65,13 @@ captured bytes; `read` it with a line range.
 ### Active-work narration
 
 The resident keeps one narration streak per occupant. Assistant prose resets it;
-tool results, an outstanding command, and `job wait` do not. When the streak
-reaches its tool-call bound (`lane.narration`) or its time deadline, the
-resident records `narration::prodded` and the supervisor interjects a progress
-notice that interrupts outstanding tool waits, never their commands. No
-acknowledgment key is minted, and a moved or exited occupant never receives a
-successor's prod.
+tool results, an outstanding command, and `job wait` do not. The first reminder
+is due at the configured tool-call bound (`lane.narration`) or three minutes,
+and the second at the next call bound or five minutes total. Further reminders
+are call-bound only. Each due reminder records `narration::prodded`, interrupts
+the active host-tool boundary so healthy work continues as a kept job, and
+enters steering immediately. No acknowledgment key is minted, and a moved or
+exited occupant never receives a successor's prod.
 
 ### Cadence is reachability
 
