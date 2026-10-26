@@ -32,7 +32,7 @@ and browser code cannot reach server internals.
 | `target/` | Rebuildable compiler and test caches; see cleanup below. |
 | `<git-common>/.spice/` | Durable appliance authority; removed only by an authorized lifecycle operation. |
 | `<git-dir>/.spice/` | Disposable per-worktree projections the resident rebuilds. A `.spice` inside worktree content is ordinary content, never runtime authority. |
-| `<git-common>/.spice-install/` | Installed appliance, hooks, and bootstrap skill; republish through `spice install`, never edit. |
+| `<git-common>/.spice-install/` | Installed appliance and hooks; republish through `spice install`, never edit. |
 
 ## Feedback
 
@@ -78,6 +78,6 @@ It collects only real Cargo-tagged target directories below their owning
 worktrees, and never the current roots, the hottest linked worktrees, or roots
 whose Cargo locks are held; `--free-space-floor BYTES` targets free space
 instead. Remove unneeded worktrees without `--force` after preserving wanted
-changes. Never use `git clean -fdX`: appliance state, bootstrap skill,
+changes. Never use `git clean -fdX`: appliance state,
 artifacts, generations, dependencies, and compiler output have distinct
 lifecycles.

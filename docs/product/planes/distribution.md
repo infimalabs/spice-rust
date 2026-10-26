@@ -638,10 +638,22 @@ named by the executable's linked archive, beside the executable operation. A
 plan reads the selected executable once and admits that archive, inflating
 only its shell. Upgrading the app is replacing the executable.
 
-**Invariant —** An install receipt of an earlier schema, including schema 18,
+**Invariant —** An install receipt of a schema before 19, including schema 18,
 which published app sidecar files under `.spice-install/app`, is refused
 before any mutation, naming the release that owns it; that release's own
 executable unapplies it.
+
+**Invariant —** Installation writes no agent skill file: a lane reads the
+skill its executable links through `spice://SKILL.md`. Install schema 19, which
+published a copy at `.spice-install/agents/skills/spice/SKILL.md`, is a
+one-crossing boundary. Only `spice install` reads such a receipt, and only a
+complete, canonical, digest-exact one. The schema-20 refresh derived from it
+keeps every other effect's reversal image and plans the copy as a discarded
+retirement, removed only while the file still holds the image its preview
+observed. The refresh withdraws the directories schema 19 introduced for it
+only once empty, and no unapply restores it. Every other install command
+refuses a complete schema-19 receipt until that refresh applies; an
+interrupted or uninstalled one refuses, naming `SPICE-dX13sl6Gm`.
 
 **Invariant —** Generated artifacts live in a directory the product owns and are
 activated by redirecting the host tool there, never by writing into the location
@@ -743,7 +755,8 @@ payloads remain available for the receipt's next executable direction. Absence
 is never synthesized by deleting provenance.
 
 **Invariant —** Install support is bounded by receipt schema, not product
-version. The current schema is the sole executable shape. Each retired schema
+version. The current schema is the sole executable shape; the one exception is
+the schema-19 crossing above, which only a refresh reads. Each retired schema
 refuses before receipt-owned mutation and names the release change whose
 executable can unapply it, recorded in the landing that retires it. Malformed,
 inconsistent, and future receipts are store failures, never retired state.

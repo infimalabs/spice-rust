@@ -246,6 +246,7 @@ pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
         | InstallError::LegacyRecord { .. }
+        | InstallError::CrossingRecord(_)
         | InstallError::CanvasRefused { .. }
         | InstallError::RecordMissing
         | InstallError::ApplyInProgress
@@ -311,6 +312,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::ReferenceStorage { .. } => "install::ref-storage-unsupported",
         InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
         InstallError::LegacyRecord { .. } => "install::release-owned-state",
+        InstallError::CrossingRecord(_) => "install::crossing-pending",
         InstallError::CanvasRefused { .. } => "install::canvas-refused",
         InstallError::RecordMissing => "install::record-missing",
         InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
@@ -381,6 +383,10 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         InstallError::LegacyRecord { path, owner } => format!(
             "inspect the {owner}-owned record with `{}`; run that retired release's own executable with `install --unapply` before retrying the current preview",
             inspect_path(path),
+        ),
+        InstallError::CrossingRecord(_) => format!(
+            "run this executable's `install` preview and apply its printed digest, which carries the schema-19 `{}/install.json` record forward, then retry",
+            wire::STATE_DIRECTORY
         ),
         InstallError::CanvasRefused { path, .. } => format!(
             "inspect the selected executable with `{}`; install an appliance that links its canvas archive, built by `spice dev xtask -- install` or taken from a sealed release package",

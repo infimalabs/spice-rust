@@ -531,24 +531,6 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
     )))
 }
 
-/// A resident that cannot launch any lane is not serving, so a skill that is
-/// not this release's refuses the start; reinstalling with this executable
-/// publishes its own.
-fn skill_refusal(detail: &str) -> Outcome<()> {
-    let install = wire::SpiceCommand::new("install", std::iter::empty::<&str>())
-        .expect("install is one stable command");
-    Outcome::Refusal(Refusal::repairable(
-        install,
-        wire::RefusalDiagnostic::new(
-            "resident::skill-unavailable".to_owned(),
-            Some("installed-skill".to_owned()),
-            Some("this release's skill".to_owned()),
-            None,
-        )
-        .with_detail(detail),
-    ))
-}
-
 /// Run the explicit demo/test surface against its worktree-built app stage.
 pub(crate) fn up_from(current: &Path, binding: AppBinding, ambient: &Ambient) -> Outcome<()> {
     up_from_with(
@@ -593,9 +575,6 @@ fn up_from_with(
             return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
-    if let Err(detail) = spice::install::current_skill(&repository) {
-        return skill_refusal(&detail);
-    }
     let app = match app.resolve(&repository) {
         Ok(app) => app,
         Err(outcome) => return outcome,

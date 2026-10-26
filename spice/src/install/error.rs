@@ -75,6 +75,8 @@ pub enum InstallError {
         path: PathBuf,
         owner: &'static str,
     },
+    /// A complete schema-19 receipt, which only an install refresh reads.
+    CrossingRecord(PathBuf),
     /// The selected executable carries no admissible linked canvas archive.
     CanvasRefused {
         path: PathBuf,
@@ -126,6 +128,7 @@ impl fmt::Display for InstallError {
             | Self::DigestMismatch { .. }
             | Self::InvalidRecord(_)
             | Self::LegacyRecord { .. }
+            | Self::CrossingRecord(_)
             | Self::CanvasRefused { .. }
             | Self::RecordMissing
             | Self::ApplyInProgress
@@ -261,6 +264,12 @@ fn fmt_progress_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) 
             formatter,
             "install record at {} belongs to the retired release {owner}; \
                  unapply it with that release before installing Spice",
+            path.display(),
+        ),
+        InstallError::CrossingRecord(path) => write!(
+            formatter,
+            "install record at {} is schema 19, which this executable reads only to \
+                 install over it",
             path.display(),
         ),
         InstallError::CanvasRefused { path, reason } => write!(

@@ -69,17 +69,23 @@ pub use symbol_verification::{
 };
 pub use symbols::SymbolProvenance;
 
-const PLAN_VERSION: u16 = 19;
-const RECORD_VERSION: u16 = 19;
+const PLAN_VERSION: u16 = 20;
+const RECORD_VERSION: u16 = 20;
+/// The one earlier schema a refresh still reads: schema 19 published the
+/// agent skill copy that schema 20 discards.
+const CROSSING_VERSION: u16 = 19;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiptSupport {
     Current,
+    /// A complete receipt crosses forward through one refresh; any other
+    /// receipt of the schema refuses, naming the change that retires it.
+    Crossing(&'static str),
     Retired(&'static str),
 }
 
-const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 19] = [
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 20] = [
     (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
     (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
     (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
@@ -98,6 +104,10 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 19] = [
     (16, ReceiptSupport::Retired("INSTALL-dV1QSGJ71")),
     (17, ReceiptSupport::Retired("INSTALL-dVvBGPX6p")),
     (18, ReceiptSupport::Retired("CANVAS-dWF0m0T7z")),
+    (
+        CROSSING_VERSION,
+        ReceiptSupport::Crossing("SPICE-dX13sl6Gm"),
+    ),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
 
@@ -136,7 +146,9 @@ const STATIC_PATH: &str = ".spice-install/hooks/static/stage.sh";
 const ZSH_HOOK_PATH: &str = ".spice-install/hooks/shell/.zshenv";
 const BASH_HOOK_PATH: &str = ".spice-install/hooks/shell/bash_env";
 const WRAPPER_SPICE_PATH: &str = ".spice-install/hooks/wrappers/spice";
-const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
+/// Agent skill copy schema 19 published; lanes read the skill from the
+/// executable's linked rack through [`SKILL_RESOURCE`], so a plan discards it.
+const RETIRED_SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
 #[cfg(not(windows))]
 const BINARY_PATH: &str = ".spice-install/bin/spice";
 #[cfg(windows)]
@@ -145,7 +157,7 @@ const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
 
 const SKILL: &str = ::std::include_str!("../agent/SKILL.md");
-/// Maximum bytes admitted for the authoritative installed skill.
+/// Maximum bytes admitted for the authoritative skill.
 pub const SKILL_BYTES_CEILING: usize = 8 * 1_024;
 /// Maximum bytes admitted for the binding system-prompt bootstrap card.
 pub const SKILL_BOOTSTRAP_BYTES_CEILING: usize = 1_024;
@@ -566,16 +578,20 @@ fn build_plan_over(
     // predecessor retained, so the executable and dSYM leave together.
     let discard_symbols =
         symbols.is_none() && installed.is_some_and(|plan| symbols::operations(plan).count() > 0);
-    let retirements = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH]
-        .into_iter()
-        .chain(
-            discard_symbols
-                .then_some(symbols::DISCARD_PATHS)
-                .into_iter()
-                .flatten(),
-        )
-        .map(|path| retirement(repository, installed, path))
-        .collect::<Result<Vec<_>, _>>()?;
+    let retirements = [
+        RETIRED_XTASK_PATH,
+        RETIRED_XTASK_GUARD_PATH,
+        RETIRED_SKILL_PATH,
+    ]
+    .into_iter()
+    .chain(
+        discard_symbols
+            .then_some(symbols::DISCARD_PATHS)
+            .into_iter()
+            .flatten(),
+    )
+    .map(|path| retirement(repository, installed, path))
+    .collect::<Result<Vec<_>, _>>()?;
     let hook_activation = spice_binary
         .is_some()
         .then(|| hook_activation::plan(repository, installed, false))
@@ -596,7 +612,7 @@ fn build_plan_over(
 
 /// Paths a current plan discards outright, without a reversal image.
 fn is_discard_path(path: &str) -> bool {
-    symbols::DISCARD_PATHS.contains(&path)
+    path == RETIRED_SKILL_PATH || symbols::DISCARD_PATHS.contains(&path)
 }
 
 fn retirement(
@@ -720,22 +736,24 @@ fn parent_bindings(
 
 type PlanState<'a> = (&'a mut BTreeSet<(Location, String)>, &'a mut Vec<Operation>);
 
+/// The fixed operations that open every plan, in canonical order.
+const FIXED_ASSETS: [Asset; 8] = [
+    Asset::GitPreCommit,
+    Asset::GitCommitMessage,
+    Asset::GitReferenceTransaction,
+    Asset::HookEntry,
+    Asset::HookStatic,
+    Asset::HookZsh,
+    Asset::HookBash,
+    Asset::HookWrapperSpice,
+];
+
 fn append_fixed_operations(
     repository: &Repository,
     installed: &InstalledOperations<'_>,
     (directories, operations): PlanState<'_>,
 ) -> Result<(), InstallError> {
-    for asset in [
-        Asset::GitPreCommit,
-        Asset::GitCommitMessage,
-        Asset::GitReferenceTransaction,
-        Asset::HookEntry,
-        Asset::HookStatic,
-        Asset::HookZsh,
-        Asset::HookBash,
-        Asset::HookWrapperSpice,
-        Asset::Skill,
-    ] {
+    for asset in FIXED_ASSETS {
         let (location, path, mode) = asset_contract(asset)?;
         let bytes = fixed_asset_bytes(asset, repository.common_dir())?
             .expect("the fixed asset inventory contains no variable asset");
@@ -907,8 +925,11 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         Asset::HookZsh => steer::hook::STAGES[2].bytes().as_bytes().to_vec(),
         Asset::HookBash => steer::hook::STAGES[3].bytes().as_bytes().to_vec(),
         Asset::HookWrapperSpice => steer::hook::STAGES[4].bytes().as_bytes().to_vec(),
-        Asset::Skill => SKILL.as_bytes().to_vec(),
-        Asset::Exclusions | Asset::Binary | Asset::SymbolsInfo | Asset::SymbolsDwarf => {
+        Asset::Exclusions
+        | Asset::Skill
+        | Asset::Binary
+        | Asset::SymbolsInfo
+        | Asset::SymbolsDwarf => {
             return Ok(None);
         }
     };
@@ -949,55 +970,6 @@ fn verify_binary_context(
 #[must_use]
 pub fn installed_binary(repository: &Repository) -> PathBuf {
     repository.common_dir().join(BINARY_PATH)
-}
-
-/// Installed operator skill shared by every linked worktree.
-#[must_use]
-pub fn installed_skill(repository: &Repository) -> PathBuf {
-    repository.common_dir().join(SKILL_PATH)
-}
-
-/// The installed skill, admitted only as a regular file under Git-common
-/// authority whose bytes are this release's [`skill_document`].
-///
-/// # Errors
-///
-/// Names the installed path and why it cannot serve this release.
-pub fn current_skill(repository: &Repository) -> Result<PathBuf, String> {
-    let skill = installed_skill(repository);
-    let unavailable = |error: std::io::Error| {
-        format!(
-            "initialized skill {} is unavailable: {error}",
-            skill.display()
-        )
-    };
-    if !fs::symlink_metadata(&skill).map_err(unavailable)?.is_file() {
-        return Err(format!(
-            "initialized skill {} is not a regular file",
-            skill.display()
-        ));
-    }
-    let common = fs::canonicalize(repository.common_dir()).map_err(|error| {
-        format!(
-            "initialized skill authority {} is unavailable: {error}",
-            repository.common_dir().display()
-        )
-    })?;
-    let physical = fs::canonicalize(&skill).map_err(unavailable)?;
-    if !physical.starts_with(&common) {
-        return Err(format!(
-            "initialized skill {} resolves outside Git-common authority: {}",
-            skill.display(),
-            physical.display()
-        ));
-    }
-    if fs::read(&skill).map_err(unavailable)? != SKILL.as_bytes() {
-        return Err(format!(
-            "initialized skill {} does not match this appliance",
-            skill.display()
-        ));
-    }
-    Ok(skill)
 }
 
 /// Complete authoritative agent skill compiled into this release.

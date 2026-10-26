@@ -4,14 +4,27 @@ pub(super) fn validate_plan(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    validate_plan_version(plan)?;
+    validate_plan_version(plan, content)?;
     validate_operation_inventory(plan, content)?;
     validate_retirement_inventory(plan)?;
     validate_plan_destinations(plan, content)
 }
 
-fn validate_plan_version(plan: &InstallPlan) -> Result<(), InstallError> {
-    if plan.version != PLAN_VERSION {
+/// Whether `plan` is the schema-19 receipt plan a refresh crosses forward.
+///
+/// Only receipt history may carry it: every plan this build derives is
+/// [`PLAN_VERSION`].
+fn crossing(plan: &InstallPlan) -> bool {
+    plan.version == CROSSING_VERSION
+}
+
+fn validate_plan_version(
+    plan: &InstallPlan,
+    content: GeneratedContentAuthority,
+) -> Result<(), InstallError> {
+    let historical_crossing =
+        crossing(plan) && content == GeneratedContentAuthority::HistoricalReceipt;
+    if plan.version != PLAN_VERSION && !historical_crossing {
         return Err(InstallError::InvalidRecord(format!(
             "install plan version {} is not {PLAN_VERSION}",
             plan.version
@@ -24,29 +37,21 @@ fn validate_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    let expected = [
-        Asset::GitPreCommit,
-        Asset::GitCommitMessage,
-        Asset::GitReferenceTransaction,
-        Asset::HookEntry,
-        Asset::HookStatic,
-        Asset::HookZsh,
-        Asset::HookBash,
-        Asset::HookWrapperSpice,
-        Asset::Skill,
-    ];
-    if plan.operations.len() < expected.len()
+    // Schema 19 closed its fixed prefix with the agent skill copy.
+    let crossed: &[Asset] = if crossing(plan) { &[Asset::Skill] } else { &[] };
+    let fixed = FIXED_ASSETS.len() + crossed.len();
+    if plan.operations.len() < fixed
         || plan
             .operations
             .iter()
-            .zip(expected)
-            .any(|(operation, asset)| operation.asset != asset)
+            .zip(FIXED_ASSETS.iter().chain(crossed))
+            .any(|(operation, asset)| operation.asset != *asset)
     {
         return Err(InstallError::InvalidRecord(
             "install plan operation order is not canonical".to_owned(),
         ));
     }
-    validate_optional_tail(plan, &plan.operations[expected.len()..])?;
+    validate_optional_tail(plan, &plan.operations[fixed..])?;
     if let Some(activation) = &plan.hook_activation {
         activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
     }
@@ -94,6 +99,9 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
 fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError> {
     let fixed = &plan.retirements;
     let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
+    if !crossing(plan) {
+        expected.push(RETIRED_SKILL_PATH);
+    }
     // Only a plan without symbols may discard a retained bundle.
     if plan.symbols.is_none()
         && fixed
@@ -166,7 +174,7 @@ fn validate_retirement(
     if let Some(parent) = &retirement.publication_parent {
         validate_bound_parent(&retirement.destination, parent)?;
     }
-    let current_discard = symbols::DISCARD_PATHS.contains(&retirement.path.as_str());
+    let current_discard = is_discard_path(&retirement.path);
     let invalid_discard = if current_discard {
         !retirement.discard || retirement.previous.is_some() || retirement.observed.is_some()
     } else {
@@ -320,7 +328,7 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::HookZsh => "zsh startup hook",
         Asset::HookBash => "Bash startup hook",
         Asset::HookWrapperSpice => "Spice shell wrapper",
-        Asset::Skill => "generated skill",
+        Asset::Skill => "retired agent skill copy",
         Asset::Binary => "Spice executable",
         Asset::SymbolsInfo => "retained dSYM Info.plist",
         Asset::SymbolsDwarf => "retained dSYM DWARF image",
@@ -418,7 +426,11 @@ pub(super) fn asset_contract(asset: Asset) -> Result<(Location, String, u32), In
             WRAPPER_SPICE_PATH.to_owned(),
             EXECUTABLE_MODE,
         ),
-        Asset::Skill => (Location::CommonGit, SKILL_PATH.to_owned(), DATA_MODE),
+        Asset::Skill => (
+            Location::CommonGit,
+            RETIRED_SKILL_PATH.to_owned(),
+            DATA_MODE,
+        ),
         Asset::Binary => (Location::CommonGit, BINARY_PATH.to_owned(), EXECUTABLE_MODE),
         Asset::SymbolsInfo | Asset::SymbolsDwarf => unreachable!("symbol assets returned above"),
     };

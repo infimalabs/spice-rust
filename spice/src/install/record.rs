@@ -7,9 +7,9 @@ use wire::Digest;
 use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
-    FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
-    InstallStatus, RECORD_MODE, RECORD_PATH, RECORD_VERSION, ReceiptGeneration, ReceiptSupport,
-    Repository, RepositoryIdentity,
+    CROSSING_VERSION, FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary,
+    InstallReceipt, InstallStatus, RECORD_MODE, RECORD_PATH, RECORD_VERSION, ReceiptGeneration,
+    ReceiptSupport, Repository, RepositoryIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -114,16 +114,17 @@ impl InstallRecord {
     ///
     /// A complete appliance carrying a binary may be the intact output of a
     /// previous build. Its fixed digests are admitted as history only until
-    /// progress verification proves every destination still matches. The
-    /// immediately previous schema is also admitted long enough to add its new
-    /// fixed asset, including for a binary-less install. Other binary-less
-    /// records have no installed build identity to anchor that exception,
-    /// while interrupted directions remain owned by the build that started
-    /// them.
+    /// progress verification proves every destination still matches. A
+    /// complete schema-19 receipt is history by construction, including for a
+    /// binary-less install, and is admitted only so a refresh can cross it
+    /// forward. Other binary-less records have no installed build identity to
+    /// anchor that exception, while interrupted directions remain owned by the
+    /// build that started them.
     fn validate_loaded(&self) -> Result<(), InstallError> {
         let historical = self.status == InstallStatus::Uninstalled
             || (self.status == InstallStatus::Complete
-                && super::binary_operation(&self.plan).is_some());
+                && (self.version == CROSSING_VERSION
+                    || super::binary_operation(&self.plan).is_some()));
         self.validate_with_content(historical)
     }
 
@@ -258,12 +259,14 @@ impl InstallRecord {
                 "install record and plan versions do not match".to_owned(),
             ));
         }
-        if self.version != RECORD_VERSION
-            || !matches!(
-                super::receipt_support(self.version),
-                Some(ReceiptSupport::Current)
-            )
-        {
+        let admitted = match super::receipt_support(self.version) {
+            Some(ReceiptSupport::Current) => self.version == RECORD_VERSION,
+            Some(ReceiptSupport::Crossing(_)) => {
+                historical && self.status == InstallStatus::Complete
+            }
+            Some(ReceiptSupport::Retired(_)) | None => false,
+        };
+        if !admitted {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
                 self.version
@@ -445,6 +448,9 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
         return Ok(None);
     };
     let _ = finish_loaded_record(repository, &mut loaded)?;
+    if loaded.record.version != RECORD_VERSION {
+        return Err(InstallError::CrossingRecord(record_path(repository)?));
+    }
     Ok(Some(loaded))
 }
 
@@ -478,7 +484,8 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
     let generation = ReceiptGeneration::observed(&observed);
     let image = observed.image;
     let header: InstallRecordHeader = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-    if let Some(ReceiptSupport::Retired(owner)) = super::receipt_support(header.version) {
+    let support = super::receipt_support(header.version);
+    if let Some(ReceiptSupport::Retired(owner)) = support {
         return Err(InstallError::LegacyRecord {
             path: record_path(repository)?,
             owner,
@@ -491,21 +498,34 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
             "install record is not canonical".to_owned(),
         ));
     }
+    // Only a complete crossing receipt has effects a refresh can carry forward.
+    if let Some(ReceiptSupport::Crossing(owner)) = support
+        && record.status != InstallStatus::Complete
+    {
+        return Err(InstallError::LegacyRecord {
+            path: record_path(repository)?,
+            owner,
+        });
+    }
     Ok(Some(LoadedRecord { record, generation }))
 }
 
+/// Validate a decoded record against `repository`, returning the on-disk
+/// digest when the record to refresh differs from that receipt: a
+/// mount-device repair, or a schema-19 receipt crossing forward.
 fn finish_loaded_record(
     repository: &Repository,
     loaded: &mut LoadedRecord,
 ) -> Result<Option<Digest>, InstallError> {
     loaded.record.validate_loaded()?;
     let record = &mut loaded.record;
+    let crossing = (record.version != RECORD_VERSION).then(|| record.plan_digest.clone());
     if record.repository.common_git != repository.common_dir() {
         record.rebase_repository(repository)?;
     }
     let repaired = record.repair_mount_device(repository)?;
     record.validate_loaded_for_repository(repository)?;
-    Ok(repaired)
+    Ok(crossing.or(repaired))
 }
 
 pub(super) fn write_initial_record(
