@@ -824,15 +824,13 @@ fn version_outcome() -> Outcome<wire::Version> {
         Ok(state) => state,
         Err(error) => return state_failure(&error).outcome(),
     };
-    let app = match serve::AppSource::resolve(repository.worktree_root())
-        .and_then(|source| source.current_generation())
-    {
-        Ok(generation) => generation.identity().clone(),
-        Err(error) => {
+    let app = match spice::version::app_generation(repository.worktree_root()) {
+        Ok(generation) => generation,
+        Err(detail) => {
             return Outcome::Fault(Fault {
                 class: FaultClass::Environment,
                 reason: "version::app-unavailable".to_owned(),
-                detail: error.to_string(),
+                detail,
             });
         }
     };

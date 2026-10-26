@@ -366,7 +366,9 @@ carries no marker. A plain Cargo build bound to no commit reports `0.0.0-dev`,
 below every derived version. The version never carries the executable digest:
 the native-binary identity is the running executable's complete digest, so
 identical bytes keep one identity without a Git checkout. `spice --version`
-ends with `app G` when the executable links generation G's archive.
+ends with `app G` when the executable links generation G's archive, and
+`spice version` reports that same G without reading the worktree; only a
+development build that links no archive reports the worktree's staged app.
 
 Owners: [`dist/src/version.rs`](../../dist/src/version.rs),
 [`spice/src/version.rs`](../../spice/src/version.rs), and
