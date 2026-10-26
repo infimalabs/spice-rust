@@ -824,7 +824,10 @@ fn version_outcome() -> Outcome<wire::Version> {
         Ok(state) => state,
         Err(error) => return state_failure(&error).outcome(),
     };
-    let app = match spice::version::app_generation(repository.worktree_root()) {
+    let app = match spice::version::app_generation(
+        repository.worktree_root(),
+        spice::version::canvas(),
+    ) {
         Ok(generation) => generation,
         Err(detail) => {
             return Outcome::Fault(Fault {

@@ -93,13 +93,18 @@ pub fn report() -> String {
 /// reads nothing from the worktree, as `--version` and the installed resident
 /// do. Only a build that links none, which is a development build, names the
 /// generation staged in `worktree`.
+/// `linked` is the executable's admitted archive state; supplying it explicitly
+/// keeps the precedence independent of process-global initialization.
 ///
 /// # Errors
 ///
 /// Refuses a linked archive that failed admission and, for a development
 /// build, an absent or malformed staged app.
-pub fn app_generation(worktree: &Path) -> Result<Digest, String> {
-    match canvas() {
+pub fn app_generation(
+    worktree: &Path,
+    linked: Option<&Result<EmbeddedArchive, RackError>>,
+) -> Result<Digest, String> {
+    match linked {
         Some(Ok(archive)) => Ok(archive.generation().clone()),
         Some(Err(error)) => Err(error.to_string()),
         None => serve::AppSource::resolve(worktree)
@@ -149,3 +154,6 @@ fn binary_digest() -> Result<Digest, Fault> {
         detail: format!("{}: {error}", executable.display()),
     })
 }
+
+#[cfg(test)]
+mod tests;
