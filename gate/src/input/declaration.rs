@@ -81,11 +81,11 @@ impl ToolDeclaration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutableDeclaration {
     name: String,
-    program: PathBuf,
+    program: String,
 }
 
 impl ExecutableDeclaration {
-    fn new(name: impl Into<String>, program: impl Into<PathBuf>) -> Self {
+    fn new(name: impl Into<String>, program: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             program: program.into(),
@@ -98,9 +98,10 @@ impl ExecutableDeclaration {
         &self.name
     }
 
-    /// Exact compiled executable path.
+    /// Compiled program: an absolute path is exact, and a bare name resolves
+    /// on the running host's executable search path.
     #[must_use]
-    pub fn program(&self) -> &Path {
+    pub fn program(&self) -> &str {
         &self.program
     }
 }
@@ -121,22 +122,20 @@ pub fn declared_tools() -> Result<Vec<ExecutableDeclaration>, GateSetError> {
     })
 }
 
-/// Return every compiled Gate mutation executable without reading or starting it.
+/// Return every Gate mutation program name without resolving, reading, or
+/// starting it.
 ///
 /// # Errors
 ///
 /// Returns a specification error if this build's own declaration set is not
 /// internally coherent.
 pub fn declared_mutation_tools() -> Result<Vec<ExecutableDeclaration>, GateSetError> {
-    GateSet::current().map(|gate_set| {
-        let tool = gate_set.kill.tool;
-        [
-            ("cargo", tool.cargo_program()),
-            ("cargo-mutants", tool.mutants_program()),
-        ]
-        .into_iter()
-        .map(|(name, program)| ExecutableDeclaration::new(name, program))
-        .collect()
+    GateSet::current().map(|_| {
+        [CARGO_PROGRAM, MUTANTS_PROGRAM]
+            .into_iter()
+            .chain(NATIVE_BUILD_PROGRAMS)
+            .map(|program| ExecutableDeclaration::new(program, program))
+            .collect()
     })
 }
 
@@ -237,55 +236,39 @@ impl KillBoundsDeclaration {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct KillDeclaration {
-    pub(super) tool: MutationTool,
+    pub(super) identity: &'static str,
     pub(super) battery: MutationBattery,
     pub(super) bounds: KillBoundsDeclaration,
 }
 
 impl KillDeclaration {
     fn current() -> Result<Self, RateError> {
-        let cargo_program = PathBuf::from(env!("CARGO"));
-        let cargo_bin = cargo_program
-            .parent()
-            .expect("Cargo supplies an executable path with a parent")
-            .to_path_buf();
-        let mutants_program = Path::new(env!("HOME")).join(".cargo/bin/cargo-mutants");
-        let environment = Environment::new([
-            ("AR", "/usr/bin/ar".to_owned()),
-            ("CARGO_HOME", concat!(env!("HOME"), "/.cargo").to_owned()),
-            ("CARGO_INCREMENTAL", "0".to_owned()),
-            ("CC", "/usr/bin/cc".to_owned()),
-            ("HOME", env!("HOME").to_owned()),
-            ("PATH", format!("{}:/usr/bin:/bin", cargo_bin.display())),
-            ("RUSTFLAGS", "-C linker=/usr/bin/cc".to_owned()),
-            ("RUSTC_WORKSPACE_WRAPPER", String::new()),
-            ("RUSTC_WRAPPER", String::new()),
-        ])
-        .map_err(RateError::Spec)?;
-        let tool = MutationTool::new(
-            cargo_program,
-            mutants_program,
-            PINNED_CARGO_MUTANTS,
-            environment,
-        )?;
+        check_identity(PINNED_CARGO_MUTANTS)?;
         let battery = MutationBattery::new(MUTATION_TARGETS, MUTATION_ATTEMPTS, MUTATION_SEED)?;
         Ok(Self {
-            tool,
+            identity: PINNED_CARGO_MUTANTS,
             battery,
             bounds: KillBoundsDeclaration::current()?,
         })
     }
 
-    fn build(&self) -> Result<Kill, RateError> {
-        Ok(Kill::new(
-            self.tool.clone(),
-            self.battery.clone(),
-            self.bounds.build()?,
-        ))
+    /// Resolve the declared programs on the running host into one runner.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resolve(
+        &self,
+        rim: &crate::toolchain::RimCapture,
+        inherited: &[(OsString, OsString)],
+    ) -> Result<Kill, KillError> {
+        let tool = MutationTool::resolve(self.identity, rim, inherited)?;
+        let bounds = self
+            .bounds
+            .build()
+            .expect("admitted mutation bounds remain valid");
+        Ok(Kill::new(tool, self.battery.clone(), bounds))
     }
 
     fn render(&self, into: &mut String) {
-        self.tool.render(into);
+        MutationTool::render_declaration(self.identity, into);
         let _ = writeln!(into, "kill attempts {}", self.battery.attempts());
         let _ = writeln!(into, "kill seed {}", self.battery.seed());
         for target in self.battery.targets() {
@@ -362,7 +345,7 @@ impl GateSet {
         }
 
         validate_camp_declarations(&camp_metrics, &camp)?;
-        kill.build().map_err(GateSetError::Kill)?;
+        kill.bounds.build().map_err(GateSetError::Kill)?;
 
         let mut names = BTreeSet::new();
         let mut programs = BTreeSet::new();
@@ -429,10 +412,14 @@ impl GateSet {
         &self.camp
     }
 
-    pub(super) fn build_kill(&self) -> Kill {
-        self.kill
-            .build()
-            .expect("an admitted mutation declaration remains valid")
+    /// Resolve the mutation programs on the running host into one runner.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn resolve_kill(
+        &self,
+        rim: &crate::toolchain::RimCapture,
+        inherited: &[(OsString, OsString)],
+    ) -> Result<Kill, KillError> {
+        self.kill.resolve(rim, inherited)
     }
 
     pub(crate) fn camp_metrics(&self) -> impl Iterator<Item = Metric> + '_ {

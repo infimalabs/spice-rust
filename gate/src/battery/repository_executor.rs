@@ -408,9 +408,14 @@ impl<'trace> RepositoryExecutor<'trace> {
             .map_err(|error| BatteryError::new(error.to_string()))
     }
 
-    /// Run the canonical mutation profile against this executor's selected tree.
-    pub(super) fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
-        self.contract.execute_kill(self.tree.root())
+    /// Run the canonical mutation profile against this executor's selected tree,
+    /// resolving its programs through the captured rim.
+    pub(super) fn execute_kill(
+        &self,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<crate::KillRun, crate::KillError> {
+        self.contract
+            .execute_kill(self.tree.root(), &self.rim, compiler_environment)
     }
 
     pub(super) fn set_compiler_environment(

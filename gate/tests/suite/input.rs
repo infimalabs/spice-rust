@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gate::{BASELINE_PATH, ContractError, ParsedContract, PolicyError};
 use serde::Deserialize;
@@ -20,6 +20,25 @@ fn identical_tracked_bytes_yield_identical_execution_identities() {
     assert_eq!(first.bounds().digest(), second.bounds().digest());
     assert_eq!(first.baseline().render(), second.baseline().render());
     assert_eq!(first.baseline().digest(), second.baseline().digest());
+}
+
+#[test]
+fn the_mutation_declaration_names_programs_rather_than_host_paths() {
+    let contract = fixture_contract(TRACKED_POLICY, TRACKED_BASELINE).expect("load");
+    let rendered = contract.gate_set().render();
+    let kill = rendered
+        .lines()
+        .filter(|line| line.starts_with("kill "))
+        .collect::<Vec<_>>();
+
+    assert!(!kill.is_empty(), "the gate set declares the mutation arm");
+    for line in kill {
+        assert!(
+            line.split_whitespace()
+                .all(|token| !Path::new(token).is_absolute()),
+            "{line} names a host path"
+        );
+    }
 }
 
 #[test]

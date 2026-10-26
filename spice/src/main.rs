@@ -372,7 +372,7 @@ impl NativeInvocation<'_> {
                 deliver_commit_message(gate_command::commit_message(leaf, configuration), form)
             }
             ["gate", "kill"] => deliver_with_reply_text(
-                &gate_command::kill(leaf, live),
+                &gate_command::kill(leaf, live, ambient),
                 form,
                 gate_command::KillAnswer::text,
             ),

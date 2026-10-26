@@ -236,6 +236,8 @@ pub(crate) use acquire::{
     acquire_toolchain_arm, acquire_toolchain_arm_tools, acquire_toolchain_observed,
     toolchain_executable_authority,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use analyze::tool_search_path;
 pub use declarations::*;
 
 /// Stable selected-source and Cargo output roots completed by native analysis.
@@ -1320,6 +1322,6 @@ fn contracted_version(version: &str) -> &str {
 }
 
 #[cfg(test)]
-mod scratch;
+pub(crate) mod scratch;
 #[cfg(test)]
 use scratch::*;

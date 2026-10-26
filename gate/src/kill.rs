@@ -36,6 +36,33 @@ pub(crate) const ATTEMPT_ENVIRONMENT: &str = wire::SpiceVariable::MutationAttemp
 const CARGO_ENVIRONMENT: &str = "CARGO";
 const CARGO_BUILD_DIRECTORY_ENVIRONMENT: &str = "CARGO_BUILD_BUILD_DIR";
 const CARGO_TARGET_DIRECTORY_ENVIRONMENT: &str = "CARGO_TARGET_DIR";
+/// Program the unmutated baseline builds and tests with.
+pub(crate) const CARGO_PROGRAM: &str = "cargo";
+/// Program that attests, inventories, and runs every mutant.
+pub(crate) const MUTANTS_PROGRAM: &str = "cargo-mutants";
+/// Native build programs Cargo reaches only through `PATH`: the archiver and
+/// C compiler that build scripts invoke, the default linker driver, and the
+/// shell those scripts run.
+#[cfg(unix)]
+pub(crate) const NATIVE_BUILD_PROGRAMS: [&str; 3] = ["ar", "cc", "sh"];
+/// Rust's Windows targets find their linker without `PATH`.
+#[cfg(not(unix))]
+pub(crate) const NATIVE_BUILD_PROGRAMS: [&str; 0] = [];
+/// Fixed environment entries: no incremental state and no compiler wrapper.
+const FIXED_ENVIRONMENT: [(&str, &str); 3] = [
+    ("CARGO_INCREMENTAL", "0"),
+    ("RUSTC_WORKSPACE_WRAPPER", ""),
+    ("RUSTC_WRAPPER", ""),
+];
+/// Environment entries the gate sets itself on every mutation process.
+const GATE_OWNED_ENVIRONMENT: [&str; 5] = [
+    SEED_ENVIRONMENT,
+    ATTEMPT_ENVIRONMENT,
+    CARGO_ENVIRONMENT,
+    CARGO_BUILD_DIRECTORY_ENVIRONMENT,
+    CARGO_TARGET_DIRECTORY_ENVIRONMENT,
+];
+const SEARCH_PATH_ENVIRONMENT: &str = "PATH";
 const MUTATION_BUILD_DIRECTORY: &str = "target/mutation-build";
 const MUTATION_TARGET_DIRECTORY: &str = "target/mutation-target";
 const OUTPUT_DIRECTORY: &str = ".spice-gate-mutants";
@@ -59,6 +86,8 @@ const ATTEMPT_ARGUMENTS: [&str; 10] = [
 
 mod profile;
 pub use profile::*;
+#[cfg(test)]
+mod tests;
 
 /// One exact rational survivor rate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

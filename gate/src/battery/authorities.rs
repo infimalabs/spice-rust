@@ -514,12 +514,18 @@ impl<'trace> BatteryCapture<'trace> {
 
     /// Execute the existing canonical mutation profile over this same source.
     ///
+    /// The rim this capture observed resolves the mutation programs, and
+    /// `compiler_environment` is what their processes inherit.
+    ///
     /// # Errors
     ///
     /// Returns the first mutation selection, tool, inventory, baseline, or
     /// integrity refusal. No second selected tree or mutation runner is used.
-    pub fn execute_kill(&self) -> Result<crate::KillRun, crate::KillError> {
-        self.executor.execute_kill()
+    pub fn execute_kill(
+        &self,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<crate::KillRun, crate::KillError> {
+        self.executor.execute_kill(compiler_environment)
     }
 
     /// Publish this enclosing run's accumulated state after total acceptance.
