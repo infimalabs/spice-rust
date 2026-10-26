@@ -103,6 +103,26 @@ fn refresh_keeps_each_initial_parent_reversal_until_unapply() {
     }
 }
 
+/// A discard restores nothing, so the operator removing the directory that
+/// held a discarded file leaves the receipt readable and refreshable.
+#[test]
+fn a_removed_discard_parent_leaves_the_receipt_readable_and_refreshable() {
+    let (_scratch, repository) = repository("removed-discard-parent");
+    let skill = repository
+        .common_dir()
+        .join(super::super::RETIRED_SKILL_PATH);
+    write_mode(&skill, b"retired skill\n", 0o600);
+    install_without_binary(&repository);
+    assert!(!skill.exists(), "install discards the retired skill copy");
+    fs::remove_dir_all(repository.common_dir().join(".spice-install/agents"))
+        .expect("operator removes the emptied skill directory");
+
+    crate::install::capture_generation(&repository).expect("receipt audits");
+    refresh_without_binary(&repository);
+    crate::install::capture_generation(&repository).expect("refreshed receipt audits");
+    unapply_record(&repository).expect("refreshed install unapplies");
+}
+
 /// `.spice` is the only state root name: a directory by any other name is
 /// foreign state an install neither reads, moves, nor deletes.
 #[test]

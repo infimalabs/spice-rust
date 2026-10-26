@@ -660,8 +660,11 @@ complete, canonical, digest-exact one. The schema-20 refresh derived from it
 keeps every other effect's reversal image and plans the copy as a discarded
 retirement, removed only while the file still holds the image its preview
 observed. The refresh withdraws the directories schema 19 introduced for it
-only once empty, and no unapply restores it. Every other install command
-refuses a complete schema-19 receipt until that refresh applies; an
+only once empty, and no unapply restores it. Once a receipt is complete or
+uninstalled, a discard's recorded parent carries no authority: removing that
+directory leaves the receipt readable, auditable, and refreshable, and the
+next refresh binds the path where it resolves then. Every other install
+command refuses a complete schema-19 receipt until that refresh applies; an
 interrupted or uninstalled one refuses, naming `SPICE-dX13sl6Gm`.
 
 **Invariant —** Generated artifacts live in a directory the product owns and are

@@ -285,10 +285,17 @@ impl InstallPlan {
 
     fn validate_for_repository(&self, repository: &Repository) -> Result<(), InstallError> {
         self.validate()?;
-        self.validate_repository_binding(repository)
+        self.validate_repository_binding(repository, false)
     }
 
-    fn validate_repository_binding(&self, repository: &Repository) -> Result<(), InstallError> {
+    /// Check every destination binding against `repository`. A `settled`
+    /// record's discards are done and restore nothing, so their parents carry
+    /// no authority and may since have been removed.
+    fn validate_repository_binding(
+        &self,
+        repository: &Repository,
+        settled: bool,
+    ) -> Result<(), InstallError> {
         self.repository.validate(repository)?;
         binding::validate_record_binding(&repository.state_root(), &self.record, RECORD_PATH)?;
         for operation in &self.operations {
@@ -301,6 +308,9 @@ impl InstallPlan {
             )?;
         }
         for retirement in &self.retirements {
+            if settled && retirement.discards_payload() {
+                continue;
+            }
             validate_operation_binding(
                 repository,
                 Location::CommonGit,
@@ -620,7 +630,13 @@ fn retirement(
     installed: Option<&InstallPlan>,
     path: &str,
 ) -> Result<Retirement, InstallError> {
-    let inherited = InstalledOperations(installed).binding(path);
+    let inherited = InstalledOperations(installed)
+        .binding(path)
+        .filter(|(parent, _)| {
+            // A discard's inherited parents are gone once its anchor is:
+            // nothing remains to withdraw, so it binds what exists now.
+            !is_discard_path(path) || binding::anchor_holds(repository.common_dir(), parent)
+        });
     let (ownership_parent, introduced_parents) = inherited_binding(inherited);
     if is_discard_path(path) {
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
