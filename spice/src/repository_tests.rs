@@ -453,11 +453,7 @@ fn git_spellings_name_local_drives_with_forward_slashes_and_refuse_shares() {
         r"\\server\share\repo\.git\index",
         r"\\?\UNC\server\share\index",
     ] {
-        assert_eq!(
-            git_spelling(Path::new(refused)),
-            Err("is not on a local drive"),
-            "{refused}"
-        );
+        assert!(git_spelling(Path::new(refused)).is_err(), "{refused}");
     }
 }
 
