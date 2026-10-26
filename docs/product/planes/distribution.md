@@ -190,6 +190,10 @@ payload, environment, and battery, but does not prove that the checkout equals
 the payload's source digest. Unsupported hosts, drift, infrastructure failure,
 or a non-clean replay publish no receipt; a refused replay is a typed refusal.
 
+> **Not current.** The GitHub-hosted Windows route described in this plane does
+> not work right now and is not the way to run native Windows work. Use the
+> [local Windows guest](#persistent-windows-11-arm-developer-guest) instead.
+
 The Windows proof boundary requires the configured repository visibility to be
 `public` before it dispatches the release battery. A private repository returns
 the typed hosted-attestation prerequisite and publishes no proof receipt;
@@ -214,6 +218,11 @@ private same-directory file that replaces the destination only once complete,
 so an interrupted publication leaves the prior file or none.
 
 ### Ephemeral native Windows execution
+
+> **Not current.** This GitHub-hosted route does not work right now and is not
+> the way to run native Windows work. Use the
+> [local Windows guest](#persistent-windows-11-arm-developer-guest) instead;
+> the description below records the hosted design only.
 
 The repository's Windows execution boundary is a fresh GitHub-hosted
 `windows-2025` x86-64 machine running Windows Server 2025 Datacenter on the
