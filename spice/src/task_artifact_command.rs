@@ -83,7 +83,7 @@ fn run_inner(
                     )
                 })?;
             let created_at = now()?;
-            let artifact = store
+            let (artifact, budget) = store
                 .add(AddRequest {
                     task: &selected.born,
                     source: Path::new(source),
@@ -93,7 +93,6 @@ fn run_inner(
                     created_at,
                 })
                 .map_err(artifact_failure)?;
-            let budget = store.budget(&selected.born).map_err(artifact_failure)?;
             Ok((
                 position,
                 ArtifactAnswer::Added {

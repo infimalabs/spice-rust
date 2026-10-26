@@ -72,13 +72,18 @@ impl Store {
         &self.root
     }
 
-    /// Publish one source file and cite it from the exact task manifest.
-    pub fn add(&self, request: AddRequest<'_>) -> Result<Artifact, Error> {
+    /// Publish one source file and cite it from the exact task manifest,
+    /// returning the citation and its post-publication task budget.
+    pub fn add(&self, request: AddRequest<'_>) -> Result<(Artifact, ArtifactBudget), Error> {
         self.add_with_hook(request, || Ok(()))
     }
 
-    /// Publish caller-owned bytes and cite them from the exact task manifest.
-    pub fn add_bytes(&self, request: AddBytesRequest<'_>) -> Result<Artifact, Error> {
+    /// Publish caller-owned bytes and cite them from the exact task manifest,
+    /// returning the citation and its post-publication task budget.
+    pub fn add_bytes(
+        &self,
+        request: AddBytesRequest<'_>,
+    ) -> Result<(Artifact, ArtifactBudget), Error> {
         self.add_bytes_with_hook(request, || Ok(()))
     }
 
@@ -86,7 +91,7 @@ impl Store {
         &self,
         request: AddRequest<'_>,
         before_manifest: F,
-    ) -> Result<Artifact, Error>
+    ) -> Result<(Artifact, ArtifactBudget), Error>
     where
         F: FnOnce() -> Result<(), Error>,
     {
@@ -116,7 +121,7 @@ impl Store {
         &self,
         request: AddBytesRequest<'_>,
         before_manifest: F,
-    ) -> Result<Artifact, Error>
+    ) -> Result<(Artifact, ArtifactBudget), Error>
     where
         F: FnOnce() -> Result<(), Error>,
     {
@@ -183,8 +188,9 @@ impl Store {
         };
         manifest.artifacts.push(artifact.clone());
         manifest.issued = None;
+        let budget = ArtifactBudget::of(manifest.artifacts.len());
         publish_manifest(&task_dir, &manifest)?;
-        Ok(artifact)
+        Ok((artifact, budget))
     }
 
     /// List citations only after proving every referenced payload generation.
@@ -195,16 +201,6 @@ impl Store {
         let manifest = read_manifest(&task_dir, task)?;
         validate_manifest(&task_dir, task, &manifest, true)?;
         Ok(manifest.artifacts)
-    }
-
-    /// The task's citation count against the per-task bound.
-    pub fn budget(&self, task: &TaskStamp) -> Result<ArtifactBudget, Error> {
-        let _possession = self.acquire()?;
-        refuse_legacy_layout(&self.root)?;
-        let task_dir = self.task_dir(task);
-        let manifest = read_manifest(&task_dir, task)?;
-        validate_manifest(&task_dir, task, &manifest, false)?;
-        Ok(ArtifactBudget::of(manifest.artifacts.len()))
     }
 
     /// Drop one citation from the task manifest, then its payload object when

@@ -46,6 +46,7 @@ impl Fixture {
                 created_at: "2030-01-01T00:00:00.000Z".parse().expect("fixture instant"),
             })
             .expect("artifact adds")
+            .0
     }
 
     fn list(
