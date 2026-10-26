@@ -268,6 +268,47 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
     clean(&root, bus);
 }
 
+/// An artifact a contribution cites stays retained: removal reads the room's
+/// cited digests and refuses that citation while an uncited one still goes.
+#[test]
+fn a_room_cited_artifact_refuses_removal_and_an_uncited_one_is_removed() {
+    let (root, bus, epoch, seats) = fixture("design-contribution-artifact-removal", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Evidence design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let born = design.born().expect("fixture Design has a birth");
+    let digest = retain(root.as_ref(), &born, b"cited evidence");
+    retain(root.as_ref(), &born, b"uncited evidence");
+    let body = contribution_body(
+        &design,
+        RoomContributionKind::charge(0),
+        "Measured.",
+        vec![RoomSource::Artifact {
+            digest: digest.clone(),
+        }],
+    );
+    contributed(contribute(&bus, epoch, root.as_ref(), lane, body));
+
+    let cited = crate::task_artifact_command::room_cited(&root.join("authority.sqlite3"), &born)
+        .unwrap_or_else(|_| panic!("room citations read"));
+    assert_eq!(cited, std::collections::BTreeSet::from([digest]));
+    let store = artifacts(root.as_ref());
+    let refused = store
+        .remove(&born, "A1", &cited)
+        .expect_err("a room-cited artifact stays");
+    assert_eq!(refused.class(), artifact::ErrorClass::Refusal);
+    store
+        .remove(&born, "A2", &cited)
+        .expect("an uncited artifact is removed");
+    assert_eq!(store.list(&born).expect("one citation remains").len(), 1);
+    clean(&root, bus);
+}
+
 /// The browser's contribution read says what each cited journal fact is: a
 /// task fact and a room record name their task's current handle, and a fact
 /// about no task names only its kind.

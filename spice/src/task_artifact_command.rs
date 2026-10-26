@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -9,8 +9,9 @@ use artifact::{
 use spice::cli::Contract;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::output::Export;
+use wire::rooms::{RoomContributed, RoomPublicationContent, RoomPublished, RoomSource};
 use wire::{
-    Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, SpiceCommand,
+    Digest, Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, SpiceCommand,
     TaskHandle, TaskStamp,
 };
 
@@ -92,11 +93,13 @@ fn run_inner(
                     created_at,
                 })
                 .map_err(artifact_failure)?;
+            let budget = store.budget(&selected.born).map_err(artifact_failure)?;
             Ok((
                 position,
                 ArtifactAnswer::Added {
                     task: selected.handle,
                     artifact,
+                    budget,
                 },
             ))
         }
@@ -124,6 +127,9 @@ fn run_inner(
             let answer = show_answer(&store, &selected.born, selected.handle, artifact_id, window)?;
             Ok((position, answer))
         }
+        ["task", "artifact", "remove"] => {
+            Ok((position, remove_answer(&store, &snapshot, matches)?))
+        }
         ["task", "artifact", "prune"] => {
             let older = matches
                 .get_one::<String>("older-than")
@@ -142,6 +148,39 @@ fn run_inner(
         }
         _ => unreachable!("artifact dispatcher receives only artifact leaves"),
     }
+}
+
+/// Drop one citation of a pending task unless its room cites the payload.
+fn remove_answer(
+    store: &Store,
+    snapshot: &Snapshot,
+    matches: &clap::ArgMatches,
+) -> Result<ArtifactAnswer, Failure> {
+    let selected = selected_task(matches, snapshot)?;
+    let artifact_id = matches
+        .get_one::<String>("ARTIFACT")
+        .expect("generated artifact remove parser requires ARTIFACT");
+    let status = snapshot
+        .statuses
+        .get(&selected.born)
+        .map_or("", |(_, status)| status.as_str());
+    if status != "pending" {
+        return Err(Failure::refusal(
+            "artifact::task-settled",
+            "one pending task",
+            format!("{} is {status}", selected.handle),
+            "settled evidence stays; prune removes expired prunable artifacts",
+        ));
+    }
+    let cited = room_cited(snapshot.state.journal(), &selected.born)?;
+    let (artifact, budget) = store
+        .remove(&selected.born, artifact_id, &cited)
+        .map_err(artifact_failure)?;
+    Ok(ArtifactAnswer::Removed {
+        task: selected.handle,
+        artifact,
+        budget,
+    })
 }
 
 struct Snapshot {
@@ -227,6 +266,49 @@ fn task_heads_failure(error: journal::GuardError) -> Failure {
         "artifact::task-heads-unreadable",
         error.to_string(),
     )
+}
+
+/// Every artifact digest the task's room cites: a contribution's sources or a
+/// linked publication. Removing such a citation would leave a published room
+/// source unreadable.
+pub(crate) fn room_cited(journal: &Path, room: &TaskStamp) -> Result<BTreeSet<Digest>, Failure> {
+    let unreadable =
+        |error: String| Failure::fault(FaultClass::Store, "artifact::room-unreadable", error);
+    let journal =
+        journal::JournalReader::open(journal).map_err(|error| unreadable(error.to_string()))?;
+    journal
+        .read_with(|read| {
+            let mut cited = BTreeSet::new();
+            let mut after = None;
+            loop {
+                let page = read
+                    .room_publications(room, after, journal::FactReadBudget::RETAINED)
+                    .map_err(|error| unreadable(error.to_string()))?;
+                for row in &page.rows {
+                    let sources = if let Some(contributed) = row.fact.read::<RoomContributed>() {
+                        contributed.sources
+                    } else if let Some(published) = row.fact.read::<RoomPublished>()
+                        && let RoomPublicationContent::Linked { link } = published.content
+                    {
+                        vec![link]
+                    } else {
+                        Vec::new()
+                    };
+                    cited.extend(sources.into_iter().filter_map(|source| match source {
+                        RoomSource::Artifact { digest } => Some(digest),
+                        _ => None,
+                    }));
+                }
+                after = page.continuation;
+                if after.is_none() {
+                    return Ok(cited);
+                }
+            }
+        })
+        .map_err(|error| match error {
+            journal::ReadError::Journal(error) => unreadable(error.to_string()),
+            journal::ReadError::Answer(failure) => failure,
+        })
 }
 
 struct SelectedTask {
@@ -402,10 +484,12 @@ fn list_answer(
         )
     })?;
     let artifacts = store.list(born).map_err(artifact_failure)?;
+    let held = artifact::ArtifactBudget::of(artifacts.len());
     let (artifacts, omission) = page(&task, artifacts, budget, after)?;
     Ok(ArtifactAnswer::Listed {
         task,
         artifacts,
+        budget: held,
         omission,
     })
 }
@@ -750,7 +834,7 @@ fn state_failure(error: StateError) -> Failure {
 }
 
 #[derive(Debug)]
-enum Failure {
+pub(crate) enum Failure {
     Refusal(Refusal),
     Fault(Fault),
 }

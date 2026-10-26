@@ -1346,6 +1346,7 @@ fn artifact_trailer(document: &mut String, answer: &ArtifactAnswer) {
             task,
             artifacts,
             omission,
+            ..
         } => (
             omission.as_ref().map(|omission| &omission.continuation),
             artifacts

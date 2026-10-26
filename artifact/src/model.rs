@@ -8,6 +8,7 @@ use wire::output::{Export, Omission};
 use wire::{Digest, Instant, SpiceCommand, TaskHandle, TaskStamp};
 
 pub(crate) const STORE_VERSION: u16 = 2;
+pub(crate) const MAX_ARTIFACTS_PER_TASK: usize = 32;
 
 /// Retention policy attached to one artifact citation.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -174,13 +175,21 @@ pub enum ArtifactAnswer {
     Added {
         task: TaskHandle,
         artifact: Artifact,
+        budget: ArtifactBudget,
     },
     /// Citations newest first, and what the page withheld.
     Listed {
         task: TaskHandle,
         artifacts: Vec<Artifact>,
+        budget: ArtifactBudget,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         omission: Option<Omission>,
+    },
+    /// The removed citation and the budget it left.
+    Removed {
+        task: TaskHandle,
+        artifact: Artifact,
+        budget: ArtifactBudget,
     },
     /// Metadata and one bounded window; `next` reads the window after it.
     Shown {
@@ -201,6 +210,28 @@ pub enum ArtifactAnswer {
         plan: PrunePlan,
         applied: bool,
     },
+}
+
+/// How many citations one task holds against the per-task bound.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactBudget {
+    pub count: u64,
+    pub bound: u64,
+    pub remaining: u64,
+}
+
+impl ArtifactBudget {
+    /// The budget a task holding `count` citations has left.
+    #[must_use]
+    pub fn of(count: usize) -> Self {
+        let wide = |value: usize| u64::try_from(value).expect("artifact counts fit u64");
+        Self {
+            count: wide(count),
+            bound: wide(MAX_ARTIFACTS_PER_TASK),
+            remaining: wide(MAX_ARTIFACTS_PER_TASK.saturating_sub(count)),
+        }
+    }
 }
 
 /// One deterministic removal in a retention preview.
@@ -243,6 +274,8 @@ pub(crate) struct PruneChange {
     pub task: TaskStamp,
     pub original: Vec<Artifact>,
     pub remaining: Vec<Artifact>,
+    /// The remaining manifest's issued high-water mark.
+    pub issued: Option<u64>,
     pub remove: Vec<Artifact>,
 }
 
@@ -252,6 +285,10 @@ pub(crate) struct Manifest {
     pub version: u16,
     pub task: TaskStamp,
     pub artifacts: Vec<Artifact>,
+    /// Highest artifact number ever issued, present only while it exceeds
+    /// the last remaining citation's, so a removed id is never issued again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued: Option<u64>,
 }
 
 impl Manifest {
@@ -260,6 +297,7 @@ impl Manifest {
             version: STORE_VERSION,
             task,
             artifacts: Vec::new(),
+            issued: None,
         }
     }
 }

@@ -10,8 +10,8 @@ use sill::{LockFile, LockName, Possession, authority};
 use wire::{Digest, Domain, Instant, TaskHandle, TaskStamp};
 
 use crate::model::{
-    Artifact, Manifest, MediaType, ObjectMetadata, PruneChange, PruneOperation, PrunePlan,
-    PruneSkip, Retention, STORE_VERSION,
+    Artifact, ArtifactBudget, MAX_ARTIFACTS_PER_TASK, Manifest, MediaType, ObjectMetadata,
+    PruneChange, PruneOperation, PrunePlan, PruneSkip, Retention, STORE_VERSION,
 };
 
 const MANIFEST: &str = "manifest.json";
@@ -20,7 +20,6 @@ const PAYLOAD: &str = "payload";
 const METADATA: &str = "metadata.json";
 const SOURCE: &str = "spice task artifact add";
 const MAX_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
-const MAX_ARTIFACTS_PER_TASK: usize = 32;
 const MAX_NAME_CHARS: usize = 96;
 const CREATE_ATTEMPTS: usize = 128;
 
@@ -155,8 +154,13 @@ impl Store {
             return Err(Error::refused(
                 "artifact count",
                 format!(
-                    "task {} already has {MAX_ARTIFACTS_PER_TASK} artifacts",
-                    request.task
+                    concat!(
+                        "task {} already has {} of {} artifacts, 0 remaining; ",
+                        "free a slot with spice task artifact remove"
+                    ),
+                    request.task,
+                    manifest.artifacts.len(),
+                    MAX_ARTIFACTS_PER_TASK
                 ),
             ));
         }
@@ -168,7 +172,7 @@ impl Store {
         before_manifest()?;
 
         let artifact = Artifact {
-            id: next_id(&manifest.artifacts)?,
+            id: next_id(&manifest)?,
             name,
             digest,
             media_type,
@@ -178,6 +182,7 @@ impl Store {
             retention: request.retention,
         };
         manifest.artifacts.push(artifact.clone());
+        manifest.issued = None;
         publish_manifest(&task_dir, &manifest)?;
         Ok(artifact)
     }
@@ -190,6 +195,60 @@ impl Store {
         let manifest = read_manifest(&task_dir, task)?;
         validate_manifest(&task_dir, task, &manifest, true)?;
         Ok(manifest.artifacts)
+    }
+
+    /// The task's citation count against the per-task bound.
+    pub fn budget(&self, task: &TaskStamp) -> Result<ArtifactBudget, Error> {
+        let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
+        let task_dir = self.task_dir(task);
+        let manifest = read_manifest(&task_dir, task)?;
+        validate_manifest(&task_dir, task, &manifest, false)?;
+        Ok(ArtifactBudget::of(manifest.artifacts.len()))
+    }
+
+    /// Drop one citation from the task manifest, then its payload object when
+    /// no remaining citation shares the digest. A digest in `cited` is
+    /// evidence another record still links, so its citation stays.
+    pub fn remove(
+        &self,
+        task: &TaskStamp,
+        artifact_id: &str,
+        cited: &BTreeSet<Digest>,
+    ) -> Result<(Artifact, ArtifactBudget), Error> {
+        let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
+        let task_dir = self.task_dir(task);
+        let mut manifest = read_manifest(&task_dir, task)?;
+        validate_manifest(&task_dir, task, &manifest, true)?;
+        let index = manifest
+            .artifacts
+            .iter()
+            .position(|artifact| artifact.id == artifact_id)
+            .ok_or_else(|| {
+                Error::refused(
+                    "artifact identity",
+                    format!("task {task} has no artifact {artifact_id:?}"),
+                )
+            })?;
+        if cited.contains(&manifest.artifacts[index].digest) {
+            return Err(Error::refused(
+                "artifact citation",
+                format!("artifact {artifact_id} of task {task} is cited by its room"),
+            ));
+        }
+        let high = high_water(&manifest);
+        let removed = manifest.artifacts.remove(index);
+        manifest.issued = retained_issued(high, &manifest.artifacts);
+        publish_manifest(&task_dir, &manifest)?;
+        if !manifest
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.digest == removed.digest)
+        {
+            remove_object(&task_dir, &removed.digest)?;
+        }
+        Ok((removed, ArtifactBudget::of(manifest.artifacts.len())))
     }
 
     /// Return one cited payload after proving its metadata and content digest.
@@ -322,6 +381,7 @@ impl Store {
             if !remove.is_empty() {
                 changes.push(PruneChange {
                     task,
+                    issued: retained_issued(high_water(&manifest), &remaining),
                     original: manifest.artifacts,
                     remaining,
                     remove,
@@ -360,6 +420,7 @@ impl Store {
                     version: STORE_VERSION,
                     task: change.task.clone(),
                     artifacts: change.remaining.clone(),
+                    issued: change.issued,
                 },
             )?;
             let remaining = change
@@ -849,6 +910,12 @@ fn validate_manifest_shape(
             ));
         }
     }
+    if manifest.issued.is_some_and(|issued| issued <= previous) {
+        return Err(Error::corrupt(
+            subject,
+            "issued artifact number does not exceed the last citation",
+        ));
+    }
     Ok(())
 }
 
@@ -932,19 +999,30 @@ fn read_cited(path: &Path, artifact_id: &str, member: &str) -> Result<Vec<u8>, E
     }
 }
 
-fn next_id(artifacts: &[Artifact]) -> Result<String, Error> {
-    let highest = artifacts
-        .last()
-        .map(|artifact| {
-            artifact
-                .id
-                .strip_prefix('A')
-                .expect("validated artifact id")
-                .parse::<u64>()
-                .expect("validated artifact number")
-        })
-        .unwrap_or(0);
-    highest
+/// The artifact number a validated citation carries.
+fn number(artifact: &Artifact) -> u64 {
+    artifact
+        .id
+        .strip_prefix('A')
+        .expect("validated artifact id")
+        .parse::<u64>()
+        .expect("validated artifact number")
+}
+
+/// The highest artifact number `manifest` has ever issued.
+fn high_water(manifest: &Manifest) -> u64 {
+    let last = manifest.artifacts.last().map_or(0, number);
+    manifest.issued.map_or(last, |issued| issued.max(last))
+}
+
+/// The high-water mark a manifest left holding `remaining` must record: only
+/// one above its last citation, which the id order cannot recover.
+fn retained_issued(high: u64, remaining: &[Artifact]) -> Option<u64> {
+    (high > remaining.last().map_or(0, number)).then_some(high)
+}
+
+fn next_id(manifest: &Manifest) -> Result<String, Error> {
+    high_water(manifest)
         .checked_add(1)
         .map(|number| format!("A{number}"))
         .ok_or_else(|| Error::corrupt("artifact manifest", "artifact id space is exhausted"))

@@ -224,6 +224,14 @@ Surfaces that refine the law:
 - `task artifact show` never writes raw payload bytes to the terminal; exact
   extraction is `--output PATH`, verified against the retained digest, and a
   payload that fails its digest is neither shown nor extracted.
+- A task holds at most 32 artifact citations. Every `task artifact add`,
+  `list` page, and `remove` answer carries the task's `budget`: its `count`,
+  the `bound`, and the `remaining` slots, whole-task even on a partial page;
+  the add refusal at the bound names `task artifact remove`. Removal drops one
+  citation of a pending task, deleting the payload only when no remaining
+  citation shares its digest; it refuses a completed or deleted task, an
+  unknown id, and an artifact its room cites. A removed id is never issued
+  again.
 - Backup and restore share one bundle bound on members and aggregate bytes;
   restore refuses an oversized manifest before reading a member, and an
   oversized current authority before changing anything.

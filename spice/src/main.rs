@@ -461,7 +461,8 @@ impl NativeInvocation<'_> {
             ["task", "artifact", "add"]
             | ["task", "artifact", "list"]
             | ["task", "artifact", "show"]
-            | ["task", "artifact", "prune"] => {
+            | ["task", "artifact", "prune"]
+            | ["task", "artifact", "remove"] => {
                 deliver(&task_artifact_command::run(leaf, contract), form)
             }
             ["room", "history"]

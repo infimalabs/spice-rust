@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -356,6 +356,106 @@ fn duplicate_payload_survives_pruning_of_one_citation() {
     assert_eq!(
         fixture.store.show(&task, "A1").expect("payload remains").1,
         b"same bytes"
+    );
+}
+
+#[test]
+fn removal_keeps_a_payload_another_citation_shares_and_drops_an_unshared_one() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-r1");
+    let task_dir = fixture.store.root().join(task.as_str());
+    let same = fixture.source("same.txt", b"same bytes");
+    let other = fixture.source("other.txt", b"other bytes");
+    let at = instant("2030-01-01T00:00:00.000Z");
+    let kept = add(&fixture.store, &task, &same, Retention::Permanent, at);
+    let shared = add(&fixture.store, &task, &same, Retention::Permanent, at);
+    let unshared = add(&fixture.store, &task, &other, Retention::Permanent, at);
+    let uncited = BTreeSet::new();
+
+    let (removed, budget) = fixture
+        .store
+        .remove(&task, "A2", &uncited)
+        .expect("remove shared citation");
+    assert_eq!(removed, shared);
+    assert_eq!((budget.count, budget.remaining), (2, 30));
+    assert!(object_dir(&task_dir, &kept.digest).exists());
+    assert_eq!(
+        fixture.store.show(&task, "A1").expect("shared payload").1,
+        b"same bytes"
+    );
+
+    fixture
+        .store
+        .remove(&task, "A3", &uncited)
+        .expect("remove unshared citation");
+    assert!(!object_dir(&task_dir, &unshared.digest).exists());
+    assert_eq!(fixture.store.list(&task).expect("remaining"), vec![kept]);
+}
+
+#[test]
+fn removal_at_the_bound_frees_one_slot_without_reissuing_the_removed_id() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-r2");
+    let at = instant("2030-01-01T00:00:00.000Z");
+    for index in 0..32 {
+        let source = fixture.source(&format!("{index}.txt"), index.to_string().as_bytes());
+        add(&fixture.store, &task, &source, Retention::Permanent, at);
+    }
+    let extra = fixture.source("extra.txt", b"extra");
+    let full = fixture
+        .store
+        .add(AddRequest {
+            task: &task,
+            source: &extra,
+            name: None,
+            media_type: None,
+            retention: Retention::Permanent,
+            created_at: at,
+        })
+        .expect_err("the bound refuses a 33rd citation");
+    assert_eq!(full.class(), ErrorClass::Refusal);
+    let budget = fixture.store.budget(&task).expect("budget at the bound");
+    assert_eq!((budget.count, budget.bound, budget.remaining), (32, 32, 0));
+
+    let (_, budget) = fixture
+        .store
+        .remove(&task, "A32", &BTreeSet::new())
+        .expect("remove the newest citation");
+    assert_eq!(budget.remaining, 1);
+    let readded = add(&fixture.store, &task, &extra, Retention::Permanent, at);
+    assert_eq!(readded.id, "A33");
+    fixture
+        .store
+        .remove(&task, "A33", &BTreeSet::new())
+        .expect("remove the readded citation");
+    let again = add(&fixture.store, &task, &extra, Retention::Permanent, at);
+    assert_eq!(again.id, "A34");
+}
+
+#[test]
+fn removal_refuses_an_unknown_or_room_cited_artifact_without_change() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-r3");
+    let source = fixture.source("proof.txt", b"proof");
+    let artifact = add(
+        &fixture.store,
+        &task,
+        &source,
+        Retention::Permanent,
+        instant("2030-01-01T00:00:00.000Z"),
+    );
+    let cited = BTreeSet::from([artifact.digest.clone()]);
+
+    for (id, cited) in [("A9", BTreeSet::new()), ("A1", cited)] {
+        let refused = fixture
+            .store
+            .remove(&task, id, &cited)
+            .expect_err("removal refuses");
+        assert_eq!(refused.class(), ErrorClass::Refusal, "{id}");
+    }
+    assert_eq!(
+        fixture.store.list(&task).expect("unchanged"),
+        vec![artifact]
     );
 }
 

@@ -6,8 +6,8 @@ mod model;
 mod store;
 
 pub use model::{
-    Artifact, ArtifactAnswer, ArtifactContent, MediaType, PruneOperation, PrunePlan, PruneSkip,
-    Retention, VocabularyError,
+    Artifact, ArtifactAnswer, ArtifactBudget, ArtifactContent, MediaType, PruneOperation,
+    PrunePlan, PruneSkip, Retention, VocabularyError,
 };
 pub use store::{
     AddBytesRequest, AddRequest, ArtifactReader, BackupGeneration, BackupMember, BackupSource,

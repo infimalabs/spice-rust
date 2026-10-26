@@ -109,6 +109,7 @@ fn many_artifacts_page_newest_first_and_continuations_visit_each_once() {
     let ArtifactAnswer::Listed {
         artifacts,
         omission,
+        budget,
         ..
     } = fixture
         .list(wire::output::Request::default(), None)
@@ -121,6 +122,11 @@ fn many_artifacts_page_newest_first_and_continuations_visit_each_once() {
     assert_eq!(artifacts[0].id, "A32", "newest first");
     let omission = omission.expect("a partial page states its omission");
     assert_eq!((omission.population, omission.withheld), (32, 12));
+    assert_eq!(
+        (budget.count, budget.bound, budget.remaining),
+        (32, 32, 0),
+        "a partial page reports the whole task's budget"
+    );
     assert_eq!(
         omission.continuation.arguments(),
         [
