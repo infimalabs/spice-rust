@@ -132,6 +132,7 @@ pub(in crate::resident) fn settle_pending_presentations(
     let reader = bus.reader();
     let directives = load_steering_presentations(&reader, &pending.keys()).and_then(|rows| {
         let mut directives = PresentationDirectives::from_presentations(
+            &reader,
             &rows,
             super::load_principal_roles(&reader)?,
         )

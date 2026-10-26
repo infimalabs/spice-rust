@@ -1040,7 +1040,7 @@ fn hydrate_steering_presentations(
     keys.retain(|key| !steering.directives.contains_key(key));
     let rows = load_steering_presentations(bus, &keys)?;
     steering
-        .extend_presentations(&rows, super::load_principal_roles(bus)?)
+        .extend_presentations(bus, &rows, super::load_principal_roles(bus)?)
         .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
     steering.prove_recipients(bus, message_addresses(scan_assistant_texts(scan)))
 }

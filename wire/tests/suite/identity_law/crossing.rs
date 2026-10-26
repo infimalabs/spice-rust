@@ -1005,6 +1005,7 @@ fn directive_sample(lane: CanonicalUuid) -> wire::MessageDirective {
         },
         authored: at("2030-04-12T18:44:08.000Z"),
         badge: Some(DirectiveBadge::Taste),
+        review: None,
         delivery: None,
     }
 }

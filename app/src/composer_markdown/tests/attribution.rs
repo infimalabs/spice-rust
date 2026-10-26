@@ -28,6 +28,7 @@ fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
         }),
         authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
         badge: None,
+        review: None,
         delivery: None,
     }];
     let sources = BTreeMap::from([(
@@ -105,6 +106,7 @@ fn peer_context_destination_survives_badges_and_reseating() {
         },
         authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
         badge: None,
+        review: None,
         delivery: None,
     };
     let sources = BTreeMap::from([(
@@ -184,6 +186,7 @@ fn a_delivered_direction_names_every_receiver_in_the_first_receivers_accent() {
         },
         authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
         badge: None,
+        review: None,
         delivery: Some(wire::MessageDelivery {
             fanout: Some(id("ff")),
         }),
@@ -252,6 +255,7 @@ fn a_quoted_direct_direction_names_the_same_two_ends_as_its_card() {
         attribution: attribution.clone(),
         authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
         badge: None,
+        review: None,
         delivery: Some(wire::MessageDelivery { fanout: None }),
     };
     let quoted = wire::QuotePresentation::Resolved {
@@ -392,6 +396,7 @@ fn direction_to(recipients: &[wire::CanonicalUuid]) -> MessageDirective {
         },
         authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
         badge: None,
+        review: None,
         delivery: None,
     }
 }

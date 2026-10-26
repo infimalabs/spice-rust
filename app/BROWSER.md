@@ -175,9 +175,14 @@ changing prose leading.
 Acknowledgment is an authenticated message disposition, not source text. Every
 direct hunk of the answering speaker wears the same ACK or NAK segment, quoted
 hunks never inherit it, and pending settlement revises those segments in place.
-TASTE and REVIEW mark the quoted directive the resident sent, not the answer.
-Literal `[ACK]`, `[NAK]`, `[TASTE]`, or `[REVIEW]` without an authenticated
-owner stays ordinary Markdown.
+TASTE marks the quoted directive the resident sent, not the answer. A typed
+REVIEW presentation replaces its prose delivery envelope with a finding card;
+that card starts with the authenticated Spice source, REVIEW segment, and
+reviewed task handle, then closes with typed system guidance that follow-ups are
+already boarded and the agent must continue its current task. The discarded
+envelope is never rendered and the lead does not repeat after nested finding
+quotes. Literal `[ACK]`, `[NAK]`, `[TASTE]`, or `[REVIEW]` without an
+authenticated owner stays ordinary Markdown.
 
 A quoted peer MSG keeps its original sender, arrow, and exact destination from
 the creating journal fact; a fanout reply quotes only its own delivered

@@ -131,7 +131,7 @@ fn a_packet_and_a_following_acknowledgement_present_as_separate_quotes() {
             text: directive.to_owned(),
             authored: true,
             taste: false,
-            review: false,
+            review: None,
             disposition: wire::Disposition::Live,
             quote_target: wire::QuoteTarget::Steering {
                 key: key.to_owned(),

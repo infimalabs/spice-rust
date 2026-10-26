@@ -418,14 +418,15 @@ pub(crate) fn render_room_card(markdown: &str) -> RenderedMarkdown {
     )
 }
 
-/// Render one resolved quote card as recursively attributed text hunks.
-fn render_quote_card_body(
-    markdown: &str,
+/// Render one resolved or typed review quote as recursively attributed text
+/// hunks. A typed review supplies its task separately from finding Markdown.
+fn render_quote_card_body<'r>(
+    markdown: &'r str,
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     media_quotes: &[wire::MediaQuote],
-    finish: Finish<'_>,
+    finish: Finish<'r>,
 ) -> RenderedMarkdown {
     render(
         markdown,
@@ -458,6 +459,11 @@ enum Finish<'r> {
     /// A quote card split into hunks attributed to its authenticated source.
     QuoteCard {
         attribution: image_flow::Attribution,
+        /// Typed context leading the Markdown body without being recovered from
+        /// its source envelope.
+        leading_task: Option<&'r wire::TaskHandle>,
+        /// Typed system guidance following the source's Markdown body.
+        trailing_guidance: Option<&'r str>,
         /// Quote shells around this card's hunks, raw and authenticated alike.
         quote_depth: usize,
         speaker: Option<wire::CanonicalUuid>,
@@ -469,12 +475,28 @@ enum Finish<'r> {
     },
 }
 
-impl Finish<'_> {
+impl<'r> Finish<'r> {
     /// The lane this rendering's surrounding signoff names, if any.
     const fn speaker(&self) -> Option<wire::CanonicalUuid> {
         match self {
             Self::ProseCard { speaker, .. } | Self::QuoteCard { speaker, .. } => *speaker,
             Self::Received | Self::TaskText { .. } => None,
+        }
+    }
+
+    const fn leading_task(&self) -> Option<&'r wire::TaskHandle> {
+        match self {
+            Self::QuoteCard { leading_task, .. } => *leading_task,
+            Self::Received | Self::ProseCard { .. } | Self::TaskText { .. } => None,
+        }
+    }
+
+    const fn trailing_guidance(&self) -> Option<&'r str> {
+        match self {
+            Self::QuoteCard {
+                trailing_guidance, ..
+            } => *trailing_guidance,
+            Self::Received | Self::ProseCard { .. } | Self::TaskText { .. } => None,
         }
     }
 
@@ -499,6 +521,7 @@ fn card_attribution() -> image_flow::Attribution {
         disposition: String::new(),
         badge: String::new(),
         task_tail: String::new(),
+        repeat: true,
     }
 }
 
@@ -515,14 +538,14 @@ struct Annotations<'a> {
     sends: &'a [MessageSend],
 }
 
-fn render(
-    markdown: &str,
-    annotations: Annotations<'_>,
+fn render<'r>(
+    markdown: &'r str,
+    annotations: Annotations<'r>,
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
     media_quotes: &[wire::MediaQuote],
-    finish: Finish<'_>,
+    finish: Finish<'r>,
 ) -> RenderedMarkdown {
     let math = math::normalize(
         markdown,
@@ -643,7 +666,7 @@ fn parse_events<'m>(
     sends: Vec<MessageSend>,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    finish: &Finish<'_>,
+    finish: &Finish<'m>,
 ) -> (Vec<MarkdownEvent<'m>>, Vec<OuterQuote>) {
     let card = match finish {
         Finish::ProseCard { card, .. } => Some(*card),
@@ -665,17 +688,39 @@ fn parse_events<'m>(
         .collect::<BTreeMap<_, _>>();
     let mut outer_quotes = Vec::new();
     let mut quote_depth = 0usize;
+    let mut skipped_review_depth = 0usize;
     let mut skipped_marker = None;
     let mut code_block = false;
     let mut events = Vec::new();
+    if let Some(task) = finish.leading_task() {
+        quotes::push_typed_paragraph(&mut events, task.as_str());
+    }
     for (event, source) in Parser::new_ext(markdown, OPTIONS).into_offset_iter() {
+        if quotes::skip_review_envelope_event(&event, &mut skipped_review_depth) {
+            continue;
+        }
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
             MarkdownEvent::Start(Tag::BlockQuote(_)) => {
                 if quote_depth == 0 {
-                    let quote = if let Some(context) = contexts.remove(&source.start) {
-                        OuterQuote {
+                    if let Some(context) = contexts.remove(&source.start) {
+                        if context.review.is_some() {
+                            let end = context.end;
+                            events.push(MarkdownEvent::InlineHtml(
+                                quotes::review_html(
+                                    &context,
+                                    quote_agents,
+                                    quote_sources,
+                                    finish.speaker(),
+                                )
+                                .into(),
+                            ));
+                            remaining.retain(|start, _| *start < context.start || *start >= end);
+                            skipped_review_depth = 1;
+                            continue;
+                        }
+                        outer_quotes.push(OuterQuote {
                             accent: if context.delivery.is_some() {
                                 quotes::recipient_accent(&context.attribution, quote_agents)
                             } else {
@@ -692,19 +737,18 @@ fn parse_events<'m>(
                                 quote_sources,
                                 finish.speaker(),
                             )),
-                        }
+                        });
                     } else if let Some(send) = sends.remove(&source.start) {
-                        OuterQuote {
+                        outer_quotes.push(OuterQuote {
                             accent: quotes::send_accent(&send, quote_agents),
                             attribution: Some(quotes::send_attribution(&send, quote_agents, card)),
-                        }
+                        });
                     } else {
-                        OuterQuote {
+                        outer_quotes.push(OuterQuote {
                             attribution: None,
                             accent: None,
-                        }
-                    };
-                    outer_quotes.push(quote);
+                        });
+                    }
                 }
                 quote_depth += 1;
             }
@@ -722,6 +766,9 @@ fn parse_events<'m>(
                 &mut skipped_marker,
             ));
         }
+    }
+    if let Some(guidance) = finish.trailing_guidance() {
+        quotes::push_typed_paragraph(&mut events, guidance);
     }
     debug_assert!(
         remaining.is_empty(),

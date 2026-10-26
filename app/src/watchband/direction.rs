@@ -123,6 +123,7 @@ mod tests {
             },
             authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
             badge: None,
+            review: None,
             delivery: Some(wire::MessageDelivery { fanout }),
         }
     }

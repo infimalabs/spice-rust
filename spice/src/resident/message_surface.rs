@@ -644,8 +644,12 @@ pub(super) fn steering_ledger(
         PresentationDirectives::default()
     } else {
         let presentations = load_steering_presentations(&reader, &keys)?;
-        PresentationDirectives::from_presentations(&presentations, load_principal_roles(&reader)?)
-            .map_err(|error| store_fault("serve::message-steering-invalid", &error))?
+        PresentationDirectives::from_presentations(
+            &reader,
+            &presentations,
+            load_principal_roles(&reader)?,
+        )
+        .map_err(|error| store_fault("serve::message-steering-invalid", &error))?
     };
     ledger.prove_recipients(&reader, addresses)?;
     Ok(Some(ledger))
@@ -774,7 +778,7 @@ pub(super) fn present_acknowledged_prose(
     }
     let rows = load_steering_presentations(reader, &keys).map_err(|error| format!("{error:?}"))?;
     let roles = load_principal_roles(reader).map_err(|error| format!("{error:?}"))?;
-    let directives = PresentationDirectives::from_presentations(&rows, roles)?;
+    let directives = PresentationDirectives::from_presentations(reader, &rows, roles)?;
     present_steering_acknowledgements(
         &prose.text,
         Some(&directives),
@@ -807,7 +811,7 @@ struct PresentationDirective {
     text: String,
     authored: bool,
     taste: bool,
-    review: bool,
+    review: Option<wire::MessageReview>,
     disposition: wire::Disposition,
     quote_target: wire::QuoteTarget,
     /// Images retained by this directive, each with its exact quote target.
@@ -827,7 +831,7 @@ struct PresentationDirective {
 impl PresentationDirective {
     /// Badge of the resident-generated directive kind, from typed provenance.
     fn badge(&self) -> Option<wire::DirectiveBadge> {
-        if self.review {
+        if self.review.is_some() {
             Some(wire::DirectiveBadge::Review)
         } else if self.taste {
             Some(wire::DirectiveBadge::Taste)
@@ -854,9 +858,21 @@ impl PresentationDirectives {
     }
 
     fn from_presentations(
+        reader: &bus::BusReader,
         rows: &[bus::SteeringPresentation],
         roles: wire::principal::PrincipalRoles,
     ) -> Result<Self, String> {
+        let needs_review = rows.iter().any(|row| {
+            row.head()
+                .body()
+                .control
+                .as_deref()
+                .and_then(wire::parse_review_feedback_control)
+                .is_some()
+        });
+        let snapshot = needs_review
+            .then(|| reader.task_snapshot().map_err(|error| error.to_string()))
+            .transpose()?;
         let mut directives = BTreeMap::new();
         for row in rows {
             let head = row.head().body();
@@ -904,7 +920,7 @@ impl PresentationDirectives {
                         .into_owned(),
                     authored: true,
                     taste,
-                    review: is_review_feedback(head.control.as_deref()),
+                    review: review_presentation(snapshot.as_ref(), head.control.as_deref())?,
                     disposition: head.disposition,
                     retirement,
                     quote_target,
@@ -924,10 +940,11 @@ impl PresentationDirectives {
 
     fn extend_presentations(
         &mut self,
+        reader: &bus::BusReader,
         rows: &[bus::SteeringPresentation],
         roles: wire::principal::PrincipalRoles,
     ) -> Result<(), String> {
-        let loaded = Self::from_presentations(rows, roles)?;
+        let loaded = Self::from_presentations(reader, rows, roles)?;
         self.directives.extend(loaded.directives);
         self.roles = loaded.roles;
         Ok(())
@@ -981,10 +998,40 @@ fn steering_keys<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<steer
         .collect()
 }
 
-fn is_review_feedback(control: Option<&str>) -> bool {
-    control
-        .and_then(wire::parse_review_feedback_control)
-        .is_some()
+pub(super) fn review_presentation(
+    snapshot: Option<&bus::TaskSnapshot>,
+    control: Option<&str>,
+) -> Result<Option<wire::MessageReview>, String> {
+    let Some((task, reviewed_at)) = control.and_then(wire::parse_review_feedback_control) else {
+        return Ok(None);
+    };
+    let snapshot = snapshot.ok_or_else(|| "review feedback has no task snapshot".to_owned())?;
+    let reviewed = snapshot
+        .facts()
+        .at(reviewed_at)
+        .and_then(|envelope| envelope.fact.read::<wire::body::TaskReviewed>())
+        .ok_or_else(|| format!("review feedback names missing review fact {reviewed_at}"))?;
+    if reviewed.task != task {
+        return Err(format!(
+            "review feedback task {task} disagrees with review fact task {}",
+            reviewed.task
+        ));
+    }
+    let finding = reviewed
+        .finding
+        .filter(|finding| !finding.trim().is_empty())
+        .ok_or_else(|| format!("review feedback for {task} has no finding"))?;
+    let heads = snapshot
+        .tasks()
+        .binary_search_by(|heads| heads.statement().body().born.cmp(&task))
+        .ok()
+        .map(|index| &snapshot.tasks()[index])
+        .ok_or_else(|| format!("review feedback task {task} has no current statement"))?;
+    Ok(Some(wire::MessageReview {
+        task: wire::TaskHandle::for_project(&heads.statement().body().project, &task),
+        finding,
+        guidance: wire::REVIEW_FEEDBACK_GUIDANCE.to_owned(),
+    }))
 }
 
 /// How many broadcast markers the quoted contexts of directives this answer
@@ -1112,6 +1159,7 @@ fn hydrate_directive_contexts(
                 attribution: directive.attribution.clone(),
                 authored: directive.published,
                 badge: directive.badge(),
+                review: directive.review.clone(),
                 delivery: None,
             })
         })
@@ -1225,7 +1273,7 @@ impl EventDirectives<'_> {
                         directive.disposition,
                         wire::Disposition::Acked | wire::Disposition::Declined
                     )
-                    && !directive.review
+                    && directive.review.is_none()
                     && directive.retirement.is_some()
             })
             .map(|directive| directive.disposition)

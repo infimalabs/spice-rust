@@ -42,7 +42,7 @@ fn directive(key: &str, text: &str) -> (steer::Key, PresentationDirective) {
             text: text.to_owned(),
             authored: true,
             taste: false,
-            review: false,
+            review: None,
             disposition: wire::Disposition::Live,
             quote_target: wire::QuoteTarget::Steering {
                 key: key.to_owned(),
