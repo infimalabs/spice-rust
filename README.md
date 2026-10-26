@@ -93,8 +93,11 @@ window's Edit menu carries the standard copy, paste, cut, undo, and select-all
 shortcuts and Start Dictation. The window admits its endpoint through the same
 discovery check as `--open` and carries the token only over the private
 descriptor `spice up` uses and in the URL fragment the window loads; the
-detached attendant's own receipt goes to the resident log. Links the console
-opens in a new window go to the system browser. The window itself is drawn by
+detached attendant's own receipt goes to the resident log. A link to another
+site opens in the system browser however it is followed (click, keyboard,
+Cmd-click, or the context menu's Open Link) and the console stays put; the
+console's own links stay in the window. Only web (http and https) links are
+handed to the system. The window itself is drawn by
 a child process running the same appliance from
 `~/Library/Caches/dev.spice.app/Spice.app`, a minimal bundle `spice app`
 writes and verifies on each launch, because macOS dictation only attaches to
