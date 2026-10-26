@@ -283,7 +283,7 @@ fn gate_observation(
         };
     }
     for declaration in declarations {
-        if let Err(reason) = probe.exact(declaration.program()) {
+        if let Err(reason) = probe.configured(declaration.program()) {
             return DoctorObservation::Unavailable {
                 reason: format!(
                     "required Gate tool {} is unavailable: {reason}",
@@ -492,7 +492,13 @@ mod tests {
 
     #[test]
     fn missing_required_executables_and_dynamic_commands_are_not_ready() {
-        let missing = probe(Err("fixture executable is absent".to_owned()));
+        let mut missing = probe(Err("fixture executable is absent".to_owned()));
+        for declaration in gate::declared_mutation_tools().expect("compiled mutation programs") {
+            missing.named.insert(
+                declaration.program().to_owned(),
+                Err("fixture executable is absent".to_owned()),
+            );
+        }
         for command in cli::contracts().iter().filter(|contract| {
             contract.tools.iter().any(|tool| {
                 matches!(

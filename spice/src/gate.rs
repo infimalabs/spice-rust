@@ -394,7 +394,7 @@ impl PreparedBattery<'_> {
     /// Returns the canonical mutation refusal; no second selection is captured.
     pub fn execute_kill(&self) -> Result<KillRun, RunError> {
         self.capture
-            .execute_kill()
+            .execute_kill(&self.compiler_environment)
             .map_err(|error| RunError::refusal("gate::kill-refused", error))
     }
 
@@ -457,6 +457,45 @@ fn bind_cargo_jobs(
             *bound = Some(requested);
             Ok(())
         }
+    }
+}
+
+/// Where `gate kill` resolves its mutation programs and what their processes
+/// inherit: the ambient working directory and search path, and the canonical
+/// compiler environment every compile arm runs under.
+pub struct MutationHost {
+    rim: RimCapture,
+    compiler_environment: Vec<(OsString, OsString)>,
+}
+
+impl MutationHost {
+    /// Capture the ambient rim and compiler environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable working directory or a refused rim.
+    pub fn capture(ambient: &Ambient) -> Result<Self, RunError> {
+        let directory = env::current_dir()
+            .map_err(|error| RunError::fault("gate::working-directory-unavailable", error))?;
+        let search_path = ambient.get(PROCESS_PATH).map(OsStr::to_os_string);
+        let rim = RimCapture::new(directory, search_path, Vec::<String>::new())
+            .map_err(|error| RunError::refusal("gate::rim-refused", error))?;
+        Ok(Self {
+            rim,
+            compiler_environment: compiler_environment(ambient),
+        })
+    }
+
+    /// The captured rim that resolves the mutation programs.
+    #[must_use]
+    pub const fn rim(&self) -> &RimCapture {
+        &self.rim
+    }
+
+    /// The environment every mutation process inherits.
+    #[must_use]
+    pub fn compiler_environment(&self) -> &[(OsString, OsString)] {
+        &self.compiler_environment
     }
 }
 

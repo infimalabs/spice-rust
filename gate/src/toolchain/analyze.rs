@@ -823,11 +823,18 @@ fn tool_environment_with(
         .map_err(|error| format!("{label} tool environment was refused: {error}"))
 }
 
-fn tool_search_path(label: &str, programs: &[&str]) -> Result<std::ffi::OsString, String> {
+pub(crate) fn tool_search_path<P: AsRef<Path>>(
+    label: &str,
+    programs: &[P],
+) -> Result<std::ffi::OsString, String> {
     let mut directories = Vec::new();
     for program in programs {
-        let Some(parent) = Path::new(program).parent() else {
-            return Err(format!("{label} tool {program:?} has no parent directory"));
+        let program = program.as_ref();
+        let Some(parent) = program.parent() else {
+            return Err(format!(
+                "{label} tool {} has no parent directory",
+                program.display()
+            ));
         };
         if !directories.contains(&parent) {
             directories.push(parent);

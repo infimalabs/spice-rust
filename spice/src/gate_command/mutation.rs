@@ -69,20 +69,30 @@ impl CampAnswer {
 }
 
 /// Run the compiled mutation profile against private copies of the index.
-pub(crate) fn kill(matches: &clap::ArgMatches, live: bool) -> Outcome<KillAnswer> {
+pub(crate) fn kill(
+    matches: &clap::ArgMatches,
+    live: bool,
+    ambient: &spice::ambient::Ambient,
+) -> Outcome<KillAnswer> {
     let verbose = matches.get_flag("verbose");
     let selected = match SelectedContract::capture(Selector::staged()) {
         Ok(selected) => selected,
         Err(failure) => return failure.outcome(),
+    };
+    let host = match spice::gate::MutationHost::capture(ambient) {
+        Ok(host) => host,
+        Err(error) => return super::battery_failure(error),
     };
     let progress = Progress::stderr("gate kill", live);
     progress.line(format_args!("baseline and mutant inventory starting"));
     let started = Instant::now();
     let campaign = Mutex::new(Campaign::new(output::HEARTBEAT, started));
     let run = beating(&progress, &campaign, Campaign::heartbeat, || {
-        selected
-            .contract
-            .execute_kill_with_progress(selected.root(), &mut |observation| {
+        selected.contract.execute_kill_with_progress(
+            selected.root(),
+            host.rim(),
+            host.compiler_environment(),
+            &mut |observation| {
                 let line = campaign
                     .lock()
                     .ok()
@@ -90,7 +100,8 @@ pub(crate) fn kill(matches: &clap::ArgMatches, live: bool) -> Outcome<KillAnswer
                 if let Some(line) = line {
                     progress.line(format_args!("{line}"));
                 }
-            })
+            },
+        )
     });
     let report = match run {
         Ok(run) => run.report(),

@@ -151,6 +151,12 @@ impl RimCapture {
         self.search_path.as_deref()
     }
 
+    /// Resolve one program name through this rim's search path, as every
+    /// declared toolchain program is resolved.
+    pub(crate) fn resolve(&self, program: &str) -> Option<PathBuf> {
+        resolve(program, &self.directory, self.search_path())
+    }
+
     /// Selected-tree-relative paths the rim captured as changed.
     #[must_use]
     pub fn changes(&self) -> &[String] {

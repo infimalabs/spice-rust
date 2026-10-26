@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs;
@@ -16,14 +17,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
-use sill::{Argv, Completion, Deadlines, Environment, SpecError, WaitError};
+use sill::{Argv, Completion, Deadlines, SpecError, WaitError};
 use wire::{Digest, Domain, TRACKED_POLICY_FILE};
 
 use crate::camp::{Camp, CampError, SharedBound};
 use crate::jurisdiction::{Ignore, IgnoreError};
 use crate::kill::{
-    Kill, KillBounds, KillError, KillRun, MutationBattery, MutationTool, PINNED_CARGO_MUTANTS,
-    RateError, SurvivorRate,
+    CARGO_PROGRAM, Kill, KillBounds, KillError, KillRun, MUTANTS_PROGRAM, MutationBattery,
+    MutationTool, NATIVE_BUILD_PROGRAMS, PINNED_CARGO_MUTANTS, RateError, SurvivorRate,
+    check_identity,
 };
 use crate::measure::{Bounds, Metric, MetricError, Parser, Policy, spawn};
 #[cfg(not(target_arch = "wasm32"))]
@@ -115,40 +117,6 @@ impl ToolIdentity {
     }
 }
 
-/// The complete mutation execution profile selected by one current contract.
-#[derive(Debug)]
-pub struct KillProfile {
-    runner: Kill,
-    floor: Option<SurvivorRate>,
-}
-
-impl KillProfile {
-    /// Direct executables and explicit environment.
-    #[must_use]
-    pub const fn tool(&self) -> &MutationTool {
-        self.runner.tool()
-    }
-
-    /// Fixed targets, retries, and seed.
-    #[must_use]
-    pub const fn battery(&self) -> &MutationBattery {
-        self.runner.battery()
-    }
-
-    /// Fixed process deadlines, grace, and capture.
-    #[must_use]
-    pub const fn bounds(&self) -> &KillBounds {
-        self.runner.bounds()
-    }
-
-    /// Exact committed survivor-rate floor.
-    #[must_use]
-    pub const fn floor(&self) -> SurvivorRate {
-        self.floor
-            .expect("a strict tracked contract carries the mutation floor")
-    }
-}
-
 /// Parsed tracked inputs that contain no observation of external tools.
 ///
 /// This type is suitable for in-process policy and acquisition evaluation. It
@@ -166,7 +134,7 @@ pub struct ParsedContract {
     #[cfg(not(target_arch = "wasm32"))]
     shape: ShapePolicy,
     camp_policy: Policy,
-    kill_profile: KillProfile,
+    kill_floor: Option<SurvivorRate>,
     baseline: Option<Baseline>,
     ratchet: Option<Ratchet>,
     bounds: Bounds,
@@ -345,10 +313,7 @@ impl ParsedContract {
         let ratchet = baseline
             .as_ref()
             .map(|baseline| baseline.ratchet(&gate_set));
-        let kill_profile = KillProfile {
-            runner: gate_set.build_kill(),
-            floor: baseline.as_ref().map(Baseline::mutation_floor),
-        };
+        let kill_floor = baseline.as_ref().map(Baseline::mutation_floor);
 
         Ok(Self {
             gate_set,
@@ -361,7 +326,7 @@ impl ParsedContract {
             #[cfg(not(target_arch = "wasm32"))]
             shape,
             camp_policy,
-            kill_profile,
+            kill_floor,
             baseline,
             ratchet,
             bounds,
@@ -415,20 +380,24 @@ impl ParsedContract {
         &self.camp_policy
     }
 
-    /// Complete compiled mutation execution profile and committed floor.
-    #[must_use]
-    pub const fn kill(&self) -> &KillProfile {
-        &self.kill_profile
-    }
-
     /// Execute the compiled mutation profile against a private selected tree.
+    ///
+    /// `rim` resolves the declared mutation programs on the running host, and
+    /// `compiler_environment` is the environment their processes inherit.
     ///
     /// # Errors
     ///
     /// Returns the first selection, tool, inventory, baseline, or integrity
-    /// refusal. The caller tree and tracked baseline are never mutation roots.
-    pub fn execute_kill(&self, root: &Path) -> Result<KillRun, KillError> {
-        self.execute_kill_with_progress(root, &mut |_| {})
+    /// refusal, including a declared program the rim does not resolve. The
+    /// caller tree and tracked baseline are never mutation roots.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn execute_kill(
+        &self,
+        root: &Path,
+        rim: &crate::toolchain::RimCapture,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<KillRun, KillError> {
+        self.execute_kill_with_progress(root, rim, compiler_environment, &mut |_| {})
     }
 
     /// Execute the mutation profile while observing its canonical campaign.
@@ -436,24 +405,21 @@ impl ParsedContract {
     /// # Errors
     ///
     /// Returns the same failures as [`Self::execute_kill`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn execute_kill_with_progress(
         &self,
         root: &Path,
+        rim: &crate::toolchain::RimCapture,
+        compiler_environment: &[(OsString, OsString)],
         progress: &mut dyn FnMut(crate::KillProgress<'_>),
     ) -> Result<KillRun, KillError> {
-        let floor = self
-            .kill_profile
-            .floor
-            .ok_or_else(|| KillError::MissingFloor {
-                path: root.join(BASELINE_PATH),
-                name: "rust.mutation-survivors",
-            })?;
-        self.kill_profile.runner.run_with_progress(
-            root,
-            self.policy.ignore(),
-            Some(floor),
-            progress,
-        )
+        let floor = self.kill_floor.ok_or_else(|| KillError::MissingFloor {
+            path: root.join(BASELINE_PATH),
+            name: "rust.mutation-survivors",
+        })?;
+        self.gate_set
+            .resolve_kill(rim, compiler_environment)?
+            .run_with_progress(root, self.policy.ignore(), Some(floor), progress)
     }
 
     /// Complete versioned floor state.

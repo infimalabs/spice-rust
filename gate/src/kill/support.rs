@@ -212,6 +212,13 @@ pub enum KillError {
     },
     /// Selected-tree walking or snapshotting failed.
     Walk(WalkError),
+    /// A declared mutation program did not resolve on the running host.
+    ToolMissing {
+        /// Declared program name.
+        program: &'static str,
+    },
+    /// The resolved mutation programs could not form their process environment.
+    ToolEnvironment(String),
     /// One direct mutation executable could not be read for identification.
     ToolRead {
         /// Executable role.
@@ -269,6 +276,13 @@ impl fmt::Display for KillError {
                 path.display()
             ),
             Self::Walk(source) => source.fmt(formatter),
+            Self::ToolMissing { program } => write!(
+                formatter,
+                "required mutation tool {program} is not on the captured executable search path"
+            ),
+            Self::ToolEnvironment(detail) => {
+                write!(formatter, "mutation tool environment was refused: {detail}")
+            }
             Self::ToolRead {
                 role,
                 program,

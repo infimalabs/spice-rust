@@ -37,15 +37,11 @@ impl MutationTool {
                 program: mutants_program,
             });
         }
-        if identity.is_empty() || identity.contains(['\n', '\r']) {
-            return Err(RateError::InvalidToolIdentity { identity });
-        }
+        check_identity(&identity)?;
         for (key, _) in environment.entries() {
-            if key == OsStr::new(SEED_ENVIRONMENT)
-                || key == OsStr::new(ATTEMPT_ENVIRONMENT)
-                || key == OsStr::new(CARGO_ENVIRONMENT)
-                || key == OsStr::new(CARGO_BUILD_DIRECTORY_ENVIRONMENT)
-                || key == OsStr::new(CARGO_TARGET_DIRECTORY_ENVIRONMENT)
+            if GATE_OWNED_ENVIRONMENT
+                .iter()
+                .any(|owned| key == OsStr::new(owned))
             {
                 return Err(RateError::ReservedEnvironment {
                     key: key.to_string_lossy().into_owned(),
@@ -58,6 +54,77 @@ impl MutationTool {
             identity,
             environment,
         })
+    }
+
+    /// Resolve the declared programs on the host that runs the battery.
+    ///
+    /// Every program resolves through the rim's directory and search path,
+    /// exactly as the compile arms resolve theirs. The process environment is
+    /// the inherited compiler environment with a hermetic `PATH` holding only
+    /// the resolved programs' directories, plus the fixed entries.
+    ///
+    /// # Errors
+    ///
+    /// Names the first declared program the rim does not resolve, or refuses
+    /// an environment the resolved programs cannot form.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn resolve(
+        identity: &str,
+        rim: &crate::toolchain::RimCapture,
+        inherited: &[(OsString, OsString)],
+    ) -> Result<Self, KillError> {
+        let resolve = |program: &'static str| {
+            rim.resolve(program)
+                .ok_or(KillError::ToolMissing { program })
+        };
+        let cargo_program = resolve(CARGO_PROGRAM)?;
+        let mutants_program = resolve(MUTANTS_PROGRAM)?;
+        let mut programs = vec![cargo_program.clone(), mutants_program.clone()];
+        for program in NATIVE_BUILD_PROGRAMS {
+            programs.push(resolve(program)?);
+        }
+        let search_path = crate::toolchain::tool_search_path("mutation", &programs)
+            .map_err(KillError::ToolEnvironment)?;
+        let mut entries = inherited
+            .iter()
+            .filter(|(name, _)| {
+                name != OsStr::new(SEARCH_PATH_ENVIRONMENT)
+                    && !GATE_OWNED_ENVIRONMENT
+                        .iter()
+                        .any(|owned| name == OsStr::new(owned))
+            })
+            .cloned()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        entries.insert(OsString::from(SEARCH_PATH_ENVIRONMENT), search_path);
+        for (name, value) in FIXED_ENVIRONMENT {
+            entries.insert(OsString::from(name), OsString::from(value));
+        }
+        let environment = Environment::new(entries)
+            .map_err(|error| KillError::ToolEnvironment(error.to_string()))?;
+        Self::new(cargo_program, mutants_program, identity, environment)
+            .map_err(|error| KillError::ToolEnvironment(error.to_string()))
+    }
+
+    /// Render the host-independent declaration: program names, the pinned
+    /// identity, and how each environment entry is formed on the running host.
+    pub(crate) fn render_declaration(identity: &str, into: &mut String) {
+        use std::fmt::Write as _;
+
+        let _ = writeln!(into, "kill cargo-program {CARGO_PROGRAM}");
+        let _ = writeln!(into, "kill mutants-program {MUTANTS_PROGRAM}");
+        for program in NATIVE_BUILD_PROGRAMS {
+            let _ = writeln!(into, "kill native-program {program}");
+        }
+        let _ = writeln!(into, "kill identity {identity}");
+        let _ = writeln!(into, "kill environment inherited compiler-environment");
+        let _ = writeln!(
+            into,
+            "kill environment {SEARCH_PATH_ENVIRONMENT} resolved-program-directories"
+        );
+        for (name, value) in FIXED_ENVIRONMENT {
+            let _ = writeln!(into, "kill environment {name} {value}");
+        }
+        render_owned_environment("resolved-cargo-program", into);
     }
 
     /// Direct Cargo executable used for the unmutated baseline.
@@ -95,21 +162,6 @@ impl MutationTool {
         );
         let _ = writeln!(into, "kill identity {}", self.identity);
         let _ = writeln!(into, "kill environment clear");
-        let _ = writeln!(
-            into,
-            "kill environment {CARGO_ENVIRONMENT} {}",
-            self.cargo_program.display()
-        );
-        let _ = writeln!(
-            into,
-            "kill environment {CARGO_BUILD_DIRECTORY_ENVIRONMENT} \
-             selected-snapshot/{MUTATION_BUILD_DIRECTORY}"
-        );
-        let _ = writeln!(
-            into,
-            "kill environment {CARGO_TARGET_DIRECTORY_ENVIRONMENT} \
-             selected-snapshot/{MUTATION_TARGET_DIRECTORY}"
-        );
         for (name, value) in self.environment.entries() {
             let _ = writeln!(
                 into,
@@ -118,11 +170,7 @@ impl MutationTool {
                 value.to_string_lossy()
             );
         }
-        let _ = writeln!(into, "kill environment {SEED_ENVIRONMENT} compiled-seed");
-        let _ = writeln!(
-            into,
-            "kill environment {ATTEMPT_ENVIRONMENT} one-based-attempt"
-        );
+        render_owned_environment(self.cargo_program.display(), into);
     }
 
     pub(super) fn identify(&self) -> Result<MutationToolIdentity, KillError> {
@@ -172,6 +220,38 @@ impl MutationTool {
         }
         Environment::new(entries)
     }
+}
+
+/// Check one exact pinned version line.
+pub(crate) fn check_identity(identity: &str) -> Result<(), RateError> {
+    if identity.is_empty() || identity.contains(['\n', '\r']) {
+        return Err(RateError::InvalidToolIdentity {
+            identity: identity.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Render the entries the gate sets on every mutation process.
+fn render_owned_environment(cargo: impl std::fmt::Display, into: &mut String) {
+    use std::fmt::Write as _;
+
+    let _ = writeln!(into, "kill environment {CARGO_ENVIRONMENT} {cargo}");
+    let _ = writeln!(
+        into,
+        "kill environment {CARGO_BUILD_DIRECTORY_ENVIRONMENT} \
+         selected-snapshot/{MUTATION_BUILD_DIRECTORY}"
+    );
+    let _ = writeln!(
+        into,
+        "kill environment {CARGO_TARGET_DIRECTORY_ENVIRONMENT} \
+         selected-snapshot/{MUTATION_TARGET_DIRECTORY}"
+    );
+    let _ = writeln!(into, "kill environment {SEED_ENVIRONMENT} compiled-seed");
+    let _ = writeln!(
+        into,
+        "kill environment {ATTEMPT_ENVIRONMENT} one-based-attempt"
+    );
 }
 
 /// Content-bound identity of the exact mutation executables and declaration.

@@ -22,7 +22,7 @@ const SCRATCH_ATTEMPTS: usize = 100;
 /// ever owns a name its own `create_dir` succeeded on. The name carries the
 /// clock rather than the process id because ids are reused and the clock is
 /// not, which is what keeps two lanes off the same name in the first place.
-pub(super) fn exclusive_scratch_root(label: &str) -> PathBuf {
+pub(crate) fn exclusive_scratch_root(label: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     for _ in 0..SCRATCH_ATTEMPTS {
         let stamp = SystemTime::now()
