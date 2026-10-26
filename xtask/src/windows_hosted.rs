@@ -29,6 +29,7 @@ pub fn windows_hosted_stage(
             "--",
             "stage-target",
             "x86_64-pc-windows-msvc",
+            "--unsigned",
         ]
         .map(str::to_owned)
         .into(),

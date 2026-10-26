@@ -24,7 +24,7 @@ const USAGE: &str = concat!(
     "render PRIVATE PUBLIC FONTS LPPL>|",
     "seal-darwin [--output DIR] [--unsigned]|",
     "share-darwin EXECUTABLE --identity IDENTITY --notary-profile PROFILE|",
-    "stage-target TARGET [--unsigned]|windows-appliance|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
+    "stage-target TARGET [--unsigned]|windows-appliance --unsigned|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
     "windows-guest <provision [--replace]|start|stop|status|reset|",
     "sync [--artifact PATH]... [--source PATH]...|",
     "run [--timeout SECONDS] [--output-bytes BYTES] -- PROGRAM [ARG...]>>"
@@ -109,8 +109,8 @@ fn main() -> ExitCode {
             &mut output,
             &mut io::stderr().lock(),
         ),
-        Some(value) if is_exact_command(value, "windows-appliance", arguments.len(), 0) => {
-            run_windows_appliance(&ambient, &mut output)
+        Some(value) if value == OsStr::new("windows-appliance") => {
+            run_windows_appliance(arguments.collect(), &ambient, &mut output)
         }
         Some(value) if is_exact_command(value, "windows-msvc", arguments.len(), 0) => {
             run_windows_msvc(&ambient, &mut output)
@@ -187,7 +187,20 @@ fn run_app(
     }
 }
 
-fn run_windows_appliance(ambient: &Ambient, output: &mut impl io::Write) -> CommandResult {
+fn run_windows_appliance(
+    arguments: Vec<OsString>,
+    ambient: &Ambient,
+    output: &mut impl io::Write,
+) -> CommandResult {
+    let unsigned = match arguments.as_slice() {
+        [] => false,
+        [flag] if flag == OsStr::new("--unsigned") => true,
+        _ => {
+            eprintln!("{}", help());
+            return Err(usage_error().into());
+        }
+    };
+    require_unsigned("x86_64-pc-windows-msvc", unsigned)?;
     xtask::build_windows_appliance(release_environment(ambient), ambient.environment()?, output)
         .map(|_| ())
         .map_err(Into::into)
@@ -348,11 +361,13 @@ fn run_stage_target(
         [target, flag] if flag == OsStr::new("--unsigned") => (target.to_str(), true),
         _ => (None, false),
     };
-    let Some(target) = target.filter(|target| !unsigned || *target == "aarch64-apple-darwin")
-    else {
+    let Some(target) = target else {
         eprintln!("{}", help());
         return Err(usage_error().into());
     };
+    if UNSIGNED_TARGETS.contains(&target) {
+        require_unsigned(target, unsigned)?;
+    }
     let environment = release_environment(ambient);
     if target == "x86_64-pc-windows-msvc" && !environment.is_hosted_guest() {
         return xtask::windows_hosted_stage(output, error_output)
@@ -376,6 +391,23 @@ fn run_stage_target(
             .map(|_| ())
             .map_err(Into::into)
     })
+}
+
+/// Release targets with no signing route yet. Their unsigned executables are
+/// the releases for now, built only when the caller names that result.
+const UNSIGNED_TARGETS: [&str; 2] = ["x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"];
+
+fn require_unsigned(target: &str, unsigned: bool) -> CommandResult {
+    if unsigned {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "{target} has no signing route yet; pass --unsigned to build its unsigned release executable"
+        ),
+    )
+    .into())
 }
 
 /// The Developer ID pair Darwin staging signs with. Without one, staging

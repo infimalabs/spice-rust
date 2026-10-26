@@ -185,6 +185,14 @@ With neither key set they refuse before any build unless `--unsigned` asks for
 an executable Gatekeeper blocks on every other Mac; with only one set they
 refuse by naming the other.
 
+Darwin is the only target with a signing route today. The Linux and Windows
+executables ship unsigned, and those unsigned executables are their releases
+for now, so every command that builds one names that result: `stage-target
+x86_64-unknown-linux-musl`, `stage-target x86_64-pc-windows-msvc` (including
+the command the hosted route runs remotely), and `windows-appliance` refuse
+before any build unless given `--unsigned`. A signing route for either target
+replaces its requirement with the configured signer, as Darwin's did.
+
 `spice dev xtask -- share-darwin` applies the same signing to a separate built
 Darwin executable outside staging; its result is not a sealed artifact.
 
@@ -263,7 +271,7 @@ spice dev xtask -- windows-hosted -- PROGRAM ARG...
 Stage the Windows release target through the same boundary:
 
 ```sh
-spice dev xtask -- stage-target x86_64-pc-windows-msvc
+spice dev xtask -- stage-target x86_64-pc-windows-msvc --unsigned
 ```
 
 `PROGRAM` is either a path beneath the selected worktree or one admitted tool
@@ -435,9 +443,18 @@ The host owns every Cargo build. A complete appliance cycle is:
 
 ```sh
 spice dev xtask -- windows-msvc
-spice dev xtask -- windows-appliance
+spice dev xtask -- windows-appliance --unsigned
 spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/release/spice.exe
 ```
+
+Until the hosted route is usable, this local cross-build is how Windows
+executables ship. `windows-appliance` therefore applies the release source rule
+before it builds: from a checkout equal to HEAD, with only release output
+untracked, it links the same release product version the Darwin and Linux
+stages of that commit report. From any other checkout it names the difference
+and links the `-dev` version, so a release version never vouches for
+uncommitted source. The result is still not a staged payload and carries no
+receipt.
 
 Only the x64 PE crosses into the guest; the initial guest needs neither Rust nor
 Visual Studio, and Windows 11 ARM executes it through Microsoft x64 emulation.
@@ -550,7 +567,7 @@ lifecycle consumer launches a two-process tree in a new group, reaches it only b
 group id to interrupt and then force it, waits for the root's forced status, and
 proves the emptied and an unknown group both refuse as not found. The
 repository-install consumer needs Git for Windows under Program Files and the
-`spice dev xtask -- windows-appliance` image. It installs into a fresh
+`spice dev xtask -- windows-appliance --unsigned` image. It installs into a fresh
 repository, runs the wrapper and hooks under Git's shell, reinstalls
 convergently, and upgrades under a running resident that keeps serving the app.
 It then reclaims the deferred image, resumes an apply killed mid-flight, and
