@@ -498,29 +498,19 @@ fn create_stage(temporary: &Path) -> io::Result<File> {
 }
 
 fn sync_directory(parent: &Path) -> Result<(), Error> {
-    let directory = open_directory(parent)
-        .map_err(|error| Error::io(Operation::SyncDirectory, parent, error))?;
-    directory
-        .sync_all()
+    sync_directory_handle(parent)
         .map_err(|error| Error::io(Operation::SyncDirectory, parent, error))
 }
 
-#[cfg(not(windows))]
-fn open_directory(parent: &Path) -> io::Result<File> {
-    File::open(parent)
+#[cfg(any(unix, windows))]
+fn sync_directory_handle(parent: &Path) -> io::Result<()> {
+    sill::authority::Directory::open(parent)?.sync()
 }
 
-/// Windows opens a directory only with backup semantics, and its flush
-/// (`FlushFileBuffers`) requires a handle with write access.
-#[cfg(windows)]
-fn open_directory(parent: &Path) -> io::Result<File> {
-    use std::os::windows::fs::OpenOptionsExt as _;
-
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    OpenOptions::new()
-        .write(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(parent)
+/// Wasm contract checks have no filesystem principals to exclude.
+#[cfg(not(any(unix, windows)))]
+fn sync_directory_handle(parent: &Path) -> io::Result<()> {
+    OpenOptions::new().read(true).open(parent)?.sync_all()
 }
 
 #[cfg(test)]
