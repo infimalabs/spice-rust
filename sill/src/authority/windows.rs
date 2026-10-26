@@ -117,6 +117,67 @@ pub(super) fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
     )
 }
 
+/// Grant the owner `DELETE` on the file at `path` when the only grant on it is
+/// this principal's owner-only grant from a release that withheld `DELETE`.
+/// Every other object, including a missing one, is left as it is.
+pub(super) fn prepare_replacement(path: &Path) -> io::Result<()> {
+    let file = match open(path, READ_CONTROL) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let Some(owner) = grant_withholding_delete(&file)? else {
+        return Ok(());
+    };
+    protect(
+        &open(path, READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES)?,
+        owner << 6,
+    )
+}
+
+/// The owner bits of a DACL made solely of this principal's write grants, none
+/// of which carries `DELETE`; `None` for any other protection.
+fn grant_withholding_delete(file: &File) -> io::Result<Option<u32>> {
+    let principal = Principal::current()?;
+    let descriptor = Descriptor::read(file)?;
+    if !principal.controls(descriptor.owner) || descriptor.dacl.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: a non-null DACL returned by `GetSecurityInfo` lives inside the
+    // descriptor this function still owns.
+    let count = unsafe { (*descriptor.dacl).AceCount };
+    if count == 0 {
+        return Ok(None);
+    }
+    let mut owner = 0;
+    for index in 0..u32::from(count) {
+        let mut ace: *mut c_void = ptr::null_mut();
+        // SAFETY: `index` is below the ACL's own count, and `ace` receives a
+        // pointer into the same owned descriptor.
+        if unsafe { GetAce(descriptor.dacl, index, &raw mut ace) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: every ACE begins with an `ACE_HEADER`.
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        if u32::from(header.AceType) != ACCESS_ALLOWED_ACE_TYPE
+            || u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0
+        {
+            return Ok(None);
+        }
+        // SAFETY: the header names this ACE an access-allowed ACE, whose SID
+        // begins at `SidStart`.
+        let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        let sid: PSID = (&raw const allowed.SidStart).cast_mut().cast();
+        // SAFETY: both SIDs are valid for the duration of the call.
+        let own = unsafe { EqualSid(sid, principal.user()) } != 0;
+        if !own || allowed.Mask & DELETE != 0 || allowed.Mask & FILE_WRITE_DATA == 0 {
+            return Ok(None);
+        }
+        owner |= bits(allowed.Mask);
+    }
+    Ok(Some(owner))
+}
+
 pub(super) fn set_file_mode(file: &File, mode: u32) -> io::Result<()> {
     if mode & !0o700 != 0 {
         return Err(io::Error::new(
@@ -133,6 +194,12 @@ fn protect(file: &File, mode: u32) -> io::Result<()> {
     let directory = file.metadata()?.is_dir();
     let principal = Principal::current()?;
     let acl = owner_acl(principal.user(), mode >> 6, directory)?;
+    apply_protected_dacl(file, &acl)
+}
+
+/// Replace the DACL of the object `file` holds open with `WRITE_DAC` by `acl`,
+/// protected from inheritance.
+fn apply_protected_dacl(file: &File, acl: &[u32]) -> io::Result<()> {
     // SAFETY: the handle is open with `WRITE_DAC`, and `acl` is an initialized
     // ACL that outlives the call.
     let status = unsafe {
@@ -147,6 +214,176 @@ fn protect(file: &File, mode: u32) -> io::Result<()> {
         )
     };
     win32_status(status)
+}
+
+/// Give the file at `path` the private grant earlier releases wrote: the
+/// owner's read and write without `DELETE`.
+#[cfg(test)]
+pub(super) fn protect_withholding_delete(path: &Path) -> io::Result<()> {
+    let principal = Principal::current()?;
+    let mask = rights(READ_BITS | WRITE_BITS, false) & !DELETE;
+    let acl = grant_acl(principal.user(), &[(0, mask)])?;
+    apply_protected_dacl(&open(path, READ_CONTROL | WRITE_DAC)?, &acl)
+}
+
+/// Deny every principal `FILE_DELETE_CHILD` on the directory at `path` ahead
+/// of its owner's full grant, the rule some synchronized folders inherit.
+#[cfg(test)]
+pub(super) fn deny_everyone_delete_child(path: &Path) -> io::Result<()> {
+    use windows_sys::Win32::Security::{
+        ACCESS_DENIED_ACE, AddAccessDeniedAceEx, CreateWellKnownSid, SECURITY_MAX_SID_SIZE,
+        WinWorldSid,
+    };
+
+    let principal = Principal::current()?;
+    let mut everyone = vec![0_u8; SECURITY_MAX_SID_SIZE as usize];
+    let mut everyone_bytes = SECURITY_MAX_SID_SIZE;
+    // SAFETY: `everyone` holds `everyone_bytes` writable bytes for the SID.
+    if unsafe {
+        CreateWellKnownSid(
+            WinWorldSid,
+            ptr::null_mut(),
+            everyone.as_mut_ptr().cast(),
+            &raw mut everyone_bytes,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let everyone: PSID = everyone.as_mut_ptr().cast();
+    let grants = [
+        (0, rights(ALL_BITS, true)),
+        (
+            CONTAINER_INHERIT_ACE | INHERIT_ONLY_ACE,
+            rights(ALL_BITS, true),
+        ),
+        (
+            OBJECT_INHERIT_ACE | INHERIT_ONLY_ACE,
+            rights(READ_BITS | WRITE_BITS, false),
+        ),
+    ];
+    // SAFETY: both SIDs are valid.
+    let (user_bytes, world_bytes) =
+        unsafe { (GetLengthSid(principal.user()), GetLengthSid(everyone)) };
+    let header = size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>();
+    let acl_bytes = size_of::<ACL>() + size_of::<ACCESS_DENIED_ACE>() - size_of::<u32>()
+        + world_bytes as usize
+        + (header + user_bytes as usize) * grants.len();
+    let mut buffer = vec![0_u32; acl_bytes.div_ceil(size_of::<u32>())];
+    let acl = buffer.as_mut_ptr().cast::<ACL>();
+    // SAFETY: `buffer` is DWORD-aligned and `acl_bytes` long, enough for the
+    // header and every ACE added below; both SIDs stay valid.
+    unsafe {
+        if InitializeAcl(acl, acl_bytes as u32, ACL_REVISION) == 0
+            || AddAccessDeniedAceEx(acl, ACL_REVISION, 0, FILE_DELETE_CHILD, everyone) == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        for (flags, mask) in grants {
+            if AddAccessAllowedAceEx(acl, ACL_REVISION, flags, mask, principal.user()) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    }
+    apply_protected_dacl(&open(path, READ_CONTROL | WRITE_DAC)?, &buffer)
+}
+
+/// The calling thread impersonating this process's token without backup and
+/// restore privileges, which let an elevated administrator pass the very
+/// access checks a test means to exercise. Dropping it reverts the thread.
+#[cfg(test)]
+pub(super) struct WithoutBackupPrivileges;
+
+#[cfg(test)]
+impl WithoutBackupPrivileges {
+    pub(super) fn enter() -> io::Result<Self> {
+        use windows_sys::Win32::Security::{
+            AdjustTokenPrivileges, DuplicateTokenEx, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW,
+            SE_PRIVILEGE_REMOVED, SecurityImpersonation, TOKEN_ADJUST_PRIVILEGES, TOKEN_DUPLICATE,
+            TOKEN_IMPERSONATE, TOKEN_PRIVILEGES, TokenImpersonation,
+        };
+        use windows_sys::Win32::System::Threading::SetThreadToken;
+
+        let mut process: HANDLE = ptr::null_mut();
+        // SAFETY: the pseudo-handle is valid and `process` receives one handle.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE, &raw mut process) } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `OpenProcessToken` returned one owned handle.
+        let process = unsafe { OwnedHandle::from_raw_handle(process) };
+        let mut duplicate: HANDLE = ptr::null_mut();
+        // SAFETY: `process` is open for duplication; `duplicate` receives one
+        // handle.
+        if unsafe {
+            DuplicateTokenEx(
+                process.as_raw_handle(),
+                TOKEN_ADJUST_PRIVILEGES | TOKEN_IMPERSONATE | TOKEN_QUERY,
+                ptr::null(),
+                SecurityImpersonation,
+                TokenImpersonation,
+                &raw mut duplicate,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `DuplicateTokenEx` returned one owned handle.
+        let token = unsafe { OwnedHandle::from_raw_handle(duplicate) };
+        for name in ["SeBackupPrivilege", "SeRestorePrivilege"] {
+            let name = OsStr::new(name)
+                .encode_wide()
+                .chain([0])
+                .collect::<Vec<_>>();
+            let mut removal = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [LUID_AND_ATTRIBUTES {
+                    Luid: windows_sys::Win32::Foundation::LUID {
+                        LowPart: 0,
+                        HighPart: 0,
+                    },
+                    Attributes: SE_PRIVILEGE_REMOVED,
+                }],
+            };
+            // SAFETY: `name` is NUL-terminated and the LUID out-pointer lives
+            // in `removal`; the token is open for adjustment.
+            let removed = unsafe {
+                LookupPrivilegeValueW(
+                    ptr::null(),
+                    name.as_ptr(),
+                    &raw mut removal.Privileges[0].Luid,
+                ) != 0
+                    && AdjustTokenPrivileges(
+                        token.as_raw_handle(),
+                        0,
+                        &raw const removal,
+                        0,
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    ) != 0
+            };
+            if !removed {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        // SAFETY: a null thread names the calling thread; the token is an
+        // impersonation token open for impersonation, and the thread keeps its
+        // own reference once this handle closes.
+        if unsafe { SetThreadToken(ptr::null(), token.as_raw_handle()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self)
+    }
+}
+
+#[cfg(test)]
+impl Drop for WithoutBackupPrivileges {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Threading::SetThreadToken;
+
+        // SAFETY: a null token reverts the calling thread to its process token.
+        unsafe { SetThreadToken(ptr::null(), ptr::null_mut()) };
+    }
 }
 
 pub(super) fn create_private_directory(path: &Path) -> io::Result<()> {
@@ -423,6 +660,7 @@ pub(super) fn replace_entry(
     source: &OsStr,
     destination: &OsStr,
 ) -> io::Result<()> {
+    prepare_replacement(&path.join(destination))?;
     let source = wide(&path.join(source))?;
     let destination = wide(&path.join(destination))?;
     // SAFETY: both paths are NUL-terminated and outlive the call.
@@ -702,15 +940,17 @@ fn grant_acl(user: PSID, entries: &[(ACE_FLAGS, u32)]) -> io::Result<Vec<u32>> {
 
 /// Rights for owner permission `bits`.
 ///
-/// Write never includes `DELETE`; removing an entry needs its parent's write
-/// bit, which carries `FILE_DELETE_CHILD`.
+/// Write includes `DELETE`. Windows lets a rename or replacement remove an
+/// entry through the entry's own `DELETE` grant or its parent's
+/// `FILE_DELETE_CHILD`, and an inherited deny can close the parent route, so a
+/// private object the owner may write must also be one the owner may replace.
 fn rights(bits: u32, directory: bool) -> u32 {
     let mut mask = BASE_RIGHTS;
     if bits & READ_BITS != 0 {
         mask |= FILE_GENERIC_READ;
     }
     if bits & WRITE_BITS != 0 {
-        mask |= FILE_GENERIC_WRITE;
+        mask |= FILE_GENERIC_WRITE | DELETE;
         if directory {
             mask |= FILE_DELETE_CHILD;
         }

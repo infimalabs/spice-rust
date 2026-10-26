@@ -162,9 +162,13 @@ fn owner_modes_round_trip_and_refuse_shared_access() {
 #[test]
 fn a_sealed_directory_refuses_new_entries() {
     let scratch = Scratch::new("sealed");
+    #[cfg(windows)]
+    let _unprivileged =
+        super::windows::WithoutBackupPrivileges::enter().expect("drop backup privileges");
     let directory = scratch.path("sealed");
     create_private_directory(&directory).expect("create directory");
     fs::write(directory.join("kept"), b"kept").expect("create entry");
+    set_owner_mode(&directory.join("kept"), 0o400).expect("seal entry");
     set_owner_mode(&directory, 0o500).expect("seal directory");
 
     let refused = fs::write(directory.join("added"), b"").expect_err("sealed directory");
@@ -480,6 +484,76 @@ fn junction_targets_must_be_local_drive_paths() {
         .expect_err("network target refused");
     assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
     assert!(!scratch.path("link").exists());
+}
+
+/// A parent denying every principal `FILE_DELETE_CHILD` leaves replacement to
+/// the destination's and source's own `DELETE` grants: a fresh private file
+/// carries one, and a private file from a release that withheld it gains one
+/// before the rename, through both the path and the held-directory routes.
+#[cfg(windows)]
+#[test]
+fn private_files_replace_beneath_a_parent_denying_delete_child() {
+    use super::prepare_replacement;
+    use super::windows::{
+        WithoutBackupPrivileges, deny_everyone_delete_child, protect_withholding_delete,
+    };
+
+    let scratch = Scratch::new("replace-denied");
+    let _unprivileged = WithoutBackupPrivileges::enter().expect("drop backup privileges");
+    let parent = scratch.path("parent");
+    create_private_directory(&parent).expect("create parent");
+    deny_everyone_delete_child(&parent).expect("deny delete-child");
+
+    let destination = parent.join("destination");
+    drop(create_private_file(&destination).expect("create destination"));
+    let staged = parent.join("staged");
+    drop(create_private_file(&staged).expect("create staged"));
+    prepare_replacement(&destination).expect("prepare fresh destination");
+    fs::rename(&staged, &destination).expect("replace fresh destination");
+    assert_eq!(owner_mode(&destination).expect("destination mode"), 0o600);
+
+    protect_withholding_delete(&destination).expect("restore an earlier grant");
+    drop(create_private_file(&staged).expect("create staged again"));
+    let refused = fs::rename(&staged, &destination).expect_err("earlier grant blocks replacement");
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
+    prepare_replacement(&destination).expect("prepare earlier destination");
+    fs::rename(&staged, &destination).expect("replace prepared destination");
+    assert_eq!(owner_mode(&destination).expect("destination mode"), 0o600);
+
+    protect_withholding_delete(&destination).expect("restore an earlier grant");
+    drop(create_private_file(&staged).expect("create staged for held route"));
+    let held = Directory::open(&parent).expect("hold parent");
+    held.replace(
+        std::ffi::OsStr::new("staged"),
+        std::ffi::OsStr::new("destination"),
+    )
+    .expect("held replacement prepares the destination");
+    assert!(!staged.exists());
+}
+
+/// A destination whose owner may not write is not rewritten: its protection
+/// is not the earlier private grant, so the replacement keeps refusing.
+#[cfg(windows)]
+#[test]
+fn replacement_preparation_leaves_unwritable_destinations_protected() {
+    use super::prepare_replacement;
+    use super::windows::{WithoutBackupPrivileges, deny_everyone_delete_child};
+
+    let scratch = Scratch::new("replace-readonly");
+    let _unprivileged = WithoutBackupPrivileges::enter().expect("drop backup privileges");
+    let parent = scratch.path("parent");
+    create_private_directory(&parent).expect("create parent");
+    deny_everyone_delete_child(&parent).expect("deny delete-child");
+    let destination = parent.join("destination");
+    drop(create_private_file(&destination).expect("create destination"));
+    set_owner_mode(&destination, 0o400).expect("make destination read-only");
+    let staged = parent.join("staged");
+    drop(create_private_file(&staged).expect("create staged"));
+
+    prepare_replacement(&destination).expect("preparation leaves it alone");
+    assert_eq!(owner_mode(&destination).expect("destination mode"), 0o400);
+    let refused = fs::rename(&staged, &destination).expect_err("read-only destination refuses");
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
 }
 
 #[cfg(windows)]
