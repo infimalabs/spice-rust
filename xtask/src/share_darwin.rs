@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use dist::DarwinSigning;
 use serde::Deserialize;
 
 const SECURITY: &str = "/usr/bin/security";
@@ -13,28 +14,21 @@ const CODESIGN: &str = "/usr/bin/codesign";
 const DITTO: &str = "/usr/bin/ditto";
 const XCRUN: &str = "/usr/bin/xcrun";
 const SPCTL: &str = "/usr/sbin/spctl";
-const DEVELOPER_ID_PREFIX: &str = "Developer ID Application: ";
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Operator-owned inputs for making one built Darwin executable shareable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShareDarwinRequest {
     executable: PathBuf,
-    identity: String,
-    notary_profile: String,
+    signing: DarwinSigning,
 }
 
 impl ShareDarwinRequest {
     #[must_use]
-    pub fn new(
-        executable: impl Into<PathBuf>,
-        identity: impl Into<String>,
-        notary_profile: impl Into<String>,
-    ) -> Self {
+    pub fn new(executable: impl Into<PathBuf>, signing: DarwinSigning) -> Self {
         Self {
             executable: executable.into(),
-            identity: identity.into(),
-            notary_profile: notary_profile.into(),
+            signing,
         }
     }
 }
@@ -64,12 +58,62 @@ fn share_with(
     runner: &impl Runner,
 ) -> Result<(), ShareDarwinError> {
     admit_executable(&request.executable)?;
-    admit_identity(&request.identity, runner)?;
-    admit_notary_profile(&request.notary_profile, runner)?;
+    admit_signing(&request.signing, runner)?;
+    let submission = sign_and_notarize(
+        &request.executable,
+        &request.signing,
+        &std::env::temp_dir(),
+        runner,
+    )?;
 
+    writeln!(
+        output,
+        "signed and notarized {}",
+        request.executable.display()
+    )
+    .map_err(ShareDarwinError::Output)?;
+    writeln!(output, "identity: {}", request.signing.identity().as_str())
+        .map_err(ShareDarwinError::Output)?;
+    writeln!(
+        output,
+        "notary profile: {}",
+        request.signing.notary_profile().as_str()
+    )
+    .map_err(ShareDarwinError::Output)?;
+    writeln!(output, "submission: {submission}").map_err(ShareDarwinError::Output)?;
+    writeln!(
+        output,
+        "verification: strict code signature and online Gatekeeper assessment accepted"
+    )
+    .map_err(ShareDarwinError::Output)
+}
+
+/// Refuse unless the keychain holds the identity and the notary profile
+/// authenticates, so no signing work starts with credentials it cannot use.
+pub(crate) fn admit_signing(
+    signing: &DarwinSigning,
+    runner: &impl Runner,
+) -> Result<(), ShareDarwinError> {
+    admit_identity(signing.identity().as_str(), runner)?;
+    admit_notary_profile(signing.notary_profile().as_str(), runner)
+}
+
+/// Apply a hardened-runtime Developer ID signature to `executable` in place,
+/// notarize an archive of it written beneath `scratch`, and finish only when
+/// strict verification and Gatekeeper's primary-signature assessment accept
+/// it as notarized. Returns Apple's submission identifier.
+pub(crate) fn sign_and_notarize(
+    executable: &Path,
+    signing: &DarwinSigning,
+    scratch: &Path,
+    runner: &impl Runner,
+) -> Result<String, ShareDarwinError> {
+    let identity = signing.identity().as_str();
+    let profile = signing.notary_profile().as_str();
     required(
         "sign executable",
         runner.run(
+            "developer-id-sign",
             Path::new(CODESIGN),
             &arguments_os([
                 OsStr::new("--force"),
@@ -77,37 +121,39 @@ fn share_with(
                 OsStr::new("runtime"),
                 OsStr::new("--timestamp"),
                 OsStr::new("--sign"),
-                OsStr::new(&request.identity),
-                request.executable.as_os_str(),
+                OsStr::new(identity),
+                executable.as_os_str(),
             ]),
         )?,
     )?;
-    verify_signature(&request.executable, runner)?;
+    verify_signature(executable, runner)?;
 
-    let temporary = TemporaryDirectory::create()?;
+    let temporary = TemporaryDirectory::create(scratch)?;
     let archive = temporary.path().join("spice.zip");
     required(
         "archive signed executable",
         runner.run(
+            "notary-archive",
             Path::new(DITTO),
             &arguments_os([
                 OsStr::new("-c"),
                 OsStr::new("-k"),
                 OsStr::new("--keepParent"),
-                request.executable.as_os_str(),
+                executable.as_os_str(),
                 archive.as_os_str(),
             ]),
         )?,
     )?;
 
     let submission = runner.run(
+        "notary-submit",
         Path::new(XCRUN),
         &arguments_os([
             OsStr::new("notarytool"),
             OsStr::new("submit"),
             archive.as_os_str(),
             OsStr::new("--keychain-profile"),
-            OsStr::new(&request.notary_profile),
+            OsStr::new(profile),
             OsStr::new("--wait"),
             OsStr::new("--output-format"),
             OsStr::new("json"),
@@ -121,21 +167,17 @@ fn share_with(
             }
         })?;
     if !submission.success || answer.status != "Accepted" {
-        return Err(rejected_submission(
-            &request.notary_profile,
-            answer,
-            submission,
-            runner,
-        ));
+        return Err(rejected_submission(profile, answer, submission, runner));
     }
 
-    verify_signature(&request.executable, runner)?;
+    verify_signature(executable, runner)?;
     // `--type execute` judges only app bundles and rejects every bare Mach-O;
     // the primary-signature open assessment is Gatekeeper's verdict on a
     // standalone executable, accepting only a notarized Developer ID.
     required(
         "assess executable with Gatekeeper",
         runner.run(
+            "gatekeeper-assess",
             Path::new(SPCTL),
             &arguments_os([
                 OsStr::new("--assess"),
@@ -144,26 +186,11 @@ fn share_with(
                 OsStr::new("--context"),
                 OsStr::new("context:primary-signature"),
                 OsStr::new("--verbose=4"),
-                request.executable.as_os_str(),
+                executable.as_os_str(),
             ]),
         )?,
     )?;
-
-    writeln!(
-        output,
-        "signed and notarized {}",
-        request.executable.display()
-    )
-    .map_err(ShareDarwinError::Output)?;
-    writeln!(output, "identity: {}", request.identity).map_err(ShareDarwinError::Output)?;
-    writeln!(output, "notary profile: {}", request.notary_profile)
-        .map_err(ShareDarwinError::Output)?;
-    writeln!(output, "submission: {}", answer.id).map_err(ShareDarwinError::Output)?;
-    writeln!(
-        output,
-        "verification: strict code signature and online Gatekeeper assessment accepted"
-    )
-    .map_err(ShareDarwinError::Output)
+    Ok(answer.id)
 }
 
 fn admit_executable(path: &Path) -> Result<(), ShareDarwinError> {
@@ -201,10 +228,8 @@ fn admit_executable(path: &Path) -> Result<(), ShareDarwinError> {
 }
 
 fn admit_identity(identity: &str, runner: &impl Runner) -> Result<(), ShareDarwinError> {
-    if !identity.starts_with(DEVELOPER_ID_PREFIX) {
-        return Err(ShareDarwinError::MissingIdentity(identity.to_owned()));
-    }
     let answer = runner.run(
+        "developer-id-identity",
         Path::new(SECURITY),
         &arguments(["find-identity", "-v", "-p", "codesigning"]),
     )?;
@@ -220,13 +245,8 @@ fn admit_identity(identity: &str, runner: &impl Runner) -> Result<(), ShareDarwi
 }
 
 fn admit_notary_profile(profile: &str, runner: &impl Runner) -> Result<(), ShareDarwinError> {
-    if profile.is_empty() {
-        return Err(ShareDarwinError::MissingNotaryProfile {
-            profile: profile.to_owned(),
-            detail: "empty profile name".to_owned(),
-        });
-    }
     let answer = runner.run(
+        "notary-profile",
         Path::new(XCRUN),
         &arguments([
             "notarytool",
@@ -250,6 +270,7 @@ fn verify_signature(path: &Path, runner: &impl Runner) -> Result<(), ShareDarwin
     required(
         "verify code signature",
         runner.run(
+            "developer-id-verify",
             Path::new(CODESIGN),
             &arguments_os([
                 OsStr::new("--verify"),
@@ -268,6 +289,7 @@ fn rejected_submission(
     runner: &impl Runner,
 ) -> ShareDarwinError {
     let log = runner.run(
+        "notary-log",
         Path::new(XCRUN),
         &arguments([
             "notarytool",
@@ -318,12 +340,13 @@ struct NotarySubmission {
     message: String,
 }
 
+/// One finished process as the signing steps judge it.
 #[derive(Clone, Debug)]
-struct ProcessOutput {
-    success: bool,
-    code: Option<i32>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+pub(crate) struct ProcessOutput {
+    pub(crate) success: bool,
+    pub(crate) code: Option<i32>,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
 }
 
 impl ProcessOutput {
@@ -339,9 +362,12 @@ impl ProcessOutput {
     }
 }
 
-trait Runner {
+/// Runs one labeled signing step. The release pipeline supplies its own
+/// executor so staging records every step beside its build commands.
+pub(crate) trait Runner {
     fn run(
         &self,
+        label: &'static str,
         program: &Path,
         arguments: &[OsString],
     ) -> Result<ProcessOutput, ShareDarwinError>;
@@ -352,6 +378,7 @@ struct SystemRunner;
 impl Runner for SystemRunner {
     fn run(
         &self,
+        _label: &'static str,
         program: &Path,
         arguments: &[OsString],
     ) -> Result<ProcessOutput, ShareDarwinError> {
@@ -374,8 +401,7 @@ impl Runner for SystemRunner {
 struct TemporaryDirectory(PathBuf);
 
 impl TemporaryDirectory {
-    fn create() -> Result<Self, ShareDarwinError> {
-        let base = std::env::temp_dir();
+    fn create(base: &Path) -> Result<Self, ShareDarwinError> {
         for _ in 0..100 {
             let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let path = base.join(format!(
@@ -390,7 +416,7 @@ impl TemporaryDirectory {
                 }
             }
         }
-        Err(ShareDarwinError::TemporaryExhausted(base))
+        Err(ShareDarwinError::TemporaryExhausted(base.to_path_buf()))
     }
 
     fn path(&self) -> &Path {

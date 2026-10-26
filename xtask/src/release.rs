@@ -13,7 +13,7 @@ use std::time::Duration;
 use crate::app::PINNED_TRUNK;
 
 use atomic::{RootedFiles, RootedPublish};
-use dist::{BuildError, Builder, Canvas, Pipeline, RequiredPins, StagedTarget};
+use dist::{BuildError, Builder, Canvas, DarwinSigning, Pipeline, RequiredPins, StagedTarget};
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
@@ -38,6 +38,8 @@ use source::{GuardedPublisher, SourceGuard};
 mod windows_appliance;
 pub use windows_appliance::build_windows_appliance;
 
+#[cfg(unix)]
+mod signing;
 #[cfg(unix)]
 mod symbols;
 #[cfg(unix)]
@@ -258,10 +260,13 @@ impl ReleaseEnvironment {
 ///
 /// The command refuses missing or drifted tools and source state before the
 /// first build. The source is checked again immediately before the target
-/// payload pointer is published.
+/// payload pointer is published. A `signing` pair gives the Darwin executable
+/// a notarized Developer ID signature before its bytes are digested; it is
+/// admitted against the keychain and notary service before the first build.
 pub fn stage_target(
     spelling: &str,
     environment: ReleaseEnvironment,
+    signing: Option<&DarwinSigning>,
     output: &mut impl Write,
 ) -> Result<TargetBuild, TargetBuildError> {
     let target = parse_target(spelling)?;
@@ -274,8 +279,11 @@ pub fn stage_target(
         &root,
         &environment.build_root(&root),
         &environment.stage_root_path(&root),
-        target,
-        &version,
+        StageRequest {
+            target,
+            version: &version,
+            signing,
+        },
         &programs,
         &executor,
     ) {
@@ -306,27 +314,45 @@ fn stage_with<E: Executor>(
         root,
         build_root,
         &root.join("dist/stage"),
-        target,
-        &ProductVersion::parse(FIXTURE_VERSION).expect("fixture version is canonical"),
+        StageRequest {
+            target,
+            version: &ProductVersion::parse(FIXTURE_VERSION).expect("fixture version is canonical"),
+            signing: None,
+        },
         programs,
         executor,
     )
+}
+
+/// What one staging run builds: the target, its product version, and the
+/// Developer ID pair its Darwin executable is signed with, if any.
+struct StageRequest<'a> {
+    target: ReleaseTarget,
+    version: &'a ProductVersion,
+    signing: Option<&'a DarwinSigning>,
 }
 
 fn stage_with_roots<E: Executor>(
     root: &Path,
     build_root: &Path,
     stage_root: &Path,
-    target: ReleaseTarget,
-    version: &ProductVersion,
+    request: StageRequest<'_>,
     programs: &Programs,
     executor: &E,
 ) -> Result<TargetBuild, TargetBuildError> {
+    let StageRequest {
+        target,
+        version,
+        signing,
+    } = request;
     let source = SourceGuard::capture(executor, &programs.git)?;
     let required = required_pins();
     let observed = observe_pins(executor, programs, target)?;
     let required = RequiredPins::new(required)?;
     required.verify(&observed)?;
+    if let Some(signing) = signing {
+        admit_signing(target, signing, executor)?;
+    }
 
     let pipeline = Pipeline::new(required.clone(), version.clone());
     let target_dir = build_root.join("release-appliance");
@@ -339,6 +365,8 @@ fn stage_with_roots<E: Executor>(
         executor,
         #[cfg(unix)]
         source: &source,
+        #[cfg(unix)]
+        signing,
         symbols: None,
         symbol_artifact: None,
         windows_debug_artifact: None,
@@ -379,6 +407,26 @@ fn stage_with_roots<E: Executor>(
         symbols,
         commands: executor.records(),
     })
+}
+
+#[cfg(unix)]
+fn admit_signing<E: Executor>(
+    target: ReleaseTarget,
+    signing: &DarwinSigning,
+    executor: &E,
+) -> Result<(), TargetBuildError> {
+    signing::admit(target, signing, executor)
+}
+
+#[cfg(not(unix))]
+fn admit_signing<E: Executor>(
+    _target: ReleaseTarget,
+    _signing: &DarwinSigning,
+    _executor: &E,
+) -> Result<(), TargetBuildError> {
+    Err(TargetBuildError::Signing(
+        "Developer ID signing requires a macOS host".to_owned(),
+    ))
 }
 
 fn parse_target(spelling: &str) -> Result<ReleaseTarget, TargetBuildError> {

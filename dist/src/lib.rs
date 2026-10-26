@@ -6,6 +6,7 @@
 
 mod authority;
 mod canvas;
+mod darwin_signing;
 mod notes;
 mod pins;
 mod release;
@@ -17,6 +18,10 @@ pub use authority::{
     admit_authority, admit_workspace_publish_policy, current_authority,
 };
 pub use canvas::{Canvas, CanvasError, ObjectTarget, canvas_object, linked_archive};
+pub use darwin_signing::{
+    DEVELOPER_ID_PREFIX, DarwinSigning, DarwinSigningError, DeveloperIdentity, NotaryProfile,
+    ReleaseConfig,
+};
 pub use notes::{
     Correction, HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput,
     PRE_PROJECTION_RELEASE, ReviewStanding, curated_release_notes, release_notes,

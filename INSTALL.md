@@ -119,10 +119,10 @@ On Windows, set `$SourceSpice = 'C:\absolute\path\to\spice.exe'`, then run
 verification block above to select the target repository's
 `.spice-install\bin\spice.exe`.
 
-## Share a macOS executable
+## Sign macOS executables
 
-Directly shared macOS executables must be signed with a Developer ID and
-notarized. The operator needs Apple Developer Program membership, a
+Shared macOS executables must be signed with a Developer ID and notarized. The
+operator needs Apple Developer Program membership, a
 `Developer ID Application` certificate and its private key in the login
 keychain, and a `notarytool` keychain profile created once:
 
@@ -131,9 +131,21 @@ xcrun notarytool store-credentials PROFILE
 security find-identity -v -p codesigning
 ```
 
-Build or copy the Darwin executable outside the sealed release, then sign,
-submit, wait for Apple's verdict, and verify it with one repository-owned
-command:
+Darwin release staging (`spice dev xtask -- stage-target aarch64-apple-darwin`
+and `spice dev xtask -- seal-darwin`) signs and notarizes the executable before
+sealing it. Name the identity and profile once in Git-common configuration;
+each `spice config` call previews its write and its `--apply=DIGEST` applies it:
+
+```sh
+spice config release.darwin.identity "Developer ID Application: NAME (TEAMID)"
+spice config release.darwin.notary_profile PROFILE
+```
+
+Staging refuses before any build while either name is missing or unusable;
+`--unsigned` stages an executable Gatekeeper blocks on every other Mac.
+
+To sign an executable built outside the sealed release, sign, submit, wait for
+Apple's verdict, and verify it with one repository-owned command:
 
 ```sh
 spice dev xtask -- share-darwin /absolute/path/to/spice \
@@ -141,14 +153,14 @@ spice dev xtask -- share-darwin /absolute/path/to/spice \
   --notary-profile PROFILE
 ```
 
-The command changes the executable in place. It refuses before signing when the
-identity or profile is unavailable, retrieves Apple's log when notarization is
-rejected, and finishes only after strict `codesign` verification and
+Both paths change the executable in place. They refuse before signing when the
+identity or profile is unavailable, retrieve Apple's log when notarization is
+rejected, and finish only after strict `codesign` verification and
 Gatekeeper's primary-signature assessment (`spctl --assess --type open
 --context context:primary-signature`) accept the file as notarized. A bare
 Mach-O cannot carry a stapled ticket, so its first Gatekeeper assessment needs
-network access. This operator sharing path does not mutate or replace any
-sealed release artifact.
+network access. `share-darwin` does not mutate or replace any sealed release
+artifact.
 
 ## Hook authority
 

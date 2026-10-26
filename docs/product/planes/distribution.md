@@ -160,13 +160,33 @@ the `canvas` feature that names its symbols, so
 no compile step reads a file outside the selected tree. A resident whose
 executable carries no archive refuses installed serving at startup.
 
-An operator may make a separate built Darwin executable directly shareable
-with `spice dev xtask -- share-darwin`: that local command applies a Developer
-ID signature, submits an archive of the signed file to Apple notarization, and
-verifies the bare Mach-O through Gatekeeper. The bare executable cannot carry a
-stapled ticket, so its recipient's first assessment is online. This is not a
-release operation: signing changes the executable digest, the release pipeline
-never invokes this command, and its result is not admitted as a sealed artifact.
+**Invariant —** Darwin staging gives the release executable a notarized
+Developer ID signature before the pipeline reads the bytes it digests: after
+the dSYM is derived and the image stripped, it signs with the hardened runtime
+and a secure timestamp, submits an archive of the signed file to Apple
+notarization, and finishes only when strict `codesign` verification and
+Gatekeeper's primary-signature assessment accept the file as notarized. The
+target payload, its inventory, and the symbol artifact therefore bind the
+signed bytes, and no step changes the executable after they are read. The
+signature and notarization are a step of the one staging build, never a
+rebuild: Apple's timestamp makes two signings of the same image differ, so a
+signed digest is never reproduced, and nothing reproduces it. The artifact
+gate and proof replay verify the sealed digests of the bytes the stage wrote.
+The bare executable cannot carry a stapled ticket, so a recipient's first
+assessment is online.
+
+The signer is named by two machine-local Git-common keys,
+`release.darwin.identity` (a `Developer ID Application` keychain identity) and
+`release.darwin.notary_profile` (a `notarytool` keychain profile). Only names
+enter configuration; the certificate, private key, and notarization credential
+stay in the operator's keychain. Darwin `stage-target` and `seal-darwin` admit
+the pair against the keychain and the notary service before the first build.
+With neither key set they refuse before any build unless `--unsigned` asks for
+an executable Gatekeeper blocks on every other Mac; with only one set they
+refuse by naming the other.
+
+`spice dev xtask -- share-darwin` applies the same signing to a separate built
+Darwin executable outside staging; its result is not a sealed artifact.
 
 **Invariant —** A native Darwin proof runner is sealed for exactly one
 worktree: `dist/proof-runner/build.sh` bakes that worktree's HEAD commit and
@@ -175,10 +195,11 @@ only the worktree configuration layer. A Git-common default would hand every
 other worktree a seal for a different commit, so one is reported as a policy
 issue, never applied. A runner whose sealed commit differs from HEAD refuses
 by naming both commits and the reseal, and the staging preflight names the
-bound runner it asked. `spice dev xtask -- seal-darwin [--output DIR]` is the
-one-command point-in-time build: it seals and binds this worktree's runner,
-stages the Darwin target, and places the executable under `DIR`, writing only
-this worktree's `target/`, `dist/stage/`, Git-directory configuration, and
+bound runner it asked. `spice dev xtask -- seal-darwin [--output DIR]
+[--unsigned]` is the one-command point-in-time build: it seals and binds this
+worktree's runner, stages and signs the Darwin target, and places the
+executable under `DIR`, writing only this worktree's `target/`, `dist/stage/`,
+Git-directory configuration, and
 `DIR`; the installed appliance, the resident, and other worktrees are
 untouched.
 

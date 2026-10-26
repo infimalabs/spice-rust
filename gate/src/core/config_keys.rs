@@ -108,6 +108,8 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("proof.image", TRACKED),
     ConfigKeyDeclaration::new("proof.container", LOCAL),
     ConfigKeyDeclaration::new("proof.runner", WORKTREE),
+    ConfigKeyDeclaration::new("release.darwin.identity", LOCAL),
+    ConfigKeyDeclaration::new("release.darwin.notary_profile", LOCAL),
 ];
 
 pub(super) fn config_keys(contract: &ParsedContract) -> Result<CoreObservation, CoreInputError> {

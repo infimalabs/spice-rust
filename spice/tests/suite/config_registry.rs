@@ -137,7 +137,12 @@ fn absolute(name: &str) -> String {
 
 fn complete() -> String {
     format!(
-        "{COMPLETE}container = \"{}\"\nrunner = \"{}\"\n",
+        concat!(
+            "{}container = \"{}\"\nrunner = \"{}\"\n",
+            "[release.darwin]\nidentity = \"Developer ID Application: Holder (TEAM123456)\"\n",
+            "notary_profile = \"spice\"\n",
+        ),
+        COMPLETE,
         absolute("container"),
         absolute("runner")
     )
@@ -435,6 +440,8 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "proof.image",
     "proof.container",
     "proof.runner",
+    "release.darwin.identity",
+    "release.darwin.notary_profile",
 ];
 
 #[test]
@@ -574,6 +581,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "say.voices",
             "say.words_per_minute",
             "proof.container",
+            "release.darwin.identity",
+            "release.darwin.notary_profile",
         ]
     );
 

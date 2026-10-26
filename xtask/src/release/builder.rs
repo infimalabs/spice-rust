@@ -10,6 +10,8 @@ pub(super) struct CommandBuilder<'a, E> {
     pub(super) executor: &'a E,
     #[cfg(unix)]
     pub(super) source: &'a SourceGuard,
+    #[cfg(unix)]
+    pub(super) signing: Option<&'a DarwinSigning>,
     pub(super) symbols: Option<MacSymbols>,
     pub(super) symbol_artifact: Option<Vec<u8>>,
     pub(super) windows_debug_artifact: Option<Vec<u8>>,
@@ -57,6 +59,13 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         } else {
             None
         };
+        // Sign last: after the dSYM is derived and the image stripped, and
+        // before the bytes the pipeline digests are read, so the seal binds
+        // the signed executable and nothing changes it afterwards.
+        #[cfg(unix)]
+        if let Some(pair) = self.signing {
+            signing::sign(&executable, pair, self.target_dir, self.executor)?;
+        }
         let native = read_regular(&executable).map_err(build_error)?;
         #[cfg(unix)]
         if let Some(symbols) = symbols {

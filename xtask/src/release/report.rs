@@ -107,6 +107,7 @@ pub enum TargetBuildError {
     Pins(dist::PinError),
     SourceVersion(String),
     Stage(dist::StageError),
+    Signing(String),
 }
 
 impl fmt::Display for TargetBuildError {
@@ -172,6 +173,7 @@ impl fmt::Display for TargetBuildError {
             Self::SourceVersion(detail) => write!(formatter, "product version refused: {detail}"),
             Self::Pins(source) => write!(formatter, "release pin refused: {source}"),
             Self::Stage(source) => write!(formatter, "release stage failed: {source}"),
+            Self::Signing(detail) => write!(formatter, "Developer ID signing refused: {detail}"),
         }
     }
 }
