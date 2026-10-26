@@ -448,13 +448,15 @@ spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/r
 ```
 
 Until the hosted route is usable, this local cross-build is how Windows
-executables ship. `windows-appliance` therefore applies the release source rule
-before it builds: from a checkout equal to HEAD, with only release output
-untracked, it links the same release product version the Darwin and Linux
-stages of that commit report. From any other checkout it names the difference
-and links the `-dev` version, so a release version never vouches for
-uncommitted source. The result is still not a staged payload and carries no
-receipt.
+executables ship. `windows-appliance` therefore captures HEAD and applies the
+release source rule before it builds: from a checkout equal to HEAD, with only
+release output untracked, it links the same release product version the Darwin
+and Linux stages of that commit report. Before reporting success, it verifies
+that HEAD and the clean checkout still match. A changed commit or newly dirty
+source refuses rather than reporting a release executable. An initially dirty
+checkout still names the difference and links the `-dev` version. The result is
+not a staged payload and carries no receipt; Cargo's intermediate executable
+may remain after a refusal.
 
 Only the x64 PE crosses into the guest; the initial guest needs neither Rust nor
 Visual Studio, and Windows 11 ARM executes it through Microsoft x64 emulation.

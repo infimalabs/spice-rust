@@ -13,9 +13,9 @@ use super::{
 /// Cross-build the complete Windows appliance with the current staged canvas,
 /// without staging a release payload or receipt. Until hosted Windows staging
 /// is usable, this local build is the Windows release route: a checkout equal
-/// to HEAD (release output aside) reports the release product version, and any
-/// other checkout reports the `-dev` version so no release version vouches for
-/// uncommitted source.
+/// to HEAD (release output aside) reports the release product version only if
+/// that source remains unchanged through the build. An initially dirty
+/// checkout reports the `-dev` version.
 pub fn build_windows_appliance(
     release: ReleaseEnvironment,
     ambient: Environment,
@@ -28,18 +28,19 @@ pub fn build_windows_appliance(
         .as_deref()
         .ok_or(TargetBuildError::MissingProgram("PATH"))?;
     let native_executor = SystemExecutor::ambient(&root, ambient);
-    let build = match source::verify_checkout(&native_executor, &find_program(path, "git")?) {
-        Ok(()) => dist::Build::Staged,
-        Err(TargetBuildError::SourceDirty(reason)) => {
-            writeln!(
-                output,
-                "[windows-appliance] {reason}; building the -dev version"
-            )
-            .map_err(TargetBuildError::Output)?;
-            dist::Build::Dev
-        }
-        Err(error) => return Err(error),
-    };
+    let (build, source_guard) =
+        match source::SourceGuard::capture(&native_executor, &find_program(path, "git")?) {
+            Ok(guard) => (dist::Build::Staged, Some(guard)),
+            Err(TargetBuildError::SourceDirty(reason)) => {
+                writeln!(
+                    output,
+                    "[windows-appliance] {reason}; building the -dev version"
+                )
+                .map_err(TargetBuildError::Output)?;
+                (dist::Build::Dev, None)
+            }
+            Err(error) => return Err(error),
+        };
     let version =
         spice::version::source_version(&root, build).map_err(TargetBuildError::SourceVersion)?;
     crate::app(&release, output).map_err(TargetBuildError::Application)?;
@@ -66,6 +67,9 @@ pub fn build_windows_appliance(
         .verify_linked(&bytes)
         .map_err(build_error)
         .map_err(TargetBuildError::Build)?;
+    if let Some(guard) = source_guard {
+        guard.verify(&native_executor)?;
+    }
     writeln!(
         output,
         "[windows-appliance] executable={} version={version} canvas={}",
