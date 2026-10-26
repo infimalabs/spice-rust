@@ -45,42 +45,8 @@ pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, Inst
 }
 
 /// `path` as Git and the hooks' shell name it.
-#[cfg(not(windows))]
 pub(super) fn git_spelling(path: &Path) -> Result<String, InstallError> {
-    path.to_str()
-        .map(str::to_owned)
-        .ok_or_else(|| unrepresentable(path, "is not UTF-8"))
-}
-
-/// `path` as Git for Windows and its MSYS hook shell name it: a local drive
-/// path with `/` separators. Neither reliably resolves verbatim `\\?\C:\`
-/// paths, and a UNC share is no repository-local install.
-#[cfg(windows)]
-pub(super) fn git_spelling(path: &Path) -> Result<String, InstallError> {
-    use std::path::{Component, Prefix};
-    let mut components = path.components();
-    let drive = match components.next() {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => char::from(drive),
-            _ => return Err(unrepresentable(path, "is not on a local drive")),
-        },
-        _ => return Err(unrepresentable(path, "is not on a local drive")),
-    };
-    let mut spelling = format!("{drive}:");
-    for component in components {
-        match component {
-            Component::RootDir => {}
-            Component::Normal(name) => {
-                spelling.push('/');
-                spelling.push_str(
-                    name.to_str()
-                        .ok_or_else(|| unrepresentable(path, "is not UTF-8"))?,
-                );
-            }
-            _ => return Err(unrepresentable(path, "is not a normalized path")),
-        }
-    }
-    Ok(spelling)
+    crate::repository::git_spelling(path).map_err(|reason| unrepresentable(path, reason))
 }
 
 const PRE_COMMIT_ENVIRONMENT: &str = concat!(

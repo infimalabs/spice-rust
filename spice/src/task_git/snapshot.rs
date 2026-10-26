@@ -116,13 +116,8 @@ pub(super) fn capture(root: Worktree<'_>, head: &str) -> Result<Option<Captured>
             fs::copy(original, &build)
                 .map_err(|error| filesystem_fault("copy snapshot index", &build, error))?;
         }
-        let path = build.to_str().ok_or_else(|| {
-            Error::fault(
-                "git::snapshot-index-path",
-                "snapshot index path is not UTF-8",
-            )
-        })?;
-        let environment = [("GIT_INDEX_FILE", path)];
+        let path = transaction::git_index_spelling(&build, "git::snapshot-index-path")?;
+        let environment = [("GIT_INDEX_FILE", path.as_str())];
         if original.is_none() {
             checked(
                 run_with_environment(root, &["read-tree", head], &environment)?,

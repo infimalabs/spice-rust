@@ -769,6 +769,14 @@ pub(super) fn git_state_path(root: Worktree<'_>, name: &str) -> Result<PathBuf, 
     })
 }
 
+/// `index` as a `GIT_INDEX_FILE` value Git accepts: the worktree root is
+/// canonical, so on Windows a joined state path is verbatim, which Git for
+/// Windows cannot create a lock beside.
+pub(super) fn git_index_spelling(index: &Path, code: &'static str) -> Result<String, Error> {
+    crate::repository::git_spelling(index)
+        .map_err(|reason| Error::fault(code, format!("{} {reason}", index.display())))
+}
+
 pub(super) fn transaction_path(root: Worktree<'_>) -> Result<PathBuf, Error> {
     git_state_path(root, TRANSACTION_FILE)
 }

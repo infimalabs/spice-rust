@@ -766,6 +766,41 @@ fn metadata(path: &Path) -> Result<fs::Metadata, ResolveError> {
     fs::metadata(path).map_err(|source| ResolveError::filesystem(path, source))
 }
 
+/// `path` as Git and its hook shell name it, or why it has no such spelling.
+#[cfg(not(windows))]
+pub fn git_spelling(path: &Path) -> Result<String, &'static str> {
+    path.to_str().map(str::to_owned).ok_or("is not UTF-8")
+}
+
+/// `path` as Git for Windows and its MSYS hook shell name it: a local drive
+/// path with `/` separators. Neither reliably resolves the verbatim `\\?\C:\`
+/// paths canonicalization yields, so every path handed to Git goes through
+/// here. A UNC share is no repository-local path.
+#[cfg(windows)]
+pub fn git_spelling(path: &Path) -> Result<String, &'static str> {
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    let drive = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => char::from(drive),
+            _ => return Err("is not on a local drive"),
+        },
+        _ => return Err("is not on a local drive"),
+    };
+    let mut spelling = format!("{drive}:");
+    for component in components {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                spelling.push('/');
+                spelling.push_str(name.to_str().ok_or("is not UTF-8")?);
+            }
+            _ => return Err("is not a normalized path"),
+        }
+    }
+    Ok(spelling)
+}
+
 #[derive(Clone, Copy)]
 enum DirectoryKind {
     Git,
