@@ -309,7 +309,6 @@ fn launch_plan(
         effort,
         running,
     } = selection;
-    required_skill(repository)?;
     let wrapper = resolved
         .root()
         .wrappers()
@@ -358,10 +357,6 @@ fn launch_plan(
             worktree: repository.worktree_root().to_path_buf(),
             vendor: name.clone(),
             prompt,
-            // `required_skill` admitted this installation only because its
-            // on-disk skill is byte-identical to the current appliance. The
-            // prompt carries only the instruction to read those bytes through
-            // the appliance-owned resource.
             bootstrap: spice::install::skill_bootstrap().to_owned(),
             environment,
             lane,
@@ -397,12 +392,6 @@ fn vendor_unsupported(asked: String) -> Outcome<()> {
         ),
         Some(asked),
     )))
-}
-
-/// Require the initialized Git-common skill before composing any vendor argv.
-fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
-    spice::install::current_skill(repository)
-        .map_err(|detail| store_fault("lane::skill-unavailable", &detail))
 }
 
 /// Carry only the ambient variables a supervised occupant is admitted to see.

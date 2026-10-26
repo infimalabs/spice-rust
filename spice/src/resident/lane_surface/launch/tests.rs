@@ -1,11 +1,8 @@
 use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::test_support::{InertProbes, LaunchFixture};
 use super::*;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
@@ -194,88 +191,6 @@ fn non_regular_cargo_lock_refuses_before_rust_tool_probe() {
         Outcome::Fault(ref fault)
             if fault.reason == "lane::cargo-isolation-unavailable"
     ));
-}
-
-/// Lane launch and resident start share one skill predicate: every skill that
-/// is not this release's own faults the launch and refuses the start with the
-/// reinstall repair, and only the initialized Git-common copy can satisfy it.
-#[test]
-fn launch_and_resident_start_admit_only_the_initialized_common_skill() {
-    fn refused(root: &Path, repository: &Repository) {
-        let common = spice::install::installed_skill(repository)
-            .display()
-            .to_string();
-        let Err(Outcome::Fault(launch)) = required_skill(repository) else {
-            panic!("launch must fault")
-        };
-        assert_eq!(launch.reason, "lane::skill-unavailable");
-        assert!(launch.detail.contains(&common), "{}", launch.detail);
-        let Outcome::Refusal(start) = crate::resident::up_from(
-            root,
-            crate::resident::AppBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
-            &spice::ambient::capture(),
-        ) else {
-            panic!("resident start must refuse")
-        };
-        assert_eq!(start.reason(), "resident::skill-unavailable");
-        assert_eq!(
-            start.command().map(wire::SpiceCommand::arguments),
-            Some(&["install".to_owned()][..])
-        );
-        let detail = start
-            .diagnostic()
-            .and_then(|diagnostic| diagnostic.detail());
-        assert_eq!(detail, Some(launch.detail.as_str()));
-    }
-
-    let root = std::env::temp_dir().join(format!(
-        "spice-launch-skill-{}-{}",
-        std::process::id(),
-        NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
-    ));
-    fs::create_dir_all(root.join(".git")).expect("fixture repository creates");
-    let repository = Repository::discover(&root).expect("fixture repository discovers");
-    let accidental = root.join(".agents/skills/spice/SKILL.md");
-    fs::create_dir_all(accidental.parent().expect("accidental skill parent"))
-        .expect("accidental worktree skill parent creates");
-    fs::write(&accidental, b"wrong worktree skill\n").expect("accidental worktree skill writes");
-    refused(&root, &repository);
-
-    let common = spice::install::installed_skill(&repository);
-    fs::create_dir_all(&common).expect("invalid common skill directory creates");
-    refused(&root, &repository);
-    fs::remove_dir(&common).expect("invalid common skill directory removes");
-    fs::write(&common, b"stale common skill\n").expect("stale common skill writes");
-    refused(&root, &repository);
-    fs::write(&common, spice::install::skill_document()).expect("current common skill writes");
-    assert_eq!(
-        required_skill(&repository).expect("common regular skill admits"),
-        common
-    );
-    assert_eq!(
-        fs::read_to_string(&accidental).expect("accidental skill remains"),
-        "wrong worktree skill\n"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-
-        fs::remove_file(&common).expect("common skill removes");
-        symlink(&accidental, &common).expect("redirected common skill creates");
-        refused(&root, &repository);
-        fs::remove_file(&common).expect("redirected common skill removes");
-        fs::remove_dir(common.parent().expect("common skill parent"))
-            .expect("common skill parent removes");
-        fs::write(&accidental, spice::install::skill_document())
-            .expect("redirect target carries current skill");
-        symlink(
-            accidental.parent().expect("accidental skill parent"),
-            common.parent().expect("common skill parent"),
-        )
-        .expect("redirected common skill parent creates");
-        refused(&root, &repository);
-    }
-    fs::remove_dir_all(&root).expect("fixture removes");
 }
 
 #[test]

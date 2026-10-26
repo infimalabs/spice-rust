@@ -23,7 +23,7 @@ the plan once and applies exactly that plan, printing its digest. A plain
 cargo run --locked -p xtask -- install --no-resident || exit
 ```
 
-The plan publishes the executable, bootstrap skill, supervised-shell assets, and
+The plan publishes the executable, supervised-shell assets, and
 three Git hooks under the Git common directory's `.spice-install`, clears
 admitted worktree-local hook overrides, and switches the common
 `core.hooksPath` last. Verify the result:
@@ -98,7 +98,7 @@ Replace `DIGEST_FROM_PREVIEW` with the digest printed by the first command.
 Using the absolute source path for the second command avoids depending on an
 older `spice` selected by the shell before the target installation exists. The
 apply copies that appliance and its app into the target repository's Git common
-directory, activates its hooks, wrappers, and bootstrap skill, and leaves the
+directory, activates its hooks and wrappers, and leaves the
 source installation unchanged.
 
 Select and verify the target repository's installed appliance:

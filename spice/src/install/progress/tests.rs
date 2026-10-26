@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
-use super::super::{RECORD_PATH, SKILL_PATH};
+use super::super::{RECORD_PATH, WRAPPER_SPICE_PATH};
 use super::*;
 
 struct Scratch(PathBuf);
@@ -147,7 +147,7 @@ fn unapply_retains_preexisting_directories_and_operator_content_after_refresh() 
 
     let operator_file = repository
         .common_dir()
-        .join(".spice-install/agents/skills/operator.txt");
+        .join(".spice-install/hooks/wrappers/operator.txt");
     fs::write(&operator_file, b"operator content").expect("operator content writes");
     unapply_record(&repository).expect("refreshed install unapplies");
 
@@ -167,7 +167,7 @@ fn unapply_retains_preexisting_directories_and_operator_content_after_refresh() 
 #[test]
 fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers() {
     let (_scratch, repository) = repository("reversal-payload");
-    let target = repository.common_dir().join(SKILL_PATH);
+    let target = repository.common_dir().join(WRAPPER_SPICE_PATH);
     let prior = vec![0xA5; 2 * 1024 * 1024];
     // Windows restores only owner-only modes, so that is all it admits.
     let prior_mode = if cfg!(unix) { 0o640 } else { 0o600 };
@@ -192,14 +192,14 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     let mut generation =
         write_initial_record(&repository, &record).expect("initial receipt publishes");
     reversal::ensure_payloads(&repository, &record.plan).expect("reversal payloads publish");
-    let skill = record
+    let frontier = record
         .plan
         .operations
         .iter()
-        .position(|operation| operation.asset == Asset::Skill)
-        .expect("skill operation exists");
+        .position(|operation| operation.asset == Asset::HookWrapperSpice)
+        .expect("wrapper operation exists");
     let mut durable_completed = record.completed;
-    while record.completed < skill {
+    while record.completed < frontier {
         let index = record.completed;
         let (next, changed) = apply_operation(
             &repository,
@@ -221,8 +221,8 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     let (_, changed) = apply_operation(
         &repository,
         &mut record,
-        &generated[skill],
-        skill,
+        &generated[frontier],
+        frontier,
         generation,
         durable_completed,
     )
