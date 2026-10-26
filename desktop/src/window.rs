@@ -5,8 +5,9 @@
 //! WebKit then settles as dismissed: every `confirm` returns `false`. The
 //! console gates task settlement and draft discard on `confirm`, so the shell
 //! installs its own delegate that puts those dialogs on screen as native
-//! alerts, keeps the file panel, and sends new-window requests out to the
-//! system browser.
+//! alerts, keeps the file panel, and answers new-window requests through the
+//! console's link policy (see [`crate::link`]), which also filters every
+//! navigation.
 //!
 //! A process without a main menu has no key equivalents: Cmd+C, Cmd+V, and
 //! Cmd+Q do nothing in its window. The shell installs the standard menu bar
@@ -29,6 +30,7 @@ mod surface;
 mod titlebar;
 
 use std::ptr::null_mut;
+use std::sync::Arc;
 
 use block2::Block;
 use objc2::rc::Retained;
@@ -50,6 +52,7 @@ use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::window::WindowBuilder;
 use wry::{WebViewBuilder, WebViewExtMacOS};
 
+use crate::link::Links;
 use crate::{INITIAL_SIZE, WindowError};
 
 /// What reaches the window's event loop from the page, the synthesizer, and
@@ -84,8 +87,11 @@ pub(crate) fn show(
         .build(&event_loop)
         .map_err(|error| WindowError::Platform(error.to_string()))?;
     let proxy = event_loop.create_proxy();
+    let links = Arc::new(Links::new(url, external));
+    let navigation = Arc::clone(&links);
     let webview = WebViewBuilder::new()
         .with_url(url)
+        .with_navigation_handler(move |target| navigation.navigate(&target))
         .with_initialization_script(crate::header::SCRIPT)
         .with_initialization_script(speech::SCRIPT)
         .with_ipc_handler(move |request| {
@@ -103,7 +109,7 @@ pub(crate) fn show(
         .ok_or_else(|| WindowError::Platform("the window must open on the main thread".into()))?;
     // WebKit holds its UI delegate weakly; this binding keeps ours alive for
     // the window's whole life.
-    let delegate = ShellDelegate::new(main_thread, Box::new(external));
+    let delegate = ShellDelegate::new(main_thread, links);
     // SAFETY: the delegate outlives the webview (dropped after the event loop
     // returns), and this runs on the main thread the webview was built on.
     unsafe {
@@ -325,7 +331,7 @@ impl MenuTarget {
 }
 
 struct ShellDelegateIvars {
-    external: Box<dyn Fn(&str) + Send + Sync>,
+    links: Arc<Links>,
 }
 
 define_class!(
@@ -413,7 +419,7 @@ define_class!(
                 .and_then(|url| url.absoluteString())
                 .map(|url| url.to_string());
             if let Some(url) = url {
-                (self.ivars().external)(&url);
+                self.ivars().links.new_window(&url);
             }
             None
         }
@@ -421,13 +427,10 @@ define_class!(
 );
 
 impl ShellDelegate {
-    fn new(
-        main_thread: MainThreadMarker,
-        external: Box<dyn Fn(&str) + Send + Sync>,
-    ) -> Retained<Self> {
+    fn new(main_thread: MainThreadMarker, links: Arc<Links>) -> Retained<Self> {
         let delegate = main_thread
             .alloc::<Self>()
-            .set_ivars(ShellDelegateIvars { external });
+            .set_ivars(ShellDelegateIvars { links });
         // SAFETY: plain NSObject init on a freshly allocated instance whose
         // ivars are set.
         unsafe { msg_send![super(delegate), init] }

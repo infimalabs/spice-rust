@@ -8,11 +8,14 @@
 //! Windows 11 gives captioned windows on its own.
 //!
 //! WebView2 answers JavaScript dialogs and file pickers itself, so the shell
-//! adds only the new-window policy: every request leaves through `external`
-//! and the window stays the only webview. A missing WebView2 runtime surfaces
-//! as the webview build's error.
+//! adds only the console's link policy (see [`crate::link`]): navigations
+//! away from the console and every new-window request leave through
+//! `external`, and the window stays the only webview. A missing WebView2
+//! runtime surfaces as the webview build's error.
 
 mod caption;
+
+use std::sync::Arc;
 
 use tao::dpi::{PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
@@ -29,6 +32,7 @@ use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
 use wry::{NewWindowResponse, WebViewBuilder};
 
 use crate::header;
+use crate::link::Links;
 use crate::{INITIAL_SIZE, WindowError};
 
 /// What the page asks of the shell.
@@ -52,8 +56,11 @@ pub(crate) fn show(
         .map_err(|error| WindowError::Platform(error.to_string()))?;
     round_corners(&window);
     let proxy = event_loop.create_proxy();
+    let links = Arc::new(Links::new(url, external));
+    let navigation = Arc::clone(&links);
     let webview = WebViewBuilder::new()
         .with_url(url)
+        .with_navigation_handler(move |target| navigation.navigate(&target))
         .with_initialization_script(header::SCRIPT)
         .with_initialization_script(caption::SCRIPT)
         .with_ipc_handler(move |request| {
@@ -66,7 +73,7 @@ pub(crate) fn show(
             }
         })
         .with_new_window_req_handler(move |link, _| {
-            external(&link);
+            links.new_window(&link);
             NewWindowResponse::Deny
         })
         .build(&window)

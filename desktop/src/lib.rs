@@ -39,6 +39,8 @@ mod bundle;
 mod header;
 #[cfg(target_os = "macos")]
 mod icon;
+#[cfg(any(target_os = "macos", windows))]
+mod link;
 #[cfg(windows)]
 mod webview2;
 #[cfg(target_os = "macos")]
@@ -56,9 +58,11 @@ const INITIAL_SIZE: tao::dpi::LogicalSize<f64> = tao::dpi::LogicalSize::new(1280
 /// `key` names the window frame remembered between launches; one repository
 /// keeps one key. Only macOS remembers frames.
 ///
-/// Links the page asks to open in a new window leave through `external`, so
-/// the console's outbound links reach the system browser rather than a second
-/// webview. `external` receives the exact URL the page named.
+/// The window stays the console's only webview: a link to an http(s) URL of
+/// another origin, and any new-window request for an http(s) URL, leave
+/// through `external` for the system browser instead, while the console's
+/// own routes stay inside. `external` receives the exact URL the page named
+/// and never a non-web URL.
 ///
 /// `opened` runs once, after the window and its webview exist and before the
 /// operator can close them; a window that never starts never runs it.
