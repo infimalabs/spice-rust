@@ -44,6 +44,9 @@ pub struct TraceActivity {
     pub millis: i64,
     /// Length of the activity's text, which weights it.
     pub bytes: usize,
+    /// Accent slot of the lane that spoke a direction, when another agent
+    /// rather than the operator directed this lane.
+    pub accent: Option<usize>,
 }
 
 /// Kind of work a curve shows, in drawing order: prose paints last, on top.
@@ -106,6 +109,9 @@ pub struct TraceMarker {
     pub kind: TraceMarkerKind,
     /// Fraction of the window, its start at 0 and now at 1.
     pub x: f64,
+    /// Accent slot of the agent that directed the lane; operator direction
+    /// and lifecycle markers have none.
+    pub accent: Option<usize>,
 }
 
 /// One lane's trace at one instant.
@@ -173,7 +179,11 @@ pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
                     *sum += weight * (1.0 - (at - x).abs() / half_width).max(0.0);
                 }
             }
-            Placement::Marker(kind) => markers.push(TraceMarker { kind, x }),
+            Placement::Marker(kind) => markers.push(TraceMarker {
+                kind,
+                x,
+                accent: activity.accent,
+            }),
         }
     }
     markers.sort_by(|a, b| a.x.total_cmp(&b.x));
@@ -412,6 +422,7 @@ mod tests {
             kind,
             millis: NOW - seconds_ago * 1_000,
             bytes: 400,
+            accent: None,
         }
     }
 

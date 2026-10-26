@@ -257,10 +257,13 @@ a reload keeps those gaps from the stream's recent occupancy. There each kind
 of work with activity in the window, reasoning, tool, and prose, draws one
 smoothed curve over a fill fading toward the floor, ending in a dot at now; in
 the dark theme the curves glow. The curves keep a four-pixel headroom under the
-rail's top, so the graph itself is 28 pixels tall. Turn, operator direction,
-provider failure, compaction, fresh session, and sign-out draw as markers over
-the curves, the rules spanning the whole rail and the direction dot sitting in
-the headroom, so every marker stands clear above the highest peak. Quiet is
+rail's top, so the graph itself is 28 pixels tall. Turn, direction, provider
+failure, compaction, fresh session, and sign-out draw as markers over the
+curves, the rules spanning the whole rail and the direction dots sitting in
+the headroom, so every marker stands clear above the highest peak. The
+operator's direction dot is neutral ink; an MSG another lane sent this lane
+draws the same dot at its send instant in the sending lane's accent, while the
+sender's own rail and a send that names no lane mark nothing. Quiet is
 not off: a running lane with no activity still draws its low line. Between
 redraws the curves, gaps, and markers slide left at the window's own rate, so
 they glide rather than step however wide the composer stretches, while the
