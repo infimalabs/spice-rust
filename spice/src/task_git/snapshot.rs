@@ -117,7 +117,7 @@ pub(super) fn capture(root: Worktree<'_>, head: &str) -> Result<Option<Captured>
                 .map_err(|error| filesystem_fault("copy snapshot index", &build, error))?;
         }
         let path = transaction::git_index_spelling(&build, "git::snapshot-index-path")?;
-        let environment = [("GIT_INDEX_FILE", path.as_str())];
+        let environment = [("GIT_INDEX_FILE", path.as_ref())];
         if original.is_none() {
             checked(
                 run_with_environment(root, &["read-tree", head], &environment)?,

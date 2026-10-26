@@ -444,8 +444,8 @@ fn git_spellings_name_local_drives_with_forward_slashes_and_refuse_shares() {
         ),
     ] {
         assert_eq!(
-            git_spelling(Path::new(path)),
-            Ok(spelled.to_owned()),
+            git_spelling(Path::new(path)).as_deref(),
+            Ok(spelled),
             "{path}"
         );
     }
