@@ -1,8 +1,20 @@
 //! Repository-wide Git hook activation carried by one install plan.
+//!
+//! Worktree enumeration and the single-file `--local` and `--worktree` hook
+//! scopes are read and rewritten in process, addressed exactly as
+//! `git worktree list` and `git config --local`/`--worktree` address them.
+//! Only the effective selection across every scope runs Git. That read spans
+//! the installation, system, global, and command scopes under Git's include
+//! rules, and where the installation and system files live is compiled into
+//! the Git executable: gix finds them only by executing a Git looked up on
+//! `PATH`, so an in-process read would still run Git while trusting a less
+//! specific executable than the one pinned here.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::ffi::OsStr;
+use std::io;
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +22,8 @@ use super::{BINARY_PATH, InstallError, InstallPlan, Repository, installed_git_ho
 
 const HOOK_KEY: &str = "core.hooksPath";
 
-/// The system Git activation runs, never one found on `PATH`, inside
-/// `worktree`.
+/// The system Git the effective hook read runs, never one found on `PATH`,
+/// inside `worktree`.
 #[cfg(not(windows))]
 fn git_command(_operation: &'static str, worktree: &Path) -> Result<Command, InstallError> {
     let mut command = Command::new("/usr/bin/git");
@@ -44,10 +56,10 @@ pub enum HookConfigurationScope {
 }
 
 impl HookConfigurationScope {
-    const fn option(self) -> &'static str {
+    const fn source(self) -> gix_config::Source {
         match self {
-            Self::Local => "--local",
-            Self::Worktree => "--worktree",
+            Self::Local => gix_config::Source::Local,
+            Self::Worktree => gix_config::Source::Worktree,
         }
     }
 }
@@ -345,7 +357,7 @@ pub(super) fn plan(
     let mut observations = Vec::with_capacity(worktrees.len());
     let mut mutations = Vec::new();
     for worktree in worktrees {
-        let effective = config_values(&worktree, None)?;
+        let effective = effective_values(&worktree)?;
         if !tolerated(&effective, &hooks_path)
             && !prior.is_some_and(|activation| tolerated(&effective, &activation.hooks_path))
         {
@@ -390,7 +402,7 @@ pub(super) fn plan(
         .expect("Git returned at least one worktree")
         .worktree
         .clone();
-    let local = config_values(Path::new(&main), Some(HookConfigurationScope::Local))?;
+    let local = scope_values(Path::new(&main), HookConfigurationScope::Local)?;
     let inherited = prior.and_then(|activation| activation.mutations.last());
     mutations.push(HookConfigurationMutation {
         worktree: main,
@@ -568,34 +580,59 @@ fn replace(mutation: &HookConfigurationMutation, restoring: bool) -> Result<(), 
     Ok(())
 }
 
+/// Rewrite one scope's file to exactly `values` under Git's own `.lock`
+/// protocol, leaving every other entry in place. A file already holding
+/// `values` is not rewritten, so clearing an absent selection creates nothing.
 fn set_values(mutation: &HookConfigurationMutation, values: &[String]) -> Result<(), InstallError> {
-    let worktree = Path::new(&mutation.worktree);
-    let scope = mutation.scope.option();
-    let Some((first, rest)) = values.split_first() else {
-        let unset = git(
-            worktree,
-            ["config", scope, "--unset-all", HOOK_KEY],
-            "clear Git hook selection",
-        );
-        return match unset {
-            Ok(_)
-            | Err(InstallError::GitExit {
-                code: Some(1 | 5), ..
-            }) => Ok(()),
-            Err(error) => Err(error),
-        };
-    };
-    git(
-        worktree,
-        ["config", scope, "--replace-all", HOOK_KEY, first],
-        "replace Git hook selection",
-    )?;
-    for value in rest {
-        git(
-            worktree,
-            ["config", scope, "--add", HOOK_KEY, value],
-            "write Git hook selection",
-        )?;
+    let path = scope_file(Path::new(&mutation.worktree), mutation.scope)?;
+    let mut lock = gix::lock::File::acquire_to_update_resource(
+        &path,
+        gix::lock::acquire::Fail::Immediately,
+        None,
+    )
+    .map_err(|error| InstallError::io("lock Git configuration", &path, io::Error::other(error)))?;
+    let mut file = config_file(&path, mutation.scope)?;
+    if hook_values(&file)? == values {
+        return Ok(());
+    }
+    replace_hook_values(&mut file, values)
+        .map_err(|error| InstallError::io("write Git hook selection", &path, error))?;
+    file.write_to(&mut lock)
+        .map_err(|source| InstallError::io("write Git configuration", &path, source))?;
+    lock.commit()
+        .map_err(|error| InstallError::io("replace Git configuration", &path, error.error))?;
+    Ok(())
+}
+
+/// Remove every `core.hooksPath` entry, then append `values` in order to the
+/// last `[core]` section, which is created when none exists.
+fn replace_hook_values(file: &mut gix_config::File, values: &[String]) -> io::Result<()> {
+    let sections = file
+        .sections_and_ids_by_name("core")
+        .into_iter()
+        .flatten()
+        .filter(|(section, _)| section.header().subsection_name().is_none())
+        .map(|(_, id)| id)
+        .collect::<Vec<_>>();
+    let (_, key) = HOOK_KEY
+        .split_once('.')
+        .expect("hook key names its section");
+    for id in sections {
+        let mut section = file
+            .section_mut_by_id(id)
+            .expect("a listed section is present");
+        while section.remove(key).is_some() {}
+    }
+    if values.is_empty() {
+        return Ok(());
+    }
+    let mut section = file
+        .section_mut_or_create_new("core", None)
+        .map_err(io::Error::other)?;
+    for value in values {
+        section
+            .push(key, Some(gix::bstr::BStr::new(value)))
+            .map_err(io::Error::other)?;
     }
     Ok(())
 }
@@ -624,7 +661,7 @@ fn verify_assets(repository: &Repository, plan: &InstallPlan) -> Result<(), Inst
 }
 
 fn mutation_values(mutation: &HookConfigurationMutation) -> Result<Vec<String>, InstallError> {
-    config_values(Path::new(&mutation.worktree), Some(mutation.scope))
+    scope_values(Path::new(&mutation.worktree), mutation.scope)
 }
 
 /// Registered worktrees, split by whether their directory still exists.
@@ -634,97 +671,143 @@ struct Worktrees {
     prunable: Vec<PathBuf>,
 }
 
+/// The rows `git worktree list` reports, named as it names them: the main
+/// worktree is the real path of the common directory without a trailing
+/// `.git`, and each linked worktree is the checkout its `gitdir` file names.
+/// A registration whose `gitdir` file is missing or unreadable is left out,
+/// and an unlocked one whose checkout is gone is prunable.
 fn list_worktrees(repository: &Repository) -> Result<Worktrees, InstallError> {
-    let output = git(
-        repository.worktree_root(),
-        ["worktree", "list", "--porcelain", "-z"],
-        "list Git worktrees",
-    )?;
-    parse_worktrees(&output.stdout)
-}
-
-/// Parse `git worktree list --porcelain -z`: NUL-terminated attributes, each
-/// row opened by its `worktree` attribute.
-fn parse_worktrees(stdout: &[u8]) -> Result<Worktrees, InstallError> {
-    let mut rows: Vec<(PathBuf, bool)> = Vec::new();
-    for field in stdout.split(|byte| *byte == 0) {
-        if let Some(path) = field.strip_prefix(b"worktree ") {
-            let path = std::str::from_utf8(path)
-                .map_err(|_| InstallError::GitNonUtf8("list Git worktrees"))?;
-            rows.push((PathBuf::from(path), false));
-        } else if (field == b"prunable" || field.starts_with(b"prunable "))
-            && let Some((_, prunable)) = rows.last_mut()
+    let git = open(repository.worktree_root())?;
+    let common = std::fs::canonicalize(git.common_dir())
+        .map_err(|source| InstallError::io("list Git worktrees", git.common_dir(), source))?;
+    let main = match (common.file_name(), common.parent()) {
+        (Some(name), Some(parent)) if name == OsStr::new(".git") => parent.to_path_buf(),
+        _ => common,
+    };
+    let mut worktrees = Worktrees {
+        live: vec![spelled(&main)?],
+        prunable: Vec::new(),
+    };
+    let linked = git.worktrees().map_err(|source| {
+        InstallError::io(
+            "list Git worktrees",
+            git.common_dir().join("worktrees"),
+            source,
+        )
+    })?;
+    for proxy in linked {
+        let Ok(base) = proxy.base() else {
+            continue;
+        };
+        // Git resolves a relative `gitdir` to its real path.
+        let base = if base
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
         {
-            *prunable = true;
+            std::fs::canonicalize(&base).unwrap_or(base)
+        } else {
+            base
+        };
+        let row = spelled(&base)?;
+        if proxy.is_locked() || base.join(".git").exists() {
+            worktrees.live.push(row);
+        } else {
+            worktrees.prunable.push(row);
         }
     }
-    let (prunable, live): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, prunable)| *prunable);
-    if live.is_empty() {
-        return Err(InstallError::InvalidRecord(
-            "Git returned no worktrees for hook activation".to_owned(),
-        ));
-    }
-    Ok(Worktrees {
-        live: live.into_iter().map(|(path, _)| path).collect(),
-        prunable: prunable.into_iter().map(|(path, _)| path).collect(),
+    Ok(worktrees)
+}
+
+/// `path` spelled as Git prints worktree paths.
+fn spelled(path: &Path) -> Result<PathBuf, InstallError> {
+    super::git_hooks::git_spelling(path)
+        .map(PathBuf::from)
+        .map_err(|_| {
+            InstallError::InvalidRecord(format!(
+                "Git worktree {} is not a UTF-8 local path",
+                path.display()
+            ))
+        })
+}
+
+fn open(worktree: &Path) -> Result<gix::Repository, InstallError> {
+    gix::open_opts(worktree, gix::open::Options::isolated())
+        .map_err(|error| InstallError::io("open Git repository", worktree, io::Error::other(error)))
+}
+
+/// The file `git config --local` or `--worktree` reads and writes from
+/// `worktree`: the common `config`, or that worktree's `config.worktree`.
+fn scope_file(worktree: &Path, scope: HookConfigurationScope) -> Result<PathBuf, InstallError> {
+    let git = open(worktree)?;
+    Ok(match scope {
+        HookConfigurationScope::Local => git.common_dir().join("config"),
+        HookConfigurationScope::Worktree => git.git_dir().join("config.worktree"),
     })
 }
 
-fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
-    if !worktree_config_enabled(worktree)? {
-        return Ok(Vec::new());
-    }
-    match git(
-        worktree,
-        ["config", "--worktree", "--get-all", HOOK_KEY],
-        "read worktree-local Git hooks",
-    ) {
-        Ok(output) => values("read worktree-local Git hooks", &output.stdout),
-        Err(InstallError::GitExit { code: Some(1), .. }) => Ok(Vec::new()),
-        Err(InstallError::GitExit { diagnostic, .. })
-            if diagnostic.contains("extension worktreeConfig is enabled") =>
-        {
-            Ok(Vec::new())
+/// One scope's configuration file without following its includes, as Git
+/// reads a single scope; an absent file holds nothing.
+fn config_file(
+    path: &Path,
+    scope: HookConfigurationScope,
+) -> Result<gix_config::File, InstallError> {
+    use gix_config::file::init::from_paths::Error;
+    match gix_config::File::from_path_no_includes(path.to_path_buf(), scope.source()) {
+        Ok(file) => Ok(file),
+        Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => Ok(
+            gix_config::File::new(gix_config::file::Metadata::from(scope.source()).at(path)),
+        ),
+        Err(Error::Io { source, path }) => {
+            Err(InstallError::io("read Git configuration", path, source))
         }
-        Err(error) => Err(error),
+        Err(Error::Init(error)) => Err(InstallError::io(
+            "parse Git configuration",
+            path,
+            io::Error::other(error),
+        )),
     }
 }
 
-fn worktree_config_enabled(worktree: &Path) -> Result<bool, InstallError> {
-    let output = git_command("read Git worktree configuration mode", worktree)?
-        .args(["config", "--local", "--get", "extensions.worktreeConfig"])
-        .output()
-        .map_err(|source| InstallError::GitLaunch {
-            operation: "read Git worktree configuration mode",
-            worktree: worktree.to_path_buf(),
-            source,
-        })?;
-    if output.status.success() {
-        let value = std::str::from_utf8(&output.stdout)
-            .map_err(|_| InstallError::GitNonUtf8("read Git worktree configuration mode"))?;
-        Ok(value.trim_ascii_end().eq_ignore_ascii_case("true"))
-    } else if output.status.code() == Some(1) {
-        Ok(false)
-    } else {
-        Err(InstallError::GitExit {
-            operation: "read Git worktree configuration mode",
-            code: output.status.code(),
-            diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
+fn hook_values(file: &gix_config::File) -> Result<Vec<String>, InstallError> {
+    file.strings(HOOK_KEY)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| {
+            String::from_utf8(value.into())
+                .map_err(|_| InstallError::GitNonUtf8("read Git hook selection"))
         })
+        .collect()
+}
+
+/// Exact values one scope's own file holds.
+fn scope_values(
+    worktree: &Path,
+    scope: HookConfigurationScope,
+) -> Result<Vec<String>, InstallError> {
+    hook_values(&config_file(&scope_file(worktree, scope)?, scope)?)
+}
+
+/// Worktree-local values, which Git consults only once the common
+/// configuration enables `extensions.worktreeConfig`.
+fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
+    let local = config_file(
+        &scope_file(worktree, HookConfigurationScope::Local)?,
+        HookConfigurationScope::Local,
+    )?;
+    let enabled = local
+        .string("extensions.worktreeConfig")
+        .is_some_and(|value| value.eq_ignore_ascii_case(b"true"));
+    if enabled {
+        scope_values(worktree, HookConfigurationScope::Worktree)
+    } else {
+        Ok(Vec::new())
     }
 }
 
-fn config_values(
-    worktree: &Path,
-    scope: Option<HookConfigurationScope>,
-) -> Result<Vec<String>, InstallError> {
-    let mut command = git_command("read Git hook selection", worktree)?;
-    command.arg("config");
-    if let Some(scope) = scope {
-        command.arg(scope.option());
-    }
-    let output = command
-        .args(["--get-all", HOOK_KEY])
+/// Every value Git reports across its scopes from `worktree`, in its order.
+fn effective_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
+    let output = git_command("read Git hook selection", worktree)?
+        .args(["config", "--get-all", HOOK_KEY])
         .output()
         .map_err(|source| InstallError::GitLaunch {
             operation: "read Git hook selection",
@@ -797,53 +880,114 @@ fn valid_value(value: &str) -> Result<(), InstallError> {
     }
 }
 
-fn git<const N: usize>(
-    root: &Path,
-    arguments: [&str; N],
-    operation: &'static str,
-) -> Result<Output, InstallError> {
-    let output = git_command(operation, root)?
-        .args(arguments)
-        .output()
-        .map_err(|source| InstallError::GitLaunch {
-            operation,
-            worktree: root.to_path_buf(),
-            source,
-        })?;
-    if output.status.success() {
-        Ok(output)
-    } else {
-        Err(InstallError::GitExit {
-            operation,
-            code: output.status.code(),
-            diagnostic: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
+    fn scratch(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "spice-hook-activation-{label}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("scratch directory creates");
+        fs::canonicalize(&root).expect("scratch directory resolves")
+    }
+
+    fn register(common: &Path, id: &str, checkout: &Path) {
+        let admin = common.join("worktrees").join(id);
+        fs::create_dir_all(&admin).expect("registration creates");
+        fs::write(
+            admin.join("gitdir"),
+            format!("{}\n", checkout.join(".git").display()),
+        )
+        .expect("gitdir writes");
+    }
+
     #[test]
-    fn a_worktree_whose_directory_is_gone_leaves_the_hook_walk() {
-        let porcelain = concat!(
-            "worktree /repo\0HEAD 1111\0branch refs/heads/main\0\0",
-            "worktree /gone\0HEAD 1111\0branch refs/heads/gone\0",
-            "prunable gitdir file points to non-existent location\0\0",
-            "worktree /kept\0HEAD 1111\0detached\0locked prunable\nreason\0\0",
-            "worktree /bare-reason\0HEAD 1111\0detached\0prunable\0\0",
-        );
+    fn registered_worktrees_split_into_live_and_prunable_rows() {
+        let scratch = scratch("worktrees");
+        let root = scratch.join("repo");
+        fs::create_dir_all(&root).expect("main worktree creates");
+        crate::test_repository::initialize(&root);
+        let common = root.join(".git");
+        let live = scratch.join("live");
+        fs::create_dir_all(&live).expect("live checkout creates");
+        fs::write(live.join(".git"), "gitdir: elsewhere\n").expect("live pointer writes");
+        register(&common, "live", &live);
+        register(&common, "gone", &scratch.join("gone"));
+        register(&common, "locked", &scratch.join("locked"));
+        fs::write(common.join("worktrees/locked/locked"), "").expect("lock writes");
+        fs::create_dir_all(common.join("worktrees/orphan")).expect("orphan creates");
 
-        let worktrees = parse_worktrees(porcelain.as_bytes()).expect("porcelain parses");
+        let repository = Repository::discover(&root).expect("repository discovers");
+        let worktrees = list_worktrees(&repository).expect("worktrees list");
+        let mut linked = worktrees.live[1..].to_vec();
+        linked.sort();
 
-        assert_eq!(
-            worktrees.live,
-            [PathBuf::from("/repo"), PathBuf::from("/kept")]
+        let git = |path: &Path| spelled(path).expect("fixture path spells");
+        assert_eq!(worktrees.live[0], git(&root));
+        assert_eq!(linked, [git(&live), git(&scratch.join("locked"))]);
+        assert_eq!(worktrees.prunable, [git(&scratch.join("gone"))]);
+        fs::remove_dir_all(scratch).ok();
+    }
+
+    #[test]
+    fn replacing_a_scope_rewrites_only_its_top_level_hook_values() {
+        let scratch = scratch("replace");
+        crate::test_repository::initialize(&scratch);
+        let config = scratch.join(".git/config");
+        let mut text = fs::read_to_string(&config).expect("config reads");
+        text.push_str(
+            "[core]\n\thooksPath = old\n[core \"sub\"]\n\thooksPath = nested\n\
+             [user]\n\tname = kept\n[core]\n\thookspath = older\n",
         );
+        fs::write(&config, text).expect("config writes");
+        let mutation = |generated: Vec<String>| HookConfigurationMutation {
+            worktree: scratch.display().to_string(),
+            scope: HookConfigurationScope::Local,
+            previous: Vec::new(),
+            superseded: None,
+            generated,
+        };
+        let values = vec![" lead".to_owned(), r#"a;b#c"d\e"#.to_owned()];
+
+        set_values(&mutation(values.clone()), &values).expect("values replace");
         assert_eq!(
-            worktrees.prunable,
-            [PathBuf::from("/gone"), PathBuf::from("/bare-reason")]
+            scope_values(&scratch, HookConfigurationScope::Local).expect("values read"),
+            values
         );
+        set_values(&mutation(Vec::new()), &[]).expect("values clear");
+
+        assert!(
+            scope_values(&scratch, HookConfigurationScope::Local)
+                .expect("values read")
+                .is_empty()
+        );
+        let reread = config_file(&config, HookConfigurationScope::Local).expect("config parses");
+        let text = |key: &str| reread.string(key).map(|value| value.to_string());
+        assert_eq!(text("user.name").as_deref(), Some("kept"));
+        assert_eq!(text("core.sub.hooksPath").as_deref(), Some("nested"));
+        fs::remove_dir_all(scratch).ok();
+    }
+
+    #[test]
+    fn worktree_scope_counts_only_once_the_extension_enables_it() {
+        let scratch = scratch("worktree-scope");
+        crate::test_repository::initialize(&scratch);
+        fs::write(
+            scratch.join(".git/config.worktree"),
+            "[core]\n\thooksPath = local\n",
+        )
+        .expect("worktree config writes");
+
+        assert!(worktree_values(&scratch).expect("values read").is_empty());
+        let config = scratch.join(".git/config");
+        let mut text = fs::read_to_string(&config).expect("config reads");
+        text.push_str("[extensions]\n\tworktreeConfig = true\n");
+        fs::write(&config, text).expect("config writes");
+        assert_eq!(worktree_values(&scratch).expect("values read"), ["local"]);
+        fs::remove_dir_all(scratch).ok();
     }
 }
