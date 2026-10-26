@@ -110,8 +110,10 @@ owns each rule summarized here.
   lanes Converge would. Until then, including while any question is still
   quiet, it keeps its group's floor and reach. The group's floor returns as
   soon as a later charge contests an item or a statement edit un-steeps it;
-  the notice records Converge as the admitting stance. The floor decides
-  qualification only; finite cosine score still
+  the notice records Converge as the admitting stance. An OOPS Design, whose
+  reports rather than its items ready it, never steeps, so it always asks as
+  a steeped Design does. The floor decides qualification only; finite cosine
+  score still
   decides ranking. One opportunity selects one Design at most; one session has
   one unanswered request at most. Whether a lane is asked is decided on the
   whole statement; what it is asked is every question item still owed to it.

@@ -37,7 +37,7 @@ impl Lanes {
         acceptance: &[&str],
     ) -> wire::TaskHandle {
         let task: wire::TaskStamp = stamp.parse().expect("fixture stamp");
-        let phase: wire::Phase = if intent == Some(wire::TaskIntent::Design) {
+        let phase: wire::Phase = if intent.is_some_and(wire::TaskIntent::is_design) {
             "design"
         } else {
             "todo"

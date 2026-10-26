@@ -54,13 +54,18 @@ pub(crate) fn match_score_floor(stance: WorkingGroupStance) -> f64 {
 /// raised to Converge once its current items steep. A steeped Design is
 /// close, so it asks only the lanes Converge would; the floor falls back with
 /// the fold as soon as a later charge contests an item or a statement edit
-/// un-steeps it. The notice records this stance as the one that admitted the
-/// match.
+/// un-steeps it. An OOPS Design never steeps, since its reports rather than
+/// its items ready it, so it asks as a steeped Design always. The notice
+/// records this stance as the one that admitted the match.
 fn admitting_stance(facts: &bus::TaskFacts, design: &board::Entry) -> WorkingGroupStance {
     let born = design.born();
-    let steeped = facts
-        .design_items(born)
-        .is_some_and(|items| items.steeped(&design.statement().acceptance));
+    let steeped = design
+        .statement()
+        .intent
+        .is_some_and(wire::TaskIntent::is_opportunistic_design)
+        || facts
+            .design_items(born)
+            .is_some_and(|items| items.steeped(&design.statement().acceptance));
     if steeped {
         WorkingGroupStance::Converge
     } else {
