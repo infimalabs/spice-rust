@@ -369,6 +369,9 @@ identical bytes keep one identity without a Git checkout. `spice --version`
 ends with `app G` when the executable links generation G's archive, and
 `spice version` reports that same G without reading the worktree; only a
 development build that links no archive reports the worktree's staged app.
+A linked archive that fails admission refuses even when the worktree has a
+valid staged app; mutable worktree state cannot replace a rejected installed
+identity.
 
 Owners: [`dist/src/version.rs`](../../dist/src/version.rs),
 [`spice/src/version.rs`](../../spice/src/version.rs), and
