@@ -838,19 +838,6 @@ fn validate_manifest_shape(
     manifest: &Manifest,
     subject: &str,
 ) -> Result<(), Error> {
-    if manifest.version != STORE_VERSION {
-        return Err(Error::unsupported(
-            "artifact store version",
-            manifest.version,
-            format!(
-                concat!(
-                    "{} belongs to artifact store version {}; ",
-                    "this release owns version {}"
-                ),
-                subject, manifest.version, STORE_VERSION
-            ),
-        ));
-    }
     if &manifest.task != task {
         return Err(Error::corrupt(
             subject,
@@ -920,10 +907,7 @@ fn validate_object(
     metadata: &ObjectMetadata,
     artifact: &Artifact,
 ) -> Result<(), Error> {
-    if metadata.version != STORE_VERSION
-        || metadata.digest != artifact.digest
-        || metadata.bytes != artifact.bytes
-    {
+    if metadata.digest != artifact.digest || metadata.bytes != artifact.bytes {
         return Err(Error::corrupt(
             subject,
             format!("object metadata disagrees with artifact {}", artifact.id),
@@ -970,10 +954,27 @@ fn validate_payload_identity(
     Ok(())
 }
 
+/// Decode one store record, refusing another store version by name before
+/// the strict decode could misreport an unknown shape as corruption.
 fn decode_canonical<T>(bytes: &[u8], subject: &str) -> Result<T, Error>
 where
     T: serde::de::DeserializeOwned + serde::Serialize,
 {
+    #[derive(serde::Deserialize)]
+    struct Version {
+        version: u16,
+    }
+    let Version { version } = wire::decode(bytes)
+        .map_err(|error| Error::corrupt(subject, format!("does not decode: {error}")))?;
+    if version != STORE_VERSION {
+        return Err(Error::unsupported(
+            "artifact store version",
+            version,
+            format!(
+                "{subject} belongs to artifact store version {version}; this release owns version {STORE_VERSION}"
+            ),
+        ));
+    }
     let decoded = wire::decode::<T>(bytes)
         .map_err(|error| Error::corrupt(subject, format!("does not decode: {error}")))?;
     let canonical = wire::encode(&decoded)

@@ -613,6 +613,53 @@ fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback
 }
 
 #[test]
+fn records_of_another_store_version_are_refused_by_version_before_their_shape() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-v3");
+    let source = fixture.source("note.txt", b"note");
+    let artifact = add(
+        &fixture.store,
+        &task,
+        &source,
+        Retention::Permanent,
+        instant("2030-01-01T00:00:00.000Z"),
+    );
+    let task_dir = fixture.store.root().join(task.as_str());
+    let from_the_future = |path: &Path| {
+        let text = fs::read_to_string(path).expect("read store record");
+        let future = text.replacen("\"version\":2", "\"version\":3,\"future\":true", 1);
+        assert_ne!(future, text, "fixture record names version 2");
+        fs::write(path, future).expect("write future store record");
+    };
+    let refused_as_version_three = |failure: Error| {
+        assert_eq!(failure.class(), ErrorClass::Refusal, "{failure}");
+        assert_eq!(failure.unsupported_release(), Some(3), "{failure}");
+    };
+
+    from_the_future(&object_dir(&task_dir, &artifact.digest).join(super::METADATA));
+    refused_as_version_three(
+        fixture
+            .store
+            .show(&task, &artifact.id)
+            .expect_err("future object metadata is refused"),
+    );
+
+    from_the_future(&task_dir.join(super::MANIFEST));
+    refused_as_version_three(
+        fixture
+            .store
+            .list(&task)
+            .expect_err("future manifest is refused"),
+    );
+    refused_as_version_three(
+        fixture
+            .store
+            .capture()
+            .expect_err("capture refuses a future manifest"),
+    );
+}
+
+#[test]
 fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
     struct BoundSource {
         bytes: u64,
