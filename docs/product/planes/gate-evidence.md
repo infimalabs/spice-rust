@@ -66,6 +66,10 @@ they identify a compiler environment. On macOS the hook removes only the
 default compiler paths injected by Command Line Tools Git or full Xcode Git;
 nondefault and unrelated toolchain paths remain inputs. The same staged action
 therefore has one environment identity outside and inside the hook.
+Rust and app compile arms use HOME only when the captured compiler environment
+supplies it. They neither embed the release builder's home nor synthesize a
+runtime replacement; when HOME is absent, Cargo uses its own host resolution
+or reports its own failure.
 
 Pre-commit verifies every owed receipt, runs the live-only checks, and publishes
 one admission for the candidate tree. Several admissions may exist for one tree
