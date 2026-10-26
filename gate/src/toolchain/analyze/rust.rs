@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_INCREMENTAL, CARGO_TARGET_DIRECTORY,
-    COMPILED_HOME_DIRECTORY, CargoSelection, CompileCapture, CompileFailure, CompileInvocation,
-    CompileSuccess, CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
-    run_compile_analysis_with_wait, tool_search_path,
+    CargoSelection, CompileCapture, CompileFailure, CompileInvocation, CompileSuccess,
+    CompilerResources, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER, run_compile_analysis_with_wait,
+    tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::permissions::set_owner_writable;
@@ -540,9 +540,6 @@ fn rust_environment(
         .cloned()
         .collect::<BTreeMap<std::ffi::OsString, std::ffi::OsString>>();
     entries.insert("PATH".into(), path);
-    entries
-        .entry(HOME_DIRECTORY.into())
-        .or_insert_with(|| COMPILED_HOME_DIRECTORY.into());
     entries.insert(
         CARGO_TARGET_DIRECTORY.into(),
         workspace.cargo_target.as_os_str().to_owned(),
@@ -609,6 +606,11 @@ mod tests {
             entries.get(std::ffi::OsStr::new(CARGO_INCREMENTAL)),
             Some(&std::ffi::OsString::from("0")),
             "an ambient incremental setting never reaches a gate compile"
+        );
+        assert_eq!(
+            entries.get(std::ffi::OsStr::new(concat!("HO", "ME"))),
+            None,
+            "a compile arm names only the home its captured environment carries"
         );
     }
 
