@@ -130,6 +130,9 @@ fn share_with(
     }
 
     verify_signature(&request.executable, runner)?;
+    // `--type execute` judges only app bundles and rejects every bare Mach-O;
+    // the primary-signature open assessment is Gatekeeper's verdict on a
+    // standalone executable, accepting only a notarized Developer ID.
     required(
         "assess executable with Gatekeeper",
         runner.run(
@@ -137,7 +140,9 @@ fn share_with(
             &arguments_os([
                 OsStr::new("--assess"),
                 OsStr::new("--type"),
-                OsStr::new("execute"),
+                OsStr::new("open"),
+                OsStr::new("--context"),
+                OsStr::new("context:primary-signature"),
                 OsStr::new("--verbose=4"),
                 request.executable.as_os_str(),
             ]),
