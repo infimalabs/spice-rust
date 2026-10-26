@@ -356,8 +356,10 @@ A build that does not pass through release staging (`spice dev xtask --
 install`) appends `-dev`, so it sorts below its own commit's staged
 `stage-target` payload, which carries no marker. `spice dev xtask --
 windows-appliance --unsigned`, today's Windows release route, carries the
-unmarked release version only from a checkout equal to HEAD and appends `-dev`
-otherwise. A plain Cargo build bound to no commit reports
+unmarked release version from an initially clean checkout that remains unchanged
+through the build. An initially dirty checkout appends `-dev`; a release build
+whose source changes refuses before reporting success. A plain Cargo build bound
+to no commit reports
 `MAJOR.0.0-dev`, `0.0.0-dev` on main, below every derived version of its major.
 The version never carries the executable digest:
 the native-binary identity is the running executable's complete digest, so
