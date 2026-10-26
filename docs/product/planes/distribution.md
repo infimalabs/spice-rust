@@ -752,6 +752,7 @@ the generated hook launchers, and the alternate `GIT_INDEX_FILE` of a task's
 worktree snapshot or integration tree name local-drive paths in Git's `C:/...`
 form, never the verbatim `\\?\C:\` form canonicalization yields, beside which
 Git for Windows cannot create a lock. A path outside a local drive refuses.
+The shared spelling helper borrows unchanged UTF-8 paths on other platforms.
 
 **Invariant —** A file belongs to the current principal when its owner is a SID
 the process token may assign as owner: the token user or an enabled owner

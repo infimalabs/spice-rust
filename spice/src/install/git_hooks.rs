@@ -46,7 +46,9 @@ pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, Inst
 
 /// `path` as Git and the hooks' shell name it.
 pub(super) fn git_spelling(path: &Path) -> Result<String, InstallError> {
-    crate::repository::git_spelling(path).map_err(|reason| unrepresentable(path, reason))
+    crate::repository::git_spelling(path)
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|reason| unrepresentable(path, reason))
 }
 
 const PRE_COMMIT_ENVIRONMENT: &str = concat!(

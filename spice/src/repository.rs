@@ -767,9 +767,12 @@ fn metadata(path: &Path) -> Result<fs::Metadata, ResolveError> {
 }
 
 /// `path` as Git and its hook shell name it, or why it has no such spelling.
+/// The unchanged UTF-8 spelling is borrowed.
 #[cfg(not(windows))]
-pub fn git_spelling(path: &Path) -> Result<String, &'static str> {
-    path.to_str().map(str::to_owned).ok_or("is not UTF-8")
+pub fn git_spelling(path: &Path) -> Result<std::borrow::Cow<'_, str>, &'static str> {
+    path.to_str()
+        .map(std::borrow::Cow::Borrowed)
+        .ok_or("is not UTF-8")
 }
 
 /// `path` as Git for Windows and its MSYS hook shell name it: a local drive
@@ -777,7 +780,7 @@ pub fn git_spelling(path: &Path) -> Result<String, &'static str> {
 /// paths canonicalization yields, so every path handed to Git goes through
 /// here. A UNC share is no repository-local path.
 #[cfg(windows)]
-pub fn git_spelling(path: &Path) -> Result<String, &'static str> {
+pub fn git_spelling(path: &Path) -> Result<std::borrow::Cow<'_, str>, &'static str> {
     use std::path::{Component, Prefix};
     let mut components = path.components();
     let drive = match components.next() {
@@ -798,7 +801,7 @@ pub fn git_spelling(path: &Path) -> Result<String, &'static str> {
             _ => return Err("is not a normalized path"),
         }
     }
-    Ok(spelling)
+    Ok(std::borrow::Cow::Owned(spelling))
 }
 
 #[derive(Clone, Copy)]
