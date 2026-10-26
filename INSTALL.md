@@ -144,9 +144,11 @@ spice dev xtask -- share-darwin /absolute/path/to/spice \
 The command changes the executable in place. It refuses before signing when the
 identity or profile is unavailable, retrieves Apple's log when notarization is
 rejected, and finishes only after strict `codesign` verification and
-`spctl --assess --type execute` accept the file. A bare Mach-O cannot carry a
-stapled ticket, so its first Gatekeeper assessment needs network access. This
-operator sharing path does not mutate or replace any sealed release artifact.
+Gatekeeper's primary-signature assessment (`spctl --assess --type open
+--context context:primary-signature`) accept the file as notarized. A bare
+Mach-O cannot carry a stapled ticket, so its first Gatekeeper assessment needs
+network access. This operator sharing path does not mutate or replace any
+sealed release artifact.
 
 ## Hook authority
 

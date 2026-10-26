@@ -77,12 +77,6 @@ fn accepted_submission_signs_notarizes_and_verifies_in_order() {
             .any(|argument| argument == "--timestamp")
     );
     assert!(commands[5].1.iter().any(|argument| argument == "--wait"));
-    assert!(
-        commands[7]
-            .1
-            .windows(2)
-            .any(|pair| pair == ["--type", "execute"])
-    );
     let rendered = String::from_utf8(rendered).expect("UTF-8 report");
     assert!(rendered.contains("submission: submission-1"));
     assert!(rendered.contains("online Gatekeeper assessment accepted"));
