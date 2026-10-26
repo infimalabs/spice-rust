@@ -8,6 +8,7 @@
 //! live retune sends, and interjects steering the same way.
 
 pub mod frame;
+pub mod session_paths;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -445,7 +446,11 @@ pub fn session_file(
     at: &str,
 ) -> (PathBuf, String) {
     let path = sessions
-        .join(session_directory(home, temp, cwd))
+        .join(session_paths::session_directory(
+            Some(home),
+            Some(temp),
+            cwd,
+        ))
         .join(format!("{}_{identity}.jsonl", at.replace([':', '.'], "-")));
     let header = SessionHeader {
         kind: "session",
@@ -455,24 +460,6 @@ pub fn session_file(
         cwd: &cwd.to_string_lossy(),
     };
     (path, format!("{}{}\n", title_slot(at), json(&header)))
-}
-
-/// omp's session directory for `cwd`: its home-relative or temp-relative
-/// spelling under a scope prefix, or the whole absolute path bracketed.
-fn session_directory(home: &Path, temp: &Path, cwd: &Path) -> String {
-    let dashed = |path: &Path| path.to_string_lossy().replace(['/', '\\', ':'], "-");
-    for (prefix, root) in [("-", home), ("-tmp", temp)] {
-        if let Ok(relative) = cwd.strip_prefix(root) {
-            let relative = dashed(relative);
-            let separator = if prefix.ends_with('-') { "" } else { "-" };
-            return if relative.is_empty() {
-                prefix.to_owned()
-            } else {
-                format!("{prefix}{separator}{relative}")
-            };
-        }
-    }
-    format!("--{}--", dashed(cwd).trim_start_matches('-'))
 }
 
 /// An empty title padded to exactly [`TITLE_SLOT_BYTES`] with its newline.

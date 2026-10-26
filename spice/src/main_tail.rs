@@ -31,10 +31,20 @@ pub(crate) fn session_environment_from(
     session_command::Environment::new(
         vendors,
         variable("SPICE_AGENT_VENDOR"), // env-policy: allow
-        variable("HOME"),
+        spice::ambient::session::home(&variable),
         cwd,
-        Some(std::env::temp_dir()),
+        session_temp(&variable),
     )
+}
+
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn session_temp(variable: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    spice::ambient::session::temp(variable).map(PathBuf::from)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn session_temp(_variable: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    Some(std::env::temp_dir())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
