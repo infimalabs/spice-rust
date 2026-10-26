@@ -589,7 +589,8 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.persist_room_catch_up_landing();
     }
 
-    /// Replace the progress reminder waiting for the next step boundary.
+    /// Interrupt current host calls into kept jobs and deliver the progress
+    /// reminder through steering now.
     fn deliver_narration(&self, prod: &wire::body::NarrationProdded) {
         let urgency = if prod.count > 1 {
             "Progress update overdue"
@@ -603,7 +604,11 @@ impl<W: Write + Send + 'static> Driver<W> {
              key is required.\n</system-notice>",
             prod.moments, prod.count,
         );
-        let _sent = self.background("narration", &message);
+        let (calls, _) = self.delivery_calls(true, false);
+        for handle in calls {
+            handle.interrupt();
+        }
+        let _sent = self.steer(&message);
     }
 
     /// Tell this exact occupant which addresses a partly delivered packet it

@@ -219,6 +219,32 @@ fn fresh_direction_interrupts_the_host_call_and_enters_steering_once_in_order() 
 }
 
 #[test]
+fn narration_interrupts_the_host_call_and_enters_steering_immediately() {
+    let seat = Seat::new();
+    let control = seat.active_call("call-1", false);
+    let prod = wire::body::NarrationProdded {
+        lane: crate::resident::new_uuid(),
+        occupant: crate::resident::new_uuid(),
+        moments: 24,
+        count: 1,
+    };
+
+    seat.driver.deliver_narration(&prod);
+
+    assert!(
+        control.was_interrupted(),
+        "the reminder releases the current host-tool boundary"
+    );
+    let steered = seat.steered();
+    assert_eq!(steered.len(), 1, "{steered:?}");
+    assert!(steered[0].contains("Progress update due"), "{steered:?}");
+    assert!(
+        seat.queued("narration").is_empty(),
+        "the reminder does not wait in the aside queue"
+    );
+}
+
+#[test]
 fn a_peer_aside_yields_only_the_job_waits_already_blocking_its_boundary() {
     let seat = Seat::new();
     let wait = seat.active_call("wait", true);
