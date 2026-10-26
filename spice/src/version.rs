@@ -3,6 +3,7 @@
 mod source;
 
 use std::fs::File;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use serve::canvas::EmbeddedArchive;
@@ -83,6 +84,28 @@ pub fn report() -> String {
     match canvas() {
         Some(Ok(archive)) => format!("{} app {}", product(), archive.generation()),
         _ => product().to_string(),
+    }
+}
+
+/// The app generation `spice version` reports.
+///
+/// An executable that links an archive names that archive's generation and
+/// reads nothing from the worktree, as `--version` and the installed resident
+/// do. Only a build that links none, which is a development build, names the
+/// generation staged in `worktree`.
+///
+/// # Errors
+///
+/// Refuses a linked archive that failed admission and, for a development
+/// build, an absent or malformed staged app.
+pub fn app_generation(worktree: &Path) -> Result<Digest, String> {
+    match canvas() {
+        Some(Ok(archive)) => Ok(archive.generation().clone()),
+        Some(Err(error)) => Err(error.to_string()),
+        None => serve::AppSource::resolve(worktree)
+            .and_then(|source| source.current_generation())
+            .map(|generation| generation.identity().clone())
+            .map_err(|error| error.to_string()),
     }
 }
 
