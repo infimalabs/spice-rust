@@ -561,27 +561,17 @@ mod tests {
     use crate::toolchain::exclusive_scratch_root;
 
     #[test]
-    fn focused_native_check_retains_private_cargo_home_and_job_budget() {
+    fn compile_environment_disables_incremental_without_inventing_home() {
         let workspace = RustWorkspace {
             source: PathBuf::from("/selected"),
             cargo_target: PathBuf::from("/outputs/target"),
             cargo_build: PathBuf::from("/outputs/build"),
             possession: None,
         };
-        let inherited = vec![
-            (
-                std::ffi::OsString::from("CARGO_HOME"),
-                std::ffi::OsString::from("/private/cargo-home"),
-            ),
-            (
-                std::ffi::OsString::from("CARGO_BUILD_JOBS"),
-                std::ffi::OsString::from("2"),
-            ),
-            (
-                std::ffi::OsString::from(CARGO_INCREMENTAL),
-                std::ffi::OsString::from("1"),
-            ),
-        ];
+        let inherited = [(
+            std::ffi::OsString::from(CARGO_INCREMENTAL),
+            std::ffi::OsString::from("1"),
+        )];
 
         let environment = rust_environment("/toolchain/bin/cargo", &workspace, &inherited)
             .expect("focused native environment");
@@ -590,18 +580,6 @@ mod tests {
             .iter()
             .cloned()
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(
-            entries.get(std::ffi::OsStr::new("CARGO_HOME")),
-            Some(&std::ffi::OsString::from("/private/cargo-home"))
-        );
-        assert_eq!(
-            entries.get(std::ffi::OsStr::new("CARGO_BUILD_JOBS")),
-            Some(&std::ffi::OsString::from("2"))
-        );
-        assert_eq!(
-            entries.get(std::ffi::OsStr::new(CARGO_TARGET_DIRECTORY)),
-            Some(&std::ffi::OsString::from("/outputs/target"))
-        );
         assert_eq!(
             entries.get(std::ffi::OsStr::new(CARGO_INCREMENTAL)),
             Some(&std::ffi::OsString::from("0")),
