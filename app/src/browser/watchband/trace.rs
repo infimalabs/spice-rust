@@ -28,21 +28,39 @@ pub(crate) struct ActivityTraceProps {
 }
 
 /// One lane's retained activity, which its trace keeps to the window. Agent
-/// activity carries reasoning, tool, and prose rates; operator direction is
+/// activity carries reasoning, tool, and prose rates. Operator direction is
 /// retained on message cards rather than in that activity stream, so it joins
-/// here as a marker.
+/// here as a marker, as does each MSG another lane sent this lane, wearing its
+/// sender's accent.
 fn lane_activities(runtime: &crate::AppRuntime, lane: wire::CanonicalUuid) -> Rc<[TraceActivity]> {
-    let directions = runtime
-        .messages()
-        .iter()
-        .filter(|message| {
-            message.lane == lane && message.activity == wire::AgentActivityKind::Direction
-        })
-        .map(|message| TraceActivity {
-            kind: message.activity,
+    let lanes = runtime.lanes().map_or(&[][..], |view| &view.lanes);
+    let directions = runtime.messages().iter().filter_map(|message| {
+        let accent = if message.lane == lane {
+            // The operator's own direction keeps the neutral dot.
+            if message.activity != wire::AgentActivityKind::Direction {
+                return None;
+            }
+            None
+        } else {
+            let addressed = message.sends.iter().any(|send| {
+                send.recipients
+                    .iter()
+                    .any(|recipient| recipient.lane == lane)
+            });
+            if !addressed {
+                return None;
+            }
+            // A sender outside the roster has no accent to tell it from the
+            // operator, so it marks nothing.
+            Some(crate::watchband::lane_accent(lanes, message.lane)?)
+        };
+        Some(TraceActivity {
+            kind: wire::AgentActivityKind::Direction,
             millis: message.display_millis(),
             bytes: 0,
-        });
+            accent,
+        })
+    });
     runtime
         .activities()
         .iter()
@@ -51,6 +69,7 @@ fn lane_activities(runtime: &crate::AppRuntime, lane: wire::CanonicalUuid) -> Rc
             kind: activity.kind(),
             millis: activity.display_millis(),
             bytes: activity.text_bytes(),
+            accent: None,
         })
         .chain(directions)
         .collect()
@@ -96,7 +115,7 @@ pub(super) fn render_composer_rail(
 /// Space the now-dot needs inside the pane's right edge, in CSS pixels.
 const DOT_ROOM: f64 = 1.5;
 
-/// Radius of an operator-direction dot, in CSS pixels.
+/// Radius of a direction dot, the operator's or another agent's, in CSS pixels.
 const DIRECTION_RADIUS: f64 = 1.8;
 
 /// Samples per curve: about one per six pixels, between five and nine, so a
@@ -321,11 +340,15 @@ fn render_marker(marker: TraceMarker, width: f64, height: f64) -> Html {
     let rule = x + 0.5;
     match marker.kind {
         // Held a radius inside either edge, so a direction sent just now or
-        // leaving the window is drawn whole.
+        // leaving the window is drawn whole. Another agent's wears its accent.
         TraceMarkerKind::Direction => {
             let cx = rule.min(width - DIRECTION_RADIUS).max(DIRECTION_RADIUS);
             html! {
-                <circle data-trace-marker={key} cx={format!("{cx:.2}")} cy="2" r={DIRECTION_RADIUS.to_string()} />
+                <circle
+                    data-trace-marker={key}
+                    data-accent={marker.accent.map(|accent| accent.to_string())}
+                    cx={format!("{cx:.2}")} cy="2" r={DIRECTION_RADIUS.to_string()}
+                />
             }
         }
         TraceMarkerKind::Failure => html! {
