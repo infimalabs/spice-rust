@@ -475,7 +475,7 @@ fn card_actions(props: &CardActionsProps) -> Html {
     let control = use_context::<SpeechControl>().unwrap_or_default();
     let speak = props.correspondent.speak.clone();
     let quote = props.correspondent.quote.clone();
-    let fallback = props.text.to_string();
+    let fallback = props.text.clone();
     let speaking = props
         .correspondent
         .speech_owner
@@ -497,7 +497,7 @@ fn card_actions(props: &CardActionsProps) -> Html {
                 type="button" title={speech_label}
                 aria-label={speech_label}
                 onclick={Callback::from(move |event: MouseEvent| {
-                    speak.emit((control, action_speech_text(&event, &fallback)));
+                    speak.emit((control, action_speech_text(&event, fallback.as_str())));
                 })}
             >{
                 if speaking {
@@ -535,12 +535,12 @@ fn card_actions(props: &CardActionsProps) -> Html {
     }
 }
 
-pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
+pub(in crate::browser) fn render_card_actions(
+    text: AttrValue,
+    correspondent: &Correspondent,
+) -> Html {
     html! {
-        <CardActions
-            text={AttrValue::from(text.to_owned())}
-            correspondent={correspondent.clone()}
-        />
+        <CardActions text={text} correspondent={correspondent.clone()} />
     }
 }
 

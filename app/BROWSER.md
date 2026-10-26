@@ -179,10 +179,13 @@ TASTE marks the quoted directive the resident sent, not the answer. A typed
 REVIEW presentation replaces its prose delivery envelope with a finding card;
 that card starts with the authenticated Spice source, REVIEW segment, and
 reviewed task handle, then closes with typed system guidance that follow-ups are
-already boarded and the agent must continue its current task. The discarded
-envelope is never rendered and the lead does not repeat after nested finding
-quotes. Literal `[ACK]`, `[NAK]`, `[TASTE]`, or `[REVIEW]` without an
-authenticated owner stays ordinary Markdown.
+already boarded and the agent must continue its current task. Its Play action
+reads that same task, finding, and guidance in visible order; its Quote action
+keeps the authenticated source target while deriving the composer preview from
+the typed finding. The discarded envelope reaches neither the actions nor the
+rendering, and the lead does not repeat after nested finding quotes. Literal
+`[ACK]`, `[NAK]`, `[TASTE]`, or `[REVIEW]` without an authenticated owner stays
+ordinary Markdown.
 
 A quoted peer MSG keeps its original sender, arrow, and exact destination from
 the creating journal fact; a fanout reply quotes only its own delivered
