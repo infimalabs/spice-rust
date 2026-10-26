@@ -27,13 +27,13 @@ fn refusal(url: &str) -> String {
 fn each_resource_runs_exactly_its_cli_read() {
     for (url, expected) in [
         ("spice://board", "task status"),
-        ("spice://task", "task list"),
+        ("spice://tasks", "task list"),
         (
-            "spice://task?all&status=completed&limit=5&after=TASK-dVlFq9qKp",
+            "spice://tasks?all&status=completed&limit=5&after=TASK-dVlFq9qKp",
             "task list --all --status completed --limit 5 --after TASK-dVlFq9qKp",
         ),
         (
-            "spice://task?project=spice.task",
+            "spice://tasks?project=spice.task",
             "task list --project spice.task",
         ),
         ("spice://task/TASK-dVlFq9qKp", "task show TASK-dVlFq9qKp"),
@@ -51,7 +51,7 @@ fn each_resource_runs_exactly_its_cli_read() {
             "task show TASK-dVlFq9qKp --context --history --limit 3 --after context:2",
         ),
         (
-            "spice://task/TASK-dVlFq9qKp/artifact?max-bytes=900",
+            "spice://task/TASK-dVlFq9qKp/artifacts?max-bytes=900",
             "task artifact list TASK-dVlFq9qKp --max-bytes 900",
         ),
         (
@@ -85,7 +85,7 @@ fn each_resource_runs_exactly_its_cli_read() {
             "board graph dependencies --all --limit 5 --at x",
         ),
         ("spice://inbox?limit=2", "inbox --limit 2"),
-        ("spice://lane", "lane list"),
+        ("spice://lanes", "lane list"),
         (
             "spice://session/briefing?file=a.jsonl&deadline-seconds=5",
             "session briefing a.jsonl --deadline-seconds 5",
@@ -117,7 +117,7 @@ fn a_served_seat_reads_each_quoted_served_read_as_its_url_and_nothing_else() {
     for url in [
         "`spice://board`",
         "`spice://inbox`",
-        "`spice://lane`",
+        "`spice://lanes`",
         "`spice://task/TASK-dVlFq9qKp`",
     ] {
         assert!(served.contains(url), "{url} missing: {served}");
@@ -453,6 +453,11 @@ fn unknown_paths_and_malformed_handles_are_refused() {
         "spice://session/turns/x",
         "spice://task/TASK-dVlFq9qKp/notes",
         "spice://task/TASK-dVlFq9qKp/artifact/a1/raw",
+        "spice://task",
+        "spice://task?limit=3",
+        "spice://task/TASK-dVlFq9qKp/artifact",
+        "spice://task/TASK-dVlFq9qKp/artifact?limit=3",
+        "spice://tasks/TASK-dVlFq9qKp",
         "http://task",
     ] {
         let refused = refusal(url);
@@ -495,11 +500,11 @@ fn query_keys_are_those_the_read_admits_each_once() {
     for url in [
         "spice://board?limit=3",
         "spice://task/TASK-dVlFq9qKp?offset=3",
-        "spice://task?output=x",
-        "spice://task?limit",
-        "spice://task?limit=",
-        "spice://task?all=yes",
-        "spice://task?limit=3&limit=4",
+        "spice://tasks?output=x",
+        "spice://tasks?limit",
+        "spice://tasks?limit=",
+        "spice://tasks?all=yes",
+        "spice://tasks?limit=3&limit=4",
         "spice://task/TASK-dVlFq9qKp/artifact/a1?output=/tmp/x",
         "spice://session/turns?export=x",
         "spice://session/turns?view=full&view=dialogue",
@@ -681,8 +686,8 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
         graphs: Default::default(),
     };
     for url in [
-        "spice://task?limit=100000",
-        "spice://task?max-bytes=0",
+        "spice://tasks?limit=100000",
+        "spice://tasks?max-bytes=0",
         "spice://task/TASK-dVlFq9qKp/detail?max-text=1000000",
         "spice://task/TASK-dVlFq9qKp/history?limit=-1",
     ] {
@@ -701,7 +706,7 @@ fn out_of_range_limits_are_refused_by_the_cli_read() {
 
 #[test]
 fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
-    let commands: [&[&str]; 9] = [
+    let commands: [&[&str]; 10] = [
         &[
             "task",
             "show",
@@ -760,6 +765,7 @@ fn a_continuation_url_resumes_exactly_the_command_it_replaces() {
             "8192",
         ],
         &["room", "inbox", "--limit", "1", "--after", "dVv51t4wR"],
+        &["lane", "list", "--limit", "2", "--after", "dVv51t4wR"],
         &[
             "session",
             "turns",

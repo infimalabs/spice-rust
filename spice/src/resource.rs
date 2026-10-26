@@ -49,7 +49,7 @@ spice://SKILL.md  complete authoritative agent skill: the root member of this ex
 spice://NS/PATH[@CODE]  one member of this executable's spice rack (namespaces app, docs, tool): text inline, other media as one line naming its type, size, digest, generation short code, and extracted file; NS or NS/DIRECTORY lists its members; CODE is the short code of the journal fact admitting the linked rack, the only generation served; takes line selectors but no query or write; a digest or UUID never names a generation
 spice://board  task status
 spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
-spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
+spice://tasks  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
 spice://task/HANDLE  task show HANDLE; takes no query: /context, /history, and /detail take the paging and text keys
 spice://task/HANDLE/context  task show HANDLE --context [?limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://task/HANDLE/history  task show HANDLE --history [same paging]
@@ -57,7 +57,7 @@ spice://task/HANDLE/detail  task show HANDLE --context --history [same paging]
 spice://task/HANDLE/description  the description; its first line names the write URL, ?digest=DIGEST, that replaces the text below it
 spice://task/HANDLE/acceptance  the acceptance as `- ` items, replaced the same way
 spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N&offset=N&digest=DIGEST]
-spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
+spice://task/HANDLE/artifacts  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=N&after=PUBLICATION]; contributions pages only typed contributions; every page groups its contributions by kind; reading joins and acknowledges nothing
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
@@ -65,7 +65,7 @@ spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items with publication text and receipt state; reading settles nothing
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
-spice://lane  lane list [?limit=N&max-bytes=N&after=LANE]
+spice://lanes  lane list [?limit=N&max-bytes=N&after=LANE]
 spice://session/briefing  session briefing [?file=PATH...&deadline-seconds=N]
 spice://session/turns  session turns [?file=PATH...&start=TIME&end=TIME&contains=TEXT&turn-id=ID...&tool=NAME...&view=dialogue|full&limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://session/sweep  session sweep [?file=PATH...&limit=N&max-bytes=N&max-text=N&after=CURSOR&deadline-seconds=N]
@@ -76,10 +76,10 @@ resources:
   spice://SKILL.md
   spice://docs
   spice://board
-  spice://task
+  spice://tasks
   spice://inbox
   spice://room/inbox
-  spice://lane
+  spice://lanes
   spice://session/briefing
   spice://session/turns
   spice://session/sweep";
@@ -391,7 +391,7 @@ impl Shape {
         match self {
             Self::Board => "board".to_owned(),
             Self::Graph { view } => format!("board/graph/{}", encode(view)),
-            Self::Tasks => "task".to_owned(),
+            Self::Tasks => "tasks".to_owned(),
             Self::Task { handle, detail } => match detail {
                 Detail::Summary => format!("task/{handle}"),
                 Detail::Context => format!("task/{handle}/context"),
@@ -399,7 +399,7 @@ impl Shape {
                 Detail::Both => format!("task/{handle}/detail"),
             },
             Self::Ledger { handle } => format!("task/{handle}/ledger"),
-            Self::Artifacts { handle } => format!("task/{handle}/artifact"),
+            Self::Artifacts { handle } => format!("task/{handle}/artifacts"),
             Self::Artifact { handle, id } => {
                 format!("task/{handle}/artifact/{}", encode(id))
             }
@@ -409,7 +409,7 @@ impl Shape {
             Self::Preparation { handle } => format!("task/{handle}/preparation"),
             Self::Inbox => "inbox".to_owned(),
             Self::RoomInbox => "room/inbox".to_owned(),
-            Self::Lanes => "lane".to_owned(),
+            Self::Lanes => "lanes".to_owned(),
             Self::Session(session) => format!("session/{}", session.leaf()),
             Self::Context { session } => format!("session/context/{}", encode(session)),
         }
@@ -648,7 +648,7 @@ impl Request {
             ["board", "graph", view] => Shape::Graph {
                 view: (*view).to_owned(),
             },
-            ["task"] => Shape::Tasks,
+            ["tasks"] => Shape::Tasks,
             ["task", task, field @ ("description" | "acceptance")] => {
                 return Ok(Self {
                     resource: Resource::Text(text_resource(task, field, query, url)?),
@@ -658,7 +658,7 @@ impl Request {
             ["task", task, rest @ ..] => task_shape(task, rest, url)?,
             ["inbox"] => Shape::Inbox,
             ["room", "inbox"] => Shape::RoomInbox,
-            ["lane"] => Shape::Lanes,
+            ["lanes"] => Shape::Lanes,
             ["session", "context", session] => Shape::Context {
                 session: (*session).to_owned(),
             },
@@ -740,7 +740,7 @@ fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
             detail: Detail::Both,
         },
         ["ledger"] => Shape::Ledger { handle },
-        ["artifact"] => Shape::Artifacts { handle },
+        ["artifacts"] => Shape::Artifacts { handle },
         ["artifact", id] => {
             refuse_unserved(&["task", "artifact", id], url)?;
             Shape::Artifact {
@@ -1311,7 +1311,7 @@ fn context_urls(document: &str) -> String {
 /// End a collection with the child URLs it names.
 fn board_trailer(document: &mut String, shape: &Shape) {
     let children = match shape {
-        Shape::Board => vec![format!("{SCHEME}task")],
+        Shape::Board => vec![format!("{SCHEME}tasks")],
         Shape::Tasks => document
             .lines()
             .filter_map(|line| line.split_whitespace().next()?.parse::<TaskHandle>().ok())
@@ -1327,7 +1327,7 @@ fn board_trailer(document: &mut String, shape: &Shape) {
             "ledger",
             "description",
             "acceptance",
-            "artifact",
+            "artifacts",
             "room",
             "room/relevance",
         ]
