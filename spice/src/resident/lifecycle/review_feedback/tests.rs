@@ -64,6 +64,20 @@ fn finding_feedback_reaches_the_live_author_once_across_restart() {
             "missing current coverage\n\nexercise the live refusal",
         ),
     );
+    let snapshot = bus.task_snapshot().expect("feedback snapshot reads");
+    assert_eq!(
+        crate::resident::message_surface::review_presentation(
+            Some(&snapshot),
+            pending[0].control(),
+        )
+        .expect("review presentation resolves")
+        .expect("finding has review presentation"),
+        wire::MessageReview {
+            task: TaskHandle::for_project("task.claim", &task),
+            finding: "missing current coverage\n\nexercise the live refusal".to_owned(),
+            guidance: wire::REVIEW_FEEDBACK_GUIDANCE.to_owned(),
+        },
+    );
 
     bus.shutdown().expect("feedback bus stops");
     let reopened = Bus::start(Journal::open(&authority).expect("feedback journal reopens"))

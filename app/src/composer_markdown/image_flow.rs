@@ -14,7 +14,7 @@ const HUNK_OPEN: &str = "<div class=\"message-hunk\">";
 const HUNK_CONTENT_OPEN: &str = "<div class=\"message-hunk-content\">";
 const HUNK_CLOSE: &str = "</div>";
 
-/// Attribution repeated at the start of every hunk one speaker owns.
+/// Authenticated ownership and provenance for one Markdown layer.
 #[derive(Clone)]
 pub(super) struct Attribution {
     /// Stable browser control model key. Empty names the containing message.
@@ -28,19 +28,33 @@ pub(super) struct Attribution {
     pub(super) badge: String,
     /// Board provenance following the attributed layer's final word once.
     pub(super) task_tail: String,
+    /// Whether the source lead repeats when nested quotes split this layer.
+    pub(super) repeat: bool,
 }
 
 impl Attribution {
     fn lead_html(&self, quote_depth: usize, opening: bool) -> String {
-        format!(
-            "<span class=\"message-controls-slot\" data-message-controls=\"{}\" \
-             data-message-quote-depth=\"{quote_depth}\"></span>\
-             <p class=\"message-attribution\">{}{}{}</p>",
-            super::escape_html_attribute(&self.controls_target),
-            self.signoff,
-            self.disposition,
-            if opening { self.badge.as_str() } else { "" },
-        )
+        let show = opening || self.repeat;
+        let controls = if show {
+            format!(
+                "<span class=\"message-controls-slot\" data-message-controls=\"{}\" \
+                 data-message-quote-depth=\"{quote_depth}\"></span>",
+                super::escape_html_attribute(&self.controls_target),
+            )
+        } else {
+            String::new()
+        };
+        let attribution = if show {
+            format!(
+                "<p class=\"message-attribution\">{}{}{}</p>",
+                self.signoff,
+                self.disposition,
+                if opening { self.badge.as_str() } else { "" },
+            )
+        } else {
+            String::new()
+        };
+        format!("{controls}{attribution}")
     }
 }
 
@@ -294,6 +308,11 @@ fn blocks(events: &[MarkdownEvent<'_>]) -> Vec<(Block, Range<usize>)> {
                     _ => Block::Other,
                 };
                 (kind, end)
+            }
+            MarkdownEvent::InlineHtml(html)
+                if html.starts_with("<div class=\"message-quote-card") =>
+            {
+                (Block::QuoteCard, index)
             }
             MarkdownEvent::InlineHtml(html) if html.as_ref() == STACK_OPEN => {
                 let end = events[index + 1..]

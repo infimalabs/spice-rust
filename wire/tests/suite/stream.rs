@@ -65,6 +65,7 @@ fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delive
         },
         authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
         badge: None,
+        review: None,
         delivery: None,
     };
     let operator = || wire::QuoteAuthor::Directive {
@@ -89,6 +90,44 @@ fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delive
     assert!(
         !directive(operator(), Vec::new(), false).is_valid_for("> hi"),
         "a steering directive always reached a lane"
+    );
+
+    let review = wire::MessageDirective {
+        badge: Some(wire::DirectiveBadge::Review),
+        review: Some(wire::MessageReview {
+            task: "APP-1kKRRsDR".parse().expect("fixture review task"),
+            finding: "missing boundary coverage".to_owned(),
+            guidance: wire::REVIEW_FEEDBACK_GUIDANCE.to_owned(),
+        }),
+        ..directive(operator(), lane_only(), false)
+    };
+    assert!(review.is_valid_for("> hi"));
+    let mut unguided = review.clone();
+    unguided
+        .review
+        .as_mut()
+        .expect("fixture review")
+        .guidance
+        .clear();
+    assert!(
+        !unguided.is_valid_for("> hi"),
+        "a typed review must carry its handling expectation"
+    );
+    assert!(
+        !wire::MessageDirective {
+            review: None,
+            ..review.clone()
+        }
+        .is_valid_for("> hi"),
+        "a REVIEW badge without its typed review is not a valid presentation"
+    );
+    assert!(
+        !wire::MessageDirective {
+            badge: None,
+            ..review.clone()
+        }
+        .is_valid_for("> hi"),
+        "typed review context cannot masquerade as an ordinary direction"
     );
 
     let delivered = |author, packet| wire::MessageDirective {

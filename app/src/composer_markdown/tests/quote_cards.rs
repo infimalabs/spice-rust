@@ -383,6 +383,7 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         attribution: attributed(operator()),
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         badge: None,
+        review: None,
         delivery: None,
     }];
     let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
@@ -532,6 +533,7 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             attribution: attributed(operator()),
             authored: authored.parse().expect("fixture instant"),
             badge: None,
+            review: None,
             delivery: None,
         }
     };
@@ -621,12 +623,13 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
     );
 }
 
-/// A quoted resident directive wears its typed kind once, in its own opening
-/// attribution where its words begin; resumed hunks after a nested quote and
-/// the answering card do not repeat it, and literal markers stay text.
+/// A typed review replaces its prose delivery envelope with one finding card.
+/// Its authenticated source, kind, and task lead the typed finding once, while
+/// typed handling guidance closes the card; discarded envelope text cannot
+/// become presentation structure.
 #[test]
-fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
-    let review = "> APP-1kKRRsDR\n>\n> > [REVIEW] missing coverage\n>\n> Verbalize the finding.";
+fn typed_review_replaces_its_delivery_envelope() {
+    let review = "> APP-1kKRRsDR\n>\n> > stale string finding\n>\n> stale envelope guidance";
     let plain = "> Keep one path.";
     let markdown = format!("{review}\n\n{plain}\n\nInternalized.");
     let directive = |key, quoted: &str, badge| {
@@ -641,6 +644,11 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
             }),
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
             badge,
+            review: (badge == Some(wire::DirectiveBadge::Review)).then(|| wire::MessageReview {
+                task: "APP-1kKRRsDR".parse().expect("fixture task"),
+                finding: "typed missing coverage\n\n> nested typed evidence".to_owned(),
+                guidance: "Verbalize this guidance; follow-ups are already boarded.".to_owned(),
+            }),
             delivery: None,
         }
     };
@@ -673,16 +681,34 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
         1,
         "{html}"
     );
+    let review_controls = format!("data-message-controls=\"{}\"", directives[0].quote_target,);
+    assert_eq!(html.matches(&review_controls).count(), 1, "{html}");
     assert!(!html.contains("message-taste-pill"), "{html}");
+    let review_quote = html.find("data-message-review=").expect("review quote");
+    let first_hunk = html.find("class=\"message-hunk\"").expect("first hunk");
     let signoff = html.find("message-quote-signoff").expect("quote signoff");
     let badge = html.find("class=\"message-review-pill\"").expect("badge");
-    let handle = html.find("APP-1kKRRsDR").expect("task handle");
+    let handle = html
+        .find("class=\"message-task-chip\"")
+        .expect("task handle");
+    let finding = html.find("typed missing coverage").expect("typed finding");
+    let guidance = html
+        .find("Verbalize this guidance; follow-ups are already boarded.")
+        .expect("typed guidance");
     let plain_words = html.find("Keep one path.").expect("plain quote");
     assert!(
-        signoff < badge && badge < handle && handle < plain_words,
+        review_quote < first_hunk
+            && first_hunk < signoff
+            && signoff < badge
+            && badge < handle
+            && handle < finding
+            && finding < guidance
+            && guidance < plain_words,
         "{html}"
     );
-    assert!(html.contains("[REVIEW] missing coverage"), "{html}");
+    assert_eq!(html.matches("<blockquote").count(), 2, "{html}");
+    assert!(!html.contains("stale string finding"), "{html}");
+    assert!(!html.contains("stale envelope guidance"), "{html}");
 }
 
 /// An outgoing MSG names its exact sender, every addressed occupant in header

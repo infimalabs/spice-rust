@@ -14,7 +14,7 @@ pub use prose::{MessageProseOrigin, superseded_prose};
 mod annotation;
 pub use annotation::{
     DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDelivery,
-    MessageDirective, MessageRecipient, MessageSend, valid_message_classifications,
+    MessageDirective, MessageRecipient, MessageReview, MessageSend, valid_message_classifications,
     valid_message_directives, valid_message_sends,
 };
 
@@ -22,6 +22,12 @@ pub use annotation::{
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
 /// Canonical control prefix carried by resident-generated peer-review feedback.
 pub const REVIEW_FEEDBACK_CONTROL_PREFIX: &str = "review-feedback:";
+/// System-owned expectation accompanying each typed review finding.
+pub const REVIEW_FEEDBACK_GUIDANCE: &str = concat!(
+    "Verbalize and internalize all noteworthy findings as working guidance—there is ",
+    "nothing else to capture or act on because follow-ups are already boarded!—continue ",
+    "working your current task."
+);
 /// Canonical control prefix carried by a resident-generated withheld-packet
 /// directive.
 pub const PACKET_WITHHELD_CONTROL_PREFIX: &str = "packet-withheld:";

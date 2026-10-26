@@ -473,7 +473,7 @@ mod tests {
                     text,
                     authored: true,
                     taste: false,
-                    review: false,
+                    review: None,
                     disposition: Disposition::Live,
                     quote_target,
                     media_quotes: Vec::new(),

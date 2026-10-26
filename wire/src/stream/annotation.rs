@@ -62,10 +62,26 @@ pub struct MessageDirective {
     /// typed provenance. The absent wire spelling means ordinary direction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<DirectiveBadge>,
+    /// Typed review feedback replacing the directive envelope in presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<MessageReview>,
     /// The delivery a top-level operator direction card presents. Only a
     /// plain operator direction, delivered rather than answered, carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<MessageDelivery>,
+}
+
+/// The public task handle and finding carried by resident-generated review
+/// feedback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageReview {
+    /// Current public handle of the reviewed task.
+    pub task: crate::TaskHandle,
+    /// Authenticated finding recorded by the review fact.
+    pub finding: String,
+    /// System-owned expectation for handling the finding.
+    pub guidance: String,
 }
 
 /// One plain operator direction as its receivers' transcripts recorded it.
@@ -97,6 +113,13 @@ impl MessageDirective {
             crate::QuoteAuthor::Directive { actor }
                 if crate::principal::ActingPrincipal::of(actor).is_some()
         );
+        let review_valid = match (self.badge, &self.review) {
+            (Some(DirectiveBadge::Review), Some(review)) => {
+                !review.finding.trim().is_empty() && !review.guidance.trim().is_empty()
+            }
+            (Some(DirectiveBadge::Review), None) | (_, Some(_)) => false,
+            (_, None) => true,
+        };
         start < end
             && text.get(start..end).is_some()
             && self.media_quotes.iter().all(|media| {
@@ -110,6 +133,7 @@ impl MessageDirective {
                     )
             })
             && !attribution.recipients.is_empty()
+            && review_valid
             && self
                 .delivery
                 .as_ref()

@@ -13,6 +13,14 @@ fn published(millis: u16) -> wire::Instant {
         .expect("fixture publication instant")
 }
 
+fn review_context() -> wire::MessageReview {
+    wire::MessageReview {
+        task: "APP-1kKRRsDR".parse().expect("fixture review task"),
+        finding: "preserve the finding".to_owned(),
+        guidance: wire::REVIEW_FEEDBACK_GUIDANCE.to_owned(),
+    }
+}
+
 fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
     PresentationDirectives::new(
         rows.iter()
@@ -28,7 +36,7 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
                         text: (*text).to_owned(),
                         authored: true,
                         taste: false,
-                        review: false,
+                        review: None,
                         disposition: wire::Disposition::Live,
                         quote_target: quote_target(key, text),
                         media_quotes: Vec::new(),
@@ -288,7 +296,7 @@ fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
             text: directive_text.to_owned(),
             authored: true,
             taste: true,
-            review: false,
+            review: None,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("dRyzkQp1P", directive_text),
             media_quotes: Vec::new(),
@@ -334,8 +342,6 @@ fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
 
 #[test]
 fn review_feedback_context_carries_its_badge_without_a_marker() {
-    assert!(is_review_feedback(Some("review-feedback:1kKRRsDR:42")));
-    assert!(!is_review_feedback(Some("lane-renewal-context")));
     let source = "00000000-0000-4000-8000-000000000002"
         .parse()
         .expect("fixture source");
@@ -358,7 +364,7 @@ fn review_feedback_context_carries_its_badge_without_a_marker() {
             .to_owned(),
             authored: true,
             taste: false,
-            review: true,
+            review: Some(review_context()),
             disposition: wire::Disposition::Acked,
             quote_target: quote_target(
                 "1kQnrzNZ",
@@ -386,6 +392,12 @@ fn review_feedback_context_carries_its_badge_without_a_marker() {
     assert_eq!(
         presented_badges(text, &directives, original),
         [Some(wire::DirectiveBadge::Review)],
+    );
+    let presentation = present_steering_acknowledgements(text, Some(&directives), original)
+        .expect("review message presents");
+    assert_eq!(
+        presentation.directive_contexts[0].review,
+        Some(review_context()),
     );
     assert_eq!(presented_kinds(text, &directives, original), []);
     assert_eq!(
@@ -630,7 +642,7 @@ fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
             text: "Accepted lane renewal context.".to_owned(),
             authored: false,
             taste: false,
-            review: false,
+            review: None,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
             media_quotes: Vec::new(),
@@ -836,7 +848,7 @@ fn every_allocated_key_a_header_names_presents_its_directive_without_earning_cre
             .expect("fixture directive");
         directive.lane = lane;
         directive.disposition = disposition;
-        directive.review = review;
+        directive.review = review.then(review_context);
         directive.retirement = (disposition != wire::Disposition::Live).then_some(retired_at);
     }
     for (text, presented) in [
@@ -910,7 +922,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
             text: "Keep the original response context.".to_owned(),
             authored: true,
             taste: false,
-            review: false,
+            review: None,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("1kQwPZtK", "Keep the original response context."),
             media_quotes: Vec::new(),
@@ -981,7 +993,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 text: "Continue".to_owned(),
                 authored: true,
                 taste: false,
-                review: false,
+                review: None,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("1kR5x8yR", "Continue"),
                 media_quotes: Vec::new(),
@@ -999,7 +1011,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 text: "Keep one deterministic path.".to_owned(),
                 authored: true,
                 taste: true,
-                review: false,
+                review: None,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("1kR5xJDD", "Keep one deterministic path."),
                 media_quotes: Vec::new(),
@@ -1075,7 +1087,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
                 text: "Accepted lane renewal context.".to_owned(),
                 authored: false,
                 taste: false,
-                review: false,
+                review: None,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
                 media_quotes: Vec::new(),
@@ -1093,7 +1105,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
                 text: "Keep retained direction readable.".to_owned(),
                 authored: true,
                 taste: false,
-                review: false,
+                review: None,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("1kQwPZtK", "Keep retained direction readable."),
                 media_quotes: Vec::new(),
@@ -1134,7 +1146,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
             text: "Keep the original response context.".to_owned(),
             authored: true,
             taste: false,
-            review: false,
+            review: None,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("1kQwPZtK", "Keep the original response context."),
             media_quotes: Vec::new(),

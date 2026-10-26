@@ -9,6 +9,24 @@ use wire::{Disposition, QuoteAttribution, QuoteAuthor, QuotePresentation, QuoteT
 /// The name an agent wears when its lane is absent from the roster.
 const UNAVAILABLE: &str = "unavailable";
 
+pub(super) fn push_typed_paragraph<'a>(events: &mut Vec<MarkdownEvent<'a>>, text: &'a str) {
+    events.push(MarkdownEvent::Start(Tag::Paragraph));
+    events.push(MarkdownEvent::Text(text.into()));
+    events.push(MarkdownEvent::End(TagEnd::Paragraph));
+}
+
+pub(super) fn skip_review_envelope_event(event: &MarkdownEvent<'_>, depth: &mut usize) -> bool {
+    if *depth == 0 {
+        return false;
+    }
+    match event {
+        MarkdownEvent::Start(Tag::BlockQuote(_)) => *depth += 1,
+        MarkdownEvent::End(TagEnd::BlockQuote(_)) => *depth -= 1,
+        _ => {}
+    }
+    true
+}
+
 /// Replace each structural quote link with its card. `speaker` is the lane the
 /// surrounding signoff names, which a quote addressed only to it leaves implied.
 pub(super) fn expand<'a>(
@@ -478,6 +496,7 @@ pub(super) fn send_attribution(
         disposition: String::new(),
         badge: String::new(),
         task_tail: send_contexts_html(send),
+        repeat: true,
     }
 }
 
@@ -494,7 +513,45 @@ pub(super) fn directive_attribution(
         disposition: String::new(),
         badge: directive_badges_html(context),
         task_tail: task_tail_html(&target),
+        repeat: context.review.is_none(),
     }
+}
+
+/// One typed review finding, independent of the prose envelope that delivered
+/// it. Its task leads the finding as structured context rather than recovered
+/// Markdown.
+pub(super) fn review_html(
+    context: &wire::MessageDirective,
+    agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
+    speaker: Option<wire::CanonicalUuid>,
+) -> String {
+    let review = context
+        .review
+        .as_ref()
+        .expect("review presentation carries typed review context");
+    let body = super::render_quote_card_body(
+        &review.finding,
+        &[],
+        agents,
+        sources,
+        &[],
+        super::Finish::QuoteCard {
+            attribution: directive_attribution(context, agents, sources, speaker),
+            leading_task: Some(&review.task),
+            trailing_guidance: Some(&review.guidance),
+            quote_depth: 1,
+            speaker: author_lane(&context.attribution.author),
+        },
+    );
+    format!(
+        concat!(
+            "<div class=\"message-quote-card message-review-card\" ",
+            "data-message-review=\"{}\"><div class=\"message-quote-body\">{}</div></div>"
+        ),
+        super::escape_html_attribute(review.task.as_str()),
+        body.html,
+    )
 }
 
 /// The quoted directive's classification, in the card head's own pill group.
@@ -608,7 +665,10 @@ fn render(
                         disposition,
                         badge: String::new(),
                         task_tail,
+                        repeat: true,
                     },
+                    leading_task: None,
+                    trailing_guidance: None,
                     quote_depth,
                     speaker: author_lane(&attribution.author),
                 },
@@ -651,7 +711,10 @@ fn render(
                         disposition,
                         badge: String::new(),
                         task_tail,
+                        repeat: true,
                     },
+                    leading_task: None,
+                    trailing_guidance: None,
                     quote_depth,
                     speaker: author_lane(&attribution.author),
                 },
