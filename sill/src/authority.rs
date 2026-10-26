@@ -48,6 +48,10 @@ pub fn owner_mode(path: &Path) -> io::Result<u32> {
 ///
 /// The caller must have refused links first: Unix follows a final symlink.
 ///
+/// Windows owner write includes deletion: an entry its owner may write stays
+/// removable even inside a directory without write, so sealing a directory
+/// protects only the entries already made read-only.
+///
 /// # Errors
 ///
 /// Returns `InvalidInput` when `mode` grants group or other access, or an
@@ -142,6 +146,23 @@ pub fn create_private_file(path: &Path) -> io::Result<File> {
 /// operating-system refusal renaming the entry.
 pub fn rename_no_replace(source: &Path, destination: &Path) -> io::Result<()> {
     platform::rename_no_replace(source, destination)
+}
+
+/// Let the current user atomically replace the file at `path` by renaming
+/// another entry over it.
+///
+/// Windows authorizes the replacement through the file's own `DELETE` grant or
+/// its parent's `FILE_DELETE_CHILD`, and an inherited deny can close the
+/// parent route. A private file written before owner grants carried `DELETE`
+/// therefore has its owner grant rewritten with `DELETE`; no other file, and
+/// no other principal's access, changes. Unix needs nothing, and a missing
+/// path is already replaceable.
+///
+/// # Errors
+///
+/// Returns the operating-system refusal reading or rewriting the grant.
+pub fn prepare_replacement(path: &Path) -> io::Result<()> {
+    platform::prepare_replacement(path)
 }
 
 /// Create `link` as a directory link to `target`.

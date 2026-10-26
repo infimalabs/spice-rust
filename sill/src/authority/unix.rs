@@ -30,6 +30,10 @@ pub(super) fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
     fs::set_permissions(path, Permissions::from_mode(mode))
 }
 
+pub(super) fn prepare_replacement(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 pub(super) fn set_file_mode(file: &File, mode: u32) -> io::Result<()> {
     file.set_permissions(Permissions::from_mode(mode))
 }

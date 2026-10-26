@@ -170,6 +170,8 @@ impl Destination {
                 .map_err(|error| Error::io(Operation::SyncFile, &source, error))?;
         }
 
+        prepare_replacement(&self.path)
+            .map_err(|error| Error::io(Operation::Replace, &self.path, error))?;
         fs::rename(&source, &self.path)
             .map_err(|error| Error::io(Operation::Replace, &source, error))?;
         sync_directory(&self.parent)
@@ -219,7 +221,9 @@ impl StagedWrite {
             return Err(self.fail(Operation::SyncFile, source));
         }
 
-        if let Err(source) = fs::rename(&temporary, &self.destination.path) {
+        let replaced = prepare_replacement(&self.destination.path)
+            .and_then(|()| fs::rename(&temporary, &self.destination.path));
+        if let Err(source) = replaced {
             return Err(self.fail(Operation::Replace, source));
         }
         self.temporary.take();
@@ -469,6 +473,19 @@ fn temporary_name() -> OsString {
 #[cfg(any(unix, windows))]
 fn create_stage(temporary: &Path) -> io::Result<File> {
     sill::authority::create_private_file(temporary)
+}
+
+/// Let the rename replace `destination` even where only its own `DELETE`
+/// grant can authorize that.
+#[cfg(any(unix, windows))]
+fn prepare_replacement(destination: &Path) -> io::Result<()> {
+    sill::authority::prepare_replacement(destination)
+}
+
+/// Wasm contract checks have no filesystem principals to grant.
+#[cfg(not(any(unix, windows)))]
+fn prepare_replacement(_destination: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Wasm contract checks have no filesystem principals to exclude.
