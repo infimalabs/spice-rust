@@ -19,7 +19,7 @@ impl SourceGuard {
         })
     }
 
-    fn verify<E: Executor>(&self, executor: &E) -> Result<(), TargetBuildError> {
+    pub(super) fn verify<E: Executor>(&self, executor: &E) -> Result<(), TargetBuildError> {
         let observed = capture_commit(executor, &self.git)?;
         if observed != self.commit {
             return Err(TargetBuildError::SourceMoved {
