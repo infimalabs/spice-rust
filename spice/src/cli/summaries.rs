@@ -124,7 +124,7 @@ const SUMMARIES: &[(&str, &str)] = &[
     ),
     (
         "lane effort",
-        "Read or change the effort one lane launches with",
+        "Read, set, or --clear the effort one lane launches with",
     ),
     ("lane fast", "Turn fast mode on or off for one lane"),
     ("lane import", "Wake one vacant lane into another worktree"),
@@ -134,7 +134,7 @@ const SUMMARIES: &[(&str, &str)] = &[
     ),
     (
         "lane model",
-        "Read or change the model one lane launches with",
+        "Read, set, or --clear the model one lane launches with",
     ),
     (
         "lane purge",

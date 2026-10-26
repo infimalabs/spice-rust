@@ -1075,7 +1075,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["lane", "model"],
-        "lane model ID [MODEL]",
+        "lane model ID [MODEL] [--clear]",
         Command,
         [LaneRetuned, LaneRuntimeRetuned],
         Reply,
@@ -1083,7 +1083,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["lane", "effort"],
-        "lane effort ID [EFFORT]",
+        "lane effort ID [EFFORT] [--clear]",
         Command,
         [LaneEffortRetuned, LaneRuntimeRetuned],
         Reply,

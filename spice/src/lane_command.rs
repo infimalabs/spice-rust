@@ -7,8 +7,8 @@ use clap::ArgMatches;
 use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::intent::{
-    CommandAnswer, LaneAction, LaneAnswer, LaneEffortRetune, LaneFastRetune, LaneRecall,
-    LaneRetune, LaneSeat, LaneState,
+    CommandAnswer, LaneAction, LaneAnswer, LaneAnswerRow, LaneEffortRetune, LaneFastRetune,
+    LaneRecall, LaneRetune, LaneSeat, LaneState, TextAnswer,
 };
 use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
 
@@ -330,17 +330,144 @@ fn state(
     )
 }
 
-/// State the model spelling one seated lane's next launch runs.
+/// What one `lane model` or `lane effort` invocation asks of a seat.
+#[derive(Debug, PartialEq, Eq)]
+enum SeatEdit {
+    /// Report the seat's setting and change nothing.
+    Read,
+    /// Pin the seat to this spelling.
+    Set(String),
+    /// Return the seat to the value its vendor is configured to launch with.
+    Clear,
+}
+
+/// The seat edit named by the optional `value` argument and the `--clear`
+/// flag: a value sets, `--clear` clears, neither reads, and both are refused.
+fn seat_edit(matches: &ArgMatches, value: &str) -> Result<SeatEdit, Outcome<CommandAnswer>> {
+    let named = matches
+        .get_one::<String>(value)
+        .map(|named| named.trim().to_owned());
+    match (named, matches.get_flag("clear")) {
+        (Some(named), false) => Ok(SeatEdit::Set(named)),
+        (None, true) => Ok(SeatEdit::Clear),
+        (None, false) => Ok(SeatEdit::Read),
+        (Some(named), true) => Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::clear-conflict".to_owned(),
+                Some("clear".to_owned()),
+                Some(format!("either {value} or --clear")),
+                Some(named),
+            )
+            .with_detail("name a value to pin the seat or --clear to follow the vendor, not both"),
+        ))),
+    }
+}
+
+/// Which seat setting a read reports.
+#[derive(Clone, Copy)]
+enum SeatSetting {
+    Model,
+    Effort,
+}
+
+impl SeatSetting {
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Effort => "effort",
+        }
+    }
+}
+
+/// Report the model or effort one lane's next launch runs and where it comes
+/// from, without sending a command: the seat's own override, or the default
+/// its vendor launches with under the lane worktree's configuration.
+fn seat_read(
+    serve: &Path,
+    matches: &ArgMatches,
+    setting: SeatSetting,
+    ambient: &Ambient,
+) -> Outcome<CommandAnswer> {
+    let lane = match lane_id(matches) {
+        Ok(lane) => lane,
+        Err(outcome) => return outcome,
+    };
+    let Reply { position, body } = match read_lanes(serve, ambient) {
+        Ok(reply) => reply,
+        Err(outcome) => return outcome,
+    };
+    let Some(row) = body.lanes.iter().find(|row| row.lane == lane) else {
+        return Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::missing".to_owned(),
+                Some("lane".to_owned()),
+                Some("one current lane".to_owned()),
+                Some(lane.to_string()),
+            )
+            .with_detail("read lane and retry with a current lane identity"),
+        ));
+    };
+    let pinned = match setting {
+        SeatSetting::Model => row.seat_model.as_deref(),
+        SeatSetting::Effort => row.seat_effort.as_deref(),
+    };
+    let text = match pinned {
+        Some(pinned) => format!("{pinned} (lane override)"),
+        None => match vendor_default(row, setting) {
+            Ok(Some(default)) => format!("{default} (vendor default)"),
+            Ok(None) => format!(
+                "vendor default ({} declares no {})",
+                row.vendor,
+                setting.noun()
+            ),
+            Err(outcome) => return outcome,
+        },
+    };
+    Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Text(TextAnswer { text }),
+    })
+}
+
+/// The model or effort a seat without an override launches with, resolved as
+/// the launch does: the lane's vendor under its own worktree's configuration.
+/// A vendor with no compiled declaration, such as the demo's simulated one,
+/// never launches and so has no default to name.
+fn vendor_default(
+    row: &LaneAnswerRow,
+    setting: SeatSetting,
+) -> Result<Option<String>, Outcome<CommandAnswer>> {
+    let Some(vendor) = spice::extension::vendor(row.vendor.as_str()) else {
+        return Ok(None);
+    };
+    let repository = Repository::discover(Path::new(&row.worktree))
+        .map_err(|error| environment_fault("lane::worktree-unresolved", &error.to_string()))?;
+    let resolved = spice::config::load_repository(&repository, &[])
+        .map_err(|error| configuration_refusal(&error))?;
+    let launch = vendor.launch_values(resolved.root());
+    Ok(Some(match setting {
+        SeatSetting::Model => launch.model.to_owned(),
+        SeatSetting::Effort => launch.effort.as_str().to_owned(),
+    }))
+}
+
+/// Read, pin, or clear the model spelling one seated lane's next launch runs.
 ///
-/// Naming no spelling clears the seat, which is how a lane returns to the
-/// vendor's configured model: the request states the seat outright rather than
-/// describing a change to it, so absence is an instruction and not an omission.
+/// Naming no spelling reads the seat. `--clear` sends a retune naming no
+/// spelling, which returns the lane to the vendor's configured model: the
+/// request states the seat outright rather than describing a change to it.
 fn model(
     serve: &Path,
     matches: &ArgMatches,
     contract: &Contract,
     ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
+    let model = match seat_edit(matches, "MODEL") {
+        Ok(SeatEdit::Read) => return seat_read(serve, matches, SeatSetting::Model, ambient),
+        Ok(SeatEdit::Set(model)) => Some(model),
+        Ok(SeatEdit::Clear) => None,
+        Err(outcome) => return outcome,
+    };
     let (lane, topology_revision) = match retune_target(serve, matches, ambient) {
         Ok(target) => target,
         Err(outcome) => return outcome,
@@ -348,10 +475,7 @@ fn model(
     let body = LaneRetune {
         topology_revision,
         lane,
-        model: matches
-            .get_one::<String>("MODEL")
-            .map(|model| model.trim().to_owned())
-            .filter(|model| !model.is_empty()),
+        model,
     };
     command_client::execute(
         serve,
@@ -360,21 +484,22 @@ fn model(
         ambient,
     )
 }
-/// State the reasoning effort one seated lane's next launch runs.
+/// Read, pin, or clear the reasoning effort one seated lane's next launch runs.
+///
+/// Naming no effort reads the seat; `--clear` returns it to the vendor's
+/// configured effort.
 fn effort(
     serve: &Path,
     matches: &ArgMatches,
     contract: &Contract,
     ambient: &Ambient,
 ) -> Outcome<CommandAnswer> {
-    let (lane, topology_revision) = match retune_target(serve, matches, ambient) {
-        Ok(target) => target,
+    let effort = match seat_edit(matches, "EFFORT") {
+        Ok(SeatEdit::Read) => return seat_read(serve, matches, SeatSetting::Effort, ambient),
+        Ok(SeatEdit::Set(effort)) => Some(effort),
+        Ok(SeatEdit::Clear) => None,
         Err(outcome) => return outcome,
     };
-    let effort = matches
-        .get_one::<String>("EFFORT")
-        .map(|effort| effort.trim().to_owned())
-        .filter(|effort| !effort.is_empty());
     if effort
         .as_deref()
         .is_some_and(|effort| effort.parse::<vendor::Effort>().is_err())
@@ -384,6 +509,10 @@ fn effort(
             "effort must be low, medium, high, xhigh, or max",
         );
     }
+    let (lane, topology_revision) = match retune_target(serve, matches, ambient) {
+        Ok(target) => target,
+        Err(outcome) => return outcome,
+    };
     let body = LaneEffortRetune {
         topology_revision,
         lane,
@@ -622,5 +751,39 @@ mod tests {
                 .as_str(),
             "configured"
         );
+    }
+
+    const LANE: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn edit(
+        leaf: &str,
+        value: &str,
+        arguments: &[&str],
+    ) -> Result<SeatEdit, Outcome<CommandAnswer>> {
+        let matches = crate::cli::command()
+            .try_get_matches_from(["spice", "lane", leaf, LANE].iter().chain(arguments))
+            .expect("lane retune parses");
+        let (_, lane) = matches.subcommand().expect("lane subcommand exists");
+        let (_, leaf) = lane.subcommand().expect("retune subcommand exists");
+        seat_edit(leaf, value)
+    }
+
+    #[test]
+    fn omitting_the_value_reads_and_only_clear_clears() {
+        for (leaf, value, named) in [
+            ("model", "MODEL", "openai/gpt-5.5"),
+            ("effort", "EFFORT", "high"),
+        ] {
+            assert_eq!(edit(leaf, value, &[]).ok(), Some(SeatEdit::Read));
+            assert_eq!(
+                edit(leaf, value, &[named]).ok(),
+                Some(SeatEdit::Set(named.to_owned()))
+            );
+            assert_eq!(edit(leaf, value, &["--clear"]).ok(), Some(SeatEdit::Clear));
+            assert!(matches!(
+                edit(leaf, value, &[named, "--clear"]),
+                Err(Outcome::Refusal(_))
+            ));
+        }
     }
 }

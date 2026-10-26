@@ -62,7 +62,7 @@ impl Selection<'_> {
                     "lane::effort-invalid",
                     Some(closed_efforts()),
                     request.effort.clone(),
-                    "choose low, medium, high, xhigh, or max; omit it to follow vendor configuration",
+                    "choose low, medium, high, xhigh, or max; clear it to follow vendor configuration",
                 ))
             }
             _ => None,
