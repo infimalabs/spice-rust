@@ -24,8 +24,8 @@ a read-only workspace, empty temporary caches, and no network.
 
 ## Container invocations
 
-Containers are a release-proof exception, never a development prerequisite.
-Exactly three production surfaces invoke one:
+Containers are a release exception, never a development prerequisite. Exactly
+four production surfaces invoke one:
 
 - `proof-image build` builds, inspects, self-checks with networking disabled,
   and saves the image. Native Darwin tools cannot replace it: its product is the
@@ -38,6 +38,13 @@ Exactly three production surfaces invoke one:
   supplies the read-only workspace, network namespace, fresh cache mounts, exact
   platform, and one attested scratch owner. The Darwin target uses the
   [sealed native runner](../proof-runner/README.md) instead.
+- `stage-target x86_64-unknown-linux-musl` on a non-Linux host runs the native
+  Linux `stage-target` in the pinned image, launched by
+  [`proof/src/container/stage.rs`](../../proof/src/container/stage.rs). Such a
+  host can neither link the musl release with a pinned linker nor execute it to
+  read its version. The worktree and its Git common directory are read-only,
+  `dist/stage` is the one writable worktree path, the Cargo home and target
+  are fresh, and the network is disabled. A Linux host stages natively.
 
 Any further production invocation must declare its constraint here.
 

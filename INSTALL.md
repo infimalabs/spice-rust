@@ -162,6 +162,24 @@ Mach-O cannot carry a stapled ticket, so its first Gatekeeper assessment needs
 network access. `share-darwin` does not mutate or replace any sealed release
 artifact.
 
+## Stage the Linux release on macOS
+
+A Mac cannot link or run the Linux release, so
+`spice dev xtask -- stage-target x86_64-unknown-linux-musl --unsigned` runs
+that staging inside the pinned `linux/amd64` proof image and writes the
+payload to this worktree's `dist/stage`. The host needs Docker or Podman
+named once in Git-common configuration and the pinned image loaded:
+
+```sh
+spice config proof.container /usr/local/bin/docker
+spice dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
+```
+
+Without an archive, `spice dev xtask -- proof-image build` builds the image
+and writes that archive. Staging refuses before any build while either is
+missing. It runs emulated on Apple silicon and builds from a cold Cargo
+target each time.
+
 ## Hook authority
 
 One repository has one effective hook authority. Preview inspects every linked
