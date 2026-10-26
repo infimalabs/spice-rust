@@ -60,6 +60,7 @@ pub struct Root {
     serve: serve::Config,
     say: serve::SpeechConfig,
     proof: proof::Config,
+    release: dist::ReleaseConfig,
 }
 
 impl Root {
@@ -163,6 +164,12 @@ impl Root {
     #[must_use]
     pub const fn proof(&self) -> &proof::Config {
         &self.proof
+    }
+
+    /// Machine-local Developer ID names for Darwin release staging.
+    #[must_use]
+    pub const fn release(&self) -> &dist::ReleaseConfig {
+        &self.release
     }
 }
 

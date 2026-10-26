@@ -22,9 +22,9 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
-    "seal-darwin [--output DIR]|",
+    "seal-darwin [--output DIR] [--unsigned]|",
     "share-darwin EXECUTABLE --identity IDENTITY --notary-profile PROFILE|",
-    "stage-target TARGET|windows-appliance|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
+    "stage-target TARGET [--unsigned]|windows-appliance|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
     "windows-guest <provision [--replace]|start|stop|status|reset|",
     "sync [--artifact PATH]... [--source PATH]...|",
     "run [--timeout SECONDS] [--output-bytes BYTES] -- PROGRAM [ARG...]>>"
@@ -103,14 +103,12 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("share-darwin") => {
             run_share_darwin(arguments.collect(), &mut output)
         }
-        Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
-            run_stage_target(
-                arguments.next(),
-                &ambient,
-                &mut output,
-                &mut io::stderr().lock(),
-            )
-        }
+        Some(value) if value == OsStr::new("stage-target") => run_stage_target(
+            arguments.collect(),
+            &ambient,
+            &mut output,
+            &mut io::stderr().lock(),
+        ),
         Some(value) if is_exact_command(value, "windows-appliance", arguments.len(), 0) => {
             run_windows_appliance(&ambient, &mut output)
         }
@@ -282,19 +280,36 @@ fn run_seal_darwin(
     ambient: &Ambient,
     output: &mut impl io::Write,
 ) -> CommandResult {
-    let destination = match arguments.as_slice() {
-        [] => None,
-        [flag, directory] if flag == OsStr::new("--output") => Some(PathBuf::from(directory)),
-        _ => {
-            eprintln!("{}", help());
-            return Err(usage_error().into());
+    let mut destination = None;
+    let mut unsigned = false;
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
+        match (argument.to_str(), destination.is_none()) {
+            (Some("--output"), true) => {
+                let Some(directory) = arguments.next() else {
+                    eprintln!("{}", help());
+                    return Err(usage_error().into());
+                };
+                destination = Some(PathBuf::from(directory));
+            }
+            (Some("--unsigned"), _) if !unsigned => unsigned = true,
+            _ => {
+                eprintln!("{}", help());
+                return Err(usage_error().into());
+            }
         }
-    };
+    }
     const TARGET: &str = "aarch64-apple-darwin";
+    let signing = darwin_signing(unsigned)?;
     let root = env::current_dir()?;
     xtask::seal_runner(&root, output)?;
     preflight_native_release(TARGET)?;
-    let build = xtask::stage_target(TARGET, release_environment(ambient), output)?;
+    let build = xtask::stage_target(
+        TARGET,
+        release_environment(ambient),
+        signing.as_ref(),
+        output,
+    )?;
     if let Some(directory) = destination {
         xtask::place_executable(&build.executable, &directory, output)?;
     }
@@ -310,29 +325,31 @@ fn run_share_darwin(arguments: Vec<OsString>, output: &mut impl io::Write) -> Co
         eprintln!("{}", help());
         return Err(usage_error().into());
     }
-    let Some(identity) = identity.to_str() else {
+    let (Some(identity), Some(profile)) = (identity.to_str(), profile.to_str()) else {
         eprintln!("{}", help());
         return Err(usage_error().into());
     };
-    let Some(profile) = profile.to_str() else {
-        eprintln!("{}", help());
-        return Err(usage_error().into());
-    };
-    xtask::share_darwin(
-        &xtask::ShareDarwinRequest::new(executable, identity, profile),
-        output,
-    )
-    .map_err(Into::into)
+    let signing = dist::DarwinSigning::new(
+        dist::DeveloperIdentity::new(identity)?,
+        dist::NotaryProfile::new(profile)?,
+    );
+    xtask::share_darwin(&xtask::ShareDarwinRequest::new(executable, signing), output)
+        .map_err(Into::into)
 }
 
 fn run_stage_target(
-    argument: Option<OsString>,
+    arguments: Vec<OsString>,
     ambient: &Ambient,
     output: &mut impl io::Write,
     error_output: &mut impl io::Write,
 ) -> CommandResult {
-    let target = argument.expect("one release target was admitted");
-    let Some(target) = target.to_str() else {
+    let (target, unsigned) = match arguments.as_slice() {
+        [target] => (target.to_str(), false),
+        [target, flag] if flag == OsStr::new("--unsigned") => (target.to_str(), true),
+        _ => (None, false),
+    };
+    let Some(target) = target.filter(|target| !unsigned || *target == "aarch64-apple-darwin")
+    else {
         eprintln!("{}", help());
         return Err(usage_error().into());
     };
@@ -349,11 +366,45 @@ fn run_stage_target(
             })
             .map_err(Into::into);
     }
+    let signing = if target == "aarch64-apple-darwin" {
+        darwin_signing(unsigned)?
+    } else {
+        None
+    };
     preflight_native_release(target).and_then(|()| {
-        xtask::stage_target(target, environment, output)
+        xtask::stage_target(target, environment, signing.as_ref(), output)
             .map(|_| ())
             .map_err(Into::into)
     })
+}
+
+/// The Developer ID pair Darwin staging signs with. Without one, staging
+/// refuses before any build unless the operator explicitly asks for an
+/// unsigned executable, which Gatekeeper blocks on every other Mac.
+fn darwin_signing(
+    unsigned: bool,
+) -> Result<Option<dist::DarwinSigning>, Box<dyn std::error::Error>> {
+    if unsigned {
+        return Ok(None);
+    }
+    let repository = spice::repository::Repository::discover(Path::new("."))?;
+    let config = spice::config::load_repository(&repository, &[])?;
+    config.root().release().darwin_signing()?.map_or_else(
+        || {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                concat!(
+                    "Darwin release staging signs with a Developer ID; set ",
+                    "release.darwin.identity and release.darwin.notary_profile in ",
+                    "Git-common configuration (spice config KEY VALUE previews each write ",
+                    "and its --apply=DIGEST applies it), or pass --unsigned for an ",
+                    "executable Gatekeeper blocks"
+                ),
+            )
+            .into())
+        },
+        |signing| Ok(Some(signing)),
+    )
 }
 fn run_windows_msvc(ambient: &Ambient, output: &mut impl io::Write) -> CommandResult {
     xtask::windows_msvc(&ambient.environment()?, output)

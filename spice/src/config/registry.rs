@@ -770,6 +770,20 @@ configuration_registry! {
         class: WorktreeLocal,
         flag: None,
     }
+    fixed "release.darwin.identity" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
+    fixed "release.darwin.notary_profile" {
+        kind: String,
+        builtin: Some(Builtin::Absent),
+        layers: LOCAL,
+        class: MachineLocal,
+        flag: None,
+    }
 }
 
 /// Complete descriptor registry in stable configuration order.

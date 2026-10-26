@@ -704,6 +704,8 @@ fn authored_documents_can_address_every_registry_descriptor() {
             "{}",
             "[proof]\ncontainer = \"{}\"\n",
             "[vendor.omp]\nmodel = \"omp-current\"\neffort = \"max\"\n",
+            "[release.darwin]\nidentity = \"Developer ID Application: Holder (TEAM123456)\"\n",
+            "notary_profile = \"spice\"\n",
         ),
         LOCAL_MACHINE_DOCUMENT,
         absolute("container"),

@@ -134,15 +134,18 @@ impl Fixture {
     fn request(&self) -> ShareDarwinRequest {
         ShareDarwinRequest::new(
             self.root.join("spice"),
-            "Developer ID Application: Example (TEAMID)",
-            "release",
+            DarwinSigning::new(
+                dist::DeveloperIdentity::new("Developer ID Application: Example (TEAMID)")
+                    .expect("fixture identity"),
+                dist::NotaryProfile::new("release").expect("fixture profile"),
+            ),
         )
     }
 
     fn identity_line(&self) -> String {
         format!(
             "  1) ABCDEF \"{}\"\n     1 valid identities found\n",
-            self.request().identity
+            self.request().signing.identity().as_str()
         )
     }
 }
@@ -178,6 +181,7 @@ impl ScriptedRunner {
 impl Runner for ScriptedRunner {
     fn run(
         &self,
+        _label: &'static str,
         program: &Path,
         arguments: &[OsString],
     ) -> Result<ProcessOutput, ShareDarwinError> {

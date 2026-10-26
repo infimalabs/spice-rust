@@ -6,6 +6,8 @@ use spice::serve::rack::{Namespace, Rack, SKILL};
 use super::*;
 
 mod artifact_capture;
+#[cfg(unix)]
+mod signing;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const COMMIT: &str = "1111111111111111111111111111111111111111";
@@ -128,6 +130,7 @@ struct FakeExecutor {
     executable_uuid: RefCell<Vec<u8>>,
     dsym_uuid: RefCell<Vec<u8>>,
     records: RefCell<Vec<CommandRecord>>,
+    keychain_holds_identity: Cell<bool>,
 }
 
 impl FakeExecutor {
@@ -147,6 +150,7 @@ impl FakeExecutor {
             executable_uuid: RefCell::new(format!("UUID: {UUID} (arm64) executable\n").into()),
             dsym_uuid: RefCell::new(format!("UUID: {UUID} (arm64) symbols\n").into()),
             records: RefCell::new(Vec::new()),
+            keychain_holds_identity: Cell::new(true),
         }
     }
 
@@ -222,6 +226,8 @@ impl Executor for FakeExecutor {
             "app-build" | "dsym-generate" | "native-strip" => {
                 format!("{} complete\n", command.label).into_bytes()
             }
+            #[cfg(unix)]
+            label if signing::STEPS.contains(&label) => self.signing_step(&command, refused),
             "canvas-version" => format!("spice {FIXTURE_VERSION} app {GENERATION}\n").into_bytes(),
             "source-status" if self.tracked_dirty.get() => b" M xtask/src/lib.rs\n".to_vec(),
             "source-status" => self.untracked.borrow().clone().into_bytes(),
