@@ -1,12 +1,14 @@
-//! The product version every build derives from its source commit.
+//! The product version every build derives from `dist/VERSION` and its
+//! source commit.
 //!
-//! A version is the commit's calendar instant in UTC: the major is the
-//! two-digit year followed by the day of the year (`26298` on 2026-10-25), the
-//! minor is the second of that day, and the patch is 0. `dist/VERSION` reads
-//! `calendar` on main. A patch line replaces it with its full release version,
-//! whose patch counts up from 1, because a patch commit's own instant would
-//! move the major and minor. A build that never passes through release staging
-//! is marked `-dev`.
+//! `dist/VERSION` holds the major number a person decides, `0` on main. The
+//! commit's UTC instant supplies the rest: the minor is the two-digit year
+//! followed by the day of the year (`26298` on 2026-10-25), and the patch is
+//! ten times the second of that day, so every main version ends in 0. A patch
+//! line replaces the major with its full release version: its base's version
+//! plus 1 through 9, because a patch commit's own instant would move the minor
+//! and patch. A build that never passes through release staging is marked
+//! `-dev`.
 
 use std::fmt;
 
@@ -17,50 +19,64 @@ use wire::manifest::ProductVersion;
 use crate::authority::{AuthorityError, tracked_text_line};
 
 const VERSION_TEXT: &str = ::std::include_str!("../VERSION");
-const CALENDAR: &str = "calendar";
 const DEV: &str = "dev";
 const SECONDS_PER_DAY: i64 = 86_400;
+/// Patch slots per second: the derived patch ends in 0, and a patch line
+/// counts its last digit up from 1.
+const PATCH_SLOTS: u64 = 10;
 
-/// What `dist/VERSION` tracks: the calendar derivation or a patch line's pin.
+/// What `dist/VERSION` tracks: the major number or a patch line's pin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrackedVersion {
-    /// Main: the source commit's instant supplies the whole version.
-    Calendar,
+    /// Main: the source commit's instant supplies the minor and patch.
+    Major(u64),
     /// A patch line's exact release version.
     Pin(ProductVersion),
 }
 
 impl TrackedVersion {
-    /// Admit one tracked version: `calendar`, or a canonical
-    /// `MAJOR.MINOR.PATCH` with a nonzero patch and neither pre-release nor
-    /// build metadata.
+    /// Admit one tracked version: a canonical major number, or a canonical
+    /// `MAJOR.MINOR.PATCH` without pre-release or build metadata whose patch
+    /// is a derived second's patch plus 1 through 9.
     ///
     /// # Errors
     ///
     /// Refuses any other spelling.
     pub fn parse(text: &str) -> Result<Self, TrackedVersionError> {
-        if text == CALENDAR {
-            return Ok(Self::Calendar);
-        }
         let refused = || TrackedVersionError(text.to_owned());
-        if text.contains(['-', '+']) || text.ends_with(".0") {
+        if !text.contains('.') {
+            return canonical_number(text)
+                .then(|| text.parse().ok())
+                .flatten()
+                .map(Self::Major)
+                .ok_or_else(refused);
+        }
+        if text.contains(['-', '+']) {
             return Err(refused());
         }
-        ProductVersion::parse(text)
-            .map(Self::Pin)
-            .map_err(|_| refused())
+        let pin = ProductVersion::parse(text).map_err(|_| refused())?;
+        let patch: u64 = text
+            .rsplit('.')
+            .next()
+            .and_then(|patch| patch.parse().ok())
+            .ok_or_else(refused)?;
+        let day_patches = SECONDS_PER_DAY.unsigned_abs() * PATCH_SLOTS;
+        if patch.is_multiple_of(PATCH_SLOTS) || patch >= day_patches {
+            return Err(refused());
+        }
+        Ok(Self::Pin(pin))
     }
 
-    /// The product version a build of `source` reports: the calendar version
-    /// of its instant, or the pin verbatim, with `-dev` on a build outside
-    /// release staging. A calendar build unbound to any commit reports
-    /// `0.0.0`, below every derived version.
+    /// The product version a build of `source` reports: the major with the
+    /// minor and patch of its instant, or the pin verbatim, with `-dev` on a
+    /// build outside release staging. A build unbound to any commit reports
+    /// `MAJOR.0.0`, below every derived version of its major.
     #[must_use]
     pub fn product(&self, source: Option<SourceInstant>, build: Build) -> ProductVersion {
         let core = match self {
-            Self::Calendar => source.map_or_else(
-                || "0.0.0".to_owned(),
-                |instant| format!("{}.{}.0", instant.major, instant.minor),
+            Self::Major(major) => source.map_or_else(
+                || format!("{major}.0.0"),
+                |instant| format!("{major}.{}.{}", instant.minor, instant.patch),
             ),
             Self::Pin(pin) => pin.as_str().to_owned(),
         };
@@ -75,7 +91,7 @@ impl TrackedVersion {
 impl fmt::Display for TrackedVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Calendar => formatter.write_str(CALENDAR),
+            Self::Major(major) => write!(formatter, "{major}"),
             Self::Pin(pin) => formatter.write_str(pin.as_str()),
         }
     }
@@ -83,15 +99,17 @@ impl fmt::Display for TrackedVersion {
 
 /// Why one tracked version was refused.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("tracked version is neither calendar nor MAJOR.MINOR.PATCH with a nonzero patch: {0:?}")]
+#[error(
+    "tracked version is neither a canonical major number nor MAJOR.MINOR.PATCH whose patch adds 1 through 9 to a derived patch: {0:?}"
+)]
 pub struct TrackedVersionError(String);
 
-/// A source commit's calendar instant in UTC: the two-digit year followed by
-/// the day of the year, then the second of that day.
+/// A source commit's UTC instant as a minor and patch: the two-digit year
+/// followed by the day of the year, then ten times the second of that day.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SourceInstant {
-    major: u64,
     minor: u64,
+    patch: u64,
 }
 
 impl SourceInstant {
@@ -112,13 +130,13 @@ impl SourceInstant {
             return Err(refused());
         }
         Ok(Self {
-            major: ((year - 2000) * 1000 + i64::from(date.day_of_year())).unsigned_abs(),
-            minor: seconds.rem_euclid(SECONDS_PER_DAY).unsigned_abs(),
+            minor: ((year - 2000) * 1000 + i64::from(date.day_of_year())).unsigned_abs(),
+            patch: seconds.rem_euclid(SECONDS_PER_DAY).unsigned_abs() * PATCH_SLOTS,
         })
     }
 }
 
-/// Why a source commit has no calendar instant.
+/// Why a source commit has no version instant.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("committer instant {0}s falls outside 2000 through 2099 UTC")]
 pub struct SourceInstantError(i64);
@@ -153,6 +171,12 @@ pub fn admit_tracked_version(text: &str) -> Result<TrackedVersion, AuthorityErro
     )?)?)
 }
 
+fn canonical_number(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && (value == "0" || !value.starts_with('0'))
+}
+
 #[cfg(test)]
 mod tests {
     use std::cmp::Ordering;
@@ -167,71 +191,85 @@ mod tests {
         SourceInstant::new(second(utc)).expect("supported instant")
     }
 
-    fn calendar(utc: &str, build: Build) -> ProductVersion {
-        TrackedVersion::Calendar.product(Some(at(utc)), build)
+    fn main(utc: &str, build: Build) -> ProductVersion {
+        TrackedVersion::Major(0).product(Some(at(utc)), build)
+    }
+
+    fn pin(text: &str) -> ProductVersion {
+        match TrackedVersion::parse(text) {
+            Ok(TrackedVersion::Pin(pin)) => pin,
+            other => panic!("{text} is a pin: {other:?}"),
+        }
     }
 
     #[test]
-    fn tracked_versions_admit_calendar_or_a_nonzero_patch_pin_only() {
-        assert_eq!(
-            TrackedVersion::parse("calendar"),
-            Ok(TrackedVersion::Calendar)
-        );
-        assert!(matches!(
-            TrackedVersion::parse("26298.34704.1"),
-            Ok(TrackedVersion::Pin(_))
-        ));
+    fn tracked_versions_admit_a_major_or_a_patch_slot_pin_only() {
+        assert_eq!(TrackedVersion::parse("0"), Ok(TrackedVersion::Major(0)));
+        assert_eq!(TrackedVersion::parse("12"), Ok(TrackedVersion::Major(12)));
+        for admitted in ["0.26298.347041", "0.26298.347049", "1.27005.1", "0.26298.863999"] {
+            assert_eq!(pin(admitted).as_str(), admitted);
+        }
         for refused in [
             "",
-            "0",
-            "Calendar",
-            " calendar",
-            "26298.34704",
-            "26298.34704.0",
-            "26298.34704.1-dev",
-            "26298.34704.1+build",
-            "v26298.34704.1",
-            "26298.34704.1.0",
+            "01",
+            "calendar",
+            " 0",
+            "0.26298",
+            "0.26298.347040",
+            "0.26298.0",
+            "0.26298.864001",
+            "0.26298.347041-dev",
+            "0.26298.347041+build",
+            "v0.26298.347041",
+            "0.26298.347041.0",
+            "0.026298.347041",
         ] {
             assert!(TrackedVersion::parse(refused).is_err(), "{refused:?}");
         }
         assert_eq!(
             current_tracked_version().expect("tracked version admits"),
-            TrackedVersion::Calendar
+            TrackedVersion::Major(0)
         );
     }
 
     #[test]
-    fn calendar_versions_spell_year_day_second_and_dev_marker() {
+    fn main_versions_spell_major_year_day_ten_times_second_and_dev_marker() {
         for (utc, staged) in [
-            ("2026-10-25T09:38:24Z", "26298.34704.0"),
-            ("2027-01-05T00:00:00Z", "27005.0.0"),
-            ("2028-12-31T23:59:59Z", "28366.86399.0"),
-            ("2000-01-01T00:00:00Z", "1.0.0"),
-            ("2099-12-31T23:59:59Z", "99365.86399.0"),
+            ("2026-10-25T09:38:24Z", "0.26298.347040"),
+            ("2027-01-05T00:00:00Z", "0.27005.0"),
+            ("2028-12-31T23:59:59Z", "0.28366.863990"),
+            ("2000-01-01T00:00:00Z", "0.1.0"),
+            ("2099-12-31T23:59:59Z", "0.99365.863990"),
         ] {
-            assert_eq!(calendar(utc, Build::Staged).as_str(), staged, "{utc}");
+            assert_eq!(main(utc, Build::Staged).as_str(), staged, "{utc}");
             assert_eq!(
-                calendar(utc, Build::Dev).as_str(),
+                main(utc, Build::Dev).as_str(),
                 format!("{staged}-dev"),
                 "{utc}"
             );
         }
         assert_eq!(
-            TrackedVersion::Calendar
+            TrackedVersion::Major(1)
+                .product(Some(at("2026-10-25T09:38:24Z")), Build::Staged)
+                .as_str(),
+            "1.26298.347040"
+        );
+        assert_eq!(
+            TrackedVersion::Major(0)
                 .product(None, Build::Dev)
                 .as_str(),
             "0.0.0-dev"
         );
-        let pin = TrackedVersion::parse("26298.34704.1").expect("pin");
+        let patch = TrackedVersion::Pin(pin("0.26298.347041"));
         assert_eq!(
-            pin.product(Some(at("2026-11-02T12:00:00Z")), Build::Staged)
+            patch
+                .product(Some(at("2026-11-02T12:00:00Z")), Build::Staged)
                 .as_str(),
-            "26298.34704.1"
+            "0.26298.347041"
         );
         assert_eq!(
-            pin.product(None, Build::Dev).as_str(),
-            "26298.34704.1-dev"
+            patch.product(None, Build::Dev).as_str(),
+            "0.26298.347041-dev"
         );
         for refused in ["1999-12-31T23:59:59Z", "2100-01-01T00:00:00Z"] {
             let seconds = second(refused);
@@ -244,21 +282,20 @@ mod tests {
     }
 
     #[test]
-    fn calendar_versions_order_by_instant_with_dev_before_staged() {
+    fn versions_order_by_instant_with_patches_between_their_base_and_the_next_second() {
         let ascending = [
-            TrackedVersion::Calendar.product(None, Build::Dev),
-            ProductVersion::parse("0.1792921104.0").expect("shipped committer-second version"),
-            calendar("2026-10-25T09:38:24Z", Build::Dev),
-            calendar("2026-10-25T09:38:24Z", Build::Staged),
-            TrackedVersion::parse("26298.34704.1")
-                .expect("patch pin")
-                .product(None, Build::Staged),
-            calendar("2026-10-25T09:38:25Z", Build::Dev),
-            calendar("2026-10-25T09:38:25Z", Build::Staged),
-            calendar("2026-10-25T23:59:59Z", Build::Staged),
-            calendar("2026-10-26T00:00:00Z", Build::Staged),
-            calendar("2026-12-31T23:59:59Z", Build::Staged),
-            calendar("2027-01-01T00:00:00Z", Build::Staged),
+            TrackedVersion::Major(0).product(None, Build::Dev),
+            main("2026-10-25T09:38:24Z", Build::Dev),
+            main("2026-10-25T09:38:24Z", Build::Staged),
+            pin("0.26298.347041"),
+            pin("0.26298.347049"),
+            main("2026-10-25T09:38:25Z", Build::Dev),
+            main("2026-10-25T09:38:25Z", Build::Staged),
+            main("2026-10-25T23:59:59Z", Build::Staged),
+            main("2026-10-26T00:00:00Z", Build::Staged),
+            main("2026-12-31T23:59:59Z", Build::Staged),
+            main("2027-01-01T00:00:00Z", Build::Staged),
+            TrackedVersion::Major(1).product(None, Build::Staged),
         ];
         for pair in ascending.windows(2) {
             assert_eq!(pair[0].precedence(&pair[1]), Ordering::Less, "{pair:?}");

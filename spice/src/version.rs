@@ -14,8 +14,8 @@ use wire::{Digest, Domain, Fault, FaultClass};
 pub use source::{SOURCE_VERSION_ENV, source_instant, source_version};
 
 /// The product version derived from `dist/VERSION` and the source commit,
-/// injected by every repository build path. A calendar build unbound to any
-/// commit reports `0.0.0`, marked `-dev`.
+/// injected by every repository build path. A build unbound to any commit
+/// reports its major with minor and patch 0, marked `-dev`.
 const SOURCE_VERSION: Option<&str> = option_env!("SPICE_PRODUCT_VERSION"); // env-policy: allow
 
 /// Identity of the executable this process is running.
