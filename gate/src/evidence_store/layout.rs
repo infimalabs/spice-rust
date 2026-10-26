@@ -623,7 +623,7 @@ fn require_directory(path: &Path) -> Result<(), EvidenceStoreError> {
 }
 
 fn sync_directory(path: &Path) -> Result<(), EvidenceStoreError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
+    sill::authority::Directory::open(path)
+        .and_then(|directory| directory.sync())
         .map_err(|error| EvidenceStoreError::io("sync directory", path, error))
 }

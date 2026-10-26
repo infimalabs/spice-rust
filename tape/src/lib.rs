@@ -294,10 +294,8 @@ impl Tape {
     /// absent while every byte of it survives, which would strand a locus that
     /// tape had already promised.
     fn sync_directory(&self) -> Result<(), Error> {
-        let directory = File::open(&self.root)
-            .map_err(|error| Error::io(Operation::SyncDirectory, &self.root, error))?;
-        directory
-            .sync_all()
+        sill::authority::Directory::open(&self.root)
+            .and_then(|directory| directory.sync())
             .map_err(|error| Error::io(Operation::SyncDirectory, &self.root, error))
     }
 

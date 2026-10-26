@@ -363,8 +363,8 @@ fn resume_equal_atomic_write(
 }
 
 fn sync_directory(path: &Path) -> Result<(), Error> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
+    sill::authority::Directory::open(path)
+        .and_then(|directory| directory.sync())
         .map_err(|error| recovery_filesystem("sync recovery directory", path, error))
 }
 
