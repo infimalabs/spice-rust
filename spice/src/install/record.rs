@@ -387,7 +387,16 @@ impl InstallRecord {
     ) -> Result<(), InstallError> {
         self.validate()?;
         self.repository.validate(repository)?;
-        self.plan.validate_repository_binding(repository)
+        self.plan
+            .validate_repository_binding(repository, self.settled())
+    }
+
+    /// Whether this record's transaction is finished either way.
+    pub(super) const fn settled(&self) -> bool {
+        matches!(
+            self.status,
+            InstallStatus::Complete | InstallStatus::Uninstalled
+        )
     }
 
     /// A checkpoint mutates only the receipt. Each operation checks its own
@@ -409,12 +418,9 @@ impl InstallRecord {
             ));
         }
         self.repository.validate(repository)?;
-        if matches!(
-            self.status,
-            InstallStatus::Complete | InstallStatus::Uninstalled
-        ) {
+        if self.settled() {
             self.validate_progress_content()?;
-            self.plan.validate_repository_binding(repository)
+            self.plan.validate_repository_binding(repository, true)
         } else {
             super::binding::validate_record_binding(
                 &repository.state_root(),
@@ -430,7 +436,8 @@ impl InstallRecord {
     ) -> Result<(), InstallError> {
         self.validate_loaded()?;
         self.repository.validate(repository)?;
-        self.plan.validate_repository_binding(repository)
+        self.plan
+            .validate_repository_binding(repository, self.settled())
     }
 
     pub(super) fn receipt(&self) -> InstallReceipt {

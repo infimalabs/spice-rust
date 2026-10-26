@@ -617,11 +617,18 @@ fn verify_retirement_progress(
         .min(record.plan.retirements.len());
     for (index, retirement) in record.plan.retirements.iter().enumerate() {
         let previous = retirement.previous.as_ref();
-        let (observed, parent) = observe_bound(
-            repository.common_dir(),
-            &retirement.destination,
-            &retirement.parent,
-        )?;
+        let (observed, parent) = if record.settled() && retirement.discards_payload() {
+            // A finished discard's recorded parent may since have been
+            // removed; its file must stay absent wherever the path binds now.
+            let bound = bind_destination(repository.common_dir(), &retirement.path)?;
+            observe_bound(repository.common_dir(), &bound.destination, &bound.parent)?
+        } else {
+            observe_bound(
+                repository.common_dir(),
+                &retirement.destination,
+                &retirement.parent,
+            )?
+        };
         // A discard restores nothing, so its parent carries no reversal
         // authority: a run that withdrew its emptied directory is still absent.
         let absent = observed.is_none()

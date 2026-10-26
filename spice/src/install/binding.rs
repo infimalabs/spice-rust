@@ -199,6 +199,20 @@ pub(super) fn validate_binding(
     Ok(())
 }
 
+/// Whether the directory `parent` anchors on still exists as the one it
+/// observed.
+pub(super) fn anchor_holds(root: &Path, parent: &ParentObservation) -> bool {
+    let Ok(root) = fs::canonicalize(root) else {
+        return false;
+    };
+    let ancestor = root.join(&parent.ancestor);
+    fs::symlink_metadata(&ancestor).is_ok_and(|metadata| {
+        metadata.is_dir()
+            && Generation::observe_at(&ancestor, &metadata)
+                .is_ok_and(|generation| generation == parent.generation)
+    })
+}
+
 pub(super) fn validate_record_binding(
     root: &Path,
     binding: &BoundDestination,
