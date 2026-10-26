@@ -311,12 +311,6 @@ const CARGO_INCREMENTAL: &str = concat!("CARGO_", "INCREMENTAL");
 /// Trunk's external distribution directory under the same rule.
 const TRUNK_DISTRIBUTION_DIRECTORY: &str = concat!("TRUNK_", "BUILD_DIST");
 
-/// The build-time home Cargo and the workspace's compiled declarations share.
-const COMPILED_HOME_DIRECTORY: &str = env!("HOME");
-
-/// Home is a tool-runtime input, not a Spice-owned environment declaration.
-const HOME_DIRECTORY: &str = concat!("HO", "ME");
-
 /// The first app analysis, kept in its declaration order.
 const CARGO_WASM_ARGUMENTS: &[&str] = &[
     "clippy",

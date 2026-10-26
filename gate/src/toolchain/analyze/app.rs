@@ -203,9 +203,6 @@ fn app_environment(
         .cloned()
         .collect::<BTreeMap<std::ffi::OsString, std::ffi::OsString>>();
     entries.insert("PATH".into(), path);
-    entries
-        .entry(HOME_DIRECTORY.into())
-        .or_insert_with(|| COMPILED_HOME_DIRECTORY.into());
     entries.insert(
         CARGO_TARGET_DIRECTORY.into(),
         outputs.cargo_target.as_os_str().to_owned(),
