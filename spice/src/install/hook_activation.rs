@@ -302,8 +302,8 @@ impl HookActivationPlan {
             .collect::<BTreeSet<_>>();
         let current = list_worktrees(repository)?
             .live
-            .iter()
-            .map(|worktree| worktree_string(worktree))
+            .into_iter()
+            .map(worktree_string)
             .collect::<Result<BTreeSet<_>, _>>()?;
         let retired = previous.difference(&current).collect::<Vec<_>>();
         if retired.is_empty() {
@@ -343,31 +343,27 @@ pub(super) fn plan(
         reason: "contains a line separator",
     })?;
 
-    let Worktrees {
-        live: mut worktrees,
-        prunable,
-    } = list_worktrees(repository)?;
-    worktrees.sort();
-    worktrees.dedup();
+    let Worktrees { live, prunable } = list_worktrees(repository)?;
+    let worktrees = ordered_worktrees(live)?;
     let skipped = prunable
-        .iter()
-        .map(|worktree| worktree_string(worktree))
+        .into_iter()
+        .map(worktree_string)
         .collect::<Result<Vec<_>, _>>()?;
     let prior = installed.and_then(InstallPlan::hook_activation);
     let mut observations = Vec::with_capacity(worktrees.len());
     let mut mutations = Vec::new();
-    for worktree in worktrees {
-        let effective = effective_values(&worktree)?;
+    for spelling in worktrees {
+        let worktree = Path::new(&spelling);
+        let effective = effective_values(worktree)?;
         if !tolerated(&effective, &hooks_path)
             && !prior.is_some_and(|activation| tolerated(&effective, &activation.hooks_path))
         {
             return Err(InstallError::ForeignHookPath {
-                worktree,
+                worktree: worktree.to_path_buf(),
                 observed: effective,
             });
         }
-        let worktree_local = worktree_values(&worktree)?;
-        let spelling = worktree_string(&worktree)?;
+        let worktree_local = worktree_values(worktree)?;
         observations.push(HookWorktreeObservation {
             worktree: spelling.clone(),
             effective,
@@ -839,17 +835,29 @@ fn tolerated(values: &[String], hooks_path: &str) -> bool {
     (first == ".githooks" || first == hooks_path) && values.iter().all(|value| value == first)
 }
 
-fn worktree_string(path: &Path) -> Result<String, InstallError> {
+/// Receipt keys use string order, which can differ from `Path` component order.
+fn ordered_worktrees(paths: Vec<PathBuf>) -> Result<Vec<String>, InstallError> {
+    let mut worktrees = paths
+        .into_iter()
+        .map(worktree_string)
+        .collect::<Result<Vec<_>, _>>()?;
+    worktrees.sort();
+    worktrees.dedup();
+    Ok(worktrees)
+}
+
+fn worktree_string(path: PathBuf) -> Result<String, InstallError> {
     let text = path
-        .to_str()
-        .ok_or(InstallError::GitNonUtf8("name Git worktree"))?;
-    valid_value(text)?;
-    if !path.is_absolute() {
+        .into_os_string()
+        .into_string()
+        .map_err(|_| InstallError::GitNonUtf8("name Git worktree"))?;
+    valid_value(&text)?;
+    if !Path::new(&text).is_absolute() {
         return Err(InstallError::InvalidRecord(
             "Git worktree path is not absolute".to_owned(),
         ));
     }
-    Ok(text.to_owned())
+    Ok(text)
 }
 
 fn valid_worktree(path: &str) -> Result<(), InstallError> {
@@ -931,6 +939,20 @@ mod tests {
         assert_eq!(linked, [git(&live), git(&scratch.join("locked"))]);
         assert_eq!(worktrees.prunable, [git(&scratch.join("gone"))]);
         fs::remove_dir_all(scratch).ok();
+    }
+
+    #[test]
+    fn recorded_worktree_order_keeps_siblings_before_descendants() {
+        let base = Path::new(if cfg!(windows) { "C:/work" } else { "/work" });
+        let root = base.join("repo");
+        let sibling = base.join("repo-a");
+        let nested = root.join("child");
+        let ordered = ordered_worktrees(vec![nested.clone(), root.clone(), sibling.clone()])
+            .expect("absolute worktrees have valid spellings");
+        assert_eq!(
+            ordered,
+            [root, sibling, nested].map(|path| path.into_os_string().into_string().unwrap()),
+        );
     }
 
     #[test]

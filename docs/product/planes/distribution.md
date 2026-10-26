@@ -656,6 +656,11 @@ process that derives and applies its own plan, such as the development refresh,
 may carry it into apply but still proves every bound source, generation,
 destination, and receipt image before effect.
 
+**Invariant —** Hook activation orders its worktree observations and per-worktree
+configuration mutations by their recorded UTF-8 path strings, removing duplicate
+recorded worktrees before either inventory is built. The common configuration
+switch is last. Plan production and receipt validation use the same ordering.
+
 **Invariant —** Preview never invokes maintenance. After admission, apply and
 `--unapply` may run one bounded pass that reclaims only recognized stale
 install-record publications; it is not a plan operation and never imports,
