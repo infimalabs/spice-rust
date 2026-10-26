@@ -11,7 +11,7 @@ use wire::manifest::ProductVersion;
 pub const SOURCE_VERSION_ENV: &str = wire::SpiceVariable::ProductVersion.as_str();
 
 /// The product version a `build` of the checkout at `root` reports: its
-/// `dist/VERSION` applied to its HEAD commit's calendar instant.
+/// `dist/VERSION` applied to its HEAD commit's UTC instant.
 ///
 /// # Errors
 ///
