@@ -3,7 +3,9 @@
 use std::fs;
 
 use super::landing::{Drift, drift, integration_refusal};
-use super::transaction::{git_state_path, materialize_integration, materialize_resolution};
+use super::transaction::{
+    git_index_spelling, git_state_path, materialize_integration, materialize_resolution,
+};
 use super::*;
 
 const INTEGRATION_INDEX: &str = "spice-integration-index";
@@ -99,15 +101,8 @@ fn integration_tree(
     drifted: &[(String, Drift)],
 ) -> Result<String, Error> {
     let index = git_state_path(root, INTEGRATION_INDEX)?;
-    let built = index
-        .to_str()
-        .ok_or_else(|| {
-            Error::fault(
-                "git::integration-index-path",
-                format!("{} is not UTF-8", index.display()),
-            )
-        })
-        .and_then(|path| build_integration_tree(root, path, tree, upstream, drifted));
+    let built = git_index_spelling(&index, "git::integration-index-path")
+        .and_then(|path| build_integration_tree(root, &path, tree, upstream, drifted));
     match fs::remove_file(&index) {
         Ok(()) => built,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => built,

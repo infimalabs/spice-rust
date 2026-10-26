@@ -432,6 +432,35 @@ fn every_repository_shape_failure_is_named_at_its_path() {
     ));
 }
 
+#[cfg(windows)]
+#[test]
+fn git_spellings_name_local_drives_with_forward_slashes_and_refuse_shares() {
+    for (path, spelled) in [
+        (r"\\?\C:\work\repo\.git\index", "C:/work/repo/.git/index"),
+        (r"C:\work\repo\.git\index", "C:/work/repo/.git/index"),
+        (
+            r"\\?\d:\work tree\.git\spice-index",
+            "D:/work tree/.git/spice-index",
+        ),
+    ] {
+        assert_eq!(
+            git_spelling(Path::new(path)),
+            Ok(spelled.to_owned()),
+            "{path}"
+        );
+    }
+    for refused in [
+        r"\\server\share\repo\.git\index",
+        r"\\?\UNC\server\share\index",
+    ] {
+        assert_eq!(
+            git_spelling(Path::new(refused)),
+            Err("is not on a local drive"),
+            "{refused}"
+        );
+    }
+}
+
 fn case(scratch: &Scratch, name: &str) -> PathBuf {
     let path = scratch.join(name);
     fs::create_dir(&path).expect("create refusal case");

@@ -747,9 +747,11 @@ owner-only, owned by the current principal, older than the grace period, and
 its minting process has exited; a file still in use stays for a later pass.
 
 **Invariant —** Hook activation runs Git for Windows from the system Program
-Files folder (`Git\cmd\git.exe`), never one found on `PATH`. `core.hooksPath`
-and the generated hook launchers name local-drive paths in Git's `C:/...`
-form; a common directory outside a local drive refuses.
+Files folder (`Git\cmd\git.exe`), never one found on `PATH`. `core.hooksPath`,
+the generated hook launchers, and the alternate `GIT_INDEX_FILE` of a task's
+worktree snapshot or integration tree name local-drive paths in Git's `C:/...`
+form, never the verbatim `\\?\C:\` form canonicalization yields, beside which
+Git for Windows cannot create a lock. A path outside a local drive refuses.
 
 **Invariant —** A file belongs to the current principal when its owner is a SID
 the process token may assign as owner: the token user or an enabled owner
