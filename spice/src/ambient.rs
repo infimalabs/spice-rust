@@ -5,6 +5,8 @@
 
 use std::ffi::{OsStr, OsString};
 
+pub mod session;
+
 /// The process environment as one binary captured it at startup.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Ambient {

@@ -118,26 +118,8 @@ fn ambient(current_dir: Option<&Path>, variables: &[(&str, String)]) -> super::E
             .find(|(key, _)| *key == name)
             .map(|(_, value)| std::ffi::OsString::from(value))
     };
-    let vendors = spice::extension::registry()
-        .expect("compiled extension declarations are coherent")
-        .session_vendors()
-        .into_iter()
-        .map(|vendor| {
-            super::VendorEnvironment::new(
-                vendor,
-                variable(vendor.thread_id_environment()),
-                variable(vendor.transcript_layout().home_environment),
-            )
-        })
-        .collect();
-    super::Environment::new(
-        vendors,
-        variable("SPICE_AGENT_VENDOR"), // env-policy: allow
-        variable("HOME"),
-        current_dir.map(Path::to_path_buf),
-        Some(std::env::temp_dir()),
-    )
-    .unglanced()
+    crate::main_tail::session_environment_from(variable, current_dir.map(Path::to_path_buf))
+        .unglanced()
 }
 
 fn reply_forms(argv: &[String], environment: &[(&str, String)], expected: &str) -> Value {

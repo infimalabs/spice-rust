@@ -20,6 +20,30 @@ than a running process, which is why the
 [command optimizer](../invariants/session.md#extension-the-command-optimizer-is-optional)
 rewrites there.
 
+### Supervised host environment
+
+A lane inherits only admitted host variables. On Windows, its session home is
+explicit `HOME`, then `USERPROFILE`, then the complete `HOMEDRIVE`/`HOMEPATH`
+pair. Its temporary root is explicit `TMPDIR`, then `TEMP`, then `TMP`.
+The supervisor exports the resolved home as both `HOME` and `USERPROFILE`,
+and the temporary root as `TMPDIR`, `TEMP`, and `TMP`, so Spice's pinned
+session and OMP's native Windows discovery agree. Session discovery outside
+the occupant uses the same resolver. Missing home or temp sources refuse.
+
+Explicit `SHELL` selects the native interpreter behind interception. Without
+it on Windows, the supervisor locates `bin/bash.exe` beside the installer's
+admitted Program Files Git `cmd/git.exe`; both must be regular files.
+Discovery inspects files, never executes Git or searches `PATH`, and never
+substitutes `ComSpec` or PowerShell for a POSIX interpreter. Windows also admits
+`HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `PATHEXT`, and
+`ComSpec` for the vendor and its tools; unrelated variables remain excluded.
+Unix home, temp, shell, and ambient admission rules are unchanged.
+
+Session publication and discovery share OMP's directory encoder. On Windows,
+temp scope precedes home scope when the temporary directory nests beneath the
+profile. Absolute directory names omit Rust's verbatim-path namespace marker
+and retain OMP's ordinary drive or UNC spelling.
+
 ### Shell results
 
 Advice is read-only. A leading `cd` to the literal absolute directory the

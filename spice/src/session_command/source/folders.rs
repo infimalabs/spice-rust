@@ -191,28 +191,19 @@ fn transcripts_in(folder: &Path, thread: &str) -> Vec<PathBuf> {
 /// and every separator and `:` replaced by `-`.
 fn omp_session_folder(cwd: &Path, environment: &Environment) -> Option<String> {
     let cwd = fs::canonicalize(cwd).ok()?;
-    let beneath = |base: Option<&Path>| {
-        let base = fs::canonicalize(base?).ok()?;
-        cwd.strip_prefix(base).ok().map(omp_dashed)
-    };
-    Some(if let Some(rest) = beneath(environment.home.as_deref()) {
-        format!("-{rest}")
-    } else if let Some(rest) = beneath(environment.temp.as_deref()) {
-        if rest.is_empty() {
-            "-tmp".to_owned()
-        } else {
-            format!("-tmp-{rest}")
-        }
-    } else {
-        let absolute = cwd
-            .strip_prefix(std::path::MAIN_SEPARATOR_STR)
-            .unwrap_or(&cwd);
-        format!("--{}--", omp_dashed(absolute))
-    })
-}
-
-fn omp_dashed(path: &Path) -> String {
-    path.to_string_lossy().replace(['/', '\\', ':'], "-")
+    let home = environment
+        .home
+        .as_deref()
+        .and_then(|path| fs::canonicalize(path).ok());
+    let temp = environment
+        .temp
+        .as_deref()
+        .and_then(|path| fs::canonicalize(path).ok());
+    Some(vendor::omp::session_paths::session_directory(
+        home.as_deref(),
+        temp.as_deref(),
+        &cwd,
+    ))
 }
 
 #[cfg(test)]

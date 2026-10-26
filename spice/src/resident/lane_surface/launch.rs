@@ -68,6 +68,14 @@ pub(in crate::resident) trait LaunchProbes {
 
     /// The resident's own value of the environment variable `name`.
     fn variable(&self, name: &str) -> Option<OsString>;
+
+    /// Git admitted by the Windows installer, independent of PATH.
+    #[cfg(windows)]
+    fn git(&self) -> Option<PathBuf> {
+        sill::program_files()
+            .ok()
+            .map(|root| root.join(r"Git\cmd\git.exe"))
+    }
 }
 
 /// The probes a supervised launch runs against the host whose environment
@@ -397,16 +405,6 @@ fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
         .map_err(|detail| store_fault("lane::skill-unavailable", &detail))
 }
 
-/// Ambient names a supervised occupant inherits verbatim when present.
-const ADMITTED_AMBIENT: [&str; 4] = ["HOME", "TMPDIR", "USER", "SSH_AUTH_SOCK"];
-
-fn admitted_ambient(lookup: impl Fn(&str) -> Option<OsString>) -> Vec<(OsString, OsString)> {
-    ADMITTED_AMBIENT
-        .into_iter()
-        .filter_map(|key| lookup(key).map(|value| (key.into(), value)))
-        .collect()
-}
-
 /// Carry only the ambient variables a supervised occupant is admitted to see.
 /// The operator's SSH agent socket is among them so lane Git over SSH signs
 /// through the agent that already holds the key, not through whatever
@@ -425,12 +423,7 @@ fn launch_environment(
     lane: CanonicalUuid,
     probes: &dyn LaunchProbes,
 ) -> CommandResult<(Environment, wire::body::RtkHealth)> {
-    let native_shell = probes.variable("SHELL").ok_or_else(|| {
-        store_fault(
-            "lane::native-shell-unavailable",
-            "the supervised environment has no native SHELL to restore behind interception",
-        )
-    })?;
+    let native_shell = native_shell(probes)?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
@@ -441,7 +434,7 @@ fn launch_environment(
             .expect("the RTK history contract always has a parent"),
     )
     .map_err(|error| store_fault("lane::rtk-history-unavailable", &error.to_string()))?;
-    let mut values = admitted_ambient(|key| probes.variable(key));
+    let mut values = host_environment::ambient(probes)?;
     values.extend(cargo_environment(repository, lane, probes)?);
     values.extend([
         (
@@ -801,15 +794,8 @@ fn pin_session(
     repository: &Repository,
     probes: &dyn LaunchProbes,
 ) -> CommandResult<vendor::Resume> {
-    let home = probes.variable("HOME").map(PathBuf::from).ok_or_else(|| {
-        store_fault(
-            "lane::session-home-unavailable",
-            "the supervised environment has no HOME to keep oh-my-pi sessions beneath",
-        )
-    })?;
-    let temp = probes
-        .variable("TMPDIR")
-        .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let home = session_home(probes)?;
+    let temp = session_temp(probes)?;
     let layout = vendor::OMP.transcript_layout();
     let sessions = home
         .join(layout.default_home)
@@ -885,6 +871,12 @@ pub(super) fn configuration_refusal(error: &spice::config::LoadError) -> Outcome
         Some(error.diagnostic()),
     )))
 }
+
+mod host_environment;
+use host_environment::{native_shell, session_home, session_temp};
+
+#[cfg(all(test, windows))]
+mod windows_environment_tests;
 
 #[cfg(test)]
 pub(in crate::resident) mod test_support;
