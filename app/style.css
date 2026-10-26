@@ -43,6 +43,7 @@
   --app-type-detail: .76rem;
   --app-type-body: .78rem;
   --app-type-summary: .8rem;
+  --app-type-version: .8rem;
   --app-type-prose: .8125rem;
   --app-type-identity: .82rem;
   --app-type-message: .84rem;
@@ -732,7 +733,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   justify-self: start;
   max-inline-size: calc(100% - 10px);
   margin-inline-start: 10px;
-  font-size: var(--app-type-section);
+  font-size: var(--app-type-version);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header .app-resident-status {
   grid-area: 2 / 1 / 3 / -1;
