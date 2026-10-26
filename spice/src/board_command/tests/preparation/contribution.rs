@@ -34,6 +34,7 @@ fn retain(root: &Path, task: &TaskStamp, bytes: &[u8]) -> wire::Digest {
             created_at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         })
         .expect("fixture artifact publishes")
+        .0
         .digest
 }
 

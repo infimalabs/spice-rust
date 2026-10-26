@@ -80,6 +80,7 @@ fn add(
             created_at: at,
         })
         .expect("add artifact")
+        .0
 }
 
 #[test]
@@ -155,7 +156,7 @@ fn text_and_binary_artifacts_round_trip_with_stable_metadata() {
 fn caller_owned_bytes_publish_without_a_source_file() {
     let fixture = Fixture::new();
     let task = task("ARTIFACT-bytes");
-    let artifact = fixture
+    let (artifact, budget) = fixture
         .store
         .add_bytes(AddBytesRequest {
             task: &task,
@@ -170,6 +171,7 @@ fn caller_owned_bytes_publish_without_a_source_file() {
     assert_eq!(artifact.id, "A1");
     assert_eq!(artifact.name, "operator-capture.png");
     assert_eq!(artifact.media_type.as_str(), MediaType::IMAGE_PNG);
+    assert_eq!((budget.count, budget.bound, budget.remaining), (1, 32, 31));
     assert_eq!(
         fixture.store.show(&task, "A1").expect("show bytes").1,
         b"\x89PNG\r\n\x1a\n"
@@ -397,10 +399,21 @@ fn removal_at_the_bound_frees_one_slot_without_reissuing_the_removed_id() {
     let fixture = Fixture::new();
     let task = task("ARTIFACT-r2");
     let at = instant("2030-01-01T00:00:00.000Z");
-    for index in 0..32 {
+    let budget = (0..32).fold(crate::ArtifactBudget::of(0), |_, index| {
         let source = fixture.source(&format!("{index}.txt"), index.to_string().as_bytes());
-        add(&fixture.store, &task, &source, Retention::Permanent, at);
-    }
+        fixture
+            .store
+            .add(AddRequest {
+                task: &task,
+                source: &source,
+                name: None,
+                media_type: None,
+                retention: Retention::Permanent,
+                created_at: at,
+            })
+            .expect("citation below the bound adds")
+            .1
+    });
     let extra = fixture.source("extra.txt", b"extra");
     let full = fixture
         .store
@@ -414,7 +427,6 @@ fn removal_at_the_bound_frees_one_slot_without_reissuing_the_removed_id() {
         })
         .expect_err("the bound refuses a 33rd citation");
     assert_eq!(full.class(), ErrorClass::Refusal);
-    let budget = fixture.store.budget(&task).expect("budget at the bound");
     assert_eq!((budget.count, budget.bound, budget.remaining), (32, 32, 0));
 
     let (_, budget) = fixture
