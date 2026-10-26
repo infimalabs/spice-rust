@@ -44,6 +44,12 @@ temp scope precedes home scope when the temporary directory nests beneath the
 profile. Absolute directory names omit Rust's verbatim-path namespace marker
 and retain OMP's ordinary drive or UNC spelling.
 
+Supervisor change notifications prompt a durable-state read; they are not
+startup authority. At the start horizon the resident reads `state.json` again,
+so an unannounced published failure or proven start wins over a timeout. A
+genuine timeout names the supervisor directory containing `state.json` and
+`supervisor.log`; directive recovery and dead-letter policy are unchanged.
+
 ### Shell results
 
 Advice is read-only. A leading `cd` to the literal absolute directory the
