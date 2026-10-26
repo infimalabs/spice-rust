@@ -11,8 +11,6 @@ use std::process::{Command as ProcessCommand, ExitStatus};
 use std::sync::Arc;
 #[cfg(not(test))]
 use std::thread;
-#[cfg(not(test))]
-use std::time::Instant as Monotonic;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lane::capture::CaptureReporter;
@@ -28,6 +26,7 @@ mod entry;
 mod events;
 mod handle;
 mod reporter;
+mod start;
 pub(super) mod terminal;
 #[cfg(test)]
 pub(super) mod test_support;
@@ -41,8 +40,6 @@ use super::lane_surface::{
 use super::{CommandResult, RuntimePaths, environment_fault, store_fault};
 pub(crate) use entry::entry;
 use events::StateEvents;
-#[cfg(not(test))]
-use events::StateSignal;
 #[cfg(test)]
 use handle::StandInOccupant;
 use handle::{Handle, process_exists, status_from_raw, status_raw};
@@ -415,80 +412,17 @@ fn await_running(
     occupant: CanonicalUuid,
     events: StateEvents,
 ) -> CommandResult<Launch> {
-    let started = Monotonic::now();
-    let mut supervisor_exited = false;
-    loop {
-        match read_state(path) {
-            Ok(state) if !matches_state(&state, lane, occupant) => {
-                return Err(store_fault(
-                    "lane::supervisor-state-mismatched",
-                    "detached supervisor published another lane or occupant",
-                ));
-            }
-            Ok(state) if matches!(state.phase, Phase::Running | Phase::Exited) => {
-                // A short-lived agent can publish its session and end between
-                // two parent observations. The terminal state still carries
-                // the complete launch authority; returning its handle lets the
-                // resident commit the start and then observe the exact ending
-                // instead of turning a harmless race into resident failure.
-                let events = (state.phase == Phase::Running).then_some(events);
-                let door = command::kick_path(paths, lane);
-                return state_launch_inner(path.to_path_buf(), door, state, events);
-            }
-            Ok(state) if state.phase == Phase::Failed => {
-                return Err(store_fault(
-                    "lane::supervisor-start-failed",
-                    state
-                        .failure
-                        .as_deref()
-                        .unwrap_or("supervisor failed without detail"),
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(environment_fault(
-                    "lane::supervisor-state-unavailable",
-                    &error.to_string(),
-                ));
-            }
-        }
-        if supervisor_exited {
-            return Err(environment_fault(
-                "lane::supervisor-start-failed",
-                "detached supervisor exited before publishing a proven session",
-            ));
-        }
-        let remaining = START_HORIZON.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
-            return Err(environment_fault(
-                "lane::supervisor-start-timeout",
-                "detached supervisor did not publish a proven session before its start horizon",
-            ));
-        }
-        match events.wait_for(remaining) {
-            Ok(Some(StateSignal::Changed)) => {}
-            Ok(Some(StateSignal::SupervisorExited)) => supervisor_exited = true,
-            Ok(Some(StateSignal::ObserverFailed(error))) => {
-                return Err(environment_fault(
-                    "lane::supervisor-observer-failed",
-                    &error,
-                ));
-            }
-            Err(error) => {
-                return Err(environment_fault(
-                    "lane::supervisor-observer-failed",
-                    &error.to_string(),
-                ));
-            }
-            Ok(None) => {
-                return Err(environment_fault(
-                    "lane::supervisor-start-timeout",
-                    "detached supervisor did not publish a proven session before its start horizon",
-                ));
-            }
-        }
-    }
+    let state = start::await_published(path, lane, occupant, START_HORIZON, |remaining| {
+        events.wait_for(remaining)
+    })?;
+    // A short-lived agent can publish its session and end between two parent
+    // observations. The terminal state still carries the complete launch
+    // authority; returning its handle lets the resident commit the start and
+    // then observe the exact ending instead of turning a harmless race into
+    // resident failure.
+    let events = (state.phase == Phase::Running).then_some(events);
+    let door = command::kick_path(paths, lane);
+    state_launch_inner(path.to_path_buf(), door, state, events)
 }
 
 fn state_launch(paths: &RuntimePaths, path: PathBuf, state: State) -> CommandResult<Launch> {
