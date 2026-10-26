@@ -24,6 +24,8 @@ use crate::runtime::LaneRow;
 mod attention;
 #[cfg(any(target_arch = "wasm32", test))]
 mod direction;
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+pub(crate) mod directive_controls;
 mod group;
 #[cfg(any(target_arch = "wasm32", test))]
 mod pointer_drag;

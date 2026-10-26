@@ -1040,12 +1040,16 @@ fn render_message_age(message: &wire::AgentMessage, attribution: &str) -> Html {
 /// signoff, so its island keeps only actions; other cards keep metadata here.
 fn render_message_controls(
     message: &wire::AgentMessage,
-    shown_text: &str,
+    shown_text: std::borrow::Cow<'_, str>,
     correspondent: &view::chrome::Correspondent,
     signed: bool,
     producer_label: &str,
     attribution: &str,
 ) -> Html {
+    let shown_text = match shown_text {
+        std::borrow::Cow::Borrowed(text) => AttrValue::from(text.to_owned()),
+        std::borrow::Cow::Owned(text) => AttrValue::from(text),
+    };
     let has_actions = !shown_text.trim().is_empty();
     html! {
         <div
@@ -1066,7 +1070,7 @@ fn render_message_controls(
                     </span>
                 }
                 if has_actions {
-                    {view::chrome::render_card_actions(shown_text, correspondent)}
+                    {view::chrome::render_card_actions(shown_text.clone(), correspondent)}
                 }
             </div>
         </div>

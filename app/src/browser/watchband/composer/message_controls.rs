@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::*;
 use crate::browser::mermaid::MarkdownControl;
 
@@ -44,8 +46,8 @@ fn collect_quote_controls(
             target: quote_target,
             source_id,
             target_text: target,
-            text,
-            preview: watchband::first_nonquoted_prose,
+            text: Cow::Borrowed(text),
+            preview: watchband::first_nonquoted_prose(text),
             display_millis,
         };
         push_quote_control(source, context, controls);
@@ -70,12 +72,14 @@ fn collect_directive_controls(
             continue;
         };
         let target_text = directive.quote_target.to_string();
+        let (text, preview) =
+            watchband::directive_controls::directive_control_prose(directive.review.as_ref(), text);
         let source = QuoteControlSource {
             target: directive.quote_target.clone(),
             source_id: agent_message_source_id(context.message),
             target_text: &target_text,
             text,
-            preview: watchband::directive_context_prose,
+            preview,
             display_millis: directive.authored.get().as_millisecond(),
         };
         push_quote_control(source, context, controls);
@@ -89,8 +93,8 @@ struct QuoteControlSource<'a> {
     target: wire::QuoteTarget,
     source_id: String,
     target_text: &'a str,
-    text: &'a str,
-    preview: fn(&str) -> Option<String>,
+    text: Cow<'a, str>,
+    preview: Option<String>,
     display_millis: i64,
 }
 
@@ -112,7 +116,7 @@ fn push_quote_control(
         let focus_identity = target_text.to_owned();
         let focus_lane = lane.clone();
         let dispatcher = context.quote_dispatcher.clone();
-        let preview = watchband::quote_label(preview(text).as_deref()).to_owned();
+        let preview = watchband::quote_label(preview.as_deref()).to_owned();
         let order = context.order;
         Callback::from(move |()| {
             dispatcher.dispatch(ComposerAction::AddQuote {
@@ -170,7 +174,7 @@ pub(super) fn render_message_chrome(
             target: AttrValue::from(""),
             content: render_message_controls(
                 message,
-                shown_text,
+                Cow::Borrowed(shown_text),
                 correspondent,
                 true,
                 producer_label,
@@ -210,7 +214,7 @@ pub(super) fn render_message_chrome(
         .then(|| {
             render_message_controls(
                 message,
-                shown_text,
+                Cow::Borrowed(shown_text),
                 correspondent,
                 false,
                 producer_label,
