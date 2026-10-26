@@ -381,6 +381,9 @@ fn run_stage_target(
             })
             .map_err(Into::into);
     }
+    if target == "x86_64-unknown-linux-musl" && !cfg!(target_os = "linux") {
+        return xtask::linux_sealed_stage(&environment, output, error_output).map_err(Into::into);
+    }
     let signing = if target == "aarch64-apple-darwin" {
         darwin_signing(unsigned)?
     } else {

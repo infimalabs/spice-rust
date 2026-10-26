@@ -114,7 +114,7 @@ pub mod replay;
 pub mod seal;
 
 pub use config::{Config, DEFAULT_IMAGE, ExecutablePath, Image};
-pub use container::{Container, ContainerError, Limits, OciRuntime};
+pub use container::{Container, ContainerError, Limits, OciRuntime, ReleaseStage};
 pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost, compiled_target};
 pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify_stored};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};

@@ -16,9 +16,11 @@ use crate::challenge::Challenge;
 use crate::launch::{Launch, LaunchError, System};
 
 mod error;
+mod stage;
 
 pub use error::ContainerError;
 pub(crate) use error::{is_executable, validate_command};
+pub use stage::ReleaseStage;
 
 const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
