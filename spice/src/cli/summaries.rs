@@ -312,13 +312,17 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("task add", "Create a task, optionally claiming it"),
     (
         "task artifact",
-        "Attach, list, show, and prune task artifacts",
+        "Attach, list, show, remove, and prune task artifacts",
     ),
     ("task artifact add", "Attach one file to a task"),
     ("task artifact list", "Page one task's artifacts"),
     (
         "task artifact prune",
         "Preview or prune expired task artifacts",
+    ),
+    (
+        "task artifact remove",
+        "Remove one artifact from an unsettled task",
     ),
     ("task artifact show", "Read part of one task artifact"),
     (

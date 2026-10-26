@@ -470,6 +470,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["task", "artifact", "list"]
             | ["task", "artifact", "show"]
             | ["task", "artifact", "prune"]
+            | ["task", "artifact", "remove"]
             | ["doc"]
             | ["doc", "ledger"]
             | ["taste"]

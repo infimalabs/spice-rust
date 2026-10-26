@@ -1006,6 +1006,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "artifact::prune"
     ),
     row!(
+        ["task", "artifact", "remove"],
+        "task artifact remove HANDLE ARTIFACT",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "artifact::remove"
+    ),
+    row!(
         ["doc"],
         "doc PATH|- [--apply=<digest>]",
         OperatorOrLane,
