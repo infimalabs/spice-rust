@@ -59,11 +59,15 @@ editing them changes no production style.
 The task overview overlays each Mermaid task node with the authoritative
 availability label, and that overlay is the node's only frame: the diagram
 draws no stroke of its own around a task node, so selection and state read
-from one outline. `WAITING` is healthy workflow progress that is not running
-yet: it wears the base of the surface containing the map, plum inside a
+from one outline. `PASSIVE` marks an unclaimed Design gathering input: it
+keeps a solid node frame and state tag. `WAITING` is healthy workflow progress
+that is not running yet, including a Design waiting on its selected work:
+it wears the base of the surface containing the map, plum inside a
 Design-flavored overview and the page's green elsewhere, and a dotted outline
-on both the node frame and its state tag sets it apart from in-flight's solid
-frame and deleted work's dashed one. `DONE` remains quiet settled provenance
+on both the node frame and its state tag sets it apart from passive and
+in-flight's solid frames and deleted work's dashed one. Both passive and waiting
+Designs consume the resident's cycle without changing allocation policy.
+`DONE` remains quiet settled provenance
 with a single neutral frame and rounded tag. `READY FOR PROPOSAL` marks the
 unpossessed Design whose tab wears the proposal mark, in its live tone, and
 `AWAITING DECISION` the Design whose tab wears the decision mark, in warning.

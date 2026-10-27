@@ -26,6 +26,7 @@
 :is(.work-map-node-button, .group-design-pip)[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
 :is(.work-map-node-button, .group-design-pip)[data-work-availability="held"] { --work-card-tone: var(--work-blocked); }
 :is(.work-map-node-button, .group-design-pip)[data-work-availability="waiting"] { --work-card-tone: var(--work-waiting); }
+:is(.work-map-node-button, .group-design-pip)[data-work-availability="passive"] { --work-card-tone: var(--work-waiting); }
 :is(.work-map-node-button, .group-design-pip)[data-work-availability="selection"] { --work-card-tone: var(--work-selection); }
 :is(.work-map-node-button, .group-design-pip)[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
 :is(.work-map-node-button, .group-design-pip)[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
