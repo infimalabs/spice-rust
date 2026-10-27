@@ -206,8 +206,10 @@ pub struct DesignCyclePresentation {
 /// Whether a lane may take, or already holds, one open Design's pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesignAvailability {
-    /// Its own deferral stands, so it invites and grants no lane until woken.
-    Deferred,
+    /// Deferred without a holder; waking may atomically claim its pass.
+    DeferredUnclaimed,
+    /// Deferred while its holder checkpoints and frees its pass.
+    DeferredClaimed,
     /// Undeferred and unclaimed.
     Unclaimed,
     /// A lane holds its current pass.
@@ -216,8 +218,9 @@ pub enum DesignAvailability {
 
 impl DesignCyclePresentation {
     /// Present `design` in `cycle` with the evidence `facts` carries. A
-    /// deferred Design gathering input or ready waits on the operator's wake;
-    /// a ready or still-gathering claimed one waits on its holder's proposal.
+    /// deferred, unheld Design may be woken and claimed atomically; a deferred
+    /// held Design remains its holder's responsibility until that lane frees
+    /// the pass.
     #[must_use]
     pub fn new(
         cycle: DesignCycle,
@@ -229,12 +232,22 @@ impl DesignCyclePresentation {
         let (actor, action) = match (cycle, availability) {
             (
                 DesignCycle::GatheringInput | DesignCycle::ReadyForProposal,
-                DesignAvailability::Deferred,
+                DesignAvailability::DeferredUnclaimed,
             ) => (
-                DesignCycleActor::Operator,
+                DesignCycleActor::Lane,
                 format!(
-                    "the operator wakes {design} with `spice task wake {design}`; it then invites \
-                     lanes again and a lane claims it once it is ready"
+                    "a lane wakes and atomically claims {design} with `spice task wake {design} \
+                     --claim`"
+                ),
+            ),
+            (
+                DesignCycle::GatheringInput | DesignCycle::ReadyForProposal,
+                DesignAvailability::DeferredClaimed,
+            ) => (
+                DesignCycleActor::Lane,
+                format!(
+                    "the holding lane checkpoints its current work and runs `spice task free \
+                     {design}`; its claim stays authoritative until then"
                 ),
             ),
             (

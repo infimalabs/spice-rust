@@ -64,6 +64,14 @@ fn deferral_alone_decides_an_open_designs_standing() {
         design(true).design_standing(),
         Some(wire::intent::DesignStanding::Deferred)
     );
+    assert_eq!(
+        design(true).design_availability(),
+        wire::rooms::DesignAvailability::DeferredUnclaimed,
+    );
+    assert_eq!(
+        claimed(design(true)).design_availability(),
+        wire::rooms::DesignAvailability::DeferredClaimed,
+    );
     assert_eq!(light(vec![design(true)]), DesignStanding::Deferred);
     assert_eq!(
         light(vec![claimed(design(true)), output()]),

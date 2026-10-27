@@ -58,7 +58,7 @@ pub(super) fn render_standing(
                 {next_action(
                     settled,
                     lifecycle.as_ref(),
-                    cycle.as_ref().zip(row).map(|(cycle, row)| (cycle.cycle, row.design_availability())),
+                    cycle.as_ref().zip(row).map(|(cycle, row)| (cycle, row.design_availability())),
                 )}
             </p>
             {render_lanes(runtime, &participants)}
@@ -72,36 +72,36 @@ pub(super) fn render_standing(
 }
 
 /// The one next useful action the current authority supports, as one
-/// sentence naming who acts and on what. A deferred Design waits on its wake;
-/// any other open Design's cycle names it.
+/// sentence naming who acts and on what. Deferred Designs use the shared
+/// cycle action because possession determines whether wake-and-claim or
+/// checkpoint-and-free is valid; non-deferred prose stays local and concise.
 fn next_action(
     settled: bool,
     lifecycle: Option<&DesignStanding>,
-    cycle: Option<(DesignCycle, DesignAvailability)>,
+    cycle: Option<(&DesignCyclePresentation, DesignAvailability)>,
 ) -> String {
     if settled {
         return "The anchor is settled; nothing remains to do here.".to_owned();
     }
     match cycle {
-        _ if lifecycle == Some(&DesignStanding::Deferred) => "You wake this Design, or move it \
-            into a working group, so lanes are invited and one can claim it."
-            .to_owned(),
-        Some((cycle, availability)) => cycle_next(cycle, availability).to_owned(),
+        Some((cycle, _)) if lifecycle == Some(&DesignStanding::Deferred) => cycle.action.clone(),
+        Some((cycle, availability)) => {
+            cycle_next(cycle.cycle, availability == DesignAvailability::Claimed).to_owned()
+        }
         None => "Tell a lane to capture this Design for its next pass.".to_owned(),
     }
 }
 
 /// Who moves an undeferred open Design's pass cycle forward next, and how.
-const fn cycle_next(cycle: DesignCycle, availability: DesignAvailability) -> &'static str {
-    match (cycle, availability) {
+const fn cycle_next(cycle: DesignCycle, claimed: bool) -> &'static str {
+    match (cycle, claimed) {
         (DesignCycle::GatheringInput, _) => {
             "Lanes or you add input next: a vote, a question, or a post in this room."
         }
-        (
-            DesignCycle::ReadyForProposal,
-            DesignAvailability::Unclaimed | DesignAvailability::Deferred,
-        ) => "A lane claims this Design next and ends its pass with one proposal.",
-        (DesignCycle::ReadyForProposal, DesignAvailability::Claimed) => {
+        (DesignCycle::ReadyForProposal, false) => {
+            "A lane claims this Design next and ends its pass with one proposal."
+        }
+        (DesignCycle::ReadyForProposal, true) => {
             "The holding lane ends this pass with one proposal."
         }
         (DesignCycle::AwaitingDecision, _) => "You decide the proposal awaiting decision next.",
