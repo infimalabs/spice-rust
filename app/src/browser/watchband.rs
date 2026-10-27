@@ -40,7 +40,9 @@ pub(super) use composer::{
     primary_textarea_id, use_primary_composer_drag_state,
 };
 use controls::ArrangementOpener;
-pub(in crate::browser) use controls::{ControlsFrame, GroupPanel, SendSlot, holds_text};
+pub(in crate::browser) use controls::{
+    ControlsFrame, GroupPanel, SendSlot, holds_text, stance_slider,
+};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest};
 use controls::{TeamLife, render_team_controls};
 pub(in crate::browser) use fleet::use_team_arrangement_focus;

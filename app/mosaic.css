@@ -841,9 +841,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* Flush button material is shared by the primary panel and the separately
-   admitted global fast-mode control. */
-.team-composer .team-composer-controls,
+/* Flush button material is shared by the primary panel, a group card's stance
+   slider, and the separately admitted global fast-mode control. */
+.team-composer .team-composer-controls, .app-roster-group .room-group-stance,
 .app-spice-sidebar-anchor .app-spice-turbo, .agent-menu > .agent-menu-button {
   --team-control-face: linear-gradient(145deg, color-mix(in srgb, var(--app-highlight-source) 8.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2%, transparent));
   --team-control-edge: var(--app-control-edge-width) solid color-mix(in srgb, var(--ink) 24%, transparent);
