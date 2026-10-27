@@ -346,10 +346,6 @@ pub struct DesignCycleFacts {
     /// The operator nudged the Design at least once.
     #[serde(default)]
     pub nudged: bool,
-    /// The Design is an OOPS report intake: each report filed into it is
-    /// counted input, so its first pass needs no steeping.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub intake: bool,
     /// Latest pass boundary: a proposal or a claim release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub horizon: Option<Seq>,
@@ -397,7 +393,7 @@ impl DesignCycleFacts {
 
     fn counted(self) -> bool {
         let Some(horizon) = self.horizon else {
-            return self.steeped || self.nudged || self.intake && self.input.is_some();
+            return self.steeped || self.nudged;
         };
         self.input.is_some_and(|input| input > horizon)
             || self.settled.is_some_and(|settled| settled > horizon)
@@ -581,8 +577,7 @@ impl DesignCycles {
             | FactKind::PreparationDecided
             | FactKind::CandidateWithdrawn
             | FactKind::ExecutionAuthorized => self.observe_proposal(seq, fact),
-            FactKind::TaskAdded => self.observe_added(seq, fact),
-            FactKind::OutputControlled => self.observe_control(fact),
+            FactKind::TaskAdded | FactKind::OutputControlled => self.observe_control(fact),
             FactKind::ClaimWon
             | FactKind::ClaimFreed
             | FactKind::ClaimLapsed
@@ -643,23 +638,6 @@ impl DesignCycles {
                     .insert(output.clone(), controller.clone());
             }
         }
-    }
-
-    /// An OOPS Design opens an intake; each report it is born controlling is
-    /// counted input.
-    fn observe_added(&mut self, seq: Seq, fact: &AnyFact) {
-        if let Some(added) = fact.as_body::<TaskAdded>() {
-            if added.intent == Some(crate::TaskIntent::OpportunisticDesign) {
-                self.design(&added.task).facts.intake = true;
-            }
-            if let Some(preparation) = &added.preparation
-                && let Some(design) = self.designs.get_mut(&preparation.controller)
-                && design.facts.intake
-            {
-                design.input(seq);
-            }
-        }
-        self.observe_control(fact);
     }
 
     /// Record Plan-constructed work: a task whose immediate parent is not its

@@ -106,9 +106,7 @@ owns each rule summarized here.
   steeped one at the narrow 0.20 floor, since every question has been heard
   and it is close, so it asks only closely matched lanes. The reach widens
   again as soon as a later charge contests an item or a statement edit
-  un-steeps it. An OOPS Design, whose reports rather than its items ready it,
-  never steeps, so it always asks narrow, as a steeped Design does. The floor
-  decides qualification only; finite cosine score still
+  un-steeps it. The floor decides qualification only; finite cosine score still
   decides ranking. One opportunity selects one Design at most; one session has
   one unanswered request at most. Whether a lane is asked is decided on the
   whole statement; what it is asked is every question item still owed to it.
@@ -346,9 +344,10 @@ owns each rule summarized here.
   candidate until a holder
   proposes: the holder triages the pending reports as a whole, gives each
   cause one acceptance-bearing output, and names the reports to reject, as its
-  statement requires. Its reports are its input, so it never waits to steep:
-  one report readies its first pass and a report filed after a pass readies
-  the next. The operator decides that proposal like any other, Return
+  statement requires. It steeps and refills from counted input exactly as any
+  Design does; a report is a prepared Plan, not input, so reports alone ready
+  no pass. `spice task capture` names a gathering OOPS Design to open its pass
+  at once. The operator decides that proposal like any other, Return
   included, and reports arriving meanwhile wait for the next pass. Its
   intent and project cannot be edited; its statement text can. The operator
   may collapse the Design; the next report then opens a new generation.
