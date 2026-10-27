@@ -429,7 +429,7 @@ fn prepare_followup_policy(
     )?;
     let mut taste = None;
     if let Some(review) = taste_review.filter(TasteReview::required) {
-        hold_for_taste(&mut flow, &mut taste, &review);
+        keep_taste_hold(&mut taste, &review);
     }
     let phase = flow[0].clone();
     Ok((flow, phase, taste))

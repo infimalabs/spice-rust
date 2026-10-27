@@ -587,6 +587,7 @@ fn reconcile_client_recovery(
                     };
                     let body = if task_reply {
                         CommandAnswer::Task(Box::new(wire::intent::TaskAnswer {
+                            taste: None,
                             task: task.clone(),
                             status: "pending".to_owned(),
                             completion: None,

@@ -90,7 +90,7 @@ impl Audits {
             return Err("the audit the held creation caused matched nothing".to_owned());
         };
         Ok(TasteHold {
-            plan,
+            plan: Some(plan),
             matches,
             rechecks: 0,
         })
@@ -118,7 +118,7 @@ impl Audits {
                 .ok_or("the recheck count overflows")?;
         }
         Ok(TasteHold {
-            plan,
+            plan: Some(plan),
             matches,
             rechecks,
         })

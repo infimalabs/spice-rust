@@ -185,9 +185,9 @@ owns each rule summarized here.
   `task design` defaults to a Design with one open `design` phase when it
   names an open question, and to `plan,design` when it names none: its
   questions are its acceptance, so an unframed Design is sharpened first just
-  as ordinary work without acceptance gets a plan bookend, and a taste hold
-  keeps either in plan. It also admits `plan,design` or `review,design`
-  when a lane must first sharpen or judge the statement under a normal claim.
+  as ordinary work without acceptance gets a plan bookend. It also admits
+  `plan,design` or `review,design` when a lane must first sharpen or judge
+  the statement under a normal claim.
   Completing that intake phase releases its claim and enters the open
   Design; before then the row is ordinary claimed work, not a Design room or
   request target. Active Plan and Design claims refuse implementation commits.

@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use wire::{StatementField, TasteHold, TasteMatch, TastePlan};
+use wire::{StatementField, TasteHold, TasteMatch};
 
 use super::*;
 
@@ -86,33 +86,11 @@ pub(super) fn validate_pitch(pitch: &str) -> Result<(), Outcome<CommandAnswer>> 
     })
 }
 
-/// Hold a new task for taste review in a plan phase.
+/// Record or update a statement's taste hold from one policy read.
 ///
-/// A flow that already opens in plan keeps that phase as authored; only a plan
-/// phase this inserts is recorded as prepended, so the hold's clearance can
-/// withdraw exactly what the hold added.
-pub(super) fn hold_for_taste(
-    flow: &mut Vec<wire::Phase>,
-    taste: &mut Option<TasteHold>,
-    review: &TasteReview,
-) {
-    let plan = if flow.first().is_some_and(|phase| phase.as_str() == "plan") {
-        TastePlan::Authored
-    } else {
-        flow.insert(0, phase("plan"));
-        TastePlan::Prepended
-    };
-    *taste = Some(TasteHold {
-        plan,
-        matches: review.matches.clone(),
-        rechecks: 0,
-    });
-}
-
-/// Keep a revised statement the policy still matches under its hold.
-///
-/// A standing hold records the new matches and one more recheck; a statement
-/// not yet held opens a hold in the plan phase its flow already carries.
+/// A statement not yet held opens a fresh hold; a standing hold records the
+/// new matches and one more recheck. The hold is a statement marker only: it
+/// never touches the task's flow, phase, or claim.
 pub(super) fn keep_taste_hold(taste: &mut Option<TasteHold>, review: &TasteReview) {
     match taste {
         Some(hold) => {
@@ -121,7 +99,7 @@ pub(super) fn keep_taste_hold(taste: &mut Option<TasteHold>, review: &TasteRevie
         }
         None => {
             *taste = Some(TasteHold {
-                plan: TastePlan::Authored,
+                plan: None,
                 matches: review.matches.clone(),
                 rechecks: 0,
             });
@@ -129,151 +107,48 @@ pub(super) fn keep_taste_hold(taste: &mut Option<TasteHold>, review: &TasteRevie
     }
 }
 
-/// Clear a satisfied taste hold, withdrawing the plan phase it inserted.
+/// Carry a statement's taste hold through one policy read of its rewrite.
 ///
-/// Returns the workflow the task enters when the hold's own plan phase is still
-/// current: the authored flow, positioned at its first phase, with every other
-/// workflow field intact. A plan phase the author named stays.
-pub(super) fn clear_taste_review(
-    taste: &mut Option<TasteHold>,
-    workflow: &wire::WorkflowHead,
-) -> Option<wire::WorkflowHead> {
-    let prepended = taste
-        .take()
-        .is_some_and(|hold| hold.plan == TastePlan::Prepended);
-    let in_prepended_phase = workflow.phase.as_str() == "plan"
-        && workflow.flow.first() == Some(&workflow.phase)
-        && workflow.flow.len() > 1;
-    if !prepended || !in_prepended_phase {
-        return None;
-    }
-    let mut released = workflow.clone();
-    released.flow.remove(0);
-    released.phase = released.flow[0].clone();
-    Some(released)
-}
-
-/// Carry a document task's taste hold into the statement its document rewrites.
-///
-/// A new task is held like any other. An existing task the policy still
-/// matches keeps or opens its hold and, once a held task no longer matches,
-/// returns to the workflow its hold displaced.
+/// A match records or updates the hold; a clear read clears it. A statement
+/// that held before needs repository policy authority to clear, so an
+/// unavailable policy refuses rather than silently dropping the hold.
 pub(super) fn resync_taste_hold(
-    snapshot: &ValidatedSnapshot,
-    existing: Option<&Entry>,
-    matched: Option<&TasteReview>,
-    flow: &mut Vec<wire::Phase>,
     taste: &mut Option<TasteHold>,
-) -> Result<Option<ReleasedPlan>, Outcome<CommandAnswer>> {
-    let Some(entry) = existing else {
-        if let Some(review) = matched {
-            hold_for_taste(flow, taste, review);
+    review: Option<&TasteReview>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    match review {
+        Some(review) if review.required() => keep_taste_hold(taste, review),
+        Some(_) => *taste = None,
+        None if taste.is_some() => {
+            return Err(environment_fault(
+                "task::taste-policy-unavailable",
+                "an existing taste review cannot clear without repository policy authority",
+            ));
         }
-        return Ok(None);
+        None => {}
+    }
+    Ok(())
+}
+
+/// The standing hold's refusal of a phase completion: every match, how many
+/// rereads the statement has already survived, and the rewording remedy.
+pub(super) fn taste_hold_refusal(entry: &Entry, hold: &TasteHold) -> Outcome<CommandAnswer> {
+    // A lane that rewords and refuses again can only tell progress from
+    // stasis if the refusal says how many reads the statement has already
+    // survived.
+    let standing = match hold.rechecks {
+        0 => "the statement has not been rechecked since the hold began".to_owned(),
+        1 => "1 recheck since the hold began still matched".to_owned(),
+        count => format!("{count} rechecks since the hold began still matched"),
     };
-    let mut held = entry.statement().taste.clone();
-    if let Some(review) = matched {
-        keep_taste_hold(&mut held, review);
-        *taste = held;
-        return Ok(None);
-    }
-    clear_taste_review(&mut held, entry.workflow())
-        .map(|workflow| ReleasedPlan::observe(snapshot, entry.born(), workflow))
-        .transpose()
-}
-
-/// The workflow a cleared hold returns its task to, guarded on the workflow
-/// and claim heads the clearance read.
-pub(super) struct ReleasedPlan {
-    workflow_witness: Witness,
-    claim_witness: Witness,
-    workflow: wire::WorkflowHead,
-    claim: Option<ClaimHead>,
-    release_actor: Option<Actor>,
-}
-
-impl ReleasedPlan {
-    pub(super) fn observe(
-        snapshot: &ValidatedSnapshot,
-        task: &wire::TaskStamp,
-        workflow: wire::WorkflowHead,
-    ) -> Result<Self, Outcome<CommandAnswer>> {
-        let observed = snapshot
-            .answer
-            .tasks
-            .iter()
-            .find(|heads| heads.statement.body.born == *task)
-            .ok_or_else(|| {
-                protocol_fault(
-                    "task::snapshot-incoherent",
-                    "validated board snapshot lost a task entry",
-                )
-            })?;
-        let mut claim = observed.claim.as_ref().map(|claim| claim.body.clone());
-        let release_actor = claim
-            .as_ref()
-            .filter(|claim| claim.disposition == ClaimDisposition::Active)
-            .map(|claim| claim.actor.clone());
-        if let Some(claim) = claim.as_mut()
-            && release_actor.is_some()
-        {
-            claim.disposition = ClaimDisposition::Freed;
-        }
-        Ok(Self {
-            workflow_witness: workflow_witness(observed),
-            claim_witness: claim_witness(observed),
-            workflow,
-            claim,
-            release_actor,
-        })
-    }
-
-    pub(super) const fn workflow(&self) -> &wire::WorkflowHead {
-        &self.workflow
-    }
-
-    pub(super) fn claim(&self) -> Option<ClaimHead> {
-        self.claim.clone()
-    }
-
-    /// Record the phase change and any exact active-claim release in one write,
-    /// so replay never exposes authored execution under the synthetic-plan claim.
-    pub(super) fn write(
-        self,
-        write: &mut JournalWrite,
-        task: &wire::TaskStamp,
-        edited: PendingFact,
-    ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-        guard(write, vec![self.workflow_witness, self.claim_witness]);
-        if let Some(actor) = self.release_actor {
-            let freed = write
-                .fact(
-                    body::ClaimFreed {
-                        task: task.clone(),
-                        actor,
-                        parked: None,
-                    },
-                    FactCause::Pending(edited),
-                )
-                .map_err(|error| store_fault("claim::free-build", &error.to_string()))?;
-            let claim = self
-                .claim
-                .expect("an active synthetic-plan claim has a projected release");
-            write.claim_head(task.clone(), freed, move |fact| ClaimHead { fact, ..claim });
-        }
-        let phased = write
-            .fact(
-                body::TaskPhased {
-                    task: task.clone(),
-                    phase: self.workflow.phase.clone(),
-                },
-                FactCause::Pending(edited),
-            )
-            .map_err(|error| store_fault("task::phase-build", &error.to_string()))?;
-        let workflow = self.workflow;
-        write.workflow_head(task.clone(), phased, move |_| workflow);
-        Ok(phased)
-    }
+    taste_matches_refusal(
+        entry.handle().to_string(),
+        &hold.matches,
+        &format!(
+            "{standing}; change what the statement says, then spice task modify {} lets the complete current taste policy recheck it",
+            entry.handle(),
+        ),
+    )
 }
 
 /// Read one statement against the repository taste policy and the built-in
@@ -413,4 +288,11 @@ pub(super) fn withhold_taste_findings(principal: &Actor, taste: &mut Option<Tast
     {
         hold.withhold_findings();
     }
+}
+
+/// The taste hold a command answer leads with, read as `principal` may read it.
+pub(super) fn answered_taste(principal: &Actor, taste: Option<&TasteHold>) -> Option<TasteHold> {
+    let mut taste = taste.cloned();
+    withhold_taste_findings(principal, &mut taste);
+    taste
 }

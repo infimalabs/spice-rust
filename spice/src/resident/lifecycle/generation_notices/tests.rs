@@ -127,6 +127,68 @@ fn acknowledgement_clears_prior_generations_and_a_later_edit_gets_a_new_identity
 }
 
 #[test]
+fn a_lane_write_that_leaves_a_fresh_hold_tells_that_lane_once() {
+    let fixture = LaunchFixture::new();
+    let (bus, task) = claimed_fixture(&fixture);
+    let cursor = bus.cursor().expect("cursor reads");
+    let hold = wire::TasteHold {
+        plan: None,
+        matches: vec![wire::TasteMatch {
+            field: wire::StatementField::Title,
+            line: 1,
+            taste: "taskwording".to_owned(),
+            finding: None,
+        }],
+        rechecks: 0,
+    };
+    retitle(&bus, &task, Actor::Lane(fixture.lane), Some(hold.clone()));
+    let snapshot = bus.task_snapshot().expect("held snapshot reads");
+
+    let [(lane, notice)] = taste_holds(&bus, &snapshot, cursor)
+        .expect("hold notices project")
+        .try_into()
+        .expect("the opening write's lane hears the hold");
+    assert_eq!((lane, notice.occupant), (fixture.lane, fixture.occupant));
+    assert_eq!(
+        notice.task,
+        TaskHandle::for_project("task.claim", &task).to_string()
+    );
+    assert_eq!(notice.matches, ["title line 1 taste taskwording"]);
+    assert!(
+        taste_holds(&bus, &snapshot, bus.cursor().expect("cursor reads"))
+            .expect("observed holds project")
+            .is_empty(),
+        "a hold observed by an earlier pass is not announced again",
+    );
+    assert!(
+        taste_holds(&bus, &snapshot, None)
+            .expect("first pass projects")
+            .is_empty(),
+        "the first pass has no earlier observation to announce against",
+    );
+
+    let cursor = bus.cursor().expect("cursor reads");
+    retitle(
+        &bus,
+        &task,
+        Actor::Lane(fixture.lane),
+        Some(wire::TasteHold {
+            rechecks: 1,
+            ..hold.clone()
+        }),
+    );
+    retitle(&bus, &task, Actor::Operator, Some(hold));
+    let snapshot = bus.task_snapshot().expect("rechecked snapshot reads");
+    assert!(
+        taste_holds(&bus, &snapshot, cursor)
+            .expect("operator hold projects")
+            .is_empty(),
+        "only a lane's own fresh hold is told; an operator write tells no lane",
+    );
+    finish(bus);
+}
+
+#[test]
 fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
     let fixture = LaunchFixture::new();
     let (bus, task) = automatic_claimed_fixture(&fixture);
@@ -318,6 +380,33 @@ fn note(bus: &Bus, task: &TaskStamp, actor: Actor) {
         )
         .expect("task note builds");
     committed(bus.commit(write).expect("task note commits"));
+}
+
+/// Revise the statement as `actor`, leaving `taste` as its hold.
+fn retitle(bus: &Bus, task: &TaskStamp, actor: Actor, taste: Option<wire::TasteHold>) {
+    let snapshot = bus.task_snapshot().expect("pre-edit snapshot reads");
+    let mut statement = snapshot.tasks()[0].statement().body().clone();
+    statement.taste = taste;
+    let revision = u32::try_from(statement.revision.get())
+        .expect("fixture revision fits")
+        .saturating_add(1);
+    let mut write = JournalWrite::new(actor, task_origin(task), now(), Producer::CommandDoor);
+    let edited = write
+        .fact(
+            wire::body::TaskEdited {
+                task: task.clone(),
+                revision,
+                dependencies: None,
+                intent: None,
+            },
+            FactCause::Root,
+        )
+        .expect("task edit builds");
+    write.task_head(edited, move |position| wire::TaskHead {
+        revision: position,
+        ..statement
+    });
+    committed(bus.commit(write).expect("task edit commits"));
 }
 
 fn acknowledge(bus: &Bus, task: &TaskStamp) {

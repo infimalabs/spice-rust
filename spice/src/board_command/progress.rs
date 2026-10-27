@@ -268,6 +268,7 @@ fn replay_task_completion(
     Some(Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
         body: CommandAnswer::Task(Box::new(wire::intent::TaskAnswer {
+            taste: None,
             task: entry.handle().clone(),
             status: terminal.status.to_string(),
             completion: None,
@@ -305,6 +306,7 @@ fn done_transition(
     }
     acknowledged(entry)?;
     require_lane_progress(entry)?;
+    refuse_taste_hold(entry)?;
     if entry.workflow().phase.as_str() == "review" {
         return Err(refusal(
             "task::review-required",
@@ -354,6 +356,16 @@ fn require_lane_progress(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
     ))
 }
 
+/// Refuse completing any phase of a task whose statement stands under a taste
+/// hold, naming each match and the rewording that clears it.
+fn refuse_taste_hold(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
+    entry
+        .statement()
+        .taste
+        .as_ref()
+        .map_or(Ok(()), |hold| Err(taste_hold_refusal(entry, hold)))
+}
+
 fn admit_plan_transition(
     snapshot: &ValidatedSnapshot,
     entry: &Entry,
@@ -385,26 +397,6 @@ fn admit_plan_transition(
         transition.kind(),
         board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
     );
-    if let Some(hold) = &entry.statement().taste {
-        // A lane that rewords and refuses again can only tell progress from
-        // stasis if the refusal says how many reads the statement has already
-        // survived.
-        let standing = match hold.rechecks {
-            0 => "the filed statement has not been revised".to_owned(),
-            1 => "one revision has been rechecked and the statement still matches".to_owned(),
-            count => {
-                format!("{count} revisions have been rechecked and the statement still matches")
-            }
-        };
-        return Err(taste_matches_refusal(
-            entry.handle().to_string(),
-            &hold.matches,
-            &format!(
-                "{standing}; change what the statement says, then spice task modify {} lets the complete current taste policy recheck it",
-                entry.handle(),
-            ),
-        ));
-    }
     if disposition.is_some() {
         return Ok(());
     }
@@ -656,6 +648,7 @@ fn append_done(
         None
     };
     Ok(wire::intent::TaskAnswer {
+        taste: None,
         task: entry.handle().clone(),
         status,
         completion: None,
@@ -959,6 +952,7 @@ fn prepare_review(
     let (verdict, finding, note) = review_verdict(review)?;
     let statement = match verdict {
         body::Verdict::Clean => {
+            refuse_taste_hold(entry)?;
             admit_plan_transition(&snapshot, entry, command, &transition, None)?;
             entry.statement().clone()
         }
@@ -1199,6 +1193,7 @@ fn review_answer(
     next: Option<Box<str>>,
 ) -> wire::intent::TaskAnswer {
     wire::intent::TaskAnswer {
+        taste: None,
         task,
         status,
         completion: None,

@@ -185,14 +185,14 @@ fn writable_crossing_lifts_standing_tags_into_typed_fields_once() {
     assert_no_statement_tags(&journal);
     assert_eq!(head.priority, Some(wire::TaskPriority::High));
     assert_eq!(
-        head.taste.map(|hold| hold.plan),
+        head.taste.and_then(|hold| hold.plan),
         Some(wire::TastePlan::Prepended)
     );
     assert_eq!(added.priority, None);
     assert_eq!(
         added.taste,
         Some(wire::TasteHold {
-            plan: wire::TastePlan::Authored,
+            plan: Some(wire::TastePlan::Authored),
             matches: vec![opened],
             rechecks: 0,
         })
@@ -233,7 +233,7 @@ fn writable_crossing_lifts_audit_evidence_into_plan_only_holds_once() {
     assert_eq!(
         head.taste,
         Some(wire::TasteHold {
-            plan: wire::TastePlan::Prepended,
+            plan: Some(wire::TastePlan::Prepended),
             matches: latest.to_vec(),
             rechecks: 1,
         })
@@ -241,7 +241,7 @@ fn writable_crossing_lifts_audit_evidence_into_plan_only_holds_once() {
     assert_eq!(
         added.taste,
         Some(wire::TasteHold {
-            plan: wire::TastePlan::Authored,
+            plan: Some(wire::TastePlan::Authored),
             matches: vec![opened],
             rechecks: 0,
         })

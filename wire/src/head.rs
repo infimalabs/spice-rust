@@ -259,16 +259,23 @@ impl std::fmt::Display for TaskPriority {
     }
 }
 
-/// Board-owned hold keeping a task in a plan phase until its statement passes
-/// taste review.
+/// Board-owned marker that a task's statement has not yet passed taste review.
 ///
 /// Authors never write it; task creation, filing, and statement edits set it
-/// from the repository taste policy, and an edit that passes clears it.
+/// from the repository taste policy, and an edit that passes clears it. The
+/// hold lives on the statement alone: it never moves the task's phase or
+/// claim, and while it stands no phase of the task completes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TasteHold {
-    /// Where the plan phase holding the task came from.
-    pub plan: TastePlan,
+    /// Where the plan phase of a hold recorded before holds became statement
+    /// markers came from; absent on every hold recorded since.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub plan: Option<TastePlan>,
     /// Every place the latest policy read found a taste in the statement.
     pub matches: Vec<TasteMatch>,
     /// Statement revisions read since the hold began that still matched.
@@ -289,14 +296,16 @@ impl TasteHold {
     }
 }
 
-/// Where the plan phase of a taste hold came from.
+/// Where the plan phase of a retained taste hold came from.
+///
+/// Retained history only: holds once inserted or reused a plan phase, and
+/// those statements still decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TastePlan {
     /// The authored flow already opened in plan.
     Authored,
-    /// The hold prepended plan to the authored flow; clearing the hold
-    /// withdraws that phase.
+    /// The hold prepended plan to the authored flow.
     Prepended,
 }
 

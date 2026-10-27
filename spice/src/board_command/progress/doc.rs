@@ -29,7 +29,6 @@ struct DocTaskSpec {
     dependencies: Vec<wire::TaskStamp>,
     flow: Vec<wire::Phase>,
     initial: wire::Phase,
-    released: Option<ReleasedPlan>,
 }
 
 pub(in crate::board_command) fn doc_apply(
@@ -303,26 +302,8 @@ fn doc_task_spec(
         None,
         &node.acceptance,
     )?;
-    let was_required = existing.is_some_and(|entry| entry.statement().taste.is_some());
-    let matched = taste_review.as_ref().filter(|review| review.required());
-    if taste_review.is_none() && was_required {
-        return Err(environment_fault(
-            "task::taste-policy-unavailable",
-            "an existing taste review cannot clear without repository policy authority",
-        ));
-    }
-    if let Some(review) = matched
-        && existing.is_some_and(|entry| {
-            entry.statement().taste.is_none() && entry.workflow().phase.as_str() != "plan"
-        })
-    {
-        return Err(review.refusal(
-            task.to_string(),
-            "revise the authored task statement so it passes taste review before applying it",
-        ));
-    }
-    let mut taste = None;
-    let released = resync_taste_hold(&plan.snapshot, existing, matched, &mut flow, &mut taste)?;
+    let mut taste = existing.and_then(|entry| entry.statement().taste.clone());
+    resync_taste_hold(&mut taste, taste_review.as_ref())?;
     let initial = flow[0].clone();
     Ok(DocTaskSpec {
         born: task
@@ -341,7 +322,6 @@ fn doc_task_spec(
         dependencies,
         flow,
         initial,
-        released,
     })
 }
 
@@ -462,10 +442,7 @@ fn edit_doc_task(
         revision: position,
         ..statement
     });
-    match spec.released {
-        Some(released) => released.write(write, existing.born(), edited),
-        None => Ok(edited),
-    }
+    Ok(edited)
 }
 
 fn add_doc_task(

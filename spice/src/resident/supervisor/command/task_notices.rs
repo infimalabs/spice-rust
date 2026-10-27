@@ -1,8 +1,9 @@
 //! Private task-claim notices for one exact occupant: a stale claim
 //! generation, a resident-minted assignment and its withdrawal once the claim
-//! ends, and a lapse. Each is a keyless background aside under the task's
-//! purpose, so a later notice for the same task replaces an earlier one still
-//! queued at omp's next step boundary.
+//! ends, a lapse, and a taste hold a lane's own statement write left standing.
+//! Each is a keyless background aside under a per-task purpose, so a later
+//! notice for the same task replaces an earlier one still queued at omp's next
+//! step boundary.
 
 use std::io::Write;
 use std::sync::PoisonError;
@@ -24,6 +25,63 @@ pub(in crate::resident) struct TaskGenerationNotice {
     pub(in crate::resident) change: String,
     pub(in crate::resident) editor: String,
     pub(in crate::resident) position: u64,
+    /// The statement's taste hold as it stands now, when the holder must hear it.
+    #[serde(default)]
+    pub(in crate::resident) taste: Option<TasteState>,
+}
+
+/// Where a claimant's statement stands against the taste policy.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub(in crate::resident) enum TasteState {
+    /// Held: each place the current policy matched, findings withheld, and the
+    /// rewordings the hold has already survived.
+    Held { matches: Vec<String>, rechecks: u32 },
+    /// A statement edit left the statement clear of taste review.
+    Clear,
+}
+
+impl TasteState {
+    fn clause(&self, task: &str) -> String {
+        match self {
+            Self::Held { matches, rechecks } => format!(
+                " Its statement stands held for taste review at {} after {rechecks} \
+                 recheck(s); no phase completes until a reworded statement passes \
+                 `spice task modify {task}`.",
+                matches.join("; "),
+            ),
+            Self::Clear => " Its statement now stands clear of taste review.".to_owned(),
+        }
+    }
+}
+
+/// A taste hold one lane's statement write left standing, for that lane's
+/// current occupant whether or not the lane holds the task.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct TasteHoldNotice {
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) task: String,
+    /// Journal position of the statement write that left the hold.
+    pub(in crate::resident) position: u64,
+    /// Each place the policy matched, findings withheld.
+    pub(in crate::resident) matches: Vec<String>,
+}
+
+impl TasteHoldNotice {
+    fn text(&self) -> String {
+        format!(
+            "<system-notice>\nThis lane's statement write at position {} left task {} held \
+             for taste review at {}. No phase of it completes while the hold stands, \
+             whichever lane holds it. Change what the statement says, then run `spice task \
+             modify {}` so the complete current taste policy rechecks it. This is a private \
+             taste notice; no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
+            self.position,
+            self.task,
+            self.matches.join("; "),
+            self.task,
+        )
+    }
 }
 
 /// One private proactive-assignment notice, scoped to the claim's exact occupant.
@@ -83,9 +141,14 @@ impl<W: Write + Send + 'static> Driver<W> {
             }
             delivered.replace((notice.task.clone(), notice.claim, notice.generation))
         };
+        let taste = notice
+            .taste
+            .as_ref()
+            .map(|taste| taste.clause(&notice.task))
+            .unwrap_or_default();
         let message = format!(
             "<system-notice>\nTask {} changed after this claim last acknowledged it: \
-             generation {} is {} by {} at position {}. Run `spice task next` \
+             generation {} is {} by {} at position {}.{taste} Run `spice task next` \
              to read and accept the current statement before continuing. Completion and review remain \
              refused until task next succeeds. This is a private authority reminder; \
              no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
@@ -194,6 +257,35 @@ impl<W: Write + Send + 'static> Driver<W> {
             }
         }
     }
+
+    /// Tell this occupant once that its own statement write left a task held.
+    ///
+    /// The purpose is the task's taste rather than the task itself, so the
+    /// notice never displaces a queued assignment for the same task.
+    pub(super) fn deliver_taste_hold(&self, notice: &TasteHoldNotice) {
+        let previous = {
+            let mut delivered = self
+                .taste_hold
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered.as_ref() == Some(notice) {
+                return;
+            }
+            delivered.replace(notice.clone())
+        };
+        if self
+            .background(&format!("taste:{}", notice.task), &notice.text())
+            .is_err()
+        {
+            let mut delivered = self
+                .taste_hold
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered.as_ref() == Some(notice) {
+                *delivered = previous;
+            }
+        }
+    }
 }
 
 /// Privately notify the exact claimant occupant that its task authority moved.
@@ -230,4 +322,14 @@ pub(in crate::resident) fn claim_lapse(
     notice: ClaimLapseNotice,
 ) {
     send(paths, lane, &Kick::ClaimLapse(notice));
+}
+
+/// Privately tell the lane whose statement write left a task held, at its
+/// current occupant.
+pub(in crate::resident) fn taste_hold(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: TasteHoldNotice,
+) {
+    send(paths, lane, &Kick::TasteHold(notice));
 }

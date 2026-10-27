@@ -1166,18 +1166,6 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     {
         return Vec::new();
     }
-    let handle = &statement.handle;
-    if statement.taste.is_some() {
-        return vec![
-            "phase_guidance:".to_owned(),
-            "  phase:plan is holding this task for taste review.".to_owned(),
-            format!(
-                "  Update the task statement with spice task modify {handle} so the complete current taste policy rechecks it."
-            ),
-            "  Taste review clears only after that recheck finds no current matches. If this plan was inserted by the hold, clearance releases its claim and returns the authored phase through task next; planning changes board state, not repository files."
-                .to_owned(),
-        ];
-    }
     if workflow.flow.len() == 1 && workflow.flow.first() == Some(&workflow.phase) {
         return vec![
             "phase_guidance:".to_owned(),
@@ -1190,7 +1178,8 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),
             format!(
-                "  Record out-of-scope discoveries with spice task note {handle} \"...\"; then complete the planning bookend with spice task done --validation \"...\"."
+                "  Record out-of-scope discoveries with spice task note {} \"...\"; then complete the planning bookend with spice task done --validation \"...\".",
+                statement.handle,
             ),
         ];
     }
@@ -1205,7 +1194,8 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "  Planning changes board state, not repository files; do not edit or commit implementation."
             .to_owned(),
         format!(
-            "  Record out-of-scope discoveries with spice task note {handle} \"...\"; then advance with spice task done --validation \"...\"."
+            "  Record out-of-scope discoveries with spice task note {} \"...\"; then advance with spice task done --validation \"...\".",
+            statement.handle,
         ),
     ]
 }

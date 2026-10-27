@@ -71,11 +71,9 @@ fn prepare_correction(
     }
     let (mut statement, flow) = corrected_statement(entry, edit)?;
     // A Draft asserts nothing yet; taste policy binds when it is filed.
-    let released = if entry.is_draft() {
-        None
-    } else {
-        review_taste(repository, snapshot, command, edit, entry, &mut statement)?
-    };
+    if !entry.is_draft() {
+        review_taste(repository, snapshot, command, &mut statement)?;
+    }
     let at = current_instant()?;
     let requirement_change = requirements::prepare(
         entry,
@@ -85,22 +83,18 @@ fn prepare_correction(
         &snapshot.answer.environment(),
         at,
     )?;
-    let claim = released
-        .as_ref()
-        .map_or_else(|| entry.claim().cloned(), ReleasedPlan::claim);
-    let workflow = match (&released, flow) {
-        (Some(released), _) => released.workflow().clone(),
-        (None, Some(flow)) => wire::WorkflowHead {
+    let workflow = flow.map_or_else(
+        || entry.workflow().clone(),
+        |flow| wire::WorkflowHead {
             phase: flow[0].clone(),
             flow,
             ..entry.workflow().clone()
         },
-        (None, None) => entry.workflow().clone(),
-    };
+    );
     let post = Entry::new(
         statement.clone(),
         workflow.clone(),
-        claim,
+        entry.claim().cloned(),
         requirement_change
             .lease()
             .cloned()
@@ -116,9 +110,9 @@ fn prepare_correction(
     .with_grouped(entry.grouped())
     .with_design(entry.design());
     planning::refuse_disposed_construction(snapshot, &statement, &workflow)?;
-    // A cleared taste hold publishes its own released workflow. A Draft route
-    // replaces the workflow it read, so a concurrent workflow change refuses.
-    let workflow = if released.is_none() && workflow != *entry.workflow() {
+    // A Draft route replaces the workflow it read, so a concurrent workflow
+    // change refuses.
+    let workflow = if workflow != *entry.workflow() {
         let heads = snapshot
             .answer
             .tasks
@@ -131,9 +125,9 @@ fn prepare_correction(
     };
     let publication = CorrectionPublication {
         next: next_action(snapshot, &post),
+        status: edit_status(entry.statement().taste.as_ref(), statement.taste.as_ref()),
         at,
         requirement_change,
-        released,
         workflow,
     };
     Ok((statement, publication))
@@ -141,16 +135,15 @@ fn prepare_correction(
 
 /// Read a corrected statement against the taste policy and move its hold.
 ///
-/// A match keeps the statement held, counting one more recheck of a standing
-/// hold; a clear read releases the hold and any plan phase it inserted.
+/// A match records the hold, or counts one more recheck of a standing one; a
+/// clear read clears it. Only the statement moves: the task's phase, flow,
+/// and claim stay exactly as they were.
 fn review_taste(
     repository: Option<Host<'_>>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    edit: &TaskEdit,
-    entry: &Entry,
     statement: &mut TaskHead,
-) -> Result<Option<ReleasedPlan>, Outcome<CommandAnswer>> {
+) -> Result<(), Outcome<CommandAnswer>> {
     let review = task_taste_review(
         repository,
         snapshot,
@@ -160,32 +153,16 @@ fn review_taste(
         statement.description.as_deref(),
         &statement.acceptance,
     )?;
-    let was_required = statement.taste.is_some();
-    let mut released = None;
-    match review {
-        Some(review) if !review.required() => {
-            if let Some(workflow) = clear_taste_review(&mut statement.taste, entry.workflow()) {
-                released = Some(ReleasedPlan::observe(snapshot, entry.born(), workflow)?);
-            }
-        }
-        Some(review) if was_required || entry.workflow().phase.as_str() == "plan" => {
-            keep_taste_hold(&mut statement.taste, &review);
-        }
-        Some(review) => {
-            return Err(review.refusal(
-                edit.task.to_string(),
-                "revise the proposed task statement so it passes taste review before applying it",
-            ));
-        }
-        None if was_required => {
-            return Err(environment_fault(
-                "task::taste-policy-unavailable",
-                "an existing taste review cannot clear without repository policy authority",
-            ));
-        }
-        None => {}
+    resync_taste_hold(&mut statement.taste, review.as_ref())
+}
+
+/// The edit answer's status, naming where the edit left the taste hold.
+fn edit_status(before: Option<&wire::TasteHold>, after: Option<&wire::TasteHold>) -> String {
+    match (before, after) {
+        (_, Some(_)) => "edited; taste_review required".to_owned(),
+        (Some(_), None) => "edited; taste_review cleared".to_owned(),
+        (None, None) => "edited".to_owned(),
     }
-    Ok(released)
 }
 
 /// Build the statement a correction publishes, or the refusal it earns.
@@ -306,10 +283,10 @@ fn corrected_project(requested: &str) -> Result<String, Outcome<CommandAnswer>> 
 /// Write one corrected statement as a fresh revision attributed to its editor.
 struct CorrectionPublication {
     next: Option<Box<str>>,
+    /// The answer's status: the edit, plus how it moved the taste hold.
+    status: String,
     at: Instant,
     requirement_change: requirements::Change,
-    /// The authored workflow a cleared hold returns the task to.
-    released: Option<ReleasedPlan>,
     /// The replacement workflow a Draft's route edit publishes, with the
     /// workflow witness it replaces.
     workflow: Option<(wire::WorkflowHead, Witness)>,
@@ -324,15 +301,11 @@ fn publish_correction(
 ) -> Outcome<CommandAnswer> {
     let CorrectionPublication {
         next,
+        status,
         at,
         requirement_change,
-        released,
         workflow,
     } = publication;
-    let status = released.as_ref().map_or_else(
-        || "edited".to_owned(),
-        |released| format!("edited; phase:{}", released.workflow().phase),
-    );
     let revision = u32::try_from(statement.revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
@@ -355,22 +328,19 @@ fn publish_correction(
         Ok(fact) => fact,
         Err(error) => return store_fault("task::edit-build", &error.to_string()),
     };
-    if let Some(released) = released
-        && let Err(outcome) = released.write(&mut write, &statement.born, edited)
-    {
-        return outcome;
-    }
     if let Some((workflow, read)) = workflow {
         guard(&mut write, vec![read]);
         write.workflow_head(statement.born.clone(), edited, move |_| workflow);
     }
     let rendered = TaskHandle::for_filing(&statement.project, &statement.born, statement.filing);
+    let taste = answered_taste(command.actor(), statement.taste.as_ref());
     write.task_head(edited, move |position| TaskHead {
         revision: position,
         ..statement
     });
     requirement_change.write_lease(&mut write, edited);
     let answer = wire::intent::TaskAnswer {
+        taste,
         task: rendered,
         status,
         completion: None,

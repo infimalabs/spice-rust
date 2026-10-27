@@ -335,6 +335,7 @@ fn commit_oops_intake(
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {
+        taste: None,
         task,
         status: "pending".to_owned(),
         completion: None,

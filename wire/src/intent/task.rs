@@ -444,6 +444,14 @@ pub struct TaskAssign {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswer {
+    /// Taste hold the transaction left standing on the task's statement,
+    /// first so its author reads every match before anything else.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub taste: Option<crate::TasteHold>,
     /// Task the answer concerns.
     pub task: TaskHandle,
     /// Its status after the transaction.

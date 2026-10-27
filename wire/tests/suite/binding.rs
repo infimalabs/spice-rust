@@ -718,7 +718,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 filing: wire::TaskFiling::Filed,
                 priority: Some(wire::TaskPriority::High),
                 taste: Some(wire::TasteHold {
-                    plan: wire::TastePlan::Prepended,
+                    plan: Some(wire::TastePlan::Prepended),
                     matches: vec![wire::TasteMatch {
                         field: wire::StatementField::Acceptance,
                         line: 1,

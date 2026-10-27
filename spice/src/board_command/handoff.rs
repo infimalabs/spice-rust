@@ -14,8 +14,9 @@ pub(crate) fn queued_at(
 /// A completion that published repository work asks for independent ownership
 /// of the phase it entered. A completion that carried its claim into the next
 /// phase needs no hold: the claim itself is the assignment. Task birth, an
-/// unrecorded transition into the final declared phase, and an edit that
-/// withdrew a taste hold's plan phase carry no inferred handoff preference.
+/// unrecorded transition into the final declared phase, and a retained edit
+/// that withdrew a taste hold's prepended plan phase (edits no longer move
+/// phases) carry no inferred handoff preference.
 pub(crate) fn phase_handoff(
     facts: &bus::TaskFacts,
     heads: &journal::TaskHeads,

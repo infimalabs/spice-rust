@@ -82,13 +82,27 @@ pub(super) fn modify_with_repository(
     title: &str,
 ) -> Outcome<CommandAnswer> {
     let visible = board(bus, epoch, actor.clone());
+    let witness = statement_witness(at(&visible, task));
+    modify_witnessed(bus, repository, epoch, actor, task, title, witness)
+}
+
+/// Retitle `task` against the statement head `witness` names, as `actor`.
+fn modify_witnessed(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    task: &TaskHandle,
+    title: &str,
+    witness: Witness,
+) -> Outcome<CommandAnswer> {
     issue_repository(
         bus,
         repository,
         epoch,
         actor,
         CommandKind::TaskEdit,
-        vec![statement_witness(at(&visible, task))],
+        vec![witness],
         &TaskEdit {
             intent: None,
             task: task.clone(),
@@ -104,8 +118,20 @@ pub(super) fn modify_with_repository(
     )
 }
 
+fn flow_of(board: &BoardAnswer, task: &TaskHandle) -> (String, Vec<String>) {
+    let workflow = &at(board, task).workflow.body;
+    (
+        workflow.phase.as_str().to_owned(),
+        workflow
+            .flow
+            .iter()
+            .map(|phase| phase.as_str().to_owned())
+            .collect(),
+    )
+}
+
 #[test]
-fn configured_match_routes_accepted_task_through_durable_taste_review() {
+fn a_matched_filing_records_a_hold_and_keeps_the_authored_flow() {
     let (root, bus, epoch, _seats) = fixture("taste-review-create", 0);
     let repository = configured_repository(&root, &["delay"]);
 
@@ -117,7 +143,10 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
         "Ship the lifecycle change",
         &["focused tests pass"],
     );
-    assert_committed(clean_outcome);
+    let CommandAnswer::Task(clean_answer) = assert_committed(clean_outcome) else {
+        panic!("task add answers with a task status");
+    };
+    assert_eq!(clean_answer.taste, None);
     let (review_task, review) = add_with_repository(
         &bus,
         &repository,
@@ -126,40 +155,27 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
         "Delay the lifecycle change",
         &["focused tests pass"],
     );
-    assert_committed(review);
+    let CommandAnswer::Task(answer) = assert_committed(review) else {
+        panic!("task add answers with a task status");
+    };
 
     let visible = board(&bus, epoch, Actor::Operator);
-    let clean_entry = at(&visible, &clean_task);
+    let authored = ("todo".to_owned(), vec!["todo".into(), "review".into()]);
+    assert_eq!(flow_of(&visible, &clean_task), authored);
+    assert_eq!(at(&visible, &clean_task).statement.body.taste, None);
     assert_eq!(
-        clean_entry
-            .workflow
-            .body
-            .flow
-            .iter()
-            .map(wire::Phase::as_str)
-            .collect::<Vec<_>>(),
-        ["todo", "review"],
+        flow_of(&visible, &review_task),
+        authored,
+        "a hold leaves the authored flow and first phase exactly as filed",
     );
-    assert_eq!(clean_entry.statement.body.taste, None);
-
     let held = at(&visible, &review_task);
-    assert_eq!(held.workflow.body.phase.as_str(), "plan");
-    assert_eq!(
-        held.workflow
-            .body
-            .flow
-            .iter()
-            .map(wire::Phase::as_str)
-            .collect::<Vec<_>>(),
-        ["plan", "todo", "review"],
-    );
     let hold = held
         .statement
         .body
         .taste
         .as_ref()
         .expect("a matched statement is held");
-    assert_eq!(hold.plan, wire::TastePlan::Prepended);
+    assert_eq!(hold.plan, None);
     assert_eq!(hold.rechecks, 0);
     let [found] = hold.matches.as_slice() else {
         panic!("one title match holds the statement: {hold:?}");
@@ -175,6 +191,17 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
             .map(|finding| finding.trigger.as_str()),
         Some("delay"),
         "the operator reads what matched",
+    );
+    assert_eq!(
+        answer.taste.as_ref(),
+        Some(hold),
+        "the filing answer carries the hold"
+    );
+    let encoded = wire::encode(&answer).expect("task answer encodes");
+    assert!(
+        encoded.starts_with(b"{\"taste\":"),
+        "the filing answer leads with the hold: {}",
+        String::from_utf8_lossy(&encoded),
     );
 
     let shown = task_show(&visible, held, &[]);
@@ -195,8 +222,8 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
 }
 
 #[test]
-fn refused_statement_edit_names_the_taste_word_field_and_message_in_text_and_json() {
-    let (root, bus, epoch, _seats) = fixture("taste-review-edit-refusal", 0);
+fn a_matching_edit_records_a_hold_on_the_statement_alone() {
+    let (root, bus, epoch, seats) = fixture("taste-review-edit-hold", 1);
     let repository = configured_repository(&root, &["delay"]);
     let (task, outcome) = add_with_repository(
         &bus,
@@ -207,43 +234,34 @@ fn refused_statement_edit_names_the_taste_word_field_and_message_in_text_and_jso
         &["focused tests pass"],
     );
     assert_committed(outcome);
+    claim_held(&bus, epoch, &seats[0], &task);
+    let before = board(&bus, epoch, Actor::Operator);
 
-    let outcome = modify_with_repository(
+    let CommandAnswer::Task(edited) = assert_committed(modify_with_repository(
         &bus,
         &repository,
         epoch,
         Actor::Operator,
         &task,
         "Delay the lifecycle change",
-    );
-    let encoded = wire::encode(&outcome).expect("taste refusal encodes");
-    let json = std::str::from_utf8(&encoded).expect("wire JSON is UTF-8");
-    let Outcome::Refusal(refusal) = outcome else {
-        panic!("taste-matched edit did not refuse: {outcome:?}");
+    )) else {
+        panic!("task edit answers with a task status");
     };
-    assert_eq!(refusal.reason(), "task::taste-review-required");
-    for evidence in [
-        "taste taskwording",
-        "word \"delay\"",
-        "title line 1",
-        "Rewrite the task wording.",
-    ] {
-        assert!(
-            refusal.explanation().contains(evidence),
-            "text refusal omits {evidence:?}: {}",
-            refusal.explanation(),
-        );
-    }
-    for evidence in ["taskwording", "delay", "title", "Rewrite the task wording."] {
-        assert!(
-            json.contains(evidence),
-            "JSON refusal omits {evidence:?}: {json}",
-        );
-    }
+    assert_eq!(edited.status, "edited; taste_review required");
+    let after = board(&bus, epoch, Actor::Operator);
+    let hold = at(&after, &task)
+        .statement
+        .body
+        .taste
+        .as_ref()
+        .expect("a matching edit records a hold");
+    assert_eq!((hold.plan, hold.rechecks), (None, 0));
+    assert_eq!(edited.taste.as_ref(), Some(hold));
+    assert_eq!(flow_of(&after, &task), flow_of(&before, &task));
     assert_eq!(
-        at(&board(&bus, epoch, Actor::Operator), &task).presentation_title,
-        "Ship the lifecycle change",
-        "a refused edit changed its statement",
+        at(&after, &task).claim.as_ref().map(|claim| &claim.body),
+        at(&before, &task).claim.as_ref().map(|claim| &claim.body),
+        "recording a hold leaves the holder's claim in place",
     );
 
     clean(&root, bus);
@@ -377,272 +395,101 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
     clean(&root, bus);
 }
 
-#[test]
-fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
-    let (root, bus, epoch, _seats) = fixture("taste-review-withdraw", 0);
-    let repository = configured_repository(&root, &["delay"]);
-    let (inserted, outcome) = add_with_repository(
-        &bus,
-        &repository,
-        epoch,
-        "TASTE-inserted",
-        "Delay the lifecycle change",
-        &["focused tests pass"],
-    );
-    assert_committed(outcome);
-    let authored_born = stamp("TASTE-authored");
-    let authored = TaskHandle::for_project("board.test", &authored_born);
-    assert_committed(issue_repository(
-        &bus,
-        &repository,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskAdd,
-        vec![Witness::Absence {
-            task: authored_born,
-        }],
-        &TaskAdd {
-            preparation: None,
-            intent: None,
-            title: "Delay the planned change".to_owned(),
-            pitch: "This work keeps the fixture honest.".to_owned(),
-            project: Some("board.test".to_owned()),
-            description: None,
-            acceptance: vec!["focused tests pass".to_owned()],
-            requirements: wire::EnvironmentRequirements::default(),
-            origin: Some(fixture_origin()),
-            flow: Some("plan,todo".to_owned()),
-            depends: Vec::new(),
-            claim: false,
-            draft: false,
-        },
-    ));
-    let held = board(&bus, epoch, Actor::Operator);
-    let phases = |board: &BoardAnswer, task: &TaskHandle| {
-        let workflow = &at(board, task).workflow.body;
+/// The claim's possession, without the generation it acknowledged: an edit
+/// by its own holder acknowledges in place.
+fn claim_of(
+    board: &BoardAnswer,
+    task: &TaskHandle,
+) -> Option<(
+    ClaimDisposition,
+    wire::Seq,
+    Actor,
+    CanonicalUuid,
+    CanonicalUuid,
+)> {
+    at(board, task).claim.as_ref().map(|claim| {
         (
-            workflow.phase.as_str().to_owned(),
-            workflow
-                .flow
-                .iter()
-                .map(|phase| phase.as_str().to_owned())
-                .collect::<Vec<_>>(),
+            claim.body.disposition,
+            claim.body.claimed,
+            claim.body.actor.clone(),
+            claim.body.lane,
+            claim.body.occupant,
         )
-    };
-    assert_eq!(
-        phases(&held, &inserted),
-        (
-            "plan".to_owned(),
-            vec!["plan".into(), "todo".into(), "review".into()]
-        ),
-    );
-    assert_eq!(
-        phases(&held, &authored),
-        ("plan".to_owned(), vec!["plan".into(), "todo".into()]),
-    );
-    assert_eq!(
-        at(&held, &inserted)
-            .statement
-            .body
-            .taste
-            .as_ref()
-            .map(|hold| hold.plan),
-        Some(wire::TastePlan::Prepended),
-    );
-    assert_eq!(
-        at(&held, &authored)
-            .statement
-            .body
-            .taste
-            .as_ref()
-            .map(|hold| hold.plan),
-        Some(wire::TastePlan::Authored),
-    );
+    })
+}
 
-    for (task, title) in [
-        (&inserted, "Ship the lifecycle change"),
-        (&authored, "Ship the planned change"),
-    ] {
-        assert_committed(modify_with_repository(
+fn phase_facts(bus: &Bus, task: &TaskHandle) -> usize {
+    let born = task.born().expect("fixture handles carry their stamp");
+    bus.fact_snapshot()
+        .expect("taste-review facts read")
+        .facts()
+        .iter()
+        .filter(|fact| {
+            fact.fact
+                .read::<body::TaskPhased>()
+                .is_some_and(|phased| phased.task == born)
+        })
+        .count()
+}
+
+#[test]
+fn clearing_a_hold_moves_only_the_statement_whoever_edits() {
+    let (root, bus, epoch, seats) = fixture("taste-review-clear", 2);
+    let repository = configured_repository(&root, &["delay"]);
+    let mut held = Vec::new();
+    for (name, seat) in [("TASTE-holder01", &seats[0]), ("TASTE-creator1", &seats[1])] {
+        let (task, outcome) = add_with_repository(
             &bus,
             &repository,
             epoch,
-            Actor::Operator,
+            name,
+            "Delay the lifecycle change",
+            &["focused tests pass"],
+        );
+        assert_committed(outcome);
+        claim_held(&bus, epoch, seat, &task);
+        held.push(task);
+    }
+
+    // The holding lane clears its own hold; the operator who filed the other
+    // task clears that one while another lane holds it.
+    for (task, editor) in [
+        (&held[0], Actor::Lane(seats[0].lane)),
+        (&held[1], Actor::Operator),
+    ] {
+        let before = board(&bus, epoch, Actor::Operator);
+        let phased = phase_facts(&bus, task);
+        let CommandAnswer::Task(edited) = assert_committed(modify_with_repository(
+            &bus,
+            &repository,
+            epoch,
+            editor,
             task,
-            title,
-        ));
+            "Ship the lifecycle change",
+        )) else {
+            panic!("task edit answers with a task status");
+        };
+        assert_eq!(edited.status, "edited; taste_review cleared");
+        assert_eq!(edited.taste, None);
+        let after = board(&bus, epoch, Actor::Operator);
+        assert_eq!(at(&after, task).statement.body.taste, None);
+        assert_eq!(flow_of(&after, task), flow_of(&before, task));
+        assert!(claim_of(&before, task).is_some());
+        assert_eq!(
+            claim_of(&after, task),
+            claim_of(&before, task),
+            "clearing the hold leaves the active claim exactly where it was",
+        );
+        assert_eq!(phase_facts(&bus, task), phased, "clearing writes no phase");
     }
-    let cleared = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        phases(&cleared, &inserted),
-        ("todo".to_owned(), vec!["todo".into(), "review".into()]),
-        "the plan phase the hold inserted leaves with the hold",
-    );
-    assert_eq!(
-        phases(&cleared, &authored),
-        ("plan".to_owned(), vec!["plan".into(), "todo".into()]),
-        "an authored plan phase outlives the hold",
-    );
-    for task in [&inserted, &authored] {
-        assert_eq!(at(&cleared, task).statement.body.taste, None);
-    }
-    assert!(
-        at(&cleared, &inserted).claim.is_none(),
-        "clearing an unclaimed synthetic hold does not invent claim history",
-    );
     clean(&root, bus);
 }
 
 #[test]
-fn clearing_a_claimed_synthetic_hold_releases_before_authored_work() {
-    let (root, bus, epoch, seats) = fixture("taste-review-claimed-release", 1);
-    let repository = configured_repository(&root, &["delay"]);
-    let seat = &seats[0];
-    let lane = Actor::Lane(seat.lane);
-    let (task, outcome) = add_with_repository(
-        &bus,
-        &repository,
-        epoch,
-        "TASTE-release01",
-        "Delay the lifecycle change",
-        &["focused tests pass"],
-    );
-    assert_committed(outcome);
-    claim_held(&bus, epoch, seat, &task);
-    let held = board(&bus, epoch, lane.clone());
-    let held_heads = at(&held, &task);
-    let held_claim = held_heads
-        .claim
-        .as_ref()
-        .expect("synthetic plan is claimed");
-    let stale_completion = progress_witnesses(&held, held_heads, seat.lane, seat.occupant, false)
-        .expect("active synthetic-plan claim has completion witnesses");
-
-    let CommandAnswer::Task(edited) = assert_committed(modify_with_repository(
-        &bus,
-        &repository,
-        epoch,
-        lane.clone(),
-        &task,
-        "Ship the lifecycle change",
-    )) else {
-        panic!("taste clearance returned another answer shape");
-    };
-    assert_eq!(edited.status, "edited; phase:todo");
-    assert_eq!(edited.next.as_deref(), Some("spice task next"));
-
-    let released = board(&bus, epoch, lane.clone());
-    let released_heads = at(&released, &task);
-    assert_eq!(released_heads.workflow.body.phase.as_str(), "todo");
-    let released_claim = released_heads
-        .claim
-        .as_ref()
-        .expect("released claim remains durable");
-    assert_eq!(released_claim.body.disposition, ClaimDisposition::Freed);
-    assert_eq!(released_claim.body.claimed, held_claim.body.claimed);
-    assert_eq!(released_claim.body.actor, held_claim.body.actor);
-    assert_ne!(released_claim.position, held_claim.position);
-    let facts = bus.fact_snapshot().expect("taste-plan release facts read");
-    let born = &released_heads.statement.body.born;
-    let freed = facts
-        .facts()
-        .iter()
-        .find(|fact| {
-            fact.fact
-                .read::<body::ClaimFreed>()
-                .is_some_and(|released| released.task == *born)
-        })
-        .expect("claim release fact exists");
-    let phased = facts
-        .facts()
-        .iter()
-        .find(|fact| {
-            fact.fact
-                .read::<body::TaskPhased>()
-                .is_some_and(|phased| phased.task == *born)
-        })
-        .expect("authored phase restoration exists");
-    assert!(
-        freed.seq < phased.seq,
-        "the claim leaves before the authored execution phase becomes replayable",
-    );
-
-    let stale = issue_repository(
-        &bus,
-        &repository,
-        epoch,
-        lane.clone(),
-        CommandKind::TaskDone,
-        stale_completion,
-        &TaskDone {
-            task: task.clone(),
-            validation: "planning validation cannot complete execution".to_owned(),
-            disposition: None,
-            operation: Some(completion_operation()),
-        },
-    );
-    let Outcome::Refusal(refusal) = stale else {
-        panic!("the prior synthetic-plan claim completed authored work: {stale:?}");
-    };
-    assert_eq!(refusal.reason(), "claim::active-refused");
-    assert_eq!(
-        at(&board(&bus, epoch, lane.clone()), &task)
-            .workflow
-            .body
-            .phase
-            .as_str(),
-        "todo",
-    );
-
-    assert_release_survives_restart_and_reallocates(
-        &root,
-        bus,
-        epoch,
-        seat,
-        lane,
-        &task,
-        released_heads.clone(),
-    );
-}
-
-fn assert_release_survives_restart_and_reallocates(
-    root: &Path,
-    bus: Bus,
-    epoch: CanonicalUuid,
-    seat: &Seat,
-    lane: Actor,
-    task: &TaskHandle,
-    expected: BoardTask,
-) {
-    bus.verify()
-        .expect("taste-plan release authority verifies before restart");
-    bus.shutdown().expect("taste-plan release fixture stops");
-    let reopened = journal::Journal::open(root.join("authority.sqlite3"))
-        .expect("taste-plan release journal reopens");
-    let reopened = Bus::start(reopened).expect("taste-plan release bus restarts");
-    assert_eq!(at(&board(&reopened, epoch, lane.clone()), task), &expected);
-
-    let won = claim_held(&reopened, epoch, seat, task);
-    assert_eq!(won.holder.as_ref(), Some(&lane));
-    let reclaimed = board(&reopened, epoch, lane);
-    assert_eq!(
-        at(&reclaimed, task)
-            .claim
-            .as_ref()
-            .expect("authored execution is newly claimed")
-            .body
-            .disposition,
-        ClaimDisposition::Active,
-    );
-    clean(root, reopened);
-}
-
-#[test]
-fn clearing_an_authored_plan_retains_its_active_claim() {
+fn an_authored_plan_leaves_through_ordinary_done_once_its_hold_clears() {
     let (root, bus, epoch, seats) = fixture("taste-review-authored-plan", 1);
     let repository = configured_repository(&root, &["delay"]);
     let seat = &seats[0];
-    let lane = Actor::Lane(seat.lane);
     let born = stamp("TASTE-authplan");
     let task = TaskHandle::for_project("board.test", &born);
     assert_committed(issue_repository(
@@ -669,36 +516,91 @@ fn clearing_an_authored_plan_retains_its_active_claim() {
         },
     ));
     claim_held(&bus, epoch, seat, &task);
-    let held = board(&bus, epoch, lane.clone());
-    let held_claim = at(&held, &task)
-        .claim
-        .as_ref()
-        .expect("authored plan is claimed")
-        .clone();
+    let refused = held_done(&bus, epoch, seat, &task);
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::taste-review-required"),
+        "a held plan completed: {refused:?}",
+    );
 
-    let CommandAnswer::Task(edited) = assert_committed(modify_with_repository(
+    assert_committed(modify_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        Actor::Lane(seat.lane),
+        &task,
+        "Ship the planned change",
+    ));
+    assert_eq!(
+        flow_of(&board(&bus, epoch, Actor::Operator), &task).0,
+        "plan",
+        "clearing the hold leaves the plan phase in place",
+    );
+    assert_committed(held_done(&bus, epoch, seat, &task));
+    assert_eq!(
+        flow_of(&board(&bus, epoch, Actor::Operator), &task).0,
+        "todo"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn concurrent_creator_and_holder_edits_serialize_on_the_statement_witness() {
+    let (root, bus, epoch, seats) = fixture("taste-review-concurrent", 1);
+    let repository = configured_repository(&root, &["delay"]);
+    let lane = Actor::Lane(seats[0].lane);
+    let (task, outcome) = add_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        "TASTE-concur01",
+        "Delay the lifecycle change",
+        &["focused tests pass"],
+    );
+    assert_committed(outcome);
+    claim_held(&bus, epoch, &seats[0], &task);
+    let read = board(&bus, epoch, Actor::Operator);
+    let witness = statement_witness(at(&read, &task));
+    let standing = (flow_of(&read, &task), claim_of(&read, &task));
+
+    assert_committed(modify_witnessed(
+        &bus,
+        &repository,
+        epoch,
+        Actor::Operator,
+        &task,
+        "Ship the lifecycle change",
+        witness.clone(),
+    ));
+    let stale = modify_witnessed(
         &bus,
         &repository,
         epoch,
         lane.clone(),
         &task,
-        "Ship the planned change",
-    )) else {
-        panic!("authored-plan clearance returned another answer shape");
-    };
-    assert_eq!(edited.status, "edited");
-    assert_eq!(edited.next.as_deref(), Some("spice task done"));
-    let cleared = board(&bus, epoch, lane);
-    let cleared_heads = at(&cleared, &task);
-    assert_eq!(cleared_heads.workflow.body.phase.as_str(), "plan");
-    let cleared_claim = cleared_heads
-        .claim
-        .as_ref()
-        .expect("authored plan retains its active claim");
-    assert_eq!(cleared_claim.body.disposition, ClaimDisposition::Active);
-    assert_eq!(cleared_claim.body.claimed, held_claim.body.claimed);
-    assert_eq!(cleared_claim.body.actor, held_claim.body.actor);
-    assert_eq!(cleared_heads.statement.body.taste, None);
+        "Ship the lifecycle change today",
+        witness,
+    );
+    assert!(
+        matches!(&stale, Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"),
+        "the holder's edit read before the creator's landed: {stale:?}",
+    );
+    assert_committed(modify_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        lane,
+        &task,
+        "Ship the lifecycle change today",
+    ));
+
+    let after = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&after, &task).statement.body.taste, None);
+    assert_eq!(
+        (flow_of(&after, &task), claim_of(&after, &task)),
+        standing,
+        "neither edit moved the phase or the claim",
+    );
     clean(&root, bus);
 }
 
@@ -754,18 +656,18 @@ fn claim_held(
     *won
 }
 
-fn plan_done(
+/// Complete `task`'s current phase under the claim `seat` holds. The hold
+/// gate reads the statement's recorded hold, never the policy.
+fn held_done(
     bus: &Bus,
-    repository: &Repository,
     epoch: CanonicalUuid,
     seat: &Seat,
     task: &TaskHandle,
 ) -> Outcome<CommandAnswer> {
     let lane = Actor::Lane(seat.lane);
     let held = board(bus, epoch, lane.clone());
-    issue_repository(
+    issue(
         bus,
-        repository,
         epoch,
         lane,
         CommandKind::TaskDone,
@@ -781,14 +683,14 @@ fn plan_done(
 }
 
 #[test]
-fn plan_completion_refuses_while_taste_review_marker_remains() {
-    let (root, bus, epoch, seats) = fixture("taste-review-plan-gate", 1);
+fn completion_refuses_in_any_phase_while_the_hold_stands() {
+    let (root, bus, epoch, seats) = fixture("taste-review-done-gate", 1);
     let repository = configured_repository(&root, &["delay"]);
     let (task, outcome) = add_with_repository(
         &bus,
         &repository,
         epoch,
-        "TASTE-plan0001",
+        "TASTE-done0001",
         "Delay the lifecycle change",
         &["focused tests pass"],
     );
@@ -799,16 +701,29 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
         Some(format!("spice task modify {task} --title \"...\"").as_str()),
         "assignment named a read instead of the rewording the hold needs",
     );
+    let standing = board(&bus, epoch, Actor::Operator);
+    assert_eq!(flow_of(&standing, &task).0, "todo");
+    let phased = phase_facts(&bus, &task);
 
-    let outcome = plan_done(&bus, &repository, epoch, &seats[0], &task);
+    let outcome = held_done(&bus, epoch, &seats[0], &task);
     let Outcome::Refusal(refusal) = outcome else {
-        panic!("taste review plan completion did not refuse: {outcome:?}");
+        panic!("a held todo phase completed: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "task::taste-review-required");
     let diagnostic = refusal.explanation();
     assert!(diagnostic.contains("taste taskwording"));
     assert!(diagnostic.contains("word \"delay\""));
     assert!(diagnostic.contains("Rewrite the task wording."));
+    assert!(diagnostic.contains(&format!("spice task modify {task}")));
+    assert_eq!(
+        flow_of(&board(&bus, epoch, Actor::Operator), &task),
+        flow_of(&standing, &task),
+    );
+    assert_eq!(
+        phase_facts(&bus, &task),
+        phased,
+        "a refusal advances nothing"
+    );
 
     assert_committed(modify_with_repository(
         &bus,
@@ -828,14 +743,14 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
         Some(1),
         "a still-matching revision counts as one recheck",
     );
-    let outcome = plan_done(&bus, &repository, epoch, &seats[0], &task);
+    let outcome = held_done(&bus, epoch, &seats[0], &task);
     let Outcome::Refusal(refusal) = outcome else {
-        panic!("reworded taste review plan completion did not refuse: {outcome:?}");
+        panic!("a reworded but still held phase completed: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "task::taste-review-required");
     let diagnostic = refusal.explanation();
-    assert!(diagnostic.contains("taste taskwording"));
     assert!(diagnostic.contains("word \"delay\""));
+    assert!(diagnostic.contains("1 recheck"), "{diagnostic}");
 
     clean(&root, bus);
 }
