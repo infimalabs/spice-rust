@@ -12,6 +12,7 @@ fn task_generation_reminders_are_private_and_deduplicated_by_authority() {
         change: "task edited".to_owned(),
         editor: "operator".to_owned(),
         position: 44,
+        taste: None,
     };
 
     driver.deliver_task_generation(&notice);
@@ -150,5 +151,44 @@ fn claim_lapse_notices_are_private_and_deduplicated_by_lapse() {
             .count(),
         2,
         "a later lapse of the same task is a distinct notice",
+    );
+}
+
+#[test]
+fn taste_hold_notices_are_private_deduplicated_and_keep_a_queued_assignment() {
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let assignment = TaskAssignmentNotice {
+        occupant: crate::resident::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        phase: "todo".to_owned(),
+    };
+    let hold = TasteHoldNotice {
+        occupant: assignment.occupant,
+        task: assignment.task.clone(),
+        position: 44,
+        matches: vec!["title line 1 taste taskwording".to_owned()],
+    };
+
+    driver.deliver_task_assignment(&assignment);
+    driver.deliver_taste_hold(&hold);
+    driver.deliver_taste_hold(&hold);
+    let frames = sink.answered(2);
+    assert_eq!(frames.len(), 2, "one hold interjects once");
+    assert_eq!(frames[1]["type"], "aside", "a hold is a private notice");
+    assert_ne!(
+        frames[1]["purpose"], frames[0]["purpose"],
+        "the hold never replaces the queued assignment for the same task",
+    );
+
+    driver.deliver_taste_hold(&TasteHoldNotice {
+        position: 45,
+        ..hold
+    });
+    assert_eq!(
+        sink.answered(3).len(),
+        3,
+        "a later write that leaves a fresh hold is a distinct notice",
     );
 }

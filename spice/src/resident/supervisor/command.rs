@@ -129,6 +129,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     task_assignment: Mutex<Option<TaskAssignmentNotice>>,
     /// Latest claim lapse privately delivered to this occupant.
     claim_lapse: Mutex<Option<ClaimLapseNotice>>,
+    /// Latest taste hold privately delivered to this occupant.
+    taste_hold: Mutex<Option<TasteHoldNotice>>,
     /// Latest renewal state observed by this exact occupant.
     renewal: Mutex<Option<renewal::Notice>>,
     /// The confirm dialog each open consent request will answer.
@@ -267,6 +269,9 @@ pub(in crate::resident) enum Kick {
     },
     /// A claim this lane held lapsed; addressed to the lane's current occupant.
     ClaimLapse(ClaimLapseNotice),
+    /// A statement write by this lane left a task held for taste review;
+    /// addressed to the lane's current occupant.
+    TasteHold(TasteHoldNotice),
     /// An authored packet reached someone but missed an address, or its
     /// grammar refused before durable judgment.
     MessageRefused(MessageRefusalNotice),
@@ -355,6 +360,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             task_generation: Mutex::new(None),
             task_assignment: Mutex::new(None),
             claim_lapse: Mutex::new(None),
+            taste_hold: Mutex::new(None),
             renewal: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
             terminal,
@@ -1317,6 +1323,10 @@ pub(in crate::resident) fn listen_for_kicks(
                         driver.deliver_claim_lapse(&notice);
                     }
                     Ok(Kick::ClaimLapse(_)) => {}
+                    Ok(Kick::TasteHold(notice)) if notice.occupant == occupant => {
+                        driver.deliver_taste_hold(&notice);
+                    }
+                    Ok(Kick::TasteHold(_)) => {}
                     Ok(Kick::MessageRefused(notice)) if notice.occupant == occupant => {
                         driver.deliver_message_refusal(&notice);
                     }
@@ -1368,8 +1378,9 @@ pub(in crate::resident) use registration::FirstTurn;
 pub(in crate::resident) mod renewal;
 mod task_notices;
 pub(in crate::resident) use task_notices::{
-    ClaimLapseNotice, TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice, claim_lapse,
-    task_assignment, task_assignment_ended, task_generation,
+    ClaimLapseNotice, TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice,
+    TasteHoldNotice, TasteState, claim_lapse, task_assignment, task_assignment_ended,
+    task_generation, taste_hold,
 };
 mod steering;
 #[cfg(test)]

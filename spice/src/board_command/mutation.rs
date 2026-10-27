@@ -276,10 +276,7 @@ fn create_task(
         return outcome;
     }
     if let Some(review) = &taste_review {
-        hold_for_taste(&mut prepared.flow, &mut prepared.statement.taste, review);
-        prepared.phase = prepared.flow[0].clone();
-        prepared.workflow.flow.clone_from(&prepared.flow);
-        prepared.workflow.phase.clone_from(&prepared.phase);
+        keep_taste_hold(&mut prepared.statement.taste, review);
     }
     let post = prepared_entry(&prepared);
     let added_claim = if add.claim {
@@ -469,6 +466,7 @@ where
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {
+        taste: answered_taste(command.actor(), post.statement().taste.as_ref()),
         task,
         status: "pending".to_owned(),
         completion: None,
@@ -811,6 +809,7 @@ pub(super) fn task_note(
         return store_fault("task::note-build", &error.to_string());
     }
     let answer = wire::intent::TaskAnswer {
+        taste: None,
         task: entry.handle().clone(),
         status: "noted".to_owned(),
         completion: None,
@@ -1029,6 +1028,7 @@ fn commit_dependency_edit(
         ..statement
     });
     let answer = wire::intent::TaskAnswer {
+        taste: None,
         task: entry.handle().clone(),
         status: "edited".to_owned(),
         completion: None,

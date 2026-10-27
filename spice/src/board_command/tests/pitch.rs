@@ -82,14 +82,12 @@ fn an_identifier_in_a_pitch_records_and_holds_the_statement_naming_the_text() {
 
     let visible = board(&bus, epoch, Actor::Operator);
     let held = at(&visible, &task);
-    assert_eq!(held.workflow.body.phase.as_str(), "plan");
     let hold = held
         .statement
         .body
         .taste
         .as_ref()
         .expect("a pitch naming code is held");
-    assert_eq!(hold.plan, wire::TastePlan::Prepended);
     let matched = hold
         .matches
         .iter()

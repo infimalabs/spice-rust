@@ -117,16 +117,17 @@ fn validate_filing_entry(
 /// Validate a Draft as the complete ordinary task it becomes when filed, and
 /// return the prerequisite workflows the filing transaction relies on.
 ///
-/// The statement and workflow are the filed rows on success, held for taste
-/// review when the policy matches its prose. Every refusal names the Draft
-/// field or filing option that must be repaired, and nothing is written.
+/// The statement is the filed row on success, held for taste review when the
+/// policy matches its prose; the workflow is never moved. Every refusal names
+/// the Draft field or filing option that must be repaired, and nothing is
+/// written.
 fn draft_filing(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     repository: Option<Host<'_>>,
     file: &TaskFile,
     statement: &mut TaskHead,
-    workflow: &mut WorkflowHead,
+    workflow: &WorkflowHead,
 ) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
     if let Some(named) = &file.preparation {
         if file.claim {
@@ -179,8 +180,7 @@ fn draft_filing(
         &statement.acceptance,
     )?;
     if let Some(review) = review.filter(TasteReview::required) {
-        hold_for_taste(&mut workflow.flow, &mut statement.taste, &review);
-        workflow.phase = workflow.flow[0].clone();
+        keep_taste_hold(&mut statement.taste, &review);
     }
     Ok(dependency_witnesses)
 }
@@ -264,7 +264,7 @@ fn file_unfiled(
         repository,
         file,
         &mut statement,
-        &mut workflow,
+        &workflow,
     ) {
         Ok(witnesses) => witnesses,
         Err(outcome) => return outcome,
@@ -314,6 +314,7 @@ fn file_unfiled(
         Err(outcome) => return outcome,
     };
     let answer = wire::intent::TaskAnswer {
+        taste: answered_taste(command.actor(), post.statement().taste.as_ref()),
         task: post.handle().clone(),
         status: "filed".to_owned(),
         completion: None,
@@ -625,6 +626,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         None => None,
     };
     let answer = wire::intent::TaskAnswer {
+        taste: None,
         task: entry.handle().clone(),
         status: if deferral.is_some() {
             "deferred".to_owned()

@@ -369,6 +369,7 @@ fn settle(
         Err(outcome) => return outcome,
     };
     let answer = wire::intent::TaskAnswer {
+        taste: None,
         task: entry.handle().clone(),
         status: settlement.status().to_owned(),
         completion: None,

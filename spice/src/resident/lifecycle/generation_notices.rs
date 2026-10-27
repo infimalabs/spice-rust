@@ -12,7 +12,7 @@ use wire::TaskHandle;
 
 use super::*;
 use crate::resident::supervisor::command::{
-    TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice,
+    TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice, TasteHoldNotice, TasteState,
 };
 
 /// Index rows one read returns while a claim trails its task.
@@ -34,7 +34,90 @@ pub(super) fn reconcile(
     for (lane, notice) in notices(bus, snapshot)? {
         super::super::supervisor::command::task_generation(paths, lane, notice);
     }
+    for (lane, notice) in taste_holds(bus, snapshot, findings.cursor)? {
+        super::super::supervisor::command::taste_hold(paths, lane, notice);
+    }
     super::review_feedback::reconcile(bus, paths, epoch, snapshot, findings)
+}
+
+/// Each place a hold matched, as a lane may read it: findings withheld.
+fn hold_places(hold: &wire::TasteHold) -> Vec<String> {
+    hold.matches
+        .iter()
+        .map(|found| {
+            format!(
+                "{} line {} taste {}",
+                found.field.as_str(),
+                found.line,
+                found.taste
+            )
+        })
+        .collect()
+}
+
+/// Holds a lane's statement write after `cursor` left freshly standing.
+///
+/// A hold with no rechecks was opened by the write that established the
+/// statement head, so that write's lane learns of it at its current occupant,
+/// whichever lane holds or will hold the task. The first pass has no earlier
+/// observation and announces none.
+fn taste_holds(
+    bus: &Bus,
+    snapshot: &bus::TaskSnapshot,
+    cursor: Option<Seq>,
+) -> CommandResult<Vec<(CanonicalUuid, TasteHoldNotice)>> {
+    let Some(cursor) = cursor else {
+        return Ok(Vec::new());
+    };
+    let opened = snapshot
+        .tasks()
+        .iter()
+        .filter_map(|heads| {
+            let statement = heads.statement();
+            let hold = statement.body().taste.as_ref()?;
+            if hold.rechecks != 0 || statement.position() <= cursor {
+                return None;
+            }
+            let Some(wire::Actor::Lane(lane)) = snapshot
+                .facts()
+                .at(statement.position())
+                .map(|envelope| &envelope.actor)
+            else {
+                return None;
+            };
+            Some((*lane, statement, hold))
+        })
+        .collect::<Vec<_>>();
+    if opened.is_empty() {
+        return Ok(Vec::new());
+    }
+    let residency = bus
+        .residency_head()
+        .map_err(|error| store_fault("taste-hold::residency-unreadable", &error.to_string()))?;
+    let Some(residency) = residency else {
+        return Ok(Vec::new());
+    };
+    Ok(opened
+        .into_iter()
+        .filter_map(|(lane, statement, hold)| {
+            let occupant = residency
+                .body()
+                .lanes
+                .iter()
+                .find(|durable| durable.lane == lane)?
+                .occupant?;
+            let body = statement.body();
+            Some((
+                lane,
+                TasteHoldNotice {
+                    occupant,
+                    task: TaskHandle::for_project(&body.project, &body.born).to_string(),
+                    position: statement.position().get(),
+                    matches: hold_places(hold),
+                },
+            ))
+        })
+        .collect())
 }
 
 fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskAssignmentNotice)> {
@@ -144,6 +227,20 @@ fn task_notices(
                     ),
                 )
             })?;
+            // The holder hears where the statement stands after the change;
+            // an unheld statement is worth naming only after a statement edit,
+            // which may have just cleared it.
+            let taste = match &statement.taste {
+                Some(hold) => Some(TasteState::Held {
+                    matches: hold_places(hold),
+                    rechecks: hold.rechecks,
+                }),
+                None => envelope
+                    .fact
+                    .read::<wire::body::TaskEdited>()
+                    .is_some()
+                    .then_some(TasteState::Clear),
+            };
             notices.push((
                 claim.lane,
                 TaskGenerationNotice {
@@ -154,6 +251,7 @@ fn task_notices(
                     change: envelope.fact.kind().to_string(),
                     editor: envelope.actor.to_string(),
                     position: advance.position.get(),
+                    taste,
                 },
             ));
         }
