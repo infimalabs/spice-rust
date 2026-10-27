@@ -69,7 +69,7 @@ pub enum CommandKind {
     WorkingGroupDisband,
     /// Set one working group's fast-mode flag at the observed revision.
     WorkingGroupFast,
-    /// Set one working group's shared activity stance at the observed revision.
+    /// Set one working group to Paused or Running at the observed revision.
     WorkingGroupStance,
     /// Record one exact completed pass proposed by the active Design holder.
     DesignPropose,

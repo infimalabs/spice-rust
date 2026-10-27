@@ -366,7 +366,7 @@ impl Lanes {
         }
     }
 
-    /// Stand `design` in the fixture working group, then select its stance.
+    /// Stand `design` in the fixture working group, then set its brake.
     fn group(
         &self,
         id: u8,
@@ -408,7 +408,7 @@ impl Lanes {
             matches!(outcome, Outcome::Reply(_)),
             "group move commits: {outcome:?}"
         );
-        if stance != wire::rooms::WorkingGroupStance::Passive {
+        if stance != wire::rooms::WorkingGroupStance::Paused {
             self.stance(id.saturating_add(1), config, stance);
         }
     }
@@ -500,33 +500,35 @@ impl Lanes {
 }
 
 #[test]
-fn stance_match_floors_follow_the_balanced_base_ratio() {
-    use wire::rooms::WorkingGroupStance::{Converge, Explore, Passive};
+fn reach_match_floors_follow_the_balanced_base_ratio() {
+    use wire::rooms::DesignReach::{Narrow, Wide};
 
-    for (stance, expected) in [(Passive, 0.15), (Explore, 0.10), (Converge, 0.20)] {
-        let observed = crate::resident::design_awareness::match_score_floor(stance);
+    for (reach, expected) in [(Wide, 0.10), (Narrow, 0.20)] {
+        let observed = crate::resident::design_awareness::match_score_floor(reach);
         assert!(
             (observed - expected).abs() < 1e-12,
-            "{stance} floor {observed} != {expected}"
+            "{reach:?} floor {observed} != {expected}"
         );
     }
 }
 
 #[test]
-fn every_open_design_stance_is_invitation_eligible() {
-    use wire::rooms::WorkingGroupStance::{Converge, Explore, Passive};
+fn an_unsteeped_design_invites_wide_whatever_its_group_brake() {
+    use wire::rooms::WorkingGroupStance::{Paused, Running};
 
-    for (fixture, stance) in [
-        ("design-request-passive", Passive),
-        ("design-request-explore", Explore),
-        ("design-request-converge", Converge),
+    for (fixture, brake) in [
+        ("design-request-ungrouped", None),
+        ("design-request-paused", Some(Paused)),
+        ("design-request-running", Some(Running)),
     ] {
         let lanes = Lanes::new(fixture);
         align_completion_lane(&lanes);
         let config = surface(&lanes);
         let task = lanes.claimed("dVrD245Kc", FIRST);
         let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
-        lanes.group(30, &config, &design, stance);
+        if let Some(brake) = brake {
+            lanes.group(30, &config, &design, brake);
+        }
         let mut completions =
             crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
                 .expect("completion cursor starts");
@@ -536,14 +538,17 @@ fn every_open_design_stance_is_invitation_eligible() {
         lanes.reconcile_completions(&seated, &mut completions);
         let request = lanes
             .request(&config, FIRST)
-            .expect("a filed open Design can be requested in every stance");
-        assert_eq!(request.design, design, "{stance} Design was not eligible");
-        assert_eq!(request.stance, Some(stance), "{stance} was not recorded");
-        let text = spice::rooms::awareness::request_text(&request);
+            .expect("a filed open Design can be requested under every brake");
+        assert_eq!(request.design, design, "{brake:?} Design was not eligible");
         assert_eq!(
+            request.reach,
+            Some(wire::rooms::DesignReach::Wide),
+            "{brake:?} moved the reach"
+        );
+        let text = spice::rooms::awareness::request_text(&request);
+        assert!(
             text.contains("cast slightly wider"),
-            stance == Explore,
-            "{stance} invitation framing: {text}"
+            "{brake:?} invitation framing: {text}"
         );
         seated.release_all();
         lanes.finish();
@@ -1117,7 +1122,7 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
 }
 
 #[test]
-fn stance_changes_preserve_an_unanswered_open_design_request() {
+fn brake_changes_preserve_an_unanswered_open_design_request() {
     let lanes = Lanes::new("design-request-standing");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
@@ -1128,7 +1133,7 @@ fn stance_changes_preserve_an_unanswered_open_design_request() {
         70,
         &config,
         &design,
-        wire::rooms::WorkingGroupStance::Passive,
+        wire::rooms::WorkingGroupStance::Paused,
     );
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
@@ -1144,14 +1149,14 @@ fn stance_changes_preserve_an_unanswered_open_design_request() {
     );
 
     for (id, stance) in [
-        (72, wire::rooms::WorkingGroupStance::Explore),
-        (73, wire::rooms::WorkingGroupStance::Converge),
+        (72, wire::rooms::WorkingGroupStance::Running),
+        (73, wire::rooms::WorkingGroupStance::Paused),
     ] {
         lanes.stance(id, &config, stance);
         assert_eq!(
             lanes
                 .request(&config, FIRST)
-                .expect("an open Design stays owed across stance changes")
+                .expect("an open Design stays owed across brake changes")
                 .design,
             design
         );

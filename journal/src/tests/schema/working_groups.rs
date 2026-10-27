@@ -1,28 +1,75 @@
-//! Retained working-group partitions cross to explicit activity stance.
+//! Retained working-group stances cross onto the Paused/Running brake.
 
 use super::*;
 
-fn partition(revision: u64) -> serde_json::Value {
+const STANCE_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116321";
+const ARRANGE_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116322";
+const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
+
+fn partition(revision: u64, stance: &str) -> serde_json::Value {
     json!({
         "revision": revision,
-        "groups": [
-            {"group": "1kKRRsDR1", "anchors": ["1kKRRsDP"], "stance": "explore"},
-            {"group": "1kKRRsDR2", "anchors": ["1kKRRsDQ"], "stance": "passive"}
-        ]
+        "groups": [{"group": "1kKRRsDR1", "anchors": ["1kKRRsDP"], "stance": stance}]
     })
 }
 
-fn predecessor() -> Journal {
-    let journal = authority_fixture();
+/// Plant one retained `command` receipt whose request body is `body`.
+fn plant_receipt(journal: &Journal, id: &str, command: CommandKind, body: serde_json::Value) {
+    let command = Command {
+        v: WireVersion::CURRENT,
+        id: uuid(id),
+        epoch: uuid(EPOCH),
+        kind: command,
+        expected: Vec::new(),
+        body,
+    };
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id: command.id,
+        epoch: command.epoch,
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(4),
+                last: seq(4),
+            }),
+            body: json!({"revision": 2, "status": "stanced", "owed": []}),
+        }),
+    };
+    journal
+        .connection
+        .execute(
+            "INSERT INTO command_receipts(
+                 command_id, actor, command_kind, request, evaluated_witnesses, response,
+                 first_seq, last_seq, snapshot_seq, epoch
+             ) VALUES (?1, 'operator', ?2, ?3, ?4, ?5, 4, 4, NULL, ?6)",
+            params![
+                command.id.to_string(),
+                command.kind.as_str(),
+                command
+                    .canonical_json()
+                    .expect("canonical request")
+                    .into_bytes(),
+                wire::encode(&Vec::<Witness>::new()).expect("encode empty witnesses"),
+                wire::encode(&response).expect("encode retained response"),
+                command.epoch.to_string(),
+            ],
+        )
+        .expect("insert retained receipt");
+}
+
+/// A schema-99 authority holding every retired stance: a Converge move, an
+/// arrangement from a group whose stance predates schema 66 to a Passive one,
+/// and Converge and Explore requests.
+fn predecessor(path: &std::path::Path) -> Journal {
+    let journal = authority_file_fixture(path);
+    let running = partition(1, "running");
     insert_fact(
         &journal,
         fact(
             3,
             Some(2),
             FactKind::WorkingGroupMoved,
-            json!({
-                "design": "1kKRRsDP", "to": "1kKRRsDR1", "partition": partition(1)
-            }),
+            json!({"design": "1kKRRsDP", "to": "1kKRRsDR1", "partition": running}),
         ),
     );
     insert_fact(
@@ -31,104 +78,130 @@ fn predecessor() -> Journal {
             4,
             Some(3),
             FactKind::WorkingGroupsArranged,
-            json!({
-                "from": partition(1), "partition": partition(2)
-            }),
+            json!({"from": running, "partition": partition(2, "paused")}),
         ),
     );
     journal
         .connection
         .execute(
             "INSERT INTO group_partition(singleton, head_seq, body) VALUES (1, 4, ?1)",
-            [serde_json::to_vec(&partition(2)).unwrap()],
+            [serde_json::to_vec(&partition(2, "passive")).unwrap()],
         )
         .unwrap();
     journal
         .connection
         .execute_batch(
-            "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT),
-             '$.fact.partition.groups[0].stance', '$.fact.from.groups[0].stance') AS BLOB)
-         WHERE kind IN ('group::moved', 'group::arranged');
-         UPDATE group_partition SET body = CAST(json_remove(CAST(body AS TEXT),
-             '$.groups[0].stance') AS BLOB);",
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT),
+                 '$.fact.partition.groups[0].stance', 'converge') AS BLOB) WHERE seq = 3;
+             UPDATE fact_envelopes SET envelope = CAST(json_remove(json_set(
+                 CAST(envelope AS TEXT), '$.fact.partition.groups[0].stance', 'passive'),
+                 '$.fact.from.groups[0].stance') AS BLOB) WHERE seq = 4;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3);
+             UPDATE cursor_head SET seq = 4, wake = 4 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 4 WHERE singleton = 1;",
         )
         .unwrap();
-    restore_predecessor(&journal, 65);
+    plant_receipt(
+        &journal,
+        STANCE_COMMAND,
+        CommandKind::WorkingGroupStance,
+        json!({"group": "1kKRRsDR1", "stance": "converge"}),
+    );
+    plant_receipt(
+        &journal,
+        ARRANGE_COMMAND,
+        CommandKind::WorkingGroupArrange,
+        json!({"groups": partition(2, "explore")["groups"]}),
+    );
+    restore_predecessor(&journal, 99);
     journal
 }
 
-fn rows(journal: &Journal) -> Vec<Vec<u8>> {
-    journal.connection.prepare(
-        "SELECT envelope AS bytes FROM fact_envelopes WHERE kind IN ('group::moved', 'group::arranged')
-         UNION ALL SELECT body FROM group_partition ORDER BY bytes"
-    ).unwrap().query_map([], |row| row.get(0)).unwrap()
-        .collect::<Result<_, _>>().unwrap()
-}
-
-#[test]
-fn writable_crossing_materializes_group_stance_without_changing_explicit_authority() {
-    let mut journal = predecessor();
-    let before = rows(&journal);
-    let migration = crate::migrate::admit(&mut journal.connection)
-        .unwrap()
-        .unwrap();
-    assert_eq!((migration.from(), migration.to()), (65, SCHEMA_VERSION));
-    for seq in [3, 4] {
-        let bytes: Vec<u8> = journal
-            .connection
-            .query_row(
-                "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
-                [seq],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
-        assert_eq!(envelope.seq.get(), seq as u64);
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            value["fact"]["partition"],
-            partition(if seq == 3 { 1 } else { 2 })
-        );
-        if seq == 4 {
-            assert_eq!(value["fact"]["from"], partition(1));
-        }
-    }
-    let (head, bytes): (i64, Vec<u8>) = journal
+fn envelope(journal: &Journal, seq: i64) -> serde_json::Value {
+    let bytes: Vec<u8> = journal
         .connection
-        .query_row("SELECT head_seq, body FROM group_partition", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+            [seq],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_eq!(head, 4);
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-        partition(2)
-    );
-    assert_ne!(rows(&journal), before);
-    let crossed = rows(&journal);
-    assert_eq!(
-        crate::migrate::admit(&mut journal.connection).unwrap(),
-        None
-    );
-    assert_eq!(rows(&journal), crossed);
+    let _: Envelope<AnyFact> = wire::decode(&bytes).expect("crossed fact is current");
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+fn request_body(journal: &Journal, id: &str) -> serde_json::Value {
+    let bytes: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT request FROM command_receipts WHERE command_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["body"].clone()
 }
 
 #[test]
-fn invalid_group_stance_rolls_back_the_entire_crossing() {
-    let mut journal = predecessor();
+fn writable_open_reads_passive_as_paused_and_every_other_stance_as_running() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("working-group-brake.sqlite3");
+    drop(predecessor(&path));
+
+    let journal = Journal::open(&path).expect("schema-99 working groups cross");
+    assert_eq!(
+        journal
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((99, SCHEMA_VERSION))
+    );
+    let moved = envelope(&journal, 3);
+    assert_eq!(moved["fact"]["partition"], partition(1, "running"));
+    let arranged = envelope(&journal, 4);
+    assert_eq!(arranged["fact"]["from"], partition(1, "running"));
+    assert_eq!(arranged["fact"]["partition"], partition(2, "paused"));
+    let head = journal
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .expect("partition stands")
+        .into_body();
+    assert_eq!(
+        head.groups[0].stance,
+        wire::rooms::WorkingGroupStance::Paused
+    );
+    assert_eq!(
+        request_body(&journal, STANCE_COMMAND),
+        json!({"group": "1kKRRsDR1", "stance": "running"})
+    );
+    assert_eq!(
+        request_body(&journal, ARRANGE_COMMAND)["groups"],
+        partition(2, "running")["groups"]
+    );
+    journal.verify().expect("crossed authority verifies");
+    drop(journal);
+
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
+}
+
+#[test]
+fn an_unknown_retained_stance_refuses_the_whole_crossing() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("working-group-unknown.sqlite3");
+    let journal = predecessor(&path);
     journal
         .connection
         .execute_batch(
             "UPDATE group_partition SET body = CAST(json_set(CAST(body AS TEXT),
-             '$.groups[1].stance', 'unknown') AS BLOB);",
+             '$.groups[0].stance', 'hold') AS BLOB);",
         )
         .unwrap();
-    let before = rows(&journal);
-    let error = crate::migrate::admit(&mut journal.connection).unwrap_err();
-    assert!(matches!(error, OpenError::Migration(_)));
-    assert_eq!(rows(&journal), before);
-    assert_eq!(
-        crate::migrate::inspect_stored_version(&journal.connection).unwrap(),
-        65
-    );
+    drop(journal);
+    let before = fs::read(&path).expect("authority bytes read");
+
+    let error = Journal::open(&path).expect_err("an unknown stance refuses");
+    assert!(matches!(error, OpenError::Migration(_)), "{error}");
+    assert_eq!(fs::read(&path).expect("authority bytes reread"), before);
 }

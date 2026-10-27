@@ -1,4 +1,4 @@
-//! Resident records of session-targeted requests for open passive Designs.
+//! Resident records of session-targeted requests for open Designs.
 //!
 //! Each record durably chooses one request. It is not a room publication; it
 //! keeps the asked lane listening to the Design's room until that lane leaves,
@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{DecisionRef, DesignItemState, RoomQuestion, RoomQuestionItem, WorkingGroupStance};
+use super::{DecisionRef, DesignItemState, RoomQuestion, RoomQuestionItem};
 use crate::{CanonicalUuid, Digest, Name, Seq, SequenceCode, TaskStamp};
 
 /// Most bytes of completion validation retained for Design request matching.
@@ -18,6 +18,17 @@ pub const DESIGN_NOTICE_TERMS: usize = 12;
 /// Most matched terms any surface shows for one notice, however many its
 /// record keeps.
 pub const DESIGN_NOTICE_SHOWN_TERMS: usize = 6;
+
+/// How widely one Design request was cast, judged from the Design's maturity
+/// when it was selected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignReach {
+    /// An unsteeped Design invites at the lower relevance floor.
+    Wide,
+    /// A steeped or OOPS Design invites only at the higher floor.
+    Narrow,
+}
 
 /// Most characters of a Design request's supporting-work excerpt.
 pub const DESIGN_EXCERPT_CHARS: usize = 240;
@@ -102,7 +113,7 @@ pub fn shown_notice_terms(terms: &[String]) -> Vec<&str> {
     shown
 }
 
-/// One exact continuing vendor session invited to a passive Design.
+/// One exact continuing vendor session invited to an open Design.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignSession {
@@ -189,7 +200,7 @@ pub struct DesignAsk {
     pub state: DesignItemState,
 }
 
-/// One continuing session was invited to contribute to a passive Design.
+/// One continuing session was invited to contribute to an open Design.
 ///
 /// The opportunity and supporting evidence are independent: a new completion
 /// can select a Design because of an older task or conversation card. The
@@ -198,7 +209,7 @@ pub struct DesignAsk {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignNoticed {
-    /// Passive Design whose room accepts the answer.
+    /// Open Design whose room accepts the answer.
     pub design: TaskStamp,
     /// Exact Design statement head evaluated for this request.
     pub statement: Seq,
@@ -221,10 +232,10 @@ pub struct DesignNoticed {
     pub excerpt: String,
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
-    /// Working-group stance whose relevance floor admitted the match: Explore
-    /// lowers it, Converge raises it. Absent on records older than the field.
+    /// Reach whose relevance floor admitted the match. Absent on records older
+    /// than the field and on those a Passive working group's floor admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stance: Option<WorkingGroupStance>,
+    pub reach: Option<DesignReach>,
     /// The question items asked, the best-scoring first and the rest in
     /// statement order. Empty asks about the whole Design: no current item
     /// was askable of the lane, or the record predates items.

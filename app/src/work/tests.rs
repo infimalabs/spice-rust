@@ -863,7 +863,7 @@ fn durable_work_identities_resolve_only_after_their_mutable_authority_settles() 
         groups: vec![wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![stamp(1), stamp(2)],
-            stance: wire::rooms::WorkingGroupStance::Explore,
+            stance: wire::rooms::WorkingGroupStance::Running,
         }],
         fast: Vec::new(),
     };
@@ -883,7 +883,7 @@ fn durable_work_identities_resolve_only_after_their_mutable_authority_settles() 
         groups: vec![wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![stamp(2)],
-            stance: wire::rooms::WorkingGroupStance::Converge,
+            stance: wire::rooms::WorkingGroupStance::Paused,
         }],
         fast: Vec::new(),
     };

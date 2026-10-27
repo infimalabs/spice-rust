@@ -426,7 +426,7 @@ fn noticed_at(
             },
             excerpt: "fixture rooms".to_owned(),
             terms: vec!["rooms".to_owned()],
-            stance: None,
+            reach: None,
             asks: Vec::new(),
         },
     )

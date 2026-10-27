@@ -69,7 +69,7 @@ fn group_membership_alone_decides_an_open_designs_activity() {
     assert_eq!(
         light(vec![claimed(design(false)), output()]),
         DesignStanding::Passive,
-        "a holder parking a Design that left its group owes the operator nothing new",
+        "a holder parking a Design whose group paused owes the operator nothing new",
     );
 
     assert_eq!(

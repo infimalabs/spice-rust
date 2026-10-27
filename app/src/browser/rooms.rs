@@ -626,7 +626,7 @@ fn submit_change(
                 .map(|(group, anchors)| WorkingGroup {
                     group,
                     anchors,
-                    stance: wire::rooms::WorkingGroupStance::Passive,
+                    stance: wire::rooms::WorkingGroupStance::Paused,
                 })
                 .collect(),
         }),
@@ -660,7 +660,7 @@ pub(super) fn submit_group_change(
                                 "Working group disbanded.".to_owned()
                             }
                             WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
-                            WorkingGroupChangeStatus::Stanced => "Group stance set.".to_owned(),
+                            WorkingGroupChangeStatus::Stanced => "Group brake set.".to_owned(),
                             WorkingGroupChangeStatus::Shelved => {
                                 "Owed shelving committed.".to_owned()
                             }

@@ -1,6 +1,6 @@
 //! The one lane an operator's Design nudge messages.
 //!
-//! The operator already chose to push the Design, so no stance floor applies:
+//! The operator already chose to push the Design, so no reach floor applies:
 //! any free lane may take it, and the shared [`standing`] ranker only orders
 //! them.
 

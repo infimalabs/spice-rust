@@ -203,7 +203,7 @@ pub(super) fn client_group_disband(
     ))
 }
 
-/// Set one standing group's shared activity stance at the partition revision
+/// Set one standing group's brake at the partition revision
 /// observed immediately before the write.
 pub(super) fn client_group_stance(
     repository: Host<'_>,
@@ -218,11 +218,7 @@ pub(super) fn client_group_stance(
         Err(outcome) => return outcome,
     };
     let Some(written_stance) = matches.get_one::<String>("STANCE") else {
-        return refusal(
-            "group::stance-missing",
-            None,
-            "name passive, explore, or converge",
-        );
+        return refusal("group::stance-missing", None, "name paused or running");
     };
     let stance = match written_stance.parse::<WorkingGroupStance>() {
         Ok(stance) => stance,
@@ -338,7 +334,7 @@ fn grouping(written: &str) -> Result<WorkingGroup, Outcome<CommandAnswer>> {
             .filter(|anchor| !anchor.is_empty())
             .map(anchor)
             .collect::<Result<_, _>>()?,
-        stance: WorkingGroupStance::Passive,
+        stance: WorkingGroupStance::Paused,
     })
 }
 
@@ -367,7 +363,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                     text.push(' ');
                     text.push_str(&design.to_string());
                 }
-                text.push_str("; set the group passive again to retry");
+                text.push_str("; set the group paused again to retry");
             }
             Outcome::Reply(Reply {
                 position,

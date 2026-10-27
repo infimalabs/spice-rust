@@ -87,9 +87,9 @@ impl RoomAnchorSettlement {
 pub enum DesignStanding {
     /// No board snapshot, or the board judges no standing for the anchor.
     Unavailable,
-    /// Open without a group or in a Passive group; no lane can acquire it.
+    /// Open in a Paused group; no lane can acquire it.
     Passive,
-    /// Open in an Explore or Converge group, waiting where its cycle says.
+    /// Open without a group or in a Running group, waiting where its cycle says.
     Active(wire::rooms::DesignCycle),
     /// Active, and a lane claims it for one pass.
     Claimed,

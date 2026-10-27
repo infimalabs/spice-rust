@@ -213,7 +213,7 @@ pub struct DesignCyclePresentation {
 /// Whether a lane may take, or already holds, one open Design's pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesignAvailability {
-    /// Its working group is not Explore or Converge, so no lane may claim it.
+    /// A Paused working group holds it, so no lane may claim it.
     Passive,
     /// Active and unclaimed.
     Unclaimed,
@@ -237,8 +237,8 @@ impl DesignCyclePresentation {
             (DesignCycle::ReadyForProposal, DesignAvailability::Passive) => (
                 DesignCycleActor::Operator,
                 format!(
-                    "the operator activates {design} with `spice group stance GROUP explore` \
-                     or `spice group move {design} --to GROUP`; a lane then claims it through \
+                    "the operator activates {design} with `spice group stance GROUP running` \
+                     or `spice group move {design}` out of its group; a lane then claims it through \
                      `spice task next`"
                 ),
             ),
@@ -410,7 +410,7 @@ impl DesignCycleFacts {
 /// One open Design's standing and pass-cycle evidence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DesignFacts {
-    /// A working group with an active stance holds the Design.
+    /// No Paused working group holds the Design.
     pub active: bool,
     /// Its pass-cycle evidence.
     pub cycle: DesignCycleFacts,

@@ -24,7 +24,7 @@ impl Lanes {
             .source
     }
 
-    /// A Design standing in an exploring working group, asking [`QUESTION`].
+    /// A Design standing in a running working group, asking [`QUESTION`].
     fn open_design(&self, config: &SurfaceConfig) -> wire::TaskHandle {
         let design = self.design_with_questions(
             "dVrD245Kd",
@@ -36,7 +36,7 @@ impl Lanes {
             60,
             config,
             &design,
-            wire::rooms::WorkingGroupStance::Explore,
+            wire::rooms::WorkingGroupStance::Running,
         );
         design
     }

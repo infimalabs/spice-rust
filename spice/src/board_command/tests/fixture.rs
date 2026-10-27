@@ -310,7 +310,7 @@ pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
 }
 
 /// Make `design` active by standing it in the fixture group and setting that
-/// group's stance to Explore when the move founded it in Passive.
+/// group running when the move founded it Paused.
 pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     let born = design.born().expect("fixture design stamp");
     let group = fixture_group();
@@ -324,7 +324,7 @@ pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
         .groups
         .iter()
         .find(|standing| standing.group == group)
-        .is_some_and(|standing| standing.stance == wire::rooms::WorkingGroupStance::Passive)
+        .is_some_and(|standing| standing.stance == wire::rooms::WorkingGroupStance::Paused)
     {
         assert_committed(issue(
             bus,
@@ -336,7 +336,7 @@ pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
             }],
             &wire::rooms::WorkingGroupStanceSet {
                 group,
-                stance: wire::rooms::WorkingGroupStance::Explore,
+                stance: wire::rooms::WorkingGroupStance::Running,
             },
         ));
     }

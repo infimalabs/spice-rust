@@ -421,7 +421,7 @@ pub(super) fn set_working_group_fast(
 }
 
 /// Most reads one group command makes of a room before reporting its
-/// shelving owed. Passive standing refuses new claims on the group's
+/// shelving owed. A Paused group refuses new claims on its
 /// Designs, so a room that moved settles within a read or two.
 const SHELVING_ATTEMPTS: usize = 4;
 
@@ -459,11 +459,11 @@ pub(super) fn disband_working_group(
     )
 }
 
-/// Set one standing group's shared activity stance. A change to Passive
+/// Set one standing group's brake. A change to Paused
 /// commits the partition first, then shelves each of the group's Designs from
 /// its room as read after that commit, under the Design's own task origin,
-/// since one write carries one origin. Setting Passive on a group already
-/// Passive commits any shelving still owed instead of refusing. Returns every
+/// since one write carries one origin. Setting Paused on a group already
+/// Paused commits any shelving still owed instead of refusing. Returns every
 /// lane asked to park.
 pub(crate) fn set_working_group_stance(
     bus: &Bus,
@@ -558,7 +558,7 @@ struct ShelvingPolicy<'a> {
     config: &'a steer::Config,
 }
 
-/// Commit shelving still owed to a group that already stands Passive, without
+/// Commit shelving still owed to a group that already stands Paused, without
 /// restating its partition. Nothing owed keeps the unchanged-stance refusal.
 fn repair_shelving(
     bus: &Bus,
@@ -583,7 +583,7 @@ fn repair_shelving(
             refusal(
                 "group::shelving-owed",
                 Some(owed),
-                "shelving these held Designs did not commit; set the group Passive again",
+                "shelving these held Designs did not commit; set the group Paused again",
             ),
             Vec::new(),
         );
@@ -601,7 +601,7 @@ fn repair_shelving(
     )
 }
 
-/// What shelving a passive group's rooms committed and left owed.
+/// What shelving a Paused group's rooms committed and left owed.
 #[derive(Default)]
 struct Shelved {
     /// Positions spanning every shelving write committed.
@@ -763,7 +763,7 @@ fn designs(current: &WorkingGroupPartition) -> Result<Designs<'_>, Outcome<Comma
 
 /// The partition `designs` states at `revision`, carrying each retained
 /// group's stance and fast-mode flag from `current`. A newly founded group
-/// starts in Passive.
+/// starts Paused.
 fn stated(
     designs: &Designs<'_>,
     revision: u64,
@@ -781,7 +781,7 @@ fn stated(
                     .groups
                     .iter()
                     .find(|standing| standing.group == *group.group)
-                    .map_or(WorkingGroupStance::Passive, |standing| standing.stance),
+                    .map_or(WorkingGroupStance::Paused, |standing| standing.stance),
             })
             .collect(),
         fast: Vec::new(),

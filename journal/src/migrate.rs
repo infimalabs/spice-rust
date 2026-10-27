@@ -14,6 +14,7 @@ mod creation_contexts;
 mod decisions;
 mod design_asks;
 mod design_invitations;
+mod design_reach;
 mod designs;
 mod fact_bounds;
 mod hidden_projects;
@@ -82,8 +83,8 @@ const PREPARED: &str = "prepared";
 /// predecessor lacks, replacing its per-route room receipts and per-group
 /// heads. Finally it crosses every retained settings command answer from the
 /// retired operator field to the current principal directory, each entry
-/// carrying its principal's code, makes retained working-group activity
-/// stance explicit, lifts task priority, taste-review standing, and document
+/// carrying its principal's code, puts every retained working-group stance on
+/// the Paused/Running brake, lifts task priority, taste-review standing, and document
 /// slugs from retired statement tags into typed fields, then discards every
 /// remaining tag before the schema identity advances. Each
 /// taste hold takes the matches and recheck count its retired audit notes
@@ -417,6 +418,7 @@ fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), 
     task_evidence::cross(transaction)?;
     contribution_charges::cross(transaction)?;
     contribution_items::cross(transaction)?;
+    design_reach::cross(transaction)?;
     design_asks::cross(transaction)?;
     leave_receipts::cross(transaction)?;
     taste_proposals::cross(transaction)

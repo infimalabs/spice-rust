@@ -324,7 +324,7 @@ impl Entry {
     }
 
     /// Whether the current working-group partition holds this task. Only a
-    /// Design can stand in a group; a Design outside every group is passive.
+    /// Design can stand in a group; a Design outside every group is active.
     #[must_use]
     pub const fn grouped(&self) -> bool {
         self.grouped

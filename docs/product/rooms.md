@@ -103,33 +103,30 @@ owns each rule summarized here.
   filed open Design. Retained task statement/completion and message/passage
   views use the same 256-statement corpus, logarithmic term frequency, smooth
   inverse document frequency, L2 normalization, and durable Design-identity
-  tie break. Each candidate owns its stance-weighted cosine floor: passive uses
-  the balanced 0.15 base, Explore uses 0.10, and Converge uses 0.20. A Design
-  whose maturity is steeped clears Converge's floor whatever its group's
-  stance: every question has been heard and it is close, so it asks only the
-  lanes Converge would. Until then, including while any question is still
-  quiet, it keeps its group's floor and reach. The group's floor returns as
-  soon as a later charge contests an item or a statement edit un-steeps it;
-  the notice records Converge as the admitting stance. An OOPS Design, whose
-  reports rather than its items ready it, never steeps, so it always asks as
-  a steeped Design does. The floor decides qualification only; finite cosine
-  score still
+  tie break. Each candidate's cosine floor follows its maturity alone, never
+  its working group: an unsteeped Design invites at the wide 0.10 floor, and a
+  steeped one at the narrow 0.20 floor, since every question has been heard
+  and it is close, so it asks only closely matched lanes. The reach widens
+  again as soon as a later charge contests an item or a statement edit
+  un-steeps it. An OOPS Design, whose reports rather than its items ready it,
+  never steeps, so it always asks narrow, as a steeped Design does. The floor
+  decides qualification only; finite cosine score still
   decides ranking. One opportunity selects one Design at most; one session has
   one unanswered request at most. Whether a lane is asked is decided on the
   whole statement; what it is asked is every question item still owed to it.
-  Passive and Explore ask a lane about quiet and unopposed items whose charge
-  series does not hold it; while an item is contested, Converge instead asks a
-  lane already in that item's series to re-charge it at strength 2, and
-  otherwise asks as Explore does. A concurred item is never asked. The request
+  While any item is contested, a lane already in a contested item's series is
+  asked to re-charge it at strength 2; otherwise a lane is asked about quiet
+  and unopposed items whose charge series does not hold it. A concurred item is
+  never asked. The request
   lists the owed items in statement order, except that the one whose text,
   read with the problem sentence, scores best against any retained card view
   at or above the floor leads.
   A `room::noticed` record names the exact Design statement, session,
   compaction race witness, opportunity, evidence and immutable identity, the
-  stance whose floor admitted the match, at most six strongest weighted
-  overlaps, and the asked items. An invitation admitted under Explore says so:
-  its match was cast slightly wider than usual under the lower floor, so the
-  invited lane weighs the listed terms accordingly. Each item is asked once per
+  reach whose floor admitted the match, at most six strongest weighted
+  overlaps, and the asked items. A wide invitation says so: its match was cast
+  slightly wider than usual under the lower floor, so the invited lane weighs
+  the listed terms accordingly. Each item is asked once per
   continuing session, and a Design with no item the lane may be asked is asked
   as a whole once, unless every current item concurs: then nothing is left to
   weigh and the Design asks nobody. An item request settles on the lane's own
@@ -151,7 +148,7 @@ owns each rule summarized here.
   Selection, `task next`, room catch-up, and `room leave` share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced
   transcript source, or lost task statement, completion, or claim evidence
-  releases it on all of them. Stance and group movement do not release
+  releases it on all of them. A group's brake and group movement do not release
   an otherwise-current open Design request. Compaction does not either, but
   one landing between selection and recording refuses the recording;
   unrelated writes do not release it. The request grants no claim, work,
@@ -180,8 +177,8 @@ owns each rule summarized here.
   contested item, else the lowest quiet item, else the lowest unopposed item,
   with the input it needs, and counts the items still quiet. `spice room
   awareness HANDLE` and the browser room show each item's state. Steeped
-  maturity makes a Design's first pass ready and raises its invite floor to
-  Converge's, narrowing who is asked. Beyond those two effects the state is
+  maturity makes a Design's first pass ready and narrows its invitation reach
+  to the 0.20 floor. Beyond those two effects the state is
   advisory: it never changes standing, possession, grouping, selection, or
   authorization.
 
@@ -247,7 +244,7 @@ owns each rule summarized here.
   Design delivers it to one lane. A lane is free to take it while it holds no
   active claim but the Design's; a Design some lane holds goes only to that
   holder, and a passive Design to no lane. Among free lanes the resident ranks
-  by the TF-IDF match Design awareness uses, with no stance floor: each seated
+  by the TF-IDF match Design awareness uses, with no reach floor: each seated
   lane scores its occupant's continuing session profile against the Design's
   current statement, and each vacant lane the lifecycle may wake scores its
   best retained session. The Design's own task cards, retained when a lane
@@ -297,7 +294,7 @@ owns each rule summarized here.
      recorded meanwhile counts then.
 
   A passive Design keeps its cycle and history but no lane may possess it
-  until its working group is Explore or Converge or it leaves every group.
+  until its working group runs or it leaves every group.
 
   A Design
   [stays open until the operator settles it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
@@ -353,28 +350,29 @@ owns each rule summarized here.
 
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
-  is shared repository organization and stance authority read by `spice group
+  is shared repository organization and brake authority read by `spice group
   list` and changed by `spice group move`, `spice group arrange`, `spice group
   disband`, and `spice group stance`. Disbanding leaves every Design ungrouped;
   open consoles, their order, drafts, speech, and focus are this browser's
   foreground and are never shared.
-- **Design standing.** An open Design outside every group, or in an Explore or
-  Converge group, is
+- **Design standing.** An open Design outside every group, or in a Running
+  group, is
   [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
   the allocator offers it once its pass cycle is ready, and capture, steal,
   and a nudge may reach it, so no Design needs a group to reach its proposal.
-  A Design in a Passive group is passive, and those possession paths refuse
-  (`claim::design-passive`). A fresh group starts in Passive. The operator
+  A Design in a Paused group is passive, and those possession paths refuse
+  (`claim::design-passive`). A fresh group starts Paused. The operator
   groups a Design with `spice group move DESIGN --to GROUP` or `--new`, then
-  chooses its group's activity with `spice group stance GROUP
-  passive|explore|converge`. Setting a group Passive, or moving a Design into
-  a new or existing Passive group, makes the Design passive. If a lane holds
+  sets its group's brake with `spice group stance GROUP paused|running`. The
+  brake only withholds or releases possession; it never changes who is
+  invited or what they are asked. Pausing a group, or moving a Design into
+  a new or existing Paused group, makes the Design passive. If a lane holds
   it, the change sends that holder one stop direction, queued for the lane's
   next seat when vacant. The holder checkpoints and runs ordinary `spice task
   free DESIGN`, which parks unpublished commits and dirty work; its claim stays
-  authoritative until then. A stance change names any held Design whose
-  shelving is still owed; setting the group Passive again shelves it. Explore
-  or Converge, a move out of every group, or a disband makes it eligible again
+  authoritative until then. A brake change names any held Design whose
+  shelving is still owed; setting the group Paused again shelves it. Running
+  the group, a move out of every group, or a disband makes it eligible again
   with its room, candidates, outputs, history, and authorization unchanged.
 - **Opportunistic OOPS Design.** Every `task oops` report is a Plan prepared
   under it, so it is an ordinary Design with automatic intake. It has no

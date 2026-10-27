@@ -82,11 +82,11 @@ The group control panel keeps the team panel's frame and maps each control:
 - **The speech slider** is browser-local per group: each covered lane's prose
   is voiced at the louder of its team's and every covering group's mode, each
   line at most once. Room publications are never voiced.
-- **The allocation slider** is the group's shared stance, Passive / Explore /
-  Converge, sent as `group::stance` at the revision read. Passive makes every
-  open Design passive; Explore asks lanes for input on quiet or unopposed
-  questions; Converge asks lanes already charging a contested question to
-  re-charge it. Refusal returns the slider to partition authority with its
+- **The brake slider** is the group's shared Paused / Running setting, sent
+  as `group::stance` at the revision read. Paused makes every open Design in
+  the group passive and stops its holder; Running leaves each Design to its
+  pass cycle. Who a Design invites and what it asks follow its own maturity,
+  never the brake. Refusal returns the slider to partition authority with its
   reason.
 
 Each design heading resolves, as a member heading does, from the room's newest
@@ -201,7 +201,7 @@ A working group's toolbar keeps team geometry, total first and lane tabs after:
 | Ticker: newest member activity | Ticker: newest words across the group's rooms; a contribution names its lane and vote |
 
 A design pip reads concluded done, concluded collapsed, or deleted once
-terminal, even while grouped, and open passive while its group is Passive;
+terminal, even while grouped, and open passive while its group is Paused;
 otherwise claimed while a lane claims it for a pass, else the resident's pass
 cycle state. It wears its Design's task-overview graph-card tone, so it agrees
 with the tab marks: in flight and ready for proposal live, awaiting decision

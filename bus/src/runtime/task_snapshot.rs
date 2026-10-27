@@ -308,7 +308,7 @@ struct Indexes {
     task_origins: Arc<HashMap<journal::crossing::TaskStamp, TaskOrigin>>,
     duplicate_task_origins: Arc<HashSet<journal::crossing::TaskStamp>>,
     invalid_creator_teams: Arc<HashSet<journal::crossing::TaskStamp>>,
-    /// Effective stance of each grouped Design; an ungrouped Design is passive.
+    /// The brake of each grouped Design's working group.
     design_stances:
         Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::rooms::WorkingGroupStance>>,
     /// The reason each Design's collapse recorded, shared until a commit
@@ -1032,21 +1032,8 @@ impl TaskFacts {
         self.indexes.design_stances.contains_key(task)
     }
 
-    /// Effective stance of `task`; Designs outside every group are passive.
-    #[must_use]
-    pub fn design_stance(
-        &self,
-        task: &journal::crossing::TaskStamp,
-    ) -> journal::crossing::rooms::WorkingGroupStance {
-        self.indexes
-            .design_stances
-            .get(task)
-            .copied()
-            .unwrap_or(journal::crossing::rooms::WorkingGroupStance::Passive)
-    }
-
     /// Whether `task` is active: a Design outside every group is, and a
-    /// grouped Design follows its group's stance.
+    /// grouped Design is unless its group is Paused.
     #[must_use]
     pub fn design_is_active(&self, task: &journal::crossing::TaskStamp) -> bool {
         self.indexes

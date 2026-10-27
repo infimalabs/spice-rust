@@ -1,50 +1,47 @@
-//! Repository-shared working-group organization and activity stance.
+//! Repository-shared working-group organization and its Paused/Running brake.
 
 use serde::{Deserialize, Serialize};
 
 use super::{RoomAnchor, RoomAuthorityStamp, WORKING_GROUP_ANCHOR_LIMIT, all_unique};
 
-/// Shared activity stance of one working group.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Whether one working group lets lanes possess its Designs.
+///
+/// The setting is only a brake: how widely a Design invites lanes and which
+/// items it asks follow its maturity, never its group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkingGroupStance {
-    /// Keep every Design passive while it collects room evidence.
-    Passive,
-    /// Let every Design participate in ordinary active work.
-    #[default]
-    Explore,
-    /// Let every Design participate in ordinary active work while the group
-    /// converges; currently equivalent to Explore.
-    Converge,
+    /// No lane may possess the group's Designs; holders are asked to park.
+    Paused,
+    /// The group's Designs follow ordinary allocation and possession.
+    Running,
 }
 
 impl WorkingGroupStance {
-    /// Stable slider order.
-    pub const ALL: [Self; 3] = [Self::Passive, Self::Explore, Self::Converge];
+    /// Stable toggle order.
+    pub const ALL: [Self; 2] = [Self::Paused, Self::Running];
 
-    /// Whether this stance makes its group's Designs active.
+    /// Whether this setting makes its group's Designs active.
     #[must_use]
     pub const fn is_active(self) -> bool {
-        matches!(self, Self::Explore | Self::Converge)
+        matches!(self, Self::Running)
     }
 
     /// Stable operator-facing spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Passive => "passive",
-            Self::Explore => "explore",
-            Self::Converge => "converge",
+            Self::Paused => "paused",
+            Self::Running => "running",
         }
     }
 
-    /// Slider position.
+    /// Toggle position.
     #[must_use]
     pub const fn index(self) -> usize {
         match self {
-            Self::Passive => 0,
-            Self::Explore => 1,
-            Self::Converge => 2,
+            Self::Paused => 0,
+            Self::Running => 1,
         }
     }
 }
@@ -60,19 +57,18 @@ impl std::str::FromStr for WorkingGroupStance {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "passive" => Ok(Self::Passive),
-            "explore" => Ok(Self::Explore),
-            "converge" => Ok(Self::Converge),
-            _ => Err("stance must be passive, explore, or converge"),
+            "paused" => Ok(Self::Paused),
+            "running" => Ok(Self::Running),
+            _ => Err("stance must be paused or running"),
         }
     }
 }
 
-/// Repository-shared organization of ordered room anchors and their activity
-/// stance.
+/// Repository-shared organization of ordered room anchors and their
+/// Paused/Running brake.
 ///
 /// A working group owns only its identity, ordered anchor associations, and
-/// shared stance; it has no name of its own and lives only while it holds a
+/// shared brake; it has no name of its own and lives only while it holds a
 /// design. It cannot encode lanes, members, claims, reads, work, or foreground
 /// geometry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +78,7 @@ pub struct WorkingGroup {
     pub group: RoomAuthorityStamp,
     /// Room anchors in operator order.
     pub anchors: Vec<RoomAnchor>,
-    /// Shared activity stance governing every open Design in the group.
+    /// Whether lanes may possess every open Design in the group.
     pub stance: WorkingGroupStance,
 }
 
@@ -91,7 +87,6 @@ pub struct WorkingGroup {
 struct WorkingGroupWire {
     group: RoomAuthorityStamp,
     anchors: Vec<RoomAnchor>,
-    #[serde(default)]
     stance: WorkingGroupStance,
 }
 
@@ -124,12 +119,12 @@ impl From<WorkingGroup> for WorkingGroupWire {
 }
 
 /// The working-group partition: every current group in operator order, each
-/// holding its designs and shared stance, guarded by one revision.
+/// holding its designs and shared brake, guarded by one revision.
 ///
 /// A group stands only while it holds a design, no design stands in two
 /// groups, and no group appears twice. Revision zero is the empty partition
 /// before any grouping write. A group's fast-mode flag is independent of its
-/// stance, is off until engaged, and ends with the group.
+/// brake, is off until engaged, and ends with the group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     try_from = "WorkingGroupPartitionWire",
@@ -212,14 +207,14 @@ impl WorkingGroupPartition {
     }
 
     /// Whether `design` is active: a Design outside every group is, and a
-    /// grouped Design follows its group's stance.
+    /// grouped Design is unless its group is Paused.
     #[must_use]
     pub fn design_is_active(&self, design: &RoomAnchor) -> bool {
         self.holder(design)
             .is_none_or(|group| group.stance.is_active())
     }
 
-    /// Set a standing group's stance, saying whether it changed.
+    /// Set a standing group's brake, saying whether it changed.
     pub fn set_stance(&mut self, group: &RoomAuthorityStamp, stance: WorkingGroupStance) -> bool {
         let Some(group) = self
             .groups
@@ -307,7 +302,7 @@ pub struct WorkingGroupFast {
     pub fast_mode: bool,
 }
 
-/// Set one standing working group's shared activity stance.
+/// Set one standing working group to Paused or Running.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupStanceSet {
