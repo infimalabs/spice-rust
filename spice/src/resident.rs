@@ -207,7 +207,6 @@ mod daemon;
 pub(crate) use daemon::observer::ProcessExitObserver;
 pub(crate) mod design_awareness;
 mod design_input;
-mod design_nudge;
 mod lane_recovery;
 mod lane_surface;
 mod launch_runtime;

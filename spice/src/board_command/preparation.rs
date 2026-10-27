@@ -1,13 +1,11 @@
 use super::*;
 use wire::rooms::{
-    CandidateCoverageRecord, CandidateCovered, CandidateCritiqueRecord, CandidateCritiqued,
-    CoverageAuthority, DecisionOutcome, DesignPassProposal, DesignPropose, DesignProposed,
-    ExecutionAuthorization, ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide,
-    PreparationDecided, ProposalRef,
+    DecisionOutcome, DesignPassProposal, DesignPropose, DesignProposed, ExecutionAuthorization,
+    ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide, PreparationDecided,
+    ProposalRef,
 };
 
 mod decision;
-pub(super) mod nudge;
 mod references;
 mod withdrawal;
 
@@ -19,12 +17,6 @@ pub(super) fn dispatch_preparation(
     Some(match command.body() {
         wire::intent::Intent::DesignPropose(proposal) => {
             propose_design(bus, command, proposal, repository)
-        }
-        wire::intent::Intent::CandidateCritiqueRecord(critique) => {
-            record_critique(bus, command, critique)
-        }
-        wire::intent::Intent::CandidateCoverageRecord(coverage) => {
-            record_coverage(bus, command, coverage)
         }
         wire::intent::Intent::PreparationDecide(decision) => {
             decision::decide_preparation(bus, command, decision)
@@ -95,31 +87,6 @@ fn require_design_proposal(
                 "preparation::proposal-output-invalid",
                 Some(output.to_string()),
                 "name only acceptance-bearing outputs gated by this Design",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn require_design(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    controller: &TaskStamp,
-    outputs: &[TaskStamp],
-) -> Result<(), Outcome<CommandAnswer>> {
-    let snapshot = bus
-        .task_snapshot()
-        .map_err(|error| store_fault("preparation::heads-unreadable", &error.to_string()))?;
-    let controller_heads = task_heads(&snapshot, controller)?;
-    require_open_design(command, controller_heads, controller)?;
-    for output in outputs {
-        let heads = task_heads(&snapshot, output)?;
-        require_transition_witnesses(command, heads)?;
-        if !heads.statement().body().dependencies.contains(controller) {
-            return Err(refusal(
-                "preparation::output-uncontrolled",
-                Some(output.to_string()),
-                "name only outputs gated by this Design",
             ));
         }
     }
@@ -347,177 +314,6 @@ fn commit_proposal(
         Some(parked) => committed_with_task_git(bus, write, body, PreparedTaskGit::Release(parked)),
         None => committed(bus, write, body),
     }
-}
-
-pub(super) fn record_critique(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    request_body: &CandidateCritiqueRecord,
-) -> Outcome<CommandAnswer> {
-    let subject = ProposalRef::Critique {
-        critique: request_body.critique.critique.clone(),
-    };
-    if let Err(outcome) = require_proposal_absence(command, &subject) {
-        return outcome;
-    }
-    if let Err(outcome) = require_design(
-        bus,
-        command,
-        &request_body.critique.critique.candidate.controller,
-        &[],
-    ) {
-        return outcome;
-    }
-    record(
-        bus,
-        command,
-        request_body,
-        &request_body.critique.critique.candidate.controller,
-        CandidateCritiqued {
-            critique: request_body.critique.clone(),
-        },
-        Vec::new(),
-        format!(
-            "recorded critique {}",
-            request_body.critique.critique.critique
-        ),
-    )
-}
-
-pub(super) fn record_coverage(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    request_body: &CandidateCoverageRecord,
-) -> Outcome<CommandAnswer> {
-    let subject = ProposalRef::Coverage {
-        coverage: request_body.coverage.coverage.clone(),
-    };
-    if let Err(outcome) = require_proposal_absence(command, &subject) {
-        return outcome;
-    }
-    if let Err(outcome) = require_design(
-        bus,
-        command,
-        &request_body.coverage.coverage.candidate.controller,
-        &[],
-    ) {
-        return outcome;
-    }
-    let assessed = ProposalRef::Candidate {
-        candidate: request_body.coverage.coverage.candidate.clone(),
-    };
-    let assessed_read = assessed.clone();
-    let observed = bus.read(move |read| {
-        Ok::<_, GuardError>((
-            read.proposal_head(&assessed_read)?,
-            read.proposal_author(&assessed_read)?,
-            read.residency_head()?,
-        ))
-    });
-    let (candidate, author, residency) = match observed {
-        Ok(observed) => observed,
-        Err(error) => return store_fault("preparation::authority-unreadable", &error.to_string()),
-    };
-    let Some(candidate) = candidate else {
-        return refusal(
-            "preparation::candidate-missing",
-            Some(
-                request_body
-                    .coverage
-                    .coverage
-                    .candidate
-                    .candidate
-                    .to_string(),
-            ),
-            "retain the exact candidate before recording coverage",
-        );
-    };
-    let Some(author) = author else {
-        return store_fault(
-            "preparation::candidate-author-missing",
-            "the Design pass proposal head has no authenticated writer",
-        );
-    };
-    let mut derived = vec![Witness::Proposal {
-        proposal: assessed,
-        head: Some(candidate.position()),
-    }];
-    let authority = match command.actor() {
-        _ if command.holds(wire::principal::PrincipalRole::Operator) => {
-            CoverageAuthority::Operator {}
-        }
-        Actor::Lane(lane) => {
-            let Some(residency) = residency else {
-                return refusal(
-                    "preparation::reviewer-unseated",
-                    Some(lane.to_string()),
-                    "record coverage from a currently seated lane",
-                );
-            };
-            let Some(row) = residency.body().lanes.iter().find(|row| row.lane == *lane) else {
-                return refusal(
-                    "preparation::reviewer-unseated",
-                    Some(lane.to_string()),
-                    "record coverage from a lane in the current resident generation",
-                );
-            };
-            let Some(occupant) = row.occupant else {
-                return refusal(
-                    "preparation::reviewer-vacant",
-                    Some(lane.to_string()),
-                    "start the lane before recording its authored coverage",
-                );
-            };
-            derived.push(Witness::Residency {
-                lane: *lane,
-                occupant: Some(occupant),
-                epoch: residency.body().epoch,
-            });
-            if author == *command.actor() {
-                CoverageAuthority::SelfReview {
-                    lane: *lane,
-                    occupant,
-                }
-            } else {
-                CoverageAuthority::Independent {
-                    lane: *lane,
-                    occupant,
-                }
-            }
-        }
-        actor => {
-            return refusal(
-                "preparation::reviewer-unavailable",
-                Some(actor.to_string()),
-                "record coverage as the operator or a currently seated lane",
-            );
-        }
-    };
-    commit_coverage(bus, command, request_body, authority, derived)
-}
-
-fn commit_coverage(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    request_body: &CandidateCoverageRecord,
-    authority: CoverageAuthority,
-    derived: Vec<Witness>,
-) -> Outcome<CommandAnswer> {
-    let mut coverage = request_body.coverage.clone();
-    coverage.authority = authority;
-    let controller = coverage.coverage.candidate.controller.clone();
-    record(
-        bus,
-        command,
-        request_body,
-        &controller,
-        CandidateCovered { coverage },
-        derived,
-        format!(
-            "recorded coverage {}",
-            request_body.coverage.coverage.coverage
-        ),
-    )
 }
 
 pub(super) fn adopt_output(

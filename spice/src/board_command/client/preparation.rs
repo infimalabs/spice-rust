@@ -1,13 +1,11 @@
 use std::marker::PhantomData;
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
-    CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateReference, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority,
-    DesignPassBody, DesignPassProposal, DesignPassRecommendation, DesignPropose, OutputAdopt,
-    PreparationDecide, PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomSource,
+    CandidateRef, CandidateReference, CandidateWithdraw, CandidateWithdrawal, DesignPassBody,
+    DesignPassProposal, DesignPassRecommendation, DesignPropose, OutputAdopt, PreparationDecide,
+    PreparationDecision, ProposalRef, RoomAuthorityStamp,
 };
 
 use super::*;
@@ -56,14 +54,6 @@ impl<T: DeserializeOwned> JsonOperand<T> {
 
 const PROPOSE_DRY_RUN: &str =
     "dry run: nothing recorded; the write mints its own candidate identity";
-const CRITIQUE_JSON: JsonOperand<CandidateCritique> = JsonOperand::new(
-    "CRITIQUE_JSON",
-    r#"{"critique":{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"critique":"1"},"category":"composition","source":{"kind":"journal","fact":"6dth"},"standing":"clean"}"#,
-);
-const COVERAGE_JSON: JsonOperand<CoverageInput> = JsonOperand::new(
-    "COVERAGE_JSON",
-    r#"{"coverage":{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"coverage":"1"},"scopes":["contracts","composition"],"source":{"kind":"journal","fact":"6dth"}}"#,
-);
 const DECISION_JSON: JsonOperand<PreparationDecision> = JsonOperand::new(
     "DECISION_JSON",
     r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"resolved","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"outputs":[{"output":"dVzfwWPSh","verdict":"accepted","comment":"This boundary is ready."},{"output":"dVzfwgs7d","verdict":"rejected","comment":"Keep the retry contract explicit."}],"comment":"Proceed with the accepted output."}}"#,
@@ -73,13 +63,6 @@ const WITHDRAWAL_JSON: JsonOperand<CandidateWithdrawal> = JsonOperand::new(
     r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"reason":"cites another Design's facts; candidate dVzfC0001 corrects it"}"#,
 );
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CoverageInput {
-    coverage: wire::rooms::CoverageRef,
-    scopes: Vec<Name>,
-    source: RoomSource,
-}
 pub(super) fn dispatch_client(
     repository: Host<'_>,
     contract: &Contract,
@@ -88,13 +71,9 @@ pub(super) fn dispatch_client(
 ) -> Outcome<CommandAnswer> {
     match verb {
         "propose" => client_design_propose(repository, contract, matches),
-        "critique" => client_candidate_critique(repository, contract, matches),
-        "cover" => client_candidate_cover(repository, contract, matches),
         "decide" => client_preparation_decide(repository, contract, matches),
         "withdraw" => client_candidate_withdraw(repository, contract, matches),
-        "adopt" => client_output_adopt(repository, contract, matches),
-        "nudge" => client_design_nudge(repository, contract, matches),
-        _ => unreachable!("preparation CLI partition is closed"),
+        _ => unreachable!("design CLI partition is closed"),
     }
 }
 
@@ -332,67 +311,6 @@ fn mint_candidate() -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
     })
 }
 
-pub(super) fn client_candidate_critique(
-    repository: Host<'_>,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let critique = match CRITIQUE_JSON.argument(matches) {
-        Ok(critique) => critique,
-        Err(outcome) => return outcome,
-    };
-    let tasks = vec![critique.critique.candidate.controller.clone()];
-    submit_with_tasks(repository, contract, tasks, false, |board| {
-        let proposal = ProposalRef::Critique {
-            critique: critique.critique.clone(),
-        };
-        let mut expected = task_witnesses(board, &critique.critique.candidate.controller)?;
-        expected.push(Witness::Proposal {
-            proposal,
-            head: None,
-        });
-        Ok((
-            CommandKind::CandidateCritiqueRecord,
-            expected,
-            CandidateCritiqueRecord { critique },
-        ))
-    })
-}
-
-pub(super) fn client_candidate_cover(
-    repository: Host<'_>,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let input = match COVERAGE_JSON.argument(matches) {
-        Ok(input) => input,
-        Err(outcome) => return outcome,
-    };
-    let tasks = vec![input.coverage.candidate.controller.clone()];
-    submit_with_tasks(repository, contract, tasks, false, |board| {
-        let proposal = ProposalRef::Coverage {
-            coverage: input.coverage.clone(),
-        };
-        let mut expected = task_witnesses(board, &input.coverage.candidate.controller)?;
-        expected.push(Witness::Proposal {
-            proposal,
-            head: None,
-        });
-        Ok((
-            CommandKind::CandidateCoverageRecord,
-            expected,
-            CandidateCoverageRecord {
-                coverage: CandidateCoverage {
-                    coverage: input.coverage,
-                    authority: CoverageAuthority::Operator {},
-                    scopes: input.scopes,
-                    source: input.source,
-                },
-            },
-        ))
-    })
-}
-
 pub(super) fn client_preparation_decide(
     repository: Host<'_>,
     contract: &Contract,
@@ -600,30 +518,6 @@ pub(super) fn client_output_adopt(
             },
         ))
     })
-}
-
-pub(super) fn client_design_nudge(
-    repository: Host<'_>,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let design = match required(matches, "DESIGN").parse::<TaskHandle>() {
-        Ok(design) => design,
-        Err(error) => return invalid_handle("DESIGN", &error.to_string()),
-    };
-    let stamp = match design.born() {
-        Ok(stamp) => stamp,
-        Err(error) => return invalid_handle("DESIGN", &error.to_string()),
-    };
-    let outcome = submit_with_tasks(repository, contract, vec![stamp.clone()], false, |board| {
-        let task = task(board, &stamp)?;
-        Ok((
-            CommandKind::DesignNudge,
-            vec![statement_witness(task), workflow_witness(task)],
-            wire::rooms::DesignNudge { design },
-        ))
-    });
-    with_cycle(repository, &stamp, outcome)
 }
 
 /// Append `design`'s pass cycle, read after the command committed, to a

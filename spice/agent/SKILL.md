@@ -101,10 +101,10 @@ name continuations.
   A Plan creates an acceptance-bearing executable task, else `task done
   --disposition KIND [--cover REF]`; positive review releases outputs to
   dependencies without selection/authorization. A Design pass ends with
-  `preparation propose JUSTIFICATION`, assembled from acceptance-bearing
+  `design propose JUSTIFICATION`, assembled from acceptance-bearing
   outputs built under the claim and the room (none: `--recommend
   conclude|collapse`). Only the operator concludes a Design; stop means
-  checkpoint/free. Outputs await exact `preparation decide`; dependencies,
+  checkpoint/free. Outputs await exact `design decide`; dependencies,
   origin, closure, deletion, findings, and group movement never bypass it. A
   veto closes the output; accepted work is its derived prerequisite.
 - Work incrementally; commit only under the matching claim. Never pull/push or

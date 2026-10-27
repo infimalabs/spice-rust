@@ -384,9 +384,6 @@ impl<'a> Surface<'a> {
                     ),
                     Vec::new(),
                 ),
-                (CommandKind::DesignNudge, Intent::DesignNudge(nudge)) => {
-                    self.dispatch_design_nudge(command, nudge)
-                }
                 (CommandKind::RoomControl, Intent::RoomControl(control)) => {
                     let (outcome, notify) = crate::board_command::room_control(
                         self.bus,
@@ -411,21 +408,6 @@ impl<'a> Surface<'a> {
             }
         }
         Some(CommandDispatch::with_effects(outcome, effects))
-    }
-
-    fn dispatch_design_nudge(
-        &self,
-        command: &wire::AdmittedCommand,
-        nudge: &wire::rooms::DesignNudge,
-    ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-        let (outcome, notify) = super::design_nudge::nudge(
-            self.bus,
-            self.config,
-            self.profiles.get().map(AsRef::as_ref),
-            command,
-            nudge,
-        );
-        (outcome, notify.into_iter().collect())
     }
 
     fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {

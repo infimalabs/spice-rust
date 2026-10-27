@@ -1,11 +1,9 @@
 use super::*;
 
 use wire::rooms::{
-    CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateReference, CoverageAuthority, CoverageRef, CritiqueRef,
-    CritiqueStanding, DecisionOutcome, DecisionRef, DesignPassProposal, DesignPropose, OutputAdopt,
-    OutputDecision, OutputVerdict, PreparationDecide, PreparationDecision, ProposalRef,
-    RoomAuthorityStamp, RoomSource,
+    CandidateRef, CandidateReference, DecisionOutcome, DecisionRef, DesignPassProposal,
+    DesignPropose, OutputAdopt, OutputDecision, OutputVerdict, PreparationDecide,
+    PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomSource,
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
@@ -48,12 +46,12 @@ pub(super) fn add_controller(
 
 fn preparation_page(root: &FixtureRoot, words: &[&str]) -> serde_json::Value {
     let matches = crate::cli::command()
-        .try_get_matches_from(["spice", "preparation", "show"].iter().chain(words))
-        .expect("preparation read parses");
-    let contract = crate::cli::selected_contract(&matches).expect("preparation read is registered");
+        .try_get_matches_from(["spice", "design", "show"].iter().chain(words))
+        .expect("design read parses");
+    let contract = crate::cli::selected_contract(&matches).expect("design read is registered");
     let journal = journal::JournalReader::open(root.as_ref().join("authority.sqlite3"))
         .expect("fixture journal opens to read");
-    let outcome = crate::preparation_command::answer(
+    let outcome = crate::design_command::answer(
         &journal,
         crate::cli::selected_matches(&matches),
         contract.path,
@@ -79,7 +77,7 @@ fn journal_source(answer: &BoardAnswer, task: &TaskHandle) -> RoomSource {
 }
 
 #[test]
-fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_selection() {
+fn preparation_commands_authorize_only_the_exact_selection() {
     let (root, bus, epoch, seats) = fixture("preparation-command-loop", 2);
     let controller = add_controller(
         &bus,
@@ -88,20 +86,10 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &controller);
-    claim_task(
-        &bus,
-        epoch,
-        &seats[0],
-        &Actor::Lane(seats[0].lane),
-        &controller,
-    );
+    capture_design(&bus, epoch, &seats[0], &controller);
     let output = add_plan_output(&bus, epoch, &controller, "Selected output");
     let spare = add_plan_output(&bus, epoch, &controller, "Unselected output");
-    let (candidate, source) =
-        retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
-    record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
+    let (candidate, _) = retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
@@ -157,15 +145,6 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
             spare.born().expect("spare output stamp")
         ])
     );
-    assert_eq!(
-        record("critique")["critique"]["source"],
-        serde_json::to_value(&source).expect("source encodes")
-    );
-    assert!(
-        rows.iter()
-            .filter(|row| row["kind"] == "coverage")
-            .all(|row| row["coverage"]["source"] == serde_json::to_value(&source).unwrap())
-    );
     let outcomes = rows
         .iter()
         .filter(|row| row["kind"] == "decision")
@@ -190,14 +169,12 @@ fn each_design_decision_removes_only_its_edge_from_a_shared_output() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &first);
+    capture_design(&bus, epoch, &seats[0], &first);
     let output = add_plan_output(&bus, epoch, &first, "Shared selected output");
     let first_spare = add_plan_output(&bus, epoch, &first, "First spare");
 
-    let (first_candidate, first_source) =
+    let (first_candidate, _) =
         retain_test_candidate(&bus, epoch, &seats, &first, &output, &first_spare);
-    record_test_critique(&bus, epoch, &seats, &first, &first_candidate, &first_source);
-    record_test_coverage(&bus, epoch, &seats, &first, &first_candidate, &first_source);
     let second = add_controller(
         &bus,
         epoch,
@@ -205,27 +182,11 @@ fn each_design_decision_removes_only_its_edge_from_a_shared_output() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &second);
+    capture_design(&bus, epoch, &seats[0], &second);
     let second_spare = add_plan_output(&bus, epoch, &second, "Second spare");
     connect_child(&bus, epoch, &output, &second);
-    let (second_candidate, second_source) =
+    let (second_candidate, _) =
         retain_test_candidate(&bus, epoch, &seats, &second, &output, &second_spare);
-    record_test_critique(
-        &bus,
-        epoch,
-        &seats,
-        &second,
-        &second_candidate,
-        &second_source,
-    );
-    record_test_coverage(
-        &bus,
-        epoch,
-        &seats,
-        &second,
-        &second_candidate,
-        &second_source,
-    );
 
     authorize_test_output(&bus, epoch, &first, &output, &first_spare, first_candidate);
     assert!(
@@ -308,7 +269,7 @@ fn propose_candidate_version(
         .as_ref()
         .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active)
     {
-        claim_task(bus, epoch, seat, &Actor::Lane(seat.lane), controller);
+        capture_for(bus, epoch, seat, controller);
         current = board(bus, epoch, Actor::Lane(seat.lane));
     }
     let candidate = CandidateRef {
@@ -372,14 +333,7 @@ fn current_proposal_requires_an_exact_active_claim() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &controller);
-    claim_task(
-        &bus,
-        epoch,
-        &seats[0],
-        &Actor::Lane(seats[0].lane),
-        &controller,
-    );
+    capture_design(&bus, epoch, &seats[0], &controller);
     let output = add_plan_output(&bus, epoch, &controller, "Proposed output");
     let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
     let candidate = CandidateRef {
@@ -424,113 +378,6 @@ fn current_proposal_requires_an_exact_active_claim() {
             if refusal.reason() == "preparation::proposal-claim-missing"
     ));
     clean(&root, bus);
-}
-
-fn record_test_critique(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &[Seat],
-    controller: &TaskHandle,
-    candidate: &CandidateRef,
-    source: &RoomSource,
-) {
-    let critique = CandidateCritique {
-        critique: CritiqueRef {
-            candidate: candidate.clone(),
-            critique: wire::SequenceCode::new(1),
-        },
-        category: "composition".parse().expect("category"),
-        source: source.clone(),
-        standing: CritiqueStanding::Clean,
-    };
-    let current = board(bus, epoch, Actor::Lane(seats[0].lane));
-    assert_committed(issue(
-        bus,
-        epoch,
-        Actor::Lane(seats[0].lane),
-        CommandKind::CandidateCritiqueRecord,
-        transition_witnesses(at(&current, controller))
-            .into_iter()
-            .chain([Witness::Proposal {
-                proposal: ProposalRef::Critique {
-                    critique: critique.critique.clone(),
-                },
-                head: None,
-            }])
-            .collect(),
-        &CandidateCritiqueRecord { critique },
-    ));
-}
-
-pub(super) fn record_test_coverage(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seats: &[Seat],
-    controller: &TaskHandle,
-    candidate: &CandidateRef,
-    source: &RoomSource,
-) -> Vec<CoverageRef> {
-    let mut coverage_refs = Vec::new();
-    for (index, seat) in seats.iter().enumerate() {
-        let coverage = CoverageRef {
-            candidate: candidate.clone(),
-            coverage: wire::SequenceCode::new(index as u64 + 1),
-        };
-        let current = board(bus, epoch, Actor::Lane(seat.lane));
-        assert_committed(issue(
-            bus,
-            epoch,
-            Actor::Lane(seat.lane),
-            CommandKind::CandidateCoverageRecord,
-            transition_witnesses(at(&current, controller))
-                .into_iter()
-                .chain([Witness::Proposal {
-                    proposal: ProposalRef::Coverage {
-                        coverage: coverage.clone(),
-                    },
-                    head: None,
-                }])
-                .collect(),
-            &CandidateCoverageRecord {
-                coverage: CandidateCoverage {
-                    coverage: coverage.clone(),
-                    authority: CoverageAuthority::Operator {},
-                    scopes: vec!["contracts".parse().expect("coverage scope")],
-                    source: source.clone(),
-                },
-            },
-        ));
-        coverage_refs.push(coverage);
-    }
-    for (coverage, expected) in [
-        (
-            &coverage_refs[0],
-            CoverageAuthority::SelfReview {
-                lane: seats[0].lane,
-                occupant: seats[0].occupant,
-            },
-        ),
-        (
-            &coverage_refs[1],
-            CoverageAuthority::Independent {
-                lane: seats[1].lane,
-                occupant: seats[1].occupant,
-            },
-        ),
-    ] {
-        let proposal = ProposalRef::Coverage {
-            coverage: coverage.clone(),
-        };
-        let observed = bus
-            .read(move |read| read.proposal_head(&proposal))
-            .expect("coverage head reads")
-            .expect("coverage was recorded");
-        let journal::ProposalAuthority::Coverage(coverage) = observed.into_body() else {
-            panic!("coverage proposal decoded as another authority")
-        };
-        assert_eq!(coverage.authority, expected);
-    }
-    coverage_refs
 }
 
 /// Issue one operator decision that authorizes nothing, witnessed as the
@@ -1107,8 +954,7 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
 fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     let (root, bus, epoch, seats) = fixture("preparation-design-plans", 2);
     let design = add_controller(&bus, epoch, "Plan design", wire::TaskIntent::Design, None);
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let stamps = |tasks: &[&TaskHandle]| {
@@ -1123,9 +969,7 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
         "a Design's Plans wait for its selection"
     );
 
-    let (candidate, source) =
-        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let (candidate, _) = retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
@@ -1197,13 +1041,10 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
 fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier() {
     let (root, bus, epoch, seats) = fixture("preparation-design-next-nested", 2);
     let design = add_controller(&bus, epoch, "Nested design", wire::TaskIntent::Design, None);
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
-    let (candidate, source) =
-        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let (candidate, _) = retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     capture_for(&bus, epoch, &seats[0], &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
@@ -1244,13 +1085,11 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     let correction = todo_task(&bus, epoch, "PREP-correct01", "Open review correction");
     connect_child(&bus, epoch, &design, &correction);
 

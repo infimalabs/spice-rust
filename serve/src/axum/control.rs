@@ -48,12 +48,9 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::WorkingGroupDisband
         | CommandKind::WorkingGroupFast
         | CommandKind::DesignPropose
-        | CommandKind::CandidateCritiqueRecord
-        | CommandKind::CandidateCoverageRecord
         | CommandKind::PreparationDecide
         | CommandKind::CandidateWithdraw
         | CommandKind::OutputAdopt
-        | CommandKind::DesignNudge
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TaskEdit

@@ -34,15 +34,13 @@ owns each rule summarized here.
   a safe boundary. Recording is not receipt.
 - **Receipt, reply, and authorization stay apart.** ACK/NAK settles a delivery,
   and an operator ACK/NAK clause reaches no lane; only a reply does. Recovery
-  returns a lapsed item to pending with the same key and a fresh expiry. Review
-  coverage and execution authorization remain preparation authority, never
-  conversation traffic.
-- **One push.** `spice preparation nudge HANDLE`, or the Nudge control in the
-  browser's Design menu, is the operator's only way to push a Design at a lane:
-  it selects and messages its recipient itself. A room records no
-  coordination; a deferred Design refuses the nudge
-  (`preparation::nudge-deferred`). Deferring a held Design asks its holder to
-  checkpoint and free through one stop direction.
+  returns a lapsed item to pending with the same key and a fresh expiry.
+  Execution authorization remains preparation authority, never conversation
+  traffic.
+- **No push.** A room records no coordination and names no recipient. The
+  operator puts a lane on a Design by telling it to `spice task capture
+  HANDLE`. Deferring a held Design asks its holder to checkpoint and free
+  through one stop direction.
 - **Attention.** An authored room message or contribution makes its lane a
   participant; neither subscribes that lane, grants permission to post, nor
   restores listening. Routing a packet into a room and an owed receipt
@@ -195,7 +193,7 @@ owns each rule summarized here.
   request target. Active Plan and Design claims refuse implementation commits.
   A Design plans Plans; a Plan plans executable tasks.
 
-  Each claimed Design pass ends with exactly one `preparation propose
+  Each claimed Design pass ends with exactly one `design propose
   JUSTIFICATION` or with the existing proposal-less free/lapse abandonment.
   The client assembles the proposal from what the pass built and what the
   Design's room holds, leaving the holder only the justification and, for a
@@ -213,7 +211,7 @@ owns each rule summarized here.
   ordinary tasks or Plans it constructed directly, with source-backed
   justification. A conclude or collapse recommendation names no output or
   governed input and carries the same source-backed justification. A mistaken
-  undecided proposal can be retracted by its author with `preparation withdraw
+  undecided proposal can be retracted by its author with `design withdraw
   WITHDRAWAL_JSON`; the version stays in history but leaves the operator's
   choices.
   When a predecessor proposal's immutable receipt does not prove an active
@@ -223,11 +221,11 @@ owns each rule summarized here.
 
   A Design is offered for a pass only when it is
   [ready](invariants/identity.md#work-a-design-schedules-each-pass-from-input-after-its-last-pass):
-  its first pass needs steeped maturity or the operator's `preparation nudge
-  HANDLE`, except that an OOPS Design's first pass needs only one of its
-  reports, and every later pass needs counted input recorded after the last
-  proposal or abandonment, with no released work still pending. Contributions,
-  operator room posts, nudges, returned or rejecting decisions, each report
+  its first pass needs steeped maturity, except that an OOPS Design's first
+  pass needs only one of its reports, and every later pass needs counted
+  input recorded after the last proposal or abandonment, with no released
+  work still pending. Contributions, operator room posts, returned or
+  rejecting decisions, each report
   filed into an OOPS Design, and the final settlement of released work count;
   asks, notices, leaves, and group movement do not.
   Released work is the Design's prerequisite set: the accepted
@@ -239,54 +237,22 @@ owns each rule summarized here.
   gathers input, awaits the operator's decision, or waits on its released
   work, deferred work included, whatever input arrives meanwhile.
 
-  `preparation nudge HANDLE`, or the Nudge control in the browser's Design
-  menu, is the operator's push of one open Design to proposal before its room
-  steeps; steeping stays the default. The same guarded write that readies the
-  Design delivers it to one lane. A lane is free to take it while it holds no
-  active claim but the Design's; a Design some lane holds goes only to that
-  holder, and a deferred Design refuses (`preparation::nudge-deferred`). Among free lanes the resident ranks
-  by the TF-IDF match Design awareness uses, with no reach floor: each seated
-  lane scores its occupant's continuing session profile against the Design's
-  current statement, and each vacant lane the lifecycle may wake scores its
-  best retained session. The Design's own task cards, retained when a lane
-  completed one of its phases, never score, so the score measures only other
-  related work; a lane whose scored profile holds such a card has worked the
-  Design and is chosen only as a last resort, as a review reaches its author
-  only when no peer can take it. Every free lane that has not worked the
-  Design, seated first and then vacant, outranks every lane that has; within
-  either group a seated lane outranks a vacant one, then the higher score
-  wins, then the lower lane identity. The recipient gets one ordinary
-  operator MSG in the Design's room, which wakes a vacant lane as any operator
-  direction does and reaches its first seat. The message stands alone: it
-  names the Design and its title, says the operator pushed it to proposal,
-  lists its open questions and the room's operator posts no lane had heard,
-  and asks for `spice task capture HANDLE` and a pass that ends with
-  `preparation propose`. For two minutes from the nudge, unless the Design's
-  phase changes first, allocation holds the Design for the recipient as it
-  holds a phase handoff: no other lane is offered it, and the recipient ranks
-  it first. Capture by name stays open to any lane, and a later nudge's hold
-  replaces an earlier one. Once the recipient acknowledges or declines that
-  message, the browser stops marking the posts it carried as unheard. The
-  reply names the recipient and its match score, says when it is a last
-  resort, or says no lane could take the Design, which then waits ready for
-  allocation.
-
   Every surface names the same cycle state, who acts next, and the exact
   command: `task show` and `task status`, `board` rows, dry and empty drain,
-  `group list`, every preparation command reply, and the
+  `group list`, every Design command reply, and the
   browser's Design room and working-group lights. A multi-pass Design reads,
   from the operator's chair:
 
   1. **Gathering input**: contributors act. Lanes contribute, the operator
-     posts in the room, or the operator nudges a Design whose first pass has
-     not steeped. Allocation and steal wait, but a lane may claim it by name
+     posts in the room, or tells a lane to capture it. Allocation and steal
+     wait, but a lane may claim it by name
      with `spice task capture` and end that pass with one proposal.
   2. **Ready for proposal**: a lane acts. Allocation offers the active Design;
-     its holder ends the pass with one `preparation propose`, which releases
+     its holder ends the pass with one `design propose`, which releases
      the claim. Freeing or lapsing instead abandons the pass, and the cycle
      shows that the last pass ended without a proposal.
   3. **Awaiting decision**: the operator acts on the cited proposal with
-     `preparation decide`. Accepting work releases its outputs and closes the
+     `design decide`. Accepting work releases its outputs and closes the
      rejected ones; accepting an outputless conclude or collapse
      recommendation concludes the Design; returning it, or rejecting every
      output, is counted input, so the Design is ready for its next pass at
@@ -301,13 +267,13 @@ owns each rule summarized here.
   A Design
   [stays open until the operator settles it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
   ordinary lane `task done` refuses it. The operator accepts a conclude or
-  collapse proposal through `preparation decide`; that decision stages the
+  collapse proposal through `design decide`; that decision stages the
   guarded `task conclude --done` or `--collapse` authority without fabricating
   an output. Direct conclude remains the normal terminal act; operator close
   and delete remain explicit emergency settlements and close gated outputs too.
 
   Each work output waits on every ordinary dependency to its Designs until an
-  exact operator `preparation decide` decision assigns every output in one
+  exact operator `design decide` decision assigns every output in one
   Design pass proposal an accepted or rejected verdict. The decision and
   execution-authorization record land together with removal of exactly that
   Design's edge from each accepted output. Another open Design or Plan edge
@@ -323,7 +289,7 @@ owns each rule summarized here.
   execution authorization removes it, and requires an ordinary dependency edit
   before a later proposal can name that output under the same Design.
   Resolution belongs to the operator; Design holders do not infer a decision,
-  review coverage never gates it, and working-group membership grants no
+  and working-group membership grants no
   authorization.
 
   Collapse, done conclusion, operator close, or delete of a Design closes every
@@ -360,10 +326,10 @@ owns each rule summarized here.
 - **Design standing.** Grouping organizes Designs and
   [never gates possession](invariants/identity.md#work-deferral-stops-an-open-design):
   an undeferred open Design, grouped or not, is offered by the allocator once
-  its pass cycle is ready, and capture, steal, and a nudge may reach it, so no
+  its pass cycle is ready, and capture and steal may reach it, so no
   Design needs a group to reach its proposal. Deferral is the one way to stop
   an open Design: `spice task defer DESIGN` keeps it from allocation, capture,
-  steal, recovery, nudges, and invitations, and ends any invitation still
+  steal, recovery, and invitations, and ends any invitation still
   owed for it. If a lane holds it, an operator deferral sends that holder one
   stop direction, queued for the lane's next seat when vacant; deferring it
   again asks again only when no stop stands for the current claim. The holder
@@ -387,12 +353,12 @@ owns each rule summarized here.
   may collapse the Design; the next report then opens a new generation.
 
 Every read — `spice room history|inbox|relevance|status`,
-`spice preparation show`, `spice group list`, and their `spice://` resources —
+`spice design show`, `spice group list`, and their `spice://` resources —
 joins, acknowledges, delivers, settles, and wakes nothing.
 
-Preparation command bodies and the room and preparation limits, with their
+Design command bodies and the room and Design limits, with their
 refusals and repairs, are
-[interface contracts](interfaces.md#room-and-preparation-commands).
+[interface contracts](interfaces.md#room-and-design-commands).
 
 ## Deliberate non-capabilities
 
@@ -403,8 +369,8 @@ refusals and repairs, are
   lane's next start.
 - Reads, invitations, ACK-only traffic, compaction, and renewal make no
   participant and grant no claim, read permission, team membership, or wake.
-- No automated push: only the operator's `preparation nudge HANDLE` asks one
-  lane to hold and propose, and Design outreach asks each continuing session
+- No automated push: only the operator telling a lane to capture a Design
+  asks it to hold and propose, and Design outreach asks each continuing session
   about each question item at most once; nothing else starts work, claims,
   decides, or authorizes.
 - Agreement, silence, message count, elapsed time, and ACK never count as

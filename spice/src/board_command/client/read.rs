@@ -1185,7 +1185,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
                 .to_owned(),
             "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and depends on that Plan; --preparation HANDLE associates it explicitly. A sub-Plan waits on its parent Plan like any other constructed task. Origin alone creates no edge."
                 .to_owned(),
-            "  Explicit --depends adds ordinary prerequisites. A Design dependency is an ordinary editable edge; preparation decide removes the accepted outputs' exact edges, closes the rejected ones, and from then on the Design waits on each released output as its prerequisite until that output settles. Never add that controller-to-output edge by hand: it is derived from the output's retained preparation."
+            "  Explicit --depends adds ordinary prerequisites. A Design dependency is an ordinary editable edge; design decide removes the accepted outputs' exact edges, closes the rejected ones, and from then on the Design waits on each released output as its prerequisite until that output settles. Never add that controller-to-output edge by hand: it is derived from the output's retained preparation."
                 .to_owned(),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),

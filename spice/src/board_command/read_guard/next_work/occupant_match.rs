@@ -3,7 +3,7 @@
 //! for the claim that follows it, so both rank the same board the same way.
 //!
 //! The score is [`spice::rooms::standing::standing`] with the running occupant,
-//! the one ranker Design nudges and the best-match wake order share. The fit
+//! the one ranker `task next` and the best-match wake order share. The fit
 //! and each candidate's vector come from the shared [`MatchCache`]; the board
 //! asks for every row in the winning priority and weight group. A score below
 //! the lowest Design invitation floor counts as zero, so incidental vocabulary

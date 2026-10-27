@@ -7,7 +7,7 @@ use super::super::message_surface;
 use super::*;
 
 /// Every vacant lane's retained work scored against the board, through the
-/// ranker Design nudges and `task next` share, under the shared
+/// ranker `task next` shares, under the shared
 /// [`MatchCache`] fit. One reconciliation pass takes the profile lock once
 /// and fits once; each lane then selects the candidate its own best retained
 /// session matches, and its wake rank is that selected task's score. A lane's

@@ -31,12 +31,9 @@ impl CommandKind {
         Self::WorkingGroupDisband,
         Self::WorkingGroupFast,
         Self::DesignPropose,
-        Self::CandidateCritiqueRecord,
-        Self::CandidateCoverageRecord,
         Self::PreparationDecide,
         Self::CandidateWithdraw,
         Self::OutputAdopt,
-        Self::DesignNudge,
         Self::GlobalSettingsRead,
         Self::GlobalSettingsSet,
         Self::VendorCatalog,
@@ -133,12 +130,9 @@ impl CommandKind {
             | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::DesignPropose
-            | Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord
             | Self::PreparationDecide
             | Self::CandidateWithdraw
             | Self::OutputAdopt
-            | Self::DesignNudge
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TaskEdit
@@ -230,12 +224,9 @@ impl CommandKind {
             | Self::WorkingGroupDisband
             | Self::WorkingGroupFast => self.room_spelling(),
             Self::DesignPropose
-            | Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord
             | Self::PreparationDecide
             | Self::CandidateWithdraw
-            | Self::OutputAdopt
-            | Self::DesignNudge => self.preparation_spelling(),
+            | Self::OutputAdopt => self.preparation_spelling(),
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
             Self::TaskEdit => "task::edit",
@@ -273,12 +264,9 @@ impl CommandKind {
     const fn preparation_spelling(self) -> &'static str {
         match self {
             Self::DesignPropose => "preparation::retain",
-            Self::CandidateCritiqueRecord => "preparation::critique",
-            Self::CandidateCoverageRecord => "preparation::cover",
             Self::PreparationDecide => "preparation::decide",
             Self::CandidateWithdraw => "preparation::withdraw",
             Self::OutputAdopt => "preparation::adopt",
-            Self::DesignNudge => "preparation::nudge",
             _ => panic!("preparation command spelling partition is closed"),
         }
     }

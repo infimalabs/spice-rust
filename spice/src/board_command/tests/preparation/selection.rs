@@ -13,20 +13,10 @@ fn operator_selection_releases_outputs_and_leaves_the_design_unclaimed_and_open(
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &controller);
-    claim_task(
-        &bus,
-        epoch,
-        &seats[0],
-        &Actor::Lane(seats[0].lane),
-        &controller,
-    );
+    capture_design(&bus, epoch, &seats[0], &controller);
     let output = add_plan_output(&bus, epoch, &controller, "Selected held output");
     let spare = add_plan_output(&bus, epoch, &controller, "Unselected held output");
-    let (candidate, source) =
-        retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
-    record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
+    let (candidate, _) = retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     assert_eq!(
         open_awaiting_selection(&bus, epoch),
         [controller.born().expect("Design stamp")].into(),
@@ -149,8 +139,7 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let first = add_plan_output(&bus, epoch, &design, "First version output");
     let second = add_plan_output(&bus, epoch, &design, "Later version output");
     // A veto closes an output, so the later version names work the first
@@ -238,8 +227,7 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
 fn a_decision_refuses_an_accepted_output_that_waits_on_work_the_design_still_gates() {
     let (root, bus, epoch, seats) = fixture("preparation-selection-cycle", 2);
     let design = add_controller(&bus, epoch, "Cyclic design", wire::TaskIntent::Design, None);
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let unproposed = add_plan_output(&bus, epoch, &design, "Unproposed plan");
@@ -258,7 +246,6 @@ fn a_decision_refuses_an_accepted_output_that_waits_on_work_the_design_still_gat
     ));
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
 
     let current = board(&bus, epoch, Actor::Operator);
     let decision = DecisionRef {

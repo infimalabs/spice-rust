@@ -4,10 +4,11 @@
 //! A pass is a claim won in the design phase; releasing an intake claim ends
 //! none. A pass ends at its boundary: the claim release that a proposal
 //! recorded, or a proposal-less free or lapse that abandoned it. Before any
-//! boundary the Design is ready only when its maturity is `Steeped` or the
-//! operator nudged it. After a boundary only counted input recorded later
-//! refills it: a typed contribution, an operator-authored room post, a nudge,
-//! decision feedback that returned or rejected work, or the final settlement
+//! boundary the Design is ready only when its maturity is `Steeped` or a
+//! retained operator nudge readied it. After a boundary only counted input
+//! recorded later refills it: a typed contribution, an operator-authored room
+//! post, a retained nudge, decision feedback that returned or rejected work,
+//! or the final settlement
 //! of released work. While work the Design released is still running, the
 //! Design waits on it whatever input arrives: an approved proposal is worked
 //! whole before another pass opens, and the released work is the Design's
@@ -31,14 +32,6 @@ use crate::body::{
     TaskDeleted, TaskDone, TaskReviewed,
 };
 use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
-
-/// Ask an open Design to take its next pass.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesignNudge {
-    /// The open Design to nudge.
-    pub design: TaskHandle,
-}
 
 /// The operator asked one open Design to take its next pass.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,20 +150,19 @@ impl DesignCycle {
     pub fn next_action(self, design: &TaskHandle, facts: DesignCycleFacts) -> String {
         match self {
             Self::GatheringInput => format!(
-                "contribute with `spice room contribute {design}`, post in its room, or the \
-                 operator nudges it with `spice preparation nudge {design}` or has a lane \
-                 claim it now with `spice task capture {design}`"
+                "contribute with `spice room contribute {design}`, post in its room, or have \
+                 a lane claim it now with `spice task capture {design}`"
             ),
             Self::ReadyForProposal => format!(
                 "a lane claims {design} through `spice task next` and ends its pass with one \
-                 `spice preparation propose JUSTIFICATION`"
+                 `spice design propose JUSTIFICATION`"
             ),
             Self::AwaitingDecision => facts.proposal.map_or_else(
                 || format!("the operator decides the proposal under {design}"),
                 |proposal| {
                     format!(
-                        "the operator decides proposal {} under {design} with `spice \
-                         preparation decide DECISION_JSON`",
+                        "the operator decides proposal {} under {design} with `spice design \
+                         decide DECISION_JSON`",
                         SequenceCode::new(proposal.get())
                     )
                 },
@@ -251,7 +243,7 @@ impl DesignCyclePresentation {
             ) => (
                 DesignCycleActor::Lane,
                 format!(
-                    "the holding lane ends this pass of {design} with one `spice preparation \
+                    "the holding lane ends this pass of {design} with one `spice design \
                      propose JUSTIFICATION`, which releases its claim"
                 ),
             ),

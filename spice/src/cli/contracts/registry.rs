@@ -636,49 +636,29 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "group::disband"
     ),
     row!(
-        ["preparation", "show"],
-        "preparation show HANDLE [--limit N] [--max-bytes N] [--after POSITION]",
+        ["design", "show"],
+        "design show HANDLE [--limit N] [--max-bytes N] [--after POSITION]",
         OperatorOrLane,
         Read,
         [],
         [Daemonless],
         Reply,
-        "preparation::show"
+        "design::show"
     ),
     row!(
-        ["preparation", "propose"],
-        "preparation propose [--design HANDLE] [--recommend conclude|collapse] \
+        ["design", "propose"],
+        "design propose [--design HANDLE] [--recommend conclude|collapse] \
          [--cite RELATION=KEY...] [--dry-run] JUSTIFICATION",
         OperatorOrLane,
         Command,
         [DesignProposed],
         [Resident],
         Reply,
-        "preparation::propose"
+        "design::propose"
     ),
     row!(
-        ["preparation", "critique"],
-        "preparation critique CRITIQUE_JSON",
-        OperatorOrLane,
-        Command,
-        [CandidateCritiqued],
-        [Resident],
-        Reply,
-        "preparation::critique"
-    ),
-    row!(
-        ["preparation", "cover"],
-        "preparation cover COVERAGE_JSON",
-        OperatorOrLane,
-        Command,
-        [CandidateCovered],
-        [Resident],
-        Reply,
-        "preparation::cover"
-    ),
-    row!(
-        ["preparation", "withdraw"],
-        "preparation withdraw WITHDRAWAL_JSON",
+        ["design", "withdraw"],
+        "design withdraw WITHDRAWAL_JSON",
         OperatorOrLane,
         Command => SnapshotOrCommitted,
         [CandidateWithdrawn],
@@ -687,28 +667,20 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "preparation::withdraw"
     ),
     operator!(
-        ["preparation", "decide"],
-        "preparation decide DECISION_JSON",
+        ["design", "decide"],
+        "design decide DECISION_JSON",
         Command,
         [PreparationDecided, ExecutionAuthorized, TaskConcluded],
         Reply,
         "preparation::decide"
     ),
     operator!(
-        ["preparation", "adopt"],
-        "preparation adopt OUTPUT PREPARATION",
+        ["task", "adopt"],
+        "task adopt OUTPUT PREPARATION",
         Command,
         [OutputControlled],
         Reply,
         "preparation::adopt"
-    ),
-    operator!(
-        ["preparation", "nudge"],
-        "preparation nudge DESIGN",
-        Command,
-        [SteerSent, RoomPosted, DesignNudged],
-        Reply,
-        "preparation::nudge"
     ),
     row!(
         ["task", "list"],

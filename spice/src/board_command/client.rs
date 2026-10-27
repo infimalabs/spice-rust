@@ -86,7 +86,10 @@ fn dispatch_client(
         ["dev", "report-page"] => client_report(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
-        ["preparation", verb] => preparation::dispatch_client(repository, contract, matches, verb),
+        ["design", verb @ ("propose" | "decide" | "withdraw")] => {
+            preparation::dispatch_client(repository, contract, matches, verb)
+        }
+        ["task", "adopt"] => preparation::client_output_adopt(repository, contract, matches),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),

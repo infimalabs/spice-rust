@@ -13,8 +13,7 @@ use crate::principal::{
     PrincipalEdit, PrincipalRead, PrincipalRoleRef, PrincipalStanding, PrincipalsAnswer,
 };
 use crate::rooms::{
-    CandidateCoverageRecord, CandidateCritiqueRecord, CandidateWithdraw, DesignNudge,
-    DesignPropose, OutputAdopt, PreparationDecide, RoomPost, RoomPostAnswer,
+    CandidateWithdraw, DesignPropose, OutputAdopt, PreparationDecide, RoomPost, RoomPostAnswer,
 };
 
 use answer::AnswerSource;
@@ -82,18 +81,12 @@ pub enum BodyShape {
     WorkingGroupFast,
     /// [`DesignPropose`]
     DesignPropose,
-    /// [`CandidateCritiqueRecord`]
-    CandidateCritiqueRecord,
-    /// [`CandidateCoverageRecord`]
-    CandidateCoverageRecord,
     /// [`PreparationDecide`]
     PreparationDecide,
     /// [`CandidateWithdraw`]
     CandidateWithdraw,
     /// [`OutputAdopt`]
     OutputAdopt,
-    /// [`DesignNudge`]
-    DesignNudge,
     /// [`GlobalSettingsRead`]
     GlobalSettingsRead,
     /// [`GlobalSettingsSet`]
@@ -510,12 +503,9 @@ impl CommandKind {
             | Self::RoomContributionRead
             | Self::RoomControl => self.room_binding(),
             Self::DesignPropose
-            | Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord
             | Self::PreparationDecide
             | Self::CandidateWithdraw
             | Self::OutputAdopt
-            | Self::DesignNudge
             | Self::BoardRead
             | Self::ReportRead
             | Self::TaskDetail
@@ -597,12 +587,9 @@ impl CommandKind {
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
             Self::DesignPropose
-            | Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord
             | Self::PreparationDecide
             | Self::CandidateWithdraw
-            | Self::OutputAdopt
-            | Self::DesignNudge => self.preparation_binding(),
+            | Self::OutputAdopt => self.preparation_binding(),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
@@ -633,12 +620,9 @@ impl CommandKind {
 
         match self {
             Self::DesignPropose => Binding::of(B::DesignPropose, A::Text),
-            Self::CandidateCritiqueRecord => Binding::of(B::CandidateCritiqueRecord, A::Text),
-            Self::CandidateCoverageRecord => Binding::of(B::CandidateCoverageRecord, A::Text),
             Self::PreparationDecide => Binding::of(B::PreparationDecide, A::Text),
             Self::CandidateWithdraw => Binding::of(B::CandidateWithdraw, A::Text),
             Self::OutputAdopt => Binding::of(B::OutputAdopt, A::Text),
-            Self::DesignNudge => Binding::of(B::DesignNudge, A::Text),
             _ => panic!("preparation command binding partition is closed"),
         }
     }
@@ -768,18 +752,12 @@ pub enum Intent {
     WorkingGroupFast(WorkingGroupFast),
     /// [`BodyShape::DesignPropose`]
     DesignPropose(DesignPropose),
-    /// [`BodyShape::CandidateCritiqueRecord`]
-    CandidateCritiqueRecord(CandidateCritiqueRecord),
-    /// [`BodyShape::CandidateCoverageRecord`]
-    CandidateCoverageRecord(CandidateCoverageRecord),
     /// [`BodyShape::PreparationDecide`]
     PreparationDecide(PreparationDecide),
     /// [`BodyShape::CandidateWithdraw`]
     CandidateWithdraw(CandidateWithdraw),
     /// [`BodyShape::OutputAdopt`]
     OutputAdopt(OutputAdopt),
-    /// [`BodyShape::DesignNudge`]
-    DesignNudge(DesignNudge),
     /// [`BodyShape::GlobalSettingsRead`]
     GlobalSettingsRead(GlobalSettingsRead),
     /// [`BodyShape::GlobalSettingsSet`]
@@ -919,12 +897,9 @@ impl Intent {
             | Self::RoomContributionRead(_)
             | Self::RoomControl(_) => self.room_shape(),
             Self::DesignPropose(_)
-            | Self::CandidateCritiqueRecord(_)
-            | Self::CandidateCoverageRecord(_)
             | Self::PreparationDecide(_)
             | Self::CandidateWithdraw(_)
             | Self::OutputAdopt(_)
-            | Self::DesignNudge(_)
             | Self::BoardRead(_)
             | Self::ReportRead(_)
             | Self::TaskDetail(_)
@@ -995,12 +970,9 @@ impl Intent {
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
             Self::DesignPropose(_)
-            | Self::CandidateCritiqueRecord(_)
-            | Self::CandidateCoverageRecord(_)
             | Self::PreparationDecide(_)
             | Self::CandidateWithdraw(_)
-            | Self::OutputAdopt(_)
-            | Self::DesignNudge(_) => self.preparation_shape(),
+            | Self::OutputAdopt(_) => self.preparation_shape(),
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
@@ -1025,12 +997,9 @@ impl Intent {
     const fn preparation_shape(&self) -> BodyShape {
         match self {
             Self::DesignPropose(_) => BodyShape::DesignPropose,
-            Self::CandidateCritiqueRecord(_) => BodyShape::CandidateCritiqueRecord,
-            Self::CandidateCoverageRecord(_) => BodyShape::CandidateCoverageRecord,
             Self::PreparationDecide(_) => BodyShape::PreparationDecide,
             Self::CandidateWithdraw(_) => BodyShape::CandidateWithdraw,
             Self::OutputAdopt(_) => BodyShape::OutputAdopt,
-            Self::DesignNudge(_) => BodyShape::DesignNudge,
             _ => panic!("preparation intent shape partition is closed"),
         }
     }
@@ -1129,12 +1098,9 @@ impl BodyShape {
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
                 | Self::DesignPropose
-                | Self::CandidateCritiqueRecord
-                | Self::CandidateCoverageRecord
                 | Self::PreparationDecide
                 | Self::CandidateWithdraw
                 | Self::OutputAdopt
-                | Self::DesignNudge
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TaskEdit
@@ -1181,12 +1147,9 @@ impl BodyShape {
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
                 | Self::DesignPropose
-                | Self::CandidateCritiqueRecord
-                | Self::CandidateCoverageRecord
                 | Self::PreparationDecide
                 | Self::CandidateWithdraw
                 | Self::OutputAdopt
-                | Self::DesignNudge
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TaskEdit
@@ -1223,12 +1186,9 @@ impl BodyShape {
             | Self::WorkingGroupDisband
             | Self::WorkingGroupFast => return self.decode_working_group_body(bytes),
             Self::DesignPropose
-            | Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord
             | Self::PreparationDecide
             | Self::CandidateWithdraw
-            | Self::OutputAdopt
-            | Self::DesignNudge => return self.decode_preparation_body(bytes),
+            | Self::OutputAdopt => return self.decode_preparation_body(bytes),
             _ => return self.decode_task_statement_body(bytes),
         })
     }
@@ -1247,12 +1207,9 @@ impl BodyShape {
     fn decode_preparation_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::DesignPropose => Intent::DesignPropose(crate::decode(bytes)?),
-            Self::CandidateCritiqueRecord => Intent::CandidateCritiqueRecord(crate::decode(bytes)?),
-            Self::CandidateCoverageRecord => Intent::CandidateCoverageRecord(crate::decode(bytes)?),
             Self::PreparationDecide => Intent::PreparationDecide(crate::decode(bytes)?),
             Self::CandidateWithdraw => Intent::CandidateWithdraw(crate::decode(bytes)?),
             Self::OutputAdopt => Intent::OutputAdopt(crate::decode(bytes)?),
-            Self::DesignNudge => Intent::DesignNudge(crate::decode(bytes)?),
             _ => unreachable!("preparation body partition is closed"),
         })
     }
