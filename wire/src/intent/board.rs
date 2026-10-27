@@ -696,17 +696,19 @@ impl BoardTask {
         )
     }
 
-    /// Whether a lane may take, or already holds, this Design's pass. A
-    /// deferred Design's holder has been asked to stop, so deferral outranks
-    /// its claim.
+    /// Whether a lane may take, or already holds, this Design's pass.
+    /// Deferral and possession remain independent: a non-holder deferral asks
+    /// the live holder to checkpoint and free its pass.
     #[must_use]
     pub const fn design_availability(&self) -> crate::rooms::DesignAvailability {
-        if self.workflow.body.deferral.is_some() {
-            crate::rooms::DesignAvailability::Deferred
-        } else if matches!(&self.claim, Some(claim) if claim.body.is_active()) {
-            crate::rooms::DesignAvailability::Claimed
-        } else {
-            crate::rooms::DesignAvailability::Unclaimed
+        match (
+            self.workflow.body.deferral.is_some(),
+            matches!(&self.claim, Some(claim) if claim.body.is_active()),
+        ) {
+            (true, true) => crate::rooms::DesignAvailability::DeferredClaimed,
+            (true, false) => crate::rooms::DesignAvailability::DeferredUnclaimed,
+            (false, true) => crate::rooms::DesignAvailability::Claimed,
+            (false, false) => crate::rooms::DesignAvailability::Unclaimed,
         }
     }
 }
