@@ -346,7 +346,7 @@ pub enum WorkingGroupAnchor {
 pub struct WorkingGroupView {
     /// Stable repository-shared identity.
     pub group: RoomAuthorityStamp,
-    /// Shared activity stance governing the group's open Designs.
+    /// Whether lanes may possess the group's open Designs.
     pub stance: crate::rooms::WorkingGroupStance,
     /// Room anchors in arranged order, resolved through current task authority.
     pub anchors: Vec<WorkingGroupAnchor>,
@@ -372,8 +372,7 @@ pub struct WorkingGroupChange {
     /// Current transition outcome.
     pub status: WorkingGroupChangeStatus,
     /// Designs whose holder is still owed its shelving stop. A standing
-    /// Passive group retries them when set Passive again; after disbanding,
-    /// each now-ungrouped Design can be put aside directly. Only the live reply
+    /// Paused group retries them when set Paused again. Only the live reply
     /// reports this: a retained receipt records the partition change alone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub owed: Vec<TaskHandle>,
@@ -394,9 +393,9 @@ pub enum WorkingGroupChangeStatus {
     Disbanded,
     /// One group's fast-mode flag was set.
     Retuned,
-    /// One group's shared activity stance was set.
+    /// One group was set Paused or Running.
     Stanced,
-    /// The group already stood Passive; shelving still owed to its held
+    /// The group already stood Paused; shelving still owed to its held
     /// Designs was committed without restating the partition.
     Shelved,
 }

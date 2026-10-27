@@ -428,7 +428,7 @@ fn writable_open_binds_a_retained_notice_to_its_latest_compaction() {
 }
 
 #[test]
-fn writable_open_crosses_a_retained_single_ask_notice_to_a_one_element_list() {
+fn writable_open_crosses_a_retained_single_ask_stanced_notice_whole() {
     let scratch = Scratch::new();
     let path = scratch.path().join("retained-single-ask-notice.sqlite3");
     let journal = authority_file_fixture(&path);
@@ -452,7 +452,7 @@ fn writable_open_crosses_a_retained_single_ask_notice_to_a_one_element_list() {
         .connection
         .execute_batch(&format!(
             "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
-             '$.fact.ask', json('{planted}')) AS BLOB) WHERE seq = 6;
+             '$.fact.ask', json('{planted}'), '$.fact.stance', 'converge') AS BLOB) WHERE seq = 6;
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
                  (4, 'task:1kKRRsDP', 3, 1, 3),
@@ -480,6 +480,62 @@ fn writable_open_crosses_a_retained_single_ask_notice_to_a_one_element_list() {
         .read::<wire::rooms::DesignNoticed>()
         .expect("crossed fact remains a notice");
     assert_eq!(notice.asks, [ask]);
+    assert_eq!(notice.reach, Some(wire::rooms::DesignReach::Narrow));
+}
+
+#[test]
+fn writable_open_records_each_retained_notice_stance_as_its_reach() {
+    for (stance, reach) in [
+        ("explore", Some(wire::rooms::DesignReach::Wide)),
+        ("converge", Some(wire::rooms::DesignReach::Narrow)),
+        ("passive", None),
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join("retained-stanced-notice.sqlite3");
+        let journal = authority_file_fixture(&path);
+        plant_invitation_support(&journal);
+        insert_fact(
+            &journal,
+            fact(
+                6,
+                Some(5),
+                FactKind::DesignNoticed,
+                current_notice("1kKRRsDP"),
+            ),
+        );
+        journal
+            .connection
+            .execute_batch(&format!(
+                "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+                 '$.fact.stance', '{stance}') AS BLOB) WHERE seq = 6;
+                 INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                     (3, 'task:1kKRRsDP', 2, 1, 2),
+                     (4, 'task:1kKRRsDP', 3, 1, 3),
+                     (5, 'task:1kKRRsDP', 4, 1, 4),
+                     (6, 'task:1kKRRsDP', 5, 1, 5);
+                 UPDATE cursor_head SET seq = 6, wake = 6 WHERE singleton = 1;
+                 UPDATE steering_index SET indexed_seq = 6 WHERE singleton = 1;"
+            ))
+            .expect("retained stanced notice is planted");
+        restore_predecessor(&journal, 99);
+        drop(journal);
+
+        let crossed = Journal::open(&path).expect("retained stanced notice crosses");
+        let envelope = crossed
+            .connection
+            .query_row(
+                "SELECT envelope FROM fact_envelopes WHERE seq = 6",
+                [],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .expect("crossed notice reads");
+        let envelope: Envelope<AnyFact> = wire::decode(&envelope).expect("crossed notice decodes");
+        let notice = envelope
+            .fact
+            .read::<wire::rooms::DesignNoticed>()
+            .expect("crossed fact remains a notice");
+        assert_eq!(notice.reach, reach, "{stance} notice reach");
+    }
 }
 
 #[test]
@@ -973,7 +1029,7 @@ fn plant_stored_group(journal: &Journal, anchors: usize) -> String {
         anchors: (1..=anchors)
             .map(|micros| wire::TaskStamp::for_micros(micros as i64).expect("fixture anchor"))
             .collect(),
-        stance: wire::rooms::WorkingGroupStance::Explore,
+        stance: wire::rooms::WorkingGroupStance::Running,
     };
     let moved = wire::rooms::WorkingGroupMoved {
         design: group.anchors[0].clone(),

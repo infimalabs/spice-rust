@@ -451,7 +451,7 @@ pub struct BoardTask {
     /// Whether the current working-group partition holds this task.
     #[serde(default, skip_serializing_if = "is_false")]
     pub grouped: bool,
-    /// Whether this Design is active under its group's shared stance.
+    /// Whether this Design is active: no Paused working group holds it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub design_active: bool,
     /// This Design's pass-cycle evidence, so a client allocates from the
@@ -633,7 +633,7 @@ impl BoardTask {
         self
     }
 
-    /// Attach whether this Design is active under its group's shared stance.
+    /// Attach whether this Design is active: no Paused working group holds it.
     #[must_use]
     pub const fn with_design_active(mut self, active: bool) -> Self {
         self.design_active = active;

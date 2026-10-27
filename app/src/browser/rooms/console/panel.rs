@@ -63,7 +63,7 @@ pub(super) fn submit(postables: &[Postable]) -> Callback<SubmitEvent> {
 }
 
 /// The panel: TURBO, the arrangement menu where the team menu stands, the
-/// speech slider, the stance slider in the allocation slot, and SEND. A group
+/// speech slider, the Paused/Running brake in the allocation slot, and SEND. A group
 /// is on while any lane claims its designs' work, as a team is while a member
 /// runs; with no claimant, no quote drafted, and no post in flight it rests
 /// exactly as an idle team's panel does.

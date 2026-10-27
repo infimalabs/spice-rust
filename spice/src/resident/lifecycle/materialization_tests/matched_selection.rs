@@ -114,7 +114,7 @@ fn each_vacant_lane_selects_the_task_its_retained_sessions_match() {
     );
 
     // A lane whose retained work shares one term of the newer row under forty
-    // unrelated ones scores it positively but below the Explore floor, so it
+    // unrelated ones scores it positively but below the wide-reach floor, so it
     // selects as today and carries no wake rank.
     let faint = (b'a'..=b'z')
         .flat_map(|first| [(first, b'x'), (first, b'y')])

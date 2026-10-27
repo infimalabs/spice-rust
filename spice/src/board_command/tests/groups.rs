@@ -112,7 +112,7 @@ fn arrange(
                 .map(|(group, anchors)| WorkingGroup {
                     group: (*group).clone(),
                     anchors: anchors.iter().map(|anchor| (*anchor).clone()).collect(),
-                    stance: wire::rooms::WorkingGroupStance::Explore,
+                    stance: wire::rooms::WorkingGroupStance::Running,
                 })
                 .collect(),
         },
@@ -461,7 +461,7 @@ fn disbanding_a_group_leaves_every_design_ungrouped_under_the_partition_guard() 
     let group = group_stamp(449);
     assert_committed(move_design(&bus, epoch, &first_born, Some(&group)));
     assert_committed(move_design(&bus, epoch, &second_born, Some(&group)));
-    assert_committed(set_stance(&bus, epoch, &group, WorkingGroupStance::Explore));
+    assert_committed(set_stance(&bus, epoch, &group, WorkingGroupStance::Running));
     assert_committed(set_fast(&bus, epoch, &group, true));
     let observed = read_partition(&bus, epoch).revision;
     let before_room_heads = room_heads(&bus, &[first_born.clone(), second_born.clone()]);
@@ -540,7 +540,7 @@ fn a_group_stance_controls_design_activity_under_the_partition_guard() {
     assert_committed(move_design(&bus, epoch, &born, Some(&group)));
 
     let page = read_partition(&bus, epoch);
-    assert_eq!(page.groups[0].stance, WorkingGroupStance::Passive);
+    assert_eq!(page.groups[0].stance, WorkingGroupStance::Paused);
     let visible = board(&bus, epoch, Actor::Operator);
     let held = at(&visible, &design);
     assert!(held.grouped);
@@ -548,32 +548,26 @@ fn a_group_stance_controls_design_activity_under_the_partition_guard() {
 
     let founded_revision = page.revision;
     assert_eq!(
-        change_status(set_stance(&bus, epoch, &group, WorkingGroupStance::Explore)),
+        change_status(set_stance(&bus, epoch, &group, WorkingGroupStance::Running)),
         WorkingGroupChangeStatus::Stanced
     );
     assert!(at(&board(&bus, epoch, Actor::Operator), &design).design_active);
     assert_committed(set_fast(&bus, epoch, &group, true));
-    assert_committed(set_stance(
-        &bus,
-        epoch,
-        &group,
-        WorkingGroupStance::Converge,
-    ));
     let partition = bus
         .read(|read| read.group_partition())
         .expect("partition reads")
         .expect("partition stands")
         .into_body();
-    assert_eq!(partition.groups[0].stance, WorkingGroupStance::Converge);
+    assert_eq!(partition.groups[0].stance, WorkingGroupStance::Running);
     assert!(partition.is_fast(&group));
     assert!(at(&board(&bus, epoch, Actor::Operator), &design).design_active);
 
     assert!(refused_as(
-        set_stance(&bus, epoch, &group, WorkingGroupStance::Converge),
+        set_stance(&bus, epoch, &group, WorkingGroupStance::Running),
         "group::stance-unchanged"
     ));
     assert!(refused_as(
-        set_stance(&bus, epoch, &group_stamp(451), WorkingGroupStance::Passive),
+        set_stance(&bus, epoch, &group_stamp(451), WorkingGroupStance::Paused),
         "group::missing"
     ));
     assert!(refused_as(
@@ -582,7 +576,7 @@ fn a_group_stance_controls_design_activity_under_the_partition_guard() {
             epoch,
             founded_revision,
             &group,
-            WorkingGroupStance::Passive
+            WorkingGroupStance::Paused
         ),
         "group::partition-moved"
     ));
@@ -699,8 +693,8 @@ fn a_fast_flagged_group_runs_claimants_of_its_design_associated_work() {
         let born = task.born().expect("design identity");
         assert_committed(move_design(&bus, epoch, &born, Some(group)));
     }
-    assert_committed(set_stance(&bus, epoch, &fast, WorkingGroupStance::Explore));
-    assert_committed(set_stance(&bus, epoch, &slow, WorkingGroupStance::Explore));
+    assert_committed(set_stance(&bus, epoch, &fast, WorkingGroupStance::Running));
+    assert_committed(set_stance(&bus, epoch, &slow, WorkingGroupStance::Running));
     let current = board(&bus, epoch, Actor::Operator);
     for task in [&flagged, &unflagged] {
         assert_committed(nudge_design(&bus, epoch, Actor::Operator, &current, task));

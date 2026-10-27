@@ -94,10 +94,7 @@ const SUMMARIES: &[(&str, &str)] = &[
     ),
     ("group list", "List working groups and their stances"),
     ("group move", "Move one Design into a group or a new one"),
-    (
-        "group stance",
-        "Set one group's stance: passive, explore, or converge",
-    ),
+    ("group stance", "Set one group's stance: paused or running"),
     ("inbox", "Read pending steering for a lane"),
     (
         "install",

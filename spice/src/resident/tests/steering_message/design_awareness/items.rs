@@ -178,51 +178,58 @@ fn floor(lanes: &Lanes, design: &wire::TaskHandle) -> f64 {
 }
 
 #[test]
-fn a_steeped_design_invites_at_converges_floor_until_an_item_contests() {
-    use wire::rooms::WorkingGroupStance::{Converge, Explore, Passive};
+fn a_steeped_design_invites_narrow_until_an_item_contests_whatever_its_brake() {
+    use wire::rooms::DesignReach::{Narrow, Wide};
+    use wire::rooms::WorkingGroupStance::{Paused, Running};
 
     let lanes = Lanes::new("design-request-steeped-floor");
     lanes.seat(THIRD);
     let config = surface(&lanes);
     let design = item_design(&lanes, &[UNRELATED[0], UNRELATED[1]]);
-    lanes.group(30, &config, &design, Passive);
+    lanes.group(30, &config, &design, Paused);
     let expected = crate::resident::design_awareness::match_score_floor;
-    assert_eq!(floor(&lanes, &design), expected(Passive));
+    assert_eq!(floor(&lanes, &design), expected(Wide));
 
     lanes.charge(50, SENDER, &design, 1, 1);
     lanes.charge(51, SECOND, &design, 1, 1);
     lanes.charge(52, THIRD, &design, 1, 1);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Passive),
-        "three lanes concur on one item, but a quiet item keeps the group's floor"
+        expected(Wide),
+        "three lanes concur on one item, but a quiet item keeps the reach wide"
     );
-    lanes.stance(53, &config, Explore);
+    lanes.stance(53, &config, Running);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Explore),
-        "Explore keeps its floor while a question is unheard"
+        expected(Wide),
+        "running the group leaves the reach wide while a question is unheard"
     );
 
     lanes.charge(54, SECOND, &design, 2, 1);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Converge),
-        "every item heard and one concurring steeps the Design, which asks as Converge does"
+        expected(Narrow),
+        "every item heard and one concurring steeps the Design, which narrows its reach"
     );
-
-    lanes.charge(55, SENDER, &design, 1, -1);
+    lanes.stance(55, &config, Paused);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Explore),
-        "a contesting charge un-steeps the Design and its stance's floor returns"
+        expected(Narrow),
+        "pausing the group leaves a steeped Design's reach narrow"
+    );
+
+    lanes.charge(57, SENDER, &design, 1, -1);
+    assert_eq!(
+        floor(&lanes, &design),
+        expected(Wide),
+        "a contesting charge un-steeps the Design and widens its reach again"
     );
     lanes.finish();
 }
 
 #[test]
-fn an_oops_design_invites_at_converges_floor_without_steeping() {
-    use wire::rooms::WorkingGroupStance::{Converge, Explore};
+fn an_oops_design_invites_narrow_without_steeping() {
+    use wire::rooms::DesignReach::Narrow;
 
     let lanes = Lanes::new("design-request-oops-floor");
     let config = surface(&lanes);
@@ -234,18 +241,23 @@ fn an_oops_design_invites_at_converges_floor_without_steeping() {
         None,
         &[UNRELATED[0], UNRELATED[1]],
     );
-    lanes.group(30, &config, &design, Explore);
+    lanes.group(
+        30,
+        &config,
+        &design,
+        wire::rooms::WorkingGroupStance::Running,
+    );
     let expected = crate::resident::design_awareness::match_score_floor;
     assert_eq!(
         floor(&lanes, &design),
-        expected(Converge),
+        expected(Narrow),
         "an unheard OOPS Design asks as a steeped one"
     );
 
     lanes.charge(50, SENDER, &design, 1, -1);
     assert_eq!(
         floor(&lanes, &design),
-        expected(Converge),
+        expected(Narrow),
         "a contested item cannot un-steep an OOPS Design"
     );
     lanes.finish();

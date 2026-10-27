@@ -87,7 +87,7 @@ fn group(extra: &[&str]) -> WorkingGroup {
         anchors: std::iter::once(room())
             .chain(extra.iter().map(|design| fixture_stamp(design)))
             .collect(),
-        stance: wire::rooms::WorkingGroupStance::Explore,
+        stance: wire::rooms::WorkingGroupStance::Running,
     }
 }
 
@@ -913,7 +913,7 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
                     evidence: evidence.clone(),
                     excerpt: "fixture rooms".to_owned(),
                     terms: vec!["rooms".to_owned()],
-                    stance: None,
+                    reach: None,
                     asks: Vec::new(),
                 },
             ),

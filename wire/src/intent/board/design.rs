@@ -1,8 +1,8 @@
-//! Design standing and the passive Design invitation a session owes.
+//! Design standing and the Design invitation a session owes.
 
 use serde::{Deserialize, Serialize};
 
-/// One passive Design invitation owed to a continuing vendor session.
+/// One Design invitation owed to a continuing vendor session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignRequest {
@@ -28,10 +28,10 @@ pub struct DesignRequest {
     pub questions: Vec<String>,
     /// Distinctive shared terms that selected this Design.
     pub terms: Vec<String>,
-    /// Working-group stance whose relevance floor admitted the match, when the
-    /// record kept it; Explore admits on a slightly wider cast.
+    /// Reach whose relevance floor admitted the match, when the record kept
+    /// it; an unsteeped Design admits on a wider cast.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stance: Option<crate::rooms::WorkingGroupStance>,
+    pub reach: Option<crate::rooms::DesignReach>,
     /// The question items asked, the best-scoring first and the rest in
     /// statement order; empty asks about the whole Design.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -86,15 +86,15 @@ pub fn released_construction_root<'a>(
     .then_some(&preparation.parent)
 }
 
-/// One Design's lifecycle standing. An open Design is passive while a Passive
+/// One Design's lifecycle standing. An open Design is passive while a Paused
 /// working group holds it and active otherwise; only the operator concludes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DesignStanding {
-    /// Open in a Passive working group: no path grants it a claim.
+    /// Open in a Paused working group: no path grants it a claim.
     Passive,
-    /// Open outside every working group or in an Explore or Converge one:
-    /// lanes may claim it or be nudged onto it.
+    /// Open outside every working group or in a Running one: lanes may claim
+    /// it or be nudged onto it.
     Active,
     /// The operator concluded it done.
     Done,
@@ -166,7 +166,7 @@ impl DesignStanding {
 impl std::fmt::Display for DesignStanding {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Passive => formatter.write_str("open passive (in a Passive working group)"),
+            Self::Passive => formatter.write_str("open passive (in a Paused working group)"),
             Self::Active => formatter.write_str("open active"),
             Self::Done => formatter.write_str("concluded done"),
             Self::Collapsed {

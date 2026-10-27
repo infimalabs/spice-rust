@@ -1,6 +1,6 @@
 //! A Design made passive by a working-group change asks its holder to park.
 //!
-//! When a claimed Design leaves every working group, the change sends the
+//! When a claimed Design enters a Paused working group or its group pauses, the change sends the
 //! lane holding it one operator directive carrying a
 //! [`wire::rooms::StopControl`] for the exact claim win, asking it to
 //! checkpoint and free. The control makes the request idempotent: a later
@@ -171,7 +171,7 @@ pub(super) enum Shelving {
 
 fn stop_message(anchor: &TaskHandle) -> String {
     format!(
-        "Design {anchor} became passive under its working-group stance. Checkpoint its \
+        "Design {anchor} became passive because its working group is Paused. Checkpoint its \
          current work and run `spice task free {anchor}` at the next safe boundary; free \
          parks unpublished commits and dirty work under the task, and your claim stays \
          authoritative until then. Do not release child-plan claims or unrelated \

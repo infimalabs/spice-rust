@@ -816,7 +816,7 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
                     groups: vec![wire::rooms::WorkingGroup {
                         group,
                         anchors: vec![batch.clone()],
-                        stance: wire::rooms::WorkingGroupStance::Passive,
+                        stance: wire::rooms::WorkingGroupStance::Paused,
                     }],
                     fast: Vec::new(),
                 },

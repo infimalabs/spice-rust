@@ -39,21 +39,21 @@ fn arrangements_refresh_designs_removed_from_and_added_to_the_partition() {
                 fast: Vec::new(),
             }
         };
-    let explore = partition(
+    let running = partition(
         1,
         &old_group,
         &removed,
-        wire::rooms::WorkingGroupStance::Explore,
+        wire::rooms::WorkingGroupStance::Running,
     );
-    let passive = partition(
+    let paused = partition(
         2,
         &old_group,
         &removed,
-        wire::rooms::WorkingGroupStance::Passive,
+        wire::rooms::WorkingGroupStance::Paused,
     );
     committed(
-        bus.commit(arranged_write(explore, passive.clone(), instant(8)))
-            .expect("passive stance commits"),
+        bus.commit(arranged_write(running, paused.clone(), instant(8)))
+            .expect("paused brake commits"),
     );
     assert!(!projected(&bus, &mut incremental, &removed).design_is_active());
     assert!(projected(&bus, &mut incremental, &added).design_is_active());
@@ -62,10 +62,10 @@ fn arrangements_refresh_designs_removed_from_and_added_to_the_partition() {
         3,
         &new_group,
         &added,
-        wire::rooms::WorkingGroupStance::Passive,
+        wire::rooms::WorkingGroupStance::Paused,
     );
     committed(
-        bus.commit(arranged_write(passive, replaced, instant(9)))
+        bus.commit(arranged_write(paused, replaced, instant(9)))
             .expect("replacement arrangement commits"),
     );
     assert!(

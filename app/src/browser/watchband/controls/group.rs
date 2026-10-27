@@ -1,5 +1,5 @@
 //! A working group's browser-local panel state and its team-panel controls:
-//! TURBO, the speech slider, and the shared stance slider. Group state lives
+//! TURBO, the speech slider, and the shared brake slider. Group state lives
 //! beside the team controls because a group's speech raises the speech of the
 //! team planes its claimants draw in.
 
@@ -378,14 +378,14 @@ fn displayed_stance(
                 .groups
                 .iter()
                 .find(|standing| standing.group == *group)
-                .map_or(WorkingGroupStance::Passive, |standing| standing.stance)
+                .map_or(WorkingGroupStance::Paused, |standing| standing.stance)
         })
 }
 
-/// One group's shared activity stance, as its console panel and its catalog
-/// card both draw it. Passive keeps its Designs passive; Explore and Converge
-/// make them active. A move shows its request until the resident answers, and
-/// `report` shows a refusal or the shelving it still owes.
+/// One group's shared brake, as its console panel and its catalog card both
+/// draw it. Paused keeps its Designs passive; Running makes them active. A
+/// move shows its request until the resident answers, and `report` shows a
+/// refusal or the shelving it still owes.
 pub(in crate::browser) fn stance_slider(
     runtime: &crate::AppRuntime,
     controls: &UseReducerHandle<TeamControls>,
@@ -427,7 +427,7 @@ pub(in crate::browser) fn stance_slider(
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             report.emit(format!(
-                                "Shelving is still owed for {owed}; set the group Passive again."
+                                "Shelving is still owed for {owed}; set the group Paused again."
                             ));
                         }
                         Ok(_) => {}
@@ -457,17 +457,17 @@ pub(in crate::browser) fn stance_slider(
     html! {
         <label
             class="team-slider team-lifetime"
-            data-stop={stance.index().to_string()}
+            data-stop={if stance.is_active() { "2" } else { "0" }}
         >
             <input
                 type="range"
                 min="0"
-                max="2"
+                max="1"
                 step="1"
                 value={stance.index().to_string()}
                 disabled={!can_configure}
-                aria-label={format!("Group stance: {}", stance_label(stance))}
-                title="Passive keeps this group's Designs passive; Explore and Converge make them active"
+                aria-label={format!("Group brake: {}", stance_label(stance))}
+                title="Paused keeps this group's Designs passive; Running makes them active"
                 {oninput}
             />
             {slider_words(WorkingGroupStance::ALL.map(stance_label), stance.index())}
@@ -477,8 +477,7 @@ pub(in crate::browser) fn stance_slider(
 
 const fn stance_label(stance: WorkingGroupStance) -> &'static str {
     match stance {
-        WorkingGroupStance::Passive => "Passive",
-        WorkingGroupStance::Explore => "Explore",
-        WorkingGroupStance::Converge => "Converge",
+        WorkingGroupStance::Paused => "Paused",
+        WorkingGroupStance::Running => "Running",
     }
 }

@@ -1,5 +1,5 @@
-//! Working-group stance as the sole active/passive authority for an open
-//! Design: who can claim it, and what becoming passive asks of its holder.
+//! A working group's Paused/Running brake as the sole active/passive authority
+//! for a grouped open Design: who can claim it, and what pausing asks of its holder.
 
 use super::super::preparation::add_controller;
 use super::super::reclaim::free_active;
@@ -101,7 +101,7 @@ fn live_stop(bus: &Bus, room: &TaskHandle) -> Option<wire::SteeringHead> {
     stops.pop().map(|head| head.body().clone())
 }
 
-/// Move `task` into the group `to` names, founding it in Passive when no such
+/// Move `task` into the group `to` names, founding it Paused when no such
 /// group stands, or out of every group.
 pub(super) fn move_to(
     bus: &Bus,
@@ -170,9 +170,9 @@ fn set_stance(
     )
 }
 
-/// Commit the fixture group's Passive stance alone, as a stance command that
+/// Commit the fixture group's Paused brake alone, as a stance command that
 /// ended before shelving its rooms leaves it.
-fn stand_passive_unshelved(bus: &Bus) {
+fn stand_paused_unshelved(bus: &Bus) {
     let from = bus
         .read(|read| read.group_partition())
         .expect("partition reads")
@@ -182,7 +182,7 @@ fn stand_passive_unshelved(bus: &Bus) {
     partition.revision += 1;
     assert!(partition.set_stance(
         &from.groups[0].group,
-        wire::rooms::WorkingGroupStance::Passive
+        wire::rooms::WorkingGroupStance::Paused
     ));
     let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
     let mut write = JournalWrite::new(
@@ -219,7 +219,7 @@ fn group_change(outcome: Outcome<CommandAnswer>) -> wire::intent::WorkingGroupCh
 }
 
 #[test]
-fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
+fn pausing_a_group_makes_every_held_design_passive_and_shelves_its_room() {
     let (root, bus, epoch, seats) = fixture("design-standing-passive", 3);
     prove_seat_addresses(&bus, epoch, &seats);
     let first = design(&bus, epoch, "First held by stance");
@@ -231,7 +231,7 @@ fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
     claim_task(&bus, epoch, &seats[0], &first_holder, &first);
     claim_task(&bus, epoch, &seats[1], &second_holder, &second);
 
-    let (changed, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    let (changed, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
     let change = group_change(changed);
     assert_eq!(change.status, WorkingGroupChangeStatus::Stanced);
     assert!(change.owed.is_empty());
@@ -258,11 +258,11 @@ fn a_repeated_passive_stance_shelves_what_its_change_left_owed() {
     group_design(&bus, epoch, &second);
     claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &first);
     claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &second);
-    stand_passive_unshelved(&bus);
+    stand_paused_unshelved(&bus);
     let revision = partition_revision(&bus);
     assert!(live_stop(&bus, &first).is_none());
 
-    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
     let change = group_change(repaired);
     assert_eq!(change.status, WorkingGroupChangeStatus::Shelved);
     assert_eq!(change.revision, revision);
@@ -278,7 +278,7 @@ fn a_repeated_passive_stance_shelves_what_its_change_left_owed() {
         assert_eq!(stop_directions(&bus, task).len(), 1);
     }
 
-    let (again, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    let (again, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
     assert_eq!(refused(&again), "group::stance-unchanged");
     assert!(notified.is_empty());
     for task in [&first, &second] {
@@ -302,10 +302,10 @@ fn a_room_freed_before_its_shelving_settles_quiescent() {
     let freed_holder = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &freed_holder, &freed);
     claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &held);
-    stand_passive_unshelved(&bus);
+    stand_paused_unshelved(&bus);
     free_active(&bus, epoch, &freed_holder, &seats[0], &freed);
 
-    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
     let change = group_change(repaired);
     assert_eq!(change.status, WorkingGroupChangeStatus::Shelved);
     assert!(change.owed.is_empty(), "a freed room owes nothing");
@@ -330,7 +330,7 @@ fn a_ready_ungrouped_design_is_offered_and_only_a_passive_group_withholds_it() {
     assert_eq!(
         offered(&bus, epoch, &seats[0]),
         None,
-        "a fresh group stands Passive and withholds its Design"
+        "a fresh group stands Paused and withholds its Design"
     );
     assert_eq!(
         refused(&win_named(&bus, epoch, &seats[0], &task, "capture")),

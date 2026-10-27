@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     DesignAsk, DesignNoticed, RoomCharge, RoomContributed, RoomContributionKind, RoomLeft,
-    RoomQuestion, RoomQuestionItem, WorkingGroupStance,
+    RoomQuestion, RoomQuestionItem,
 };
 use crate::{CanonicalUuid, Seq};
 
@@ -358,19 +358,14 @@ impl DesignItems {
             .collect()
     }
 
-    /// The current items `lane` may be asked about under `stance`, in
-    /// statement order. Every stance asks a lane outside an item's series
-    /// about its quiet and unopposed items. While some item is contested,
-    /// Converge instead asks a lane already in a contested item's series to
-    /// re-charge it at strength 2; a lane in no contested series keeps the
-    /// outside asks. A concurred item is never asked.
+    /// The current items `lane` may be asked about, in statement order. A lane
+    /// outside an item's series is asked about its quiet and unopposed items.
+    /// While some item is contested, a lane already in a contested item's
+    /// series is instead asked to re-charge it at strength 2; a lane in no
+    /// contested series keeps the outside asks. A concurred item is never
+    /// asked.
     #[must_use]
-    pub fn askable(
-        &self,
-        acceptance: &[String],
-        stance: WorkingGroupStance,
-        lane: CanonicalUuid,
-    ) -> Vec<DesignAsk> {
+    pub fn askable(&self, acceptance: &[String], lane: CanonicalUuid) -> Vec<DesignAsk> {
         let mut outside = Vec::new();
         let mut recharge = Vec::new();
         for (offset, item) in RoomQuestionItem::each(acceptance).enumerate() {
@@ -393,7 +388,7 @@ impl DesignItems {
                 {
                     outside.push(ask);
                 }
-                DesignItemState::Contested if holds && stance == WorkingGroupStance::Converge => {
+                DesignItemState::Contested if holds => {
                     recharge.push(ask);
                 }
                 _ => {}
@@ -840,7 +835,7 @@ mod tests {
                 "maturity".to_owned(),
                 "measure".to_owned(),
             ],
-            stance: None,
+            reach: None,
             asks: Vec::new(),
         }
     }
@@ -1347,14 +1342,13 @@ mod tests {
         assert!(maturity.recent_heads.is_empty());
     }
 
-    /// Every stance asks a lane outside an item's series about its quiet and
-    /// unopposed items; Converge asks a lane in a contested series to
-    /// re-charge only that item, and targets as Explore does once nothing is
-    /// contested. A concurred item is never asked.
+    /// A lane outside an item's series is asked about its quiet and unopposed
+    /// items; a lane in a contested series is asked to re-charge only that
+    /// item, and is asked as an outside lane once nothing is contested. A
+    /// concurred item is never asked.
     #[test]
-    fn askable_items_follow_the_stance_and_the_lanes_series() {
+    fn askable_items_follow_the_items_and_the_lanes_series() {
         use DesignItemState::{Contested, Quiet, UnopposedFor};
-        use WorkingGroupStance::{Converge, Explore, Passive};
 
         let items = [
             "Is the first item quiet?",
@@ -1366,7 +1360,7 @@ mod tests {
         let mut maturity = DesignMaturity::default();
         for (lane, item, value) in [
             (1, items[1], 1),
-            (1, items[2], 1),
+            (3, items[2], 1),
             (2, items[2], -1),
             (3, items[3], 1),
             (3, items[3], -1),
@@ -1374,38 +1368,32 @@ mod tests {
         ] {
             maturity.observe_contribution(&charge(lane, item, value));
         }
-        let asked = |maturity: &DesignMaturity, stance, lane| {
+        let asked = |maturity: &DesignMaturity, lane| {
             maturity
                 .items
-                .askable(&current, stance, self::lane(lane))
+                .askable(&current, self::lane(lane))
                 .into_iter()
                 .map(|ask| (ask.question.offset() + 1, ask.state))
                 .collect::<Vec<_>>()
         };
 
-        for stance in [Passive, Explore, Converge] {
-            assert_eq!(
-                asked(&maturity, stance, 9),
-                [(1, Quiet), (2, UnopposedFor)],
-                "{stance:?} asks an outside lane every quiet and unopposed item"
-            );
-        }
         assert_eq!(
-            asked(&maturity, Explore, 1),
+            asked(&maturity, 9),
+            [(1, Quiet), (2, UnopposedFor)],
+            "an outside lane is asked every quiet and unopposed item"
+        );
+        assert_eq!(
+            asked(&maturity, 1),
             [(1, Quiet)],
             "an item whose series holds the lane is not asked of it"
         );
-        assert_eq!(asked(&maturity, Converge, 2), [(3, Contested)]);
-        assert_eq!(
-            asked(&maturity, Explore, 2),
-            [(1, Quiet), (2, UnopposedFor)]
-        );
+        assert_eq!(asked(&maturity, 2), [(3, Contested)]);
 
-        maturity.observe_contribution(&charge(1, items[2], -1));
+        maturity.observe_contribution(&charge(3, items[2], -1));
         assert_eq!(
-            asked(&maturity, Converge, 2),
+            asked(&maturity, 2),
             [(1, Quiet), (2, UnopposedFor)],
-            "with nothing contested Converge targets as Explore does"
+            "with nothing contested a series lane is asked as an outside lane"
         );
     }
 }

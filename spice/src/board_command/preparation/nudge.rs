@@ -88,7 +88,7 @@ fn staged(
     let Some(recipient) = choose(&design, holder)? else {
         let text = format!(
             "nudged {handle}: no lane could take it now, so it waits ready for allocation: every \
-             lane holds other work, none can be woken, or its working group is passive"
+             lane holds other work, none can be woken, or its working group is Paused"
         );
         let nudged = DesignNudged {
             design: design.clone(),
