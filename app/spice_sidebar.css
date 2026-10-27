@@ -268,7 +268,7 @@
 }
 .app-roster-group > header strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
 .app-roster-group > header > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A card's stance slider is the console's, at the console's geometry. */
+/* A card's brake slider is the console's, at the console's geometry. */
 .app-roster-group > header > .room-group-stance {
   --team-slider-inset: 0px;
   --team-slider-groove-block: 28px;

@@ -39,8 +39,8 @@ group's card and tiles disable their mouse and touch drop target, while its
 members can still reorder or leave, and the authority refuses a stale client's
 seventh member. Every change carries the revision the roster was drawn from.
 No roster gesture mounts, reorders, closes, or focuses a view. A working-group
-card's header also carries that group's stance slider; a finger, pen, or mouse
-on it sets the stance and neither lifts nor opens the card (see [Working
+card's header also carries that group's brake slider; a finger, pen, or mouse
+on it sets the brake and neither lifts nor opens the card (see [Working
 groups](ROOMS.md)).
 
 ## Who the app names
