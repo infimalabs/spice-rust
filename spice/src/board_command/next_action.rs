@@ -79,10 +79,7 @@ pub(super) fn accepted_transition(
 
     if principal_can_progress(principal, residency, entries, entry) {
         let workflow = entry.workflow();
-        if workflow.phase.as_str() == "review"
-            && workflow.flow.last() == Some(&workflow.phase)
-            && workflow.status.reviewer() == Some(principal)
-        {
+        if workflow.phase.as_str() == "review" && workflow.status.reviewer() == Some(principal) {
             return NextTransition::Review;
         }
         // Only the open Design phase stays operator-owned: its holder ends a

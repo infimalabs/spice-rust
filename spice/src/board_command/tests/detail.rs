@@ -441,3 +441,130 @@ fn task_detail_refuses_an_unknown_durable_identity() {
     ));
     clean(&root, bus);
 }
+
+#[test]
+fn task_detail_next_wakes_deferred_work() {
+    let (root, bus, epoch, seats) = fixture("detail-deferred-next", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::TeamLife::Drive);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        lane.clone(),
+        "DETAIL-deferred",
+        "Deferred work",
+        Some("todo"),
+    );
+    let before = board(&bus, epoch, Actor::Operator);
+    let row = at(&before, &task);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDefer,
+        vec![workflow_witness(row), deferral_witness(row)],
+        &TaskDefer {
+            task: task.clone(),
+            wait: instant_after(current_instant().expect("clock"), 300).expect("future instant"),
+        },
+    ));
+    let answer = board(&bus, epoch, lane);
+    let rendered = task_show(&answer, at(&answer, &task), &[]);
+    assert_eq!(
+        rendered.lines().last(),
+        Some(format!("next: spice task wake {task}").as_str())
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn task_detail_next_respects_blocking_and_drain_continuation() {
+    let (root, bus, epoch, seats) = fixture("detail-blocked-next", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::TeamLife::Drive);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        lane.clone(),
+        "DETAIL-blocked",
+        "Blocked work",
+        Some("todo"),
+    );
+    let prerequisite = add(
+        &bus,
+        epoch,
+        lane.clone(),
+        "DETAIL-required",
+        "Required work",
+        Some("todo"),
+    );
+    let before = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependencies::dependency_witnesses(&before, &task, &[&prerequisite], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![prerequisite],
+            remove: false,
+        },
+    ));
+    let blocked = board(&bus, epoch, lane.clone());
+    let rendered = task_show(&blocked, at(&blocked, &task), &[]);
+    assert_eq!(rendered.lines().last(), Some("next: -"));
+
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::TeamLife::Drain);
+    let drain = board(&bus, epoch, lane);
+    let rendered = task_show(&drain, at(&drain, &task), &[]);
+    assert_eq!(rendered.lines().last(), Some("next: spice task next"));
+    clean(&root, bus);
+}
+
+#[test]
+fn task_detail_next_advances_a_nonfinal_review_phase() {
+    let (root, bus, epoch, seats) = fixture("detail-nonfinal-review", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DETAIL-nonfinal",
+        "Advance a nonfinal phase",
+        Some("review,verify"),
+    );
+    capture_for(&bus, epoch, &seats[0], &task);
+    let held = board(&bus, epoch, lane.clone());
+    let row = at(&held, &task);
+    let rendered = task_show(&held, row, &[]);
+    assert_eq!(
+        rendered.lines().last(),
+        Some(
+            format!(
+                "next: spice task review {task} --finding clean --note \"description current; ...\""
+            )
+            .as_str()
+        )
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskReview,
+        progress_witnesses(&held, row, seats[0].lane, seats[0].occupant, true)
+            .expect("held review admits a verdict"),
+        &TaskReview {
+            task: task.clone(),
+            finding: "clean".to_owned(),
+            note: Some("phase contract proved".to_owned()),
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    ));
+    let advanced = board(&bus, epoch, lane);
+    assert_eq!(at(&advanced, &task).workflow.body.phase.as_str(), "verify");
+    clean(&root, bus);
+}

@@ -204,6 +204,10 @@ Surfaces that refine the law:
   `room_context` carries the same newest room rows under the interactive
   defaults, so the next phase's holder and the reviewer receive the task's
   conversation.
+  Its `next:` command uses the same admitted transition as mutation replies:
+  deferred work names `task wake`, while blocked work names no task action.
+  A Drain lane can still name allocator continuation; open Designs retain their
+  shared cycle guidance.
 - `spice board` is a posture — counts, the reader's own claim outside every
   budget, and the ready, review, and blocked rows on its route — not a dump.
   The complete board is only `spice board [FAMILY] --output FILE`.

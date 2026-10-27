@@ -139,50 +139,6 @@ fn occupied_zero_refuses_before_task_stamp_clock_underflow() {
 }
 
 #[test]
-fn a_nonfinal_review_phase_prints_the_transition_it_can_accept() {
-    let (root, bus, epoch, seats) = fixture("nonfinal-review-next-action", 1);
-    let lane = Actor::Lane(seats[0].lane);
-    let task = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "FLOW-review01",
-        "Advance through a nonfinal review phase",
-        Some("review,verify"),
-    );
-    let available = board(&bus, epoch, lane.clone());
-    let answer = assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimWin,
-        claim_expected(&available, &task, &seats[0]),
-        &ClaimWin {
-            rule: "next".parse().expect("allocator rule"),
-            recovery: None,
-        },
-    ));
-    let CommandAnswer::Claim(claim) = answer else {
-        panic!("claim win returned another answer shape");
-    };
-    let expected_next = format!("spice task show {task} --full");
-    assert_eq!(
-        claim.next.as_deref(),
-        Some(expected_next.as_str()),
-        "a fresh claim hands activation to the full task packet first",
-    );
-    let claimed = board(&bus, epoch, lane);
-    let shown = task_show(&claimed, at(&claimed, &task), &[]);
-    assert!(
-        shown.contains(&format!(
-            "next: spice task review {task} --finding clean --note \"description current; ...\""
-        )),
-        "the detail packet exposes the phase-specific command after activation"
-    );
-    clean(&root, bus);
-}
-
-#[test]
 fn a_won_claim_carries_its_whole_statement() {
     let (root, bus, epoch, seats) = fixture("claim-whole-statement", 1);
     let lane = Actor::Lane(seats[0].lane);
