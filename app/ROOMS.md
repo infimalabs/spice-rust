@@ -55,7 +55,10 @@ revision. A group exists only while designs belong to it: it is never created
 empty, never named, and never removed as an object. Its card is labelled from
 its lead design, member zero, as a team is from its host. The whole card mounts
 the group's console by click, Enter, or Space; its nested Design controls keep
-their own actions. The formed card's frame binds to the same stable base-flavor
+their own actions. Its header carries the group's stance slider, the console's
+own control: both show one stance, pending included, and a refusal or owed
+shelving reads in the catalog notice. Using it neither mounts the console nor
+lifts the card. The formed card's frame binds to the same stable base-flavor
 accent index as the corresponding team or group console; member and Design
 accent slots remain independent. The console's group menu can move or close
 that browser-local console;
@@ -67,13 +70,13 @@ group**, the twins of an agent's **Create new team** and **Leave all teams**:
 the first moves the design alone into a fresh group and is offered only while
 its group holds another design; the second takes it out of its group. They and
 every drop send one `group::move` or `group::arrange` witnessing the partition
-revision the browser last folded; the console's stance slider sends
-`group::stance` under that same revision. A change that partition revision no
-longer matches is refused rather than merged. A group whose last design leaves
-or which is disbanded ends. Ending a group moves no task: its designs and the
-work they produced stay on the board. While room authority loads or
-reconnects, an open console keeps its last label and geometry and closes
-nothing.
+revision the browser last folded; the stance slider, in the console or on the
+catalog card, sends `group::stance` under that same revision. A change that
+partition revision no longer matches is refused rather than merged. A group
+whose last design leaves or which is disbanded ends. Ending a group moves no
+task: its designs and the work they produced stay on the board. While room
+authority loads or reconnects, an open console keeps its last label and
+geometry and closes nothing.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
 lists lanes in no team; each tile there reads open, passive, while a grouped

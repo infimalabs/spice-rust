@@ -5,8 +5,8 @@ mod frame;
 mod group;
 pub(in crate::browser) use frame::{ControlsFrame, SendSlot, holds_text};
 use group::GroupControlAction;
-pub(in crate::browser) use group::GroupPanel;
 pub(super) use group::Plane;
+pub(in crate::browser) use group::{GroupPanel, stance_slider};
 
 const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
 const HIDDEN_TEAMS_STORAGE: &str = "spice:hidden-teams:v1";

@@ -229,15 +229,7 @@ impl GroupPanel<'_> {
             .get(self.group)
             .cloned()
             .unwrap_or_default();
-        let stance = control.pending_stance.unwrap_or_else(|| {
-            self.runtime
-                .room_projection()
-                .partition()
-                .groups
-                .iter()
-                .find(|group| group.group == *self.group)
-                .map_or(WorkingGroupStance::Passive, |group| group.stance)
-        });
+        let stance = displayed_stance(self.runtime, self.controls, self.group);
         GroupControls {
             turbo: self.turbo(control.pending_fast),
             speech: control.speech.label(),
@@ -245,7 +237,7 @@ impl GroupPanel<'_> {
             sliders: html! {
                 <>
                     {self.speech_slider(control.speech)}
-                    {self.stance_slider(stance)}
+                    {stance_slider(self.runtime, self.controls, self.sender, &self.report, self.group)}
                 </>
             },
         }
@@ -366,91 +358,120 @@ impl GroupPanel<'_> {
             </label>
         }
     }
+}
 
-    /// The group's shared activity stance. Passive keeps its Designs passive;
-    /// Explore and Converge make them active.
-    fn stance_slider(&self, stance: WorkingGroupStance) -> Html {
-        let partition = self.runtime.room_projection().partition();
-        let revision = partition.revision;
-        let standing = partition
-            .groups
-            .iter()
-            .any(|group| group.group == *self.group);
-        let can_configure = standing && self.runtime.offers(wire::CommandKind::WorkingGroupStance);
-        let controls = self.controls.clone();
-        let sender = self.sender.clone();
-        let report = self.report.clone();
-        let group = self.group.clone();
-        let oninput = Callback::from(move |event: InputEvent| {
-            let input: HtmlInputElement = event.target_unchecked_into();
-            let index = input.value().parse::<usize>().unwrap_or(0);
-            let stance = WorkingGroupStance::ALL[index.min(WorkingGroupStance::ALL.len() - 1)];
-            let respond = {
-                let (controls, report, group) = (controls.clone(), report.clone(), group.clone());
-                Rc::new(
-                    move |result: Result<wire::intent::WorkingGroupChange, String>| {
-                        controls.dispatch(TeamControlAction::Group(
-                            GroupControlAction::SettleStance {
-                                group: group.clone(),
-                                stance,
-                            },
-                        ));
-                        match result {
-                            Err(error) => report.emit(error),
-                            Ok(change) if !change.owed.is_empty() => {
-                                let owed = change
-                                    .owed
-                                    .iter()
-                                    .map(ToString::to_string)
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                report.emit(format!(
-                                    "Shelving is still owed for {owed}; set the group Passive again."
-                                ));
-                            }
-                            Ok(_) => {}
+/// The stance a group's controls show: the one this browser requested and the
+/// resident has not answered, else the partition's.
+fn displayed_stance(
+    runtime: &crate::AppRuntime,
+    controls: &TeamControls,
+    group: &RoomAuthorityStamp,
+) -> WorkingGroupStance {
+    controls
+        .groups
+        .get(group)
+        .and_then(|control| control.pending_stance)
+        .unwrap_or_else(|| {
+            runtime
+                .room_projection()
+                .partition()
+                .groups
+                .iter()
+                .find(|standing| standing.group == *group)
+                .map_or(WorkingGroupStance::Passive, |standing| standing.stance)
+        })
+}
+
+/// One group's shared activity stance, as its console panel and its catalog
+/// card both draw it. Passive keeps its Designs passive; Explore and Converge
+/// make them active. A move shows its request until the resident answers, and
+/// `report` shows a refusal or the shelving it still owes.
+pub(in crate::browser) fn stance_slider(
+    runtime: &crate::AppRuntime,
+    controls: &UseReducerHandle<TeamControls>,
+    sender: &SenderHandle,
+    report: &Callback<String>,
+    group: &RoomAuthorityStamp,
+) -> Html {
+    let stance = displayed_stance(runtime, controls, group);
+    let partition = runtime.room_projection().partition();
+    let revision = partition.revision;
+    let standing = partition
+        .groups
+        .iter()
+        .any(|standing| standing.group == *group);
+    let can_configure = standing && runtime.offers(wire::CommandKind::WorkingGroupStance);
+    let controls = controls.clone();
+    let sender = sender.clone();
+    let report = report.clone();
+    let group = group.clone();
+    let oninput = Callback::from(move |event: InputEvent| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        let index = input.value().parse::<usize>().unwrap_or(0);
+        let stance = WorkingGroupStance::ALL[index.min(WorkingGroupStance::ALL.len() - 1)];
+        let respond = {
+            let (controls, report, group) = (controls.clone(), report.clone(), group.clone());
+            Rc::new(
+                move |result: Result<wire::intent::WorkingGroupChange, String>| {
+                    controls.dispatch(TeamControlAction::Group(GroupControlAction::SettleStance {
+                        group: group.clone(),
+                        stance,
+                    }));
+                    match result {
+                        Err(error) => report.emit(error),
+                        Ok(change) if !change.owed.is_empty() => {
+                            let owed = change
+                                .owed
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            report.emit(format!(
+                                "Shelving is still owed for {owed}; set the group Passive again."
+                            ));
                         }
-                    },
-                )
-            };
-            if admit_action(
-                &sender,
-                ClientAction::WorkingGroupChange {
-                    change: GroupChange::Stance(WorkingGroupStanceSet {
-                        group: group.clone(),
-                        stance,
-                    }),
-                    revision,
-                    respond,
+                        Ok(_) => {}
+                    }
                 },
-            ) {
-                controls.dispatch(TeamControlAction::Group(
-                    GroupControlAction::RequestStance {
-                        group: group.clone(),
-                        stance,
-                    },
-                ));
-            }
-        });
-        html! {
-            <label
-                class="team-slider team-lifetime"
-                data-stop={stance.index().to_string()}
-            >
-                <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="1"
-                    value={stance.index().to_string()}
-                    disabled={!can_configure}
-                    aria-label={format!("Group stance: {}", stance_label(stance))}
-                    title="Passive keeps this group's Designs passive; Explore and Converge make them active"
-                    {oninput}
-                />
-                {slider_words(WorkingGroupStance::ALL.map(stance_label), stance.index())}
-            </label>
+            )
+        };
+        if admit_action(
+            &sender,
+            ClientAction::WorkingGroupChange {
+                change: GroupChange::Stance(WorkingGroupStanceSet {
+                    group: group.clone(),
+                    stance,
+                }),
+                revision,
+                respond,
+            },
+        ) {
+            controls.dispatch(TeamControlAction::Group(
+                GroupControlAction::RequestStance {
+                    group: group.clone(),
+                    stance,
+                },
+            ));
         }
+    });
+    html! {
+        <label
+            class="team-slider team-lifetime"
+            data-stop={stance.index().to_string()}
+        >
+            <input
+                type="range"
+                min="0"
+                max="2"
+                step="1"
+                value={stance.index().to_string()}
+                disabled={!can_configure}
+                aria-label={format!("Group stance: {}", stance_label(stance))}
+                title="Passive keeps this group's Designs passive; Explore and Converge make them active"
+                {oninput}
+            />
+            {slider_words(WorkingGroupStance::ALL.map(stance_label), stance.index())}
+        </label>
     }
 }
 

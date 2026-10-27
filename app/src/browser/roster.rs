@@ -40,6 +40,9 @@ thread_local! {
     static MOUSE_LIFT: RefCell<Option<String>> = const { RefCell::new(None) };
     /// A lifted drag's release can still click a tile link; that click is swallowed.
     static SWALLOW_CLICK: Cell<bool> = const { Cell::new(false) };
+    /// The last press went down on a form control a row carries, so a mouse
+    /// drag from it moves that control rather than lifting the row.
+    static CONTROL_PRESS: Cell<bool> = const { Cell::new(false) };
 }
 
 /// What one kind's roster says.
@@ -339,7 +342,7 @@ where
     Callback::from(move |event: DragEvent| {
         // The innermost row lifts; a card holding the tile does not.
         event.stop_propagation();
-        if !enabled {
+        if !enabled || CONTROL_PRESS.get() {
             event.prevent_default();
             return;
         }
@@ -411,6 +414,7 @@ where
 }
 
 /// Begin a finger or pen lift from a row's handle; a tap still activates it.
+/// Every press also records whether it went down on a control.
 fn touch_start<G, M>(gesture: &Gesture<G, M>, lift: String) -> Callback<PointerEvent>
 where
     G: Clone + Eq + Display + FromStr + 'static,
@@ -419,6 +423,7 @@ where
     let (enabled, revision) = (gesture.enabled, gesture.revision);
     Callback::from(move |event: PointerEvent| {
         SWALLOW_CLICK.set(false);
+        CONTROL_PRESS.set(on_control(&event));
         if event.pointer_type() == "mouse" || !event.is_primary() || !on_handle(&event, &lift) {
             return;
         }
@@ -439,9 +444,26 @@ where
     })
 }
 
+/// Whether the contact went down on a form control.
+fn on_control(event: &PointerEvent) -> bool {
+    event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|element| {
+            element
+                .closest("input, button, select, textarea")
+                .ok()
+                .flatten()
+        })
+        .is_some()
+}
+
 /// Whether the contact went down on the handle of the row lifting `lift`,
-/// rather than on a row nested inside it.
+/// rather than on a row nested inside it or a control a handle carries.
 fn on_handle(event: &PointerEvent, lift: &str) -> bool {
+    if on_control(event) {
+        return false;
+    }
     let Some(handle) = event
         .target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
@@ -564,7 +586,7 @@ fn group_click(opener: Option<GroupOpener>) -> Callback<MouseEvent> {
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|target| {
                 target
-                    .closest("a, button, input, select, textarea, [data-roster-member]")
+                    .closest("a, button, input, label, select, textarea, [data-roster-member]")
                     .ok()
                     .flatten()
                     .is_some()
