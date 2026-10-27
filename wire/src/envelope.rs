@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ident::{CanonicalUuid, Instant};
 
-/// The wire schema version writers emit and readers admit.
+/// The crossing wire generation writers emit and readers admit.
 ///
 /// This is a transparent number rather than a type-level constant because a
 /// mismatch must be able to name the version it observed. A version that

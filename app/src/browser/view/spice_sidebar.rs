@@ -241,21 +241,13 @@ fn render_product_version(identity: Option<&AppIdentity>, update: Option<&AppUpd
             .expect("app update action reloads the current document");
     });
     if let Some(update) = update {
-        let product = product_version.as_deref().unwrap_or("loading");
-        let mut update_rows = vec![format!("Current product: {product}")];
-        if let Some(identity) = identity {
-            update_rows.extend([
-                format!("Native binary: {}", identity.version.binary),
-                format!("Wire schema: {}", identity.version.wire),
-                format!("Journal schema: {}", identity.version.journal),
-            ]);
-        }
-        update_rows.extend([
-            format!("Loaded app generation: {}", update.loaded_generation),
-            format!("Available app protocol: {}", update.version),
-            format!("Served app generation: {}", update.generation),
-        ]);
-        let update_identity = update_rows.join("\n");
+        let update_identity = crate::version_identity::update_rows(
+            identity.map(|identity| &identity.version),
+            &update.loaded_generation,
+            update.version,
+            &update.generation,
+        )
+        .join("\n");
         let update_details = format!("{update_identity}\nAction: Reload to update");
         let update_accessible = format!(
             "Reload Spice to update; {}",
@@ -315,18 +307,8 @@ fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation
             accessible: "Spice product identity is loading".to_owned(),
         };
     };
-    let mut rows = vec![
-        format!("Product: {}", identity.version.product),
-        format!("Native binary: {}", identity.version.binary),
-        format!("Wire schema: {}", identity.version.wire),
-        format!("Journal schema: {}", identity.version.journal),
-        format!("App protocol: {}", identity.version.app_protocol),
-        format!("Loaded app generation: {}", identity.loaded_app),
-    ];
-    if identity.loaded_app != identity.version.app {
-        rows.push(format!("Served app generation: {}", identity.version.app));
-    }
-    let details = rows.join("\n");
+    let details =
+        crate::version_identity::identity_rows(&identity.version, &identity.loaded_app).join("\n");
     IdentityPresentation {
         label: identity.version.product.to_string(),
         accessible: details.replace('\n', "; "),

@@ -133,7 +133,7 @@ fn admit_bootstrap_identity(
         return Err("bootstrap body app generation disagreed with its header".to_owned());
     }
     if discovery.version.wire != wire::WireVersion::CURRENT {
-        return Err("bootstrap body wire schema is not current".to_owned());
+        return Err("bootstrap body crossing wire generation is not current".to_owned());
     }
     Ok(AppIdentity {
         version: discovery.version.clone(),

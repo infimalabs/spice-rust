@@ -96,6 +96,16 @@ connection state's hover title and accessible name, and only while the resident
 connection is current; startup and reconnect states never present a retained
 runtime's cursor as live.
 
+The version's hover title and accessible name carry the full identity, and an
+update's carry the same rows beside the generation it offers. Three of its
+numbers count different things and are never compared. The crossing wire
+generation is the outer envelope every request and frame carries; a build
+speaks exactly one and admits no other, so it stays at its one value while
+the others advance. The journal migration schema counts the stored journal's
+migrations, the only schema of the three. The browser app protocol counts
+changes to the browser/resident contract, which a loaded page must match to
+connect.
+
 ## Composer images
 
 The chooser keeps admitted image bytes when the complete draft fits one durable
