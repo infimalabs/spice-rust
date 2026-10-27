@@ -168,12 +168,16 @@ pub(super) struct PreparedClaim<'a> {
 }
 
 /// Validate and prepare an atomic mutation-and-claim before the journal opens.
+///
+/// `creating` says the same write creates `selected`, so an ineligibility
+/// refusal leaves no task behind and must not name its handle as a repair.
 pub(super) fn prepare_capture_claim<'a>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<Host<'a>>,
     snapshot: &ValidatedSnapshot,
     selected: &Entry,
+    creating: bool,
 ) -> Result<PreparedClaim<'a>, Outcome<CommandAnswer>> {
     let claim_rule = command.expected().iter().find_map(|witness| match witness {
         Witness::Eligibility { rule }
@@ -205,7 +209,11 @@ pub(super) fn prepare_capture_claim<'a>(
         command.actor(),
         &snapshot.answer.environment(),
     ) {
-        return Err(named_claim_ineligible(selected, false));
+        return Err(if creating {
+            new_claim_ineligible()
+        } else {
+            named_claim_ineligible(selected, false)
+        });
     }
     // Ordinary add-and-claim records the clean allocator boundary. Compound
     // capture and dirty adoption both retain loose commits; dirty adoption also
@@ -812,6 +820,18 @@ pub(in crate::board_command) fn named_claim_ineligible(
         )
     };
     refusal(reason, Some(handle.to_string()), &remedy)
+}
+
+/// The refusal of a task add whose new task the board would not let it claim.
+/// The whole write is refused, so no handle exists to name or capture yet.
+fn new_claim_ineligible() -> Outcome<CommandAnswer> {
+    refusal(
+        "claim::capture-ineligible",
+        None,
+        "nothing was created: the new task's prerequisites or environment requirements are not \
+         satisfied, so it cannot be claimed yet; add it without --claim, then claim it with \
+         spice task capture HANDLE once it is ready",
+    )
 }
 
 fn claim_residency(
