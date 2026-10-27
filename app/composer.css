@@ -748,6 +748,17 @@
   z-index: 3;
   inset: 6px 0 auto auto;
 }
+/* A code block's Copy action seats against the block's inline edge as an
+   image's Quote does, just inside the border that closes it. The block box,
+   not the scrolling pre, positions it, so it stays put over wide code. */
+.markdown-body .message-code { position: relative; margin: .55em 0; }
+.markdown-body .message-code > pre { margin: 0; }
+.message-code-copy {
+  --message-control-size: var(--app-header-control);
+  position: absolute;
+  z-index: 3;
+  inset: 6px var(--app-control-edge-width) auto auto;
+}
 /* Message card actions form one cutout rather than separate circles. The row
    has no gap: whichever control leads it, Play or a lone Quote, rounds both
    inline-start corners into a finger, and later controls stay square. Every
@@ -773,7 +784,7 @@
   background: transparent;
 }
 .team-surface .mosaic-message-card .message-actions > .app-card-action,
-.team-surface .mosaic-message-card .message-image-quote {
+.team-surface .mosaic-message-card :is(.message-image-quote, .message-code-copy) {
   --app-card-action-accent: var(--accent-slot, var(--accent-neutral));
   min-width: 0;
   margin: 0;
@@ -785,11 +796,11 @@
   color: var(--muted);
 }
 .team-surface .mosaic-message-card .message-actions > .app-card-action:first-child,
-.team-surface .mosaic-message-card .message-image-quote {
+.team-surface .mosaic-message-card :is(.message-image-quote, .message-code-copy) {
   border-radius: var(--app-radius-circle) 0 0 var(--app-radius-circle);
 }
 .team-surface .mosaic-message-card .message-actions > .app-card-action:is(:hover, :active, .active),
-.team-surface .mosaic-message-card .message-image-quote:is(:hover, :active, .active) {
+.team-surface .mosaic-message-card :is(.message-image-quote, .message-code-copy):is(:hover, :active, .active) {
   background: color-mix(in srgb, var(--app-card-action-accent) 10%, var(--message-stream-surface));
   color: var(--ink);
 }
@@ -797,7 +808,7 @@
 .team-surface
   .mosaic-message-card
   .markdown-body > .message-controls .app-card-action,
-.team-surface .message-image-quote {
+.team-surface :is(.message-image-quote, .message-code-copy) {
   width: var(--message-control-size);
   min-width: var(--message-control-size);
   height: var(--message-control-size);
@@ -812,7 +823,7 @@
   width: 62.5%;
   height: 62.5%;
 }
-.team-surface .message-image-quote:focus-visible { outline-offset: -2px; }
+.team-surface :is(.message-image-quote, .message-code-copy):focus-visible { outline-offset: -2px; }
 .markdown-body .message-attribution {
   display: inline-flex;
   min-width: 0;

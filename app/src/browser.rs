@@ -41,6 +41,7 @@ use crate::{
 mod card_target;
 mod clipboard;
 mod clock;
+mod code_copy;
 mod connection;
 mod deferral;
 mod diagnostics;
@@ -807,6 +808,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
 fn app(properties: &AppProperties) -> Html {
     let (state, speech_runtime) = use_app_state(properties);
     use_app_effects(&state, speech_runtime);
+    code_copy::use_code_copy();
     state.render()
 }
 

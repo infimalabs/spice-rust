@@ -104,10 +104,8 @@ mod tests {
                 "Run `spice task next:`",
                 "<p>Run <code>spice task next:</code></p>\n",
             ),
-            (
-                "Run:\n\n```\nkey:\n```",
-                "<p>Run:</p>\n<pre><code>key:\n</code></pre>\n",
-            ),
+            ("Run:\n\n```\nkey:\n```", "<p>Run:</p>\n"),
+            ("Run:\n\n```\nkey:\n```", "<pre><code>key:\n</code></pre>\n"),
             ("Quoted:\n\n> wait:", "<p>wait:</p>\n"),
             (
                 "Colons: inside, then a stop.",

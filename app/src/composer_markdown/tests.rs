@@ -422,6 +422,29 @@ fn acknowledgement_markers_remain_ordinary_markdown() {
 }
 
 #[test]
+fn every_code_block_boxes_one_copy_control_with_its_pre() {
+    let rendered = render_received(
+        "Run `inline`.\n\n```sh\necho \"a\" > b\n```\n\n    indented\n\n\
+         ```mermaid\ngraph TD; A-->B\n```\n\n> ```\n> quoted\n> ```",
+    );
+
+    assert_eq!(rendered.html.matches("data-code-copy").count(), 3);
+    // The copy listener reads the `pre` directly inside the control's box.
+    for code in [
+        "<pre><code class=\"language-sh\">echo \"a\" &gt; b\n</code></pre>\n</div>",
+        "<pre><code>indented\n</code></pre>\n</div>",
+        "<pre><code>quoted\n</code></pre>\n</div>",
+    ] {
+        assert!(
+            rendered.html.contains(&format!("</button>\n{code}")),
+            "{code} lacks its boxed control in {}",
+            rendered.html
+        );
+    }
+    assert!(rendered.html.contains("data-mermaid-slot=\"0\""));
+}
+
+#[test]
 fn noncanonical_and_block_code_handles_remain_ordinary_markdown() {
     let rendered = render_received("`APP-a1` and APP-a1.\n\n```text\nCONTROL-1kKbC3j4\n```");
 
