@@ -81,7 +81,7 @@ fn require_design_proposal(
         return Err(refusal(
             "preparation::proposal-claim-stale",
             Some(controller.to_string()),
-            "run `spice task reclaim` to acknowledge the current Design generation, then retry",
+            "run `spice task next` to read and acknowledge the current Design generation, then retry",
         ));
     }
     for output in &proposal.outputs {

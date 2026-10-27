@@ -1,31 +1,31 @@
 use super::*;
 
 mod doc;
-mod reclaim;
+mod refresh;
 mod release;
 pub(super) use doc::doc_apply;
-use reclaim::*;
+use refresh::*;
 pub(super) use release::{claim_free, prepare_release};
 
-pub(super) fn claim_reclaim(
+pub(super) fn claim_refresh(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    renew: &ClaimRenew,
+    refresh: &TaskRef,
 ) -> Outcome<CommandAnswer> {
-    claim_reclaim_with_clock(bus, command, renew, current_instant)
+    claim_refresh_with_clock(bus, command, refresh, current_instant)
 }
 
-pub(super) fn claim_reclaim_with_clock(
+pub(super) fn claim_refresh_with_clock(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    renew: &ClaimRenew,
+    refresh: &TaskRef,
     clock: impl FnOnce() -> Result<Instant, Outcome<CommandAnswer>>,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match command_task_snapshot(bus, command, &renew.task) {
+    let snapshot = match command_task_snapshot(bus, command, &refresh.task) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let entry = match reclaim_entry(&snapshot, renew) {
+    let entry = match refresh_entry(&snapshot, refresh) {
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
@@ -33,27 +33,36 @@ pub(super) fn claim_reclaim_with_clock(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let window = match reclaim_window(bus, entry, &snapshot, command, renew, at) {
-        Ok(window) => window,
+    let state = match refresh_claim(bus, entry, &snapshot, command, refresh, at) {
+        Ok(state) => state,
         Err(outcome) => return outcome,
     };
     let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, window.producer());
+    let acknowledged = entry
+        .claim()
+        .expect("refresh admission requires a claim")
+        .is_stale(entry.workflow())
+        .then_some(entry.workflow().generation);
+    let held = entry.lease().is_some_and(spice::claim_lease::is_indefinite);
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let until = window.expiry();
-    let held = window.held();
-    if let Err(outcome) = append_reclaim(&mut write, entry, command, at, window) {
+    if let Err(outcome) = append_refresh(&mut write, entry, state) {
         return outcome;
     }
     let answer = wire::intent::ClaimAnswer {
         task: entry.handle().clone(),
-        statement: None,
+        statement: Some(Box::new(wire::intent::ClaimStatement {
+            title: entry.statement().title.clone(),
+            pitch: entry.statement().pitch.clone(),
+            description: entry.statement().description.clone(),
+            acceptance: entry.statement().acceptance.clone(),
+        })),
         holder: Some(command.actor().clone()),
-        expiry: Some(Box::new(until)),
-        acknowledged: Some(entry.workflow().generation),
+        expiry: None,
+        acknowledged,
         held,
         warnings: Box::default(),
         creation_context: None,
@@ -65,17 +74,17 @@ pub(super) fn claim_reclaim_with_clock(
         transplant: None,
     };
     if let Err(error) = write.command_result(
-        request(command, renew.clone()),
+        request(command, refresh.clone()),
         command.epoch(),
         answer.clone(),
     ) {
-        return store_fault("claim::reclaim-receipt", &error.to_string());
+        return store_fault("claim::refresh-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Claim(Box::new(answer)))
 }
 
-// Reclaim admission and head publication live in `progress/reclaim.rs` so the
-// ordinary workflow transitions below remain independently reviewable.
+// Generation acknowledgement and residency recovery live in
+// `progress/refresh.rs`, apart from ordinary workflow transitions.
 
 pub(super) fn task_done(
     bus: &Bus,
@@ -281,10 +290,7 @@ fn done_transition(
         refusal(
             "claim::active-refused",
             Some(error.to_string()),
-            concat!(
-                "renew or win a current claim before ",
-                "completing its phase",
-            ),
+            "run spice task next before completing its phase",
         )
     })?;
     if active.epoch() != command.epoch() && !resume_epoch {
@@ -292,7 +298,7 @@ fn done_transition(
             "claim::epoch-moved",
             Some(active.epoch().to_string()),
             &format!(
-                "run spice task reclaim {} under the current resident generation",
+                "run spice task next to rebind task {} under the current resident generation",
                 entry.handle()
             ),
         ));
@@ -805,9 +811,9 @@ fn admit_review<'a>(
 
 /// Refuse an active claim that has not acknowledged its task's generation.
 ///
-/// The task changed after this claim last took stock of it (a statement edit,
-/// an observation, a deferral, or a workflow move), so the holder must reread
-/// and reclaim before completing or reviewing on stale understanding.
+/// The task changed after the claim last took stock of it through a statement
+/// edit, observation, deferral, or workflow move. The holder must read the
+/// current statement through `task next` before completing or reviewing.
 fn acknowledged(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
     let claim = entry.claim().expect("an admitted active claim has a head");
     if !claim.is_stale(entry.workflow()) {
@@ -822,9 +828,8 @@ fn acknowledged(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
             claim.acknowledged
         )),
         &format!(
-            "task {} changed since this claim acknowledged it; reread it, then run spice task reclaim {}",
+            "task {} changed since this claim acknowledged it; run spice task next to read and acknowledge the current statement",
             entry.handle(),
-            entry.handle()
         ),
     ))
 }

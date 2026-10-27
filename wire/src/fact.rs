@@ -317,6 +317,8 @@ vocabulary! {
     ClaimCarried = "claim::carried" by ResidentRecognition;
     /// A lane recovered possession after residency moved ahead of its claim.
     ClaimRebound = "claim::rebound" by CommandDoor;
+    /// A holder accepted the current task generation without moving its lease.
+    ClaimAcknowledged = "claim::acknowledged" by CommandDoor;
     /// Possession was released and the task became eligible again.
     ClaimFreed = "claim::freed" by CommandDoor;
     /// The lease deadline passed and the resident expired possession.
@@ -964,6 +966,7 @@ impl AnyFact {
             Decoded::ClaimWon(body) => Some(&body.task),
             Decoded::ClaimCarried(body) => Some(&body.task),
             Decoded::ClaimRebound(body) => Some(&body.task),
+            Decoded::ClaimAcknowledged(body) => Some(&body.task),
             Decoded::ClaimFreed(body) => Some(&body.task),
             Decoded::ClaimLapsed(body) => Some(&body.task),
             Decoded::ClaimRenewed(body) => Some(&body.task),

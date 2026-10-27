@@ -57,6 +57,7 @@ impl CommandKind {
         Self::TaskAssign,
         Self::ClaimWin,
         Self::ClaimCarry,
+        Self::ClaimRefresh,
         Self::ClaimRenew,
         Self::ClaimFree,
         Self::ClaimLapse,
@@ -156,6 +157,7 @@ impl CommandKind {
             | Self::TaskAssign => self.board_spelling(),
             Self::ClaimWin
             | Self::ClaimCarry
+            | Self::ClaimRefresh
             | Self::ClaimRenew
             | Self::ClaimFree
             | Self::ClaimLapse
@@ -287,6 +289,7 @@ impl CommandKind {
         match self {
             Self::ClaimWin => "claim::win",
             Self::ClaimCarry => "claim::carry",
+            Self::ClaimRefresh => "claim::refresh",
             Self::ClaimRenew => "claim::renew",
             Self::ClaimFree => "claim::free",
             Self::ClaimLapse => "claim::lapse",

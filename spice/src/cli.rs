@@ -210,6 +210,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TaskAssign
         | CommandKind::ClaimWin
         | CommandKind::ClaimCarry
+        | CommandKind::ClaimRefresh
         | CommandKind::ClaimRenew
         | CommandKind::ClaimFree
         | CommandKind::ClaimLapse
@@ -446,7 +447,6 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["task", "status"]
             | ["task", "show"]
             | ["task", "next"]
-            | ["task", "reclaim"]
             | ["task", "add"]
             | ["task", "plan"]
             | ["task", "design"]

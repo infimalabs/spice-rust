@@ -714,6 +714,15 @@ pub struct ClaimRebound {
     pub source: SourceBoundary,
 }
 
+/// A holder accepted the task generation currently governing its claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimAcknowledged {
+    /// Task whose current statement and workflow were accepted.
+    pub task: TaskStamp,
+    /// Current task generation the holder accepted.
+    pub generation: u64,
+}
+
 /// Commits and an optional dirty worktree snapshot detached on task release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

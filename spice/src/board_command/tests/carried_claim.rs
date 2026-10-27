@@ -119,11 +119,8 @@ fn done_into_a_continuing_phase_carries_the_claim_to_its_lane() {
         lease.position, claim.claimed,
         "the lease is born with the carried win"
     );
-    let (expiry, maximum) = (
-        instant_after(lease.body.start, 60 * 60).expect("lease expiry"),
-        instant_after(lease.body.start, 2 * 60 * 60).expect("lease maximum"),
-    );
-    assert_eq!((lease.body.expiry, lease.body.maximum), (expiry, maximum));
+    let expiry = instant_after(lease.body.start, 60 * 60).expect("lease expiry");
+    assert_eq!((lease.body.expiry, lease.body.maximum), (expiry, expiry));
     let Some(NextWorkState::Active { task: active }) = next_board(&bus, epoch, holder.clone()).next
     else {
         panic!("the carrying lane's task next holds the carried claim")

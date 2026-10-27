@@ -14,9 +14,9 @@ mod subscription;
 // so both source files remain inside the structural review bound.
 mod fixture;
 use fixture::*;
-// Renewal and restart assertions are one bounded reclaim scenario seam.
-mod reclaim;
-use reclaim::*;
+// Claim generation and resident-generation refreshes share one scenario seam.
+mod refresh;
+use refresh::*;
 
 // Each allocator re-read refusal is pinned by a scenario that moves only
 // what that one comparison reads, so severing them apart is observable.
@@ -362,9 +362,8 @@ fn task_status_names_the_claim_the_asking_principal_holds() {
         "manual task claims keep the predecessor one-hour lease",
     );
     assert_eq!(
-        lease.body.maximum,
-        fixture_instant_after(lease.body.start, 2 * 60 * 60),
-        "manual task claims keep a later renewal cap for task reclaim",
+        lease.body.maximum, lease.body.expiry,
+        "ordinary claims carry no separate manual extension cap",
     );
 
     let holder = task_status(&claimed).expect("holder reads status");
@@ -1086,65 +1085,6 @@ fn stealing_claims_a_task_nobody_holds_and_warns_nothing_was_stolen() {
     assert_eq!(claim.body.actor, lane);
     assert_eq!(claim.body.disposition, ClaimDisposition::Active);
     clean(&root, bus);
-}
-
-#[test]
-fn reclaim_renews_only_the_lane_owned_claim_and_survives_restart() {
-    let (root, bus, epoch, seats) = fixture("reclaim", 1);
-    let lane = Actor::Lane(seats[0].lane);
-    let held_task = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "RECLAIM-held1",
-        "Held recovery work",
-        Some("todo"),
-    );
-    let available_task = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "RECLAIM-next1",
-        "Next allocator work",
-        Some("todo"),
-    );
-    let available = board(&bus, epoch, lane.clone());
-    assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimWin,
-        claim_expected(&available, &held_task, &seats[0]),
-        &ClaimWin {
-            rule: "next".parse().expect("allocator rule"),
-            recovery: None,
-        },
-    ));
-    let held = board(&bus, epoch, lane.clone());
-    let before = at(&held, &held_task).clone();
-    let claim = before.claim.as_ref().expect("active claim");
-    let lease = before.lease.as_ref().expect("active lease");
-    let expected = vec![
-        Witness::Claim {
-            task: before.statement.body.born.clone(),
-            head: Some(claim.position),
-        },
-        Witness::Lease {
-            task: before.statement.body.born.clone(),
-            head: lease.position,
-        },
-        residency(&held, &seats[0]),
-    ];
-    let after = renew_and_assert(&bus, epoch, &lane, &held_task, &before, expected);
-    assert_reclaim_survives_restart(
-        &root,
-        bus,
-        epoch,
-        &lane,
-        &held_task,
-        &available_task,
-        &after,
-    );
 }
 
 // Lane lifecycle, review, and document tests share this fixture harness.

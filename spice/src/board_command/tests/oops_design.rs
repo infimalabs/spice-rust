@@ -447,7 +447,7 @@ fn oops_reports_wait_for_their_holders_proposal() {
     let body = pass().expect("a triaged pass assembles");
     assert_eq!(body.outputs, vec![first_stamp, second_stamp]);
 
-    super::reclaim::free_active(&bus, epoch, &lane, &seats[0], &design);
+    super::refresh::free_active(&bus, epoch, &lane, &seats[0], &design);
     collapse_and_open_next_generation(&bus, epoch, design);
     clean(&root, bus);
 }

@@ -309,7 +309,7 @@ fn seed_vacant_lane_with_lineage(
 }
 
 #[test]
-fn startup_ready_promotes_expiry_and_preserves_a_one_hour_reclaim_horizon() {
+fn startup_ready_promotes_expiry_and_preserves_a_one_hour_maximum() {
     let epoch = "018f82d4-6f59-7d06-92e3-bce9131163aa"
         .parse()
         .expect("fixture epoch");

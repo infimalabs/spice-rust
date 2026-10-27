@@ -9,8 +9,8 @@ use super::*;
 fn lane_held_fixture(age_seconds: i64) -> Fixture {
     let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
     let start = shifted(now, -age_seconds);
-    let expiry = shifted(start, spice::claim_lease::RECLAIM_HORIZON_SECONDS);
-    let maximum = shifted(start, 2 * spice::claim_lease::RECLAIM_HORIZON_SECONDS);
+    let expiry = shifted(start, spice::claim_lease::AUTOMATIC_MAXIMUM_SECONDS);
+    let maximum = expiry;
     let authority = Authority {
         task: task(),
         lane: uuid(20),
@@ -33,7 +33,7 @@ fn lane_held_fixture(age_seconds: i64) -> Fixture {
 
 #[test]
 fn lane_held_claim_rolls_past_the_hour_its_allocation_minted() {
-    let fixture = lane_held_fixture(spice::claim_lease::RECLAIM_HORIZON_SECONDS - 30);
+    let fixture = lane_held_fixture(spice::claim_lease::AUTOMATIC_MAXIMUM_SECONDS - 30);
     let minted_expiry = fixture.authority.expiry;
     let snapshot = fixture.bus.task_snapshot().expect("seeded snapshot reads");
     assert!(
@@ -104,7 +104,7 @@ fn lane_held_claim_rolls_past_the_hour_its_allocation_minted() {
 
 #[test]
 fn lane_held_claim_stops_rolling_once_its_occupant_leaves_the_lane() {
-    let fixture = lane_held_fixture(spice::claim_lease::RECLAIM_HORIZON_SECONDS - 30);
+    let fixture = lane_held_fixture(spice::claim_lease::AUTOMATIC_MAXIMUM_SECONDS - 30);
     let minted_expiry = fixture.authority.expiry;
     let mut timers = start_timers().expect("timer runtime starts");
     timers

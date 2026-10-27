@@ -191,9 +191,9 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
         "{stale_outcome:?}"
     );
 
-    // The reclaim moves the claim head: a proposal witnessing the earlier
+    // The refresh moves the claim head: a proposal witnessing the earlier
     // claim no longer names the active one.
-    reclaim_held(&bus, epoch, &lane, &seats[0], &design);
+    refresh_held(&bus, epoch, &lane, &seats[0], &design);
     let current = board(&bus, epoch, lane.clone());
     assert_ne!(
         stale.claim,

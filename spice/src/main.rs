@@ -547,7 +547,6 @@ impl NativeInvocation<'_> {
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]
-            | ["task", "reclaim"]
             | ["task", "add"]
             | ["task", "plan"]
             | ["task", "design"]

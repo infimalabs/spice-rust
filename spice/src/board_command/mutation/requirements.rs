@@ -89,7 +89,7 @@ fn lease_transition(
             refusal(
                 "task::require-claim-inactive",
                 Some(error.to_string()),
-                "reclaim the active task before attaching its trust requirement",
+                "run task next to refresh the active claim before attaching its trust requirement",
             )
         })?;
         Some(spice::claim_lease::iced(lease))

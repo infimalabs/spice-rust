@@ -74,8 +74,6 @@ pub struct ClaimState {
     pub remaining: Option<Duration>,
     /// Whether the resident rolls this lease while the occupant holds the lane.
     pub rolling: bool,
-    /// Whether the default task reclaim can extend expiry in place.
-    pub reclaim_extends: bool,
 }
 
 /// One active-claim observation read from the command boundary's live board.
@@ -395,7 +393,6 @@ struct StateKey {
     last_taste: String,
     tier: LeaseTier,
     rolling: bool,
-    reclaim_extends: bool,
     /// Ordinal of the open prod, so each further prod speaks once more.
     #[serde(default)]
     prod: u32,
@@ -412,7 +409,6 @@ impl From<&WorkingState> for StateKey {
             last_taste: clean(&snapshot.last_taste),
             tier: LeaseTier::observe(claim),
             rolling: claim.is_some_and(|claim| claim.rolling),
-            reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
             prod: snapshot.narration.map_or(0, |narration| narration.count),
         }
     }
@@ -429,7 +425,6 @@ impl StateKey {
             last_taste: String::new(),
             tier: LeaseTier::observe(claim),
             rolling: claim.is_some_and(|claim| claim.rolling),
-            reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
             prod: 0,
         }
     }
@@ -521,20 +516,13 @@ fn render_claim_lease(claim: &ClaimState, handle: &str) -> Option<String> {
     let remaining = claim.remaining?;
     match LeaseTier::observe(Some(claim)) {
         LeaseTier::None if claim.rolling => Some(format!(
-            "Claim lease: {handle} rolls while this occupant holds the lane; no reclaim needed",
+            "Claim lease: {handle} rolls while this occupant holds the lane; no action needed",
         )),
         LeaseTier::None => None,
-        _ => {
-            let recovery = if claim.reclaim_extends {
-                format!("run spice task reclaim {handle}")
-            } else {
-                format!("run spice task free {handle}, then spice task next")
-            };
-            Some(format!(
-                "Claim lease: {handle} has {}s remaining; {recovery}",
-                remaining.as_secs(),
-            ))
-        }
+        _ => Some(format!(
+            "Claim lease: {handle} has {}s remaining; run spice task free {handle}, then spice task next",
+            remaining.as_secs(),
+        )),
     }
 }
 

@@ -1381,8 +1381,8 @@ pub(in crate::board_command) fn task_status(
 /// The phase is what decides the lane's next action, and a lane that resumed,
 /// compacted, or lost its assignment answer reads status before it reads any
 /// one task. A lease the resident rolls while this occupant stays seated needs
-/// no reclaim, so the posture is the actionable part of the rest of the line,
-/// not the expiry.
+/// no manual action, so the posture is the actionable part of the line, not
+/// the expiry.
 fn actor_claim_lease(board: &BoardAnswer, entry: &Entry) -> String {
     let handle = entry.handle();
     let phase = entry.workflow().phase.as_str();

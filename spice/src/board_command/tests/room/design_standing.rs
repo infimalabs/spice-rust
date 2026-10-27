@@ -3,7 +3,7 @@
 //! Grouping alone gates no possession.
 
 use super::super::preparation::add_controller;
-use super::super::reclaim::free_active;
+use super::super::refresh::free_active;
 use super::*;
 use wire::rooms::StopControl;
 

@@ -10,12 +10,11 @@ use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::body::GitBoundary;
 use wire::intent::{
-    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimRenew, ClaimWin,
-    CommandAnswer, DocApply, DocLedger, NextWorkCounts, NextWorkState, NextWorkTask, Positioned,
-    ReviewFollowup, TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TaskAdd, TaskClose,
-    TaskConclude, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskFile,
-    TaskHistoryCursor, TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake,
-    TextAnswer,
+    BoardAnswer, BoardGraph, BoardHandout, BoardRead, BoardTask, ClaimWin, CommandAnswer, DocApply,
+    DocLedger, NextWorkCounts, NextWorkState, NextWorkTask, Positioned, ReviewFollowup,
+    TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TaskAdd, TaskClose, TaskConclude,
+    TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskFile, TaskHistoryCursor,
+    TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake, TextAnswer,
 };
 use wire::rooms::{
     RoomListenerAvailability, RoomListenerDelivery, RoomPost, RoomPostAnswer, RoomPostListener,
@@ -79,9 +78,7 @@ fn require_no_planning_implementation(
     }
 }
 
-pub(crate) use spice::claim_lease::{
-    AUTOMATIC_MAXIMUM_SECONDS, AUTOMATIC_PROVISIONAL_SECONDS, RECLAIM_HORIZON_SECONDS,
-};
+pub(crate) use spice::claim_lease::{AUTOMATIC_MAXIMUM_SECONDS, AUTOMATIC_PROVISIONAL_SECONDS};
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 
@@ -90,7 +87,7 @@ pub(crate) use read_guard::next_work::read_next_work;
 pub(crate) use read_guard::next_work::{OccupantMatch, OccupantProfiles, floored_standing};
 const CAPTURE_WORK_RULE: &str = "capturework";
 const RECOVER_STEAL_RULE: &str = "recoversteal";
-fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {
+fn claim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {
     let command = wire::SpiceCommand::new("task", ["status"])
         .expect("task status is a structural Spice recovery command");
     Outcome::Refusal(Refusal::repairable(

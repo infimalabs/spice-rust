@@ -124,6 +124,8 @@ pub enum CommandKind {
     ClaimWin,
     /// Pass possession to a successor with ancestor lineage preserved.
     ClaimCarry,
+    /// Refresh possession against current task and resident generations.
+    ClaimRefresh,
     /// Extend a live, epoch-bound lease.
     ClaimRenew,
     /// Release the winning claim.

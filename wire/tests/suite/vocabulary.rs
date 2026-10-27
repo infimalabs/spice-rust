@@ -54,6 +54,12 @@ const CLAIM_REBOUND: &str = r#"{
   "source": { "proven": { "heads": [] } }
 }"#;
 
+const CLAIM_ACKNOWLEDGED: &str = r#"{
+  "kind": "claim::acknowledged",
+  "task": "0000000B",
+  "generation": 42
+}"#;
+
 const STEER_ACKED: &str = r#"{
   "kind": "steer::acked",
   "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
@@ -158,6 +164,11 @@ fn the_command_door_body_matches_the_specified_fields() {
     assert_eq!(rebound.kind(), FactKind::ClaimRebound);
     assert_eq!(rebound.producer(), Producer::CommandDoor);
     assert_ne!(rebound.body.occupant, rebound.body.ancestor);
+
+    let acknowledged: Fact<body::ClaimAcknowledged> = round_trip(CLAIM_ACKNOWLEDGED);
+    assert_eq!(acknowledged.kind(), FactKind::ClaimAcknowledged);
+    assert_eq!(acknowledged.producer(), Producer::CommandDoor);
+    assert_eq!(acknowledged.body.generation, 42);
 }
 
 #[test]

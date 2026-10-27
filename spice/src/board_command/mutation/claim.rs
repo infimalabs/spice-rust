@@ -112,8 +112,9 @@ fn refuse_if_actor_already_claims(
         "claim::active-exists",
         Some(first.handle().to_string()),
         &format!(
-            "run spice task reclaim {} before claiming another task",
-            first.handle()
+            "finish task {} before claiming another task, or run spice task free {}",
+            first.handle(),
+            first.handle(),
         ),
     ))
 }
@@ -826,12 +827,14 @@ fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswe
     Ok((at, expiry, maximum))
 }
 
-/// The ordinary claim lease granted at `at`: its first expiry and the maximum
-/// instant renewal may reach.
+/// The ordinary claim lease granted at `at`. The resident advances both
+/// horizons while the holder remains seated; no manual extension budget is
+/// minted with the claim.
 pub(in crate::board_command) fn claim_lease(
     at: Instant,
 ) -> Result<(Instant, Instant), Outcome<CommandAnswer>> {
-    Ok((instant_after(at, 60 * 60)?, instant_after(at, 2 * 60 * 60)?))
+    let expiry = instant_after(at, AUTOMATIC_MAXIMUM_SECONDS)?;
+    Ok((expiry, expiry))
 }
 
 pub(in crate::board_command) struct ClaimGit<'a> {

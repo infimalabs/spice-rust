@@ -351,7 +351,6 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("task note", "Append an observation to a task"),
     ("task oops", "File an appliance friction report as a Plan"),
     ("task plan", "Create a Plan, optionally claiming it"),
-    ("task reclaim", "Renew your live claim's lease"),
     (
         "task require",
         "Set a task's trust, schema, appliance, and evidence requirements",
