@@ -1,8 +1,12 @@
 use wire::head::ClaimDisposition;
 use wire::intent::BoardTask;
-use wire::rooms::DesignCycle;
+use wire::rooms::{
+    DesignAvailability, DesignCycle, DesignCycleActor, DesignCycleFacts, DesignCyclePresentation,
+};
 
-use super::{DesignStanding, RoomProjection, associated, design_dependent_count};
+use super::{
+    DesignStanding, RoomProjection, associated, design_dependent_count, design_next_action,
+};
 use crate::work::tests::{board, claim, stamp, task};
 
 fn design(deferred: bool) -> BoardTask {
@@ -198,4 +202,46 @@ fn design_membership_tracks_each_current_dependency_edge() {
         !associated(&selected_by_first.statement.body, &first),
         "provenance does not keep a selected output in its former Design room",
     );
+}
+
+fn cycle_presentation(
+    cycle: DesignCycle,
+    availability: DesignAvailability,
+) -> DesignCyclePresentation {
+    let handle = wire::TaskHandle::for_project("app.rooms", &stamp(1));
+    DesignCyclePresentation::new(cycle, DesignCycleFacts::default(), &handle, availability)
+}
+
+#[test]
+fn room_next_uses_each_typed_cycle_action() {
+    for cycle in DesignCycle::ALL {
+        for availability in [
+            DesignAvailability::DeferredUnclaimed,
+            DesignAvailability::DeferredClaimed,
+            DesignAvailability::Unclaimed,
+            DesignAvailability::Claimed,
+        ] {
+            let cycle = cycle_presentation(cycle, availability);
+            assert_eq!(design_next_action(false, Some(&cycle)), cycle.action);
+        }
+    }
+
+    let gathering = cycle_presentation(DesignCycle::GatheringInput, DesignAvailability::Unclaimed);
+    assert_eq!(gathering.actor, DesignCycleActor::Contributors);
+    assert!(gathering.action.contains("spice room contribute"));
+
+    let held = cycle_presentation(DesignCycle::GatheringInput, DesignAvailability::Claimed);
+    assert_eq!(held.actor, DesignCycleActor::Lane);
+    assert!(held.action.contains("spice design propose"));
+    assert_ne!(
+        design_next_action(false, Some(&gathering)),
+        design_next_action(false, Some(&held))
+    );
+}
+
+#[test]
+fn settled_and_unavailable_rooms_keep_their_own_actions() {
+    let cycle = cycle_presentation(DesignCycle::ReadyForProposal, DesignAvailability::Unclaimed);
+    assert!(design_next_action(true, Some(&cycle)).contains("settled"));
+    assert!(design_next_action(false, None).contains("capture"));
 }
