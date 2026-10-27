@@ -601,7 +601,7 @@ pub(in crate::board_command) fn task_show_bounded(
         )?);
     }
     lines.extend(phase_guidance_lines(task));
-    lines.push(next_command_line(board, task));
+    lines.push(next_command_line(board, task)?);
     Ok(lines.join("\n"))
 }
 
@@ -1236,42 +1236,44 @@ fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
     }
 }
 
-pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
-    if !task.statement.body.filing.is_filed() {
-        return format!("next: spice task file {}", task.statement.body.handle);
+pub(super) fn next_command_line(
+    board: &BoardAnswer,
+    task: &BoardTask,
+) -> Result<String, Outcome<CommandAnswer>> {
+    let entries = actor_entries(board)?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.born() == &task.statement.body.born)
+        .ok_or_else(|| {
+            protocol_fault(
+                "task::detail-next-missing",
+                "task detail is absent from its board",
+            )
+        })?;
+    let transition = accepted_transition(
+        &board.principal,
+        &board.residency.body,
+        &entries,
+        entry,
+        &board.environment(),
+    );
+    let handle = &task.statement.body.handle;
+    if transition != NextTransition::File && task.statement.body.taste.is_some() {
+        return Ok(format!("next: spice task modify {handle} --title \"...\""));
     }
-    if task.statement.body.taste.is_some() {
-        return format!(
-            "next: spice task modify {} --title \"...\"",
-            task.statement.body.handle,
-        );
+    if let Some(next) = design_cycle_next(board, task) {
+        return Ok(next);
     }
-    if task.workflow.body.phase.as_str() == "review" {
-        if active_claimed_by_principal(board, task) {
-            return format!(
-                "next: spice task review {} --finding clean --note \"description current; ...\"",
-                task.statement.body.handle
-            );
-        }
-        return "next: spice task next".to_owned();
-    }
-    if wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body) {
-        if active_claimed_by_principal(board, task) {
-            return design_holder_next(&task.statement.body.handle);
-        }
-        if let Some(next) = design_cycle_next(board, task) {
-            return next;
-        }
-    }
-    if !active_claimed_by_principal(board, task) {
-        return "next: spice task next".to_owned();
-    }
-    "next: spice task done --validation \"...\"".to_owned()
-}
-
-fn active_claimed_by_principal(board: &BoardAnswer, task: &BoardTask) -> bool {
-    task.claim.as_ref().is_some_and(|claim| {
-        claim.body.actor == board.principal && claim.body.disposition == ClaimDisposition::Active
+    Ok(match transition {
+        NextTransition::File => format!("next: spice task file {handle}"),
+        NextTransition::Review => format!(
+            "next: spice task review {handle} --finding clean --note \"description current; ...\""
+        ),
+        NextTransition::Done => "next: spice task done --validation \"...\"".to_owned(),
+        NextTransition::Propose => design_holder_next(handle),
+        NextTransition::Wake => format!("next: spice task wake {handle}"),
+        NextTransition::Next => "next: spice task next".to_owned(),
+        NextTransition::Settled | NextTransition::Inert => "next: -".to_owned(),
     })
 }
 
