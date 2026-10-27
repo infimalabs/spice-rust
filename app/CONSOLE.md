@@ -201,10 +201,10 @@ A working group's toolbar keeps team geometry, total first and lane tabs after:
 | Ticker: newest member activity | Ticker: newest words across the group's rooms; a contribution names its lane and vote |
 
 A design pip reads concluded done, concluded collapsed, or deleted once
-terminal, even while grouped, and open passive outside every group; otherwise
-claimed while a lane claims it for a pass, else the resident's pass cycle
-state. It wears its Design's task-overview graph-card tone, so it agrees with
-the tab marks: in flight and ready for proposal live, awaiting decision
+terminal, even while grouped, and open passive while its group is Passive;
+otherwise claimed while a lane claims it for a pass, else the resident's pass
+cycle state. It wears its Design's task-overview graph-card tone, so it agrees
+with the tab marks: in flight and ready for proposal live, awaiting decision
 warning, blocked danger. A passive Design's pip is a ring in that
 tone; a terminal or unavailable one fades. An unavailable row or cycle invents
 no standing, and each pip's accessible label names it. The pips close the
