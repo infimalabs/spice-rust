@@ -107,14 +107,17 @@ notice deliver exactly one; a notice that fails to write gives the claim back.
 
 ### Acknowledgment corrections
 
-[Assistant prose on the lane tape](../invariants/identity.md#steering-acknowledgment-evidence-is-assistant-prose-on-the-lane-tape)
-is the only acknowledgment evidence. Within one prose the placed header decides
-its key; a later mention in backticks or mid-sentence is talk about the header.
-Prose that only quotes or buries a live key is refused as `steer::ack-missed`
-with the repair: lead a line with the header.
+[Assistant text on the lane tape](../invariants/identity.md#steering-acknowledgment-evidence-is-assistant-prose-on-the-lane-tape)
+is the acknowledgment evidence: visible prose, or a narrated tool call's declared
+intent when no visible prose accompanies it. Reasoning, tool arguments and quoted
+examples do not qualify. `ACK KEY [KEY ...]: response` can retire several keys;
+`NAK KEY: reason` declines one. Recognition happens on landing, not at turn end.
 
-A placed header naming a token the occupant does not hold retires nothing. The
-supervisor privately names that token, says it acknowledged nothing, and lists
-the pending keys, once per compaction. A key successfully delivered to an
-occupant stays recognized for that occupant's lifetime, so a closing reply may
-repeat its header without a false correction.
+Every reminder of an already-delivered directive replaces its body with a
+correction, even when the original is shorter. It names the pending key, says
+whether replies followed, and supplies the same grammar as reasoning-only,
+wrong-key and compaction corrections. First deliveries remain complete.
+
+A wrong-key correction names unrecognized tokens and lists pending keys, once
+per compaction. Delivered keys stay recognized for that occupant's lifetime,
+so repeating a previously acknowledged key causes no false correction.
