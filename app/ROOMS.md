@@ -79,9 +79,9 @@ authority loads or reconnects, an open console keeps its last label and
 geometry and closes nothing.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
-lists lanes in no team; each tile there reads open, passive, while a grouped
-tile reads the standing its group's stance grants. Passive and no group are
-passive; Explore and Converge are active. Dropping a design on **New working
+lists lanes in no team; each tile there reads open, active, while a grouped
+tile reads the standing its group's stance grants. Only Passive is passive;
+no group, Explore, and Converge are active. Dropping a design on **New working
 group** begins a Passive group containing only that design, standing where the
 design stood in partition order or, for an ungrouped design, last. The catalog
 notice reports every outcome; typed refusals such as `group::design-limit`,
