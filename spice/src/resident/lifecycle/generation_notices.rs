@@ -2,7 +2,8 @@
 //!
 //! The task journal is the authority. A resident-minted claim is announced to
 //! its exact occupant, and each active claim records the task generation it
-//! acknowledged so later edits can require reclaim. These projections create
+//! acknowledged so later edits can require acknowledgement through `task
+//! next`. These projections create
 //! no steering directive or acknowledgment key; the detached occupant driver
 //! deduplicates repeated resident observations by their authority identities.
 

@@ -388,18 +388,18 @@ fn a_design_pass_names_its_claim_across_lease_renewals() {
         .expect("replay admits the pass across the renewal");
 }
 
-/// An explicit reclaim of a claim that trailed its task's generation rewrites
-/// the claim head at its renewal, so the next Design pass names that renewal,
-/// while a reclaim of a current claim only extends the lease; replay admits the
-/// pass exactly as the live commit did.
+/// A retained manual renewal of a claim that trailed its task's generation
+/// rewrote the claim head at its renewal, so the next Design pass named that
+/// renewal. A current claim's renewal moved only its lease. Replay preserves
+/// both historical forms exactly as their live commits did.
 #[test]
-fn a_design_pass_names_the_claim_head_a_stale_reclaim_rewrote() {
+fn a_design_pass_names_the_claim_head_a_retained_stale_renewal_rewrote() {
     let mut journal = Journal::in_memory().expect("journal");
     let mut preparation = Preparation::new(&mut journal);
     let controller = preparation.controller.clone();
     let at = |text: &str| -> Instant { text.parse().expect("fixture instant") };
 
-    reclaim(
+    retained_renewal(
         &mut journal,
         &controller,
         at("2030-04-12T18:45:00.000Z"),
@@ -429,13 +429,13 @@ fn a_design_pass_names_the_claim_head_a_stale_reclaim_rewrote() {
         ..head
     });
     preparation.statement = journal.apply(edit).expect("peer edit commits").first();
-    preparation.claim = reclaim(
+    preparation.claim = retained_renewal(
         &mut journal,
         &controller,
         at("2030-04-12T18:47:00.000Z"),
         true,
     );
-    reclaim(
+    retained_renewal(
         &mut journal,
         &controller,
         at("2030-04-12T18:48:00.000Z"),
@@ -446,15 +446,20 @@ fn a_design_pass_names_the_claim_head_a_stale_reclaim_rewrote() {
         &mut journal,
         preparation.retained(1, vec![preparation.output.clone()]),
     )
-    .expect("live admits the pass naming the reclaimed claim head");
+    .expect("live admits the pass naming the renewal's claim head");
     journal
         .verify()
         .expect("replay admits the pass the live commit admitted");
 }
 
-/// Renew `task`'s claim as its holder at `at`; an `acknowledge`d reclaim
-/// rewrites the claim head at the renewal, as reclaiming a stale claim does.
-fn reclaim(journal: &mut Journal, task: &TaskStamp, at: Instant, acknowledge: bool) -> Seq {
+/// Reproduce a retained manual renewal, optionally with the historical
+/// generation acknowledgement that rewrote the claim head at the same fact.
+fn retained_renewal(
+    journal: &mut Journal,
+    task: &TaskStamp,
+    at: Instant,
+    acknowledge: bool,
+) -> Seq {
     let claim = journal
         .read(|read| read.claim_head(task))
         .expect("claim reads")
@@ -490,7 +495,7 @@ fn reclaim(journal: &mut Journal, task: &TaskStamp, at: Instant, acknowledge: bo
             ..claim
         });
     }
-    journal.apply(write).expect("reclaim commits").first()
+    journal.apply(write).expect("renewal commits").first()
 }
 
 #[test]

@@ -8,11 +8,11 @@
 //! A claim won in the transaction acknowledges the generation the transaction
 //! leaves. A mutation made by the active claim's own actor is one that holder
 //! has seen, so it carries a claim that was current into the new generation;
-//! a claim that already trailed stays behind until an explicit reclaim. Any
-//! other claim write keeps the acknowledgement its writer carried, which may
-//! never exceed the task's generation. A completion or review verdict commits
-//! only under a claim that acknowledged the generation the task stood at when
-//! the transaction began.
+//! a claim that already trailed stays behind until the holder explicitly
+//! acknowledges it. Any other claim write keeps the acknowledgement its writer
+//! carried, which may never exceed the task's generation. A completion or
+//! review verdict commits only under a claim that acknowledged the generation
+//! the task stood at when the transaction began.
 //!
 //! Writers never compute the generation. They build their heads from a
 //! snapshot, and only this immediate transaction knows the stored value the

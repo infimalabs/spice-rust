@@ -728,13 +728,13 @@ pub struct ClaimCarry {
     pub successor: Actor,
 }
 
-/// Extend the authenticated actor's active claim within its durable maximum.
+/// Retained explicit-renewal request evidence; no current command executes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClaimRenew {
-    /// Task whose possession is refreshed.
+    /// Task whose possession was refreshed.
     pub task: TaskHandle,
-    /// Requested positive lease duration in whole seconds.
+    /// Requested lease duration in whole seconds.
     pub lease_seconds: u64,
 }
 

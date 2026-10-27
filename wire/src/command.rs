@@ -126,7 +126,7 @@ pub enum CommandKind {
     ClaimCarry,
     /// Refresh possession against current task and resident generations.
     ClaimRefresh,
-    /// Extend a live, epoch-bound lease.
+    /// Decode retained explicit-renewal requests; no current command executes one.
     ClaimRenew,
     /// Release the winning claim.
     ClaimFree,
