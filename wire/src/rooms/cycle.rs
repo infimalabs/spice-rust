@@ -158,7 +158,8 @@ impl DesignCycle {
         match self {
             Self::GatheringInput => format!(
                 "contribute with `spice room contribute {design}`, post in its room, or the \
-                 operator nudges it with `spice preparation nudge {design}`"
+                 operator nudges it with `spice preparation nudge {design}` or has a lane \
+                 claim it now with `spice task capture {design}`"
             ),
             Self::ReadyForProposal => format!(
                 "a lane claims {design} through `spice task next` and ends its pass with one \
@@ -223,8 +224,8 @@ pub enum DesignAvailability {
 
 impl DesignCyclePresentation {
     /// Present `design` in `cycle` with the evidence `facts` carries. A ready
-    /// Design waits on the operator's activation while passive and on its
-    /// holder's proposal while claimed.
+    /// Design waits on the operator's activation while passive, and a ready or
+    /// still-gathering Design on its holder's proposal while claimed.
     #[must_use]
     pub fn new(
         cycle: DesignCycle,
@@ -242,7 +243,10 @@ impl DesignCyclePresentation {
                      `spice task next`"
                 ),
             ),
-            (DesignCycle::ReadyForProposal, DesignAvailability::Claimed) => (
+            (
+                DesignCycle::ReadyForProposal | DesignCycle::GatheringInput,
+                DesignAvailability::Claimed,
+            ) => (
                 DesignCycleActor::Lane,
                 format!(
                     "the holding lane ends this pass of {design} with one `spice preparation \

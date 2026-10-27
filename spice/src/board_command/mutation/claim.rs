@@ -199,7 +199,7 @@ pub(super) fn prepare_capture_claim<'a>(
     refuse_passive_design(selected)?;
     let satisfied = board::resolved_tasks(&snapshot.entries);
     refuse_held_design(selected, &satisfied)?;
-    if !board::eligible_entry(
+    if !board::capturable_entry(
         &satisfied,
         selected,
         command.actor(),
@@ -757,7 +757,7 @@ fn named_claim_selection<'a>(
         Possession::Recover | Possession::Capture => {
             refuse_held_design(entry, &satisfied)?;
             (
-                board::eligible_entry(&satisfied, entry, command.actor(), &environment),
+                board::capturable_entry(&satisfied, entry, command.actor(), &environment),
                 "claim::capture-ineligible",
                 "capture only an unclaimed, ready, pending task",
             )
@@ -785,9 +785,10 @@ pub(in crate::board_command) fn refuse_passive_design(
     Ok(())
 }
 
-/// An active Design whose pass cycle is not ready for a proposal is steeping:
-/// capture and recovery name the cycle and its next action, and the operator's
-/// nudge remains the escape hatch.
+/// An active Design that awaits the operator's decision or waits on work it
+/// released is held even from a named claim: capture and recovery name the
+/// cycle and its next action. A Design still gathering input is claimable by
+/// name, so the operator can force its pass before it steeps.
 pub(in crate::board_command) fn refuse_held_design(
     entry: &Entry,
     satisfied: &board::ResolvedTasks,

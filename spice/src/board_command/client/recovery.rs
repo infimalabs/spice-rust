@@ -189,7 +189,7 @@ fn capture_recovery_preflight(
         board::stealable_entry(&satisfied, entry, &board.principal, &board.environment())
     } else {
         super::super::mutation::refuse_held_design(entry, &satisfied)?;
-        board::eligible_entry(&satisfied, entry, &board.principal, &board.environment())
+        board::capturable_entry(&satisfied, entry, &board.principal, &board.environment())
     };
     if !eligible {
         return Err(refusal(
