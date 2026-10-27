@@ -40,15 +40,15 @@ impl steer::Standing for PendingKeys {
     }
 }
 
-fn activity_message(keys: &BTreeSet<String>) -> String {
-    if keys.is_empty() {
-        return String::new();
-    }
+fn activity_message<'a>(keys: impl IntoIterator<Item = &'a String>) -> String {
     let keys = keys
-        .iter()
+        .into_iter()
         .map(|key| format!("`{key}`"))
         .collect::<Vec<_>>()
         .join(", ");
+    if keys.is_empty() {
+        return String::new();
+    }
     format!(
         "<system-notice>\n{ACTIVITY_ACK_MARKER} Complete visible response left pending \
          steering unanswered: {keys}. Acknowledge it immediately. {}\n</system-notice>",
@@ -256,17 +256,67 @@ impl<W: Write + Send + 'static> Driver<W> {
             .extend(steer::inbox::keys(message).map(str::to_owned));
     }
 
-    /// Observe the landing of an ordinary corrective reminder or an
-    /// activity-driven replacement. Only a landed first correction arms a key.
+    /// Only a correction observed on the operator tape arms its pending keys.
     pub(super) fn observe_activity_reminder(&self, text: &str) {
+        let (keys, landed) = {
+            let delivered = self
+                .delivered
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let pending = delivered
+                .as_deref()
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map(steer::inbox::keys)
+                .into_iter()
+                .flatten()
+                .collect::<BTreeSet<_>>();
+            let background = self
+                .background
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut keys = BTreeSet::new();
+            let mut landed = false;
+            for (purpose, message) in background.iter() {
+                if !text.contains(message.as_str()) {
+                    continue;
+                }
+                match purpose.as_str() {
+                    "inbox" if steer::inbox::replays(message) => {
+                        keys.extend(
+                            steer::inbox::keys(message)
+                                .filter(|key| pending.contains(key))
+                                .map(str::to_owned),
+                        );
+                    }
+                    "inbox" => {
+                        keys.extend(message.lines().filter_map(|line| {
+                            let key = line
+                                .strip_prefix("[NUDGE] key=")?
+                                .split_whitespace()
+                                .next()?;
+                            pending.contains(key).then(|| key.to_owned())
+                        }));
+                    }
+                    "hidden-ack" | "misdirected-ack" => {
+                        keys.extend(
+                            message
+                                .split(|character: char| !character.is_ascii_alphanumeric())
+                                .filter(|key| pending.contains(key))
+                                .map(str::to_owned),
+                        );
+                    }
+                    ACTIVITY_ACK_PURPOSE => landed = true,
+                    _ => {}
+                }
+            }
+            (keys, landed)
+        };
         let mut activity = self
             .activity_reminder
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if text.contains("[NUDGE] key=") {
-            activity.arm(steer::inbox::keys(text).map(str::to_owned));
-        }
-        if text.contains(ACTIVITY_ACK_MARKER) {
+        activity.arm(keys);
+        if landed {
             activity.landed();
         }
     }
@@ -310,7 +360,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         if due.is_empty() {
             return;
         }
-        let message = activity_message(&due);
+        let message = activity_message(activity.queued().union(&due));
         if self.background(ACTIVITY_ACK_PURPOSE, &message).is_ok() {
             activity.delivered(&due);
         }
@@ -432,10 +482,6 @@ impl<W: Write + Send + 'static> Driver<W> {
         );
         let sent = self.background("hidden-ack", &message).is_ok();
         if sent {
-            self.activity_reminder
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .arm(mentioned.iter().map(|key| key.as_str().to_owned()));
             reminder.nudged.extend(mentioned);
         }
         sent
@@ -520,10 +566,6 @@ impl<W: Write + Send + 'static> Driver<W> {
         );
         let sent = self.background("misdirected-ack", &message).is_ok();
         if sent {
-            self.activity_reminder
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .arm(pending.iter().map(|key| (*key).to_owned()));
             misdirected.extend(named);
         }
         sent
