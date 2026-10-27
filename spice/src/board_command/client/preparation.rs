@@ -11,6 +11,7 @@ use wire::rooms::{
 };
 
 use super::*;
+use crate::board_command::preparation::claim_design_remedy;
 
 pub(in crate::board_command) mod assemble;
 #[cfg(test)]
@@ -266,7 +267,7 @@ pub(in crate::board_command) fn held_design<'a>(
             return Err(refusal(
                 "preparation::design-unheld",
                 Some(named.to_string()),
-                "propose only a pass of a Design this capability holds an active claim on",
+                &claim_design_remedy(Some(named)),
             ));
         }
         return Ok(heads);
@@ -279,7 +280,7 @@ pub(in crate::board_command) fn held_design<'a>(
         return Err(refusal(
             "preparation::design-unheld",
             Some(board.principal.to_string()),
-            "claim the open Design with `spice task next` before proposing its pass",
+            &claim_design_remedy(None),
         ));
     };
     if let Some(other) = held.next() {
@@ -307,7 +308,7 @@ pub(in crate::board_command) fn derive_proposal(
         refusal(
             "preparation::design-unheld",
             Some(design.statement.body.handle.to_string()),
-            "claim the open Design with `spice task next` before proposing its pass",
+            &claim_design_remedy(Some(&design.statement.body.handle)),
         )
     })?;
     Ok(DesignPassProposal::witnessing(

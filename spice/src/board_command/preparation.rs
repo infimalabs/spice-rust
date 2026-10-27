@@ -37,6 +37,19 @@ pub(super) fn dispatch_preparation(
     })
 }
 
+/// How a lane claims the open Design whose pass it means to propose.
+///
+/// Allocation hands out only a Design ready for proposal, while a Design still
+/// gathering input is claimed by name, so the remedy names both routes.
+pub(super) fn claim_design_remedy(design: Option<&TaskHandle>) -> String {
+    match design {
+        Some(design) => format!(
+            "claim {design} before proposing its pass: `spice task next` takes it once it is ready for proposal, and `spice task capture {design}` claims it by name while it gathers input"
+        ),
+        None => "claim the open Design before proposing its pass: `spice task next` takes one ready for proposal, and `spice task capture HANDLE` claims an undeferred Design still gathering input by name".to_owned(),
+    }
+}
+
 /// Admit the exact claimed Design and every gated output named by one pass.
 fn require_design_proposal(
     snapshot: &bus::TaskSnapshot,
@@ -61,10 +74,12 @@ fn require_design_proposal(
         ));
     };
     let Some(claim) = heads.claim() else {
+        let statement = heads.statement().body();
+        let handle = TaskHandle::for_filing(&statement.project, &statement.born, statement.filing);
         return Err(refusal(
             "preparation::proposal-unclaimed",
             Some(controller.to_string()),
-            "claim the ready Design before proposing the completed pass",
+            &claim_design_remedy(Some(&handle)),
         ));
     };
     if claim.position() != proposal_claim

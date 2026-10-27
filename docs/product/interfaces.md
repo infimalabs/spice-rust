@@ -116,7 +116,9 @@ handle.
   its room, the Design, a governed input, an output, or a task prepared under
   it. The Design is the open Design the caller holds an active claim on
   (`--design HANDLE` names it when the caller holds several; holding none
-  refuses `preparation::design-unheld`), the candidate stamp is minted fresh,
+  refuses `preparation::design-unheld`, naming `spice task next` for a Design
+  ready for proposal and `spice task capture HANDLE` for an undeferred Design
+  still gathering input), the candidate stamp is minted fresh,
   and the Design's statement and claim heads, each output and input, and the
   room's newest publication are witnessed, so a statement edit, claim move, or
   room publication between that read and the write refuses
