@@ -253,6 +253,79 @@ fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() 
     clean(&root, bus);
 }
 
+/// An add whose new task could not be claimed refuses whole, and its remedy
+/// routes through adding without a claim rather than naming the handle the
+/// refused write never created.
+#[test]
+fn create_and_claim_of_blocked_work_refuses_without_naming_the_uncreated_task() {
+    let (root, bus, epoch, seats) = fixture("create-and-claim-blocked", 1);
+    let seat = &seats[0];
+    let actor = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    let prerequisite = todo_task(&bus, epoch, "CLAIM-first001", "Open prerequisite");
+    let before = board(&bus, epoch, actor.clone());
+    let born = stamp("CLAIM-block001");
+    let handle = TaskHandle::for_project("task.workflow", &born);
+    let facts_before = bus
+        .fact_snapshot()
+        .expect("fixture facts remain readable")
+        .facts()
+        .len();
+    let outcome = issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence { task: born },
+            Witness::Eligibility {
+                rule: "capture".parse().expect("fixture capture rule"),
+            },
+            residency(&before, seat),
+        ],
+        &TaskAdd {
+            preparation: None,
+            intent: None,
+            title: "Blocked work this lane wants to hold".to_owned(),
+            pitch: "This work keeps the fixture honest.".to_owned(),
+            project: Some("task.workflow".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("ack:1kLGp2NJ".parse().expect("fixture steering origin")),
+            flow: Some("todo,review".to_owned()),
+            depends: vec![prerequisite],
+            claim: true,
+            draft: false,
+        },
+    );
+    let Outcome::Refusal(refusal) = &outcome else {
+        panic!("blocked create-and-claim must refuse: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "claim::capture-ineligible");
+    let remedy = refusal.explanation();
+    assert!(
+        remedy.contains("without --claim") && !remedy.contains(&handle.to_string()),
+        "{remedy}"
+    );
+    assert_eq!(
+        bus.fact_snapshot()
+            .expect("fixture facts remain readable")
+            .facts()
+            .len(),
+        facts_before,
+        "refusal must not write any facts",
+    );
+    assert!(
+        board(&bus, epoch, actor)
+            .tasks
+            .iter()
+            .all(|task| task.statement.body.handle != handle),
+        "refused task must not exist",
+    );
+    clean(&root, bus);
+}
+
 #[test]
 fn a_defaulted_flow_omits_review_only_when_every_dependency_is_in_review() {
     let (root, bus, epoch, seats) = fixture("creation-dependency-flow", 1);

@@ -63,7 +63,7 @@ fn prepare_mutation_claim<'a>(
         return Ok(None);
     }
     let room_context = claim_room(bus, repository, selected)?;
-    let prepared = prepare_capture_claim(bus, command, repository, snapshot, selected)?;
+    let prepared = prepare_capture_claim(bus, command, repository, snapshot, selected, false)?;
     let origin_context = task_steering_origin_output(bus, &snapshot.facts, selected)?;
     let answer =
         Box::new(prepared.answer(command, snapshot, selected, origin_context, room_context));
@@ -283,7 +283,7 @@ fn create_task(
     }
     let post = prepared_entry(&prepared);
     let added_claim = if add.claim {
-        match prepare_capture_claim(bus, command, repository, &snapshot, &post) {
+        match prepare_capture_claim(bus, command, repository, &snapshot, &post, true) {
             Ok(claim) => Some(claim),
             Err(outcome) => return outcome,
         }
