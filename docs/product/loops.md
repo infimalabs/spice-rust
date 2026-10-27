@@ -106,7 +106,9 @@ flowchart LR
   conflicting commit leaves the replay paused for the claimant with the
   snapshot waiting behind it until task completion is retried.
 - `task free`, the holder's own deferral, and plan completion all park this way.
-  A peer's deferral changes scheduling only and never takes possession.
+  A peer's deferral never takes possession: it changes scheduling only, except
+  that deferring an open Design another lane holds
+  [asks that holder to free it](invariants/identity.md#work-deferral-stops-an-open-design).
 - A failed guarded write is an atomic refusal: the claim and lane return to
   their prior state, including the staged and worktree split.
 - `task capture` is the single adoption boundary. With `HANDLE` it claims that
