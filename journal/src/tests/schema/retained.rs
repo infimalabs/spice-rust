@@ -1029,7 +1029,6 @@ fn plant_stored_group(journal: &Journal, anchors: usize) -> String {
         anchors: (1..=anchors)
             .map(|micros| wire::TaskStamp::for_micros(micros as i64).expect("fixture anchor"))
             .collect(),
-        stance: wire::rooms::WorkingGroupStance::Running,
     };
     let moved = wire::rooms::WorkingGroupMoved {
         design: group.anchors[0].clone(),

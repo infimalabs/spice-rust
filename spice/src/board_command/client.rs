@@ -1008,10 +1008,7 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
                     .with_creator_team(heads.creator_team)
                     .with_explicit_release(heads.explicit_release)
                     .with_grouped(heads.grouped)
-                    .with_design(wire::rooms::DesignFacts {
-                        active: heads.design_active,
-                        cycle: heads.design_cycle,
-                    })
+                    .with_design(heads.design_cycle)
                     .with_preparation_decision(heads.preparation_decision.clone())
             })
         })
@@ -1337,16 +1334,10 @@ pub(crate) fn dispatch(
     bus: &Bus,
     command: &wire::AdmittedCommand,
 ) -> Option<Outcome<CommandAnswer>> {
-    let allocation = board::NextConfig::default();
-    if let wire::intent::Intent::WorkingGroupMove(moving) = command.body() {
-        let config = steer::Config::default();
-        return Some(move_working_group(bus, command, moving, &config).0);
+    if let wire::intent::Intent::TaskDefer(defer) = command.body() {
+        return Some(task_defer(bus, command, defer, None, &steer::Config::default()).0);
     }
-    if let wire::intent::Intent::WorkingGroupStance(stance) = command.body() {
-        let config = steer::Config::default();
-        return Some(set_working_group_stance(bus, command, stance, &config).0);
-    }
-    dispatch_with_repository(bus, command, None, &allocation, None)
+    dispatch_with_repository(bus, command, None, &board::NextConfig::default(), None)
 }
 fn dispatch_working_group(
     bus: &Bus,
@@ -1354,6 +1345,7 @@ fn dispatch_working_group(
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
         wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
+        wire::intent::Intent::WorkingGroupMove(moving) => move_working_group(bus, command, moving),
         wire::intent::Intent::WorkingGroupArrange(arrange) => {
             arrange_working_groups(bus, command, arrange)
         }
@@ -1410,7 +1402,6 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskOopsAdd(add) => task_oops_add(bus, command, add),
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note),
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, repository),
-        wire::intent::Intent::TaskDefer(defer) => task_defer(bus, command, defer, repository),
         wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, repository),
         wire::intent::Intent::TaskFile(file) => task_file(bus, command, file, repository),
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {

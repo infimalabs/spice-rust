@@ -17,7 +17,6 @@ mod conversation;
 
 use super::roster::{self, GroupOpener, RosterView, Wording};
 use super::sender::{SenderHandle, admit_action};
-use super::watchband::TeamControls;
 use crate::AppRuntime;
 use crate::client_action::{ClientAction, GroupChange};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
@@ -259,12 +258,6 @@ impl Controls {
         Callback::from(move |text| notice.set(Some(text)))
     }
 
-    /// The catalog's notice as a callback for its cards' controls.
-    fn catalog_reporter(&self) -> Callback<String> {
-        let notice = self.notice.clone();
-        Callback::from(move |text| notice.set(Some(text)))
-    }
-
     /// The text a design composer draws with: its saved draft the first time
     /// this page shows it, then whatever a landed post last cleared it to.
     fn drawn(&self, view: &GroupView, design: &TaskStamp) -> String {
@@ -320,7 +313,6 @@ pub(super) fn render_catalog(
     runtime: Option<&AppRuntime>,
     work: Option<&WorkProjection<'_>>,
     controls: &Controls,
-    team_controls: &UseReducerHandle<TeamControls>,
     sender: &SenderHandle,
 ) -> Html {
     let Some(runtime) = runtime else {
@@ -342,7 +334,7 @@ pub(super) fn render_catalog(
                 if let Some(notice) = (*controls.notice).clone() {
                     <p class="room-notice" role="status">{notice}</p>
                 }
-                {render_roster(runtime, work, controls, team_controls, sender)}
+                {render_roster(runtime, work, controls, sender)}
             </>
         },
     };
@@ -425,36 +417,29 @@ fn section(title: &'static str, body: Html) -> Html {
     }
 }
 
-/// The working-group roster: each group a card named for its lead design,
-/// carrying its stance and the console it opens, then New working group and the
-/// ungrouped Designs. Every design tile links its read view.
+/// The working-group roster: each group a card named for its lead design with
+/// the console it opens, then New working group and the ungrouped Designs.
+/// Every design tile links its read view.
 fn render_roster(
     runtime: &AppRuntime,
     work: Option<&WorkProjection<'_>>,
     controls: &Controls,
-    team_controls: &UseReducerHandle<TeamControls>,
     sender: &SenderHandle,
 ) -> Html {
     let partition = runtime.room_projection().partition();
     let tasks = runtime
         .board()
         .map_or(&[][..], |board| board.tasks.as_slice());
-    let report = controls.catalog_reporter();
     let head = |group: &RoomAuthorityStamp, designs: &[TaskStamp]| {
         let size = match designs.len() {
             1 => "1 design".to_owned(),
             count => format!("{count} designs"),
         };
         html! {
-            <>
-                <div>
-                    <strong>{lead_label(runtime, group, designs.first())}</strong>
-                    <span>{size}</span>
-                </div>
-                <div class="room-group-stance">
-                    {super::watchband::stance_slider(runtime, team_controls, sender, &report, group)}
-                </div>
-            </>
+            <div>
+                <strong>{lead_label(runtime, group, designs.first())}</strong>
+                <span>{size}</span>
+            </div>
         }
     };
     let base = |group: &RoomAuthorityStamp| console::group_base(&partition.groups, group);
@@ -623,11 +608,7 @@ fn submit_change(
         Change::Arrange(groups) => GroupChange::Arrange(WorkingGroupArrange {
             groups: groups
                 .into_iter()
-                .map(|(group, anchors)| WorkingGroup {
-                    group,
-                    anchors,
-                    stance: wire::rooms::WorkingGroupStance::Paused,
-                })
+                .map(|(group, anchors)| WorkingGroup { group, anchors })
                 .collect(),
         }),
     };
@@ -647,36 +628,17 @@ pub(super) fn submit_group_change(
         Rc::new(
             move |result: Result<wire::intent::WorkingGroupChange, String>| {
                 let message = match result {
-                    Ok(change) => {
-                        let done = match change.status {
-                            WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
-                            WorkingGroupChangeStatus::Ended => {
-                                "Design moved; its group ended with its last design.".to_owned()
-                            }
-                            WorkingGroupChangeStatus::Arranged => {
-                                "Working groups arranged.".to_owned()
-                            }
-                            WorkingGroupChangeStatus::Disbanded => {
-                                "Working group disbanded.".to_owned()
-                            }
-                            WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
-                            WorkingGroupChangeStatus::Stanced => "Group brake set.".to_owned(),
-                            WorkingGroupChangeStatus::Shelved => {
-                                "Owed shelving committed.".to_owned()
-                            }
-                        };
-                        if change.owed.is_empty() {
-                            done
-                        } else {
-                            let owed = change
-                                .owed
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            format!("{done} Shelving is still owed for {owed}.")
+                    Ok(change) => match change.status {
+                        WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
+                        WorkingGroupChangeStatus::Ended => {
+                            "Design moved; its group ended with its last design.".to_owned()
                         }
-                    }
+                        WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
+                        WorkingGroupChangeStatus::Disbanded => {
+                            "Working group disbanded.".to_owned()
+                        }
+                        WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
+                    },
                     Err(error) => error,
                 };
                 controls.report(message);

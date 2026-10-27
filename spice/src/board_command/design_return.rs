@@ -1,8 +1,8 @@
-//! The operator's newest candidate feedback as an active Design's next input.
+//! The operator's newest candidate feedback as an open Design's next input.
 //!
 //! Legacy returns and output-by-output decisions record what the operator sent
-//! back or accepted on one exact candidate version. Each active Design (open
-//! and held by no Paused working group) whose claim an occupied lane holds is owed
+//! back or accepted on one exact candidate version. Each open, undeferred
+//! Design whose claim an occupied lane holds is owed
 //! its newest feedback until that exact occupant's supervisor confirms enqueue
 //! and the resident commits `room::relayed` for the still-current claim.
 //! Failed or stale attempts remain owed. A holder present at the decision hears
@@ -18,7 +18,7 @@ use wire::rooms::{
     RoomAuthorityStamp,
 };
 
-/// One return an occupied holder of an active Design is owed.
+/// One return an occupied holder of an open, undeferred Design is owed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReturnOwed {
     pub(crate) lane: CanonicalUuid,
@@ -53,7 +53,7 @@ pub(crate) fn owed_returns(
         };
         if !wire::intent::is_open_design(statement.intent, workflow)
             || claim.disposition != ClaimDisposition::Active
-            || !snapshot.facts().design_is_active(&statement.born)
+            || workflow.deferral.is_some()
         {
             continue;
         }

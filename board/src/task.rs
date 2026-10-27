@@ -163,7 +163,7 @@ pub struct Entry {
     creator_team: Option<wire::CanonicalUuid>,
     explicit_release: bool,
     grouped: bool,
-    design: wire::rooms::DesignFacts,
+    design: wire::rooms::DesignCycleFacts,
     preparation_decision: Option<wire::rooms::DecisionRef>,
     phase_handoff: Option<PhaseHandoff>,
     queued_at: Option<wire::Instant>,
@@ -205,7 +205,7 @@ impl Entry {
             creator_team: None,
             explicit_release: false,
             grouped: false,
-            design: wire::rooms::DesignFacts::default(),
+            design: wire::rooms::DesignCycleFacts::default(),
             preparation_decision: None,
             phase_handoff: None,
             queued_at: None,
@@ -324,28 +324,22 @@ impl Entry {
     }
 
     /// Whether the current working-group partition holds this task. Only a
-    /// Design can stand in a group; a Design outside every group is active.
+    /// Design can stand in a group, and grouping never gates its possession.
     #[must_use]
     pub const fn grouped(&self) -> bool {
         self.grouped
     }
 
-    /// Attach this Design's working-group standing and pass-cycle evidence.
+    /// Attach this Design's pass-cycle evidence.
     #[must_use]
-    pub const fn with_design(mut self, design: wire::rooms::DesignFacts) -> Self {
+    pub const fn with_design(mut self, design: wire::rooms::DesignCycleFacts) -> Self {
         self.design = design;
         self
     }
 
-    /// Whether this Design is active under its working-group stance.
+    /// This Design's pass-cycle evidence.
     #[must_use]
-    pub const fn design_is_active(&self) -> bool {
-        self.design.active
-    }
-
-    /// This Design's working-group standing and pass-cycle evidence.
-    #[must_use]
-    pub const fn design(&self) -> wire::rooms::DesignFacts {
+    pub const fn design(&self) -> wire::rooms::DesignCycleFacts {
         self.design
     }
 

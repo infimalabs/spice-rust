@@ -354,7 +354,7 @@ fn terminal_standing_outranks_retained_group_on_board_and_group_reads() {
             },
         ),
         (born(&done), wire::intent::DesignStanding::Done),
-        (born(&open), wire::intent::DesignStanding::Active),
+        (born(&open), wire::intent::DesignStanding::Open),
     ]);
     let board = board(&bus, epoch, Actor::Operator)
         .tasks

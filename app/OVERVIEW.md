@@ -86,9 +86,10 @@ authority, missing prerequisite, cycle, or other non-advancing wall that needs
 a human to repair; merely waiting its turn is never Blocked. A Design cycle
 never hides such a wall beneath it: every dependent is Blocked. The Design's
 own row remains **Awaiting decision** when that action is available, is Blocked
-in another active cycle, or remains **Passive** outside the partition. A lapsed
-claim likewise remains **Stale** on its own row. Awaiting-decision, Passive, and
-Stale rows are transparent to a dependency walk, so the underlying gate decides
+in another cycle, or remains **Deferred** while deferred, a wall its dependents
+read as Blocked. A lapsed claim likewise remains **Stale** on its own row.
+Awaiting-decision and Stale rows are transparent to a dependency walk, so the
+underlying gate decides
 the dependent's standing.
 A **Draft** row is prospective work its author is still editing. It counts in
 no standing, and nothing offers it until `spice task file` turns it into Filed
@@ -185,6 +186,10 @@ change made against a stale view refuses. A landed change re-reads the board,
 so the fact shows the new time, or a dash once cleared, without a reload. The
 outcome, or the refusal, stays on the same line, in full on hover. Either
 button is disabled when the runtime does not offer its command.
+Deferring an open Design is the one way to stop it: no lane may possess it,
+its invitations end, and a lane already holding it is sent one stop direction
+asking it to checkpoint and `spice task free`. **Clear**, or moving it into a
+working group, makes it possessable again.
 
 **Running jobs** closes the sheet, after every task's details, in a fixed
 footprint that scrolls beyond it. It is global: every job a lane still runs is
@@ -202,7 +207,7 @@ overview scope is selected: an unclaimed, undeferred Design awaiting the
 operator's decision on its candidate, read as **Awaiting your decision**; a
 task whose unsatisfied environmental requirement (trust grant, journal schema,
 appliance version) needs the operator, unless that task is already set aside
-(closed, Draft, parked, deferred, or a passive Design); and each
+(closed, Draft, parked, or deferred); and each
 human-actionable Blocked gate or the task where its dependency chain stops. A
 deferred task keeps its own explicit standing without entering this danger
 queue merely for waiting; it enters only when a Blocked dependency chain
@@ -214,7 +219,7 @@ queue item appears once, in board order, however many reasons or held tasks
 reach it. A dependency on work an agent can claim or is working, or on an open
 Design whose underlying gate can advance, is ordinary **Waiting** and never
 counts. A Design awaiting your decision counts once as itself, never through
-its outputs. Claimable stale prerequisites, passive Designs, and
+its outputs. Claimable stale prerequisites and
 Awaiting-decision Designs remain transparent: when any has a real wall beneath
 it, the queue names that underlying task and reason instead of blaming its
 dependent.

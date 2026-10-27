@@ -4,12 +4,11 @@ use wire::grouping::{Destination, Group, GroupingError, Partition, Placement, Re
 use wire::intent::{
     DesignStanding, WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange,
     WorkingGroupChangeStatus, WorkingGroupFast, WorkingGroupMove, WorkingGroupPage,
-    WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
+    WorkingGroupRead, WorkingGroupView,
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupDisband,
-    WorkingGroupMoved, WorkingGroupPartition, WorkingGroupStance, WorkingGroupsArranged,
-    working_group_origin,
+    WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged, working_group_origin,
 };
 
 type Designs<'a> = Partition<&'a RoomAuthorityStamp, &'a TaskStamp>;
@@ -88,12 +87,7 @@ fn working_group_view(
             let workflow = read.workflow_head(born)?;
             Ok(match (task, workflow) {
                 (Some(task), Some(workflow)) if !workflow.body().status.is_deleted() => {
-                    match DesignStanding::of(
-                        task.body().intent,
-                        workflow.body(),
-                        group.stance.is_active(),
-                        None,
-                    ) {
+                    match DesignStanding::of(task.body().intent, workflow.body(), None) {
                         Some(design) => WorkingGroupAnchor::Available {
                             born: born.clone(),
                             handle: TaskHandle::for_project(&task.body().project, born),
@@ -108,7 +102,6 @@ fn working_group_view(
         .collect::<Result<_, GuardError>>()?;
     Ok(WorkingGroupView {
         group: group.group,
-        stance: group.stance,
         anchors,
     })
 }
@@ -145,14 +138,14 @@ impl<'a> wire::grouping::Kind for DesignKind<'a> {
 /// Move one design into a group, founding the group when no group holds that
 /// identity, or out of every group; a group its last design leaves ends.
 ///
-/// A move that changes an active Design to passive asks the lane holding it
-/// to checkpoint and free; the returned lane is the one asked to park.
-pub(crate) fn move_working_group(
+/// Acquisition wakes: a deferred open Design moved into a group, including
+/// one founding it, has its deferral cleared in the same write, which then
+/// commits under the Design's own task origin.
+pub(super) fn move_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request: &WorkingGroupMove,
-    config: &steer::Config,
-) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
+) -> Outcome<CommandAnswer> {
     let design = request.design.clone();
     let (current, head, workflow) = match bus.read(move |read| {
         Ok((
@@ -162,54 +155,42 @@ pub(crate) fn move_working_group(
         ))
     }) {
         Ok(observed) => observed,
-        Err(error) => {
-            return (
-                store_fault("group::read-unavailable", &error.to_string()),
-                None,
-            );
-        }
+        Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
     };
     let revision = match next_revision(command, current.revision) {
         Ok(revision) => revision,
-        Err(outcome) => return (outcome, None),
+        Err(outcome) => return outcome,
     };
-    let Some(head) = head else {
-        let missing = refusal(
+    let (Some(head), Some(workflow)) = (head, workflow) else {
+        return refusal(
             "group::design-missing",
             Some(request.design.to_string()),
             "read the board and retry with a current Design task",
         );
-        return (missing, None);
-    };
-    let Some(workflow) = workflow else {
-        let missing = refusal(
-            "group::design-missing",
-            Some(request.design.to_string()),
-            "read the board and retry with a current Design task",
-        );
-        return (missing, None);
     };
     let task = head.body();
-    let was_active = current.design_is_active(&request.design);
     let (fact, status) = match moved_fact(&current, task, workflow.body(), request, revision) {
         Ok(moved) => moved,
-        Err(outcome) => return (outcome, None),
+        Err(outcome) => return outcome,
     };
-    let deactivation = if was_active && !fact.partition.design_is_active(&request.design) {
-        let handle = TaskHandle::for_project(&task.project, &task.born);
-        match Deactivation::read(bus, &handle) {
-            Ok(deactivation) => deactivation,
-            Err(outcome) => return (outcome, None),
+    let woken = (request.to.is_some()
+        && workflow.body().deferral.is_some()
+        && wire::intent::is_open_design(task.intent, workflow.body()))
+    .then(|| wire::WorkflowHead {
+        deferral: None,
+        ..workflow.body().clone()
+    });
+    let origin = if woken.is_some() {
+        match task_origin(&task.born) {
+            Ok(origin) => origin,
+            Err(outcome) => return outcome,
         }
     } else {
-        None
-    };
-    let origin = match deactivation.as_ref().map(Deactivation::origin).transpose() {
-        Ok(origin) => origin.unwrap_or_else(working_group_origin),
-        Err(outcome) => return (outcome, None),
+        working_group_origin()
     };
     // Statement and workflow witnesses keep an intent edit or phase transition
-    // from slipping a pre-Design row into a group. Group membership changes
+    // from slipping a pre-Design row into a group, and keep a wake from
+    // landing over a workflow that moved. Group membership changes
     // organization only; execution authorization is an explicit preparation
     // decision.
     let witnesses = vec![
@@ -223,8 +204,8 @@ pub(crate) fn move_working_group(
             phase: workflow.body().phase.clone(),
         },
     ];
-    let mut parked = None;
-    let outcome = change_partition(
+    let born = task.born.clone();
+    change_partition(
         bus,
         command,
         PartitionChange {
@@ -233,31 +214,26 @@ pub(crate) fn move_working_group(
             status,
             witnesses,
         },
-        |write, at| {
+        |write, _| {
             write
                 .fact(fact, FactCause::Root)
                 .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))?;
-            if let Some(deactivation) = deactivation {
-                parked = deactivation.stage(bus, command, config, write, at, None)?;
+            if let Some(woken) = woken {
+                let wake = write
+                    .fact(body::TaskWoken { task: born.clone() }, FactCause::Root)
+                    .map_err(|error| store_fault("group::wake-invalid", &error.to_string()))?;
+                write.workflow_head(born, wake, move |_| woken);
             }
             Ok(())
         },
         request.clone(),
-    );
-    let committed = matches!(
-        &outcome,
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(_),
-            ..
-        })
-    );
-    (outcome, parked.filter(|_| committed))
+    )
 }
 
 /// The move fact and change status `request` makes of `current`, refusing a
 /// non-Design, a Design joining a group while neither open nor completed, an
-/// unchanged standing, or a full group. A completed Design may join: a group's
-/// only authority is the active standing of the open Designs it holds.
+/// unchanged standing, or a full group. A completed Design may join: a group
+/// organizes Designs and gates no possession.
 fn moved_fact(
     current: &WorkingGroupPartition,
     task: &wire::TaskHead,
@@ -420,14 +396,8 @@ pub(super) fn set_working_group_fast(
     )
 }
 
-/// Most reads one group command makes of a room before reporting its
-/// shelving owed. A Paused group refuses new claims on its
-/// Designs, so a room that moved settles within a read or two.
-const SHELVING_ATTEMPTS: usize = 4;
-
-/// End one standing group and leave all of its Designs ungrouped. An
-/// ungrouped Design is active, so a disband stops no holder and shelves no
-/// room.
+/// End one standing group and leave all of its Designs ungrouped. Grouping
+/// gates no possession, so a disband stops no holder.
 pub(super) fn disband_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -457,203 +427,6 @@ pub(super) fn disband_working_group(
         fact,
         request.clone(),
     )
-}
-
-/// Set one standing group's brake. A change to Paused
-/// commits the partition first, then shelves each of the group's Designs from
-/// its room as read after that commit, under the Design's own task origin,
-/// since one write carries one origin. Setting Paused on a group already
-/// Paused commits any shelving still owed instead of refusing. Returns every
-/// lane asked to park.
-pub(crate) fn set_working_group_stance(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    request: &WorkingGroupStanceSet,
-    config: &steer::Config,
-) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let policy = ShelvingPolicy { config };
-    let (current, revision) = match advancing_partition(bus, command) {
-        Ok(found) => found,
-        Err(outcome) => return (outcome, Vec::new()),
-    };
-    let group = match standing_group(&current, &request.group) {
-        Ok(group) => group,
-        Err(outcome) => return (outcome, Vec::new()),
-    };
-    let unchanged = group.stance == request.stance;
-    if unchanged && request.stance.is_active() {
-        return (stance_unchanged(request.stance), Vec::new());
-    }
-    let deactivating = !request.stance.is_active() && (unchanged || group.stance.is_active());
-    let handles = if deactivating {
-        match design_handles(bus, group.anchors.clone()) {
-            Ok(handles) => handles,
-            Err(outcome) => return (outcome, Vec::new()),
-        }
-    } else {
-        Vec::new()
-    };
-    if unchanged {
-        return repair_shelving(
-            bus,
-            command,
-            policy,
-            current.revision,
-            request.stance,
-            handles,
-        );
-    }
-    let mut partition = current.clone();
-    partition.revision = revision;
-    let restated = partition.set_stance(&request.group, request.stance);
-    debug_assert!(
-        restated,
-        "a found group with another stance takes the new one"
-    );
-    let fact = WorkingGroupsArranged {
-        from: current,
-        partition,
-    };
-    let outcome = restate(
-        bus,
-        command,
-        WorkingGroupChangeStatus::Stanced,
-        fact,
-        request.clone(),
-    );
-    shelve_committed(outcome, bus, command, policy, handles)
-}
-
-fn stance_unchanged(stance: WorkingGroupStance) -> Outcome<CommandAnswer> {
-    refusal(
-        "group::stance-unchanged",
-        Some(stance.to_string()),
-        "the group's stance already stands there",
-    )
-}
-
-/// The current handle of each of `anchors` the board still shows.
-fn design_handles(
-    bus: &Bus,
-    anchors: Vec<TaskStamp>,
-) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
-    bus.read(move |read| {
-        anchors
-            .iter()
-            .filter_map(|born| {
-                read.task_head(born)
-                    .map(|head| {
-                        head.map(|head| TaskHandle::for_project(&head.body().project, born))
-                    })
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()
-    })
-    .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))
-}
-
-/// The steering and project policy shelving reads each Design's room under.
-#[derive(Clone, Copy)]
-struct ShelvingPolicy<'a> {
-    config: &'a steer::Config,
-}
-
-/// Commit shelving still owed to a group that already stands Paused, without
-/// restating its partition. Nothing owed keeps the unchanged-stance refusal.
-fn repair_shelving(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    policy: ShelvingPolicy<'_>,
-    revision: u64,
-    stance: WorkingGroupStance,
-    handles: Vec<TaskHandle>,
-) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let shelved = shelve(bus, command, policy, handles);
-    let Some(range) = shelved.range else {
-        if shelved.owed.is_empty() {
-            return (stance_unchanged(stance), Vec::new());
-        }
-        let owed = shelved
-            .owed
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(" ");
-        return (
-            refusal(
-                "group::shelving-owed",
-                Some(owed),
-                "shelving these held Designs did not commit; set the group Paused again",
-            ),
-            Vec::new(),
-        );
-    };
-    (
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(range),
-            body: CommandAnswer::WorkingGroupChange(WorkingGroupChange {
-                revision,
-                status: WorkingGroupChangeStatus::Shelved,
-                owed: shelved.owed,
-            }),
-        }),
-        shelved.lanes,
-    )
-}
-
-/// What shelving a Paused group's rooms committed and left owed.
-#[derive(Default)]
-struct Shelved {
-    /// Positions spanning every shelving write committed.
-    range: Option<SeqRange>,
-    /// Each lane asked to park.
-    lanes: Vec<wire::CanonicalUuid>,
-    /// Designs whose room neither committed its shelving nor settled.
-    owed: Vec<TaskHandle>,
-}
-
-/// Shelve each of `designs` from its room as read now. A room the board no
-/// longer shows, or that owes nothing, settles; a room that moved since its
-/// read is read again, up to [`SHELVING_ATTEMPTS`] times; a room that cannot
-/// be read or committed stays owed.
-fn shelve(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    policy: ShelvingPolicy<'_>,
-    designs: Vec<TaskHandle>,
-) -> Shelved {
-    let mut shelved = Shelved::default();
-    for design in designs {
-        let mut settled = false;
-        for _ in 0..SHELVING_ATTEMPTS {
-            let room = match Deactivation::read(bus, &design) {
-                Ok(Some(room)) if !room.is_quiescent() => room,
-                Ok(_) => {
-                    settled = true;
-                    break;
-                }
-                Err(_) => break,
-            };
-            let directive = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
-            match room.commit(bus, command, policy.config, (directive, command.id())) {
-                Ok(Shelving::Committed { range, lane }) => {
-                    shelved.range = Some(shelved.range.map_or(range, |covered| SeqRange {
-                        first: covered.first.min(range.first),
-                        last: covered.last.max(range.last),
-                    }));
-                    shelved.lanes.extend(lane);
-                    settled = true;
-                    break;
-                }
-                Ok(Shelving::Moved) => {}
-                Err(_) => break,
-            }
-        }
-        if !settled {
-            shelved.owed.push(design);
-        }
-    }
-    shelved
 }
 
 /// Lanes a fast-flagged working group runs fast: each holder of an active
@@ -762,8 +535,7 @@ fn designs(current: &WorkingGroupPartition) -> Result<Designs<'_>, Outcome<Comma
 }
 
 /// The partition `designs` states at `revision`, carrying each retained
-/// group's stance and fast-mode flag from `current`. A newly founded group
-/// starts Paused.
+/// group's fast-mode flag from `current`.
 fn stated(
     designs: &Designs<'_>,
     revision: u64,
@@ -777,11 +549,6 @@ fn stated(
             .map(|group| WorkingGroup {
                 group: group.group.clone(),
                 anchors: group.members.into_iter().cloned().collect(),
-                stance: current
-                    .groups
-                    .iter()
-                    .find(|standing| standing.group == *group.group)
-                    .map_or(WorkingGroupStance::Paused, |standing| standing.stance),
             })
             .collect(),
         fast: Vec::new(),
@@ -887,11 +654,7 @@ where
     if let Err(outcome) = stage(&mut write, at) {
         return outcome;
     }
-    let answer = WorkingGroupChange {
-        revision,
-        status,
-        owed: Vec::new(),
-    };
+    let answer = WorkingGroupChange { revision, status };
     if let Err(error) =
         write.command_result(request(command, body), command.epoch(), answer.clone())
     {
@@ -926,25 +689,4 @@ fn restate<B: serde::Serialize>(
         },
         body,
     )
-}
-
-/// Shelve `handles` once a partition change committed, carrying the shelving
-/// still owed in its answer; any other outcome shelves nothing.
-fn shelve_committed(
-    mut outcome: Outcome<CommandAnswer>,
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    policy: ShelvingPolicy<'_>,
-    handles: Vec<TaskHandle>,
-) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(_),
-        body: CommandAnswer::WorkingGroupChange(change),
-    }) = &mut outcome
-    else {
-        return (outcome, Vec::new());
-    };
-    let shelved = shelve(bus, command, policy, handles);
-    change.owed = shelved.owed;
-    (outcome, shelved.lanes)
 }

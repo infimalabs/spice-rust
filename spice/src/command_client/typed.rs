@@ -132,7 +132,6 @@ fn group_kind_for(verb: &str) -> Option<CommandKind> {
         "move" => CommandKind::WorkingGroupMove,
         "arrange" => CommandKind::WorkingGroupArrange,
         "disband" => CommandKind::WorkingGroupDisband,
-        "stance" => CommandKind::WorkingGroupStance,
         _ => return None,
     })
 }

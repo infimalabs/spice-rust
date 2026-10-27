@@ -3,7 +3,6 @@ use super::*;
 use wire::intent::{WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead};
 use wire::rooms::{
     RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupDisband, WorkingGroupMove,
-    WorkingGroupStance, WorkingGroupStanceSet,
 };
 
 pub(super) fn dispatch_client(
@@ -16,7 +15,6 @@ pub(super) fn dispatch_client(
         ["group", "move"] => client_group_move(repository, contract, matches),
         ["group", "arrange"] => client_group_arrange(repository, contract, matches),
         ["group", "disband"] => client_group_disband(repository, contract, matches),
-        ["group", "stance"] => client_group_stance(repository, contract, matches),
         _ => return None,
     })
 }
@@ -203,48 +201,6 @@ pub(super) fn client_group_disband(
     ))
 }
 
-/// Set one standing group's brake at the partition revision
-/// observed immediately before the write.
-pub(super) fn client_group_stance(
-    repository: Host<'_>,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let Some(written_group) = matches.get_one::<String>("GROUP") else {
-        return refusal("group::identity-missing", None, "name the working group");
-    };
-    let group = match group(written_group) {
-        Ok(group) => group,
-        Err(outcome) => return outcome,
-    };
-    let Some(written_stance) = matches.get_one::<String>("STANCE") else {
-        return refusal("group::stance-missing", None, "name paused or running");
-    };
-    let stance = match written_stance.parse::<WorkingGroupStance>() {
-        Ok(stance) => stance,
-        Err(error) => {
-            return refusal(
-                "group::stance-invalid",
-                Some(written_stance.to_owned()),
-                error,
-            );
-        }
-    };
-    let page = match observed(repository) {
-        Ok(page) => page,
-        Err(outcome) => return outcome,
-    };
-    render_change(crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::WorkingGroupStance,
-        vec![Witness::Group {
-            revision: page.revision,
-        }],
-        &WorkingGroupStanceSet { group, stance },
-    ))
-}
-
 /// The current partition a change witnesses.
 fn observed(repository: Host<'_>) -> Result<WorkingGroupPage, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["group", "list"])
@@ -334,7 +290,6 @@ fn grouping(written: &str) -> Result<WorkingGroup, Outcome<CommandAnswer>> {
             .filter(|anchor| !anchor.is_empty())
             .map(anchor)
             .collect::<Result<_, _>>()?,
-        stance: WorkingGroupStance::Paused,
     })
 }
 
@@ -344,7 +299,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
             position,
             body: CommandAnswer::WorkingGroupChange(change),
         }) => {
-            let mut text = format!(
+            let text = format!(
                 "revision {} {}",
                 wire::SequenceCode::new(change.revision),
                 match change.status {
@@ -353,18 +308,8 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                     wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
                     wire::intent::WorkingGroupChangeStatus::Disbanded => "disbanded",
                     wire::intent::WorkingGroupChangeStatus::Retuned => "fast mode set",
-                    wire::intent::WorkingGroupChangeStatus::Stanced => "stance set",
-                    wire::intent::WorkingGroupChangeStatus::Shelved => "owed shelving committed",
                 }
             );
-            if !change.owed.is_empty() {
-                text.push_str("; shelving still owed for");
-                for design in &change.owed {
-                    text.push(' ');
-                    text.push_str(&design.to_string());
-                }
-                text.push_str("; set the group paused again to retry");
-            }
             Outcome::Reply(Reply {
                 position,
                 body: CommandAnswer::Text(TextAnswer { text }),
@@ -383,7 +328,7 @@ fn render_groups(
         text.push_str("no working groups\n");
     }
     for group in &page.groups {
-        text.push_str(&format!("{} {}\n", group.group, group.stance));
+        text.push_str(&format!("{}\n", group.group));
         for anchor in &group.anchors {
             match anchor {
                 WorkingGroupAnchor::Available {

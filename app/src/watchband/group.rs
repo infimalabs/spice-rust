@@ -43,7 +43,6 @@ mod tests {
         WorkingGroup {
             group: RoomAuthorityStamp::for_micros(micros).expect("fixture group"),
             anchors: anchors.iter().copied().map(stamp).collect(),
-            stance: wire::rooms::WorkingGroupStance::Running,
         }
     }
 

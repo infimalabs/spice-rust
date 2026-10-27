@@ -569,7 +569,6 @@ impl NativeInvocation<'_> {
             | ["group", "move"]
             | ["group", "arrange"]
             | ["group", "disband"]
-            | ["group", "stance"]
             | ["principal", "list"]
             | ["principal", "admit"]
             | ["principal", "profile"]

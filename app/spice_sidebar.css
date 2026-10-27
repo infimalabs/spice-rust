@@ -267,17 +267,7 @@
   gap: 2px;
 }
 .app-roster-group > header strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
-.app-roster-group > header > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A card's brake slider is the console's, at the console's geometry. */
-.app-roster-group > header > .room-group-stance {
-  --team-slider-inset: 0px;
-  --team-slider-groove-block: 28px;
-  --team-slider-thumb-inline: 48px;
-  --team-slider-thumb-block: 24px;
-  --team-slider-thumb-inset: calc((var(--team-slider-groove-block) - var(--team-slider-thumb-block)) / 2);
-  flex: 0 0 auto;
-  inline-size: 80px;
-}
+.app-roster-group > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-roster-members { display: grid; gap: 6px; }
 .app-roster-member { min-width: 0; }
 .app-roster-group[draggable="true"],

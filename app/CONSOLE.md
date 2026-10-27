@@ -82,12 +82,11 @@ The group control panel keeps the team panel's frame and maps each control:
 - **The speech slider** is browser-local per group: each covered lane's prose
   is voiced at the louder of its team's and every covering group's mode, each
   line at most once. Room publications are never voiced.
-- **The brake slider** is the group's shared Paused / Running setting, sent
-  as `group::stance` at the revision read. Paused makes every open Design in
-  the group passive and stops its holder; Running leaves each Design to its
-  pass cycle. Who a Design invites and what it asks follow its own maturity,
-  never the brake. Refusal returns the slider to partition authority with its
-  reason.
+
+The group carries no possession control: grouping never gates a Design, and
+who a Design invites and what it asks follow its own maturity. Deferral,
+through the Design's [Deferral fact](OVERVIEW.md) (**Defer** and **Clear**),
+is the one stop.
 
 Each design heading resolves, as a member heading does, from the room's newest
 authored publication this browser holds, a lane's contribution included;
@@ -201,11 +200,11 @@ A working group's toolbar keeps team geometry, total first and lane tabs after:
 | Ticker: newest member activity | Ticker: newest words across the group's rooms; a contribution names its lane and vote |
 
 A design pip reads concluded done, concluded collapsed, or deleted once
-terminal, even while grouped, and open passive while its group is Paused;
+terminal, even while grouped, and open deferred while deferred, held or not;
 otherwise claimed while a lane claims it for a pass, else the resident's pass
 cycle state. It wears its Design's task-overview graph-card tone, so it agrees
 with the tab marks: in flight and ready for proposal live, awaiting decision
-warning, blocked danger. A passive Design's pip is a ring in that
+warning, blocked danger. A deferred Design's pip is a ring in that
 tone; a terminal or unavailable one fades. An unavailable row or cycle invents
 no standing, and each pip's accessible label names it. The pips close the
 status row above the group menu, and each design's tile in the Working groups

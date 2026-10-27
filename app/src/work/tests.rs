@@ -55,7 +55,6 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         lease: None,
         explicit_release: false,
         grouped: false,
-        design_active: false,
         design_cycle: wire::rooms::DesignCycleFacts::default(),
         preparation_decision: None,
         collapse_reason: None,
@@ -292,31 +291,25 @@ fn a_design_depends_on_the_outputs_it_released_while_gated_outputs_stay_its_depe
 }
 
 #[test]
-fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
+fn a_deferred_design_reads_deferred_and_grouping_gates_nothing() {
     let design = |value| design(value, "alpha.design");
     let mut held = design(1);
     held.claim = Some(claim(&held, ClaimDisposition::Active));
     let mut lapsed = design(2);
     lapsed.claim = Some(claim(&lapsed, ClaimDisposition::Lapsed));
     let mut deferred = design(3);
-    deferred.workflow.body.deferral = Some(
-        "2026-09-24T06:00:00.000Z"
-            .parse()
-            .expect("fixture deferral"),
-    );
-    let mut active = design(4);
-    active.grouped = true;
-    active.design_active = true;
-    let mut active_lapsed = design(5);
-    active_lapsed.grouped = true;
-    active_lapsed.design_active = true;
-    active_lapsed.claim = Some(claim(&active_lapsed, ClaimDisposition::Lapsed));
+    deferred.workflow.body.deferral = Some(wire::Instant::indefinite());
+    let mut grouped = design(4);
+    grouped.grouped = true;
+    let mut grouped_lapsed = design(5);
+    grouped_lapsed.grouped = true;
+    grouped_lapsed.claim = Some(claim(&grouped_lapsed, ClaimDisposition::Lapsed));
     let mut board = board(vec![
         held,
         lapsed,
         deferred,
-        active,
-        active_lapsed,
+        grouped,
+        grouped_lapsed,
         design(6),
         design(7),
     ]);
@@ -334,17 +327,18 @@ fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
             .collect::<Vec<_>>(),
         [
             WorkAvailability::InFlight,
-            WorkAvailability::Passive,
-            WorkAvailability::Passive,
+            WorkAvailability::Stale,
+            WorkAvailability::Deferred,
             WorkAvailability::Ready,
             WorkAvailability::Stale,
-            WorkAvailability::Passive,
+            WorkAvailability::Blocked,
             WorkAvailability::Selection,
         ],
-        "a passive Design waits on the operator unless possessed or awaiting selection; an active one moves"
+        "a deferred Design waits on the operator's wake; grouped or not, any other moves by \
+         possession and gate"
     );
     let counts = projection.counts();
-    assert_eq!([counts.passive(), counts.waiting()], [3, 4]);
+    assert_eq!([counts.deferred(), counts.waiting()], [1, 2]);
     assert_eq!(
         projection
             .scope_strip(&WorkScope::planning())
@@ -355,12 +349,12 @@ fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
             WorkAvailability::InFlight,
             WorkAvailability::Ready,
             WorkAvailability::Stale,
-            WorkAvailability::Passive,
-            WorkAvailability::Passive,
-            WorkAvailability::Passive,
+            WorkAvailability::Stale,
+            WorkAvailability::Blocked,
             WorkAvailability::Selection,
+            WorkAvailability::Deferred,
         ],
-        "passive Designs stay on the Design rail after every Design an agent can move"
+        "a deferred Design stays on the Design rail after every Design an agent can move"
     );
 }
 
@@ -658,14 +652,12 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
     );
     let blocked = task(8, "delta.wall");
     let selection = design(9, "alpha.design");
-    let passive = design(10, "beta.design");
+    let ungrouped = design(10, "beta.design");
     let mut decided = design(11, "gamma.design");
     decided.grouped = true;
-    decided.design_active = true;
     let proposing = design(12, "alpha.design");
     let mut claimed = design(13, "epsilon.design");
     claimed.grouped = true;
-    claimed.design_active = true;
     claimed.claim = Some(claim(&claimed, ClaimDisposition::Active));
     let mut board = board(vec![
         in_flight,
@@ -677,7 +669,7 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
         held,
         blocked,
         selection,
-        passive,
+        ungrouped,
         decided,
         proposing,
         claimed,
@@ -719,9 +711,9 @@ fn each_partition_marks_exactly_its_own_operator_transitions() {
             ("epsilon.design".to_owned(), None),
             ("gamma.design".to_owned(), Some((WorkMark::Proposal, 1))),
         ]),
-        "a Design awaiting decision outranks a ready pass in its project; an offered or \
-         passive Design ready for proposal marks its project; one a lane already holds marks \
-         nothing"
+        "a Design awaiting decision outranks a ready pass in its project; an unpossessed \
+         Design ready for proposal marks its project, grouped or not; one a lane already holds \
+         marks nothing"
     );
     assert_eq!(
         projection.scope_counts(&WorkScope::planning()).mark(),
@@ -863,7 +855,6 @@ fn durable_work_identities_resolve_only_after_their_mutable_authority_settles() 
         groups: vec![wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![stamp(1), stamp(2)],
-            stance: wire::rooms::WorkingGroupStance::Running,
         }],
         fast: Vec::new(),
     };
@@ -883,7 +874,6 @@ fn durable_work_identities_resolve_only_after_their_mutable_authority_settles() 
         groups: vec![wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![stamp(2)],
-            stance: wire::rooms::WorkingGroupStance::Paused,
         }],
         fast: Vec::new(),
     };

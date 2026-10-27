@@ -8,7 +8,6 @@ use crate::rooms::{
 };
 pub use crate::rooms::{
     WorkingGroupArrange, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
-    WorkingGroupStanceSet,
 };
 use crate::{SequenceCode, TaskHandle, TaskStamp};
 
@@ -346,8 +345,6 @@ pub enum WorkingGroupAnchor {
 pub struct WorkingGroupView {
     /// Stable repository-shared identity.
     pub group: RoomAuthorityStamp,
-    /// Whether lanes may possess the group's open Designs.
-    pub stance: crate::rooms::WorkingGroupStance,
     /// Room anchors in arranged order, resolved through current task authority.
     pub anchors: Vec<WorkingGroupAnchor>,
 }
@@ -366,16 +363,10 @@ pub struct WorkingGroupPage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupChange {
-    /// Partition revision the change committed, or the standing revision when
-    /// it restated no partition.
+    /// Partition revision the change committed.
     pub revision: u64,
     /// Current transition outcome.
     pub status: WorkingGroupChangeStatus,
-    /// Designs whose holder is still owed its shelving stop. A standing
-    /// Paused group retries them when set Paused again. Only the live reply
-    /// reports this: a retained receipt records the partition change alone.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub owed: Vec<TaskHandle>,
 }
 
 /// Current working-group change outcomes.
@@ -393,9 +384,4 @@ pub enum WorkingGroupChangeStatus {
     Disbanded,
     /// One group's fast-mode flag was set.
     Retuned,
-    /// One group was set Paused or Running.
-    Stanced,
-    /// The group already stood Paused; shelving still owed to its held
-    /// Designs was committed without restating the partition.
-    Shelved,
 }

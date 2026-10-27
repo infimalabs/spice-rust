@@ -85,7 +85,7 @@ pub const OOPS_DESIGN_TITLE: &str = "OOPS";
 /// Stable context of every opportunistic OOPS Design generation: the holder's
 /// job, stated so an agent works the reports as a whole.
 pub const OOPS_DESIGN_DESCRIPTION: &str = "Every `spice task oops` report lands here as a Plan \
-gated by this Design. Like any Design, it is worked unless a Paused working group holds it.
+gated by this Design. Like any Design, it is worked unless the operator defers it.
 
 Work the reports as a whole, not line by line. Read each pending report, its origin, and the \
 code it names. Group reports that share a cause, find the defect behind a cluster of symptoms, \

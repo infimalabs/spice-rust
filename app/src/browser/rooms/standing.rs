@@ -72,7 +72,8 @@ pub(super) fn render_standing(
 }
 
 /// The one next useful action the current authority supports, as one
-/// sentence naming who acts and on what. An open Design's cycle names it.
+/// sentence naming who acts and on what. A deferred Design waits on its wake;
+/// any other open Design's cycle names it.
 fn next_action(
     settled: bool,
     lifecycle: Option<&DesignStanding>,
@@ -82,27 +83,24 @@ fn next_action(
         return "The anchor is settled; nothing remains to do here.".to_owned();
     }
     match cycle {
-        Some((cycle, availability)) => cycle_next(cycle, availability).to_owned(),
-        None if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group \
-            running, or move it out of every group, so a lane can claim it."
+        _ if lifecycle == Some(&DesignStanding::Deferred) => "You wake this Design, or move it \
+            into a working group, so lanes are invited and one can claim it."
             .to_owned(),
+        Some((cycle, availability)) => cycle_next(cycle, availability).to_owned(),
         None => "Nudge this Design to ask one lane for its next contribution.".to_owned(),
     }
 }
 
-/// Who moves an open Design's pass cycle forward next, and how.
+/// Who moves an undeferred open Design's pass cycle forward next, and how.
 const fn cycle_next(cycle: DesignCycle, availability: DesignAvailability) -> &'static str {
     match (cycle, availability) {
         (DesignCycle::GatheringInput, _) => {
             "Lanes or you add input next: a vote, a question, or a post in this room."
         }
-        (DesignCycle::ReadyForProposal, DesignAvailability::Passive) => {
-            "You activate this Design by setting its working group running, or moving it out of \
-             every group, so a lane can claim it."
-        }
-        (DesignCycle::ReadyForProposal, DesignAvailability::Unclaimed) => {
-            "A lane claims this Design next and ends its pass with one proposal."
-        }
+        (
+            DesignCycle::ReadyForProposal,
+            DesignAvailability::Unclaimed | DesignAvailability::Deferred,
+        ) => "A lane claims this Design next and ends its pass with one proposal.",
         (DesignCycle::ReadyForProposal, DesignAvailability::Claimed) => {
             "The holding lane ends this pass with one proposal."
         }

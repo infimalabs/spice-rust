@@ -18,7 +18,7 @@ fn iced_automatic_claim_arms_only_its_distant_lapse() {
             .expect("distant lapse remains armed")
             .authority
             .expiry,
-        spice::claim_lease::indefinite_horizon()
+        wire::Instant::indefinite()
     );
     assert_eq!(
         fixture
@@ -72,7 +72,7 @@ fn ice_claim(fixture: &Fixture) {
         revision: position,
         ..statement
     });
-    let horizon = spice::claim_lease::indefinite_horizon();
+    let horizon = wire::Instant::indefinite();
     write.lease_head(stamp, edited, move |_| LeaseHead {
         expiry: horizon,
         maximum: horizon,

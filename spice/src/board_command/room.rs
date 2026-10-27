@@ -249,22 +249,29 @@ pub(crate) struct RoomDutyRows {
 }
 
 /// Read the rows behind `room`'s duties through the per-Design notice index
-/// and the steering index; a non-Design room has no notices.
+/// and the steering index; a non-Design room has no notices, and a deferred
+/// Design's room owes none, since deferral ends its outstanding invitations.
 pub(crate) fn read_room_duty_rows(
     read: &journal::JournalRead<'_>,
     room: &wire::TaskStamp,
 ) -> Result<RoomDutyRows, journal::GuardError> {
     let mut asks = Vec::new();
     let mut after = None;
-    let mut asks_overflow = true;
-    for _ in 0..ROOM_PUBLICATION_PAGES {
-        let page = read.design_notices(room, after, journal::FactReadBudget::RETAINED)?;
-        asks.extend(page.rows);
-        let Some(continuation) = page.continuation else {
-            asks_overflow = false;
-            break;
-        };
-        after = Some(continuation);
+    let mut asks_overflow = false;
+    let deferred = read
+        .workflow_head(room)?
+        .is_some_and(|head| head.body().deferral.is_some());
+    if !deferred {
+        asks_overflow = true;
+        for _ in 0..ROOM_PUBLICATION_PAGES {
+            let page = read.design_notices(room, after, journal::FactReadBudget::RETAINED)?;
+            asks.extend(page.rows);
+            let Some(continuation) = page.continuation else {
+                asks_overflow = false;
+                break;
+            };
+            after = Some(continuation);
+        }
     }
     let stops = read.live_room_stops(room, spice::rooms::MAX_ROOM_ATTENTION_SIGNALS)?;
     Ok(RoomDutyRows {

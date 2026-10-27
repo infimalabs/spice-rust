@@ -425,7 +425,7 @@ fn thaw_replaces_the_indefinite_horizon_with_ordinary_automatic_bounds() {
         .expect("fixture epoch");
     let start: wire::Instant = "2026-08-30T08:00:00.000Z".parse().expect("fixture start");
     let ready: wire::Instant = "2026-08-30T08:05:00.000Z".parse().expect("fixture ready");
-    let horizon = spice::claim_lease::indefinite_horizon();
+    let horizon = wire::Instant::indefinite();
     let thawed = promoted_lease(
         &wire::LeaseHead {
             start,

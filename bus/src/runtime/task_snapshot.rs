@@ -308,9 +308,8 @@ struct Indexes {
     task_origins: Arc<HashMap<journal::crossing::TaskStamp, TaskOrigin>>,
     duplicate_task_origins: Arc<HashSet<journal::crossing::TaskStamp>>,
     invalid_creator_teams: Arc<HashSet<journal::crossing::TaskStamp>>,
-    /// The brake of each grouped Design's working group.
-    design_stances:
-        Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::rooms::WorkingGroupStance>>,
+    /// Every Design the current working-group partition holds.
+    grouped_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
@@ -329,16 +328,11 @@ struct Indexes {
 
 impl Indexes {
     fn replace_partition(&mut self, partition: journal::crossing::rooms::WorkingGroupPartition) {
-        self.design_stances = Arc::new(
+        self.grouped_designs = Arc::new(
             partition
                 .groups
                 .into_iter()
-                .flat_map(|group| {
-                    group
-                        .anchors
-                        .into_iter()
-                        .map(move |design| (design, group.stance))
-                })
+                .flat_map(|group| group.anchors)
                 .collect(),
         );
     }
@@ -1023,39 +1017,25 @@ impl TaskFacts {
     pub fn room_anchor_tasks(
         &self,
     ) -> impl ExactSizeIterator<Item = &journal::crossing::TaskStamp> {
-        self.indexes.design_stances.keys()
+        self.indexes.grouped_designs.iter()
     }
 
     /// Whether the current working-group partition holds `task`.
     #[must_use]
     pub fn grouped(&self, task: &journal::crossing::TaskStamp) -> bool {
-        self.indexes.design_stances.contains_key(task)
+        self.indexes.grouped_designs.contains(task)
     }
 
-    /// Whether `task` is active: a Design outside every group is, and a
-    /// grouped Design is unless its group is Paused.
-    #[must_use]
-    pub fn design_is_active(&self, task: &journal::crossing::TaskStamp) -> bool {
-        self.indexes
-            .design_stances
-            .get(task)
-            .is_none_or(|stance| stance.is_active())
-    }
-
-    /// One open Design's standing and pass-cycle evidence, judging maturity
-    /// against `statement`, its current statement head.
+    /// One open Design's pass-cycle evidence, judging maturity against
+    /// `statement`, its current statement head.
     #[must_use]
     pub fn design(
         &self,
         statement: &journal::crossing::TaskHead,
-    ) -> journal::crossing::rooms::DesignFacts {
-        journal::crossing::rooms::DesignFacts {
-            active: self.design_is_active(&statement.born),
-            cycle: self
-                .indexes
-                .design_cycles
-                .facts(&statement.born, &statement.acceptance),
-        }
+    ) -> journal::crossing::rooms::DesignCycleFacts {
+        self.indexes
+            .design_cycles
+            .facts(&statement.born, &statement.acceptance)
     }
 
     /// The reason the operator's collapse of Design `task` recorded.

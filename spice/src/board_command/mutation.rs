@@ -6,7 +6,8 @@ mod edit;
 mod oops;
 mod requirements;
 mod settlement;
-pub(super) use deferral::{task_defer, task_file, task_wake};
+pub(crate) use deferral::task_defer;
+pub(super) use deferral::{task_file, task_wake};
 pub(super) use settlement::{
     DecisionWrite, stage_conclusion, stage_rejection, task_close, task_conclude, task_delete,
 };

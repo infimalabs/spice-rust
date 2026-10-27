@@ -233,7 +233,7 @@ pub struct DesignNoticed {
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
     /// Reach whose relevance floor admitted the match. Absent on records older
-    /// than the field and on those a Passive working group's floor admitted.
+    /// than the field and on those a retired Passive group's floor admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<DesignReach>,
     /// The question items asked, the best-scoring first and the rest in

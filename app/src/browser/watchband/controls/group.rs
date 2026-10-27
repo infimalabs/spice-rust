@@ -1,14 +1,12 @@
 //! A working group's browser-local panel state and its team-panel controls:
-//! TURBO, the speech slider, and the shared brake slider. Group state lives
-//! beside the team controls because a group's speech raises the speech of the
-//! team planes its claimants draw in.
+//! TURBO and the speech slider. Group state lives beside the team controls
+//! because a group's speech raises the speech of the team planes its
+//! claimants draw in.
 
 use super::*;
 use crate::client_action::GroupChange;
 use crate::speech_queue::{LaneSpeech, SpeechMode, group_speech};
-use wire::rooms::{
-    RoomAuthorityStamp, WorkingGroupFast, WorkingGroupStance, WorkingGroupStanceSet,
-};
+use wire::rooms::{RoomAuthorityStamp, WorkingGroupFast};
 
 const GROUP_SPEECH_STORAGE: &str = "spice:group-speech:v1";
 
@@ -16,8 +14,6 @@ const GROUP_SPEECH_STORAGE: &str = "spice:group-speech:v1";
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct GroupControl {
     speech: SpeechMode,
-    /// Group stance requested and not yet answered by the resident.
-    pending_stance: Option<WorkingGroupStance>,
     /// Group fast-mode flag requested and not yet answered by the resident.
     pending_fast: Option<bool>,
 }
@@ -26,15 +22,6 @@ pub(crate) enum GroupControlAction {
     SetSpeech {
         group: RoomAuthorityStamp,
         speech: SpeechMode,
-    },
-    RequestStance {
-        group: RoomAuthorityStamp,
-        stance: WorkingGroupStance,
-    },
-    /// The resident answered the request for `stance`.
-    SettleStance {
-        group: RoomAuthorityStamp,
-        stance: WorkingGroupStance,
     },
     RequestFast {
         group: RoomAuthorityStamp,
@@ -81,16 +68,6 @@ impl TeamControls {
             GroupControlAction::SetSpeech { group, speech } => {
                 self.groups.entry(group).or_default().speech = speech;
                 self.store_group_speech();
-            }
-            GroupControlAction::RequestStance { group, stance } => {
-                self.groups.entry(group).or_default().pending_stance = Some(stance);
-            }
-            GroupControlAction::SettleStance { group, stance } => {
-                if let Some(control) = self.groups.get_mut(&group)
-                    && control.pending_stance == Some(stance)
-                {
-                    control.pending_stance = None;
-                }
             }
             GroupControlAction::RequestFast { group, fast_mode } => {
                 self.groups.entry(group).or_default().pending_fast = Some(fast_mode);
@@ -213,11 +190,10 @@ pub(in crate::browser) struct GroupPanel<'a> {
     pub(in crate::browser) names: &'a [String],
 }
 
-/// A group panel's TURBO, the stops its two sliders show, and the sliders.
+/// A group panel's TURBO, the stop its speech slider shows, and the slider.
 pub(in crate::browser) struct GroupControls {
     pub(in crate::browser) turbo: Html,
     pub(in crate::browser) speech: &'static str,
-    pub(in crate::browser) stance: &'static str,
     pub(in crate::browser) sliders: Html,
 }
 
@@ -229,17 +205,10 @@ impl GroupPanel<'_> {
             .get(self.group)
             .cloned()
             .unwrap_or_default();
-        let stance = displayed_stance(self.runtime, self.controls, self.group);
         GroupControls {
             turbo: self.turbo(control.pending_fast),
             speech: control.speech.label(),
-            stance: stance_label(stance),
-            sliders: html! {
-                <>
-                    {self.speech_slider(control.speech)}
-                    {stance_slider(self.runtime, self.controls, self.sender, &self.report, self.group)}
-                </>
-            },
+            sliders: self.speech_slider(control.speech),
         }
     }
 
@@ -357,127 +326,5 @@ impl GroupPanel<'_> {
                 {slider_words(SpeechMode::ALL.map(SpeechMode::label), speech.index())}
             </label>
         }
-    }
-}
-
-/// The stance a group's controls show: the one this browser requested and the
-/// resident has not answered, else the partition's.
-fn displayed_stance(
-    runtime: &crate::AppRuntime,
-    controls: &TeamControls,
-    group: &RoomAuthorityStamp,
-) -> WorkingGroupStance {
-    controls
-        .groups
-        .get(group)
-        .and_then(|control| control.pending_stance)
-        .unwrap_or_else(|| {
-            runtime
-                .room_projection()
-                .partition()
-                .groups
-                .iter()
-                .find(|standing| standing.group == *group)
-                .map_or(WorkingGroupStance::Paused, |standing| standing.stance)
-        })
-}
-
-/// One group's shared brake, as its console panel and its catalog card both
-/// draw it. Paused keeps its Designs passive; Running makes them active. A
-/// move shows its request until the resident answers, and `report` shows a
-/// refusal or the shelving it still owes.
-pub(in crate::browser) fn stance_slider(
-    runtime: &crate::AppRuntime,
-    controls: &UseReducerHandle<TeamControls>,
-    sender: &SenderHandle,
-    report: &Callback<String>,
-    group: &RoomAuthorityStamp,
-) -> Html {
-    let stance = displayed_stance(runtime, controls, group);
-    let partition = runtime.room_projection().partition();
-    let revision = partition.revision;
-    let standing = partition
-        .groups
-        .iter()
-        .any(|standing| standing.group == *group);
-    let can_configure = standing && runtime.offers(wire::CommandKind::WorkingGroupStance);
-    let controls = controls.clone();
-    let sender = sender.clone();
-    let report = report.clone();
-    let group = group.clone();
-    let oninput = Callback::from(move |event: InputEvent| {
-        let input: HtmlInputElement = event.target_unchecked_into();
-        let index = input.value().parse::<usize>().unwrap_or(0);
-        let stance = WorkingGroupStance::ALL[index.min(WorkingGroupStance::ALL.len() - 1)];
-        let respond = {
-            let (controls, report, group) = (controls.clone(), report.clone(), group.clone());
-            Rc::new(
-                move |result: Result<wire::intent::WorkingGroupChange, String>| {
-                    controls.dispatch(TeamControlAction::Group(GroupControlAction::SettleStance {
-                        group: group.clone(),
-                        stance,
-                    }));
-                    match result {
-                        Err(error) => report.emit(error),
-                        Ok(change) if !change.owed.is_empty() => {
-                            let owed = change
-                                .owed
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            report.emit(format!(
-                                "Shelving is still owed for {owed}; set the group Paused again."
-                            ));
-                        }
-                        Ok(_) => {}
-                    }
-                },
-            )
-        };
-        if admit_action(
-            &sender,
-            ClientAction::WorkingGroupChange {
-                change: GroupChange::Stance(WorkingGroupStanceSet {
-                    group: group.clone(),
-                    stance,
-                }),
-                revision,
-                respond,
-            },
-        ) {
-            controls.dispatch(TeamControlAction::Group(
-                GroupControlAction::RequestStance {
-                    group: group.clone(),
-                    stance,
-                },
-            ));
-        }
-    });
-    html! {
-        <label
-            class="team-slider team-lifetime"
-            data-stop={if stance.is_active() { "2" } else { "0" }}
-        >
-            <input
-                type="range"
-                min="0"
-                max="1"
-                step="1"
-                value={stance.index().to_string()}
-                disabled={!can_configure}
-                aria-label={format!("Group brake: {}", stance_label(stance))}
-                title="Paused keeps this group's Designs passive; Running makes them active"
-                {oninput}
-            />
-            {slider_words(WorkingGroupStance::ALL.map(stance_label), stance.index())}
-        </label>
-    }
-}
-
-const fn stance_label(stance: WorkingGroupStance) -> &'static str {
-    match stance {
-        WorkingGroupStance::Paused => "Paused",
-        WorkingGroupStance::Running => "Running",
     }
 }

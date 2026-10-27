@@ -5,8 +5,7 @@ use wire::intent::{
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupArrange,
-    WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove, WorkingGroupStance,
-    WorkingGroupStanceSet,
+    WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
 };
 
 use super::preparation::{
@@ -112,7 +111,6 @@ fn arrange(
                 .map(|(group, anchors)| WorkingGroup {
                     group: (*group).clone(),
                     anchors: anchors.iter().map(|anchor| (*anchor).clone()).collect(),
-                    stance: wire::rooms::WorkingGroupStance::Running,
                 })
                 .collect(),
         },
@@ -461,7 +459,6 @@ fn disbanding_a_group_leaves_every_design_ungrouped_under_the_partition_guard() 
     let group = group_stamp(449);
     assert_committed(move_design(&bus, epoch, &first_born, Some(&group)));
     assert_committed(move_design(&bus, epoch, &second_born, Some(&group)));
-    assert_committed(set_stance(&bus, epoch, &group, WorkingGroupStance::Running));
     assert_committed(set_fast(&bus, epoch, &group, true));
     let observed = read_partition(&bus, epoch).revision;
     let before_room_heads = room_heads(&bus, &[first_born.clone(), second_born.clone()]);
@@ -475,7 +472,6 @@ fn disbanding_a_group_leaves_every_design_ungrouped_under_the_partition_guard() 
     for design in [&first, &second] {
         let row = at(&visible, design);
         assert!(!row.grouped);
-        assert!(row.design_active, "a disband leaves its Designs active");
     }
     assert_eq!(
         room_heads(&bus, &[first_born, second_born]),
@@ -485,99 +481,6 @@ fn disbanding_a_group_leaves_every_design_ungrouped_under_the_partition_guard() 
     assert!(refused_as(disband(&bus, epoch, &group), "group::missing"));
     assert!(refused_as(
         disband_at(&bus, epoch, observed, &group),
-        "group::partition-moved"
-    ));
-    clean(&root, bus);
-}
-
-fn set_stance_at(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    revision: u64,
-    group: &RoomAuthorityStamp,
-    stance: WorkingGroupStance,
-) -> Outcome<CommandAnswer> {
-    issue(
-        bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::WorkingGroupStance,
-        vec![Witness::Group { revision }],
-        &WorkingGroupStanceSet {
-            group: group.clone(),
-            stance,
-        },
-    )
-}
-
-fn set_stance(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    group: &RoomAuthorityStamp,
-    stance: WorkingGroupStance,
-) -> Outcome<CommandAnswer> {
-    set_stance_at(
-        bus,
-        epoch,
-        read_partition(bus, epoch).revision,
-        group,
-        stance,
-    )
-}
-
-#[test]
-fn a_group_stance_controls_design_activity_under_the_partition_guard() {
-    let (root, bus, epoch, _) = fixture("group-stance", 1);
-    let design = add_controller(
-        &bus,
-        epoch,
-        "Stanced design",
-        wire::TaskIntent::Design,
-        None,
-    );
-    let born = design.born().expect("design identity");
-    let group = group_stamp(450);
-    assert_committed(move_design(&bus, epoch, &born, Some(&group)));
-
-    let page = read_partition(&bus, epoch);
-    assert_eq!(page.groups[0].stance, WorkingGroupStance::Paused);
-    let visible = board(&bus, epoch, Actor::Operator);
-    let held = at(&visible, &design);
-    assert!(held.grouped);
-    assert!(!held.design_active);
-
-    let founded_revision = page.revision;
-    assert_eq!(
-        change_status(set_stance(&bus, epoch, &group, WorkingGroupStance::Running)),
-        WorkingGroupChangeStatus::Stanced
-    );
-    assert!(at(&board(&bus, epoch, Actor::Operator), &design).design_active);
-    assert_committed(set_fast(&bus, epoch, &group, true));
-    let partition = bus
-        .read(|read| read.group_partition())
-        .expect("partition reads")
-        .expect("partition stands")
-        .into_body();
-    assert_eq!(partition.groups[0].stance, WorkingGroupStance::Running);
-    assert!(partition.is_fast(&group));
-    assert!(at(&board(&bus, epoch, Actor::Operator), &design).design_active);
-
-    assert!(refused_as(
-        set_stance(&bus, epoch, &group, WorkingGroupStance::Running),
-        "group::stance-unchanged"
-    ));
-    assert!(refused_as(
-        set_stance(&bus, epoch, &group_stamp(451), WorkingGroupStance::Paused),
-        "group::missing"
-    ));
-    assert!(refused_as(
-        set_stance_at(
-            &bus,
-            epoch,
-            founded_revision,
-            &group,
-            WorkingGroupStance::Paused
-        ),
         "group::partition-moved"
     ));
     clean(&root, bus);
@@ -693,8 +596,6 @@ fn a_fast_flagged_group_runs_claimants_of_its_design_associated_work() {
         let born = task.born().expect("design identity");
         assert_committed(move_design(&bus, epoch, &born, Some(group)));
     }
-    assert_committed(set_stance(&bus, epoch, &fast, WorkingGroupStance::Running));
-    assert_committed(set_stance(&bus, epoch, &slow, WorkingGroupStance::Running));
     let current = board(&bus, epoch, Actor::Operator);
     for task in [&flagged, &unflagged] {
         assert_committed(nudge_design(&bus, epoch, Actor::Operator, &current, task));

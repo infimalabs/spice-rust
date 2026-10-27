@@ -812,7 +812,7 @@ fn horizon_reclaim_acknowledges_an_edit_and_keeps_the_hold() {
     let heads = at(&iced, &task);
     let claim = heads.claim.as_ref().expect("active claim");
     let lease = heads.lease.as_ref().expect("iced lease");
-    let horizon = spice::claim_lease::indefinite_horizon();
+    let horizon = wire::Instant::indefinite();
     assert_eq!(lease.body.expiry, horizon);
     assert!(claim.body.is_stale(&heads.workflow.body), "{heads:?}");
 

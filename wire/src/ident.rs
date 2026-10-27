@@ -597,6 +597,18 @@ impl Instant {
         (23, b'Z'),
     ];
 
+    /// The repository's one indefinite horizon: the lease of a claim iced on
+    /// human approval and the hold a deferral carries when no time wakes it.
+    pub const INDEFINITE: &str = "2099-12-31T23:59:59.999Z";
+
+    /// [`Self::INDEFINITE`] as a typed instant.
+    #[must_use]
+    pub fn indefinite() -> Self {
+        Self::INDEFINITE
+            .parse()
+            .expect("the canonical indefinite horizon is a valid wire instant")
+    }
+
     /// Wrap a timestamp, flooring it to the millisecond the spelling carries.
     ///
     /// A timestamp built elsewhere in the workspace may carry more resolution

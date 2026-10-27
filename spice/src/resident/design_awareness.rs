@@ -766,9 +766,11 @@ fn durable_conversation(
     })
 }
 
-/// Whether `entry` is currently an open Design, whatever its group's brake.
+/// Whether `entry` is an open Design no deferral stops: only such a Design is
+/// invited, and deferring one ends its outstanding invitations.
 fn open_design(entry: &board::Entry) -> bool {
     wire::intent::is_open_design(entry.statement().intent, entry.workflow())
+        && entry.workflow().deferral.is_none()
 }
 
 /// One request owed to a continuing session.
@@ -912,10 +914,11 @@ fn restated_request(
     }))
 }
 
-/// Whether a recorded invitation is still owed. Design closure or statement
-/// replacement releases it, and so does the lane's answer: a contribution
-/// against any asked item or a leave, or any room record for a whole-Design
-/// ask. Another lane's post or a change in an item's standing never does.
+/// Whether a recorded invitation is still owed. Design closure, deferral, or
+/// statement replacement releases it, and so does the lane's answer: a
+/// contribution against any asked item or a leave, or any room record for a
+/// whole-Design ask. Another lane's post or a change in an item's standing
+/// never does.
 fn request_is_current(
     facts: &bus::TaskFacts,
     design: &board::Entry,
@@ -1180,6 +1183,9 @@ fn current_design(
         || !wire::intent::is_open_design(statement.body().intent, workflow.body())
     {
         return Err(stale("the Design is no longer open"));
+    }
+    if workflow.body().deferral.is_some() {
+        return Err(stale("the Design was deferred"));
     }
     if answered_in_session(read, request, session_declared)? {
         return Err(stale("the session already answered this ask"));

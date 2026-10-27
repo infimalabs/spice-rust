@@ -65,7 +65,7 @@ fn refreshes_that_carry_no_newer_revision_keep_every_typed_field() {
     let typed = form.fields().clone();
 
     let mut claimed = row.clone();
-    claimed.design_active = true;
+    claimed.grouped = true;
     let mut behind = revised(&row, 1, |row| row.presentation_title = "Older".to_owned());
     behind.workflow.position = seq(1);
     for refresh in [&row, &claimed, &behind] {

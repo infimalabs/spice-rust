@@ -12,21 +12,10 @@ pub const RECLAIM_HORIZON_SECONDS: i64 = DEFAULT_RECLAIM_SECONDS as i64;
 /// Reclaim horizon available after an automatically launched agent proves health.
 pub const AUTOMATIC_MAXIMUM_SECONDS: i64 = RECLAIM_HORIZON_SECONDS;
 
-/// Canonical repository horizon for a claim iced on human approval.
-pub const INDEFINITE_HORIZON: &str = "2099-12-31T23:59:59.999Z";
-
-/// The one canonical indefinite horizon as a typed instant.
-#[must_use]
-pub fn indefinite_horizon() -> wire::Instant {
-    INDEFINITE_HORIZON
-        .parse()
-        .expect("the canonical indefinite horizon is a valid wire instant")
-}
-
 /// Whether a lease is represented by the canonical indefinite horizon.
 #[must_use]
 pub fn is_indefinite(lease: &wire::LeaseHead) -> bool {
-    let horizon = indefinite_horizon();
+    let horizon = wire::Instant::indefinite();
     lease.expiry == horizon && lease.maximum == horizon
 }
 
@@ -34,7 +23,7 @@ pub fn is_indefinite(lease: &wire::LeaseHead) -> bool {
 /// renewal, and epoch.
 #[must_use]
 pub fn iced(lease: &wire::LeaseHead) -> wire::LeaseHead {
-    let horizon = indefinite_horizon();
+    let horizon = wire::Instant::indefinite();
     wire::LeaseHead {
         expiry: horizon,
         maximum: horizon,

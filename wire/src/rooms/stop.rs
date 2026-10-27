@@ -7,11 +7,11 @@ use super::RoomAnchor;
 use crate::SequenceCode;
 
 /// Steering control carried by the one operator direction that asks the lane
-/// holding a Design made passive to checkpoint and free its claim.
+/// holding a deferred Design to checkpoint and free its claim.
 ///
-/// It names the Design and the exact claim win it applies to, so a later
-/// partition change that leaves the same holder on the same win sends nothing
-/// new, while a new win after a free or steal is asked afresh.
+/// It names the Design and the exact claim win it applies to, so a repeated
+/// deferral that leaves the same holder on the same win sends nothing new,
+/// while a new win after a free or steal is asked afresh.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StopControl {
     /// Design whose claim is asked to stop.

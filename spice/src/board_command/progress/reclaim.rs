@@ -89,9 +89,7 @@ pub(super) fn reclaim_window(
     // the holder acknowledging the task's generation, so it is admitted and
     // leaves the lease exactly where the hold put it: settling it to the
     // ordinary maximum would end the approval hold an hour later.
-    if matches!(residency, ReclaimResidency::Exact)
-        && lease.expiry == spice::claim_lease::indefinite_horizon()
-    {
+    if matches!(residency, ReclaimResidency::Exact) && lease.expiry == wire::Instant::indefinite() {
         return Ok(ReclaimWindow {
             until: lease.expiry,
             lease: lease.clone(),

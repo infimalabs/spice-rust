@@ -86,16 +86,17 @@ pub fn released_construction_root<'a>(
     .then_some(&preparation.parent)
 }
 
-/// One Design's lifecycle standing. An open Design is passive while a Paused
-/// working group holds it and active otherwise; only the operator concludes it.
+/// One Design's lifecycle standing. An open Design is deferred while its own
+/// deferral stands and open otherwise; only the operator concludes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DesignStanding {
-    /// Open in a Paused working group: no path grants it a claim.
-    Passive,
-    /// Open outside every working group or in a Running one: lanes may claim
-    /// it or be nudged onto it.
-    Active,
+    /// Open and deferred: it invites no lane and no path grants it a claim
+    /// until it is woken.
+    Deferred,
+    /// Open and undeferred: lanes may be invited to it, claim it, or be
+    /// nudged onto it.
+    Open,
     /// The operator concluded it done.
     Done,
     /// The operator concluded it collapsed. A retained record concluded
@@ -113,11 +114,9 @@ impl DesignStanding {
     /// Derive the standing every board, task, group, room, and browser read
     /// shows from current heads, so terminal settlement outranks any retained
     /// group membership; `None` for a task without Design intent.
-    #[must_use]
     pub fn of(
         intent: Option<crate::TaskIntent>,
         workflow: &crate::WorkflowHead,
-        active: bool,
         collapse_reason: Option<&str>,
     ) -> Option<Self> {
         if !intent.is_some_and(crate::TaskIntent::is_design) {
@@ -139,23 +138,23 @@ impl DesignStanding {
                 reason: collapse_reason.map(str::to_owned),
             },
             crate::WorkflowStatus::Pending(_) if !is_open_design(intent, workflow) => return None,
-            crate::WorkflowStatus::Pending(_) if active => Self::Active,
-            crate::WorkflowStatus::Pending(_) => Self::Passive,
+            crate::WorkflowStatus::Pending(_) if workflow.deferral.is_some() => Self::Deferred,
+            crate::WorkflowStatus::Pending(_) => Self::Open,
         })
     }
 
     /// Whether the Design is still open.
     #[must_use]
     pub const fn is_open(&self) -> bool {
-        matches!(self, Self::Passive | Self::Active)
+        matches!(self, Self::Deferred | Self::Open)
     }
 
     /// Stable machine key.
     #[must_use]
     pub const fn key(&self) -> &'static str {
         match self {
-            Self::Passive => "passive",
-            Self::Active => "active",
+            Self::Deferred => "deferred",
+            Self::Open => "open",
             Self::Done => "done",
             Self::Collapsed { .. } => "collapsed",
             Self::Deleted => "deleted",
@@ -166,8 +165,8 @@ impl DesignStanding {
 impl std::fmt::Display for DesignStanding {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Passive => formatter.write_str("open passive (in a Paused working group)"),
-            Self::Active => formatter.write_str("open active"),
+            Self::Deferred => formatter.write_str("open deferred (wake it to resume)"),
+            Self::Open => formatter.write_str("open"),
             Self::Done => formatter.write_str("concluded done"),
             Self::Collapsed {
                 reason: Some(reason),

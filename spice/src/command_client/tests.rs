@@ -915,7 +915,6 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["group", "move"][..], CommandKind::WorkingGroupMove),
         (&["group", "arrange"][..], CommandKind::WorkingGroupArrange),
         (&["group", "disband"][..], CommandKind::WorkingGroupDisband),
-        (&["group", "stance"][..], CommandKind::WorkingGroupStance),
         (&["principal", "list"][..], CommandKind::PrincipalRead),
         (&["principal", "admit"][..], CommandKind::PrincipalAdmit),
         (&["principal", "profile"][..], CommandKind::PrincipalEdit),

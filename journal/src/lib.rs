@@ -73,8 +73,11 @@
 /// receipt refuses the crossing. Schema 100 retires the Passive, Explore, and
 /// Converge working-group stances onto a Paused/Running brake in every
 /// partition and stance or arrange request, and records each Design request's
-/// admitting stance as the reach its maturity now derives.
-pub const SCHEMA_VERSION: u32 = 100;
+/// admitting stance as the reach its maturity now derives. Schema 101 retires
+/// the working-group brake: each open Design a Paused group held becomes
+/// deferred, every partition and arrange request drops its stance, and
+/// `group::stance` receipts retire to historical authority.
+pub const SCHEMA_VERSION: u32 = 101;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
