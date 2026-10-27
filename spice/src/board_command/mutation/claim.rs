@@ -771,7 +771,7 @@ fn named_claim_selection<'a>(
     }
 }
 
-/// A Design outside every working group is passive: no claim path grants it.
+/// A Design a Passive working group holds is passive: no claim path grants it.
 pub(in crate::board_command) fn refuse_passive_design(
     entry: &Entry,
 ) -> Result<(), Outcome<CommandAnswer>> {
@@ -779,7 +779,7 @@ pub(in crate::board_command) fn refuse_passive_design(
         return Err(refusal(
             "claim::design-passive",
             Some(entry.handle().to_string()),
-            "a Design outside every working group is passive; move it into a working group to make it claimable",
+            "a Design in a Passive working group is passive; set its group to Explore or Converge, or move it out of every group, to make it claimable",
         ));
     }
     Ok(())

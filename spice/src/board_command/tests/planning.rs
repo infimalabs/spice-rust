@@ -169,7 +169,7 @@ fn declared_planning_defaults_give_each_purpose_its_flow() {
     clean(&root, bus);
 }
 #[test]
-fn plan_intake_releases_its_claim_into_a_passive_design() {
+fn plan_intake_releases_its_claim_into_an_active_design() {
     let (root, bus, epoch, seats) = fixture("planning-design-plan-intake", 1);
     let design = add_planning(
         &bus,
@@ -232,7 +232,7 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
     assert_eq!(
         allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
         None,
-        "the transitioned passive Design leaves allocation",
+        "the transitioned Design gathers input outside allocation",
     );
     let view = board(&bus, epoch, Actor::Operator);
     let heads = at(&view, &design);
@@ -244,7 +244,7 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
     );
     assert_eq!(
         heads.design_standing(),
-        Some(wire::intent::DesignStanding::Passive),
+        Some(wire::intent::DesignStanding::Active),
     );
     bus.verify()
         .expect("transitioned Design authority verifies before restart");
@@ -255,7 +255,7 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
     let restarted = board(&reopened, epoch, Actor::Operator);
     assert_eq!(
         at(&restarted, &design).design_standing(),
-        Some(wire::intent::DesignStanding::Passive),
+        Some(wire::intent::DesignStanding::Active),
     );
     clean(&root, reopened);
 }
@@ -336,13 +336,13 @@ fn a_plan_intake_claimant_revises_the_statement_and_a_stale_head_refuses() {
     assert_eq!(heads.presentation_title(), "Sharpened Design statement");
     assert_eq!(
         heads.design_standing(),
-        Some(wire::intent::DesignStanding::Passive),
+        Some(wire::intent::DesignStanding::Active),
     );
     clean(&root, bus);
 }
 
 #[test]
-fn clean_review_intake_releases_its_claim_into_a_passive_design() {
+fn clean_review_intake_releases_its_claim_into_an_active_design() {
     let (root, bus, epoch, seats) = fixture("planning-design-review-intake", 1);
     let seat = &seats[0];
     let actor = Actor::Lane(seat.lane);
@@ -389,7 +389,7 @@ fn clean_review_intake_releases_its_claim_into_a_passive_design() {
     );
     assert_eq!(
         design.design_standing(),
-        Some(wire::intent::DesignStanding::Passive),
+        Some(wire::intent::DesignStanding::Active),
     );
     clean(&root, bus);
 }
@@ -510,7 +510,7 @@ fn finding_review_intake_enters_design_with_its_correction_recorded() {
     );
     assert_eq!(
         design.design_standing(),
-        Some(wire::intent::DesignStanding::Passive),
+        Some(wire::intent::DesignStanding::Active),
     );
     clean(&root, bus);
 }

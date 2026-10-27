@@ -367,12 +367,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                     text.push(' ');
                     text.push_str(&design.to_string());
                 }
-                text.push_str(match change.status {
-                    wire::intent::WorkingGroupChangeStatus::Disbanded => {
-                        "; put each ungrouped Design aside directly to retry"
-                    }
-                    _ => "; set the group passive again to retry",
-                });
+                text.push_str("; set the group passive again to retry");
             }
             Outcome::Reply(Reply {
                 position,

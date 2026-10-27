@@ -84,7 +84,7 @@ fn next_action(
     match cycle {
         Some((cycle, availability)) => cycle_next(cycle, availability).to_owned(),
         None if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group \
-            to Explore or Converge so a lane can claim it; if ungrouped, group it first."
+            to Explore or Converge, or move it out of every group, so a lane can claim it."
             .to_owned(),
         None => "Nudge this Design to ask one lane for its next contribution.".to_owned(),
     }
@@ -97,8 +97,8 @@ const fn cycle_next(cycle: DesignCycle, availability: DesignAvailability) -> &'s
             "Lanes or you add input next: a vote, a question, or a post in this room."
         }
         (DesignCycle::ReadyForProposal, DesignAvailability::Passive) => {
-            "You activate this Design by moving its working group to Explore or Converge, so a \
-             lane can claim it."
+            "You activate this Design by setting its working group to Explore or Converge, or \
+             moving it out of every group, so a lane can claim it."
         }
         (DesignCycle::ReadyForProposal, DesignAvailability::Unclaimed) => {
             "A lane claims this Design next and ends its pass with one proposal."

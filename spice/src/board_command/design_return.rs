@@ -2,7 +2,7 @@
 //!
 //! Legacy returns and output-by-output decisions record what the operator sent
 //! back or accepted on one exact candidate version. Each active Design (open
-//! and standing in a working group) whose claim an occupied lane holds is owed
+//! and held by no Passive working group) whose claim an occupied lane holds is owed
 //! its newest feedback until that exact occupant's supervisor confirms enqueue
 //! and the resident commits `room::relayed` for the still-current claim.
 //! Failed or stale attempts remain owed. A holder present at the decision hears

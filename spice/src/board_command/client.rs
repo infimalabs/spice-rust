@@ -1342,10 +1342,6 @@ pub(crate) fn dispatch(
         let config = steer::Config::default();
         return Some(move_working_group(bus, command, moving, &config).0);
     }
-    if let wire::intent::Intent::WorkingGroupDisband(request) = command.body() {
-        let config = steer::Config::default();
-        return Some(disband_working_group(bus, command, request, &config).0);
-    }
     if let wire::intent::Intent::WorkingGroupStance(stance) = command.body() {
         let config = steer::Config::default();
         return Some(set_working_group_stance(bus, command, stance, &config).0);
@@ -1362,6 +1358,9 @@ fn dispatch_working_group(
             arrange_working_groups(bus, command, arrange)
         }
         wire::intent::Intent::WorkingGroupFast(fast) => set_working_group_fast(bus, command, fast),
+        wire::intent::Intent::WorkingGroupDisband(request) => {
+            disband_working_group(bus, command, request)
+        }
         _ => return None,
     })
 }

@@ -101,10 +101,13 @@ fn live_stop(bus: &Bus, room: &TaskHandle) -> Option<wire::SteeringHead> {
     stops.pop().map(|head| head.body().clone())
 }
 
-pub(super) fn move_out(
+/// Move `task` into the group `to` names, founding it in Passive when no such
+/// group stands, or out of every group.
+pub(super) fn move_to(
     bus: &Bus,
     epoch: CanonicalUuid,
     task: &TaskHandle,
+    to: Option<&wire::rooms::RoomAuthorityStamp>,
 ) -> (Outcome<CommandAnswer>, Option<CanonicalUuid>) {
     let revision = bus
         .read(|read| read.group_partition())
@@ -120,13 +123,19 @@ pub(super) fn move_out(
         ],
         &wire::rooms::WorkingGroupMove {
             design: born(task),
-            to: None,
+            to: to.cloned(),
         },
     );
     let wire::intent::Intent::WorkingGroupMove(request) = command.body() else {
         panic!("fixture command carries a working-group move");
     };
     crate::board_command::move_working_group(bus, &command, request, &steer::Config::default())
+}
+
+/// Ready an ungrouped `design` for its proposal through the operator's nudge.
+fn ready(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
+    let current = board(bus, epoch, Actor::Operator);
+    assert_committed(nudge_design(bus, epoch, Actor::Operator, &current, design));
 }
 
 fn set_stance(
@@ -307,14 +316,21 @@ fn a_room_freed_before_its_shelving_settles_quiescent() {
 }
 
 #[test]
-fn only_a_grouped_design_is_offered_or_claimed() {
+fn a_ready_ungrouped_design_is_offered_and_only_a_passive_group_withholds_it() {
     let (root, bus, epoch, seats) = fixture("design-standing-claims", 1);
-    let task = design(&bus, epoch, "Passive design");
+    let task = design(&bus, epoch, "Ungrouped design");
+    ready(&bus, epoch, &task);
+    assert_eq!(
+        offered(&bus, epoch, &seats[0]),
+        Some(born(&task)),
+        "a ready Design needs no group to be offered"
+    );
 
+    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
     assert_eq!(
         offered(&bus, epoch, &seats[0]),
         None,
-        "a passive Design is never offered"
+        "a fresh group stands Passive and withholds its Design"
     );
     assert_eq!(
         refused(&win_named(&bus, epoch, &seats[0], &task, "capture")),
@@ -322,7 +338,7 @@ fn only_a_grouped_design_is_offered_or_claimed() {
     );
     assert_eq!(active_holder(&bus, epoch, &task), None);
 
-    group_design(&bus, epoch, &task);
+    assert_committed(move_to(&bus, epoch, &task, None).0);
     assert_eq!(offered(&bus, epoch, &seats[0]), Some(born(&task)));
     let lane = Actor::Lane(seats[0].lane);
     assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
@@ -331,18 +347,36 @@ fn only_a_grouped_design_is_offered_or_claimed() {
 }
 
 #[test]
-fn a_held_design_leaving_its_group_asks_its_holder_to_park_and_returns_unchanged() {
+fn a_held_design_leaving_an_active_group_keeps_its_holder_without_a_stop() {
+    let (root, bus, epoch, seats) = fixture("design-standing-leave-active", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let task = design(&bus, epoch, "Held through leaving");
+    group_design(&bus, epoch, &task);
+    let holder = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &holder, &task);
+
+    let (moved, notified) = move_to(&bus, epoch, &task, None);
+    assert_committed(moved);
+    assert_eq!(notified, None, "an ungrouped Design stays active");
+    assert!(live_stop(&bus, &task).is_none());
+    assert!(stop_directions(&bus, &task).is_empty());
+    assert_eq!(active_holder(&bus, epoch, &task), Some(holder));
+    clean(&root, bus);
+}
+
+#[test]
+fn a_held_design_entering_a_passive_group_asks_its_holder_to_park_and_returns_unchanged() {
     let (root, bus, epoch, seats) = fixture("design-standing-park", 2);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Held design");
-    group_design(&bus, epoch, &task);
+    ready(&bus, epoch, &task);
     let holder = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &holder, &task);
     let before = at(&board(&bus, epoch, Actor::Operator), &task)
         .statement
         .clone();
 
-    let (moved, notified) = move_out(&bus, epoch, &task);
+    let (moved, notified) = move_to(&bus, epoch, &task, Some(&fixture_group()));
     assert_committed(moved);
     assert_eq!(
         notified,
@@ -369,9 +403,9 @@ fn a_held_design_leaving_its_group_asks_its_holder_to_park_and_returns_unchanged
         "no lane steals a passive Design from its holder"
     );
 
-    // Re-entry and a second exit while the request stands send nothing new.
-    group_design(&bus, epoch, &task);
-    assert_committed(move_out(&bus, epoch, &task).0);
+    // Leaving and re-entering while the request stands send nothing new.
+    assert_committed(move_to(&bus, epoch, &task, None).0);
+    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
     assert_eq!(stop_directions(&bus, &task).len(), 1);
 
     free_active(&bus, epoch, &holder, &seats[0], &task);
@@ -383,7 +417,8 @@ fn a_held_design_leaving_its_group_asks_its_holder_to_park_and_returns_unchanged
     );
     assert_eq!(offered(&bus, epoch, &seats[1]), None);
 
-    group_design(&bus, epoch, &task);
+    assert_committed(move_to(&bus, epoch, &task, None).0);
+    ready(&bus, epoch, &task);
     assert_eq!(offered(&bus, epoch, &seats[1]), Some(born(&task)));
     assert_eq!(
         at(&board(&bus, epoch, Actor::Operator), &task).statement,
@@ -398,12 +433,12 @@ fn a_vacant_holder_is_asked_to_park_through_its_lane() {
     let (root, bus, epoch, seats) = fixture("design-standing-vacant", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Vacant holder design");
-    group_design(&bus, epoch, &task);
+    ready(&bus, epoch, &task);
     let holder = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &holder, &task);
     vacate(&bus, epoch, &seats[0]);
 
-    assert_committed(move_out(&bus, epoch, &task).0);
+    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
     let stop = live_stop(&bus, &task).expect("a vacant holder still receives the park request");
     assert_eq!(stop.lane, seats[0].lane);
     let [sent] = stop_directions(&bus, &task)
@@ -418,15 +453,15 @@ fn a_vacant_holder_is_asked_to_park_through_its_lane() {
 }
 
 #[test]
-fn an_offer_read_before_the_design_left_its_group_cannot_claim_it() {
+fn an_offer_read_before_the_design_entered_a_passive_group_cannot_claim_it() {
     let (root, bus, epoch, seats) = fixture("design-standing-stale", 1);
     let task = design(&bus, epoch, "Stale offer design");
-    group_design(&bus, epoch, &task);
+    ready(&bus, epoch, &task);
     let lane = Actor::Lane(seats[0].lane);
     let available = board(&bus, epoch, lane.clone());
     let stale = claim_expected(&available, &task, &seats[0]);
 
-    assert_committed(move_out(&bus, epoch, &task).0);
+    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
     let outcome = issue(
         &bus,
         epoch,

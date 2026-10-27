@@ -425,27 +425,21 @@ pub(super) fn set_working_group_fast(
 /// Designs, so a room that moved settles within a read or two.
 const SHELVING_ATTEMPTS: usize = 4;
 
-/// End one standing group and leave all of its Designs ungrouped. The
-/// partition commits first, then every Design is shelved from its room under
-/// that Design's task origin. Returns every lane asked to park.
-pub(crate) fn disband_working_group(
+/// End one standing group and leave all of its Designs ungrouped. An
+/// ungrouped Design is active, so a disband stops no holder and shelves no
+/// room.
+pub(super) fn disband_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request: &WorkingGroupDisband,
-    config: &steer::Config,
-) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+) -> Outcome<CommandAnswer> {
     let (current, revision) = match advancing_partition(bus, command) {
         Ok(found) => found,
-        Err(outcome) => return (outcome, Vec::new()),
+        Err(outcome) => return outcome,
     };
-    let group = match standing_group(&current, &request.group) {
-        Ok(group) => group,
-        Err(outcome) => return (outcome, Vec::new()),
-    };
-    let handles = match design_handles(bus, group.anchors.clone()) {
-        Ok(handles) => handles,
-        Err(outcome) => return (outcome, Vec::new()),
-    };
+    if let Err(outcome) = standing_group(&current, &request.group) {
+        return outcome;
+    }
     let mut partition = current.clone();
     partition.revision = revision;
     partition
@@ -456,14 +450,13 @@ pub(crate) fn disband_working_group(
         from: current,
         partition,
     };
-    let outcome = restate(
+    restate(
         bus,
         command,
         WorkingGroupChangeStatus::Disbanded,
         fact,
         request.clone(),
-    );
-    shelve_committed(outcome, bus, command, ShelvingPolicy { config }, handles)
+    )
 }
 
 /// Set one standing group's shared activity stance. A change to Passive
