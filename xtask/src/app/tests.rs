@@ -490,6 +490,66 @@ fn publication_switches_only_after_an_event_releases_the_complete_generation() {
     fs::remove_dir_all(root).expect("remove fixture");
 }
 
+/// Stagings of one worktree publish into one stage, so two that compiled the
+/// same sources must both land the one content-addressed generation they
+/// share, even when neither finds a stage to publish into.
+#[test]
+fn concurrent_stagings_of_the_same_sources_publish_one_generation() {
+    const STAGERS: usize = 4;
+    for round in 0..8 {
+        let root = fixture(&format!("worktree-app-concurrent-{round}"));
+        let sources = fixture_source();
+        let built = std::sync::Barrier::new(STAGERS);
+        let published = std::thread::scope(|scope| {
+            let stagers = (0..STAGERS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        app_at(
+                            &root,
+                            &sources,
+                            &mut Vec::new(),
+                            |stage, _| {
+                                write_raw_generation(stage, "shared", &sources, true);
+                                built.wait();
+                                Ok(())
+                            },
+                            || Ok(()),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            stagers
+                .into_iter()
+                .map(|stager| {
+                    stager
+                        .join()
+                        .expect("stager joins")
+                        .unwrap_or_else(|error| panic!("round {round}: staging failed: {error}"))
+                })
+                .collect::<Vec<_>>()
+        });
+        let identity = &published[0];
+        assert!(published.iter().all(|staged| staged == identity));
+        let current = spice::serve::AppSource::resolve(&root)
+            .expect("shared generation resolves")
+            .current_generation()
+            .expect("shared generation is current");
+        assert_eq!(current.identity(), identity);
+        let store = root
+            .join(spice::serve::APP_STAGE)
+            .join(spice::serve::APP_STAGE_GENERATIONS);
+        let generations = fs::read_dir(&store)
+            .expect("generation store lists")
+            .map(|entry| entry.expect("generation entry").path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        assert_eq!(generations, [store.join(identity.as_str())]);
+        let archive = fs::read(archive_path(&store, identity)).expect("archive is staged");
+        Rack::admit_generation(&archive, identity).expect("archive admits as its generation");
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+}
+
 #[test]
 fn a_failed_finalization_preserves_the_prior_pointer_or_first_build_absence() {
     let root = fixture("worktree-app-failure");

@@ -186,11 +186,27 @@ fn carries_identity(wasm: &[u8], source_identity: &Digest) -> bool {
         .any(|window| window == source_identity.as_str().as_bytes())
 }
 
+/// The lock beside the stage that serializes every publication into it.
+///
+/// Stagings compile into their own temporaries in parallel, but they publish
+/// into one stage: resetting a pointer-less stage, publishing or reusing the
+/// content-addressed generation, its archive, the pointer, and pruning each
+/// read what another publication may be changing. The lock sits outside the
+/// stage because a pointer-less reset removes the stage itself.
+const STAGE_LOCK: &str = ".stage-app.lock";
+
 fn publish_generation(
     stage: &Path,
     temporary: &Path,
     identity: &Digest,
 ) -> Result<(), AppBuildError> {
+    let lock = stage.with_file_name(STAGE_LOCK);
+    let _publication = sill::LockFile::new(
+        sill::LockName::new("app-stage").expect("fixed app stage lock name is valid"),
+        &lock,
+    )
+    .acquire()
+    .map_err(|source| AppBuildError::Io { path: lock, source })?;
     if stage.exists() && !stage.join(spice::serve::APP_STAGE_CURRENT).is_file() {
         fs::remove_dir_all(stage).map_err(|source| AppBuildError::Io {
             path: stage.to_path_buf(),
