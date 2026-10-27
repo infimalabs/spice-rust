@@ -28,7 +28,6 @@ mod approval;
 mod conclusion;
 mod console;
 mod contributions;
-mod nudge;
 mod reading;
 mod standing;
 pub(super) use console::{GroupRender, design_of_key, group_base, render_group_surfaces};

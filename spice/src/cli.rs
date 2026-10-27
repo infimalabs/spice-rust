@@ -179,12 +179,9 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::WorkingGroupDisband
         | CommandKind::WorkingGroupFast
         | CommandKind::DesignPropose
-        | CommandKind::CandidateCritiqueRecord
-        | CommandKind::CandidateCoverageRecord
         | CommandKind::PreparationDecide
         | CommandKind::CandidateWithdraw
         | CommandKind::OutputAdopt
-        | CommandKind::DesignNudge
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog
@@ -435,14 +432,11 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["principal", "role", "grant"]
             | ["principal", "role", "revoke"]
             | ["principal", "deauthorize"]
-            | ["preparation", "propose"]
-            | ["preparation", "show"]
-            | ["preparation", "critique"]
-            | ["preparation", "cover"]
-            | ["preparation", "decide"]
-            | ["preparation", "withdraw"]
-            | ["preparation", "adopt"]
-            | ["preparation", "nudge"]
+            | ["design", "propose"]
+            | ["design", "show"]
+            | ["design", "decide"]
+            | ["design", "withdraw"]
+            | ["task", "adopt"]
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]
@@ -532,8 +526,8 @@ A Design is itself a question: phrase TITLE as the question under Design.
 Each --acceptance value is one open question for evidence and proposals to
 answer, not an implementation completion criterion.";
 
-/// What `preparation propose` assembles and what its holder still authors.
-const PREPARATION_PROPOSE_HELP: &str = "\
+/// What `design propose` assembles and what its holder still authors.
+const DESIGN_PROPOSE_HELP: &str = "\
 Ends the pass of the open Design this capability holds (--design HANDLE when it
 holds several) and releases that claim; the Design stays open for the
 operator's decision. The proposal is assembled, not typed: its outputs are the
@@ -555,7 +549,7 @@ fn leaf_help(path: &[&str]) -> Option<&'static str> {
         ["watch"] => Some(WATCH_HELP),
         ["task", "next"] => Some(TASK_NEXT_HELP),
         ["task", "design"] => Some(TASK_DESIGN_HELP),
-        ["preparation", "propose"] => Some(PREPARATION_PROPOSE_HELP),
+        ["design", "propose"] => Some(DESIGN_PROPOSE_HELP),
         ["task", "artifact", "list"] => Some(ARTIFACT_LIST_HELP),
         ["task", "artifact", "show"] => Some(ARTIFACT_SHOW_HELP),
         _ => None,

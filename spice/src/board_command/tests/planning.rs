@@ -525,8 +525,8 @@ fn a_lane_never_completes_a_design_it_holds() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    let result = done(&bus, epoch, &seats[0], &design);
+    capture_design(&bus, epoch, &seats[0], &design);
+    let result = complete(&bus, epoch, &seats[0], &design);
     let Outcome::Refusal(refusal) = &result else {
         panic!("lane done must leave a Design open: {result:?}");
     };

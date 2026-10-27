@@ -71,18 +71,12 @@ pub enum CommandKind {
     WorkingGroupFast,
     /// Record one exact completed pass proposed by the active Design holder.
     DesignPropose,
-    /// Record one source-backed critique of a Design pass proposal.
-    CandidateCritiqueRecord,
-    /// Record one source-backed review coverage statement.
-    CandidateCoverageRecord,
     /// Record one exact operator disposition; selection also authorizes its subset.
     PreparationDecide,
     /// Withdraw one exact undecided candidate its author retained.
     CandidateWithdraw,
     /// Adopt pending existing work under preparation control.
     OutputAdopt,
-    /// Ask one open Design to take its next pass.
-    DesignNudge,
     /// Read durable global app settings.
     GlobalSettingsRead,
     /// Replace the durable global fast-mode setting.

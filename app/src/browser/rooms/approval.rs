@@ -1,6 +1,6 @@
 //! Every immutable Design pass proposal and the operator's exact decision
 //! surface. Work verdicts, outputless acceptance, and material returns are
-//! previewed before one atomic `preparation decide`.
+//! previewed before one atomic `design decide`.
 //! A version its author withdrew stays in history, apart from the open
 //! versions, and offers no decision.
 

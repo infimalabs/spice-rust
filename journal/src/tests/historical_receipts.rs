@@ -92,36 +92,44 @@ fn historical_corruption_is_reported_without_weakening_current_receipts() {
 
 #[test]
 fn retired_in_place_receipts_verify_but_unregistered_kinds_do_not() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("authorize.sqlite3");
-    let current = historical_fixture(&path);
-    let request = authorize_request();
-    assert!(
-        wire::decode::<Command<serde_json::Value>>(&request).is_err(),
-        "a retained receipt must not restore the retired command to the live registry"
-    );
-    insert_in_place(
-        &current.connection,
-        "command_receipts",
-        AUTHORIZATION,
+    for kind in [
         "preparation::authorize",
-        &request,
-    );
-    let before = receipt(&current.connection, "command_receipts", AUTHORIZATION);
-    drop(current);
-    let journal = Journal::open(&path).expect("authorization evidence reopens");
-    assert_eq!(
-        journal
-            .verify()
-            .expect("authorization evidence verifies")
-            .receipts,
-        2
-    );
-    assert_eq!(
-        receipt(&journal.connection, "command_receipts", AUTHORIZATION),
-        before,
-        "verification leaves retained evidence byte-identical"
-    );
+        "preparation::critique",
+        "preparation::cover",
+        "preparation::nudge",
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join("retired.sqlite3");
+        let current = historical_fixture(&path);
+        let request = retired_request(AUTHORIZATION, kind);
+        assert!(
+            wire::decode::<Command<serde_json::Value>>(&request).is_err(),
+            "a retained {kind} receipt must not restore its command to the live registry"
+        );
+        insert_in_place(
+            &current.connection,
+            "command_receipts",
+            AUTHORIZATION,
+            kind,
+            &request,
+        );
+        let before = receipt(&current.connection, "command_receipts", AUTHORIZATION);
+        drop(current);
+        let journal = Journal::open(&path).expect("retired evidence reopens");
+        assert_eq!(
+            journal
+                .verify()
+                .expect("retired evidence verifies")
+                .receipts,
+            2,
+            "{kind}"
+        );
+        assert_eq!(
+            receipt(&journal.connection, "command_receipts", AUTHORIZATION),
+            before,
+            "verification leaves retained {kind} evidence byte-identical"
+        );
+    }
 
     let scratch = Scratch::new();
     let path = scratch.path().join("unknown.sqlite3");
@@ -266,10 +274,6 @@ fn insert_retired(connection: &Connection, id: &str) {
         "INSERT INTO historical_command_receipts VALUES (?1, 'operator', 'gate::findings', ?2, ?3, ?4, 1, 2, NULL, ?5)",
         params![id, serde_json::to_vec(&request).expect("request encodes"), b"[]".as_slice(), wire::encode(&response).expect("response encodes"), EPOCH],
     ).expect("insert historical receipt");
-}
-
-fn authorize_request() -> Vec<u8> {
-    retired_request(AUTHORIZATION, "preparation::authorize")
 }
 
 fn tell_request() -> Vec<u8> {

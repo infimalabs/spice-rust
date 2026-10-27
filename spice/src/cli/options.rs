@@ -128,22 +128,22 @@ const OPTIONS: &[(&str, &str, &str)] = &[
         "How the work is done: need, mechanism, invariants; the why belongs in --pitch",
     ),
     (
-        "preparation propose",
+        "design propose",
         "design",
         "Name the held Design when this capability holds several",
     ),
     (
-        "preparation propose",
+        "design propose",
         "recommend",
         "End a pass that built nothing by recommending conclude or collapse",
     ),
     (
-        "preparation propose",
+        "design propose",
         "cite",
         "Add a source, or relabel an assembled one, as RELATION=KEY",
     ),
     (
-        "preparation propose",
+        "design propose",
         "dry-run",
         "Print the assembled proposal and record nothing",
     ),

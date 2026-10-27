@@ -71,21 +71,17 @@ pub(crate) enum RoomControlRequest {
 }
 
 /// One preparation write with the heads its surface observed: an exact
-/// proposal decision, or a nudge pushing an open Design to proposal.
+/// proposal decision.
 #[cfg_attr(
     all(test, not(target_arch = "wasm32")),
     expect(
         dead_code,
-        reason = "only the wasm32 browser approval and nudge controls send preparation requests"
+        reason = "only the wasm32 browser approval control sends preparation requests"
     )
 )]
 pub(crate) enum PreparationRequest {
     Decide {
         request: Box<wire::rooms::PreparationDecide>,
-        expected: Vec<wire::Witness>,
-    },
-    Nudge {
-        request: wire::rooms::DesignNudge,
         expected: Vec<wire::Witness>,
     },
 }

@@ -27,6 +27,23 @@ const SUMMARIES: &[(&str, &str)] = &[
         "Serve the installed appliance from an isolated demo repository",
     ),
     (
+        "design",
+        "Propose, decide, withdraw, and read Design passes",
+    ),
+    (
+        "design decide",
+        "Record the operator's decision on a Design proposal",
+    ),
+    (
+        "design propose",
+        "Record a Design pass proposal and release its claim",
+    ),
+    ("design show", "Page one task's Design pass authority"),
+    (
+        "design withdraw",
+        "Withdraw an undecided proposal you authored",
+    ),
+    (
         "dev",
         "Run repository Cargo and xtask commands with the admitted Cargo home",
     ),
@@ -140,39 +157,6 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("lane wake", "Launch a new occupant into a vacant lane seat"),
     ("lock", "Report resource locks, or run a command under one"),
     ("lock run", "Run a command while holding a named lock"),
-    (
-        "preparation",
-        "Propose, critique, and decide Design preparations",
-    ),
-    (
-        "preparation adopt",
-        "Adopt existing pending work under preparation control",
-    ),
-    (
-        "preparation cover",
-        "Record a source-backed review coverage statement",
-    ),
-    (
-        "preparation critique",
-        "Record a source-backed critique of a Design proposal",
-    ),
-    (
-        "preparation decide",
-        "Record the operator's decision on a Design proposal",
-    ),
-    (
-        "preparation nudge",
-        "Push one open Design to proposal and message the best-matching free lane",
-    ),
-    (
-        "preparation propose",
-        "Record a Design pass proposal and release its claim",
-    ),
-    ("preparation show", "Page one task's preparation authority"),
-    (
-        "preparation withdraw",
-        "Withdraw an undecided proposal you authored",
-    ),
     (
         "principal",
         "Admit human principals and manage their profiles and roles",
@@ -306,6 +290,10 @@ const SUMMARIES: &[(&str, &str)] = &[
     ("steer resend", "Re-deliver one live directive"),
     ("task", "Create, claim, complete, review, and read tasks"),
     ("task add", "Create a task, optionally claiming it"),
+    (
+        "task adopt",
+        "Adopt existing pending work under a Design's control",
+    ),
     (
         "task artifact",
         "Attach, list, show, remove, and prune task artifacts",

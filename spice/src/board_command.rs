@@ -126,7 +126,6 @@ use mutation::*;
 mod planning;
 use planning::*;
 mod preparation;
-pub(crate) use preparation::nudge::design_nudge;
 use preparation::*;
 mod progress;
 use progress::*;

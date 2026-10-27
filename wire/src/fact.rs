@@ -366,9 +366,11 @@ vocabulary! {
 
     /// One exact completed Design pass was proposed under its controlling task.
     DesignProposed = "proposal::retained" by CommandDoor;
-    /// One source-backed critique of an exact Design pass proposal was recorded.
+    /// Retained source-backed critique of an exact Design pass proposal; no
+    /// longer minted.
     CandidateCritiqued = "proposal::critiqued" by CommandDoor;
-    /// One source-backed coverage statement over an exact proposal was recorded.
+    /// Retained source-backed coverage statement over an exact proposal; no
+    /// longer minted.
     CandidateCovered = "proposal::covered" by CommandDoor;
     /// The operator decided one exact proposal.
     PreparationDecided = "proposal::decided" by CommandDoor;
@@ -376,7 +378,8 @@ vocabulary! {
     CandidateWithdrawn = "proposal::withdrawn" by CommandDoor;
     /// A work decision made its exact accepted outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
-    /// The operator asked one open Design to take its next pass.
+    /// Retained operator nudge of one open Design toward its next pass; no
+    /// longer minted.
     DesignNudged = "proposal::nudged" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.

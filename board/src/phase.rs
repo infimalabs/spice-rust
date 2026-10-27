@@ -168,7 +168,7 @@ pub enum PhaseRefusal {
 pub fn deliverable(phase: &Phase) -> Option<&'static str> {
     match phase.as_str() {
         "design" => Some(
-            "board state is the deliverable: record exactly one `preparation propose` \
+            "board state is the deliverable: record exactly one `design propose` \
              recommendation justified by the evidence; that command releases the claim \
              atomically; only the operator concludes a Design, and lanes never mark it done",
         ),
@@ -213,11 +213,11 @@ pub fn released_reminder(entry: &Entry) -> String {
             Some(wire::rooms::DesignPassEnd::Proposed) => format!(
                 "your earlier pass of {task} ended in a proposal; this pass answers the \
                  operator's decision and the input recorded since, read through \
-                 `spice preparation show {task}`, and ends with one `spice preparation propose`"
+                 `spice design show {task}`, and ends with one `spice design propose`"
             ),
             Some(wire::rooms::DesignPassEnd::Abandoned) | None => format!(
                 "your earlier pass of {task} ended without a proposal; finish this pass with \
-                 one `spice preparation propose`, recommending conclude or collapse when no \
+                 one `spice design propose`, recommending conclude or collapse when no \
                  further work is warranted"
             ),
         };

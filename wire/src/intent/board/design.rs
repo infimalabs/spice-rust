@@ -94,8 +94,7 @@ pub enum DesignStanding {
     /// Open and deferred: it invites no lane and no path grants it a claim
     /// until it is woken.
     Deferred,
-    /// Open and undeferred: lanes may be invited to it, claim it, or be
-    /// nudged onto it.
+    /// Open and undeferred: lanes may be invited to it or claim it.
     Open,
     /// The operator concluded it done.
     Done,

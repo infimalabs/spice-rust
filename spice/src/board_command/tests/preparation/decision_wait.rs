@@ -9,39 +9,6 @@ fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
     }
 }
 
-#[test]
-fn an_operator_nudge_readies_only_an_open_design_gathering_its_first_pass() {
-    let (root, bus, epoch, seats) = fixture("preparation-design-nudge", 2);
-    let design = add_controller(&bus, epoch, "Nudged design", wire::TaskIntent::Design, None);
-    let plan = add_controller(&bus, epoch, "Not a Design", wire::TaskIntent::Plan, None);
-    capture_for(&bus, epoch, &seats[1], &plan);
-    stand_design(&bus, epoch, &design);
-    assert_eq!(
-        offered(&bus, epoch, &seats[0]),
-        None,
-        "an active Design short of Steeped maturity gathers input"
-    );
-
-    let current = board(&bus, epoch, Actor::Operator);
-    assert!(matches!(
-        nudge_design(&bus, epoch, Actor::Operator, &current, &plan),
-        Outcome::Refusal(refusal) if refusal.reason() == "preparation::nudge-not-open-design"
-    ));
-    assert_committed(nudge_design(
-        &bus,
-        epoch,
-        Actor::Operator,
-        &current,
-        &design,
-    ));
-    assert_eq!(
-        offered(&bus, epoch, &seats[0]),
-        Some(design.born().expect("Design stamp"))
-    );
-    capture_for(&bus, epoch, &seats[0], &design);
-    clean(&root, bus);
-}
-
 /// A lane may claim a Design still gathering input by name, by capture or by
 /// steal, and end its pass with a proposal, while allocation waits for it to
 /// be ready. A named claim on a Design awaiting decision or waiting on
@@ -122,24 +89,16 @@ fn a_named_claim_forces_a_gathering_design_but_not_a_held_one() {
             awaiting
         );
     }
-    assert!(awaiting.contains("spice preparation decide"), "{awaiting}");
+    assert!(awaiting.contains("spice design decide"), "{awaiting}");
 
     // Selecting the output leaves the Design waiting on it: the released
-    // work is the Design's prerequisite, so counted input recorded meanwhile
-    // does not open another pass until the work settles.
+    // work is the Design's prerequisite, so no named claim opens another pass
+    // until the work settles.
     select_candidate_outputs(&bus, epoch, &design, candidate, &[&output], 1);
     claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &output);
     let waiting = held("capture", wire::rooms::DesignCycle::WaitingOnSelectedWork);
     assert!(waiting.contains("finish the work decision"), "{waiting}");
-    let current = board(&bus, epoch, Actor::Operator);
-    assert_committed(nudge_design(
-        &bus,
-        epoch,
-        Actor::Operator,
-        &current,
-        &design,
-    ));
-    for rule in ["capture", "recover", "steal"] {
+    for rule in ["recover", "steal"] {
         held(rule, wire::rooms::DesignCycle::WaitingOnSelectedWork);
     }
 
@@ -179,8 +138,7 @@ fn recorded_rejections_close_outputs_while_the_design_waits_on_released_work() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let accepted = add_plan_output(&bus, epoch, &design, "Accepted output");
     let rejected = add_plan_output(&bus, epoch, &design, "Rejected output");
     let undecided = add_plan_output(&bus, epoch, &design, "Undecided output");
@@ -261,8 +219,7 @@ fn a_later_open_candidate_owes_a_decision_until_decided_or_withdrawn() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let output = add_plan_output(&bus, epoch, &design, "Vetoed output");
     let design_stamp = design.born().expect("Design stamp");
     let decision_of = |bus: &Bus, task: &TaskHandle| {
@@ -329,15 +286,8 @@ fn a_later_open_candidate_owes_a_decision_until_decided_or_withdrawn() {
         "the earlier verdict stays on the output it closed"
     );
 
-    // Withdrawal is not counted input; the operator readies the corrected pass.
-    let current = board(&bus, epoch, Actor::Operator);
-    assert_committed(nudge_design(
-        &bus,
-        epoch,
-        Actor::Operator,
-        &current,
-        &design,
-    ));
+    // Withdrawal is not counted input; a named capture forces the corrected
+    // pass.
     let (corrected, _) = retain_candidate_version(
         &bus,
         epoch,

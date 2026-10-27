@@ -18,7 +18,7 @@ impl NextTransition {
         match self {
             Self::Review => Some(format!("spice task review {task}").into_boxed_str()),
             Self::Done => Some("spice task done".into()),
-            Self::Propose => Some("spice preparation propose JUSTIFICATION".into()),
+            Self::Propose => Some("spice design propose JUSTIFICATION".into()),
             Self::Wake => Some(format!("spice task wake {task}").into_boxed_str()),
             Self::File => Some(format!("spice task file {task}").into_boxed_str()),
             Self::Next => Some("spice task next".into()),

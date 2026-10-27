@@ -716,21 +716,22 @@ fn filing_turns_a_complete_task_plan_or_design_draft_into_offered_work() {
                 .iter()
                 .all(|task| task.statement.body.handle != draft)
         );
+        let listed = listed(&current, false);
+        assert!(listed.contains(filed.as_str()), "{listed}");
         if intent == Some(wire::TaskIntent::Design) {
             assert_eq!(
                 allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
                 None,
                 "a filed Design gathering input is not offered before it is ready",
             );
-            group_design(&bus, epoch, &filed);
+            capture_design(&bus, epoch, &seats[0], &filed);
+        } else {
+            assert_eq!(
+                allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
+                Some(filed.to_string()),
+                "filed {name} is not offered once eligible",
+            );
         }
-        assert_eq!(
-            allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
-            Some(filed.to_string()),
-            "filed {name} is not offered once eligible",
-        );
-        let listed = listed(&current, false);
-        assert!(listed.contains(filed.as_str()), "{listed}");
         clean(&root, bus);
     }
 }

@@ -13,8 +13,7 @@ fn a_design_selects_an_ordinary_output_with_an_open_vocabulary_phase() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let selected = add_output_with_flow(&bus, epoch, &design, "Selected ordinary task", "gather");
     let sibling = add_output(&bus, epoch, &design, "Sibling ordinary task");
     let born = |task: &TaskHandle| task.born().expect("task stamp");
@@ -33,9 +32,7 @@ fn a_design_selects_an_ordinary_output_with_an_open_vocabulary_phase() {
         "both direct outputs await an operator decision"
     );
 
-    let (candidate, source) =
-        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let (candidate, _) = retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),

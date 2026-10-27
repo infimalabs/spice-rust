@@ -34,6 +34,8 @@ mod control_signal;
 #[cfg(not(target_arch = "wasm32"))]
 mod demo_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod design_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod doctor;
 #[cfg(not(target_arch = "wasm32"))]
 mod gate_command;
@@ -55,8 +57,6 @@ mod lane_command;
 mod lock_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod message_shape;
-#[cfg(not(target_arch = "wasm32"))]
-mod preparation_command;
 mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod quote_command;
@@ -414,9 +414,7 @@ impl NativeInvocation<'_> {
             ["room", "awareness"] => {
                 deliver_display(&room_command::awareness::run(leaf, contract), form)
             }
-            ["preparation", "show"] => {
-                deliver_display(&preparation_command::run(leaf, contract), form)
-            }
+            ["design", "show"] => deliver_display(&design_command::run(leaf, contract), form),
             _ => unreachable!("retained read dispatch requires a retained read contract"),
         }
     }
@@ -470,7 +468,7 @@ impl NativeInvocation<'_> {
             | ["room", "result"]
             | ["room", "relevance"]
             | ["room", "awareness"]
-            | ["preparation", "show"] => {
+            | ["design", "show"] => {
                 self.dispatch_retained_read(contract);
             }
             ["backup"] => deliver(&journal_command::backup(leaf), form),
@@ -573,13 +571,10 @@ impl NativeInvocation<'_> {
             | ["principal", "profile"]
             | ["principal", "role", "grant" | "revoke"]
             | ["principal", "deauthorize"]
-            | ["preparation", "propose"]
-            | ["preparation", "critique"]
-            | ["preparation", "cover"]
-            | ["preparation", "decide"]
-            | ["preparation", "withdraw"]
-            | ["preparation", "adopt"]
-            | ["preparation", "nudge"]
+            | ["design", "propose"]
+            | ["design", "decide"]
+            | ["design", "withdraw"]
+            | ["task", "adopt"]
             | ["doc"]
             | ["doc", "ledger"] => {
                 deliver_command_answer(&board_command::run(leaf, contract, ambient), form);

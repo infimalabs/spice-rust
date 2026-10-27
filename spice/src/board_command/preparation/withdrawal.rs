@@ -42,7 +42,7 @@ pub(super) fn withdraw_candidate(
             "preparation::withdrawal-not-author",
             Some(code),
             "only the actor that retained this candidate withdraws it; the operator disposes of \
-             it with `spice preparation decide`",
+             it with `spice design decide`",
         );
     }
     let candidate_witness = Witness::Proposal {

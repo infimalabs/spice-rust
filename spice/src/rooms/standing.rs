@@ -1,5 +1,5 @@
 //! How well one lane's retained work matches a task statement: the one ranker
-//! every choice of a lane for a task shares, Design nudges and the lifecycle's
+//! every choice of a lane for a task shares, `task next` and the lifecycle's
 //! best-match wake order alike.
 
 use board::similarity::{FrequencyProfile, GenerationMismatch, Prepared};

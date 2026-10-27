@@ -750,14 +750,6 @@ pub struct CandidateCritique {
     pub standing: CritiqueStanding,
 }
 
-/// Command body recording one candidate critique.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateCritiqueRecord {
-    /// Source-backed critique to record.
-    pub critique: CandidateCritique,
-}
-
 /// Immutable fact body recording one candidate critique.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -836,14 +828,6 @@ impl From<CandidateCoverage> for CandidateCoverageWire {
             source: value.source,
         }
     }
-}
-
-/// Command body recording one candidate coverage statement.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateCoverageRecord {
-    /// Source-backed coverage to record.
-    pub coverage: CandidateCoverage,
 }
 
 /// Immutable fact body recording one candidate coverage statement.

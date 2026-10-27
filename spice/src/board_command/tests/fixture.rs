@@ -298,51 +298,17 @@ pub(super) fn fixture_group() -> wire::rooms::RoomAuthorityStamp {
     wire::rooms::RoomAuthorityStamp::for_micros(1_750_000_000_000_000).expect("fixture group stamp")
 }
 
-/// Group `design` and make it ready: stand it in the fixture group, then nudge
-/// it when it is already an open Design.
-pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
+/// Stand `design` in the fixture group and capture it for `seat` by name, as
+/// a lane told to take a Design does before it steeps.
+pub(super) fn capture_design(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, design: &TaskHandle) {
     stand_design(bus, epoch, design);
-    let current = board(bus, epoch, Actor::Operator);
-    let heads = at(&current, design);
-    if wire::intent::is_open_design(heads.statement.body.intent, &heads.workflow.body) {
-        assert_committed(nudge_design(bus, epoch, Actor::Operator, &current, design));
-    }
+    super::capture_for(bus, epoch, seat, design);
 }
 
 /// Stand `design` in the fixture group.
 pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     let born = design.born().expect("fixture design stamp");
     assert_committed(move_design_now(bus, epoch, &born, Some(&fixture_group())));
-}
-
-/// `actor`'s nudge of `design` at the heads `current` shows, with no lane free
-/// to take it.
-pub(super) fn nudge_design(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    actor: Actor,
-    current: &BoardAnswer,
-    design: &TaskHandle,
-) -> Outcome<CommandAnswer> {
-    let heads = at(current, design);
-    let request = wire::rooms::DesignNudge {
-        design: design.clone(),
-    };
-    let command = fixture_command(
-        epoch,
-        actor,
-        CommandKind::DesignNudge,
-        vec![statement_witness(heads), workflow_witness(heads)],
-        &request,
-    );
-    crate::board_command::design_nudge(
-        bus,
-        &command,
-        &request,
-        &steer::Config::default(),
-        |_, _| Ok(None),
-    )
-    .0
 }
 
 /// The rows an Open read reports as blocked execution trouble, after proving

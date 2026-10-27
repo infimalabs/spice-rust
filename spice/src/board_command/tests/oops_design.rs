@@ -424,8 +424,7 @@ fn oops_reports_wait_for_their_holders_proposal() {
     );
 
     // Moved to an active group, it is claimed and worked like any Design.
-    group_design(&bus, epoch, &design);
-    super::resolution::claim_task(&bus, epoch, &seats[0], &lane, &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let accept = |report: &TaskHandle| {
         assert_committed(super::edit::correct(
             &bus,
