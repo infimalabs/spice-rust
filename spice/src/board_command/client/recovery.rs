@@ -185,10 +185,10 @@ fn capture_recovery_preflight(
         .expect("actor entries retain every board task");
     planning::admit_capture(entry)?;
     let satisfied = board::resolved_tasks(&entries);
+    super::super::mutation::refuse_held_design(entry, &satisfied)?;
     let eligible = if stealing {
         board::stealable_entry(&satisfied, entry, &board.principal, &board.environment())
     } else {
-        super::super::mutation::refuse_held_design(entry, &satisfied)?;
         board::capturable_entry(&satisfied, entry, &board.principal, &board.environment())
     };
     if !eligible {

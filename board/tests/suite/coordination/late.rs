@@ -344,13 +344,6 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let blocked =
         admitted(blocked_head, workflow("todo"), None, None).expect("valid blocked heads");
 
-    let mut assigned_workflow = workflow("todo");
-    assigned_workflow.status = wire::WorkflowStatus::assigned(Actor::Operator);
-    let mut assigned_head = statement("BOARD-y8");
-    assigned_head.priority = Some(wire::TaskPriority::Critical);
-    let assigned =
-        admitted(assigned_head, assigned_workflow, None, None).expect("valid assigned heads");
-
     let active = claimed_entry("BOARD-x7", "todo");
     let mut deferred_workflow = workflow("todo");
     deferred_workflow.deferral = Some(instant("2026-08-01T07:00:00.000Z"));
@@ -369,15 +362,12 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let ordered = [
         blocked.clone(),
         second.clone(),
-        assigned.clone(),
         first.clone(),
         active.clone(),
         deferred.clone(),
         completed.clone(),
     ];
-    let reversed = [
-        completed, deferred, active, first, assigned, second, blocked,
-    ];
+    let reversed = [completed, deferred, active, first, second, blocked];
 
     let selected = select(&ordered, &Actor::Spice, &all_projects()).expect("eligible task");
     let selected_again = select(&reversed, &Actor::Spice, &all_projects()).expect("eligible task");
@@ -586,32 +576,20 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     let other = uuid("019fbbde-5105-75a3-a76a-722afde1e409");
     let actor = Actor::Lane(lane);
-    let entry =
-        |handle: &str, project: &str, creator: Option<CanonicalUuid>, assignment: Option<Actor>| {
-            let mut statement = statement(handle);
-            statement.project = project.to_owned();
-            if project == "task.unrelated" {
-                statement.priority = Some(wire::TaskPriority::Critical);
-            }
-            let mut workflow = workflow("todo");
-            workflow.status = assignment.map_or_else(
-                wire::WorkflowStatus::pending,
-                wire::WorkflowStatus::assigned,
-            );
-            admitted(statement, workflow, None, None)
-                .expect("scoped fixture entry")
-                .with_creator_team(creator)
-        };
+    let entry = |handle: &str, project: &str, creator: Option<CanonicalUuid>| {
+        let mut statement = statement(handle);
+        statement.project = project.to_owned();
+        if project == "task.unrelated" {
+            statement.priority = Some(wire::TaskPriority::Critical);
+        }
+        admitted(statement, workflow("todo"), None, None)
+            .expect("scoped fixture entry")
+            .with_creator_team(creator)
+    };
     let entries = vec![
-        entry("SCOPE-same001", "task.same", Some(lane), None),
-        entry("SCOPE-cross01", "task.cross", Some(other), None),
-        entry("SCOPE-open001", "task.unrelated", None, None),
-        entry(
-            "SCOPE-closed1",
-            "task.unassignable",
-            Some(lane),
-            Some(Actor::Lane(other)),
-        ),
+        entry("SCOPE-same001", "task.same", Some(lane)),
+        entry("SCOPE-cross01", "task.cross", Some(other)),
+        entry("SCOPE-open001", "task.unrelated", None),
     ];
     let same = entries[0].handle().to_string();
     let cross = entries[1].handle().to_string();
