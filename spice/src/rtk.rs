@@ -361,7 +361,7 @@ fn selector_arguments(command: &[OsString]) -> Option<Vec<String>> {
         .collect()
 }
 
-pub(crate) fn shell_command_index(command: &[OsString]) -> Option<usize> {
+fn shell_command_index(command: &[OsString]) -> Option<usize> {
     if command.len() < 3 || !matches!(command[1].to_str(), Some("-c" | "-lc")) {
         return None;
     }

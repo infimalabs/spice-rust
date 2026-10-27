@@ -891,12 +891,6 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
 /// Runs one command through the structural wrapper.
 #[cfg(not(target_arch = "wasm32"))]
 fn run(command: Vec<OsString>, ambient: &Ambient) -> ! {
-    if cfg!(target_os = "macos")
-        && let Some(refusal) = spice::browser_launch::argv_refusal(&command)
-    {
-        let _ = writeln!(io::stderr().lock(), "{refusal}");
-        terminate_code(126);
-    }
     let rewritten = ambient
         .get(spice::rtk::EXECUTABLE_VARIABLE)
         .map(|executable| spice::rtk::rewrite(&command, executable, ambient));

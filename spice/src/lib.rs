@@ -13,8 +13,6 @@ pub mod agent_prose;
 pub mod agent_wrapper;
 pub mod ambient;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod browser_launch;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod cargo_isolation;
 #[cfg(unix)]
 pub mod cargo_output;
