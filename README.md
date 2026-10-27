@@ -133,6 +133,13 @@ Supervised shells may route commands through an optional configured
 lane's RTK history is isolated under `<git-common>/.spice/rtk/`, and
 `spice doctor` checks the configured executable.
 
+On macOS, supervised shells refuse a command that starts a Chromium-family
+executable (Chrome, Chrome for Testing, Chromium, Edge, Brave) without
+`--use-mock-keychain`, reporting `browser::keychain-unmocked`. Without that
+switch Chromium reads its profile key from the login Keychain, and an
+untrusted build makes macOS ask the operator for their password. Playwright
+and Puppeteer pass the switch themselves.
+
 ## Develop
 
 [DEVELOPMENT.md](DEVELOPMENT.md) owns the development loop, crate seams, and
