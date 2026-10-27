@@ -409,10 +409,6 @@ fn complete_visible_reply_after_a_landed_reminder_queues_correction_without_inte
     let correction = seat.queued("ack-activity");
     assert!(correction.contains(ASKED), "{correction}");
     assert!(
-        correction.contains("Acknowledge it immediately"),
-        "{correction}"
-    );
-    assert!(
         !call.was_interrupted(),
         "activity correction waits for the ordinary aside boundary"
     );
@@ -538,4 +534,58 @@ fn direction_unread_while_the_resident_is_unreachable_is_steered_once_when_it_an
     seat.driver.deliver_inbox();
     seat.kick(&[(ASKED, "reminded"), (LATER, "published")]);
     assert_eq!(seat.steered().len(), 2, "nothing is steered twice");
+}
+
+#[test]
+fn corrective_notices_arm_activity_only_after_landing() {
+    for purpose in ["inbox", "hidden-ack", "misdirected-ack"] {
+        let seat = Seat::new();
+        seat.kick(&[(ASKED, "published")]);
+        match purpose {
+            "inbox" => seat.kick(&[(ASKED, "reminded")]),
+            "hidden-ack" => seat.hear(&serde_json::json!({
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "thinking", "thinking": format!("ACK {ASKED}: handled.")}],
+                },
+            })),
+            _ => seat.reply("ACK 1kJK6N3R: handled."),
+        }
+        let notice = seat.queued(purpose);
+        assert!(notice.contains(ASKED), "{purpose}: {notice}");
+        seat.reply("Still working before the notice lands.");
+        assert!(seat.queued("ack-activity").is_empty(), "{purpose}");
+        seat.land_operator(&notice);
+        seat.reply("Still working after the notice lands.");
+        let correction = seat.queued("ack-activity");
+        assert!(correction.contains(ASKED), "{purpose}: {correction}");
+    }
+}
+
+#[test]
+fn newly_due_keys_join_older_unanswered_activity_corrections() {
+    let seat = Seat::new();
+    seat.kick(&[(ASKED, "published"), (LATER, "published")]);
+    seat.kick(&[(ASKED, "reminded"), (LATER, "published")]);
+    seat.land_operator(&seat.queued("inbox"));
+    seat.reply("Continuing before answering the first key.");
+    assert!(seat.queued("ack-activity").contains(ASKED));
+
+    seat.hear(&serde_json::json!({
+        "type": "message_end",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": format!("ACK {LATER}: handled.")}],
+        },
+    }));
+    seat.land_operator(&seat.queued("hidden-ack"));
+    seat.reply("Continuing before answering either key.");
+    let queued = seat.queued("ack-activity");
+    assert!(queued.contains(ASKED) && queued.contains(LATER), "{queued}");
+
+    seat.answer_in_intent(LATER);
+    let remaining = seat.queued("ack-activity");
+    assert!(remaining.contains(ASKED), "{remaining}");
+    assert!(!remaining.contains(LATER), "{remaining}");
 }

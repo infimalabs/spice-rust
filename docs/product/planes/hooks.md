@@ -118,9 +118,11 @@ correction, even when the original is shorter. It names the pending key, says
 whether replies followed, and supplies the same grammar as reasoning-only,
 wrong-key and compaction corrections. First deliveries remain complete.
 
-Once a correction lands, the first later complete visible assistant response
-that still leaves its key pending queues one coalesced activity correction.
-Further ignored responses repeat it every third complete response. This cadence
+Once an ordinary, reasoning-only, wrong-key or compaction correction actually
+lands—not merely enters the aside queue—the first later complete visible
+assistant response that leaves its key pending queues an activity correction.
+Newly due keys join any older keys still queued. Further ignored responses
+repeat it every third complete response. This cadence
 has no clock: silence, a blocked or tool-only call, and streamed fragments do
 not advance it, and its queued aside does not interrupt a running tool. An ACK
 in visible prose or declared tool intent removes its keys from the queued
