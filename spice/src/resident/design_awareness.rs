@@ -17,8 +17,8 @@ use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityK
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
     DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems, DesignNoticeEvidence,
-    DesignNoticeOpportunity, DesignNoticed, DesignSession, DesignSupport, RoomContributed,
-    RoomLeft, RoomQuestionItem, WorkingGroupStance,
+    DesignNoticeOpportunity, DesignNoticed, DesignReach, DesignSession, DesignSupport,
+    RoomContributed, RoomLeft, RoomQuestionItem,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -36,46 +36,44 @@ const COMPLETION_PAGE_ROWS: usize = 64;
 const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
 /// Profile opportunities admitted to one in-memory page.
 const PROFILE_OPPORTUNITY_PAGE: usize = 64;
-/// Denominator shared by the exact stance weighting ratios.
+/// Denominator shared by the exact reach weighting ratios.
 const MATCH_SCORE_PARTS: f64 = 3.0;
 
-/// Candidate-owned relevance floor for one Design's effective stance.
+/// Candidate-owned relevance floor for one Design request's reach.
 #[must_use]
-pub(crate) fn match_score_floor(stance: WorkingGroupStance) -> f64 {
-    let parts = match stance {
-        WorkingGroupStance::Passive => 3.0,
-        WorkingGroupStance::Explore => 2.0,
-        WorkingGroupStance::Converge => 4.0,
+pub(crate) fn match_score_floor(reach: DesignReach) -> f64 {
+    let parts = match reach {
+        DesignReach::Wide => 2.0,
+        DesignReach::Narrow => 4.0,
     };
     MATCH_SCORE_BASE * parts / MATCH_SCORE_PARTS
 }
 
-/// The stance whose floor one Design's invitations clear: its group's,
-/// raised to Converge once its current items steep. A steeped Design is
-/// close, so it asks only the lanes Converge would; the floor falls back with
-/// the fold as soon as a later charge contests an item or a statement edit
+/// The reach one Design's invitations clear, from its maturity alone: wide
+/// while its current items are unsteeped, narrow once they steep. A steeped
+/// Design is close, so it asks only closely matched lanes; the reach widens
+/// again as soon as a later charge contests an item or a statement edit
 /// un-steeps it. An OOPS Design never steeps, since its reports rather than
-/// its items ready it, so it asks as a steeped Design always. The notice
-/// records this stance as the one that admitted the match.
-fn admitting_stance(facts: &bus::TaskFacts, design: &board::Entry) -> WorkingGroupStance {
-    let born = design.born();
+/// its items ready it, so it is always narrow. Its working group never moves
+/// the reach. The notice records this reach as the one that admitted the match.
+fn admitting_reach(facts: &bus::TaskFacts, design: &board::Entry) -> DesignReach {
     let steeped = design
         .statement()
         .intent
         .is_some_and(wire::TaskIntent::is_opportunistic_design)
         || facts
-            .design_items(born)
+            .design_items(design.born())
             .is_some_and(|items| items.steeped(&design.statement().acceptance));
     if steeped {
-        WorkingGroupStance::Converge
+        DesignReach::Narrow
     } else {
-        facts.design_stance(born)
+        DesignReach::Wide
     }
 }
 
 /// The floor one Design's invitations clear.
 pub(in crate::resident) fn invitation_floor(facts: &bus::TaskFacts, design: &board::Entry) -> f64 {
-    match_score_floor(admitting_stance(facts, design))
+    match_score_floor(admitting_reach(facts, design))
 }
 
 /// One Design request and the journal position its planning read covered.
@@ -91,7 +89,7 @@ struct PlannedRequest {
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
-    stance: Option<WorkingGroupStance>,
+    reach: Option<DesignReach>,
     asks: Vec<DesignAsk>,
     horizon: Option<Seq>,
 }
@@ -367,7 +365,7 @@ fn plan_profile_requests(
             evidence,
             excerpt,
             terms,
-            stance,
+            reach,
             asks,
         }) = selected
         else {
@@ -385,7 +383,7 @@ fn plan_profile_requests(
             design,
             statement,
             terms,
-            stance: Some(stance),
+            reach: Some(reach),
             asks,
             horizon: planning.horizon,
         });
@@ -424,13 +422,13 @@ struct Selection {
     evidence: DesignNoticeEvidence,
     excerpt: String,
     terms: Vec<String>,
-    stance: WorkingGroupStance,
+    reach: DesignReach,
     asks: Vec<DesignAsk>,
 }
 
 /// The best Design `kind` admits that still owes this session an ask, unless
 /// it fails to strictly outrank the Design still owed to the session under the
-/// same frequency generation, current cards, and stance floors. An owed Design
+/// same frequency generation, current cards, and reach floors. An owed Design
 /// that no longer clears its floor bars nothing. Whether a Design is selected
 /// is judged on its whole statement; the selection then asks every pending
 /// item, the one scoring best against the cards first.
@@ -489,22 +487,22 @@ fn select_design(
     let evidence = durable_evidence(matched.evidence, matched.digest);
     let excerpt = matched.excerpt.to_owned();
     let terms = matched.terms;
-    let stance = admitting_stance(facts, design);
+    let reach = admitting_reach(facts, design);
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
     let asks =
-        rank_asks(profile, frequency, design, asks, match_score_floor(stance)).map_err(mismatch)?;
+        rank_asks(profile, frequency, design, asks, match_score_floor(reach)).map_err(mismatch)?;
     Ok(Some(Selection {
         design: design.born().clone(),
         statement: design.statement().revision,
         evidence,
         excerpt,
         terms,
-        stance,
+        reach,
         asks,
     }))
 }
 
-/// What `design` still owes this continuing session: each item the stance
+/// What `design` still owes this continuing session: each item its maturity
 /// makes askable of the lane that the session was not yet asked and did not
 /// answer, or, when no current item is askable of the lane, the whole Design
 /// (an empty list) unless asked or answered. `None` when it owes nothing,
@@ -517,13 +515,12 @@ fn pending_asks(
 ) -> Option<Vec<DesignAsk>> {
     let born = design.born();
     let acceptance = &design.statement().acceptance;
-    let stance = facts.design_stance(born);
     let quiet = DesignItems::default();
     let items = facts.design_items(born).unwrap_or(&quiet);
     if items.all_concurred(acceptance) {
         return None;
     }
-    let askable = items.askable(acceptance, stance, lane);
+    let askable = items.askable(acceptance, lane);
     let open = |item: Option<&RoomQuestionItem>| {
         !facts.design_was_asked_in_session(lane, session, born, item)
             && !facts.design_ask_answered_in_session(lane, session, born, item)
@@ -769,7 +766,7 @@ fn durable_conversation(
     })
 }
 
-/// Whether `entry` is currently an open Design, regardless of its stance.
+/// Whether `entry` is currently an open Design, whatever its group's brake.
 fn open_design(entry: &board::Entry) -> bool {
     wire::intent::is_open_design(entry.statement().intent, entry.workflow())
 }
@@ -909,7 +906,7 @@ fn restated_request(
         design: notice.design.clone(),
         statement: notice.statement,
         terms: notice.terms.clone(),
-        stance: notice.stance,
+        reach: notice.reach,
         asks: notice.asks.clone(),
         horizon: planning.horizon,
     }))
@@ -975,7 +972,7 @@ fn design_request(
             .into_iter()
             .map(str::to_owned)
             .collect(),
-        stance: notice.stance,
+        reach: notice.reach,
         asks,
     }
 }
@@ -1289,7 +1286,7 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 evidence: request.evidence.clone(),
                 excerpt: request.excerpt.clone(),
                 terms: request.terms.clone(),
-                stance: request.stance,
+                reach: request.reach,
                 asks: request.asks.clone(),
             },
             FactCause::Root,

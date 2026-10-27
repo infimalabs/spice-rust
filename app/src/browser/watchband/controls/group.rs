@@ -1,5 +1,5 @@
 //! A working group's browser-local panel state and its team-panel controls:
-//! TURBO, the speech slider, and the shared stance slider. Group state lives
+//! TURBO, the speech slider, and the Paused/Running brake. Group state lives
 //! beside the team controls because a group's speech raises the speech of the
 //! team planes its claimants draw in.
 
@@ -16,7 +16,7 @@ const GROUP_SPEECH_STORAGE: &str = "spice:group-speech:v1";
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct GroupControl {
     speech: SpeechMode,
-    /// Group stance requested and not yet answered by the resident.
+    /// Group brake requested and not yet answered by the resident.
     pending_stance: Option<WorkingGroupStance>,
     /// Group fast-mode flag requested and not yet answered by the resident.
     pending_fast: Option<bool>,
@@ -236,7 +236,7 @@ impl GroupPanel<'_> {
                 .groups
                 .iter()
                 .find(|group| group.group == *self.group)
-                .map_or(WorkingGroupStance::Passive, |group| group.stance)
+                .map_or(WorkingGroupStance::Paused, |group| group.stance)
         });
         GroupControls {
             turbo: self.turbo(control.pending_fast),
@@ -367,8 +367,8 @@ impl GroupPanel<'_> {
         }
     }
 
-    /// The group's shared activity stance. Passive keeps its Designs passive;
-    /// Explore and Converge make them active.
+    /// The group's brake. Paused keeps its Designs passive; Running makes them
+    /// active.
     fn stance_slider(&self, stance: WorkingGroupStance) -> Html {
         let partition = self.runtime.room_projection().partition();
         let revision = partition.revision;
@@ -405,7 +405,7 @@ impl GroupPanel<'_> {
                                     .collect::<Vec<_>>()
                                     .join(", ");
                                 report.emit(format!(
-                                    "Shelving is still owed for {owed}; set the group Passive again."
+                                    "Shelving is still owed for {owed}; set the group Paused again."
                                 ));
                             }
                             Ok(_) => {}
@@ -435,17 +435,17 @@ impl GroupPanel<'_> {
         html! {
             <label
                 class="team-slider team-lifetime"
-                data-stop={stance.index().to_string()}
+                data-stop={if stance.is_active() { "2" } else { "0" }}
             >
                 <input
                     type="range"
                     min="0"
-                    max="2"
+                    max="1"
                     step="1"
                     value={stance.index().to_string()}
                     disabled={!can_configure}
-                    aria-label={format!("Group stance: {}", stance_label(stance))}
-                    title="Passive keeps this group's Designs passive; Explore and Converge make them active"
+                    aria-label={format!("Group brake: {}", stance_label(stance))}
+                    title="Paused keeps this group's Designs passive; Running makes them active"
                     {oninput}
                 />
                 {slider_words(WorkingGroupStance::ALL.map(stance_label), stance.index())}
@@ -456,8 +456,7 @@ impl GroupPanel<'_> {
 
 const fn stance_label(stance: WorkingGroupStance) -> &'static str {
     match stance {
-        WorkingGroupStance::Passive => "Passive",
-        WorkingGroupStance::Explore => "Explore",
-        WorkingGroupStance::Converge => "Converge",
+        WorkingGroupStance::Paused => "Paused",
+        WorkingGroupStance::Running => "Running",
     }
 }

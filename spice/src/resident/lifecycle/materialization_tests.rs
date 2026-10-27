@@ -182,10 +182,10 @@ fn stance_changes_refresh_every_design_in_the_group() {
         }],
         fast: Vec::new(),
     };
-    let mut from = partition(1, wire::rooms::WorkingGroupStance::Explore);
+    let mut from = partition(1, wire::rooms::WorkingGroupStance::Running);
     for (revision, second, stance) in [
-        (2, 7, wire::rooms::WorkingGroupStance::Passive),
-        (3, 8, wire::rooms::WorkingGroupStance::Converge),
+        (2, 7, wire::rooms::WorkingGroupStance::Paused),
+        (3, 8, wire::rooms::WorkingGroupStance::Running),
     ] {
         let next = partition(revision, stance);
         committed(
@@ -954,7 +954,7 @@ fn move_write(
         .map(|group| wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![design.clone()],
-            stance: wire::rooms::WorkingGroupStance::Explore,
+            stance: wire::rooms::WorkingGroupStance::Running,
         })
         .collect();
     write

@@ -18,7 +18,7 @@ use board::similarity::{FrequencyProfile, MatchCache};
 use spice::rooms::profile::SessionProfiles;
 use spice::rooms::standing::standing;
 use wire::CanonicalUuid;
-use wire::rooms::WorkingGroupStance;
+use wire::rooms::DesignReach;
 
 use super::OccupantProfiles;
 use crate::resident::design_awareness::{command_answer_outcome, match_score_floor};
@@ -55,7 +55,7 @@ impl<'a> OccupantMatch<'a> {
         }))
     }
 
-    /// The occupant's standing for `entry` at or above the Explore floor;
+    /// The occupant's standing for `entry` at or above the wide-reach floor;
     /// zero below it or when nothing scores.
     pub(crate) fn score(&self, entry: &Entry) -> f64 {
         let mut state = self.state.borrow_mut();
@@ -72,7 +72,7 @@ impl<'a> OccupantMatch<'a> {
 
 /// One lane's standing for `entry` under `frequency`: the running occupant's
 /// session when `occupant` is given, else the lane's best retained session.
-/// Absent when nothing scores or the score sits below the Explore floor, the
+/// Absent when nothing scores or the score sits below the wide-reach floor, the
 /// lowest Design invitation floor, so incidental vocabulary overlap never
 /// counts as a match.
 pub(crate) fn floored_standing(
@@ -94,7 +94,7 @@ pub(crate) fn floored_standing(
     // The statement was prepared under this same frequency generation.
     .ok()
     .and_then(|standing| standing.score)
-    .filter(|score| *score >= match_score_floor(WorkingGroupStance::Explore))
+    .filter(|score| *score >= match_score_floor(DesignReach::Wide))
 }
 
 /// The lane and occupant seated for `principal`, when it is an occupied lane.

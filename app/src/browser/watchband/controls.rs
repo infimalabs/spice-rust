@@ -791,7 +791,7 @@ fn lifetime_slider(
     }
 }
 
-fn slider_words(words: [&'static str; 3], selected: usize) -> Html {
+fn slider_words<const N: usize>(words: [&'static str; N], selected: usize) -> Html {
     let word = words[selected.min(words.len() - 1)];
     html! {
         <span class="team-slider-words" aria-hidden="true">

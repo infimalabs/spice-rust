@@ -60,7 +60,7 @@ fn noticed(
             "maturity".to_owned(),
             "measure".to_owned(),
         ],
-        stance: None,
+        reach: None,
         asks: Vec::new(),
     };
     let mut write = JournalWrite::new(

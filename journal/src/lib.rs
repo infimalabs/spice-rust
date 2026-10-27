@@ -70,8 +70,11 @@
 /// projects: a retained row naming a leading-dot project refuses the crossing
 /// with the last release that admitted it. Schema 99 retires Taste mining: each
 /// retained statement drops its proposal evidence, and a retained proposal
-/// receipt refuses the crossing.
-pub const SCHEMA_VERSION: u32 = 99;
+/// receipt refuses the crossing. Schema 100 retires the Passive, Explore, and
+/// Converge working-group stances onto a Paused/Running brake in every
+/// partition and stance or arrange request, and records each Design request's
+/// admitting stance as the reach its maturity now derives.
+pub const SCHEMA_VERSION: u32 = 100;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

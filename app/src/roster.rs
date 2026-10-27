@@ -424,12 +424,12 @@ mod tests {
                 wire::rooms::WorkingGroup {
                     group: first_group.clone(),
                     anchors: vec![first.clone()],
-                    stance: wire::rooms::WorkingGroupStance::Explore,
+                    stance: wire::rooms::WorkingGroupStance::Running,
                 },
                 wire::rooms::WorkingGroup {
                     group: second_group.clone(),
                     anchors: vec![second.clone()],
-                    stance: wire::rooms::WorkingGroupStance::Explore,
+                    stance: wire::rooms::WorkingGroupStance::Running,
                 },
             ],
             fast: Vec::new(),

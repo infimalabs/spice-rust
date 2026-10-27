@@ -100,9 +100,9 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         Opportunity::SessionResumed { .. } => "this resumed session".to_owned(),
     };
     let support = supporting_work(request);
-    let cast = match request.stance {
-        Some(wire::rooms::WorkingGroupStance::Explore) => {
-            " Its working group is exploring, so this match was cast slightly wider than usual: \
+    let cast = match request.reach {
+        Some(wire::rooms::DesignReach::Wide) => {
+            " Its Design is not yet steeped, so this match was cast slightly wider than usual: \
              a lower relevance floor admitted it."
         }
         _ => "",

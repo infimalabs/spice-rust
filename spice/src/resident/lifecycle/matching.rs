@@ -34,7 +34,7 @@ impl<'a> RetainedMatch<'a> {
         }))
     }
 
-    /// `lane`'s best retained standing for `entry` at or above the Explore
+    /// `lane`'s best retained standing for `entry` at or above the wide-reach
     /// floor; absent below it or when nothing scores.
     pub(super) fn score(&self, lane: CanonicalUuid, entry: &Entry) -> Option<f64> {
         let mut state = self.state.borrow_mut();

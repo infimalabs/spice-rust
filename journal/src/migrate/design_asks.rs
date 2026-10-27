@@ -5,7 +5,7 @@
 //! invitation; schema 94 records every item pending for the lane in one list.
 
 use rusqlite::Transaction;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::{OpenError, residual};
 
@@ -18,12 +18,17 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         wire::FactKind::DesignNoticed,
         "json_type(CAST(envelope AS TEXT), '$.fact.ask') IS NOT NULL",
         SINGLE_ASK_RELEASE,
-        |_, fact| match fact.remove("ask") {
-            Some(ask @ Value::Object(_)) => {
-                fact.insert("asks".to_owned(), Value::Array(vec![ask]));
-                Ok(())
-            }
-            other => Err(format!("ask {other:?} is not one asked item")),
-        },
+        |_, fact| list_single_ask(fact),
     )
+}
+
+/// Replace a notice's one retained `ask` with its one-element `asks` list.
+pub(super) fn list_single_ask(fact: &mut Map<String, Value>) -> Result<(), String> {
+    match fact.remove("ask") {
+        Some(ask @ Value::Object(_)) => {
+            fact.insert("asks".to_owned(), Value::Array(vec![ask]));
+            Ok(())
+        }
+        other => Err(format!("ask {other:?} is not one asked item")),
+    }
 }

@@ -243,8 +243,8 @@ in the sheet's Contract list. Fresh has no contributions; steeped means
 every current item has been charged, some item concurs, and none is
 contested, so a quiet item keeps the Design steeping; the summary otherwise
 names the item and the vote it needs next. Steeped maturity makes the Design's
-first pass ready for a lane, which the standing's pass cycle shows, and raises
-its invitation floor to Converge's, narrowing which lanes are asked; it is not
+first pass ready for a lane, which the standing's pass cycle shows, and narrows
+its invitation reach to the 0.20 floor, so fewer lanes are asked; it is not
 a danger or workflow state, and maturity never blocks or authorizes a Design
 decision.
 

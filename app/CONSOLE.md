@@ -82,11 +82,11 @@ The group control panel keeps the team panel's frame and maps each control:
 - **The speech slider** is browser-local per group: each covered lane's prose
   is voiced at the louder of its team's and every covering group's mode, each
   line at most once. Room publications are never voiced.
-- **The allocation slider** is the group's shared stance, Passive / Explore /
-  Converge, sent as `group::stance` at the revision read. Passive makes every
-  open Design passive; Explore asks lanes for input on quiet or unopposed
-  questions; Converge asks lanes already charging a contested question to
-  re-charge it. Refusal returns the slider to partition authority with its
+- **The brake slider** is the group's shared Paused / Running setting, sent
+  as `group::stance` at the revision read. Paused makes every open Design in
+  the group passive and stops its holder; Running leaves each Design to its
+  pass cycle. Who a Design invites and what it asks follow its own maturity,
+  never the brake. Refusal returns the slider to partition authority with its
   reason.
 
 Each design heading resolves, as a member heading does, from the room's newest
