@@ -26,8 +26,8 @@ generation reminder, run `spice task next`.
 ## Steering and rooms
 
 Lead the next working message for pending keys with `ACK KEY [KEY
-...]: CLAUSE` or `NAK KEY: CLAUSE`. Tool fallback: start its intent with the
-header. Landing retires the key; no command or confirmation. Do not stop
+...]: CLAUSE` or `NAK KEY: CLAUSE` in visible prose or a narrated tool call's
+intent. Recognized on landing, not turn end; no command or confirmation. Do not stop
 unfinished work just to ACK. Evidence must be verbatim visible assistant text
 or tool intent, never reasoning, arguments, quotes, or buried/described
 headers. After an ACK reminder, check the inbox; empty is valid. `[STALE]`

@@ -15,9 +15,7 @@ pub(super) struct TranscriptRecognition {
 }
 
 /// Repair when the lane wrote no authored header as durable assistant text.
-const HEADER_REPAIR: &str = "send the ACK or NAK header in visible assistant prose, and in the \
-     first tool intent when the message calls a tool, and let that message land; the durable \
-     assistant text must name the key and disposition";
+const HEADER_REPAIR: &str = steer::inbox::ACK_GUIDANCE;
 
 /// Characters of the newest assistant text the refusal quotes back.
 const QUOTED_LINE: usize = 80;

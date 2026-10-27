@@ -331,11 +331,10 @@ impl<W: Write + Send + 'static> Driver<W> {
             .iter()
             .map(steer::Key::as_str)
             .collect::<Vec<_>>()
-            .join(", ");
+            .join(" ");
         let message = format!(
-            "<system-notice>\nReasoning is not acknowledgment. Lead visible assistant prose, and \
-             the first tool intent when the message calls a tool, with `ACK {keys}: response` or \
-             `NAK {keys}: reason`.\n</system-notice>"
+            "<system-notice>\nReasoning did not acknowledge {keys}. {}\n</system-notice>",
+            steer::inbox::ACK_GUIDANCE,
         );
         if self.background("hidden-ack", &message).is_ok() {
             reminder.nudged.extend(mentioned);
@@ -415,9 +414,9 @@ impl<W: Write + Send + 'static> Driver<W> {
             )
         };
         let message = format!(
-            "<system-notice>\nYour acknowledgment named {}, which is not a pending steering key; \
-             it acknowledged nothing. {pending}\n</system-notice>",
+            "<system-notice>\nNot pending: {}. {pending} {}\n</system-notice>",
             quoted(&mut named.iter().map(String::as_str)),
+            steer::inbox::ACK_GUIDANCE,
         );
         if self.background("misdirected-ack", &message).is_ok() {
             misdirected.extend(named);

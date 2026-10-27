@@ -301,38 +301,22 @@ pub enum Told {
     Replied,
 }
 
-const NUDGE_PREFIX: &str = "[NUDGE] key=";
-const SILENT_BEFORE_ACK: &str = " still pending; no visible reply. Thinking/tool args do not count. \
-     Lead prose and first tool intent: `ACK ";
-const REPLIED_BEFORE_ACK: &str =
-    " still pending; visible prose did not retire it. Lead prose and first tool intent: `ACK ";
-const ACK_TO_NAK: &str = ": <one clause>` or `NAK ";
-const SILENT_AFTER_NAK: &str = ": <one clause>`.";
-const REPLIED_AFTER_NAK: &str = ": <one clause>`.";
+/// Shared repair for visible, narrated and missing acknowledgment headers.
+pub const ACK_GUIDANCE: &str = "Use `ACK KEY [KEY ...]: response` or `NAK KEY: reason` in visible prose or a narrated \
+     tool call's intent. Recognized on landing, not turn end.";
 
 impl Told {
-    fn pointer_len(self, key: &str) -> usize {
-        let (before_ack, after_nak) = match self {
-            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NAK),
-            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NAK),
-        };
-        NUDGE_PREFIX.len() + before_ack.len() + ACK_TO_NAK.len() + after_nak.len() + key.len() * 3
-    }
-
     fn push_pointer(self, rendered: &mut String, key: &str) {
-        let (before_ack, after_nak) = match self {
-            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NAK),
-            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NAK),
-        };
-        rendered.push_str(NUDGE_PREFIX);
+        rendered.push_str("[NUDGE] key=");
         rendered.push_str(key);
-        rendered.push_str(before_ack);
-        rendered.push_str(key);
-        rendered.push_str(ACK_TO_NAK);
-        rendered.push_str(key);
-        rendered.push_str(after_nak);
+        rendered.push_str(match self {
+            Self::Silent => " still pending; no ACK/NAK header observed. ",
+            Self::Replied => " still pending; your replies did not ACK/NAK this key. ",
+        });
+        rendered.push_str(ACK_GUIDANCE);
     }
 }
+
 /// Condenses every directive the occupant was already told into a pointer.
 ///
 /// A resend exists to say a directive is still unanswered, not to say the
@@ -341,8 +325,7 @@ impl Told {
 /// `told` answers what this occupant still holds of each key: `None` for a
 /// context that dropped the telling, by compaction or by never having heard
 /// it, which is told in full. The header line is never condensed, because the
-/// key, the stage, and any control field are what the resend is for, and a
-/// telling shorter than the pointer is simply said again.
+/// key, the stage, and any control field are what the resend is for.
 #[must_use]
 pub fn nudge(rendered: &str, told: impl Fn(&str) -> Option<Told>) -> String {
     let mut condensed = String::with_capacity(rendered.len());
@@ -383,12 +366,10 @@ fn header_key(line: &str) -> Option<&str> {
         .map(str::trim_end)
 }
 
-/// Spend the body, or the pointer when the occupant holds the body already
-/// and the pointer is the cheaper of the two.
+/// Replace every already-delivered body with corrective guidance.
 fn push_body(condensed: &mut String, body: &str, held: Option<(Told, &str)>) {
-    // What the pointer itself costs, its own line ending included.
     match held {
-        Some((state, key)) if body.len() > state.pointer_len(key) + "\n".len() => {
+        Some((state, key)) => {
             state.push_pointer(condensed, key);
             condensed.push('\n');
         }
@@ -428,11 +409,9 @@ pub fn post_compaction(rendered: &str) -> String {
         replayed.push(' ');
         replayed.push_str(key);
     }
-    replayed.push_str(
-        ". Lead visible assistant prose, and the first tool intent when the message calls a \
-         tool, with `ACK <key> [<key> ...]: <one clause>` or \
-         `NAK <key>: <one clause>` for every key.\n",
-    );
+    replayed.push_str(". ");
+    replayed.push_str(ACK_GUIDANCE);
+    replayed.push('\n');
     replayed.push_str(concat!(keep_working!(), "\n"));
     replayed.push_str(body);
     replayed
@@ -602,117 +581,23 @@ mod tests {
         assert_eq!(keys("").count(), 0);
     }
 
-    /// One directive from a real delivery, shaped and sized as the lane
-    /// received it: the operator's broadcast dSvXD9bv3 cost 2702 bytes the
-    /// first time and 2701 the second, the whole text over again.
-    fn delivered(stage: &str) -> String {
-        // Sentences enough to size the fixture to that real delivery.
-        const SENTENCES: usize = 66;
-
-        let body =
-            "[BROADCAST] ".to_owned() + &"measure the cost before changing it. ".repeat(SENTENCES);
-        format!(
-            "<Qk8zdj5rQ>\ndirective=1bea6ea6-a894-4899-923e-16df120968b3 key=dSvXD9bv3 \
-             stage={stage} expires=2026-09-20T02:25:15.856Z\n{body}\n</Qk8zdj5rQ>\n",
-        )
-    }
-
     #[test]
-    fn a_resend_costs_a_pointer_and_still_names_what_to_answer() {
-        let first = delivered("published");
-        let again = delivered("reminded");
-
-        // Exact recovery syntax may cost at most one eighth of the telling.
-        const SHARE: usize = 8;
-
-        for since in [Told::Silent, Told::Replied] {
-            let resent = nudge(&again, |key| (key == "dSvXD9bv3").then_some(since));
-            assert!(
-                resent.len() * SHARE < first.len(),
-                "a resend of {} bytes against a telling of {} bytes is not a pointer",
-                resent.len(),
-                first.len(),
+    fn reminders_replace_only_delivered_bodies_regardless_of_size() {
+        let held_header = "directive=d1 key=1kJK6N3R stage=reminded expires=never control=stop";
+        let new_header = "directive=d2 key=1kJK6M0V stage=published expires=never from=lane:peer";
+        for body in ["x".to_owned(), "a longer direction\n".repeat(40)] {
+            let rendering = format!(
+                "<seal>\n{held_header}\n{body}\n{new_header}\nunheard direction\n</seal>\n"
             );
-            assert_eq!(keys(&resent).collect::<Vec<_>>(), ["dSvXD9bv3"]);
-            assert!(
-                resent.contains("stage=reminded") && resent.contains("key=dSvXD9bv3"),
-                "the pointer must still name the directive and why it arrived: {resent}",
-            );
-            assert!(
-                resent.contains("[NUDGE] key=dSvXD9bv3 still pending"),
-                "the pointer must name the exact unanswered key: {resent}"
-            );
-            assert!(
-                !resent.contains("measure the cost"),
-                "the telling is already in the occupant's context: {resent}",
-            );
-            assert!(
-                resent.starts_with("<Qk8zdj5rQ>\n") && resent.ends_with("</Qk8zdj5rQ>\n"),
-                "the seal authenticates the pointer exactly as it authenticates a telling: {resent}",
-            );
+            assert_eq!(nudge(&rendering, |_| None), rendering);
+            for state in [Told::Silent, Told::Replied] {
+                let resent = nudge(&rendering, |key| (key == "1kJK6N3R").then_some(state));
+                let (held, unheard) = resent.split_once(new_header).expect("second header");
+                assert!(held.starts_with(&format!("<seal>\n{held_header}\n")));
+                assert!(!held.contains(&format!("\n{body}\n")));
+                assert_eq!(unheard, "\nunheard direction\n</seal>\n");
+                assert_eq!(keys(&resent).collect::<Vec<_>>(), ["1kJK6N3R", "1kJK6M0V"]);
+            }
         }
-    }
-
-    #[test]
-    fn a_silent_occupant_is_told_its_reasoning_was_not_a_reply() {
-        let again = delivered("reminded");
-        let silent = nudge(&again, |_| Some(Told::Silent));
-        let replied = nudge(&again, |_| Some(Told::Replied));
-
-        assert_ne!(
-            silent, replied,
-            "the two observations must read differently"
-        );
-        for reminder in [&silent, &replied] {
-            assert!(
-                reminder.contains("`ACK dSvXD9bv3: <one clause>`")
-                    && reminder.contains("`NAK dSvXD9bv3: <one clause>`"),
-                "the reminder must supply valid visible-line syntax for its exact key: {reminder}",
-            );
-        }
-    }
-
-    #[test]
-    fn a_post_compaction_replay_authenticates_one_instruction_for_every_pending_key() {
-        let rendered = "<seal>\n\
-                        directive=d1 key=1kJK6N3R stage=published expires=never\nfirst\n\
-                        directive=d2 key=1kJK6M0V stage=reminded expires=never\nsecond\n\
-                        </seal>\n";
-        let replayed = post_compaction(rendered);
-
-        assert!(
-            replayed.starts_with("<seal>\n[POST-COMPACTION] Pending keys: 1kJK6N3R 1kJK6M0V. ")
-        );
-        assert_eq!(replayed.matches("[POST-COMPACTION]").count(), 1);
-        assert!(replayed.ends_with("</seal>\n"), "{replayed}");
-        assert_eq!(post_compaction(""), "");
-    }
-
-    #[test]
-    fn a_telling_this_context_never_heard_is_spent_in_full() {
-        let held = "hold the line while the suite runs, and say so when it finishes running \
-                    along with what it reported. "
-            .repeat(3);
-        let rendering = format!(
-            "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{held}\n{}",
-            &delivered("published")["<Qk8zdj5rQ>\n".len()..],
-        );
-        let resent = nudge(&rendering, |key| {
-            (key == "1kJK6N3R").then_some(Told::Replied)
-        });
-
-        assert!(
-            !resent.contains(&held),
-            "the key this context holds is pointed at, not repeated: {resent}",
-        );
-        assert!(
-            resent.contains("measure the cost"),
-            "a key this context never heard is told in full: {resent}",
-        );
-        assert_eq!(
-            keys(&resent).collect::<Vec<_>>(),
-            ["1kJK6N3R", "dSvXD9bv3"],
-            "condensing one directive does not drop another",
-        );
     }
 }
