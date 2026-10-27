@@ -10,7 +10,9 @@
 
 # The sole browser app generation store. Each lane publishes it with
 # installed Spice `dev xtask -- app`; no resident falls back when its current generation is absent.
+# Publications into it serialize on the lock file beside it.
 /dist/stage-app/
+/dist/.stage-app.lock
 
 # Snapshots, console logs and screenshots the Playwright MCP browser writes
 # beside the worktree. Every lane is told to validate the canvas through that
