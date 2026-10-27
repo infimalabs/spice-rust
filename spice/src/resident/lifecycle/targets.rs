@@ -94,10 +94,12 @@ pub(super) fn project_targets<'a>(
 }
 
 /// The held-claim trigger, and whether the held work is parked on authority no
-/// lane holds: an unsatisfied trust grant, or a Design that can conclude only
-/// through the operator's selection. Parked held work wakes nothing; the lane
-/// also takes no other work while it holds that claim, so pending operator
-/// steering is its only wake.
+/// lane holds: an unsatisfied trust grant, or a Design that awaits the
+/// operator's decision or waits on work it released. A held Design still
+/// gathering input or ready for proposal is its holder's pass and resumes like
+/// any held work. Parked held work wakes nothing; the lane also takes no other
+/// work while it holds that claim, so pending operator steering is its only
+/// wake.
 fn held_claim(
     entries: &[Entry],
     satisfied: &board::ResolvedTasks,
@@ -124,7 +126,7 @@ fn held_claim(
         .statement()
         .requirements
         .has_unsatisfied_trust_grant(environment)
-        || board::design_held(entry, satisfied);
+        || board::design_hold(entry, satisfied).is_some();
     let live = entry
         .lease()
         .ok_or_else(|| {
