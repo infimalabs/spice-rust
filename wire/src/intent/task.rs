@@ -282,7 +282,8 @@ pub struct TaskDefer {
 pub struct TaskWake {
     /// Filed deferred task being woken.
     pub task: TaskHandle,
-    /// Wake and atomically claim the resulting ready task.
+    /// Wake and atomically claim the task in its current lifecycle state. A
+    /// Gathering Design remains unsteeped and gathering input.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub claim: bool,
 }

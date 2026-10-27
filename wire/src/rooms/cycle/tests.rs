@@ -40,6 +40,60 @@ fn design() -> TaskStamp {
     task(DESIGN)
 }
 
+#[test]
+fn deferred_cycle_presentation_distinguishes_possession() {
+    let design = TaskHandle::for_project("wire.rooms", &design());
+    for cycle in [DesignCycle::GatheringInput, DesignCycle::ReadyForProposal] {
+        let unheld = DesignCyclePresentation::new(
+            cycle,
+            DesignCycleFacts::default(),
+            &design,
+            DesignAvailability::DeferredUnclaimed,
+        );
+        assert_eq!(unheld.actor, DesignCycleActor::Lane);
+        assert!(
+            unheld
+                .action
+                .contains(&format!("`spice task wake {design} --claim`"))
+        );
+        assert!(!unheld.action.contains("task free"));
+
+        let held = DesignCyclePresentation::new(
+            cycle,
+            DesignCycleFacts::default(),
+            &design,
+            DesignAvailability::DeferredClaimed,
+        );
+        assert_eq!(held.actor, DesignCycleActor::Lane);
+        assert!(held.action.contains(&format!("`spice task free {design}`")));
+        assert!(!held.action.contains("--claim"));
+    }
+}
+
+#[test]
+fn undeferred_cycle_presentation_keeps_cycle_authority() {
+    let design = TaskHandle::for_project("wire.rooms", &design());
+    let facts = DesignCycleFacts::default();
+    for cycle in DesignCycle::ALL {
+        let unclaimed =
+            DesignCyclePresentation::new(cycle, facts, &design, DesignAvailability::Unclaimed);
+        assert_eq!(unclaimed.actor, cycle.next_actor());
+        assert_eq!(unclaimed.action, cycle.next_action(&design, facts));
+
+        let claimed =
+            DesignCyclePresentation::new(cycle, facts, &design, DesignAvailability::Claimed);
+        if matches!(
+            cycle,
+            DesignCycle::GatheringInput | DesignCycle::ReadyForProposal
+        ) {
+            assert_eq!(claimed.actor, DesignCycleActor::Lane);
+            assert!(claimed.action.contains("spice preparation propose"));
+        } else {
+            assert_eq!(claimed, unclaimed);
+        }
+    }
+}
+
 fn candidate(micros: i64) -> CandidateRef {
     CandidateRef {
         controller: design(),
