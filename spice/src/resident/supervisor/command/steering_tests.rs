@@ -152,6 +152,46 @@ impl Seat {
         }));
     }
 
+    fn land_operator(&self, text: &str) {
+        self.hear(&serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": text}],
+            },
+        }));
+    }
+
+    fn reply(&self, text: &str) {
+        self.hear(&serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+                "stopReason": "stop",
+            },
+        }));
+    }
+
+    fn stream_fragment(&self, text: &str) {
+        self.hear(&serde_json::json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "text_delta",
+                "contentIndex": 0,
+                "delta": text,
+                "partial": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": text}],
+                },
+            },
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+            },
+        }));
+    }
+
     fn frames(&self) -> Vec<serde_json::Value> {
         let input = self.driver.stdin.lock().expect("input locks");
         input
@@ -347,6 +387,73 @@ fn an_answer_in_a_running_tool_intent_cancels_the_queued_reminder_before_the_bou
         "",
         "the answered reminder is withdrawn"
     );
+}
+
+#[test]
+fn complete_visible_reply_after_a_landed_reminder_queues_correction_without_interrupting() {
+    let seat = Seat::new();
+    seat.kick(&[(ASKED, "published")]);
+    seat.kick(&[(ASKED, "reminded")]);
+    let reminder = seat.queued("inbox");
+    assert!(reminder.contains(&format!("[NUDGE] key={ASKED}")));
+    seat.land_operator(&reminder);
+    let call = seat.active_call("still-running", false);
+
+    seat.stream_fragment("still looking");
+    assert!(
+        seat.queued("ack-activity").is_empty(),
+        "a partial stream is not a complete response"
+    );
+    seat.reply("I am continuing the implementation.");
+
+    let correction = seat.queued("ack-activity");
+    assert!(correction.contains(ASKED), "{correction}");
+    assert!(
+        correction.contains("Acknowledge it immediately"),
+        "{correction}"
+    );
+    assert!(
+        !call.was_interrupted(),
+        "activity correction waits for the ordinary aside boundary"
+    );
+}
+
+#[test]
+fn intent_acknowledgments_prune_a_queued_activity_correction_before_catch_up() {
+    let seat = Seat::new();
+    seat.kick(&[(ASKED, "published"), (LATER, "published")]);
+    seat.kick(&[(ASKED, "reminded"), (LATER, "reminded")]);
+    seat.land_operator(&seat.queued("inbox"));
+    seat.reply("I am still working.");
+    let both = seat.queued("ack-activity");
+    assert!(both.contains(ASKED) && both.contains(LATER), "{both}");
+
+    seat.answer_in_intent(ASKED);
+    let remaining = seat.queued("ack-activity");
+    assert!(!remaining.contains(ASKED), "{remaining}");
+    assert!(remaining.contains(LATER), "{remaining}");
+
+    seat.reply(&format!("ACK {LATER}: handled"));
+    assert_eq!(
+        seat.queued("ack-activity"),
+        "",
+        "the final ACK cancels the replacement notice"
+    );
+}
+
+#[test]
+fn journal_settlement_rewrites_a_queued_activity_correction_to_remaining_keys() {
+    let seat = Seat::new();
+    seat.kick(&[(ASKED, "published"), (LATER, "published")]);
+    seat.kick(&[(ASKED, "reminded"), (LATER, "reminded")]);
+    seat.land_operator(&seat.queued("inbox"));
+    seat.reply("I am still working.");
+
+    seat.kick(&[(LATER, "reminded")]);
+
+    let remaining = seat.queued("ack-activity");
+    assert!(!remaining.contains(ASKED), "{remaining}");
+    assert!(remaining.contains(LATER), "{remaining}");
 }
 
 #[test]

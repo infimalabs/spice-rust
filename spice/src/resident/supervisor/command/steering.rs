@@ -3,6 +3,8 @@
 //! replay and briefing after a compaction, and the private corrections an
 //! acknowledgment attempt earns.
 
+mod activity;
+
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::sync::atomic::Ordering;
@@ -13,6 +15,10 @@ use wire::Disposition;
 
 use super::super::terminal::Handle;
 use super::Driver;
+pub(super) use activity::ActivityReminder;
+
+const ACTIVITY_ACK_PURPOSE: &str = "ack-activity";
+const ACTIVITY_ACK_MARKER: &str = "[ACK-ACTIVITY]";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum InboxDelivery {
@@ -32,6 +38,22 @@ impl steer::Standing for PendingKeys {
     fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
         self.0.contains(key).then_some(Disposition::Live)
     }
+}
+
+fn activity_message(keys: &BTreeSet<String>) -> String {
+    if keys.is_empty() {
+        return String::new();
+    }
+    let keys = keys
+        .iter()
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "<system-notice>\n{ACTIVITY_ACK_MARKER} Complete visible response left pending \
+         steering unanswered: {keys}. Acknowledge it immediately. {}\n</system-notice>",
+        steer::inbox::ACK_GUIDANCE,
+    )
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
@@ -109,6 +131,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             answered.settle(message);
             steer::inbox::retain(message, |key| !answered.holds(key))
         };
+        self.reconcile_activity(&owed);
         let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let recognized = self
             .recognized
@@ -233,6 +256,77 @@ impl<W: Write + Send + 'static> Driver<W> {
             .extend(steer::inbox::keys(message).map(str::to_owned));
     }
 
+    /// Observe the landing of an ordinary corrective reminder or an
+    /// activity-driven replacement. Only a landed first correction arms a key.
+    pub(super) fn observe_activity_reminder(&self, text: &str) {
+        let mut activity = self
+            .activity_reminder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if text.contains("[NUDGE] key=") {
+            activity.arm(steer::inbox::keys(text).map(str::to_owned));
+        }
+        if text.contains(ACTIVITY_ACK_MARKER) {
+            activity.landed();
+        }
+    }
+
+    /// Prune a queued activity correction when journal movement settles only
+    /// some of its keys. New pending keys remain unarmed.
+    fn reconcile_activity(&self, rendered: &str) {
+        let pending = steer::inbox::keys(rendered)
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        let mut activity = self
+            .activity_reminder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        activity.settle(&pending);
+        let message = activity_message(activity.queued());
+        let _replaced = self.background(ACTIVITY_ACK_PURPOSE, &message);
+    }
+
+    /// Queue one coalesced correction when a complete visible response leaves
+    /// an already-reminded key unanswered. Silence, stream fragments, and tool
+    /// activity never call this transition.
+    pub(super) fn nudge_unanswered_activity(&self) {
+        let inbox = (self.read_inbox)().unwrap_or_default();
+        let Ok(rendered) = std::str::from_utf8(&inbox) else {
+            return;
+        };
+        let pending = {
+            let mut answered = self.answered.lock().unwrap_or_else(PoisonError::into_inner);
+            answered.settle(rendered);
+            steer::inbox::keys(rendered)
+                .filter(|key| !answered.holds(key))
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>()
+        };
+        let mut activity = self
+            .activity_reminder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let due = activity.respond(&pending);
+        if due.is_empty() {
+            return;
+        }
+        let message = activity_message(&due);
+        if self.background(ACTIVITY_ACK_PURPOSE, &message).is_ok() {
+            activity.delivered(&due);
+        }
+    }
+
+    /// Compaction starts a new activity window and drops a correction queued
+    /// for the context it replaced.
+    pub(super) fn reset_activity_reminder(&self) {
+        let mut activity = self
+            .activity_reminder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        activity.clear();
+        let _cancelled = self.background(ACTIVITY_ACK_PURPOSE, "");
+    }
+
     /// Interject one message as steering, in sequence with the inbox.
     pub(super) fn steer(&self, message: &str) -> io::Result<()> {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
@@ -274,7 +368,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// Detection reuses the prose scanner but consumes none of its outcomes:
     /// this path writes only a private notice and never reaches journal
     /// authority.
-    pub(super) fn nudge_hidden_acknowledgements(&self, decoded: &Decoded) {
+    pub(super) fn nudge_hidden_acknowledgements(&self, decoded: &Decoded) -> bool {
         let acknowledgement_prose = decoded
             .events()
             .iter()
@@ -292,11 +386,11 @@ impl<W: Write + Send + 'static> Driver<W> {
             .filter(|prose| steer::has_acknowledgement(prose))
             .collect::<Vec<_>>();
         if acknowledgement_prose.is_empty() {
-            return;
+            return false;
         }
         let pending = (self.read_inbox)().unwrap_or_default();
         let Ok(rendered) = std::str::from_utf8(&pending) else {
-            return;
+            return false;
         };
         let standing = PendingKeys(
             steer::inbox::keys(rendered)
@@ -325,7 +419,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
         mentioned.retain(|key| !reminder.nudged.contains(key));
         if mentioned.is_empty() {
-            return;
+            return false;
         }
         let keys = mentioned
             .iter()
@@ -336,9 +430,15 @@ impl<W: Write + Send + 'static> Driver<W> {
             "<system-notice>\nReasoning did not acknowledge {keys}. {}\n</system-notice>",
             steer::inbox::ACK_GUIDANCE,
         );
-        if self.background("hidden-ack", &message).is_ok() {
+        let sent = self.background("hidden-ack", &message).is_ok();
+        if sent {
+            self.activity_reminder
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .arm(mentioned.iter().map(|key| key.as_str().to_owned()));
             reminder.nudged.extend(mentioned);
         }
+        sent
     }
 
     /// Correct visible acknowledgment headers that name a key the occupant
@@ -350,7 +450,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// and the lane's own seal stay silent: the first retires, and the others
     /// were really given to this occupant. Like the reasoning correction this
     /// writes only a private notice and never reaches journal authority.
-    pub(super) fn nudge_misdirected_acknowledgements(&self, decoded: &Decoded) {
+    pub(super) fn nudge_misdirected_acknowledgements(&self, decoded: &Decoded) -> bool {
         let prose = decoded
             .events()
             .iter()
@@ -365,7 +465,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             })
             .collect::<Vec<_>>();
         if prose.is_empty() {
-            return;
+            return false;
         }
         let inbox = (self.read_inbox)().unwrap_or_default();
         let pending = std::str::from_utf8(&inbox)
@@ -398,14 +498,14 @@ impl<W: Write + Send + 'static> Driver<W> {
             }
         }
         if named.is_empty() {
-            return;
+            return false;
         }
         let quoted = |keys: &mut dyn Iterator<Item = &str>| {
             keys.map(|key| format!("`{key}`"))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let pending = if pending.is_empty() {
+        let pending_guidance = if pending.is_empty() {
             "No steering is pending.".to_owned()
         } else {
             format!(
@@ -414,17 +514,23 @@ impl<W: Write + Send + 'static> Driver<W> {
             )
         };
         let message = format!(
-            "<system-notice>\nNot pending: {}. {pending} {}\n</system-notice>",
+            "<system-notice>\nNot pending: {}. {pending_guidance} {}\n</system-notice>",
             quoted(&mut named.iter().map(String::as_str)),
             steer::inbox::ACK_GUIDANCE,
         );
-        if self.background("misdirected-ack", &message).is_ok() {
+        let sent = self.background("misdirected-ack", &message).is_ok();
+        if sent {
+            self.activity_reminder
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .arm(pending.iter().map(|key| (*key).to_owned()));
             misdirected.extend(named);
         }
+        sent
     }
 
-    /// Hold every key the occupant's visible words just answered, and strip
-    /// it from queued reminders and briefings before the journal catches up.
+    /// Hold every key the occupant's tape-backed assistant text just answered,
+    /// and strip it from queued reminders and briefings before journal catch-up.
     ///
     /// This runs as the words are decoded, ahead of the step boundary that
     /// flushes queued notices, so it reads only what this driver last
@@ -480,6 +586,13 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _cancelled = self.update_background("briefing", |page| {
             crate::session_command::digest::without_answered(page, |key| heard.contains(key))
         });
+        let mut activity = self
+            .activity_reminder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        activity.acknowledge(&heard);
+        let message = activity_message(activity.queued());
+        let _cancelled = self.background(ACTIVITY_ACK_PURPOSE, &message);
         if settled {
             let _cancelled = self.background("hidden-ack", "");
         }
