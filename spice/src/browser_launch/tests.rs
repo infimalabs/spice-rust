@@ -40,6 +40,53 @@ fn a_chromium_executable_in_command_position_needs_the_mock_keychain() {
 }
 
 #[test]
+fn openers_and_command_prefixes_lead_into_the_browser_they_start() {
+    for script in [
+        "if chromium --headless; then :; fi",
+        "while chromium --headless; do :; done",
+        "until chromium --headless; do :; done",
+        "timeout 30 chromium --headless",
+        "timeout -s KILL -k 5 30s chromium --headless",
+        "sudo -u runner -E chromium --headless",
+        "sudo -- chromium --headless",
+    ] {
+        assert!(refusal(script).is_some(), "admitted: {script}");
+        let switched = script.replace("--headless", "--headless --use-mock-keychain");
+        assert_eq!(refusal(&switched), None, "{switched}");
+    }
+    // An option's value or a duration names no command.
+    for script in ["sudo -u chromium ls", "timeout chromium make test"] {
+        assert_eq!(refusal(script), None, "{script}");
+    }
+}
+
+#[test]
+fn heredoc_bodies_are_data_but_their_surroundings_are_commands() {
+    let admitted = [
+        "git commit -F - <<'MSG'\nchromium --headless no longer prompts\nMSG",
+        "cat > notes.md <<EOF\nchromium --headless\nEOF\necho done",
+        "cat <<-\"END\"\n\tchromium --headless\n\tEND\n",
+        "cat <<A <<B\nchromium --headless\nA\ngoogle-chrome --headless\nB",
+        "cat <<EOF\nchromium --headless\n",
+    ];
+    for script in admitted {
+        assert_eq!(refusal(script), None, "{script}");
+    }
+    let refused = [
+        "cat <<EOF; chromium --headless\nbody\nEOF",
+        "cat <<EOF\nbody\nEOF\nchromium --headless",
+        "cat <<-END\n\tbody\n\tEND\nchromium --headless",
+        // A here-string, quoted text, and a comment open no body.
+        "cat <<<'x'\nchromium --headless",
+        "echo '<<EOF'\nchromium --headless",
+        "echo hi # a<<EOF\nchromium --headless",
+    ];
+    for script in refused {
+        assert!(refusal(script).is_some(), "admitted: {script}");
+    }
+}
+
+#[test]
 fn a_wrapped_vector_is_judged_by_its_script_or_as_one_command() {
     let words = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
     assert!(argv_refusal(&words(&["/bin/zsh", "-c", "chromium --headless"])).is_some());
