@@ -166,11 +166,11 @@ pub struct Version {
     pub product: crate::manifest::ProductVersion,
     /// Digest of the native executable for its release target.
     pub binary: Digest,
-    /// The one wire schema this build speaks.
+    /// The one crossing wire generation this build speaks.
     pub wire: WireVersion,
-    /// Finalized journal schema this build observed without migrating it.
+    /// Finalized journal migration schema this build observed without migrating it.
     pub journal: u32,
-    /// Internal browser/resident protocol clock.
+    /// Internal browser/resident app protocol.
     pub app_protocol: crate::hello::AppProtocolVersion,
     /// Identity of the complete app generation served by this build.
     pub app: Digest,

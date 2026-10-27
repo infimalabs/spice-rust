@@ -97,6 +97,8 @@ mod task_sheet;
 mod toast_state;
 #[cfg(any(target_arch = "wasm32", test))]
 mod unsent_work;
+#[cfg(any(target_arch = "wasm32", test))]
+mod version_identity;
 pub mod view;
 pub mod voice_spread;
 pub mod watchband;
