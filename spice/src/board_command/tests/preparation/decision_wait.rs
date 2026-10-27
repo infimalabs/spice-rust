@@ -42,13 +42,14 @@ fn an_operator_nudge_readies_only_an_open_design_gathering_its_first_pass() {
     clean(&root, bus);
 }
 
-/// A lane may claim a Design still gathering input by name and end its pass
-/// with a proposal, while allocation and steal wait for it to be ready. A
-/// named claim on a Design awaiting decision or waiting on released work
-/// learns the cycle that holds it and the action that moves it.
+/// A lane may claim a Design still gathering input by name, by capture or by
+/// steal, and end its pass with a proposal, while allocation waits for it to
+/// be ready. A named claim on a Design awaiting decision or waiting on
+/// released work, steal included, learns the cycle that holds it and the
+/// action that moves it.
 #[test]
 fn a_named_claim_forces_a_gathering_design_but_not_a_held_one() {
-    let (root, bus, epoch, seats) = fixture("preparation-design-held-capture", 2);
+    let (root, bus, epoch, seats) = fixture("preparation-design-held-capture", 3);
     let design = add_controller(
         &bus,
         epoch,
@@ -76,11 +77,27 @@ fn a_named_claim_forces_a_gathering_design_but_not_a_held_one() {
     };
 
     assert_eq!(offered(&bus, epoch, &seats[0]), None);
-    assert_eq!(
-        refused(&win_named(&bus, epoch, &seats[1], &design, "steal")),
-        "claim::steal-ineligible"
+    let unheld = add_controller(
+        &bus,
+        epoch,
+        "Unheld steeping design",
+        wire::TaskIntent::Design,
+        None,
     );
-    assert_committed(win_named(&bus, epoch, &seats[1], &design, "capture"));
+    stand_design(&bus, epoch, &unheld);
+    let stolen = |outcome| match assert_committed(outcome) {
+        CommandAnswer::Claim(answer) => answer.nothing_stolen,
+        other => panic!("steal returned another answer shape: {other:?}"),
+    };
+    assert!(
+        stolen(win_named(&bus, epoch, &seats[2], &unheld, "steal")),
+        "steal claims a gathering Design nobody holds"
+    );
+    assert_committed(win_named(&bus, epoch, &seats[0], &design, "capture"));
+    assert!(
+        !stolen(win_named(&bus, epoch, &seats[1], &design, "steal")),
+        "steal displaces a gathering Design's holder"
+    );
     assert_eq!(
         active_holder(&bus, epoch, &design),
         Some(Actor::Lane(seats[1].lane))
@@ -99,10 +116,12 @@ fn a_named_claim_forces_a_gathering_design_but_not_a_held_one() {
     );
     assert_eq!(active_holder(&bus, epoch, &design), None);
     let awaiting = held("capture", wire::rooms::DesignCycle::AwaitingDecision);
-    assert_eq!(
-        held("recover", wire::rooms::DesignCycle::AwaitingDecision),
-        awaiting
-    );
+    for rule in ["recover", "steal"] {
+        assert_eq!(
+            held(rule, wire::rooms::DesignCycle::AwaitingDecision),
+            awaiting
+        );
+    }
     assert!(awaiting.contains("spice preparation decide"), "{awaiting}");
 
     // Selecting the output leaves the Design waiting on it: the released
@@ -120,8 +139,9 @@ fn a_named_claim_forces_a_gathering_design_but_not_a_held_one() {
         &current,
         &design,
     ));
-    held("capture", wire::rooms::DesignCycle::WaitingOnSelectedWork);
-    held("recover", wire::rooms::DesignCycle::WaitingOnSelectedWork);
+    for rule in ["capture", "recover", "steal"] {
+        held(rule, wire::rooms::DesignCycle::WaitingOnSelectedWork);
+    }
 
     let current = board(&bus, epoch, Actor::Operator);
     let heads = at(&current, &output);

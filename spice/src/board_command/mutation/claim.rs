@@ -746,20 +746,18 @@ fn named_claim_selection<'a>(
     }
     let environment = snapshot.answer.environment();
     let satisfied = board::resolved_tasks(&snapshot.entries);
+    refuse_held_design(entry, &satisfied)?;
     let (admitted, reason, remedy) = match possession {
         Possession::Steal | Possession::RecoverSteal => (
             board::stealable_entry(&satisfied, entry, command.actor(), &environment),
             "claim::steal-ineligible",
             "capture --steal only a ready, pending task, held or not",
         ),
-        Possession::Recover | Possession::Capture => {
-            refuse_held_design(entry, &satisfied)?;
-            (
-                board::capturable_entry(&satisfied, entry, command.actor(), &environment),
-                "claim::capture-ineligible",
-                "capture only an unclaimed, ready, pending task",
-            )
-        }
+        Possession::Recover | Possession::Capture => (
+            board::capturable_entry(&satisfied, entry, command.actor(), &environment),
+            "claim::capture-ineligible",
+            "capture only an unclaimed, ready, pending task",
+        ),
         Possession::Next => unreachable!("allocator possession returned above"),
     };
     if admitted {
@@ -770,9 +768,9 @@ fn named_claim_selection<'a>(
 }
 
 /// An open Design that awaits the operator's decision or waits on work it
-/// released is held even from a named claim: capture and recovery name the
-/// cycle and its next action. A Design still gathering input is claimable by
-/// name, so the operator can force its pass before it steeps.
+/// released is held even from a named claim: capture, steal, and recovery name
+/// the cycle and its next action. A Design still gathering input is claimable
+/// by name, so the operator can force its pass before it steeps.
 pub(in crate::board_command) fn refuse_held_design(
     entry: &Entry,
     satisfied: &board::ResolvedTasks,

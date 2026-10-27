@@ -906,7 +906,7 @@ fn selectable(
 ) -> bool {
     subscription.admits_creator_team(entry.creator_team())
         && handoff_admits(entry, actor, now)
-        && eligible(entry, actor, completed)
+        && eligible(entry, completed)
 }
 
 fn handoff_admits(entry: &Entry, actor: &Actor, now: Option<Instant>) -> bool {
@@ -925,8 +925,8 @@ fn handoff_admits(entry: &Entry, actor: &Actor, now: Option<Instant>) -> bool {
     }
 }
 
-fn eligible(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
-    workable(entry, actor, completed) && unheld(entry)
+fn eligible(entry: &Entry, completed: &ResolvedTasks) -> bool {
+    workable(entry, completed) && unheld(entry)
 }
 
 /// Whether `actor` explicitly freed `entry` and nobody has claimed it since.
@@ -944,50 +944,33 @@ pub fn is_released_by(entry: &Entry, actor: &Actor) -> bool {
 
 /// Every eligibility clause except possession.
 ///
-/// Allocation and stealing agree on all of this and disagree on possession
-/// alone, so possession is the only thing either caller states for itself.
-fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
-    entry.is_filed() && operational(entry, actor, completed)
+/// A review assignment is no clause here: it lives exactly as long as the
+/// reviewing claim, which free and lapse both release, and that live claim
+/// already excludes every other lane through possession.
+fn workable(entry: &Entry, completed: &ResolvedTasks) -> bool {
+    entry.is_filed() && operational(entry, completed)
 }
 
-fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
-    open_to(entry, actor, completed) && !design_held(entry, completed)
+fn operational(entry: &Entry, completed: &ResolvedTasks) -> bool {
+    open(entry, completed) && !design_held(entry, completed)
 }
 
 /// Every operational clause except the Design pass cycle, which automatic
 /// routes and a named claim gate differently.
-fn open_to(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
-    let workflow = entry.workflow();
-    workflow.status.is_pending()
-        && workflow.deferral.is_none()
-        && workflow
-            .status
-            .reviewer()
-            .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
-        && dependencies_satisfied(entry, completed)
-}
-
-/// Whether a review assignment died with the claim that carried it.
-///
-/// A review assignment pins the row to one reviewer. When that reviewer's own
-/// claim has lapsed, the pin outlives the possession it came with: nobody
-/// holds the row, yet every other actor is filtered out and the assignee is the
-/// one lane known to have left. Such an assignment is treated as none, so the
-/// next drain-mode lane takes the review over and mints its own assignment. A
-/// freed claim is not a lapse: the reviewer let go on purpose and the release
-/// already cleared the pin, so a pin that survives a free is somebody else's.
-fn assignment_lapsed(entry: &Entry, assignment: &Actor) -> bool {
-    entry.claim().is_some_and(|claim| {
-        claim.disposition == ClaimDisposition::Lapsed && &claim.actor == assignment
-    })
-}
-
-fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> bool {
+fn open(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let workflow = entry.workflow();
     workflow.status.is_pending()
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
-        && !design_held(entry, completed)
+}
+
+/// Every clause a named claim admits on except possession: capture adds that
+/// nobody holds the entry, and steal adds nothing.
+fn claimable(entry: &Entry, completed: &ResolvedTasks, environment: &wire::Environment) -> bool {
+    entry.is_filed()
+        && open(entry, completed)
+        && design_hold(entry, completed).is_none()
+        && environment_satisfied(entry, environment)
 }
 
 /// Whether every ordinary prerequisite has settled.
@@ -1025,10 +1008,10 @@ pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> 
 pub fn eligible_entry(
     satisfied: &ResolvedTasks,
     entry: &Entry,
-    actor: &Actor,
+    _actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
+    workable(entry, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
 /// Whether one named entry may be captured or recovered.
@@ -1041,14 +1024,10 @@ pub fn eligible_entry(
 pub fn capturable_entry(
     satisfied: &ResolvedTasks,
     entry: &Entry,
-    actor: &Actor,
+    _actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    entry.is_filed()
-        && open_to(entry, actor, satisfied)
-        && design_hold(entry, satisfied).is_none()
-        && environment_satisfied(entry, environment)
-        && unheld(entry)
+    claimable(entry, satisfied, environment) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the team's current task scope.
@@ -1080,7 +1059,7 @@ pub fn selectable_entry_at(
 
 /// Earliest future phase-handoff instant that currently blocks `actor`.
 ///
-/// Ordinary route, workflow, dependency, environment, assignment, and
+/// Ordinary route, workflow, dependency, environment, and
 /// possession predicates must already admit the row. This lets lifecycle arm
 /// the exact durable handoff deadline when the actor has no candidate yet.
 #[must_use]
@@ -1101,16 +1080,17 @@ pub fn blocked_handoff_until(
         .min()
 }
 
-/// Whether one named entry may be taken from whoever currently holds it.
+/// Whether one named entry may be taken from whoever holds it, if anyone.
 ///
-/// [`eligible_entry`] without the possession clause, and without any clause put
-/// in its place: a steal takes the task at once rather than waiting out a lease
-/// or proving the holder gone. Taking immediately is safe rather than reckless
-/// because the displaced holder is told: its next renewal refuses as
+/// [`capturable_entry`] without the possession clause, and without any clause
+/// put in its place: a steal takes the task at once rather than waiting out a
+/// lease or proving the holder gone. Taking immediately is safe rather than
+/// reckless because the displaced holder is told: its next renewal refuses as
 /// `claim::ownership-refused` and names whoever holds the claim now.
 ///
-/// Every other clause still applies, so a steal can no more take a hidden,
-/// completed, deferred or dependency-blocked task than an allocation can.
+/// Every other clause is capture's, so the steal flag never refuses what a
+/// capture would take: a Design gathering input is stealable, while a hidden,
+/// completed, deferred, dependency-blocked, or [held](design_hold) Design is not.
 #[must_use]
 pub fn stealable_entry(
     satisfied: &ResolvedTasks,
@@ -1118,9 +1098,7 @@ pub fn stealable_entry(
     _actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    entry.is_filed()
-        && operational_without_assignment(entry, satisfied)
-        && environment_satisfied(entry, environment)
+    claimable(entry, satisfied, environment)
 }
 
 /// Each settled task with whether its conclusion is positive, whether each

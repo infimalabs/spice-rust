@@ -1,9 +1,10 @@
-//! A review assignment dies with the lapsed claim that carried it.
+//! A review assignment never gates who may claim the row.
 //!
-//! The row this pins is the live one the defect was filed from: a workflow head
-//! still assigning the review to one reviewer beside a claim head recording
-//! that reviewer's possession as lapsed. Nobody holds the row, yet without this
-//! law the allocator filters it out for every actor but the one that left.
+//! The assignment lives exactly as long as the reviewing claim: free and lapse
+//! both release it, and while that claim is live, possession alone keeps every
+//! other lane out until one steals it. A pin retained beside a claim that no
+//! longer possesses the row therefore admits every lane, by allocation,
+//! capture, or steal.
 
 use board::Entry;
 use wire::{
@@ -56,19 +57,15 @@ fn newcomer() -> Actor {
     Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e4b2"))
 }
 
-fn bystander() -> Actor {
-    Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e4c3"))
-}
-
-/// One review row assigned to `assignee`, with `holder`'s claim in `disposition`.
-fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -> Entry {
+/// One review row assigned to `reviewer()`, whose claim is in `disposition`.
+fn review_row(disposition: ClaimDisposition) -> Entry {
     let statement = TaskHead {
         preparation: None,
         intent: None,
         born: stamp("BOARD-r1"),
         queue_origin: seq(1),
-        title: "Review the lapsed assignment".to_owned(),
-        pitch: "A lapsed assignment still needs its review.".to_owned(),
+        title: "Review the assigned row".to_owned(),
+        pitch: "An assigned review still needs a reviewer.".to_owned(),
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
@@ -87,12 +84,12 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
     let workflow = WorkflowHead {
         flow: vec![phase("todo"), phase("review")],
         phase: phase("review"),
-        status: wire::WorkflowStatus::assigned(assignee.clone()),
+        status: wire::WorkflowStatus::assigned(reviewer()),
         deferral: None,
         generation: 0,
     };
     let claim = ClaimHead {
-        actor: holder.clone(),
+        actor: reviewer(),
         fact: seq(3),
         claimed: seq(3),
         cell: wire::ClaimCell {
@@ -116,59 +113,32 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
     Entry::new(statement, workflow, Some(claim), Some(lease)).expect("review row")
 }
 
-fn eligible_for(entry: &Entry, actor: &Actor) -> bool {
-    let satisfied = board::resolved_tasks(std::slice::from_ref(entry));
-    board::eligible_entry(&satisfied, entry, actor, &environment())
-}
-
-fn selected_for(entry: &Entry, actor: &Actor) -> bool {
-    board::select(std::slice::from_ref(entry), actor, &drain(), &environment()).is_some()
-}
-
-#[test]
-fn a_review_whose_assignee_lapsed_is_handed_to_another_lane() {
-    let row = review_row(&reviewer(), &reviewer(), ClaimDisposition::Lapsed);
-    assert!(
-        eligible_for(&row, &newcomer()),
-        "a lapsed assignee no longer pins the review"
-    );
-    assert!(
-        selected_for(&row, &newcomer()),
-        "drain policy hands the lapsed review to the next lane"
-    );
-    assert!(
-        eligible_for(&row, &reviewer()),
-        "the assignee itself may still take its own lapsed review back"
-    );
+/// Whether `actor` may take `row` by allocation, capture, and steal.
+fn routes(row: &Entry, actor: &Actor) -> [bool; 3] {
+    let satisfied = board::resolved_tasks(std::slice::from_ref(row));
+    [
+        board::select(std::slice::from_ref(row), actor, &drain(), &environment()).is_some(),
+        board::capturable_entry(&satisfied, row, actor, &environment()),
+        board::stealable_entry(&satisfied, row, actor, &environment()),
+    ]
 }
 
 #[test]
-fn a_review_whose_assignee_holds_or_freed_its_claim_stays_pinned() {
-    for (disposition, reason) in [
-        (
-            ClaimDisposition::Active,
-            "an active claim still possesses the row",
-        ),
-        (
-            ClaimDisposition::Freed,
-            "a pin that survives a free was not released by this lapse law",
-        ),
-    ] {
-        let row = review_row(&reviewer(), &reviewer(), disposition);
-        assert!(!eligible_for(&row, &newcomer()), "{reason}");
-        assert!(!selected_for(&row, &newcomer()), "{reason}");
+fn a_retained_review_assignment_admits_every_lane_once_its_claim_ends() {
+    for disposition in [ClaimDisposition::Freed, ClaimDisposition::Lapsed] {
+        let row = review_row(disposition);
+        for actor in [newcomer(), reviewer()] {
+            assert_eq!(
+                routes(&row, &actor),
+                [true; 3],
+                "{actor} after a {disposition:?} review claim"
+            );
+        }
     }
 }
 
 #[test]
-fn a_lapse_by_someone_other_than_the_assignee_does_not_unpin_the_review() {
-    let row = review_row(&reviewer(), &bystander(), ClaimDisposition::Lapsed);
-    assert!(
-        !eligible_for(&row, &newcomer()),
-        "the assignment outlives a lapse that was never the assignee's"
-    );
-    assert!(
-        eligible_for(&row, &reviewer()),
-        "the assignee is still the one lane the pin admits"
-    );
+fn a_live_review_claim_yields_only_to_a_steal() {
+    let row = review_row(ClaimDisposition::Active);
+    assert_eq!(routes(&row, &newcomer()), [false, false, true]);
 }
