@@ -510,9 +510,10 @@ pub struct ClaimHead {
     ///
     /// A win records the task's generation at possession, assigned by the
     /// journal at commit. Automatic renewal and resident carry preserve it.
-    /// An explicit reclaim advances it, and so does a mutation its own current
-    /// holder commits; a claim that trails stays behind until reclaimed.
-    /// Completion and review refuse while it trails the task generation.
+    /// Explicit generation acknowledgement and residency rebound advance it,
+    /// as does a mutation its own current holder commits. A trailing claim
+    /// stays behind until its holder acknowledges through `task next`;
+    /// completion and review refuse meanwhile.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub acknowledged: u64,
 }

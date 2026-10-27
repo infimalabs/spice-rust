@@ -1,13 +1,12 @@
-//! Replay of where an explicit reclaim moved a Design pass's claim.
+//! Replay of the claim position governing each Design pass.
 //!
 //! A Design pass names its controller's claim-head position. Winning,
-//! carrying, and rebinding set it; the resident's lease timer never moves it.
-//! An explicit reclaim moves it only when the claim trailed its task's
-//! generation, because that reclaim rewrites the claim head at its
-//! `claim::renewed` fact to acknowledge the generation. Replay follows the
-//! commit guard's acknowledgement rule (`guard/generation.rs`) from facts alone:
-//! a transaction mutating the task leaves its claim trailing unless that
-//! transaction won the claim or the holder's own actor committed it.
+//! carrying, rebinding, and explicit generation acknowledgement set it; the
+//! resident's lease timer never moves it. Retained manual renewals also moved
+//! that position when they acknowledged a generation. Replay follows the
+//! commit guard's acknowledgement rule (`guard/generation.rs`) from facts
+//! alone: a transaction mutating the task leaves its claim trailing unless
+//! that transaction won the claim or the holder's own actor committed it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,7 +29,7 @@ struct Acknowledgement {
 
 impl Acknowledgements {
     /// Observe one fact in history order, answering the task whose claim head
-    /// an explicit reclaim rewrote at this fact.
+    /// a retained manual renewal rewrote at this fact.
     pub(super) fn observe(
         &mut self,
         actor: &Actor,

@@ -84,7 +84,7 @@ fn trailing_generations_project_private_claimant_notices_without_steering() {
 }
 
 #[test]
-fn reclaim_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
+fn acknowledgement_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
     let fixture = LaunchFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Operator);
@@ -93,13 +93,13 @@ fn reclaim_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
     let prior = notices(&bus, &before).expect("prior notices project");
     assert_eq!(prior.len(), 2);
 
-    reclaim(&bus, &task);
-    let reclaimed = bus.task_snapshot().expect("reclaimed snapshot reads");
+    acknowledge(&bus, &task);
+    let acknowledged = bus.task_snapshot().expect("acknowledged snapshot reads");
     assert!(
-        notices(&bus, &reclaimed)
-            .expect("reclaimed notices project")
+        notices(&bus, &acknowledged)
+            .expect("acknowledged notices project")
             .is_empty(),
-        "successful reclaim retires every acknowledged reminder",
+        "successful acknowledgement retires every prior reminder",
     );
 
     note(&bus, &task, Actor::Operator);
@@ -320,36 +320,34 @@ fn note(bus: &Bus, task: &TaskStamp, actor: Actor) {
     committed(bus.commit(write).expect("task note commits"));
 }
 
-fn reclaim(bus: &Bus, task: &TaskStamp) {
-    let snapshot = bus.task_snapshot().expect("pre-reclaim snapshot reads");
+fn acknowledge(bus: &Bus, task: &TaskStamp) {
+    let snapshot = bus
+        .task_snapshot()
+        .expect("pre-acknowledgement snapshot reads");
     let heads = &snapshot.tasks()[0];
     let claim = heads.claim().expect("claim head").body().clone();
-    let lease = heads.lease().expect("lease head").body().clone();
-    let acknowledged = heads.workflow().body().generation;
+    let generation = heads.workflow().body().generation;
     let mut write = JournalWrite::new(
         claim.actor.clone(),
         task_origin(task),
         now(),
-        Producer::BusTimer,
+        Producer::CommandDoor,
     );
-    let renewed = write
+    let acknowledged = write
         .fact(
-            wire::body::ClaimRenewed {
+            wire::body::ClaimAcknowledged {
                 task: task.clone(),
-                epoch: claim.epoch,
-                until: lease.expiry,
-                maximum: lease.maximum,
+                generation,
             },
             FactCause::Root,
         )
-        .expect("claim renewal fact builds");
-    write.lease_head(task.clone(), renewed, move |_| lease);
-    write.claim_head(task.clone(), renewed, move |fact| wire::ClaimHead {
+        .expect("claim acknowledgement fact builds");
+    write.claim_head(task.clone(), acknowledged, move |fact| wire::ClaimHead {
         fact,
-        acknowledged,
+        acknowledged: generation,
         ..claim
     });
-    committed(bus.commit(write).expect("reclaim commits"));
+    committed(bus.commit(write).expect("acknowledgement commits"));
 }
 
 fn end_claim(bus: &Bus, task: &TaskStamp) {
