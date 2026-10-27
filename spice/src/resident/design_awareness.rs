@@ -53,17 +53,12 @@ pub(crate) fn match_score_floor(reach: DesignReach) -> f64 {
 /// while its current items are unsteeped, narrow once they steep. A steeped
 /// Design is close, so it asks only closely matched lanes; the reach widens
 /// again as soon as a later charge contests an item or a statement edit
-/// un-steeps it. An OOPS Design never steeps, since its reports rather than
-/// its items ready it, so it is always narrow. Its working group never moves
-/// the reach. The notice records this reach as the one that admitted the match.
+/// un-steeps it. Its working group never moves the reach. The notice records
+/// this reach as the one that admitted the match.
 fn admitting_reach(facts: &bus::TaskFacts, design: &board::Entry) -> DesignReach {
-    let steeped = design
-        .statement()
-        .intent
-        .is_some_and(wire::TaskIntent::is_opportunistic_design)
-        || facts
-            .design_items(design.born())
-            .is_some_and(|items| items.steeped(&design.statement().acceptance));
+    let steeped = facts
+        .design_items(design.born())
+        .is_some_and(|items| items.steeped(&design.statement().acceptance));
     if steeped {
         DesignReach::Narrow
     } else {

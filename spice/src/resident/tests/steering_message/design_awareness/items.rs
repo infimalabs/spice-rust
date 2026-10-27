@@ -215,37 +215,6 @@ fn a_steeped_design_invites_narrow_until_an_item_contests() {
 }
 
 #[test]
-fn an_oops_design_invites_narrow_without_steeping() {
-    use wire::rooms::DesignReach::Narrow;
-
-    let lanes = Lanes::new("design-request-oops-floor");
-    let config = surface(&lanes);
-    let design = lanes.seed_task_with_acceptance(
-        "dVrD245Kd",
-        TASK_TITLE,
-        Some(&format!("{OFF_TOPIC} {PITCH}")),
-        Some(wire::TaskIntent::OpportunisticDesign),
-        None,
-        &[UNRELATED[0], UNRELATED[1]],
-    );
-    lanes.group(30, &config, &design);
-    let expected = crate::resident::design_awareness::match_score_floor;
-    assert_eq!(
-        floor(&lanes, &design),
-        expected(Narrow),
-        "an unheard OOPS Design asks as a steeped one"
-    );
-
-    lanes.charge(50, SENDER, &design, 1, -1);
-    assert_eq!(
-        floor(&lanes, &design),
-        expected(Narrow),
-        "a contested item cannot un-steep an OOPS Design"
-    );
-    lanes.finish();
-}
-
-#[test]
 fn every_item_concurring_owes_no_whole_design_ask() {
     let lanes = Lanes::new("design-request-all-concurred");
     lanes.seat(THIRD);

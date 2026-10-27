@@ -407,45 +407,33 @@ fn added(subject: i64, intent: Option<crate::TaskIntent>, report: bool) -> AnyFa
 }
 
 #[test]
-fn an_oops_design_is_ready_from_its_reports_without_steeping() {
-    let oops = Some(crate::TaskIntent::OpportunisticDesign);
-    let mut journal = Journal::new();
-    journal.lane(&added(DESIGN, oops, false));
-    assert_eq!(journal.cycle(false), DesignCycle::GatheringInput);
-    journal.lane(&added(OUTPUT, Some(crate::TaskIntent::Plan), true));
-    assert_eq!(
-        journal.cycle(false),
-        DesignCycle::ReadyForProposal,
-        "a report readies the first pass with no charge or nudge"
-    );
-
-    journal.passed(
-        DecisionOutcome::Accepted {
-            candidate: candidate(10),
-        },
-        vec![task(OUTPUT)],
-    );
-    assert_eq!(
-        journal.cycle(false),
-        DesignCycle::GatheringInput,
-        "a pass's own reports never reopen it"
-    );
-    journal.lane(&added(SECOND, Some(crate::TaskIntent::Plan), true));
-    assert_eq!(
-        journal.cycle(false),
-        DesignCycle::ReadyForProposal,
-        "a later report readies the next pass"
-    );
-
-    let mut ordinary = Journal::new();
-    ordinary
-        .lane(&added(DESIGN, Some(crate::TaskIntent::Design), false))
-        .lane(&added(OUTPUT, Some(crate::TaskIntent::Plan), true));
-    assert_eq!(
-        ordinary.cycle(false),
-        DesignCycle::GatheringInput,
-        "an ordinary Design's first pass still needs steeping or a nudge"
-    );
+fn a_prepared_report_is_never_input_for_an_oops_or_ordinary_design() {
+    for intent in [
+        crate::TaskIntent::OpportunisticDesign,
+        crate::TaskIntent::Design,
+    ] {
+        let mut journal = Journal::new();
+        journal
+            .lane(&added(DESIGN, Some(intent), false))
+            .lane(&added(OUTPUT, Some(crate::TaskIntent::Plan), true));
+        assert_eq!(
+            journal.cycle(false),
+            DesignCycle::GatheringInput,
+            "{intent:?}: a report alone never readies the first pass"
+        );
+        journal.passed(
+            DecisionOutcome::Accepted {
+                candidate: candidate(10),
+            },
+            vec![task(OUTPUT)],
+        );
+        journal.lane(&added(SECOND, Some(crate::TaskIntent::Plan), true));
+        assert_eq!(
+            journal.cycle(false),
+            DesignCycle::GatheringInput,
+            "{intent:?}: a report after a pass never readies the next"
+        );
+    }
 }
 
 #[test]
