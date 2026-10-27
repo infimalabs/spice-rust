@@ -33,7 +33,7 @@ use wire::CanonicalUuid;
 use super::super::RuntimePaths;
 use super::terminal::{Control, Event as JobEvent, Handle, Job, Report, Run, Terminal};
 use crate::resident::steering::{MessageRecordedNotice, MessageRefusalNotice};
-use steering::{InboxDelivery, ReasoningReminder};
+use steering::{ActivityReminder, InboxDelivery, ReasoningReminder};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 pub(in crate::resident) const KICK_BYTES: usize = 1024;
@@ -110,13 +110,17 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// resend can say whether it saw a reply at all. Reasoning and tool
     /// arguments are not prose. Cleared with `told`.
     replied: Mutex<BTreeSet<String>>,
-    /// Keys the occupant's visible words answered that the journal still
-    /// lists. Every composition holds them back; compaction keeps them, since
-    /// the journal's lag is not the context's.
+    /// Keys the occupant's tape-backed assistant text answered that the
+    /// journal still lists. Every composition holds them back; compaction keeps
+    /// them, since the journal's lag is not the context's.
     answered: Mutex<answered::Answered>,
     /// Hidden-reasoning attempts already corrected in this context and pending
     /// inbox generation. The text itself is never retained.
     reasoning_reminder: Mutex<ReasoningReminder>,
+    /// Response-counted correction state for pending keys whose first reminder
+    /// this occupant received. Compaction clears it; a new driver never
+    /// inherits it.
+    activity_reminder: Mutex<ActivityReminder>,
     /// The seal wrapping this lane's steering, which prose may name without
     /// naming a directive.
     seal: steer::Key,
@@ -355,6 +359,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             room_catch_up_landing: Mutex::new(None),
             answered: Mutex::new(answered::Answered::default()),
             reasoning_reminder: Mutex::new(ReasoningReminder::default()),
+            activity_reminder: Mutex::new(ActivityReminder::default()),
             seal,
             misdirected: Mutex::new(BTreeSet::new()),
             task_generation: Mutex::new(None),
@@ -661,6 +666,24 @@ impl<W: Write + Send + 'static> Driver<W> {
         Ok(())
     }
 
+    /// Record one settled visible assistant response and clear narration.
+    /// Streamed revisions and tool-only records are not complete responses.
+    fn observe_visible_reply(&self, decoded: &Decoded) -> bool {
+        let replied = decoded.events().iter().any(|event| {
+            matches!(event, Event::Prose(prose)
+                if prose.role == ProseRole::Assistant && !prose.text.trim().is_empty())
+        });
+        if replied {
+            let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+            self.replied
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(told.iter().cloned());
+            let _cancelled = self.background("narration", "");
+        }
+        replied
+    }
+
     /// Let one decoded record shape delivery, and state what it raises to the
     /// resident: the consent request a confirm dialog asks for, or the
     /// vendor's refusal of fast mode.
@@ -694,6 +717,9 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .filter(|key| recognized.contains(*key))
                     .map(str::to_owned),
             );
+            drop(recognized);
+            drop(told);
+            self.observe_activity_reminder(&prose.text);
             self.observe_room_catch_up(&prose.text);
             self.background
                 .lock()
@@ -732,18 +758,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             self.cancel(withdrawn);
         }
         self.restate_waits(decoded);
-        let replied = decoded.events().iter().any(|event| {
-            matches!(event, Event::Prose(prose)
-                if prose.role == ProseRole::Assistant && !prose.text.trim().is_empty())
-        });
-        if replied {
-            let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-            self.replied
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend(told.iter().cloned());
-            let _cancelled = self.background("narration", "");
-        }
+        let replied = self.observe_visible_reply(decoded);
         self.cancel_answered_reminders(decoded);
         let compacted = decoded
             .events()
@@ -776,9 +791,13 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clear();
+            self.reset_activity_reminder();
         }
-        self.nudge_hidden_acknowledgements(decoded);
-        self.nudge_misdirected_acknowledgements(decoded);
+        let hidden_correction = self.nudge_hidden_acknowledgements(decoded);
+        let misdirected_correction = self.nudge_misdirected_acknowledgements(decoded);
+        if replied && !compacted && !hidden_correction && !misdirected_correction {
+            self.nudge_unanswered_activity();
+        }
         let settled = decoded.context().is_some_and(|context| {
             context.session_settled
                 || context

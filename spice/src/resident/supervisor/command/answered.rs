@@ -1,9 +1,9 @@
-//! Keys an occupant answered in visible words before the journal retired them.
+//! Keys an occupant answered in tape-backed assistant text before the journal retired them.
 
 use std::collections::BTreeMap;
 
-/// Each key the occupant's own visible words answered, with the stage its
-/// telling named when they did.
+/// Each key the occupant's own tape-backed assistant text answered, with the
+/// stage its telling named when they did.
 ///
 /// The resident retires a key only once the answer reaches its journal, and
 /// until then every inbox read still lists it. A reminder, replay, or briefing
