@@ -239,8 +239,7 @@ impl TaskProjection<'_> {
         )
         .with_explicit_release(explicit_release)
         .with_grouped(grouped)
-        .with_design_active(design.active)
-        .with_design_cycle(design.cycle)
+        .with_design_cycle(design)
         .with_preparation_decision(preparation_decision)
         .with_collapse_reason(
             self.facts

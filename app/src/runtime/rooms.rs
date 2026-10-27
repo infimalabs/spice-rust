@@ -81,17 +81,17 @@ impl RoomAnchorSettlement {
 }
 
 /// One Design's standing as its working group's light shows it: the board
-/// row's lifecycle standing, refined while active by the resident's pass
+/// row's lifecycle standing, refined while open by the resident's pass
 /// cycle or a lane's live claim. Derived from the board on every read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesignStanding {
     /// No board snapshot, or the board judges no standing for the anchor.
     Unavailable,
-    /// Open in a Paused group; no lane can acquire it.
-    Passive,
-    /// Open without a group or in a Running group, waiting where its cycle says.
-    Active(wire::rooms::DesignCycle),
-    /// Active, and a lane claims it for one pass.
+    /// Open and deferred; no lane can acquire it until the operator wakes it.
+    Deferred,
+    /// Open and undeferred, waiting where its cycle says.
+    Open(wire::rooms::DesignCycle),
+    /// Open, and a lane claims it for one pass.
     Claimed,
     /// The operator concluded it done.
     Done,
@@ -106,8 +106,8 @@ impl DesignStanding {
     pub const fn key(self) -> &'static str {
         match self {
             Self::Unavailable => "unavailable",
-            Self::Passive => "passive",
-            Self::Active(cycle) => cycle.key(),
+            Self::Deferred => "deferred",
+            Self::Open(cycle) => cycle.key(),
             Self::Claimed => "claimed",
             Self::Done => "done",
             Self::Collapsed => "collapsed",
@@ -119,9 +119,9 @@ impl DesignStanding {
     pub fn label(self) -> String {
         match self {
             Self::Unavailable => "unavailable".to_owned(),
-            Self::Passive => "open, passive".to_owned(),
-            Self::Active(cycle) => format!("open, active, {}", cycle.label()),
-            Self::Claimed => "open, active, claimed".to_owned(),
+            Self::Deferred => "open, deferred".to_owned(),
+            Self::Open(cycle) => format!("open, {}", cycle.label()),
+            Self::Claimed => "open, claimed".to_owned(),
             Self::Done => "concluded done".to_owned(),
             Self::Collapsed => "concluded collapsed".to_owned(),
             Self::Deleted => "deleted".to_owned(),
@@ -473,7 +473,7 @@ impl RoomProjection {
     }
 
     /// One Design's standing. The board row's lifecycle standing decides
-    /// terminal and passive Designs; an active one shows a lane's live claim,
+    /// terminal and deferred Designs; an open one shows a lane's live claim,
     /// else the cycle the resident judged.
     pub fn design_standing(&self, room: &TaskStamp, board: Option<&BoardView>) -> DesignStanding {
         let Some(board) = board else {
@@ -484,11 +484,11 @@ impl RoomProjection {
         };
         match design.design_standing() {
             None => DesignStanding::Unavailable,
-            Some(wire::intent::DesignStanding::Passive) => DesignStanding::Passive,
+            Some(wire::intent::DesignStanding::Deferred) => DesignStanding::Deferred,
             Some(wire::intent::DesignStanding::Done) => DesignStanding::Done,
             Some(wire::intent::DesignStanding::Collapsed { .. }) => DesignStanding::Collapsed,
             Some(wire::intent::DesignStanding::Deleted) => DesignStanding::Deleted,
-            Some(wire::intent::DesignStanding::Active) => {
+            Some(wire::intent::DesignStanding::Open) => {
                 if design.design_availability() == wire::rooms::DesignAvailability::Claimed {
                     DesignStanding::Claimed
                 } else {
@@ -496,7 +496,7 @@ impl RoomProjection {
                         .design_cycles
                         .get(room)
                         .map_or(DesignStanding::Unavailable, |cycle| {
-                            DesignStanding::Active(*cycle)
+                            DesignStanding::Open(*cycle)
                         })
                 }
             }

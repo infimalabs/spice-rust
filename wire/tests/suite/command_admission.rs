@@ -348,7 +348,6 @@ fn a_lane_reads_working_groups_but_cannot_mutate_them() {
         CommandKind::WorkingGroupArrange,
         CommandKind::WorkingGroupDisband,
         CommandKind::WorkingGroupFast,
-        CommandKind::WorkingGroupStance,
     ] {
         let command = Command {
             v: WireVersion::CURRENT,

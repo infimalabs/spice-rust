@@ -1,13 +1,13 @@
 //! Which unsatisfied dependencies only the operator can move.
 //!
 //! A dependency on work an agent can claim or is already working resolves
-//! organically, so it is an ordinary wait. A lapsed claim and a passive Design
-//! are transparent: the task keeps its own stale or passive standing, while its
-//! underlying gate decides the dependency path, so an open Design gathering
-//! input never reads as a wall. A chain is a wall only when every path forward
-//! needs the operator: a deferral, an internal parked row, a cycle, a
-//! prerequisite that can never complete, or an environment requirement only the
-//! operator can satisfy.
+//! organically, so it is an ordinary wait. A lapsed claim and a pending
+//! selection are transparent: the task keeps its own stale or selection
+//! standing, while its underlying gate decides the dependency path, so an open
+//! Design gathering input never reads as a wall. A chain is a wall only when
+//! every path forward needs the operator: a deferral, a deferred Design
+//! included, an internal parked row, a cycle, a prerequisite that can never
+//! complete, or an environment requirement only the operator can satisfy.
 
 use wire::TaskStamp;
 
@@ -103,7 +103,7 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             | WorkAvailability::Ready
             | WorkAvailability::Review
             | WorkAvailability::Waiting => return None,
-            WorkAvailability::Stale | WorkAvailability::Passive | WorkAvailability::Selection => {
+            WorkAvailability::Stale | WorkAvailability::Selection => {
                 return self.underlying(index);
             }
             WorkAvailability::Held => DependencyWall::Environment(born),
@@ -123,7 +123,7 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         Some((index, wall))
     }
 
-    /// A lapsed claim, passive Design, or operator selection changes only the
+    /// A lapsed claim or operator selection changes only the
     /// row's own standing. Follow the task's underlying gate so its dependents
     /// see the same wall they would if that standing were absent.
     fn underlying(&mut self, index: usize) -> Option<(usize, DependencyWall<'a>)> {

@@ -14,7 +14,7 @@ use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, PreparationRequest};
 
-/// One open Design's Nudge control; any other task shows nothing.
+/// One open, undeferred Design's Nudge control; any other task shows nothing.
 pub(super) fn nudge_control(
     runtime: &AppRuntime,
     report: &Callback<String>,
@@ -24,10 +24,7 @@ pub(super) fn nudge_control(
     let Some(anchor) = runtime.board().and_then(|board| board.row(room)) else {
         return Html::default();
     };
-    if !matches!(
-        anchor.design_standing(),
-        Some(DesignStanding::Active | DesignStanding::Passive)
-    ) {
+    if anchor.design_standing() != Some(DesignStanding::Open) {
         return Html::default();
     }
     let design = anchor.statement.body.handle.clone();

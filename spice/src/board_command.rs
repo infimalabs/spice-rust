@@ -124,6 +124,7 @@ pub(crate) use automatic_lifecycle::{
     AutomaticClaim, AutomaticSeat, claim_automatic, is_automatic_claim, release_automatic,
 };
 mod mutation;
+pub(crate) use mutation::task_defer;
 use mutation::*;
 mod planning;
 use planning::*;
@@ -133,8 +134,8 @@ use preparation::*;
 mod progress;
 use progress::*;
 mod group;
+pub(crate) use group::group_fast_lanes;
 use group::*;
-pub(crate) use group::{group_fast_lanes, move_working_group, set_working_group_stance};
 mod read_guard;
 use read_guard::*;
 mod report;
@@ -151,7 +152,7 @@ pub(crate) use room_leave::room_leave;
 mod room_contribute;
 pub(crate) use room_contribute::room_contribute;
 mod deactivation;
-use deactivation::{Deactivation, Shelving};
+use deactivation::Deactivation;
 mod steering_origin;
 use steering_origin::*;
 mod task_step;

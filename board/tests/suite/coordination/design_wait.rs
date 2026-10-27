@@ -1,16 +1,14 @@
 use super::*;
 
-use wire::rooms::{DesignCycleFacts, DesignFacts, DesignPassEnd};
+use wire::rooms::{DesignCycleFacts, DesignPassEnd};
 
 fn seq(position: u64) -> Seq {
     Seq::new(position).expect("fixture position")
 }
 
-/// An open Design named `name` holding `cycle` evidence under `active` standing.
-fn design_with(name: &str, active: bool, cycle: DesignCycleFacts) -> Entry {
-    planning(name, wire::TaskIntent::Design, Standing::Open)
-        .with_grouped(true)
-        .with_design(DesignFacts { active, cycle })
+/// An undeferred open Design named `name` holding `cycle` evidence.
+fn design_with(name: &str, cycle: DesignCycleFacts) -> Entry {
+    design_with_dependencies(name, false, cycle, Vec::new())
 }
 
 /// Cycle evidence after one proposal pass released its claim at seq 10.
@@ -34,7 +32,7 @@ fn cycle_of(entries: &[Entry]) -> Option<wire::rooms::DesignCycle> {
 
 fn design_with_dependencies(
     name: &str,
-    active: bool,
+    deferred: bool,
     cycle: DesignCycleFacts,
     dependencies: Vec<TaskStamp>,
 ) -> Entry {
@@ -45,6 +43,7 @@ fn design_with_dependencies(
         head,
         WorkflowHead {
             flow: vec![phase("design")],
+            deferral: deferred.then(|| instant("2026-09-01T00:00:00.000Z")),
             ..workflow("design")
         },
         None,
@@ -52,7 +51,7 @@ fn design_with_dependencies(
     )
     .expect("Design heads")
     .with_grouped(true)
-    .with_design(DesignFacts { active, cycle })
+    .with_design(cycle)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,7 +92,7 @@ fn design_cycle_cases() -> [(wire::rooms::DesignCycle, DesignCycleFacts, Vec<Ent
 }
 
 fn design_wall_entries(
-    active: bool,
+    deferred: bool,
     facts: DesignCycleFacts,
     mut extra: Vec<Entry>,
     wall: Option<DesignWall>,
@@ -108,7 +107,7 @@ fn design_wall_entries(
     let mut downstream = statement("WAIT-downstream");
     downstream.dependencies = vec![stamp("WAIT-output")];
     let mut entries = vec![
-        design_with_dependencies("WAIT-design", active, facts, dependencies),
+        design_with_dependencies("WAIT-design", deferred, facts, dependencies),
         named_output("WAIT-output", "WAIT-design", "WAIT-design"),
         admitted(downstream, workflow("todo"), None, None).expect("downstream"),
     ];
@@ -132,11 +131,7 @@ fn design_wall_entries(
 
 #[test]
 fn a_first_pass_waits_for_steeped_maturity_or_a_nudge() {
-    let fresh = [design_with(
-        "FIRST-design",
-        true,
-        DesignCycleFacts::default(),
-    )];
+    let fresh = [design_with("FIRST-design", DesignCycleFacts::default())];
     assert!(!first_eligible(&fresh), "an unsteeped Design gathers input");
     assert_eq!(
         cycle_of(&fresh),
@@ -163,16 +158,21 @@ fn a_first_pass_waits_for_steeped_maturity_or_a_nudge() {
             },
         ),
     ] {
-        let ready = [design_with("FIRST-design", true, cycle)];
+        let ready = [design_with("FIRST-design", cycle)];
         assert!(first_eligible(&ready), "{reason}");
         assert_eq!(wait_of(&ready, "FIRST-design"), None, "{reason}");
 
-        let passive = [design_with("FIRST-design", false, cycle)];
+        let deferred = [design_with_dependencies(
+            "FIRST-design",
+            true,
+            cycle,
+            Vec::new(),
+        )];
         assert!(
-            !first_eligible(&passive),
-            "{reason}: passive standing forbids possession whatever the cycle says"
+            !first_eligible(&deferred),
+            "{reason}: its own deferral forbids possession whatever the cycle says"
         );
-        assert_eq!(wait_of(&passive, "FIRST-design"), None, "{reason}");
+        assert_eq!(wait_of(&deferred, "FIRST-design"), None, "{reason}");
     }
 }
 
@@ -185,7 +185,7 @@ fn settled_since() -> DesignCycleFacts {
 }
 
 fn waiting_design(cycle: DesignCycleFacts) -> Entry {
-    design_with("WAIT-design", true, cycle)
+    design_with("WAIT-design", cycle)
 }
 
 /// An output `name` the waiting Design selected, at `workflow`.
@@ -311,7 +311,7 @@ fn an_open_design_is_assignable_once_its_released_work_settles() {
             "only another Design's released work is in progress",
             vec![
                 design(settled_since),
-                design_with("WAIT-other", true, passed()),
+                design_with("WAIT-other", passed()),
                 released_output("WAIT-foreign", "WAIT-other", "WAIT-other", workflow("todo")),
             ],
         ),
@@ -333,7 +333,6 @@ fn only_an_undecided_proposal_holds_the_design_for_selection() {
     let proposed = [
         design_with(
             "WAIT-design",
-            true,
             DesignCycleFacts {
                 proposal: Some(seq(12)),
                 ..input_since
@@ -361,7 +360,7 @@ fn only_an_undecided_proposal_holds_the_design_for_selection() {
     };
     let constructed = |cycle| {
         [
-            design_with("WAIT-design", true, cycle),
+            design_with("WAIT-design", cycle),
             named_output("WAIT-unproposed", "WAIT-design", "WAIT-design"),
         ]
     };
@@ -387,7 +386,7 @@ fn decided_rejections_grant_no_authority_and_released_work_outranks_input() {
         input: Some(seq(11)),
         ..passed()
     };
-    let design = |cycle| design_with("DECIDE-design", true, cycle);
+    let design = |cycle| design_with("DECIDE-design", cycle);
     let rejected = |name| rejected_output(name, "DECIDE-design");
     let accepted = || {
         released_output(
@@ -442,13 +441,15 @@ fn decided_rejections_grant_no_authority_and_released_work_outranks_input() {
     );
 }
 
+/// A deferred Design keeps only its own deferral standing, and every task
+/// behind it stands blocked until the operator wakes it, whatever its cycle.
 #[test]
 fn a_design_cycle_never_masks_a_true_wall_beneath_it() {
-    for active in [false, true] {
+    for deferred in [false, true] {
         for (cycle, facts, extra) in design_cycle_cases() {
-            let entries = design_wall_entries(active, facts, extra, None);
+            let entries = design_wall_entries(deferred, facts, extra, None);
             assert_eq!(cycle_of(&entries), Some(cycle));
-            let design_wait = if !active {
+            let design_wait = if deferred {
                 None
             } else {
                 match cycle {
@@ -463,22 +464,27 @@ fn a_design_cycle_never_masks_a_true_wall_beneath_it() {
             assert_eq!(
                 wait_of(&entries, "WAIT-design"),
                 design_wait,
-                "{active:?} {cycle:?}: Design with no wall"
+                "{deferred:?} {cycle:?}: Design with no wall"
             );
+            let behind = if deferred {
+                board::WorkWait::Blocked
+            } else {
+                board::WorkWait::Workflow
+            };
             for name in ["WAIT-output", "WAIT-downstream"] {
                 assert_eq!(
                     wait_of(&entries, name),
-                    Some(board::WorkWait::Workflow),
-                    "{active:?} {cycle:?}: {name} with no wall"
+                    Some(behind),
+                    "{deferred:?} {cycle:?}: {name} with no wall"
                 );
             }
         }
 
         for wall in [DesignWall::Deferred, DesignWall::Missing] {
             for (cycle, facts, extra) in design_cycle_cases() {
-                let entries = design_wall_entries(active, facts, extra, Some(wall));
+                let entries = design_wall_entries(deferred, facts, extra, Some(wall));
                 assert_eq!(cycle_of(&entries), Some(cycle));
-                let design_wait = if !active {
+                let design_wait = if deferred {
                     None
                 } else if cycle == wire::rooms::DesignCycle::AwaitingDecision {
                     Some(board::WorkWait::Selection)
@@ -488,109 +494,18 @@ fn a_design_cycle_never_masks_a_true_wall_beneath_it() {
                 assert_eq!(
                     wait_of(&entries, "WAIT-design"),
                     design_wait,
-                    "{active:?} {cycle:?}: Design above {wall:?} wall"
+                    "{deferred:?} {cycle:?}: Design above {wall:?} wall"
                 );
                 for name in ["WAIT-output", "WAIT-downstream"] {
                     assert_eq!(
                         wait_of(&entries, name),
                         Some(board::WorkWait::Blocked),
-                        "{active:?} {cycle:?}: {name} above {wall:?} wall"
+                        "{deferred:?} {cycle:?}: {name} above {wall:?} wall"
                     );
                 }
             }
         }
     }
-}
-
-#[test]
-fn a_passive_design_in_any_cycle_is_a_neutral_wait_for_the_work_behind_it() {
-    let behind = |design: Entry, extra: Vec<Entry>| {
-        let mut downstream = statement("WAIT-downstream");
-        downstream.dependencies = vec![stamp("WAIT-output")];
-        let mut entries = vec![
-            design,
-            named_output("WAIT-output", "WAIT-design", "WAIT-design"),
-            admitted(downstream, workflow("todo"), None, None).expect("downstream"),
-        ];
-        entries.extend(extra);
-        entries
-    };
-    let proposed = DesignCycleFacts {
-        proposal: Some(seq(12)),
-        ..passed()
-    };
-    let steeped = DesignCycleFacts {
-        steeped: true,
-        ..DesignCycleFacts::default()
-    };
-    for (cycle, facts, extra) in [
-        (
-            wire::rooms::DesignCycle::GatheringInput,
-            DesignCycleFacts::default(),
-            Vec::new(),
-        ),
-        (
-            wire::rooms::DesignCycle::ReadyForProposal,
-            steeped,
-            Vec::new(),
-        ),
-        (
-            wire::rooms::DesignCycle::AwaitingDecision,
-            proposed,
-            Vec::new(),
-        ),
-        (
-            wire::rooms::DesignCycle::WaitingOnSelectedWork,
-            passed(),
-            vec![selected("WAIT-selected", workflow("todo"))],
-        ),
-    ] {
-        let entries = behind(design_with("WAIT-design", false, facts), extra);
-        assert_eq!(cycle_of(&entries), Some(cycle));
-        assert_eq!(
-            wait_of(&entries, "WAIT-design"),
-            None,
-            "{cycle:?}: a passive Design keeps its own standing"
-        );
-        for name in ["WAIT-output", "WAIT-downstream"] {
-            assert_eq!(
-                wait_of(&entries, name),
-                Some(board::WorkWait::Workflow),
-                "{cycle:?}: {name} needs no human act while its Design is open"
-            );
-        }
-    }
-
-    let feedback = DesignCycleFacts {
-        input: Some(seq(11)),
-        ..passed()
-    };
-    let after_rejection = [
-        design_with("WAIT-design", false, feedback),
-        rejected_output("WAIT-rejected", "WAIT-design"),
-    ];
-    assert_eq!(wait_of(&after_rejection, "WAIT-design"), None);
-    assert_eq!(
-        wait_of(&after_rejection, "WAIT-rejected"),
-        Some(board::WorkWait::Workflow),
-        "a rejected output carries no attention of its own"
-    );
-
-    let walled = [
-        design_with("WAIT-design", false, DesignCycleFacts::default()),
-        named_output_with(
-            "WAIT-walled",
-            "WAIT-design",
-            "WAIT-design",
-            vec![stamp("WAIT-missing")],
-            false,
-        ),
-    ];
-    assert_eq!(
-        wait_of(&walled, "WAIT-walled"),
-        Some(board::WorkWait::Blocked),
-        "a missing prerequisite beside the Design still needs a human act"
-    );
 }
 
 /// A filed output `name` under `controller`'s control: selected by that Design

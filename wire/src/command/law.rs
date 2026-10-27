@@ -566,8 +566,7 @@ impl CommandKind {
             Self::WorkingGroupMove
             | Self::WorkingGroupArrange
             | Self::WorkingGroupDisband
-            | Self::WorkingGroupFast
-            | Self::WorkingGroupStance => Law::GROUP,
+            | Self::WorkingGroupFast => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomContribute => Law::ROOM_CONTRIBUTE,
@@ -735,7 +734,6 @@ impl CommandKind {
                 | Self::WorkingGroupArrange
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
-                | Self::WorkingGroupStance
         ) && let Some(stray) = expected.iter().find_map(|witness| match witness {
             Witness::Existence { task } if Some(task) != moved => Some(task),
             _ => None,

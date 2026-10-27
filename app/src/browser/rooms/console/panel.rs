@@ -1,6 +1,6 @@
 //! A working group's control panel: the team panel's frame and geometry,
-//! holding the group's TURBO, its arrangement menu, its speech and stance
-//! sliders, and one send control for every drafted design composer.
+//! holding the group's TURBO, its arrangement menu, its speech slider, and
+//! one send control for every drafted design composer.
 
 use wasm_bindgen::JsCast;
 use wire::TaskStamp;
@@ -63,10 +63,9 @@ pub(super) fn submit(postables: &[Postable]) -> Callback<SubmitEvent> {
 }
 
 /// The panel: TURBO, the arrangement menu where the team menu stands, the
-/// speech slider, the Paused/Running brake in the allocation slot, and SEND. A group
-/// is on while any lane claims its designs' work, as a team is while a member
-/// runs; with no claimant, no quote drafted, and no post in flight it rests
-/// exactly as an idle team's panel does.
+/// speech slider, and SEND. A group is on while any lane claims its designs'
+/// work, as a team is while a member runs; with no claimant, no quote drafted,
+/// and no post in flight it rests exactly as an idle team's panel does.
 pub(super) fn render(
     render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
@@ -151,7 +150,7 @@ pub(super) fn render(
             verb="Send"
             noun="design"
             speech={Some(group_controls.speech)}
-            lifetime={Some(group_controls.stance)}
+            lifetime={None}
             lifetime_pending={false}
             turbo={group_controls.turbo}
             {menu}

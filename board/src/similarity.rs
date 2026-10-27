@@ -25,7 +25,7 @@ pub const MIN_TERM_CHARS: usize = 4;
 /// Most recently revised task statements, open or completed, in the frequency
 /// corpus.
 pub const FREQUENCY_WINDOW: usize = 256;
-/// Balanced cosine-similarity base for stance-weighted Design request floors.
+/// Balanced cosine-similarity base for reach-weighted Design request floors.
 pub const MATCH_SCORE_BASE: f64 = 0.15;
 /// Least cosine at which two concurrently claimed statements warn of overlap.
 pub const CLAIM_OVERLAP_FLOOR: f64 = 0.25;

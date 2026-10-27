@@ -133,7 +133,7 @@ pub fn unaccepted_output_of<'a>(
 /// Design.
 ///
 /// Full-board and live-frontier allocation both derive it from the same
-/// indexed [`wire::rooms::DesignFacts`] and resolved work: an undecided
+/// indexed [`wire::rooms::DesignCycleFacts`] and resolved work: an undecided
 /// proposal holds it for the operator, and live work it released holds it
 /// unless later input arrives.
 #[must_use]
@@ -142,7 +142,6 @@ pub fn design_cycle(entry: &Entry, resolved: &ResolvedTasks) -> Option<DesignCyc
     wire::intent::is_open_design(statement.intent, entry.workflow()).then(|| {
         entry
             .design()
-            .cycle
             .cycle(resolved.working.contains(&statement.born))
     })
 }
@@ -160,18 +159,14 @@ pub fn design_held(entry: &Entry, resolved: &ResolvedTasks) -> bool {
 #[must_use]
 pub fn design_hold(entry: &Entry, resolved: &ResolvedTasks) -> Option<(DesignCycle, String)> {
     let cycle = design_cycle(entry, resolved)?;
-    (cycle != DesignCycle::ReadyForProposal).then(|| {
-        (
-            cycle,
-            cycle.next_action(entry.handle(), entry.design().cycle),
-        )
-    })
+    (cycle != DesignCycle::ReadyForProposal)
+        .then(|| (cycle, cycle.next_action(entry.handle(), entry.design())))
 }
 
 /// Why one open task's allocation gate is closed.
 ///
-/// Possession, deferral, environmental holds, passive Designs, hidden filing,
-/// and stale claims are separate standings and therefore do not appear here.
+/// Possession, deferral, environmental holds, hidden filing, and stale claims
+/// are separate standings and therefore do not appear here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkWait {
     /// An unresolved gate has no route through current open work and needs
@@ -193,10 +188,9 @@ pub enum WorkWait {
 /// chain as human-actionable blocked work. A Design cycle never masks such a
 /// terminating wall beneath it. Awaiting decision retains selection on the
 /// Design's own row while the wall blocks its dependents.
-/// A lapsed claim and a passive Design are transparent while walking a
-/// dependency path: their own stale or passive standing stays outside this
-/// partition, while the underlying gate decides whether a dependent waits
-/// neutrally or is blocked.
+/// A lapsed claim is transparent while walking a dependency path: its own
+/// stale standing stays outside this partition, while the underlying gate
+/// decides whether a dependent waits neutrally or is blocked.
 #[must_use]
 pub fn work_waits<'a>(
     entries: &'a [Entry],
@@ -228,7 +222,6 @@ pub fn work_waits_resolved<'a>(
             if entry
                 .claim()
                 .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
-                || passive_design(entry)
             {
                 return None;
             }
@@ -962,17 +955,6 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
         && !design_held(entry, completed)
-        && !passive_design(entry)
-}
-
-/// Whether an open Design is inactive under its working-group stance.
-///
-/// A Design-intent row in plan or review intake remains ordinary allocatable
-/// work until its current head reaches `design`.
-#[must_use]
-pub fn passive_design(entry: &Entry) -> bool {
-    wire::intent::is_open_design(entry.statement().intent, entry.workflow())
-        && !entry.design_is_active()
 }
 
 /// Whether a review assignment died with the claim that carried it.
@@ -996,7 +978,6 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
         && !design_held(entry, completed)
-        && !passive_design(entry)
 }
 
 /// Whether every ordinary prerequisite has settled.

@@ -27,51 +27,34 @@ fn arrangements_refresh_designs_removed_from_and_added_to_the_partition() {
         ))
         .expect("first Design group move commits"),
     );
-    let partition =
-        |revision, group: &wire::rooms::RoomAuthorityStamp, design: &TaskStamp, stance| {
-            wire::rooms::WorkingGroupPartition {
-                revision,
-                groups: vec![wire::rooms::WorkingGroup {
-                    group: group.clone(),
-                    anchors: vec![design.clone()],
-                    stance,
-                }],
-                fast: Vec::new(),
-            }
-        };
-    let running = partition(
-        1,
-        &old_group,
-        &removed,
-        wire::rooms::WorkingGroupStance::Running,
-    );
-    let paused = partition(
-        2,
-        &old_group,
-        &removed,
-        wire::rooms::WorkingGroupStance::Paused,
-    );
-    committed(
-        bus.commit(arranged_write(running, paused.clone(), instant(8)))
-            .expect("paused brake commits"),
-    );
-    assert!(!projected(&bus, &mut incremental, &removed).design_is_active());
-    assert!(projected(&bus, &mut incremental, &added).design_is_active());
+    let partition = |revision, group: &wire::rooms::RoomAuthorityStamp, design: &TaskStamp| {
+        wire::rooms::WorkingGroupPartition {
+            revision,
+            groups: vec![wire::rooms::WorkingGroup {
+                group: group.clone(),
+                anchors: vec![design.clone()],
+            }],
+            fast: Vec::new(),
+        }
+    };
+    assert!(standing(&bus, &mut incremental, &removed));
+    assert!(!standing(&bus, &mut incremental, &added));
 
-    let replaced = partition(
-        3,
-        &new_group,
-        &added,
-        wire::rooms::WorkingGroupStance::Paused,
-    );
     committed(
-        bus.commit(arranged_write(paused, replaced, instant(9)))
-            .expect("replacement arrangement commits"),
+        bus.commit(arranged_write(
+            partition(1, &old_group, &removed),
+            partition(2, &new_group, &added),
+            instant(9),
+        ))
+        .expect("replacement arrangement commits"),
     );
     assert!(
-        projected(&bus, &mut incremental, &removed).design_is_active(),
-        "a Design leaving every group becomes active"
+        !standing(&bus, &mut incremental, &removed),
+        "a Design an arrangement removes leaves every group"
     );
-    assert!(!projected(&bus, &mut incremental, &added).design_is_active());
+    assert!(
+        standing(&bus, &mut incremental, &added),
+        "a Design an arrangement adds stands grouped"
+    );
     bus.shutdown().expect("arrangement fixture bus stops");
 }

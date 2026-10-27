@@ -11,24 +11,25 @@ Every read derives one standing from the Design's workflow and the
 working-group partition alone. Board rows, `spice task show`, `spice group
 list`, and the browser agree:
 
-Standing terms run from durable to volatile: lifecycle first, then
-working-group activity, then pass cycle or claim state. The most volatile term
-therefore comes last, limiting label jitter as the Design moves.
+Standing terms run from durable to volatile: lifecycle first, then deferral,
+then pass cycle or claim state. The most volatile term therefore comes last,
+limiting label jitter as the Design moves.
 
-- **open, passive**: open and in no working group. No lane can claim it until
-  the operator moves it into a group.
-- **open, active**: open and in a working group, so allocation, capture, and
-  a nudge may reach it.
+- **open, deferred**: open and deferred. No lane can possess it, it invites
+  no lane, and a nudge refuses, until the operator wakes it or moves it into a
+  working group.
+- **open, claimed**: open, undeferred, and claimed by a lane for one pass.
+- **open, CYCLE**: open and undeferred, named by its pass cycle, so
+  allocation, capture, and a nudge may reach it once that cycle allows.
 - **concluded done**: the operator concluded it done.
 - **concluded collapsed**: the operator collapsed it, with the durable reason
   that collapse recorded.
 - **deleted**.
 
 A concluded or deleted Design keeps its standing while a saved group still
-holds it: group membership decides activity only for an open Design. The
-command bar's Design rail counts open active and passive Designs without
-dimming or changing the tab edge for passive standing. The work overview and
-dependency cards label a passive Design **Passive**, waiting on the operator.
+holds it, and group membership never decides an open Design's standing. The
+work overview and dependency cards label a deferred Design **Deferred**,
+waiting on the operator.
 
 ## Reading a Design
 
@@ -124,9 +125,8 @@ board authority. A decided version shows its immutable decision and offers no
 second submission. A stale proposal, moved head, live claim, concluded Design,
 foreign output, incomplete verdict set, or mismatched version refusal
 stays beside the unchanged draft and requires a fresh preview.
-Passive versus active working-group standing changes no operator decision
-authority. Native radio, text, and button controls preserve keyboard order in
-normal and narrow layouts.
+Deferral changes no operator decision authority. Native radio, text, and
+button controls preserve keyboard order in normal and narrow layouts.
 
 ## Preparation authority
 
@@ -144,21 +144,22 @@ Reading or opening these records joins, acknowledges, and changes nothing.
 
 The design menu's **Nudge** control, beneath the room's standing, is the
 operator's one way to push an open Design at a lane; the room records no
-coordination. It shows while the Design is open, active or passive, and a
-concluded or deleted one shows no control. The button stays disabled while the
-resident does not offer `preparation nudge`. The submission witnesses the
-anchor's statement and workflow heads, so a moved anchor refuses with the
-resident's reason. The resident readies the Design and messages the one free
-lane whose retained session best matches it, waking a vacant lane when no
-seated one is free; the composer's report names that lane, or says the Design
-waits ready for allocation because every lane holds other work, none can be
-woken, or its working group is passive.
+coordination. It shows while the Design is open and undeferred; a deferred,
+concluded, or deleted one shows no control, since the resident refuses to
+nudge a deferred Design and names `spice task wake`. The button stays
+disabled while the resident does not offer `preparation nudge`. The
+submission witnesses the anchor's statement and workflow heads, so a moved
+anchor refuses with the resident's reason. The resident readies the Design
+and messages the one free lane whose retained session best matches it, waking
+a vacant lane when no seated one is free; the composer's report names that
+lane, or says the Design waits ready for allocation because every lane holds
+other work or none can be woken.
 
-Making a held Design passive, by moving it out of every group or into a
-Passive one or by setting its group Passive, sends its holder one stop
-direction asking it to checkpoint and `spice task free`. The standing shows
-that stop request until that exact claim is completed, freed, or lapsed; it
-never force-frees work or releases child claims and unrelated direction.
+Deferring a held Design, through its task detail's Deferral fact, sends its
+holder one stop direction asking it to checkpoint and `spice task free`. The
+standing shows that stop request until that exact claim is completed, freed,
+or lapsed; it never force-frees work or releases child claims and unrelated
+direction.
 
 The native command surface is `spice preparation nudge HANDLE`. Nothing
 repeats a nudge on the operator's behalf: each asks one lane to hold and

@@ -209,7 +209,7 @@ pub const SELF_HANDOFF_DELIVERABLE: &str = "the current phase deliverable remain
 pub fn released_reminder(entry: &Entry) -> String {
     let task = entry.handle();
     if wire::intent::is_open_design(entry.statement().intent, entry.workflow()) {
-        return match entry.design().cycle.end {
+        return match entry.design().end {
             Some(wire::rooms::DesignPassEnd::Proposed) => format!(
                 "your earlier pass of {task} ended in a proposal; this pass answers the \
                  operator's decision and the input recorded since, read through \

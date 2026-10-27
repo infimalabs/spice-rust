@@ -77,6 +77,16 @@ fn staged(
             "nudge only an open Design; other work is scheduled by its own workflow",
         ));
     }
+    if heads.workflow().body().deferral.is_some() {
+        return Err(refusal(
+            "preparation::nudge-deferred",
+            Some(request_body.design.to_string()),
+            &format!(
+                "the Design is deferred; wake it with spice task wake {} first",
+                request_body.design
+            ),
+        ));
+    }
     let holder =
         heads.claim().and_then(
             |claim| match (&claim.body().disposition, &claim.body().actor) {
@@ -88,7 +98,7 @@ fn staged(
     let Some(recipient) = choose(&design, holder)? else {
         let text = format!(
             "nudged {handle}: no lane could take it now, so it waits ready for allocation: every \
-             lane holds other work, none can be woken, or its working group is Paused"
+             lane holds other work or none can be woken"
         );
         let nudged = DesignNudged {
             design: design.clone(),

@@ -720,7 +720,7 @@ fn filing_turns_a_complete_task_plan_or_design_draft_into_offered_work() {
             assert_eq!(
                 allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
                 None,
-                "a filed Design outside every working group is passive",
+                "a filed Design gathering input is not offered before it is ready",
             );
             group_design(&bus, epoch, &filed);
         }

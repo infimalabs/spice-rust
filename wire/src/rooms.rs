@@ -1063,53 +1063,30 @@ mod tests {
     }
 
     #[test]
-    fn working_groups_decode_only_exact_current_stance_spellings() {
-        let running = serde_json::json!({
+    fn working_groups_decode_only_identity_and_ordered_unique_anchors() {
+        let group = serde_json::json!({
             "group": "1kKRRsDR1",
-            "anchors": ["1kKRRsDR0", "1kKRRsDR2"],
-            "stance": "running"
+            "anchors": ["1kKRRsDR0", "1kKRRsDR2"]
         });
-        let group: WorkingGroup = serde_json::from_value(running.clone()).unwrap();
-        assert_eq!(group.stance, WorkingGroupStance::Running);
-        assert_eq!(serde_json::to_value(group).unwrap(), running);
-
-        for stance in WorkingGroupStance::ALL {
-            assert_eq!(stance.to_string().parse(), Ok(stance));
-        }
-        for retired in ["passive", "explore", "converge", "hold"] {
-            assert!(retired.parse::<WorkingGroupStance>().is_err());
-            let group = serde_json::json!({
-                "group": "1kKRRsDR1",
-                "anchors": ["1kKRRsDR0"],
-                "stance": retired
-            });
-            assert!(serde_json::from_value::<WorkingGroup>(group).is_err());
-        }
-        let unstanced = serde_json::json!({
-            "group": "1kKRRsDR1",
-            "anchors": ["1kKRRsDR0"]
-        });
-        assert!(serde_json::from_value::<WorkingGroup>(unstanced).is_err());
+        let decoded: WorkingGroup = serde_json::from_value(group.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), group);
 
         let duplicate = serde_json::json!({
             "group": "1kKRRsDR1",
-            "anchors": ["1kKRRsDR0", "1kKRRsDR0"],
-            "stance": "running"
+            "anchors": ["1kKRRsDR0", "1kKRRsDR0"]
         });
         assert!(serde_json::from_value::<WorkingGroup>(duplicate).is_err());
         let oversized = serde_json::json!({
             "group": "1kKRRsDR1",
             "anchors": (0..=WORKING_GROUP_ANCHOR_LIMIT)
                 .map(|micros| TaskStamp::for_micros(micros as i64).unwrap().to_string())
-                .collect::<Vec<_>>(),
-            "stance": "running"
+                .collect::<Vec<_>>()
         });
         assert!(serde_json::from_value::<WorkingGroup>(oversized).is_err());
         let named = serde_json::json!({
             "group": "1kKRRsDR1",
             "name": "Operator batch",
-            "anchors": ["1kKRRsDR0"],
-            "stance": "running"
+            "anchors": ["1kKRRsDR0"]
         });
         assert!(
             serde_json::from_value::<WorkingGroup>(named).is_err(),
@@ -1118,7 +1095,6 @@ mod tests {
         let smuggled_membership = serde_json::json!({
             "group": "1kKRRsDR1",
             "anchors": ["1kKRRsDR0"],
-            "stance": "running",
             "lanes": []
         });
         assert!(serde_json::from_value::<WorkingGroup>(smuggled_membership).is_err());
@@ -1133,29 +1109,27 @@ mod tests {
             }))
         };
         let value = serde_json::json!([
-            {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"], "stance": "paused"},
-            {"group": "1kKRRsDR3", "anchors": ["1kKRRsDR2", "1kKRRsDR4"], "stance": "running"}
+            {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"]},
+            {"group": "1kKRRsDR3", "anchors": ["1kKRRsDR2", "1kKRRsDR4"]}
         ]);
         let decoded = partition(value).unwrap();
         assert_eq!(decoded.revision, 3);
-        assert!(!decoded.design_is_active(&"1kKRRsDR0".parse().unwrap()));
-        assert!(decoded.design_is_active(&"1kKRRsDR4".parse().unwrap()));
-        assert!(decoded.design_is_active(&"1kKRRsDR9".parse().unwrap()));
         assert_eq!(
             decoded
                 .holder(&"1kKRRsDR4".parse().unwrap())
                 .map(|group| group.group.to_string()),
             Some("1kKRRsDR3".to_owned())
         );
+        assert!(decoded.holder(&"1kKRRsDR9".parse().unwrap()).is_none());
         for refused in [
-            serde_json::json!([{"group": "1kKRRsDR1", "anchors": [], "stance": "running"}]),
+            serde_json::json!([{"group": "1kKRRsDR1", "anchors": []}]),
             serde_json::json!([
-                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"], "stance": "running"},
-                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR2"], "stance": "running"}
+                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"]},
+                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR2"]}
             ]),
             serde_json::json!([
-                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"], "stance": "running"},
-                {"group": "1kKRRsDR3", "anchors": ["1kKRRsDR0"], "stance": "running"}
+                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"]},
+                {"group": "1kKRRsDR3", "anchors": ["1kKRRsDR0"]}
             ]),
         ] {
             assert!(partition(refused.clone()).is_err(), "{refused}");

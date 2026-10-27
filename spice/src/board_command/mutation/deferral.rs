@@ -1,17 +1,22 @@
 use super::*;
-pub(in crate::board_command) fn task_defer(
+
+/// Defer one filed pending task. Another actor's deferral of an open Design a
+/// lane holds asks that holder to park in the same write; the returned lane is
+/// the one asked.
+pub(crate) fn task_defer(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     defer: &TaskDefer,
     repository: Option<Host<'_>>,
-) -> Outcome<CommandAnswer> {
+    config: &steer::Config,
+) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
         std::slice::from_ref(&defer.task),
     ) {
         Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
+        Err(outcome) => return (outcome, None),
     };
     change_deferral(
         bus,
@@ -21,6 +26,7 @@ pub(in crate::board_command) fn task_defer(
             task: &defer.task,
             deferral: Some(defer.wait),
             claim_requested: false,
+            stop: Some(config),
         },
         defer.clone(),
         repository,
@@ -50,10 +56,12 @@ pub(in crate::board_command) fn task_wake(
             task: &wake.task,
             deferral: None,
             claim_requested: wake.claim,
+            stop: None,
         },
         wake.clone(),
         repository,
     )
+    .0
 }
 
 /// File one unfiled Draft into ordinary work.
@@ -512,11 +520,22 @@ fn finish_deferral<B: serde::Serialize>(
 }
 
 /// What one defer or wake asks of its task: the new deferral, or none to
-/// wake, and whether the caller claims the task in the same write.
+/// wake, whether the caller claims the task in the same write, and the
+/// steering policy a deferral stops a held open Design's holder under.
 struct DeferralRequest<'a> {
     task: &'a TaskHandle,
     deferral: Option<Instant>,
     claim_requested: bool,
+    stop: Option<&'a steer::Config>,
+}
+
+/// Whether this deferral of `entry` stops a lane holding it: an open Design
+/// deferred by anyone but its holder, whose own deferral releases it instead.
+/// Ordinary work deferred by another actor stays held.
+fn stops_holder(entry: &Entry, deferral: Option<Instant>, releases_claim: bool) -> bool {
+    deferral.is_some()
+        && !releases_claim
+        && wire::intent::is_open_design(entry.statement().intent, entry.workflow())
 }
 
 fn change_deferral<B: serde::Serialize + Clone>(
@@ -526,18 +545,20 @@ fn change_deferral<B: serde::Serialize + Clone>(
     request: DeferralRequest<'_>,
     intent: B,
     repository: Option<Host<'_>>,
-) -> Outcome<CommandAnswer> {
+) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
     let DeferralRequest {
         task,
         deferral,
         claim_requested,
+        stop,
     } = request;
     let Some(entry) = task_entry(&snapshot.entries, task) else {
-        return refusal(
+        let unknown = refusal(
             "task::unknown",
             Some(task.to_string()),
             "read board and name one current task handle",
         );
+        return (unknown, None);
     };
     let DeferralTransition {
         workflow,
@@ -545,7 +566,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         releases_claim,
     } = match deferral_transition(entry, command, task, deferral) {
         Ok(transition) => transition,
-        Err(outcome) => return outcome,
+        Err(outcome) => return (outcome, None),
     };
     let selected = post.as_ref().unwrap_or(entry);
     let atomic_claim = match prepare_mutation_claim(
@@ -557,7 +578,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         claim_requested,
     ) {
         Ok(claim) => claim,
-        Err(outcome) => return outcome,
+        Err(outcome) => return (outcome, None),
     };
     let claim_answer = atomic_claim.as_ref().map(|claim| claim.answer.clone());
     let next = claim_answer
@@ -566,18 +587,27 @@ fn change_deferral<B: serde::Serialize + Clone>(
         .or_else(|| post.as_ref().and_then(|post| next_action(snapshot, post)));
     let mut write = match prepare_mutation_write(command, entry, snapshot, atomic_claim.as_ref()) {
         Ok(write) => write,
-        Err(outcome) => return outcome,
+        Err(outcome) => return (outcome, None),
     };
     let parked =
         match prepare_deferral_release(snapshot, command, entry, repository, releases_claim) {
             Ok(parked) => parked,
-            Err(outcome) => return outcome,
+            Err(outcome) => return (outcome, None),
         };
     let fact = match append_deferral_fact(&mut write, entry, deferral) {
         Ok(fact) => fact,
-        Err(outcome) => return rollback_release(parked, outcome),
+        Err(outcome) => return (rollback_release(parked, outcome), None),
     };
     write.workflow_head(entry.born().clone(), fact, move |_| workflow);
+    let stopped = match stop.filter(|_| stops_holder(entry, deferral, releases_claim)) {
+        Some(config) => match Deactivation::of(bus, snapshot, entry)
+            .and_then(|deactivation| deactivation.stage(bus, command, config, &mut write))
+        {
+            Ok(stopped) => stopped,
+            Err(outcome) => return (rollback_release(parked, outcome), None),
+        },
+        None => None,
+    };
     if let Err(outcome) = append_deferral_release(
         &mut write,
         entry,
@@ -585,12 +615,12 @@ fn change_deferral<B: serde::Serialize + Clone>(
         parked.as_ref(),
         releases_claim,
     ) {
-        return rollback_release(parked, outcome);
+        return (rollback_release(parked, outcome), None);
     }
     let prepared_claim = match atomic_claim {
         Some(claim) => match claim.prepared.append(&mut write, command, selected) {
             Ok(prepared) => prepared,
-            Err(outcome) => return rollback_release(parked, outcome),
+            Err(outcome) => return (rollback_release(parked, outcome), None),
         },
         None => None,
     };
@@ -606,5 +636,13 @@ fn change_deferral<B: serde::Serialize + Clone>(
         closed: Vec::new(),
         next,
     };
-    finish_deferral(bus, command, intent, write, answer, parked, prepared_claim)
+    let outcome = finish_deferral(bus, command, intent, write, answer, parked, prepared_claim);
+    let committed = matches!(
+        &outcome,
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(_),
+            ..
+        })
+    );
+    (outcome, stopped.filter(|_| committed))
 }

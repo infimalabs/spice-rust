@@ -213,18 +213,18 @@ pub struct DesignCyclePresentation {
 /// Whether a lane may take, or already holds, one open Design's pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesignAvailability {
-    /// A Paused working group holds it, so no lane may claim it.
-    Passive,
-    /// Active and unclaimed.
+    /// Its own deferral stands, so it invites and grants no lane until woken.
+    Deferred,
+    /// Undeferred and unclaimed.
     Unclaimed,
     /// A lane holds its current pass.
     Claimed,
 }
 
 impl DesignCyclePresentation {
-    /// Present `design` in `cycle` with the evidence `facts` carries. A ready
-    /// Design waits on the operator's activation while passive and on its
-    /// holder's proposal while claimed.
+    /// Present `design` in `cycle` with the evidence `facts` carries. A
+    /// deferred Design gathering input or ready waits on the operator's wake;
+    /// a ready claimed one waits on its holder's proposal.
     #[must_use]
     pub fn new(
         cycle: DesignCycle,
@@ -234,12 +234,14 @@ impl DesignCyclePresentation {
     ) -> Self {
         let code = |seq: Seq| SequenceCode::new(seq.get());
         let (actor, action) = match (cycle, availability) {
-            (DesignCycle::ReadyForProposal, DesignAvailability::Passive) => (
+            (
+                DesignCycle::GatheringInput | DesignCycle::ReadyForProposal,
+                DesignAvailability::Deferred,
+            ) => (
                 DesignCycleActor::Operator,
                 format!(
-                    "the operator activates {design} with `spice group stance GROUP running` \
-                     or `spice group move {design}` out of its group; a lane then claims it through \
-                     `spice task next`"
+                    "the operator wakes {design} with `spice task wake {design}`; it then invites \
+                     lanes again and a lane claims it once it is ready"
                 ),
             ),
             (DesignCycle::ReadyForProposal, DesignAvailability::Claimed) => (
@@ -405,15 +407,6 @@ impl DesignCycleFacts {
         self.input.is_some_and(|input| input > horizon)
             || self.settled.is_some_and(|settled| settled > horizon)
     }
-}
-
-/// One open Design's standing and pass-cycle evidence.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DesignFacts {
-    /// No Paused working group holds the Design.
-    pub active: bool,
-    /// Its pass-cycle evidence.
-    pub cycle: DesignCycleFacts,
 }
 
 /// One Design's fold state.

@@ -37,7 +37,6 @@ use super::{
     TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
     VendorCatalog, VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange,
     WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
-    WorkingGroupStanceSet,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -81,8 +80,6 @@ pub enum BodyShape {
     WorkingGroupDisband,
     /// [`WorkingGroupFast`]
     WorkingGroupFast,
-    /// [`WorkingGroupStanceSet`]
-    WorkingGroupStance,
     /// [`DesignPropose`]
     DesignPropose,
     /// [`CandidateCritiqueRecord`]
@@ -498,8 +495,7 @@ impl CommandKind {
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
             | Self::WorkingGroupDisband
-            | Self::WorkingGroupFast
-            | Self::WorkingGroupStance => self.working_group_binding(),
+            | Self::WorkingGroupFast => self.working_group_binding(),
             Self::PrincipalDirectoryRead
             | Self::PrincipalRead
             | Self::PrincipalAdmit
@@ -670,7 +666,6 @@ impl CommandKind {
             Self::WorkingGroupArrange => Binding::of(B::WorkingGroupArrange, A::WorkingGroupChange),
             Self::WorkingGroupDisband => Binding::of(B::WorkingGroupDisband, A::WorkingGroupChange),
             Self::WorkingGroupFast => Binding::of(B::WorkingGroupFast, A::WorkingGroupChange),
-            Self::WorkingGroupStance => Binding::of(B::WorkingGroupStance, A::WorkingGroupChange),
             _ => panic!("working-group command binding partition is closed"),
         }
     }
@@ -771,8 +766,6 @@ pub enum Intent {
     WorkingGroupDisband(WorkingGroupDisband),
     /// [`BodyShape::WorkingGroupFast`]
     WorkingGroupFast(WorkingGroupFast),
-    /// [`BodyShape::WorkingGroupStance`]
-    WorkingGroupStance(WorkingGroupStanceSet),
     /// [`BodyShape::DesignPropose`]
     DesignPropose(DesignPropose),
     /// [`BodyShape::CandidateCritiqueRecord`]
@@ -912,8 +905,7 @@ impl Intent {
             | Self::WorkingGroupMove(_)
             | Self::WorkingGroupArrange(_)
             | Self::WorkingGroupDisband(_)
-            | Self::WorkingGroupFast(_)
-            | Self::WorkingGroupStance(_) => self.working_group_shape(),
+            | Self::WorkingGroupFast(_) => self.working_group_shape(),
             Self::PrincipalDirectoryRead(_)
             | Self::PrincipalRead(_)
             | Self::PrincipalAdmit(_)
@@ -1059,7 +1051,6 @@ impl Intent {
             Self::WorkingGroupArrange(_) => BodyShape::WorkingGroupArrange,
             Self::WorkingGroupDisband(_) => BodyShape::WorkingGroupDisband,
             Self::WorkingGroupFast(_) => BodyShape::WorkingGroupFast,
-            Self::WorkingGroupStance(_) => BodyShape::WorkingGroupStance,
             _ => panic!("working-group intent shape partition is closed"),
         }
     }
@@ -1137,7 +1128,6 @@ impl BodyShape {
                 | Self::WorkingGroupArrange
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
-                | Self::WorkingGroupStance
                 | Self::DesignPropose
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1190,7 +1180,6 @@ impl BodyShape {
                 | Self::WorkingGroupArrange
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
-                | Self::WorkingGroupStance
                 | Self::DesignPropose
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1232,8 +1221,7 @@ impl BodyShape {
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
             | Self::WorkingGroupDisband
-            | Self::WorkingGroupFast
-            | Self::WorkingGroupStance => return self.decode_working_group_body(bytes),
+            | Self::WorkingGroupFast => return self.decode_working_group_body(bytes),
             Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
@@ -1252,7 +1240,6 @@ impl BodyShape {
             Self::WorkingGroupArrange => Intent::WorkingGroupArrange(crate::decode(bytes)?),
             Self::WorkingGroupDisband => Intent::WorkingGroupDisband(crate::decode(bytes)?),
             Self::WorkingGroupFast => Intent::WorkingGroupFast(crate::decode(bytes)?),
-            Self::WorkingGroupStance => Intent::WorkingGroupStance(crate::decode(bytes)?),
             _ => panic!("working-group body decoding partition is closed"),
         })
     }

@@ -366,14 +366,8 @@ impl Lanes {
         }
     }
 
-    /// Stand `design` in the fixture working group, then set its brake.
-    fn group(
-        &self,
-        id: u8,
-        config: &SurfaceConfig,
-        design: &wire::TaskHandle,
-        stance: wire::rooms::WorkingGroupStance,
-    ) {
+    /// Stand `design` in the fixture working group.
+    fn group(&self, id: u8, config: &SurfaceConfig, design: &wire::TaskHandle) {
         let revision = self
             .bus
             .read(|read| read.group_partition())
@@ -398,50 +392,57 @@ impl Lanes {
             ],
             &request,
         );
-        let (outcome, _) = crate::board_command::move_working_group(
+        let outcome = crate::board_command::dispatch_with_repository(
             &self.bus,
             &command,
-            &request,
-            &config.steering,
-        );
+            None,
+            &config.allocation,
+            None,
+        )
+        .expect("group move dispatches");
         assert!(
             matches!(outcome, Outcome::Reply(_)),
             "group move commits: {outcome:?}"
         );
-        if stance != wire::rooms::WorkingGroupStance::Paused {
-            self.stance(id.saturating_add(1), config, stance);
-        }
     }
 
-    fn stance(&self, id: u8, config: &SurfaceConfig, stance: wire::rooms::WorkingGroupStance) {
-        let partition = self
+    /// The operator's indefinite deferral of `design`.
+    fn defer(&self, id: u8, config: &SurfaceConfig, design: &wire::TaskHandle) {
+        let task = stamp(design);
+        let workflow = self
             .bus
-            .read(|read| read.group_partition())
-            .expect("partition reads")
-            .expect("fixture group stands")
-            .into_body();
-        let request = wire::rooms::WorkingGroupStanceSet {
-            group: partition.groups[0].group.clone(),
-            stance,
-        };
+            .read(move |read| read.workflow_head(&task))
+            .expect("workflow reads")
+            .expect("the Design exists");
         let command = self.command(
             id,
             Actor::Operator,
-            CommandKind::WorkingGroupStance,
-            vec![Witness::Group {
-                revision: partition.revision,
-            }],
-            &request,
+            CommandKind::TaskDefer,
+            vec![
+                Witness::Workflow {
+                    task: stamp(design),
+                    head: workflow.position(),
+                    phase: workflow.body().phase.clone(),
+                },
+                Witness::Deferral {
+                    task: stamp(design),
+                    head: workflow.position(),
+                    deferred: false,
+                },
+            ],
+            &wire::intent::TaskDefer {
+                task: design.clone(),
+                wait: wire::Instant::indefinite(),
+            },
         );
-        let (outcome, _) = crate::board_command::set_working_group_stance(
-            &self.bus,
-            &command,
-            &request,
-            &config.steering,
-        );
+        let wire::intent::Intent::TaskDefer(request) = command.body() else {
+            panic!("fixture command carries a deferral");
+        };
+        let (outcome, _) =
+            crate::board_command::task_defer(&self.bus, &command, request, None, &config.steering);
         assert!(
             matches!(outcome, Outcome::Reply(_)),
-            "group stance commits: {outcome:?}"
+            "deferral commits: {outcome:?}"
         );
     }
 
@@ -513,21 +514,18 @@ fn reach_match_floors_follow_the_balanced_base_ratio() {
 }
 
 #[test]
-fn an_unsteeped_design_invites_wide_whatever_its_group_brake() {
-    use wire::rooms::WorkingGroupStance::{Paused, Running};
-
-    for (fixture, brake) in [
-        ("design-request-ungrouped", None),
-        ("design-request-paused", Some(Paused)),
-        ("design-request-running", Some(Running)),
+fn an_unsteeped_design_invites_wide_grouped_or_not() {
+    for (fixture, grouped) in [
+        ("design-request-ungrouped", false),
+        ("design-request-grouped", true),
     ] {
         let lanes = Lanes::new(fixture);
         align_completion_lane(&lanes);
         let config = surface(&lanes);
         let task = lanes.claimed("dVrD245Kc", FIRST);
         let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
-        if let Some(brake) = brake {
-            lanes.group(30, &config, &design, brake);
+        if grouped {
+            lanes.group(30, &config, &design);
         }
         let mut completions =
             crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
@@ -538,17 +536,12 @@ fn an_unsteeped_design_invites_wide_whatever_its_group_brake() {
         lanes.reconcile_completions(&seated, &mut completions);
         let request = lanes
             .request(&config, FIRST)
-            .expect("a filed open Design can be requested under every brake");
-        assert_eq!(request.design, design, "{brake:?} Design was not eligible");
+            .expect("a filed open Design can be requested grouped or not");
+        assert_eq!(request.design, design, "grouped {grouped}");
         assert_eq!(
             request.reach,
             Some(wire::rooms::DesignReach::Wide),
-            "{brake:?} moved the reach"
-        );
-        let text = spice::rooms::awareness::request_text(&request);
-        assert!(
-            text.contains("cast slightly wider"),
-            "{brake:?} invitation framing: {text}"
+            "grouped {grouped} moved the reach"
         );
         seated.release_all();
         lanes.finish();
@@ -1122,45 +1115,41 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
 }
 
 #[test]
-fn brake_changes_preserve_an_unanswered_open_design_request() {
-    let lanes = Lanes::new("design-request-standing");
+fn deferring_an_open_design_ends_its_request_and_its_listening() {
+    let lanes = Lanes::new("design-request-deferred");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
-    let _other = lanes.design("dVrD245Kg", "Page room catch-up", PITCH);
-    lanes.group(
-        70,
-        &config,
-        &design,
-        wire::rooms::WorkingGroupStance::Paused,
-    );
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
     let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     lanes.complete(&task, MATCHING);
-    lanes.reconcile_completions(&seated, &mut completions);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
+    assert!(lanes.request(&config, FIRST).is_some());
     assert_eq!(
-        lanes
-            .request(&config, FIRST)
-            .expect("the completion initially owes its best Design")
-            .design,
-        design
+        lanes.post_listeners(70, &config, &design),
+        vec![test_uuid(FIRST)]
     );
 
-    for (id, stance) in [
-        (72, wire::rooms::WorkingGroupStance::Running),
-        (73, wire::rooms::WorkingGroupStance::Paused),
-    ] {
-        lanes.stance(id, &config, stance);
-        assert_eq!(
-            lanes
-                .request(&config, FIRST)
-                .expect("an open Design stays owed across brake changes")
-                .design,
-            design
-        );
-    }
+    lanes.defer(71, &config, &design);
+    assert!(
+        lanes.request(&config, FIRST).is_none(),
+        "a deferred Design is owed to no lane"
+    );
+    assert!(
+        lanes.post_listeners(72, &config, &design).is_empty(),
+        "no lane keeps listening for a deferred Design"
+    );
+
+    let later = lanes.claimed("dVrD245Kp", FIRST);
+    lanes.complete(&later, &format!("{MATCHING} Paged while deferred."));
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
+    assert!(
+        lanes.request(&config, FIRST).is_none(),
+        "a deferred Design is never invited"
+    );
     seated.release_all();
     lanes.finish();
 }

@@ -19,11 +19,15 @@ use crate::replay::{ReceiptRow, VerifyError, Violation, ViolationClass};
 const RETIRED_ROOM_RELEASE: &str = "963a54c37";
 /// Release that retired room coordination into inert authority.
 const RETIRED_COORDINATION_RELEASE: &str = "54e357267";
+/// Release that retired the working-group brake into inert authority.
+const RETIRED_GROUP_STANCE_RELEASE: &str = "schema-100";
 
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 enum HistoricalKind {
     #[serde(rename = "gate::findings")]
     GateFindings,
+    #[serde(rename = "group::stance")]
+    GroupStance,
     #[serde(rename = "preparation::authorize")]
     PreparationAuthorize,
     #[serde(rename = "room::close")]
@@ -45,6 +49,7 @@ enum HistoricalKind {
 impl HistoricalKind {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::GroupStance => "group::stance",
             Self::GateFindings => "gate::findings",
             Self::PreparationAuthorize => "preparation::authorize",
             Self::RoomClose => "room::close",
@@ -123,6 +128,19 @@ pub(crate) fn retire_room_coordination(connection: &Connection) -> Result<(), Op
     )
 }
 
+/// Move receipts for the retired working-group brake into inert, verifiable
+/// authority while preserving their exact body and response.
+pub(crate) fn retire_group_stance(connection: &Connection) -> Result<(), OpenError> {
+    retire_receipts(
+        connection,
+        "SELECT command_id, command_kind, request \
+         FROM command_receipts \
+         WHERE command_kind = 'group::stance' \
+         ORDER BY command_id",
+        RETIRED_GROUP_STANCE_RELEASE,
+    )
+}
+
 fn retire_receipts(
     connection: &Connection,
     select: &str,
@@ -160,21 +178,22 @@ fn retire_receipts(
         let retired: RetiredCommand = serde_json::from_slice(&request).map_err(|error| {
             retained(
                 id.clone(),
-                format!("retired room command does not decode: {error}"),
+                format!("retired command does not decode: {error}"),
             )
         })?;
         let historical_kind = match kind.as_str() {
+            "group::stance" => HistoricalKind::GroupStance,
             "room::close" => HistoricalKind::RoomClose,
             "room::control" => HistoricalKind::RoomControl,
             "room::coordinate" => HistoricalKind::RoomCoordinate,
             "room::coordination-read" => HistoricalKind::RoomCoordinationRead,
             "room::put-aside" => HistoricalKind::RoomPutAside,
-            _ => unreachable!("query admits only retired room command kinds"),
+            _ => unreachable!("query admits only retired command kinds"),
         };
         if retired.kind.as_str() != Some(kind.as_str()) || retired.id.to_string() != id {
             return Err(retained(
                 id,
-                "retired room command identity disagrees with its receipt".to_owned(),
+                "retired command identity disagrees with its receipt".to_owned(),
             ));
         }
         let request = serde_json::to_value(HistoricalCommand {
@@ -197,7 +216,7 @@ fn retire_receipts(
         .map_err(|error| {
             retained(
                 id.clone(),
-                format!("retired room command cannot become inert authority: {error}"),
+                format!("retired command cannot become inert authority: {error}"),
             )
         })?;
         let inserted = connection
@@ -217,7 +236,7 @@ fn retire_receipts(
         if inserted != 1 || deleted != 1 {
             return Err(retained(
                 id,
-                "retired room receipt changed during exclusive migration".to_owned(),
+                "retired receipt changed during exclusive migration".to_owned(),
             ));
         }
     }

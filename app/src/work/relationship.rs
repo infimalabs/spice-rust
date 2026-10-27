@@ -703,7 +703,6 @@ mod tests {
             lease: None,
             explicit_release: false,
             grouped: false,
-            design_active: false,
             design_cycle: wire::rooms::DesignCycleFacts::default(),
             preparation_decision: None,
             collapse_reason: None,

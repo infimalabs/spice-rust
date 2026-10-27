@@ -83,7 +83,7 @@ const SUMMARIES: &[(&str, &str)] = &[
         "gate selection",
         "Run this source repository's strict change selection",
     ),
-    ("group", "Group Designs and set each group's stance"),
+    ("group", "Group Designs into working groups"),
     (
         "group arrange",
         "Restate the order and membership of every group",
@@ -92,9 +92,8 @@ const SUMMARIES: &[(&str, &str)] = &[
         "group disband",
         "Disband one group, leaving its Designs ungrouped",
     ),
-    ("group list", "List working groups and their stances"),
+    ("group list", "List working groups and their Designs"),
     ("group move", "Move one Design into a group or a new one"),
-    ("group stance", "Set one group's stance: paused or running"),
     ("inbox", "Read pending steering for a lane"),
     (
         "install",

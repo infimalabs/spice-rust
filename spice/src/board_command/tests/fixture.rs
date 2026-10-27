@@ -293,12 +293,12 @@ pub(super) fn move_design_now(
     )
 }
 
-/// The working group fixtures stand a Design in to make it active.
+/// The working group fixtures stand a Design in.
 pub(super) fn fixture_group() -> wire::rooms::RoomAuthorityStamp {
     wire::rooms::RoomAuthorityStamp::for_micros(1_750_000_000_000_000).expect("fixture group stamp")
 }
 
-/// Make `design` active and ready: stand it in the fixture group, then nudge
+/// Group `design` and make it ready: stand it in the fixture group, then nudge
 /// it when it is already an open Design.
 pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     stand_design(bus, epoch, design);
@@ -309,37 +309,10 @@ pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
     }
 }
 
-/// Make `design` active by standing it in the fixture group and setting that
-/// group running when the move founded it Paused.
+/// Stand `design` in the fixture group.
 pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     let born = design.born().expect("fixture design stamp");
-    let group = fixture_group();
-    assert_committed(move_design_now(bus, epoch, &born, Some(&group)));
-    let partition = bus
-        .read(|read| read.group_partition())
-        .expect("partition reads")
-        .expect("fixture group stands")
-        .into_body();
-    if partition
-        .groups
-        .iter()
-        .find(|standing| standing.group == group)
-        .is_some_and(|standing| standing.stance == wire::rooms::WorkingGroupStance::Paused)
-    {
-        assert_committed(issue(
-            bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::WorkingGroupStance,
-            vec![Witness::Group {
-                revision: partition.revision,
-            }],
-            &wire::rooms::WorkingGroupStanceSet {
-                group,
-                stance: wire::rooms::WorkingGroupStance::Running,
-            },
-        ));
-    }
+    assert_committed(move_design_now(bus, epoch, &born, Some(&fixture_group())));
 }
 
 /// `actor`'s nudge of `design` at the heads `current` shows, with no lane free

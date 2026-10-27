@@ -40,9 +40,9 @@ owns each rule summarized here.
 - **One push.** `spice preparation nudge HANDLE`, or the Nudge control in the
   browser's Design menu, is the operator's only way to push a Design at a lane:
   it selects and messages its recipient itself. A room records no
-  coordination; a passive Design refuses possession (`claim::design-passive`).
-  Making a held Design passive asks its holder to checkpoint and free through
-  one stop direction.
+  coordination; a deferred Design refuses the nudge
+  (`preparation::nudge-deferred`). Deferring a held Design asks its holder to
+  checkpoint and free through one stop direction.
 - **Attention.** An authored room message or contribution makes its lane a
   participant; neither subscribes that lane, grants permission to post, nor
   restores listening. Routing a packet into a room and an owed receipt
@@ -148,8 +148,9 @@ owns each rule summarized here.
   Selection, `task next`, room catch-up, and `room leave` share one owed-request
   check. A changed or closed Design, replaced session, lost or replaced
   transcript source, or lost task statement, completion, or claim evidence
-  releases it on all of them. A group's brake and group movement do not release
-  an otherwise-current open Design request. Compaction does not either, but
+  releases it on all of them. Deferring the Design ends it for as long as the
+  Design stays deferred; group movement does not release an otherwise-current
+  open Design request. Compaction does not either, but
   one landing between selection and recording refuses the recording;
   unrelated writes do not release it. The request grants no claim, work,
   workflow state, or wake. `spice room awareness HANDLE` shows its exact
@@ -189,7 +190,7 @@ owns each rule summarized here.
   as ordinary work without acceptance gets a plan bookend, and a taste hold
   keeps either in plan. It also admits `plan,design` or `review,design`
   when a lane must first sharpen or judge the statement under a normal claim.
-  Completing that intake phase releases its claim and enters the open passive
+  Completing that intake phase releases its claim and enters the open
   Design; before then the row is ordinary claimed work, not a Design room or
   request target. Active Plan and Design claims refuse implementation commits.
   A Design plans Plans; a Plan plans executable tasks.
@@ -243,7 +244,7 @@ owns each rule summarized here.
   steeps; steeping stays the default. The same guarded write that readies the
   Design delivers it to one lane. A lane is free to take it while it holds no
   active claim but the Design's; a Design some lane holds goes only to that
-  holder, and a passive Design to no lane. Among free lanes the resident ranks
+  holder, and a deferred Design refuses (`preparation::nudge-deferred`). Among free lanes the resident ranks
   by the TF-IDF match Design awareness uses, with no reach floor: each seated
   lane scores its occupant's continuing session profile against the Design's
   current statement, and each vacant lane the lifecycle may wake scores its
@@ -293,8 +294,8 @@ owns each rule summarized here.
      prerequisites. Its final settlement makes the next pass ready; input
      recorded meanwhile counts then.
 
-  A passive Design keeps its cycle and history but no lane may possess it
-  until its working group runs or it leaves every group.
+  A deferred Design keeps its cycle and history but no lane may possess it
+  until it is woken or moved into a working group.
 
   A Design
   [stays open until the operator settles it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
@@ -350,30 +351,28 @@ owns each rule summarized here.
 
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
-  is shared repository organization and brake authority read by `spice group
-  list` and changed by `spice group move`, `spice group arrange`, `spice group
-  disband`, and `spice group stance`. Disbanding leaves every Design ungrouped;
-  open consoles, their order, drafts, speech, and focus are this browser's
-  foreground and are never shared.
-- **Design standing.** An open Design outside every group, or in a Running
-  group, is
-  [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
-  the allocator offers it once its pass cycle is ready, and capture, steal,
-  and a nudge may reach it, so no Design needs a group to reach its proposal.
-  A Design in a Paused group is passive, and those possession paths refuse
-  (`claim::design-passive`). A fresh group starts Paused. The operator
-  groups a Design with `spice group move DESIGN --to GROUP` or `--new`, then
-  sets its group's brake with `spice group stance GROUP paused|running`. The
-  brake only withholds or releases possession; it never changes who is
-  invited or what they are asked. Pausing a group, or moving a Design into
-  a new or existing Paused group, makes the Design passive. If a lane holds
-  it, the change sends that holder one stop direction, queued for the lane's
-  next seat when vacant. The holder checkpoints and runs ordinary `spice task
-  free DESIGN`, which parks unpublished commits and dirty work; its claim stays
-  authoritative until then. A brake change names any held Design whose
-  shelving is still owed; setting the group Paused again shelves it. Running
-  the group, a move out of every group, or a disband makes it eligible again
-  with its room, candidates, outputs, history, and authorization unchanged.
+  is shared repository organization read by `spice group list` and changed by
+  `spice group move`, `spice group arrange`, and `spice group disband`.
+  Disbanding leaves every Design ungrouped; open consoles, their order,
+  drafts, speech, and focus are this browser's foreground and are never
+  shared.
+- **Design standing.** Grouping organizes Designs and
+  [never gates possession](invariants/identity.md#work-deferral-stops-an-open-design):
+  an undeferred open Design, grouped or not, is offered by the allocator once
+  its pass cycle is ready, and capture, steal, and a nudge may reach it, so no
+  Design needs a group to reach its proposal. Deferral is the one way to stop
+  an open Design: `spice task defer DESIGN` keeps it from allocation, capture,
+  steal, recovery, nudges, and invitations, and ends any invitation still
+  owed for it. If a lane holds it, an operator deferral sends that holder one
+  stop direction, queued for the lane's next seat when vacant; deferring it
+  again asks again only when no stop stands for the current claim. The holder
+  checkpoints and runs ordinary `spice task free DESIGN`, which parks
+  unpublished commits and dirty work; its claim stays authoritative until
+  then. The holder's own deferral releases its claim directly. `spice task
+  wake DESIGN` (or `--claim`) makes it eligible again, and so does
+  `spice group move DESIGN --to GROUP` or `--new`, which wakes it in the same
+  write; its room, candidates, outputs, history, and authorization are
+  unchanged throughout.
 - **Opportunistic OOPS Design.** Every `task oops` report is a Plan prepared
   under it, so it is an ordinary Design with automatic intake. It has no
   candidate until a holder

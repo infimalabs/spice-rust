@@ -28,7 +28,7 @@ pub(super) fn nudge(
 
 /// The lane one nudge of `design` messages. A lane is free to take it while it
 /// holds no active claim but the Design's; an active `holder` is the only lane
-/// able to take it, and no lane can take a passive Design. A lane the
+/// able to take it. A lane the
 /// residency seats scores its occupant's continuing session; a vacant lane
 /// the lifecycle may wake scores its retained sessions. `profiles` is absent
 /// until the resident's message startup completes, when no lane has a
@@ -43,9 +43,6 @@ fn recipient(
     let Some(entry) = planning.entries.iter().find(|entry| entry.born() == design) else {
         return Ok(None);
     };
-    if board::passive_design(entry) {
-        return Ok(None);
-    }
     let busy = planning
         .entries
         .iter()

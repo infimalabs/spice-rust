@@ -474,7 +474,6 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
     groups.push(wire::rooms::WorkingGroup {
         group: group.clone(),
         anchors: vec![task.clone()],
-        stance: wire::rooms::WorkingGroupStance::Paused,
     });
     write
         .fact(

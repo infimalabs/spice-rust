@@ -1,10 +1,10 @@
-//! A working group's Paused/Running brake as the sole active/passive authority
-//! for a grouped open Design: who can claim it, and what pausing asks of its holder.
+//! Deferral as the one stop for an open Design: who can claim it, what
+//! deferring it asks of its holder, and the group acquisition that wakes it.
+//! Grouping alone gates no possession.
 
 use super::super::preparation::add_controller;
 use super::super::reclaim::free_active;
 use super::*;
-use wire::intent::WorkingGroupChangeStatus;
 use wire::rooms::StopControl;
 
 pub(super) fn design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
@@ -55,7 +55,7 @@ pub(in super::super) fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
     }
 }
 
-pub(super) fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
+fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
     match next_board(bus, epoch, Actor::Lane(seat.lane)).next {
         Some(NextWorkState::Candidate { task }) => Some(task.statement.body.born),
         _ => None,
@@ -72,6 +72,13 @@ pub(in super::super) fn active_holder(
         .as_ref()
         .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
         .map(|claim| claim.body.actor.clone())
+}
+
+fn deferral(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Instant> {
+    at(&board(bus, epoch, Actor::Operator), task)
+        .workflow
+        .body
+        .deferral
 }
 
 /// Every direction ever sent asking a holder of `room` to stop.
@@ -101,19 +108,81 @@ fn live_stop(bus: &Bus, room: &TaskHandle) -> Option<wire::SteeringHead> {
     stops.pop().map(|head| head.body().clone())
 }
 
-/// Move `task` into the group `to` names, founding it Paused when no such
-/// group stands, or out of every group.
-pub(super) fn move_to(
+/// The operator's indefinite deferral of `task` at the heads it reads now,
+/// with the lane it asked to park.
+fn defer(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &TaskHandle,
+) -> (Outcome<CommandAnswer>, Option<CanonicalUuid>) {
+    let current = board(bus, epoch, Actor::Operator);
+    let heads = at(&current, task);
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDefer,
+        vec![workflow_witness(heads), deferral_witness(heads)],
+        &TaskDefer {
+            task: task.clone(),
+            wait: Instant::indefinite(),
+        },
+    );
+    let wire::intent::Intent::TaskDefer(request) = command.body() else {
+        panic!("fixture command carries a deferral");
+    };
+    crate::board_command::task_defer(bus, &command, request, None, &steer::Config::default())
+}
+
+/// A held Design deferred with no stop sent, as the schema crossing defers a
+/// Design its retired Paused group held.
+fn defer_unstopped(bus: &Bus, task: &TaskHandle) {
+    let born = born(task);
+    let probe = born.clone();
+    let workflow = bus
+        .read(move |read| read.workflow_head(&probe))
+        .expect("workflow reads")
+        .expect("fixture workflow stands")
+        .into_body();
+    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        task_origin(&born).expect("fixture task origin"),
+        at,
+        Producer::CommandDoor,
+    );
+    let fact = write
+        .fact(
+            wire::body::TaskDeferred {
+                task: born.clone(),
+                until: Instant::indefinite(),
+            },
+            FactCause::Root,
+        )
+        .expect("deferral fact builds");
+    write.workflow_head(born, fact, move |_| wire::WorkflowHead {
+        deferral: Some(Instant::indefinite()),
+        ..workflow
+    });
+    assert!(matches!(
+        bus.commit(write).expect("deferral reaches the journal"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+/// Move `task` into the group `to` names, founding it when no such group
+/// stands, or out of every group.
+fn move_to(
     bus: &Bus,
     epoch: CanonicalUuid,
     task: &TaskHandle,
     to: Option<&wire::rooms::RoomAuthorityStamp>,
-) -> (Outcome<CommandAnswer>, Option<CanonicalUuid>) {
+) -> Outcome<CommandAnswer> {
     let revision = bus
         .read(|read| read.group_partition())
         .expect("partition reads")
         .map_or(0, |head| head.body().revision);
-    let command = fixture_command(
+    issue(
+        bus,
         epoch,
         Actor::Operator,
         CommandKind::WorkingGroupMove,
@@ -125,11 +194,7 @@ pub(super) fn move_to(
             design: born(task),
             to: to.cloned(),
         },
-    );
-    let wire::intent::Intent::WorkingGroupMove(request) = command.body() else {
-        panic!("fixture command carries a working-group move");
-    };
-    crate::board_command::move_working_group(bus, &command, request, &steer::Config::default())
+    )
 }
 
 /// Ready an ungrouped `design` for its proposal through the operator's nudge.
@@ -138,235 +203,9 @@ fn ready(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     assert_committed(nudge_design(bus, epoch, Actor::Operator, &current, design));
 }
 
-fn set_stance(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    stance: wire::rooms::WorkingGroupStance,
-) -> (Outcome<CommandAnswer>, Vec<CanonicalUuid>) {
-    let partition = bus
-        .read(|read| read.group_partition())
-        .expect("partition reads")
-        .expect("fixture group stands")
-        .into_body();
-    let group = partition.groups[0].group.clone();
-    let request = wire::rooms::WorkingGroupStanceSet { group, stance };
-    let command = fixture_command(
-        epoch,
-        Actor::Operator,
-        CommandKind::WorkingGroupStance,
-        vec![Witness::Group {
-            revision: partition.revision,
-        }],
-        &request,
-    );
-    let wire::intent::Intent::WorkingGroupStance(request) = command.body() else {
-        panic!("fixture command carries a working-group stance");
-    };
-    crate::board_command::set_working_group_stance(
-        bus,
-        &command,
-        request,
-        &steer::Config::default(),
-    )
-}
-
-/// Commit the fixture group's Paused brake alone, as a stance command that
-/// ended before shelving its rooms leaves it.
-fn stand_paused_unshelved(bus: &Bus) {
-    let from = bus
-        .read(|read| read.group_partition())
-        .expect("partition reads")
-        .expect("fixture group stands")
-        .into_body();
-    let mut partition = from.clone();
-    partition.revision += 1;
-    assert!(partition.set_stance(
-        &from.groups[0].group,
-        wire::rooms::WorkingGroupStance::Paused
-    ));
-    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
-    let mut write = JournalWrite::new(
-        Actor::Operator,
-        wire::rooms::working_group_origin(),
-        at,
-        Producer::CommandDoor,
-    );
-    write
-        .fact(
-            wire::rooms::WorkingGroupsArranged { from, partition },
-            FactCause::Root,
-        )
-        .expect("stance fact builds");
-    assert!(matches!(
-        bus.commit(write).expect("stance write reaches the journal"),
-        CommitOutcome::Committed(_)
-    ));
-}
-
-fn partition_revision(bus: &Bus) -> u64 {
-    bus.read(|read| read.group_partition())
-        .expect("partition reads")
-        .expect("fixture group stands")
-        .body()
-        .revision
-}
-
-fn group_change(outcome: Outcome<CommandAnswer>) -> wire::intent::WorkingGroupChange {
-    match assert_committed(outcome) {
-        CommandAnswer::WorkingGroupChange(change) => change,
-        other => panic!("expected a working-group change, got {other:?}"),
-    }
-}
-
 #[test]
-fn pausing_a_group_makes_every_held_design_passive_and_shelves_its_room() {
-    let (root, bus, epoch, seats) = fixture("design-standing-passive", 3);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let first = design(&bus, epoch, "First held by stance");
-    let second = design(&bus, epoch, "Second held by stance");
-    group_design(&bus, epoch, &first);
-    group_design(&bus, epoch, &second);
-    let first_holder = Actor::Lane(seats[0].lane);
-    let second_holder = Actor::Lane(seats[1].lane);
-    claim_task(&bus, epoch, &seats[0], &first_holder, &first);
-    claim_task(&bus, epoch, &seats[1], &second_holder, &second);
-
-    let (changed, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
-    let change = group_change(changed);
-    assert_eq!(change.status, WorkingGroupChangeStatus::Stanced);
-    assert!(change.owed.is_empty());
-    assert_eq!(notified, [seats[0].lane, seats[1].lane]);
-    for (task, holder) in [(&first, first_holder), (&second, second_holder)] {
-        assert_eq!(active_holder(&bus, epoch, task), Some(holder));
-        assert!(live_stop(&bus, task).is_some());
-        assert_eq!(
-            refused(&win_named(&bus, epoch, &seats[2], task, "steal")),
-            "claim::design-passive"
-        );
-    }
-    assert_eq!(offered(&bus, epoch, &seats[2]), None);
-    clean(&root, bus);
-}
-
-#[test]
-fn a_repeated_passive_stance_shelves_what_its_change_left_owed() {
-    let (root, bus, epoch, seats) = fixture("design-standing-repair", 2);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let first = design(&bus, epoch, "First left unshelved");
-    let second = design(&bus, epoch, "Second left unshelved");
-    group_design(&bus, epoch, &first);
-    group_design(&bus, epoch, &second);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &first);
-    claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &second);
-    stand_paused_unshelved(&bus);
-    let revision = partition_revision(&bus);
-    assert!(live_stop(&bus, &first).is_none());
-
-    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
-    let change = group_change(repaired);
-    assert_eq!(change.status, WorkingGroupChangeStatus::Shelved);
-    assert_eq!(change.revision, revision);
-    assert!(change.owed.is_empty());
-    assert_eq!(notified, [seats[0].lane, seats[1].lane]);
-    assert_eq!(
-        partition_revision(&bus),
-        revision,
-        "repair restates no partition"
-    );
-    for task in [&first, &second] {
-        assert!(live_stop(&bus, task).is_some());
-        assert_eq!(stop_directions(&bus, task).len(), 1);
-    }
-
-    let (again, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
-    assert_eq!(refused(&again), "group::stance-unchanged");
-    assert!(notified.is_empty());
-    for task in [&first, &second] {
-        assert_eq!(
-            stop_directions(&bus, task).len(),
-            1,
-            "nothing owed stops twice"
-        );
-    }
-    clean(&root, bus);
-}
-
-#[test]
-fn a_room_freed_before_its_shelving_settles_quiescent() {
-    let (root, bus, epoch, seats) = fixture("design-standing-freed", 2);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let freed = design(&bus, epoch, "Freed before shelving");
-    let held = design(&bus, epoch, "Held through shelving");
-    group_design(&bus, epoch, &freed);
-    group_design(&bus, epoch, &held);
-    let freed_holder = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &freed_holder, &freed);
-    claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &held);
-    stand_paused_unshelved(&bus);
-    free_active(&bus, epoch, &freed_holder, &seats[0], &freed);
-
-    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Paused);
-    let change = group_change(repaired);
-    assert_eq!(change.status, WorkingGroupChangeStatus::Shelved);
-    assert!(change.owed.is_empty(), "a freed room owes nothing");
-    assert_eq!(notified, [seats[1].lane]);
-    assert!(stop_directions(&bus, &freed).is_empty());
-    assert_eq!(stop_directions(&bus, &held).len(), 1);
-    clean(&root, bus);
-}
-
-#[test]
-fn a_ready_ungrouped_design_is_offered_and_only_a_passive_group_withholds_it() {
-    let (root, bus, epoch, seats) = fixture("design-standing-claims", 1);
-    let task = design(&bus, epoch, "Ungrouped design");
-    ready(&bus, epoch, &task);
-    assert_eq!(
-        offered(&bus, epoch, &seats[0]),
-        Some(born(&task)),
-        "a ready Design needs no group to be offered"
-    );
-
-    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
-    assert_eq!(
-        offered(&bus, epoch, &seats[0]),
-        None,
-        "a fresh group stands Paused and withholds its Design"
-    );
-    assert_eq!(
-        refused(&win_named(&bus, epoch, &seats[0], &task, "capture")),
-        "claim::design-passive"
-    );
-    assert_eq!(active_holder(&bus, epoch, &task), None);
-
-    assert_committed(move_to(&bus, epoch, &task, None).0);
-    assert_eq!(offered(&bus, epoch, &seats[0]), Some(born(&task)));
-    let lane = Actor::Lane(seats[0].lane);
-    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
-    assert_eq!(active_holder(&bus, epoch, &task), Some(lane));
-    clean(&root, bus);
-}
-
-#[test]
-fn a_held_design_leaving_an_active_group_keeps_its_holder_without_a_stop() {
-    let (root, bus, epoch, seats) = fixture("design-standing-leave-active", 1);
-    prove_seat_addresses(&bus, epoch, &seats);
-    let task = design(&bus, epoch, "Held through leaving");
-    group_design(&bus, epoch, &task);
-    let holder = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &holder, &task);
-
-    let (moved, notified) = move_to(&bus, epoch, &task, None);
-    assert_committed(moved);
-    assert_eq!(notified, None, "an ungrouped Design stays active");
-    assert!(live_stop(&bus, &task).is_none());
-    assert!(stop_directions(&bus, &task).is_empty());
-    assert_eq!(active_holder(&bus, epoch, &task), Some(holder));
-    clean(&root, bus);
-}
-
-#[test]
-fn a_held_design_entering_a_passive_group_asks_its_holder_to_park_and_returns_unchanged() {
-    let (root, bus, epoch, seats) = fixture("design-standing-park", 2);
+fn deferring_a_held_design_asks_its_holder_to_park_once() {
+    let (root, bus, epoch, seats) = fixture("design-defer-held", 2);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Held design");
     ready(&bus, epoch, &task);
@@ -376,8 +215,8 @@ fn a_held_design_entering_a_passive_group_asks_its_holder_to_park_and_returns_un
         .statement
         .clone();
 
-    let (moved, notified) = move_to(&bus, epoch, &task, Some(&fixture_group()));
-    assert_committed(moved);
+    let (deferred, notified) = defer(&bus, epoch, &task);
+    assert_committed(deferred);
     assert_eq!(
         notified,
         Some(seats[0].lane),
@@ -391,46 +230,97 @@ fn a_held_design_entering_a_passive_group_asks_its_holder_to_park_and_returns_un
         .try_into()
         .expect("one park request");
     assert_eq!(sent.key, stop.key);
-    assert_eq!(sent.lane, seats[0].lane);
-    assert!(
-        sent.text.contains(&format!("spice task free {task}")),
-        "the request names ordinary parking: {}",
-        sent.text
-    );
-    assert_eq!(
-        refused(&win_named(&bus, epoch, &seats[1], &task, "steal")),
-        "claim::design-passive",
-        "no lane steals a passive Design from its holder"
-    );
+    assert!(matches!(
+        win_named(&bus, epoch, &seats[1], &task, "steal"),
+        Outcome::Refusal(_)
+    ));
 
-    // Leaving and re-entering while the request stands send nothing new.
-    assert_committed(move_to(&bus, epoch, &task, None).0);
-    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
+    let (again, notified) = defer(&bus, epoch, &task);
+    assert_committed(again);
+    assert_eq!(notified, None, "a standing stop is not sent twice");
     assert_eq!(stop_directions(&bus, &task).len(), 1);
 
     free_active(&bus, epoch, &holder, &seats[0], &task);
     assert_eq!(active_holder(&bus, epoch, &task), None);
+    assert_eq!(offered(&bus, epoch, &seats[0]), None);
     assert_eq!(
-        offered(&bus, epoch, &seats[0]),
+        offered(&bus, epoch, &seats[1]),
         None,
-        "a parked passive Design is not reoffered"
+        "a parked deferred Design is not reoffered"
     );
-    assert_eq!(offered(&bus, epoch, &seats[1]), None);
-
-    assert_committed(move_to(&bus, epoch, &task, None).0);
-    ready(&bus, epoch, &task);
-    assert_eq!(offered(&bus, epoch, &seats[1]), Some(born(&task)));
     assert_eq!(
         at(&board(&bus, epoch, Actor::Operator), &task).statement,
         before,
-        "standing changes no statement, preparation, or authorization"
+        "deferral changes no statement, preparation, or authorization"
     );
     clean(&root, bus);
 }
 
 #[test]
+fn a_repeated_deferral_stops_a_holder_left_unstopped() {
+    let (root, bus, epoch, seats) = fixture("design-defer-owed", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let task = design(&bus, epoch, "Deferred under its holder");
+    ready(&bus, epoch, &task);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &task);
+    defer_unstopped(&bus, &task);
+    assert!(live_stop(&bus, &task).is_none());
+
+    let (repaired, notified) = defer(&bus, epoch, &task);
+    assert_committed(repaired);
+    assert_eq!(notified, Some(seats[0].lane));
+    assert!(live_stop(&bus, &task).is_some());
+
+    let (again, notified) = defer(&bus, epoch, &task);
+    assert_committed(again);
+    assert_eq!(notified, None);
+    assert_eq!(
+        stop_directions(&bus, &task).len(),
+        1,
+        "nothing owed stops twice"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn the_holders_own_deferral_releases_its_design_without_a_stop() {
+    let (root, bus, epoch, seats) = fixture("design-defer-self", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let task = design(&bus, epoch, "Self-deferred design");
+    ready(&bus, epoch, &task);
+    let holder = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &holder, &task);
+    let held = board(&bus, epoch, holder.clone());
+    let heads = at(&held, &task);
+    let lease = heads.lease.as_ref().expect("claimed task has a lease");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        holder,
+        CommandKind::TaskDefer,
+        vec![
+            workflow_witness(heads),
+            deferral_witness(heads),
+            claim_witness(heads),
+            Witness::Lease {
+                task: born(&task),
+                head: lease.position,
+            },
+            residency(&held, &seats[0]),
+        ],
+        &TaskDefer {
+            task: task.clone(),
+            wait: Instant::indefinite(),
+        },
+    ));
+    assert_eq!(active_holder(&bus, epoch, &task), None);
+    assert!(stop_directions(&bus, &task).is_empty());
+    clean(&root, bus);
+}
+
+#[test]
 fn a_vacant_holder_is_asked_to_park_through_its_lane() {
-    let (root, bus, epoch, seats) = fixture("design-standing-vacant", 1);
+    let (root, bus, epoch, seats) = fixture("design-defer-vacant", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Vacant holder design");
     ready(&bus, epoch, &task);
@@ -438,7 +328,7 @@ fn a_vacant_holder_is_asked_to_park_through_its_lane() {
     claim_task(&bus, epoch, &seats[0], &holder, &task);
     vacate(&bus, epoch, &seats[0]);
 
-    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
+    assert_committed(defer(&bus, epoch, &task).0);
     let stop = live_stop(&bus, &task).expect("a vacant holder still receives the park request");
     assert_eq!(stop.lane, seats[0].lane);
     let [sent] = stop_directions(&bus, &task)
@@ -453,15 +343,80 @@ fn a_vacant_holder_is_asked_to_park_through_its_lane() {
 }
 
 #[test]
-fn an_offer_read_before_the_design_entered_a_passive_group_cannot_claim_it() {
-    let (root, bus, epoch, seats) = fixture("design-standing-stale", 1);
+fn grouping_gates_no_possession() {
+    let (root, bus, epoch, seats) = fixture("design-group-possession", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let task = design(&bus, epoch, "Grouped design");
+    ready(&bus, epoch, &task);
+    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())));
+    assert_eq!(
+        offered(&bus, epoch, &seats[0]),
+        Some(born(&task)),
+        "a grouped undeferred Design follows ordinary possession"
+    );
+    let holder = Actor::Lane(seats[0].lane);
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
+
+    assert_committed(move_to(&bus, epoch, &task, None));
+    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())));
+    assert!(stop_directions(&bus, &task).is_empty());
+    assert_eq!(active_holder(&bus, epoch, &task), Some(holder));
+    clean(&root, bus);
+}
+
+#[test]
+fn moving_a_deferred_design_into_a_group_wakes_it_and_moving_out_does_not() {
+    let (root, bus, epoch, seats) = fixture("design-group-wake", 1);
+    let anchor = design(&bus, epoch, "Group anchor");
+    let task = design(&bus, epoch, "Deferred design");
+    ready(&bus, epoch, &task);
+    let group = fixture_group();
+    assert_committed(move_to(&bus, epoch, &anchor, Some(&group)));
+
+    assert_committed(defer(&bus, epoch, &task).0);
+    assert_eq!(offered(&bus, epoch, &seats[0]), None);
+    assert_committed(move_to(&bus, epoch, &task, Some(&group)));
+    assert_eq!(deferral(&bus, epoch, &task), None, "joining a group wakes");
+    assert_eq!(offered(&bus, epoch, &seats[0]), Some(born(&task)));
+
+    assert_committed(defer(&bus, epoch, &task).0);
+    assert_committed(move_to(&bus, epoch, &task, None));
+    assert_eq!(
+        deferral(&bus, epoch, &task),
+        Some(Instant::indefinite()),
+        "leaving a group wakes nothing"
+    );
+
+    let founded = wire::rooms::RoomAuthorityStamp::for_micros(1_750_000_000_000_001)
+        .expect("fresh group stamp");
+    assert_committed(move_to(&bus, epoch, &task, Some(&founded)));
+    assert_eq!(deferral(&bus, epoch, &task), None, "founding a group wakes");
+    clean(&root, bus);
+}
+
+#[test]
+fn a_deferred_design_refuses_a_nudge() {
+    let (root, bus, epoch, _) = fixture("design-defer-nudge", 0);
+    let task = design(&bus, epoch, "Deferred nudge design");
+    assert_committed(defer(&bus, epoch, &task).0);
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        refused(&nudge_design(&bus, epoch, Actor::Operator, &current, &task)),
+        "preparation::nudge-deferred"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn an_offer_read_before_the_design_was_deferred_cannot_claim_it() {
+    let (root, bus, epoch, seats) = fixture("design-defer-stale", 1);
     let task = design(&bus, epoch, "Stale offer design");
     ready(&bus, epoch, &task);
     let lane = Actor::Lane(seats[0].lane);
     let available = board(&bus, epoch, lane.clone());
     let stale = claim_expected(&available, &task, &seats[0]);
 
-    assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())).0);
+    assert_committed(defer(&bus, epoch, &task).0);
     let outcome = issue(
         &bus,
         epoch,

@@ -196,7 +196,6 @@ pub(super) fn prepare_capture_claim<'a>(
         planning::admit_capture(selected)?;
     }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
-    refuse_passive_design(selected)?;
     let satisfied = board::resolved_tasks(&snapshot.entries);
     refuse_held_design(selected, &satisfied)?;
     if !board::eligible_entry(
@@ -735,7 +734,6 @@ fn named_claim_selection<'a>(
                 "capture into one current pending task",
             )
         })?;
-    refuse_passive_design(entry)?;
     if entry.is_draft() {
         return Err(refusal(
             "task::draft-unfiled",
@@ -769,20 +767,6 @@ fn named_claim_selection<'a>(
     } else {
         Err(refusal(reason, Some(task.to_string()), remedy))
     }
-}
-
-/// A Design a Paused working group holds is passive: no claim path grants it.
-pub(in crate::board_command) fn refuse_passive_design(
-    entry: &Entry,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if board::passive_design(entry) {
-        return Err(refusal(
-            "claim::design-passive",
-            Some(entry.handle().to_string()),
-            "a Design in a Paused working group is passive; set its group running, or move it out of every group, to make it claimable",
-        ));
-    }
-    Ok(())
 }
 
 /// An active Design whose pass cycle is not ready for a proposal is steeping:

@@ -46,7 +46,7 @@ impl Stale {
         // The board carries every open Design's pass cycle and standing, so a
         // fact that moves cycle evidence (including execution authorization,
         // which also changes allocator eligibility) or the working-group
-        // partition and stances moves the board.
+        // partition moves the board.
         if wire::rooms::DesignCycles::concerns(kind)
             || matches!(
                 kind,

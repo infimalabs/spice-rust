@@ -178,15 +178,14 @@ fn floor(lanes: &Lanes, design: &wire::TaskHandle) -> f64 {
 }
 
 #[test]
-fn a_steeped_design_invites_narrow_until_an_item_contests_whatever_its_brake() {
+fn a_steeped_design_invites_narrow_until_an_item_contests() {
     use wire::rooms::DesignReach::{Narrow, Wide};
-    use wire::rooms::WorkingGroupStance::{Paused, Running};
 
     let lanes = Lanes::new("design-request-steeped-floor");
     lanes.seat(THIRD);
     let config = surface(&lanes);
     let design = item_design(&lanes, &[UNRELATED[0], UNRELATED[1]]);
-    lanes.group(30, &config, &design, Paused);
+    lanes.group(30, &config, &design);
     let expected = crate::resident::design_awareness::match_score_floor;
     assert_eq!(floor(&lanes, &design), expected(Wide));
 
@@ -198,24 +197,12 @@ fn a_steeped_design_invites_narrow_until_an_item_contests_whatever_its_brake() {
         expected(Wide),
         "three lanes concur on one item, but a quiet item keeps the reach wide"
     );
-    lanes.stance(53, &config, Running);
-    assert_eq!(
-        floor(&lanes, &design),
-        expected(Wide),
-        "running the group leaves the reach wide while a question is unheard"
-    );
 
     lanes.charge(54, SECOND, &design, 2, 1);
     assert_eq!(
         floor(&lanes, &design),
         expected(Narrow),
         "every item heard and one concurring steeps the Design, which narrows its reach"
-    );
-    lanes.stance(55, &config, Paused);
-    assert_eq!(
-        floor(&lanes, &design),
-        expected(Narrow),
-        "pausing the group leaves a steeped Design's reach narrow"
     );
 
     lanes.charge(57, SENDER, &design, 1, -1);
@@ -241,12 +228,7 @@ fn an_oops_design_invites_narrow_without_steeping() {
         None,
         &[UNRELATED[0], UNRELATED[1]],
     );
-    lanes.group(
-        30,
-        &config,
-        &design,
-        wire::rooms::WorkingGroupStance::Running,
-    );
+    lanes.group(30, &config, &design);
     let expected = crate::resident::design_awareness::match_score_floor;
     assert_eq!(
         floor(&lanes, &design),

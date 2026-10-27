@@ -24,7 +24,7 @@ impl Lanes {
             .source
     }
 
-    /// A Design standing in a running working group, asking [`QUESTION`].
+    /// A grouped Design asking [`QUESTION`].
     fn open_design(&self, config: &SurfaceConfig) -> wire::TaskHandle {
         let design = self.design_with_questions(
             "dVrD245Kd",
@@ -32,12 +32,7 @@ impl Lanes {
             "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
             &[QUESTION],
         );
-        self.group(
-            60,
-            config,
-            &design,
-            wire::rooms::WorkingGroupStance::Running,
-        );
+        self.group(60, config, &design);
         design
     }
 

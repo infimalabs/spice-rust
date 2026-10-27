@@ -57,9 +57,6 @@ pub enum WorkAvailability {
     /// Open and unclaimed, following normal Plan/Design control or a
     /// prerequisite chain that still reaches advancing work.
     Waiting,
-    /// Open and unclaimed, a Design a Paused working group holds: no lane can
-    /// acquire it until the operator sets that group running or moves it out.
-    Passive,
     /// Open and unclaimed, past the gate, a Design whose remaining conclusion
     /// waits on the operator's selection of an output it constructed.
     Selection,
@@ -86,7 +83,6 @@ impl WorkAvailability {
             Self::Stale => "stale",
             Self::Blocked => "blocked",
             Self::Waiting => "waiting",
-            Self::Passive => "passive",
             Self::Selection => "selection",
             Self::Held => "held",
             Self::Deferred => "deferred",
@@ -301,12 +297,11 @@ pub struct WorkCounts {
     stale: usize,
     blocked: usize,
     workflow_waiting: usize,
-    passive: usize,
     selection: usize,
     held: usize,
     deferred: usize,
     terminal: usize,
-    /// Overlaps `ready` and `passive`; never part of [`Self::open`].
+    /// Overlaps `ready`; never part of [`Self::open`].
     proposal_ready: usize,
 }
 
@@ -320,7 +315,6 @@ impl WorkCounts {
             WorkAvailability::Stale => self.stale += 1,
             WorkAvailability::Blocked => self.blocked += 1,
             WorkAvailability::Waiting => self.workflow_waiting += 1,
-            WorkAvailability::Passive => self.passive += 1,
             WorkAvailability::Selection => self.selection += 1,
             WorkAvailability::Held => self.held += 1,
             WorkAvailability::Deferred => self.deferred += 1,
@@ -357,12 +351,6 @@ impl WorkCounts {
         self.workflow_waiting
     }
 
-    /// Open Designs a Paused working group holds.
-    #[must_use]
-    pub const fn passive(self) -> usize {
-        self.passive
-    }
-
     #[must_use]
     pub const fn deferred(self) -> usize {
         self.deferred
@@ -374,19 +362,18 @@ impl WorkCounts {
     }
 
     /// Open work no agent is offered until its workflow or the operator moves:
-    /// neutral Plan/Design sequencing, environment holds, a passive Design,
-    /// selection, or deferral.
+    /// neutral Plan/Design sequencing, environment holds, selection, or
+    /// deferral.
     #[must_use]
     pub const fn waiting(self) -> usize {
-        self.workflow_waiting + self.held + self.passive + self.selection + self.deferred
+        self.workflow_waiting + self.held + self.selection + self.deferred
     }
 
     /// The partition's tab mark and how many tasks carry it: work only the
     /// operator can unblock, then a Design awaiting the operator's decision,
     /// then an unpossessed Design ready for a proposal, then work the operator
     /// deferred, which the mark keeps visible as an intentional set-aside.
-    /// Neutral workflow waiting, parked work, and a passive Design with no
-    /// ready pass need nothing and mark nothing.
+    /// Neutral workflow waiting and parked work need nothing and mark nothing.
     #[must_use]
     pub const fn mark(self) -> Option<(WorkMark, usize)> {
         let blocked = self.blocked + self.held;
@@ -479,8 +466,8 @@ pub struct WorkTask<'a> {
     /// A Design held for the operator's selection of an output it constructed,
     /// whether or not a lane still holds its claim.
     awaiting_selection: bool,
-    /// An unpossessed Design, offered or passive, whose pass cycle is ready
-    /// for a proposal.
+    /// An unpossessed, offered Design whose pass cycle is ready for a
+    /// proposal.
     proposal_ready: bool,
     /// Position in the resident's offer order, when the allocator offers it.
     offer_rank: Option<usize>,
@@ -517,8 +504,8 @@ impl<'a> WorkTask<'a> {
         self.awaiting_selection
     }
 
-    /// An unpossessed Design, offered or passive, whose pass cycle is ready
-    /// for a proposal: the state its tab marks.
+    /// An unpossessed, offered Design whose pass cycle is ready for a
+    /// proposal: the state its tab marks.
     #[must_use]
     pub const fn proposal_ready(&self) -> bool {
         self.proposal_ready
@@ -749,18 +736,17 @@ impl<'a> WorkProjection<'a> {
     }
 
     /// One scope's open tasks in strip order: in-flight, ready, review,
-    /// stale, blocked, neutral workflow waiting, passive, selection, held,
-    /// deferred, then parked, with each availability retaining resident offer
-    /// order.
+    /// stale, blocked, neutral workflow waiting, selection, held, deferred,
+    /// then parked, with each availability retaining resident offer order.
     #[must_use]
     pub fn scope_strip<'p>(&'p self, scope: &WorkScope) -> Vec<&'p WorkTask<'a>> {
         use WorkAvailability::{
-            Blocked, Deferred, Held, InFlight, Passive, Ready, Review, Selection, Stale, Waiting,
+            Blocked, Deferred, Held, InFlight, Ready, Review, Selection, Stale, Waiting,
         };
 
         let mut strip = Vec::new();
         for availability in [
-            InFlight, Ready, Review, Stale, Blocked, Waiting, Passive, Selection, Held, Deferred,
+            InFlight, Ready, Review, Stale, Blocked, Waiting, Selection, Held, Deferred,
         ] {
             strip.extend(
                 self.offered
@@ -1019,19 +1005,17 @@ fn offer_ranks(board: &BoardView, by_born: &BTreeMap<&TaskStamp, usize>) -> Vec<
     ranks
 }
 
-/// Whether each task, by index, is an unpossessed Design, offered or passive,
-/// whose pass cycle is ready for a proposal.
+/// Whether each task, by index, is an unpossessed, offered Design whose pass
+/// cycle is ready for a proposal.
 fn proposal_ready(board: &BoardView, availability: &[WorkAvailability]) -> Vec<bool> {
     board
         .tasks
         .iter()
         .zip(availability)
         .map(|(task, availability)| {
-            matches!(
-                availability,
-                WorkAvailability::Ready | WorkAvailability::Passive
-            ) && board.design_cycles.get(&task.statement.body.born)
-                == Some(&wire::rooms::DesignCycle::ReadyForProposal)
+            *availability == WorkAvailability::Ready
+                && board.design_cycles.get(&task.statement.body.born)
+                    == Some(&wire::rooms::DesignCycle::ReadyForProposal)
         })
         .collect()
 }
@@ -1165,15 +1149,6 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     }
     match task.claim.as_ref().map(|claim| claim.body.disposition) {
         Some(ClaimDisposition::Active) => return WorkAvailability::InFlight,
-        // A passive Design still holding an output for the operator's
-        // selection waits on that decision, not on grouping.
-        _ if task.design_standing() == Some(wire::intent::DesignStanding::Passive) => {
-            return if board.awaiting_selection(&task.statement.body.born) {
-                WorkAvailability::Selection
-            } else {
-                WorkAvailability::Passive
-            };
-        }
         Some(ClaimDisposition::Lapsed) => return WorkAvailability::Stale,
         _ => {}
     }

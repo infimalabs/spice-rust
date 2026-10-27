@@ -451,9 +451,6 @@ pub struct BoardTask {
     /// Whether the current working-group partition holds this task.
     #[serde(default, skip_serializing_if = "is_false")]
     pub grouped: bool,
-    /// Whether this Design is active: no Paused working group holds it.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub design_active: bool,
     /// This Design's pass-cycle evidence, so a client allocates from the
     /// same projection the resident does; empty for any other task.
     #[serde(
@@ -609,7 +606,6 @@ impl BoardTask {
             lease,
             explicit_release: false,
             grouped: false,
-            design_active: false,
             design_cycle: crate::rooms::DesignCycleFacts::default(),
             preparation_decision: None,
             collapse_reason: None,
@@ -630,13 +626,6 @@ impl BoardTask {
     #[must_use]
     pub const fn with_grouped(mut self, grouped: bool) -> Self {
         self.grouped = grouped;
-        self
-    }
-
-    /// Attach whether this Design is active: no Paused working group holds it.
-    #[must_use]
-    pub const fn with_design_active(mut self, active: bool) -> Self {
-        self.design_active = active;
         self
     }
 
@@ -703,20 +692,21 @@ impl BoardTask {
         DesignStanding::of(
             self.statement.body.intent,
             &self.workflow.body,
-            self.design_active,
             self.collapse_reason.as_deref(),
         )
     }
 
-    /// Whether a lane may take, or already holds, this Design's pass.
+    /// Whether a lane may take, or already holds, this Design's pass. A
+    /// deferred Design's holder has been asked to stop, so deferral outranks
+    /// its claim.
     #[must_use]
     pub const fn design_availability(&self) -> crate::rooms::DesignAvailability {
-        if matches!(&self.claim, Some(claim) if claim.body.is_active()) {
+        if self.workflow.body.deferral.is_some() {
+            crate::rooms::DesignAvailability::Deferred
+        } else if matches!(&self.claim, Some(claim) if claim.body.is_active()) {
             crate::rooms::DesignAvailability::Claimed
-        } else if self.design_active {
-            crate::rooms::DesignAvailability::Unclaimed
         } else {
-            crate::rooms::DesignAvailability::Passive
+            crate::rooms::DesignAvailability::Unclaimed
         }
     }
 }

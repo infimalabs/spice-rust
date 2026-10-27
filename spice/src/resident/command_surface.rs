@@ -350,26 +350,23 @@ impl<'a> Surface<'a> {
         })
     }
 
-    /// Room and working-group writes, which notify each lane they address.
+    /// Room writes and deferrals, which notify each lane they address: a
+    /// deferral that stops a held open Design notifies its holder.
     fn dispatch_room_writes(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         let (outcome, notify): (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) =
             match (command.kind(), command.body()) {
-                (CommandKind::WorkingGroupMove, Intent::WorkingGroupMove(request)) => {
-                    let (outcome, parked) = crate::board_command::move_working_group(
+                (CommandKind::TaskDefer, Intent::TaskDefer(defer)) => {
+                    let (outcome, stopped) = crate::board_command::task_defer(
                         self.bus,
                         command,
-                        request,
+                        defer,
+                        Some(crate::command_client::Host {
+                            repository: self.repository,
+                            ambient: &self.config.ambient,
+                        }),
                         &self.config.steering,
                     );
-                    (outcome, parked.into_iter().collect())
-                }
-                (CommandKind::WorkingGroupStance, Intent::WorkingGroupStance(request)) => {
-                    crate::board_command::set_working_group_stance(
-                        self.bus,
-                        command,
-                        request,
-                        &self.config.steering,
-                    )
+                    (outcome, stopped.into_iter().collect())
                 }
                 (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
                     crate::board_command::room_leave(self.bus, command, leave),

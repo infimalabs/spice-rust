@@ -410,7 +410,7 @@ pub(super) fn held_claim_write(
     at: Instant,
     edit: impl FnOnce(&mut TaskHead, &mut wire::WorkflowHead),
 ) -> JournalWrite {
-    claim_write_until(bus, at, spice::claim_lease::indefinite_horizon(), edit)
+    claim_write_until(bus, at, wire::Instant::indefinite(), edit)
 }
 
 /// Claim the seeded task for `lane()` on a lease expiring at `horizon` after

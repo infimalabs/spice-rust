@@ -22,7 +22,7 @@ pub(crate) fn phase_handoff(
     facts: &bus::TaskFacts,
     heads: &journal::TaskHeads,
 ) -> Result<Option<board::PhaseHandoff>, Outcome<CommandAnswer>> {
-    let recipient = facts.design(heads.statement().body()).cycle.recipient;
+    let recipient = facts.design(heads.statement().body()).recipient;
     let Some(recipient) =
         recipient.filter(|recipient| recipient.nudged > heads.workflow().position())
     else {

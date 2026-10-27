@@ -244,7 +244,7 @@ fn plan_intake_releases_its_claim_into_an_active_design() {
     );
     assert_eq!(
         heads.design_standing(),
-        Some(wire::intent::DesignStanding::Active),
+        Some(wire::intent::DesignStanding::Open),
     );
     bus.verify()
         .expect("transitioned Design authority verifies before restart");
@@ -255,7 +255,7 @@ fn plan_intake_releases_its_claim_into_an_active_design() {
     let restarted = board(&reopened, epoch, Actor::Operator);
     assert_eq!(
         at(&restarted, &design).design_standing(),
-        Some(wire::intent::DesignStanding::Active),
+        Some(wire::intent::DesignStanding::Open),
     );
     clean(&root, reopened);
 }
@@ -336,7 +336,7 @@ fn a_plan_intake_claimant_revises_the_statement_and_a_stale_head_refuses() {
     assert_eq!(heads.presentation_title(), "Sharpened Design statement");
     assert_eq!(
         heads.design_standing(),
-        Some(wire::intent::DesignStanding::Active),
+        Some(wire::intent::DesignStanding::Open),
     );
     clean(&root, bus);
 }
@@ -389,7 +389,7 @@ fn clean_review_intake_releases_its_claim_into_an_active_design() {
     );
     assert_eq!(
         design.design_standing(),
-        Some(wire::intent::DesignStanding::Active),
+        Some(wire::intent::DesignStanding::Open),
     );
     clean(&root, bus);
 }
@@ -510,7 +510,7 @@ fn finding_review_intake_enters_design_with_its_correction_recorded() {
     );
     assert_eq!(
         design.design_standing(),
-        Some(wire::intent::DesignStanding::Active),
+        Some(wire::intent::DesignStanding::Open),
     );
     clean(&root, bus);
 }

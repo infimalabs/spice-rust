@@ -1,76 +1,15 @@
-//! Repository-shared working-group organization and its Paused/Running brake.
+//! Repository-shared working-group organization.
 
 use serde::{Deserialize, Serialize};
 
 use super::{RoomAnchor, RoomAuthorityStamp, WORKING_GROUP_ANCHOR_LIMIT, all_unique};
 
-/// Whether one working group lets lanes possess its Designs.
+/// Repository-shared organization of ordered room anchors.
 ///
-/// The setting is only a brake: how widely a Design invites lanes and which
-/// items it asks follow its maturity, never its group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum WorkingGroupStance {
-    /// No lane may possess the group's Designs; holders are asked to park.
-    Paused,
-    /// The group's Designs follow ordinary allocation and possession.
-    Running,
-}
-
-impl WorkingGroupStance {
-    /// Stable toggle order.
-    pub const ALL: [Self; 2] = [Self::Paused, Self::Running];
-
-    /// Whether this setting makes its group's Designs active.
-    #[must_use]
-    pub const fn is_active(self) -> bool {
-        matches!(self, Self::Running)
-    }
-
-    /// Stable operator-facing spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Paused => "paused",
-            Self::Running => "running",
-        }
-    }
-
-    /// Toggle position.
-    #[must_use]
-    pub const fn index(self) -> usize {
-        match self {
-            Self::Paused => 0,
-            Self::Running => 1,
-        }
-    }
-}
-
-impl std::fmt::Display for WorkingGroupStance {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for WorkingGroupStance {
-    type Err = &'static str;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "paused" => Ok(Self::Paused),
-            "running" => Ok(Self::Running),
-            _ => Err("stance must be paused or running"),
-        }
-    }
-}
-
-/// Repository-shared organization of ordered room anchors and their
-/// Paused/Running brake.
-///
-/// A working group owns only its identity, ordered anchor associations, and
-/// shared brake; it has no name of its own and lives only while it holds a
-/// design. It cannot encode lanes, members, claims, reads, work, or foreground
-/// geometry.
+/// A working group owns only its identity and ordered anchor associations; it
+/// has no name of its own and lives only while it holds a design. It cannot
+/// encode lanes, members, claims, reads, work, possession, or foreground
+/// geometry: a Design stops only through its own deferral.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "WorkingGroupWire", into = "WorkingGroupWire")]
 pub struct WorkingGroup {
@@ -78,8 +17,6 @@ pub struct WorkingGroup {
     pub group: RoomAuthorityStamp,
     /// Room anchors in operator order.
     pub anchors: Vec<RoomAnchor>,
-    /// Whether lanes may possess every open Design in the group.
-    pub stance: WorkingGroupStance,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -87,7 +24,6 @@ pub struct WorkingGroup {
 struct WorkingGroupWire {
     group: RoomAuthorityStamp,
     anchors: Vec<RoomAnchor>,
-    stance: WorkingGroupStance,
 }
 
 impl TryFrom<WorkingGroupWire> for WorkingGroup {
@@ -103,7 +39,6 @@ impl TryFrom<WorkingGroupWire> for WorkingGroup {
         Ok(Self {
             group: value.group,
             anchors: value.anchors,
-            stance: value.stance,
         })
     }
 }
@@ -113,18 +48,17 @@ impl From<WorkingGroup> for WorkingGroupWire {
         Self {
             group: value.group,
             anchors: value.anchors,
-            stance: value.stance,
         }
     }
 }
 
 /// The working-group partition: every current group in operator order, each
-/// holding its designs and shared brake, guarded by one revision.
+/// holding its designs, guarded by one revision.
 ///
 /// A group stands only while it holds a design, no design stands in two
 /// groups, and no group appears twice. Revision zero is the empty partition
-/// before any grouping write. A group's fast-mode flag is independent of its
-/// brake, is off until engaged, and ends with the group.
+/// before any grouping write. A group's fast-mode flag is off until engaged
+/// and ends with the group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     try_from = "WorkingGroupPartitionWire",
@@ -206,30 +140,6 @@ impl WorkingGroupPartition {
             .find(|group| group.anchors.contains(design))
     }
 
-    /// Whether `design` is active: a Design outside every group is, and a
-    /// grouped Design is unless its group is Paused.
-    #[must_use]
-    pub fn design_is_active(&self, design: &RoomAnchor) -> bool {
-        self.holder(design)
-            .is_none_or(|group| group.stance.is_active())
-    }
-
-    /// Set a standing group's brake, saying whether it changed.
-    pub fn set_stance(&mut self, group: &RoomAuthorityStamp, stance: WorkingGroupStance) -> bool {
-        let Some(group) = self
-            .groups
-            .iter_mut()
-            .find(|current| current.group == *group)
-        else {
-            return false;
-        };
-        if group.stance == stance {
-            return false;
-        }
-        group.stance = stance;
-        true
-    }
-
     /// Whether `group`'s fast-mode flag is on.
     #[must_use]
     pub fn is_fast(&self, group: &RoomAuthorityStamp) -> bool {
@@ -300,16 +210,6 @@ pub struct WorkingGroupFast {
     pub group: RoomAuthorityStamp,
     /// Whether its fast-mode flag is on.
     pub fast_mode: bool,
-}
-
-/// Set one standing working group to Paused or Running.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkingGroupStanceSet {
-    /// The group being retuned.
-    pub group: RoomAuthorityStamp,
-    /// Its intended shared stance.
-    pub stance: WorkingGroupStance,
 }
 
 /// Immutable fact body recording one design's move and the resulting partition.

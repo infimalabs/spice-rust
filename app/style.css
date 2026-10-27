@@ -400,10 +400,10 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
 /* A design's pips, on its group tab and its Spice menu tile, wear the tone its
-   work-map card and tab mark wear (work.css), shaped by its standing: passive
+   work-map card and tab mark wear (work.css), shaped by its standing: deferred
    rings, and concluded, deleted, or unavailable fades. */
 .app-presence-pip.group-design-pip { --app-presence-color: var(--work-card-tone); }
-.group-design-pip.passive { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
+.group-design-pip.deferred { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
 .group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.awaiting-decision { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }

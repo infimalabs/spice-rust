@@ -153,56 +153,6 @@ fn group_moves_refresh_a_designs_standing_incrementally() {
 }
 
 #[test]
-fn stance_changes_refresh_every_design_in_the_group() {
-    let (bus, mut incremental) = caught_up_fixture(0);
-    committed(
-        bus.commit(design_write(DESIGN_MOMENT, instant(5)))
-            .expect("open Design commits"),
-    );
-    let design = task(DESIGN_MOMENT);
-    let group = wire::rooms::RoomAuthorityStamp::for_micros(1_900_000_000_000_001)
-        .expect("fixture group stamp");
-    committed(
-        bus.commit(move_write(
-            &design,
-            None,
-            Some(group.clone()),
-            1,
-            instant(6),
-        ))
-        .expect("partition move commits"),
-    );
-    assert!(projected(&bus, &mut incremental, &design).design_is_active());
-    let partition = |revision, stance| wire::rooms::WorkingGroupPartition {
-        revision,
-        groups: vec![wire::rooms::WorkingGroup {
-            group: group.clone(),
-            anchors: vec![design.clone()],
-            stance,
-        }],
-        fast: Vec::new(),
-    };
-    let mut from = partition(1, wire::rooms::WorkingGroupStance::Running);
-    for (revision, second, stance) in [
-        (2, 7, wire::rooms::WorkingGroupStance::Paused),
-        (3, 8, wire::rooms::WorkingGroupStance::Running),
-    ] {
-        let next = partition(revision, stance);
-        committed(
-            bus.commit(arranged_write(from, next.clone(), instant(second)))
-                .expect("stance change commits"),
-        );
-        assert_eq!(
-            projected(&bus, &mut incremental, &design).design_is_active(),
-            stance.is_active(),
-            "a {stance:?} stance reaches the live projection"
-        );
-        from = next;
-    }
-    bus.shutdown().expect("stance fixture bus stops");
-}
-
-#[test]
 fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
     let (bus, mut incremental) = caught_up_fixture(0);
     committed(
@@ -210,7 +160,7 @@ fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
             .expect("open Design commits"),
     );
     let design = task(DESIGN_MOMENT);
-    let cycle = |entry: Entry| entry.design().cycle.cycle(false);
+    let cycle = |entry: Entry| entry.design().cycle(false);
     assert_eq!(
         cycle(projected(&bus, &mut incremental, &design)),
         wire::rooms::DesignCycle::GatheringInput
@@ -954,7 +904,6 @@ fn move_write(
         .map(|group| wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![design.clone()],
-            stance: wire::rooms::WorkingGroupStance::Running,
         })
         .collect();
     write
@@ -975,8 +924,8 @@ fn move_write(
     write
 }
 
-/// Restate the whole partition, as a stance change, arrangement, or disband
-/// commits it.
+/// Restate the whole partition, as a fast-mode change, arrangement, or
+/// disband commits it.
 fn arranged_write(
     from: wire::rooms::WorkingGroupPartition,
     partition: wire::rooms::WorkingGroupPartition,

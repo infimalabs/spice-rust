@@ -142,10 +142,7 @@ impl<'a> OperatorQueue<'a> {
 const fn set_aside(availability: WorkAvailability) -> bool {
     matches!(
         availability,
-        WorkAvailability::Terminal
-            | WorkAvailability::Draft
-            | WorkAvailability::Deferred
-            | WorkAvailability::Passive
+        WorkAvailability::Terminal | WorkAvailability::Draft | WorkAvailability::Deferred
     )
 }
 

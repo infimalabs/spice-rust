@@ -223,7 +223,7 @@ impl Projection {
     /// Every task a fact addresses, including each output an execution
     /// authorization selects, each Design a working-group move carries in
     /// or out, each Design either side of a whole-partition arrangement holds
-    /// (stance changes and disbands commit as arrangements), and each Design
+    /// (fast-mode changes and disbands commit as arrangements), and each Design
     /// whose pass cycle the fact or a changed task's settlement moves, so its
     /// entry and READY origin are refreshed.
     fn changed_tasks(

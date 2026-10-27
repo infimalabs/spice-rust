@@ -1154,12 +1154,9 @@ fn healthy_plan_sequences_and_planning_control_are_neutral_not_blocked() {
 fn design_selection_wins_its_gate_and_its_output_waits_neutrally() {
     let design = planning("WAIT-design", wire::TaskIntent::Design, Standing::Open)
         .with_grouped(true)
-        .with_design(wire::rooms::DesignFacts {
-            active: true,
-            cycle: wire::rooms::DesignCycleFacts {
-                proposal: Seq::new(1),
-                ..wire::rooms::DesignCycleFacts::default()
-            },
+        .with_design(wire::rooms::DesignCycleFacts {
+            proposal: Seq::new(1),
+            ..wire::rooms::DesignCycleFacts::default()
         });
     let output = named_output("WAIT-design-output", "WAIT-design", "WAIT-design");
     let entries = [design, output];

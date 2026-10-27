@@ -73,7 +73,7 @@ pub use rooms::{
     RoomConversationText, RoomConversationTextAnswer, RoomFactSummary, RoomFactTask, RoomItemMove,
     RoomLeave, RoomLeaveAnswer, RoomListeningDuty, WorkingGroupAnchor, WorkingGroupArrange,
     WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupDisband, WorkingGroupFast,
-    WorkingGroupMove, WorkingGroupPage, WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
+    WorkingGroupMove, WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
 };
 
 mod task;
