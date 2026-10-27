@@ -102,6 +102,7 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             WorkAvailability::InFlight
             | WorkAvailability::Ready
             | WorkAvailability::Review
+            | WorkAvailability::Passive
             | WorkAvailability::Waiting => return None,
             WorkAvailability::Stale | WorkAvailability::Selection => {
                 return self.underlying(index);

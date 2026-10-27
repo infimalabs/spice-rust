@@ -229,6 +229,69 @@ fn lifecycle_precedence_follows_task_status_standings() {
 }
 
 #[test]
+fn gathering_designs_are_passive_while_selected_work_waits() {
+    use wire::rooms::DesignCycle;
+
+    let mut rows = (1..=7)
+        .map(|value| design(value, "app.design"))
+        .collect::<Vec<_>>();
+    rows[4].claim = Some(claim(&rows[4], ClaimDisposition::Active));
+    rows[5].workflow.body.deferral = Some(
+        "2026-09-24T06:00:00.000Z"
+            .parse()
+            .expect("fixture deferral"),
+    );
+    rows[6].claim = Some(claim(&rows[6], ClaimDisposition::Lapsed));
+    rows.push(task(8, "app.work"));
+    rows.push(design(9, "app.design"));
+    let mut held = design(10, "app.design");
+    held.statement.body.requirements = wire::EnvironmentRequirements::one(
+        EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
+    );
+    rows.push(held);
+    let mut board = board(rows);
+    board
+        .workflow_waiting
+        .extend([1, 2, 4, 5, 6, 7, 8].map(stamp));
+    board.blocked.insert(stamp(9));
+    board.design_cycles.extend([
+        (stamp(1), DesignCycle::GatheringInput),
+        (stamp(2), DesignCycle::WaitingOnSelectedWork),
+        (stamp(3), DesignCycle::ReadyForProposal),
+        (stamp(4), DesignCycle::AwaitingDecision),
+        (stamp(5), DesignCycle::GatheringInput),
+        (stamp(6), DesignCycle::GatheringInput),
+        (stamp(7), DesignCycle::GatheringInput),
+        (stamp(9), DesignCycle::GatheringInput),
+        (stamp(10), DesignCycle::GatheringInput),
+    ]);
+    let projection = WorkProjection::from_board(&board);
+
+    assert_eq!(
+        projection
+            .tasks()
+            .iter()
+            .map(WorkTask::availability)
+            .collect::<Vec<_>>(),
+        [
+            WorkAvailability::Passive,
+            WorkAvailability::Waiting,
+            WorkAvailability::Ready,
+            WorkAvailability::Selection,
+            WorkAvailability::InFlight,
+            WorkAvailability::Deferred,
+            WorkAvailability::Stale,
+            WorkAvailability::Waiting,
+            WorkAvailability::Blocked,
+            WorkAvailability::Held,
+        ]
+    );
+    assert_eq!(projection.counts().workflow_waiting(), 2);
+    assert_eq!(projection.counts().open(), 10);
+    assert!(projection.tasks()[2].proposal_ready());
+}
+
+#[test]
 fn a_design_depends_on_the_outputs_it_released_while_gated_outputs_stay_its_dependents() {
     let design = design(1, "alpha.design");
     let output = |value: i64, released: bool| {

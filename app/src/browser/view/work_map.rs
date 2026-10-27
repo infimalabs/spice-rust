@@ -419,6 +419,7 @@ pub(in crate::browser) fn task_tone(
         WorkAvailability::Stale => "Stale",
         WorkAvailability::Blocked => "Blocked",
         WorkAvailability::Waiting => "Waiting",
+        WorkAvailability::Passive => "Passive",
         WorkAvailability::Selection => {
             return Some(TaskTone {
                 availability: availability.key(),

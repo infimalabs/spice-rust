@@ -57,6 +57,9 @@ pub enum WorkAvailability {
     /// Open and unclaimed, following normal Plan/Design control or a
     /// prerequisite chain that still reaches advancing work.
     Waiting,
+    /// An open, unclaimed Design gathering input rather than waiting for
+    /// selected work to advance.
+    Passive,
     /// Open and unclaimed, past the gate, a Design whose remaining conclusion
     /// waits on the operator's selection of an output it constructed.
     Selection,
@@ -83,6 +86,7 @@ impl WorkAvailability {
             Self::Stale => "stale",
             Self::Blocked => "blocked",
             Self::Waiting => "waiting",
+            Self::Passive => "passive",
             Self::Selection => "selection",
             Self::Held => "held",
             Self::Deferred => "deferred",
@@ -297,6 +301,7 @@ pub struct WorkCounts {
     stale: usize,
     blocked: usize,
     workflow_waiting: usize,
+    passive: usize,
     selection: usize,
     held: usize,
     deferred: usize,
@@ -315,6 +320,7 @@ impl WorkCounts {
             WorkAvailability::Stale => self.stale += 1,
             WorkAvailability::Blocked => self.blocked += 1,
             WorkAvailability::Waiting => self.workflow_waiting += 1,
+            WorkAvailability::Passive => self.passive += 1,
             WorkAvailability::Selection => self.selection += 1,
             WorkAvailability::Held => self.held += 1,
             WorkAvailability::Deferred => self.deferred += 1,
@@ -362,11 +368,11 @@ impl WorkCounts {
     }
 
     /// Open work no agent is offered until its workflow or the operator moves:
-    /// neutral Plan/Design sequencing, environment holds, selection, or
-    /// deferral.
+    /// neutral Plan/Design sequencing, passive input gathering, environment
+    /// holds, selection, or deferral.
     #[must_use]
     pub const fn waiting(self) -> usize {
-        self.workflow_waiting + self.held + self.selection + self.deferred
+        self.workflow_waiting + self.passive + self.held + self.selection + self.deferred
     }
 
     /// The partition's tab mark and how many tasks carry it: work only the
@@ -736,17 +742,17 @@ impl<'a> WorkProjection<'a> {
     }
 
     /// One scope's open tasks in strip order: in-flight, ready, review,
-    /// stale, blocked, neutral workflow waiting, selection, held, deferred,
+    /// stale, blocked, neutral workflow waiting, passive, selection, held, deferred,
     /// then parked, with each availability retaining resident offer order.
     #[must_use]
     pub fn scope_strip<'p>(&'p self, scope: &WorkScope) -> Vec<&'p WorkTask<'a>> {
         use WorkAvailability::{
-            Blocked, Deferred, Held, InFlight, Ready, Review, Selection, Stale, Waiting,
+            Blocked, Deferred, Held, InFlight, Passive, Ready, Review, Selection, Stale, Waiting,
         };
 
         let mut strip = Vec::new();
         for availability in [
-            InFlight, Ready, Review, Stale, Blocked, Waiting, Selection, Held, Deferred,
+            InFlight, Ready, Review, Stale, Blocked, Waiting, Passive, Selection, Held, Deferred,
         ] {
             strip.extend(
                 self.offered
@@ -1157,7 +1163,10 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     } else if board.awaiting_selection(&task.statement.body.born) {
         WorkAvailability::Selection
     } else if board.workflow_waiting.contains(&task.statement.body.born) {
-        WorkAvailability::Waiting
+        match board.design_cycles.get(&task.statement.body.born) {
+            Some(wire::rooms::DesignCycle::GatheringInput) => WorkAvailability::Passive,
+            _ => WorkAvailability::Waiting,
+        }
     } else if board.blocked.contains(&task.statement.body.born) {
         WorkAvailability::Blocked
     } else if workflow.phase.as_str() == "review" {
