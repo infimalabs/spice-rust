@@ -19,12 +19,6 @@ try {
 }
 ```
 
-Playwright starts Chromium with `--use-mock-keychain --password-store=basic`,
-so these checks never read the macOS login Keychain. A lane shell that starts
-a Chromium executable directly without `--use-mock-keychain` is refused with
-`browser::keychain-unmocked`; such a launch would make macOS ask the operator
-for their Keychain password.
-
 `spice dev xtask -- app-demo` supplies `appUrl`. It stages the worktree's
 current app sources itself before it serves anything, so an app source edit is
 visible without a separate `spice dev xtask -- app`; its

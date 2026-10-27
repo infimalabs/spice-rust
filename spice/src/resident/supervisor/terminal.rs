@@ -201,11 +201,6 @@ impl Terminal {
     }
 
     fn run_command(&self, call: &ShellCall, control: &Control) -> Run {
-        if cfg!(target_os = "macos")
-            && let Some(refusal) = spice::browser_launch::refusal(&call.command)
-        {
-            return Run::Ended(Report::refused(&refusal));
-        }
         let service = matches!(call.lifetime, Lifetime::Service);
         let (task, service) = match &self.service_authority {
             Some(authority) => match authority.admit_job(service) {
