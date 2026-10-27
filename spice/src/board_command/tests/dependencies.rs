@@ -809,40 +809,44 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
     clean(&root, bus);
 }
 
+/// Settled work stays ineligible on every named route, and each refusal names
+/// the boundary with the exact `task capture` command for its route.
 #[test]
-fn named_capture_of_a_settled_task_is_refused_as_ineligible_not_unknown() {
+fn a_named_claim_of_settled_work_names_the_capture_command_for_its_route() {
     let (root, bus, epoch, seats) = fixture("capture-settled", 1);
     let lane = Actor::Lane(seats[0].lane);
     let task = todo_task(&bus, epoch, "SCOPE-settled1", "Settled");
     claim_and_complete_task(&bus, epoch, &seats[0], &lane, &task);
     super::read_scope::append_terminal_tasks(&bus, 8);
-    let available = board(&bus, epoch, lane.clone());
-    let heads = at(&available, &task);
-    let rule: Name = "capture".parse().expect("capture rule");
-    let outcome = issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimWin,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-            Witness::Eligibility { rule: rule.clone() },
-            residency(&available, &seats[0]),
-        ],
-        &ClaimWin {
-            rule,
-            recovery: None,
-        },
-    );
-    assert!(
-        matches!(
-            &outcome,
-            Outcome::Refusal(Refusal::Bare { diagnostic })
-                if diagnostic.reason() == "claim::capture-ineligible"
-        ),
-        "{outcome:?}"
-    );
+    let capture = format!("spice task capture {task}");
+    let steal = format!("{capture} --steal");
+    let assert_remedy = |refusal: &wire::Refusal, reason: &str, repair: &str| {
+        assert_eq!(refusal.reason(), reason);
+        let remedy = refusal.explanation();
+        assert!(
+            remedy.contains(repair) && remedy.contains("gathering input"),
+            "{reason}: {remedy}"
+        );
+        assert!(!remedy.contains("task steal"), "{reason}: {remedy}");
+    };
+    for (rule, reason, repair) in [
+        ("capture", "claim::capture-ineligible", &capture),
+        ("recover", "claim::capture-ineligible", &capture),
+        ("steal", "claim::steal-ineligible", &steal),
+        (RECOVER_STEAL_RULE, "claim::steal-ineligible", &steal),
+    ] {
+        match super::room::design_standing::win_named(&bus, epoch, &seats[0], &task, rule) {
+            Outcome::Refusal(refusal) => assert_remedy(&refusal, reason, repair),
+            other => panic!("{rule} admitted settled work: {other:?}"),
+        }
+    }
+    match recovery_preflight(&board(&bus, epoch, lane), &task) {
+        Err(Outcome::Refusal(refusal)) => {
+            assert_remedy(&refusal, "claim::capture-ineligible", &capture);
+            assert!(refusal.explanation().contains(&steal));
+        }
+        Err(other) => panic!("sealed recovery refused otherwise: {other:?}"),
+        Ok(_) => panic!("sealed recovery admitted settled work"),
+    }
     clean(&root, bus);
 }

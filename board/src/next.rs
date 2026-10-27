@@ -1017,9 +1017,10 @@ pub fn eligible_entry(
 /// Whether one named entry may be captured or recovered.
 ///
 /// [`eligible_entry`], except that an open Design still gathering input is
-/// admitted: claiming it by name forces its pass before it steeps, while
-/// allocation, steal, and work-driven starts wait until it is ready. A Design
-/// awaiting decision or waiting on released work stays [held](design_hold).
+/// admitted: claiming it by name, by capture or steal, forces its pass before
+/// it steeps, while allocation and work-driven starts wait until it is ready.
+/// A Design awaiting decision or waiting on released work stays
+/// [held](design_hold).
 #[must_use]
 pub fn capturable_entry(
     satisfied: &ResolvedTasks,

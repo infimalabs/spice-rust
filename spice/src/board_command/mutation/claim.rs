@@ -205,11 +205,7 @@ pub(super) fn prepare_capture_claim<'a>(
         command.actor(),
         &snapshot.answer.environment(),
     ) {
-        return Err(refusal(
-            "claim::capture-ineligible",
-            Some(selected.handle().to_string()),
-            "atomically claim only a public, ready task whose environment requirements and dependencies are satisfied",
-        ));
+        return Err(named_claim_ineligible(selected, false));
     }
     // Ordinary add-and-claim records the clean allocator boundary. Compound
     // capture and dirty adoption both retain loose commits; dirty adoption also
@@ -748,23 +744,21 @@ fn named_claim_selection<'a>(
     let environment = snapshot.answer.environment();
     let satisfied = board::resolved_tasks(&snapshot.entries);
     refuse_held_design(entry, &satisfied)?;
-    let (admitted, reason, remedy) = match possession {
+    let (admitted, stealing) = match possession {
         Possession::Steal | Possession::RecoverSteal => (
             board::stealable_entry(&satisfied, entry, command.actor(), &environment),
-            "claim::steal-ineligible",
-            "capture --steal only a ready, pending task, held or not",
+            true,
         ),
         Possession::Recover | Possession::Capture => (
             board::capturable_entry(&satisfied, entry, command.actor(), &environment),
-            "claim::capture-ineligible",
-            "capture only an unclaimed, ready, pending task",
+            false,
         ),
         Possession::Next => unreachable!("allocator possession returned above"),
     };
     if admitted {
         Ok(entry)
     } else {
-        Err(refusal(reason, Some(task.to_string()), remedy))
+        Err(named_claim_ineligible(entry, stealing))
     }
 }
 
@@ -784,6 +778,40 @@ pub(in crate::board_command) fn refuse_held_design(
         ));
     }
     Ok(())
+}
+
+/// The refusal of a named claim the board does not admit, naming the boundary
+/// and the exact command for the route that does.
+///
+/// Capture takes an unclaimed task that is ready, or an undeferred open Design
+/// still gathering input; steal takes the same from any holder. Deferred,
+/// dependency-blocked, environment-held, hidden, and settled work refuses
+/// both, as a held Design does through [`refuse_held_design`].
+pub(in crate::board_command) fn named_claim_ineligible(
+    entry: &Entry,
+    stealing: bool,
+) -> Outcome<CommandAnswer> {
+    let handle = entry.handle();
+    let (reason, remedy) = if stealing {
+        (
+            "claim::steal-ineligible",
+            format!(
+                "spice task capture {handle} --steal takes a ready task or an undeferred open \
+                 Design gathering input, held or not; wake deferred work and settle its \
+                 prerequisites first"
+            ),
+        )
+    } else {
+        (
+            "claim::capture-ineligible",
+            format!(
+                "spice task capture {handle} claims an unclaimed ready task or an undeferred open \
+                 Design gathering input; take a held one with spice task capture {handle} --steal, \
+                 and wake deferred work and settle its prerequisites first"
+            ),
+        )
+    };
+    refusal(reason, Some(handle.to_string()), &remedy)
 }
 
 fn claim_residency(

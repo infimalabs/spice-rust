@@ -245,8 +245,9 @@ owns each rule summarized here.
 
   1. **Gathering input**: contributors act. Lanes contribute, the operator
      posts in the room, or tells a lane to capture it. Allocation waits, but
-     a lane may claim it by name with `spice task capture`, or take it from
-     its holder with `spice task steal`, and end that pass with one proposal.
+     a lane may claim it by name with `spice task capture DESIGN`, or take it
+     from its holder with `spice task capture DESIGN --steal`, and end that
+     pass with one proposal.
   2. **Ready for proposal**: a lane acts. Allocation offers the active Design;
      its holder ends the pass with one `design propose`, which releases
      the claim. Freeing or lapsing instead abandons the pass, and the cycle

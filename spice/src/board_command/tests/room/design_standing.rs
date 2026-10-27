@@ -16,8 +16,8 @@ pub(super) fn born(task: &TaskHandle) -> TaskStamp {
 }
 
 /// Win `task` for `seat` under the named `rule`, as `spice task capture` and
-/// `spice task steal` submit it; a recovery rule carries a well-formed
-/// transaction so the claim reaches selection.
+/// `spice task capture --steal` submit it; a recovery rule carries a
+/// well-formed transaction so the claim reaches selection.
 pub(in super::super) fn win_named(
     bus: &Bus,
     epoch: CanonicalUuid,
