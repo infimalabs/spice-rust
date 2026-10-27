@@ -518,10 +518,15 @@ fn append_prepared_task(
         )
         .map_err(|error| store_fault("task::add-build", &error.to_string()))?;
     let statement = prepared.statement;
-    write.task_head(added, move |position| TaskHead {
-        queue_origin: position,
-        revision: position,
-        ..statement
+    write.task_head(added, move |position| {
+        published_statement(
+            TaskHead {
+                queue_origin: position,
+                revision: position,
+                ..statement
+            },
+            position,
+        )
     });
     write.workflow_head(prepared.born, added, move |_| prepared.workflow);
     Ok(added)

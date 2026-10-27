@@ -730,6 +730,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                         }),
                     }],
                     rechecks: 2,
+                    opened: Some(wire::Seq::new(7).expect("a fact position")),
                 }),
                 document_slug: None,
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],

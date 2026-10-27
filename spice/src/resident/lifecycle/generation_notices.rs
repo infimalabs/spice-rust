@@ -55,12 +55,14 @@ fn hold_places(hold: &wire::TasteHold) -> Vec<String> {
         .collect()
 }
 
-/// Holds a lane's statement write after `cursor` left freshly standing.
+/// Holds a lane's statement write after `cursor` opened.
 ///
-/// A hold with no rechecks was opened by the write that established the
-/// statement head, so that write's lane learns of it at its current occupant,
-/// whichever lane holds or will hold the task. The first pass has no earlier
-/// observation and announces none.
+/// A hold records the fact of the policy-reading write that opened it, so the
+/// lane that wrote that fact learns of the hold at its current occupant,
+/// whichever lane holds or will hold the task. A later write that carried the
+/// hold through, such as a dependency edit, is never taken for its author. A
+/// hold recorded before holds named their opening announces nothing, and the
+/// first pass has no earlier observation and announces none.
 fn taste_holds(
     bus: &Bus,
     snapshot: &bus::TaskSnapshot,
@@ -73,19 +75,15 @@ fn taste_holds(
         .tasks()
         .iter()
         .filter_map(|heads| {
-            let statement = heads.statement();
-            let hold = statement.body().taste.as_ref()?;
-            if hold.rechecks != 0 || statement.position() <= cursor {
-                return None;
-            }
-            let Some(wire::Actor::Lane(lane)) = snapshot
-                .facts()
-                .at(statement.position())
-                .map(|envelope| &envelope.actor)
+            let statement = heads.statement().body();
+            let hold = statement.taste.as_ref()?;
+            let opening = hold.opened.filter(|opening| *opening > cursor)?;
+            let Some(wire::Actor::Lane(lane)) =
+                snapshot.facts().at(opening).map(|envelope| &envelope.actor)
             else {
                 return None;
             };
-            Some((*lane, statement, hold))
+            Some((*lane, opening, statement, hold))
         })
         .collect::<Vec<_>>();
     if opened.is_empty() {
@@ -99,20 +97,19 @@ fn taste_holds(
     };
     Ok(opened
         .into_iter()
-        .filter_map(|(lane, statement, hold)| {
+        .filter_map(|(lane, opening, statement, hold)| {
             let occupant = residency
                 .body()
                 .lanes
                 .iter()
                 .find(|durable| durable.lane == lane)?
                 .occupant?;
-            let body = statement.body();
             Some((
                 lane,
                 TasteHoldNotice {
                     occupant,
-                    task: TaskHandle::for_project(&body.project, &body.born).to_string(),
-                    position: statement.position().get(),
+                    task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
+                    position: opening.get(),
                     matches: hold_places(hold),
                 },
             ))

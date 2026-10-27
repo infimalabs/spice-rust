@@ -533,10 +533,15 @@ fn create_followup(
             FactCause::Pending(context.reviewed),
         )
         .map_err(|error| store_fault("review::followup-build", &error.to_string()))?;
-    write.task_head(added, move |position| TaskHead {
-        queue_origin: position,
-        revision: position,
-        ..statement
+    write.task_head(added, move |position| {
+        published_statement(
+            TaskHead {
+                queue_origin: position,
+                revision: position,
+                ..statement
+            },
+            position,
+        )
     });
     write.workflow_head(followup.task.clone(), added, move |_| workflow);
     Ok(())

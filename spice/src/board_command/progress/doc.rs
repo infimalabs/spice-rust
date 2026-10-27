@@ -438,9 +438,14 @@ fn edit_doc_task(
             cause,
         )
         .map_err(|error| store_fault("doc::edit-build", &error.to_string()))?;
-    write.task_head(edited, move |position| TaskHead {
-        revision: position,
-        ..statement
+    write.task_head(edited, move |position| {
+        published_statement(
+            TaskHead {
+                revision: position,
+                ..statement
+            },
+            position,
+        )
     });
     Ok(edited)
 }
@@ -486,25 +491,30 @@ fn add_doc_task(
     let statement_task = spec.born.clone();
     let statement_origin = origin.provenance.clone();
     let statement_creation = creation.context();
-    write.task_head(added, move |position| TaskHead {
-        preparation: None,
-        intent: None,
-        born: statement_task,
-        queue_origin: position,
-        title: spec.title,
-        pitch: spec.pitch,
-        description: spec.description,
-        acceptance: spec.acceptance,
-        requirements: wire::EnvironmentRequirements::default(),
-        project: spec.project,
-        filing: wire::TaskFiling::Filed,
-        priority: spec.priority,
-        taste: spec.taste,
-        document_slug: Some(spec.document_slug),
-        dependencies: spec.dependencies,
-        provenance: statement_origin,
-        creation: statement_creation,
-        revision: position,
+    write.task_head(added, move |position| {
+        published_statement(
+            TaskHead {
+                preparation: None,
+                intent: None,
+                born: statement_task,
+                queue_origin: position,
+                title: spec.title,
+                pitch: spec.pitch,
+                description: spec.description,
+                acceptance: spec.acceptance,
+                requirements: wire::EnvironmentRequirements::default(),
+                project: spec.project,
+                filing: wire::TaskFiling::Filed,
+                priority: spec.priority,
+                taste: spec.taste,
+                document_slug: Some(spec.document_slug),
+                dependencies: spec.dependencies,
+                provenance: statement_origin,
+                creation: statement_creation,
+                revision: position,
+            },
+            position,
+        )
     });
     write.workflow_head(spec.born, added, move |_| WorkflowHead {
         flow: spec.flow,

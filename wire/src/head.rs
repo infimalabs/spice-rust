@@ -280,9 +280,33 @@ pub struct TasteHold {
     pub matches: Vec<TasteMatch>,
     /// Statement revisions read since the hold began that still matched.
     pub rechecks: u32,
+    /// Fact of the statement write that opened this hold.
+    ///
+    /// Writes that move the statement without reading the taste policy, such
+    /// as dependency edits, carry the hold through unchanged, so only this
+    /// write's actor authored what the hold found. Holds recorded before this
+    /// field omit it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub opened: Option<Seq>,
 }
 
 impl TasteHold {
+    /// Record `fact` as the write that opened this hold, when this write is
+    /// the one that opened it.
+    ///
+    /// Only a policy-reading write calls this. A hold it opened has no rechecks
+    /// and no opening fact yet; a hold it rechecked has at least one recheck
+    /// and keeps whatever opening fact it already carries.
+    pub fn record_opening(&mut self, fact: Seq) {
+        if self.rechecks == 0 && self.opened.is_none() {
+            self.opened = Some(fact);
+        }
+    }
+
     /// Withhold what each match found, keeping where it sits and which taste
     /// it names.
     ///

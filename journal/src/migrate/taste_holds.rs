@@ -93,6 +93,7 @@ impl Audits {
             plan: Some(plan),
             matches,
             rechecks: 0,
+            opened: None,
         })
     }
 
@@ -121,6 +122,7 @@ impl Audits {
             plan: Some(plan),
             matches,
             rechecks,
+            opened: None,
         })
     }
 }
