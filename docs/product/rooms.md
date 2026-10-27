@@ -297,7 +297,7 @@ owns each rule summarized here.
      recorded meanwhile counts then.
 
   A passive Design keeps its cycle and history but no lane may possess it
-  until its working group is Explore or Converge.
+  until its working group is Explore or Converge or it leaves every group.
 
   A Design
   [stays open until the operator settles it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
@@ -358,25 +358,27 @@ owns each rule summarized here.
   disband`, and `spice group stance`. Disbanding leaves every Design ungrouped;
   open consoles, their order, drafts, speech, and focus are this browser's
   foreground and are never shared.
-- **Design standing.** An open Design in an Explore or Converge group is
+- **Design standing.** An open Design outside every group, or in an Explore or
+  Converge group, is
   [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
-  the allocator offers it, and capture, steal, and a nudge may reach it. A
-  Design in Passive or outside every group is passive, and those possession
-  paths refuse (`claim::design-passive`). A fresh group starts in Passive. The operator groups a
-  Design with `spice group move DESIGN --to GROUP` or `--new`, then chooses its
-  group's activity with `spice group stance GROUP passive|explore|converge`.
-  Moving to Passive, into an existing Passive group, or out of every group makes the
-  Design passive. If a lane holds it, the change sends that holder one stop
-  direction, queued for the lane's next seat when vacant. The holder
-  checkpoints and runs ordinary `spice task
+  the allocator offers it once its pass cycle is ready, and capture, steal,
+  and a nudge may reach it, so no Design needs a group to reach its proposal.
+  A Design in a Passive group is passive, and those possession paths refuse
+  (`claim::design-passive`). A fresh group starts in Passive. The operator
+  groups a Design with `spice group move DESIGN --to GROUP` or `--new`, then
+  chooses its group's activity with `spice group stance GROUP
+  passive|explore|converge`. Setting a group Passive, or moving a Design into
+  a new or existing Passive group, makes the Design passive. If a lane holds
+  it, the change sends that holder one stop direction, queued for the lane's
+  next seat when vacant. The holder checkpoints and runs ordinary `spice task
   free DESIGN`, which parks unpublished commits and dirty work; its claim stays
   authoritative until then. A stance change names any held Design whose
   shelving is still owed; setting the group Passive again shelves it. Explore
-  or Converge makes it eligible again with its room, candidates, outputs,
-  history, and authorization unchanged.
+  or Converge, a move out of every group, or a disband makes it eligible again
+  with its room, candidates, outputs, history, and authorization unchanged.
 - **Opportunistic OOPS Design.** Every `task oops` report is a Plan prepared
   under it, so it is an ordinary Design with automatic intake. It has no
-  candidate until it is moved to an Explore or Converge group and a holder
+  candidate until a holder
   proposes: the holder triages the pending reports as a whole, gives each
   cause one acceptance-bearing output, and names the reports to reject, as its
   statement requires. Its reports are its input, so it never waits to steep:

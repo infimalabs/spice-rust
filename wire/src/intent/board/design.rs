@@ -86,14 +86,15 @@ pub fn released_construction_root<'a>(
     .then_some(&preparation.parent)
 }
 
-/// One Design's lifecycle standing. An open Design is passive outside every
-/// working group and active inside one; only the operator concludes it.
+/// One Design's lifecycle standing. An open Design is passive while a Passive
+/// working group holds it and active otherwise; only the operator concludes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DesignStanding {
-    /// Open outside every working group: no path grants it a claim.
+    /// Open in a Passive working group: no path grants it a claim.
     Passive,
-    /// Open inside a working group: lanes may claim it or be nudged onto it.
+    /// Open outside every working group or in an Explore or Converge one:
+    /// lanes may claim it or be nudged onto it.
     Active,
     /// The operator concluded it done.
     Done,
@@ -165,12 +166,8 @@ impl DesignStanding {
 impl std::fmt::Display for DesignStanding {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Passive => {
-                formatter.write_str("open passive (no Explore or Converge working group)")
-            }
-            Self::Active => {
-                formatter.write_str("open active (in an Explore or Converge working group)")
-            }
+            Self::Passive => formatter.write_str("open passive (in a Passive working group)"),
+            Self::Active => formatter.write_str("open active"),
             Self::Done => formatter.write_str("concluded done"),
             Self::Collapsed {
                 reason: Some(reason),

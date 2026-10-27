@@ -1045,10 +1045,14 @@ impl TaskFacts {
             .unwrap_or(journal::crossing::rooms::WorkingGroupStance::Passive)
     }
 
-    /// Whether `task` is active under its current working-group stance.
+    /// Whether `task` is active: a Design outside every group is, and a
+    /// grouped Design follows its group's stance.
     #[must_use]
     pub fn design_is_active(&self, task: &journal::crossing::TaskStamp) -> bool {
-        self.design_stance(task).is_active()
+        self.indexes
+            .design_stances
+            .get(task)
+            .is_none_or(|stance| stance.is_active())
     }
 
     /// One open Design's standing and pass-cycle evidence, judging maturity

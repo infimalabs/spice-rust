@@ -211,11 +211,12 @@ impl WorkingGroupPartition {
             .find(|group| group.anchors.contains(design))
     }
 
-    /// Whether `design` is active under its current working-group stance.
+    /// Whether `design` is active: a Design outside every group is, and a
+    /// grouped Design follows its group's stance.
     #[must_use]
     pub fn design_is_active(&self, design: &RoomAnchor) -> bool {
         self.holder(design)
-            .is_some_and(|group| group.stance.is_active())
+            .is_none_or(|group| group.stance.is_active())
     }
 
     /// Set a standing group's stance, saying whether it changed.

@@ -475,7 +475,7 @@ fn disbanding_a_group_leaves_every_design_ungrouped_under_the_partition_guard() 
     for design in [&first, &second] {
         let row = at(&visible, design);
         assert!(!row.grouped);
-        assert!(!row.design_active);
+        assert!(row.design_active, "a disband leaves its Designs active");
     }
     assert_eq!(
         room_heads(&bus, &[first_born, second_born]),

@@ -57,8 +57,8 @@ pub enum WorkAvailability {
     /// Open and unclaimed, following normal Plan/Design control or a
     /// prerequisite chain that still reaches advancing work.
     Waiting,
-    /// Open and unclaimed, a Design outside every working group: no lane can
-    /// acquire it until the operator moves it into one.
+    /// Open and unclaimed, a Design a Passive working group holds: no lane can
+    /// acquire it until the operator changes that group's stance or moves it out.
     Passive,
     /// Open and unclaimed, past the gate, a Design whose remaining conclusion
     /// waits on the operator's selection of an output it constructed.
@@ -357,7 +357,7 @@ impl WorkCounts {
         self.workflow_waiting
     }
 
-    /// Open Designs outside every working group.
+    /// Open Designs a Passive working group holds.
     #[must_use]
     pub const fn passive(self) -> usize {
         self.passive
