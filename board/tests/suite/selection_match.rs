@@ -86,12 +86,8 @@ fn entry(name: &str, project: &str, queue_origin: u64, priority: Option<TaskPrio
     admitted(head, None)
 }
 
-fn handoff(entry: Entry, kind: board::PhaseHandoffKind, until: &str) -> Entry {
-    entry.with_phase_handoff(Some(board::PhaseHandoff::new(
-        kind,
-        Actor::Spice,
-        instant(until),
-    )))
+fn handoff(entry: Entry, until: &str) -> Entry {
+    entry.with_phase_handoff(Some(board::PhaseHandoff::new(Actor::Spice, instant(until))))
 }
 
 fn now() -> Instant {
@@ -140,7 +136,7 @@ fn a_higher_score_beats_an_older_row_in_either_order() {
 }
 
 #[test]
-fn priority_weight_class_and_continuation_each_beat_any_score() {
+fn priority_weight_and_class_each_beat_any_score() {
     let urgent = entry("BOARD-z1", "board.alpha", 1, Some(TaskPriority::High));
     let favored = entry("BOARD-a1", "board.alpha", 1, None);
     let handle = favored.handle().as_str().to_owned();
@@ -154,21 +150,9 @@ fn priority_weight_class_and_continuation_each_beat_any_score() {
     assert_eq!(select(&entries, Some(&handle)).born(), weighted.born());
 
     let ordinary = entry("BOARD-z1", "board.alpha", 1, None);
-    let favored_last_resort = handoff(
-        favored.clone(),
-        board::PhaseHandoffKind::Independent,
-        "2026-08-01T05:00:00.000Z",
-    );
+    let favored_last_resort = handoff(favored, "2026-08-01T05:00:00.000Z");
     let entries = [favored_last_resort, ordinary.clone()];
     assert_eq!(select(&entries, Some(&handle)).born(), ordinary.born());
-
-    let continuation = handoff(
-        entry("BOARD-z1", "board.alpha", 1, None),
-        board::PhaseHandoffKind::Continue,
-        "2026-08-01T07:00:00.000Z",
-    );
-    let entries = [favored, continuation.clone()];
-    assert_eq!(select(&entries, Some(&handle)).born(), continuation.born());
 }
 
 #[test]

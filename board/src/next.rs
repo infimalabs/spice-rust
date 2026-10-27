@@ -343,7 +343,6 @@ pub struct Selection<'a> {
     effective_priority: i64,
     downstream_weight: usize,
     last_resort: bool,
-    preferred: bool,
     queued_at: Option<Instant>,
 }
 
@@ -383,11 +382,11 @@ impl<'a> Selection<'a> {
 /// Select the highest-ranked subscribed and eligible task for `actor`.
 ///
 /// This is the only allocation policy in `board`. It derives completed
-/// dependencies from the same supplied head set, applies ordinary task and
-/// environment filters, then ranks a prior claimant's continuation first.
-/// Independent handoffs back to their prior claimant, self-authored reviews,
-/// and explicitly freed rows form the last-resort class. Effective priority and
-/// downstream weight follow, then the oldest queue origin, then the handle.
+/// dependencies from the same supplied head set and applies ordinary task and
+/// environment filters. Independent handoffs back to their prior claimant,
+/// self-authored reviews, and explicitly freed rows form the last-resort class.
+/// Effective priority and downstream weight follow, then the oldest queue
+/// origin, then the handle.
 /// Identical evidence always returns the same task regardless of slice order.
 #[must_use]
 pub fn select<'a>(
@@ -626,7 +625,6 @@ fn indexed_candidates<'a>(
             urgency: Urgency::from_heads(entry),
             effective_priority: scores.effective_priorities[entry_index],
             downstream_weight: scores.downstream_weights[entry_index],
-            preferred: is_preferred_continuation(entry, actor),
             last_resort: is_independent_handoff(entry, actor) || is_released_by(entry, actor),
             queued_at: entry.queued_at(),
         })
@@ -635,29 +633,23 @@ fn indexed_candidates<'a>(
 
 /// Index of the one candidate the allocator hands out first.
 ///
-/// A prior claimant's continuation outranks other work. Within that class,
-/// ordinary work outranks last-resort rows, then effective priority and
+/// Ordinary work outranks last-resort rows, then effective priority and
 /// downstream weight. In that group, rows whose wait since queue origin
 /// exceeds the policy's horizon are overdue and rank oldest first above any
 /// score; otherwise the claimant's `match_score` (higher first, absent zero),
 /// asked of every row in the group, decides. The tied rows then fall to the
 /// oldest queue origin, then the handle.
 fn choose(candidates: &[Selection<'_>], ranking: Ranking<'_>) -> Option<usize> {
-    let preferred = candidates.iter().any(|candidate| candidate.preferred);
-    let peer_class = candidates
-        .iter()
-        .filter(|candidate| candidate.preferred == preferred)
-        .any(|candidate| !candidate.last_resort);
+    let peer_class = candidates.iter().any(|candidate| !candidate.last_resort);
     let effective_priority = candidates
         .iter()
-        .filter(|candidate| candidate.preferred == preferred && candidate.last_resort != peer_class)
+        .filter(|candidate| candidate.last_resort != peer_class)
         .map(|candidate| candidate.effective_priority)
         .max()?;
     let downstream_weight = candidates
         .iter()
         .filter(|candidate| {
-            candidate.preferred == preferred
-                && candidate.last_resort != peer_class
+            candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
         })
         .map(|candidate| candidate.downstream_weight)
@@ -666,8 +658,7 @@ fn choose(candidates: &[Selection<'_>], ranking: Ranking<'_>) -> Option<usize> {
         .iter()
         .enumerate()
         .filter(|(_, candidate)| {
-            candidate.preferred == preferred
-                && candidate.last_resort != peer_class
+            candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
                 && candidate.downstream_weight == downstream_weight
         })
@@ -735,15 +726,9 @@ fn oldest(tied: &[(usize, &Selection<'_>)]) -> Option<usize> {
 /// ownership rule to any phase name.
 #[must_use]
 pub fn is_independent_handoff(entry: &Entry, actor: &Actor) -> bool {
-    entry.phase_handoff().is_some_and(|handoff| {
-        handoff.kind() == crate::PhaseHandoffKind::Independent && handoff.prior() == actor
-    })
-}
-
-fn is_preferred_continuation(entry: &Entry, actor: &Actor) -> bool {
-    entry.phase_handoff().is_some_and(|handoff| {
-        handoff.kind() == crate::PhaseHandoffKind::Continue && handoff.prior() == actor
-    })
+    entry
+        .phase_handoff()
+        .is_some_and(|handoff| handoff.prior() == actor)
 }
 
 /// Dense live-graph indexes used by every repeated ranking traversal.
@@ -916,13 +901,7 @@ fn handoff_admits(entry: &Entry, actor: &Actor, now: Option<Instant>) -> bool {
     let Some(handoff) = entry.phase_handoff() else {
         return true;
     };
-    if now >= handoff.until() {
-        return true;
-    }
-    match handoff.kind() {
-        crate::PhaseHandoffKind::Continue => handoff.prior() == actor,
-        crate::PhaseHandoffKind::Independent => handoff.prior() != actor,
-    }
+    now >= handoff.until() || handoff.prior() != actor
 }
 
 fn eligible(entry: &Entry, completed: &ResolvedTasks) -> bool {

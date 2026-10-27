@@ -102,22 +102,12 @@ pub struct Dependency {
     pub after: TaskStamp,
 }
 
-/// Ownership preference carried by a phase transition or a Design nudge while
-/// its handoff window is open.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PhaseHandoffKind {
-    /// The named lane should take the row: the recipient of a Design nudge.
-    /// A completion that continues its own task carries its claim instead and
-    /// opens no window.
-    Continue,
-    /// Another eligible lane should take the next phase when one is available.
-    Independent,
-}
-
-/// Durable phase-transition evidence projected into allocator input.
+/// Durable phase-transition evidence projected into allocator input: while
+/// its window is open, another eligible lane should take the phase the prior
+/// claimant's completion entered. A completion that continues its own task
+/// carries its claim instead and opens no window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhaseHandoff {
-    kind: PhaseHandoffKind,
     prior: wire::Actor,
     until: wire::Instant,
 }
@@ -125,14 +115,8 @@ pub struct PhaseHandoff {
 impl PhaseHandoff {
     /// Construct one handoff from the completed phase's durable boundary.
     #[must_use]
-    pub const fn new(kind: PhaseHandoffKind, prior: wire::Actor, until: wire::Instant) -> Self {
-        Self { kind, prior, until }
-    }
-
-    /// Ownership policy for the new phase.
-    #[must_use]
-    pub const fn kind(&self) -> PhaseHandoffKind {
-        self.kind
+    pub const fn new(prior: wire::Actor, until: wire::Instant) -> Self {
+        Self { prior, until }
     }
 
     /// Claimant that completed the prior phase.

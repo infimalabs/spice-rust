@@ -44,20 +44,9 @@ pub struct DesignNudged {
     /// take the Design.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<super::RoomAuthorityStamp>,
-    /// The lane the message went to; allocation briefly holds the Design for
-    /// it.
+    /// The lane the message went to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipient: Option<CanonicalUuid>,
-}
-
-/// The lane a Design's latest nudge messaged, and the nudge's position.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NudgeRecipient {
-    /// The messaged lane.
-    pub lane: CanonicalUuid,
-    /// The nudge's journal position.
-    pub nudged: Seq,
 }
 
 /// What one open Design's pass cycle waits on.
@@ -380,9 +369,6 @@ pub struct DesignCycleFacts {
     /// Position of the operator's latest decision of one of its proposals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<Seq>,
-    /// The lane the latest nudge messaged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recipient: Option<NudgeRecipient>,
 }
 
 impl DesignCycleFacts {
@@ -620,9 +606,6 @@ impl DesignCycles {
         } else if let Some(nudged) = fact.as_body::<DesignNudged>() {
             let design = self.design(&nudged.design);
             design.facts.nudged = true;
-            design.facts.recipient = nudged
-                .recipient
-                .map(|lane| NudgeRecipient { lane, nudged: seq });
             design.input(seq);
         } else if matches!(actor, Actor::Operator | Actor::Human(_)) {
             self.observe_operator_post(seq, fact);
