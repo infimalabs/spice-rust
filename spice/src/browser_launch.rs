@@ -37,9 +37,16 @@ const CHROMIUM_EXECUTABLES: [&str; 14] = [
 ];
 
 /// Words that lead into the command they precede rather than naming it.
-const PREFIXES: [&str; 11] = [
-    "!", "{", "command", "do", "else", "env", "exec", "nohup", "then", "time", "elif",
+const PREFIXES: [&str; 14] = [
+    "!", "{", "command", "do", "elif", "else", "env", "exec", "if", "nohup", "then", "time",
+    "until", "while",
 ];
+
+/// `timeout` options that take the following word as their value.
+const TIMEOUT_VALUED: [&str; 2] = ["-k", "-s"];
+
+/// `sudo` options that take the following word as their value.
+const SUDO_VALUED: [&str; 10] = ["-C", "-D", "-g", "-p", "-R", "-r", "-T", "-t", "-U", "-u"];
 
 /// The refusal for an argument vector the lane's shell wrapper is about to
 /// run: a shell given `-c SCRIPT` is judged by its script, any other vector
@@ -66,9 +73,7 @@ pub fn refusal(script: &str) -> Option<String> {
 }
 
 fn simple_command_refusal(words: &[String]) -> Option<String> {
-    let start = words.iter().position(|word| {
-        !is_assignment(word) && !word.starts_with('-') && !PREFIXES.contains(&word.as_str())
-    })?;
+    let start = command_start(words)?;
     let executable = Path::new(&words[start]).file_name()?.to_str()?;
     let family = CHROMIUM_EXECUTABLES
         .iter()
@@ -95,53 +100,164 @@ fn is_assignment(word: &str) -> bool {
     })
 }
 
+/// The index of the word a simple command runs: past assignments, options,
+/// the words that lead into another command, and the options and duration
+/// `timeout` and `sudo` take before theirs.
+fn command_start(words: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while let Some(word) = words.get(index) {
+        let word = word.as_str();
+        index += 1;
+        if is_assignment(word) || word.starts_with('-') || PREFIXES.contains(&word) {
+            continue;
+        }
+        match word {
+            "timeout" => index = skip_options(words, index, &TIMEOUT_VALUED) + 1,
+            "sudo" => index = skip_options(words, index, &SUDO_VALUED),
+            _ => return Some(index - 1),
+        }
+    }
+    None
+}
+
+/// The index past the options starting at `index`, a `valued` option with the
+/// word after it, through a closing `--`.
+fn skip_options(words: &[String], mut index: usize, valued: &[&str]) -> usize {
+    while let Some(word) = words.get(index).filter(|word| word.starts_with('-')) {
+        index += if valued.contains(&word.as_str()) {
+            2
+        } else {
+            1
+        };
+        if word == "--" {
+            break;
+        }
+    }
+    index
+}
+
 /// Split shell text into simple commands of unquoted words. Quotes and
 /// backslashes group and escape as the shell does; `;`, `&`, `|`, `(`, `)`,
-/// and newlines outside quotes end a simple command.
+/// and newlines outside quotes end a simple command. A `#` that starts a word
+/// comments out the rest of its line. The body of each `<<` or `<<-` heredoc
+/// is data: the lines after the redirecting line, through the one equal to
+/// the unquoted delimiter, start nothing, and an unterminated body runs to the
+/// end. A `<<<` here-string is one word.
 fn simple_commands(script: &str) -> Vec<Vec<String>> {
-    let mut commands = Vec::new();
-    let mut words = Vec::new();
-    let mut word = None::<String>;
+    let mut commands = Commands::default();
     let mut quote = None;
     let mut characters = script.chars();
     while let Some(character) = characters.next() {
         match (quote, character) {
             (Some('\''), '\'') | (Some('"'), '"') => quote = None,
-            (Some('\''), _) => word.get_or_insert_default().push(character),
+            (Some('\''), _) => commands.push(character),
             (Some('"'), '\\') => match characters.next() {
                 Some('\n') | None => {}
-                Some(escaped @ ('$' | '`' | '"' | '\\')) => {
-                    word.get_or_insert_default().push(escaped);
+                Some(escaped @ ('$' | '`' | '"' | '\\')) => commands.push(escaped),
+                Some(literal) => {
+                    commands.push('\\');
+                    commands.push(literal);
                 }
-                Some(literal) => word.get_or_insert_default().extend(['\\', literal]),
             },
             (_, '\\') => {
                 if let Some(escaped) = characters.next()
                     && escaped != '\n'
                 {
-                    word.get_or_insert_default().push(escaped);
+                    commands.push(escaped);
                 }
             }
-            (Some(_), _) => word.get_or_insert_default().push(character),
+            (Some(_), _) => commands.push(character),
             (None, '\'' | '"') => {
                 quote = Some(character);
-                word.get_or_insert_default();
+                commands.word.get_or_insert_default();
             }
-            (None, ';' | '&' | '|' | '(' | ')' | '\n') => {
-                words.extend(word.take());
-                if !words.is_empty() {
-                    commands.push(std::mem::take(&mut words));
+            (None, '#') if commands.word.is_none() => {
+                let rest = characters.as_str();
+                characters = rest[rest.find('\n').unwrap_or(rest.len())..].chars();
+            }
+            (None, '<') if characters.as_str().starts_with("<<") => {
+                characters.nth(1);
+                for _ in 0..3 {
+                    commands.push('<');
                 }
             }
-            (None, ' ' | '\t') => words.extend(word.take()),
-            (None, _) => word.get_or_insert_default().push(character),
+            (None, '<') if characters.as_str().starts_with('<') => {
+                characters.next();
+                commands.end_word();
+                let strip_tabs = characters.as_str().starts_with('-');
+                if strip_tabs {
+                    characters.next();
+                }
+                commands.delimiting = Some(strip_tabs);
+            }
+            (None, '\n') => {
+                commands.end_command();
+                characters = skip_bodies(characters.as_str(), commands.bodies.drain(..)).chars();
+            }
+            (None, ';' | '&' | '|' | '(' | ')') => commands.end_command(),
+            (None, ' ' | '\t') => commands.end_word(),
+            (None, _) => commands.push(character),
         }
     }
-    words.extend(word);
-    if !words.is_empty() {
-        commands.push(words);
+    commands.end_command();
+    commands.commands
+}
+
+/// The simple commands read so far, the one being read, and the heredocs its
+/// line opened.
+#[derive(Default)]
+struct Commands {
+    commands: Vec<Vec<String>>,
+    words: Vec<String>,
+    word: Option<String>,
+    /// After an unquoted `<<` (`false`) or `<<-` (`true`), until the
+    /// delimiter word that follows it ends.
+    delimiting: Option<bool>,
+    /// Each delimiter this line opened, and whether its body strips leading
+    /// tabs before comparing a line to it.
+    bodies: Vec<(String, bool)>,
+}
+
+impl Commands {
+    fn push(&mut self, character: char) {
+        self.word.get_or_insert_default().push(character);
     }
-    commands
+
+    fn end_word(&mut self) {
+        if let Some(word) = self.word.take() {
+            match self.delimiting.take() {
+                Some(strip_tabs) => self.bodies.push((word, strip_tabs)),
+                None => self.words.push(word),
+            }
+        }
+    }
+
+    fn end_command(&mut self) {
+        self.end_word();
+        self.delimiting = None;
+        if !self.words.is_empty() {
+            self.commands.push(std::mem::take(&mut self.words));
+        }
+    }
+}
+
+/// The text after each heredoc body in turn, read line by line from `rest`.
+fn skip_bodies(mut rest: &str, bodies: impl IntoIterator<Item = (String, bool)>) -> &str {
+    for (delimiter, strip_tabs) in bodies {
+        while !rest.is_empty() {
+            let (line, after) = rest.split_once('\n').unwrap_or((rest, ""));
+            rest = after;
+            let line = if strip_tabs {
+                line.trim_start_matches('\t')
+            } else {
+                line
+            };
+            if line == delimiter {
+                break;
+            }
+        }
+    }
+    rest
 }
 
 #[cfg(test)]
