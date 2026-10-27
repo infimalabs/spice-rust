@@ -180,6 +180,14 @@ island in their card corner. A single-image cover places that same unframed
 island over its image; it does not introduce another inset panel or action
 treatment.
 
+Every rendered code block carries a Copy action seated at its top-right edge,
+in the image Quote action's tapered shape, size, colours, and interaction
+treatment. The block, not its scrolling code, positions the action, so it
+stays put while wide code scrolls beneath it. It copies exactly the block's
+code text, trailing newline included, and the toast reports `Copied code` or
+the browser's refusal. Mermaid fences render as diagrams and inline code
+carries no action.
+
 Every visible inline atom keeps its hunk's `1.25` line pitch: links, task
 handles, emphasis, emoji, superscript and subscript, inline math, and quote
 attribution never enlarge a line box. The image row therefore begins after

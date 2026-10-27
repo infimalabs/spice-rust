@@ -17,6 +17,7 @@ use wire::{
 
 use crate::watchband;
 
+mod code_blocks;
 mod diagrams;
 mod image_flow;
 pub(crate) mod inline;
@@ -632,7 +633,7 @@ fn render<'r>(
         }
         event => inline_task_chips(event, resolves),
     });
-    let mut events = events.collect::<Vec<_>>();
+    let mut events = code_blocks::copyable(events);
     bind_adjacent_task_chip_punctuation(&mut events);
     accent_directive_contexts(&mut events, &outer_quotes);
     let mut html = String::new();
