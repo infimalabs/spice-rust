@@ -123,8 +123,7 @@ fn a_contribution_answer_is_the_source_retain_accepts_only_under_its_own_design(
     let (root, bus, epoch, seats) = fixture("preparation-contribution-source", 1);
     let lane = Actor::Lane(seats[0].lane);
     let design = add_controller(&bus, epoch, "Cited design", wire::TaskIntent::Design, None);
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &lane, &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let output = add_plan_output(&bus, epoch, &design, "Cited output");
     let other = add_controller(&bus, epoch, "Other design", wire::TaskIntent::Design, None);
     let evidence = |room: &TaskHandle, sources| {

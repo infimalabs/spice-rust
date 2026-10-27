@@ -222,7 +222,7 @@ direction's operator-authored instant. The card rests in the operator's neutral
 accent. Its body is the direction as one quote reading operator → receiving
 members, with that quote's Quote and Play controls and its steering quote
 target. One send fanned out to several members of a team is one card naming
-each of them, so a resend, a nudge, a reload, or an older page adds no second
+each of them, so a resend, a reload, or an older page adds no second
 card. The direction's relative age
 links to that card as any card's age does, and a quote of the same direction
 inside another card links there too; with no direction card in the team plane,

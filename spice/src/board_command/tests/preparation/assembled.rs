@@ -1,4 +1,4 @@
-//! The Design pass proposal `preparation propose` assembles from what the
+//! The Design pass proposal `design propose` assembles from what the
 //! pass built under the Design and what the Design's room holds.
 
 use super::contribution::{contribute, contributed, contribution_body};
@@ -78,7 +78,7 @@ fn built_pass(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Built {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(bus, epoch, &design);
+    stand_design(bus, epoch, &design);
     let input = add(
         bus,
         epoch,
@@ -97,7 +97,7 @@ fn built_pass(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Built {
     );
     let first = add_output_after(bus, epoch, &design, "Assembled first", vec![input.clone()]);
     let second = add_output_after(bus, epoch, &design, "Assembled second", Vec::new());
-    claim_task(bus, epoch, seat, &Actor::Lane(seat.lane), &design);
+    capture_for(bus, epoch, seat, &design);
     Built {
         design,
         input,

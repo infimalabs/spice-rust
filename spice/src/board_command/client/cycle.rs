@@ -10,7 +10,7 @@ use super::*;
 /// The holder's next command on an open Design: one proposal ends the pass.
 pub(super) fn design_holder_next(handle: &TaskHandle) -> String {
     format!(
-        "next: spice preparation propose JUSTIFICATION (assembles what this pass built and its \
+        "next: spice design propose JUSTIFICATION (assembles what this pass built and its \
          room; ends this pass of {handle} and releases its claim; only the operator concludes a \
          Design)"
     )

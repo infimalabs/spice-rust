@@ -8,7 +8,7 @@
 //!
 //! Term counts are canonical and fit-independent. A [`Prepared`] vector is a
 //! derived cache weighted under one fitted [`Generation`]; two vectors compare
-//! only when they share it. Every matcher (Design awareness and nudges, the
+//! only when they share it. Every matcher (Design awareness, the
 //! wake and `task next` match, and claim overlap) takes its fit and statement
 //! vectors from the one shared [`MatchCache`].
 

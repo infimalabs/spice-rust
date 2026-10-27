@@ -87,7 +87,7 @@ fn next_action(
             into a working group, so lanes are invited and one can claim it."
             .to_owned(),
         Some((cycle, availability)) => cycle_next(cycle, availability).to_owned(),
-        None => "Nudge this Design to ask one lane for its next contribution.".to_owned(),
+        None => "Tell a lane to capture this Design for its next pass.".to_owned(),
     }
 }
 

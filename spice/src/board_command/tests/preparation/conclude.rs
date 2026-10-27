@@ -122,8 +122,7 @@ fn the_operator_alone_concludes_an_unheld_open_design() {
         matches!(&by_lane, Err(wire::CommandRejection::Refusal(refusal)) if refusal.reason() == "command::authority"),
         "a lane principal never concludes a Design: {by_lane:?}"
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &lane, &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let held = conclude(&bus, epoch, Actor::Operator, &design, done_conclusion());
     assert_eq!(refusal_reason(&held), "task::conclude-claimed");
     let Outcome::Refusal(refusal) = &held else {
@@ -225,16 +224,13 @@ fn collapse_settles_unselected_tree_without_retracting_selected_output() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    capture_design(&bus, epoch, &seats[0], &design);
     let output = add_plan_output(&bus, epoch, &design, "Selected collapsed output");
     let spare = add_plan_output(&bus, epoch, &design, "Rejected collapsed Plan");
     let descendant = add_output(&bus, epoch, &spare, "Rejected Plan output");
     let unproposed = add_plan_output(&bus, epoch, &design, "Unproposed collapsed Plan");
     let unproposed_descendant = add_output(&bus, epoch, &unproposed, "Unproposed Plan output");
-    let (candidate, source) = retain_test_candidate(&bus, epoch, &seats, &design, &output, &spare);
-    record_test_critique(&bus, epoch, &seats, &design, &candidate, &source);
-    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let (candidate, _) = retain_test_candidate(&bus, epoch, &seats, &design, &output, &spare);
     select_candidate_outputs(&bus, epoch, &design, candidate, &[&output], 1);
     let output_stamp = output.born().expect("output stamp");
     assert!(!open_blocked(&bus, epoch).contains(&output_stamp));
@@ -328,7 +324,7 @@ fn terminal_standing_outranks_retained_group_on_board_and_group_reads() {
         design("Open grouped design"),
     );
     for design in [&collapsed, &done, &open] {
-        group_design(&bus, epoch, design);
+        stand_design(&bus, epoch, design);
     }
     let reason = "the premise did not hold";
     assert_committed(conclude(

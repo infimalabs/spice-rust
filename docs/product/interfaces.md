@@ -64,31 +64,28 @@ takes back as text (`--after`, a thread reference) admits only that spelling.
 The JSON outcome and wire payloads keep positions as integers. Persisted
 control strings keep their recorded decimal spelling.
 
-## Room and preparation commands
+## Room and Design commands
 
 The [room loop](rooms.md#l-room--conversation-at-a-task) states what these
 commands mean; this section fixes their operand bodies and bounds.
 
-### Preparation command bodies
+### Design command bodies
 
-`preparation critique`, `cover`, `decide`, and `withdraw` each take one
-canonical JSON object. Unknown fields refuse, nothing is lenient, and a
-malformed body refuses with `preparation::argument-invalid`, giving the parse
-detail and a complete body that command accepts. `preparation propose`
-assembles its body and takes only the holder's justification, `preparation
-adopt` takes two task handles, and `preparation nudge` one open Design's
-handle.
+`design decide` and `design withdraw` each take one canonical JSON object.
+Unknown fields refuse, nothing is lenient, and a malformed body refuses with
+`preparation::argument-invalid`, giving the parse detail and a complete body
+that command accepts. `design propose` assembles its body and takes only the
+holder's justification, and `task adopt` takes two task handles.
 
 - **Values.** A task is its bare birth stamp, without the project prefix
   (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`): nine characters, or eight for a
   retained millisecond identity, which is never reminted. A candidate is
   `{"controller": STAMP, "candidate": STAMP}`: the controlling Design's stamp
   and the nine-character native stamp naming the candidate under that
-  controller, as `preparation show` and a proposal's reply print it. Critique,
-  coverage, and decision identities are native base-52 sequences (`"1"`,
-  `"2"`, …), new within their candidate or, for a decision, within its
+  controller, as `design show` and a proposal's reply print it. Decision
+  identities are native base-52 sequences (`"1"`, `"2"`, …), new within their
   controller. A source is `{"kind": "journal", "fact": POSITION}` (a position
-  `preparation show` prints), `{"kind": "contribution", "room": STAMP,
+  `design show` prints), `{"kind": "contribution", "room": STAMP,
   "publication": STAMP}` (the `source` a `room contribute` answer prints,
   pasted unchanged), `{"kind": "artifact", "digest": HEX}`, or a transcript
   hunk.
@@ -125,12 +122,6 @@ handle.
   `proposal-claim-stale`. `--dry-run` prints the assembled proposal and
   records nothing. The write records the immutable proposal and releases that
   exact claim atomically.
-- **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
-  SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
-  `material-finding`).
-- **`cover COVERAGE_JSON`.** `coverage` (`{"candidate": …, "coverage":
-  SEQUENCE}`), nonempty unique `scopes`, and `source`. The command attributes
-  the reviewer authority itself.
 - **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
   SEQUENCE}`), `source`, and one outcome over an exact proposal under that
   controller. A work proposal uses `{"kind": "resolved", "candidate": …,
@@ -156,9 +147,8 @@ handle.
 | Group membership | Design tasks that are open or completed; a completed Design grants its group no standing | `group::design-only`: choose a Design whose current phase is `design` or one already completed, or finish its admitted intake first |
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a disband leaves every Design ungrouped and its deferral unchanged |
-| Design possession | undeferred open Design, grouped or not | a deferred Design refuses capture as `claim::capture-ineligible`, steal as `claim::steal-ineligible`, and a nudge as `preparation::nudge-deferred`: run `spice task wake DESIGN` (`--claim` to take it), or move it into a working group, which wakes it. An operator `spice task defer DESIGN` of a held Design asks its holder to checkpoint and `spice task free`; a repeat asks again only when no stop stands for the current claim |
-| Steeping Design | open, undeferred Design whose cycle is not yet ready for proposal | allocation never offers it; capture, steal, or recovery by name claims a Design still gathering input before it steeps, a steal taking it from any holder, and its holder ends the pass with `spice preparation propose`; `claim::design-held` on capture, steal, or recovery of a Design awaiting decision or waiting on selected work, naming the Design, its cycle, and that cycle's next action; `spice preparation nudge DESIGN` readies a gathering Design for allocation |
-| Nudge hold | 120 seconds from the nudge, for the lane its message went to | allocation offers the Design to no other lane meanwhile; capture by name stays open |
+| Design possession | undeferred open Design, grouped or not | a deferred Design refuses capture as `claim::capture-ineligible` and steal as `claim::steal-ineligible`: run `spice task wake DESIGN` (`--claim` to take it), or move it into a working group, which wakes it. An operator `spice task defer DESIGN` of a held Design asks its holder to checkpoint and `spice task free`; a repeat asks again only when no stop stands for the current claim |
+| Steeping Design | open, undeferred Design whose cycle is not yet ready for proposal | allocation never offers it; capture, steal, or recovery by name claims a Design still gathering input before it steeps, a steal taking it from any holder, and its holder ends the pass with `spice design propose`; `claim::design-held` on capture, steal, or recovery of a Design awaiting decision or waiting on selected work, naming the Design, its cycle, and that cycle's next action |
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large` |

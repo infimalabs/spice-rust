@@ -13,7 +13,7 @@ use wire::{AgentActivityKind, AgentMessage, CanonicalUuid, MessageDirective, Quo
 /// else its directive does. The canonical card retains the send's earliest
 /// recorded delivery as its source locus, but displays at the directive's
 /// operator-authored instant. It names every member that recorded the send, in
-/// member order, so a resend, a nudge, or an older page never adds a second card.
+/// member order, so a resend or an older page never adds a second card.
 #[must_use]
 pub(crate) fn direction_cards<'m>(
     messages: impl IntoIterator<Item = &'m AgentMessage>,

@@ -321,7 +321,7 @@ flowchart TD
   a lane joining an existing team takes that team's policy, so its effective
   life can differ from the `--life` named. A lane seated alone on its own team
   therefore follows that life: a lone Drain lane is started by this loop and
-  draws work through `task next`. No wake, allocation, or nudge path reads the
+  draws work through `task next`. No wake or allocation path reads the
   lane row's own life.
 - Lifecycle first selects the row allocation would give the lane, then times
   the wake from that row's own READY transition, not the newest row on the

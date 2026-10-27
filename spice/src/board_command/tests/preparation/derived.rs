@@ -1,4 +1,4 @@
-//! The proposal `preparation propose` derives from the Design its caller
+//! The proposal `design propose` derives from the Design its caller
 //! holds, and the resident refusing it once a witnessed head has moved.
 
 use super::contribution::{contribute, contributed, contribution_body};
@@ -125,7 +125,7 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
         wire::TaskIntent::Design,
         None,
     );
-    group_design(&bus, epoch, &design);
+    stand_design(&bus, epoch, &design);
     let output = add_plan_output(&bus, epoch, &design, "Derived output");
 
     // Holding no Design derives nothing, with or without a name.
@@ -137,7 +137,7 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
         ));
     }
 
-    claim_task(&bus, epoch, &seats[0], &lane, &design);
+    capture_for(&bus, epoch, &seats[0], &design);
     let held = board(&bus, epoch, lane.clone());
     let heads = at(&held, &design);
     let proposal = derived(&held, &output, 1_760_000_000_000_201);

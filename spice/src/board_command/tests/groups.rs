@@ -10,7 +10,7 @@ use wire::rooms::{
 
 use super::preparation::{
     add_controller, add_plan_output, authorize_test_output, conclude, done_conclusion,
-    record_test_coverage, retain_test_candidate,
+    retain_test_candidate,
 };
 use crate::board_command::group_fast_lanes;
 
@@ -576,29 +576,17 @@ fn a_fast_flagged_group_runs_claimants_of_its_design_associated_work() {
     let (root, bus, epoch, seats) = fixture("group-fast", 4);
     let design = |name| add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
     let controller = design("Fast controller");
-    group_design(&bus, epoch, &controller);
-    claim_task(
-        &bus,
-        epoch,
-        &seats[0],
-        &Actor::Lane(seats[0].lane),
-        &controller,
-    );
+    capture_design(&bus, epoch, &seats[0], &controller);
     let plan = add_plan_output(&bus, epoch, &controller, "Fast selected plan");
     let spare = add_plan_output(&bus, epoch, &controller, "Fast spare plan");
-    let (candidate, source) =
+    let (candidate, _) =
         retain_test_candidate(&bus, epoch, &seats[..2], &controller, &plan, &spare);
-    record_test_coverage(&bus, epoch, &seats[..2], &controller, &candidate, &source);
     authorize_test_output(&bus, epoch, &controller, &plan, &spare, candidate);
     let (flagged, unflagged) = (design("Fast design"), design("Slow design"));
     let (fast, slow) = (group_stamp(500), group_stamp(600));
     for (task, group) in [(&controller, &fast), (&flagged, &fast), (&unflagged, &slow)] {
         let born = task.born().expect("design identity");
         assert_committed(move_design(&bus, epoch, &born, Some(group)));
-    }
-    let current = board(&bus, epoch, Actor::Operator);
-    for task in [&flagged, &unflagged] {
-        assert_committed(nudge_design(&bus, epoch, Actor::Operator, &current, task));
     }
     assert!(refused_as(
         set_fast(&bus, epoch, &group_stamp(700), true),

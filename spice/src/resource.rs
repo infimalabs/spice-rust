@@ -62,7 +62,7 @@ spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offs
 spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=N&after=PUBLICATION]; contributions pages only typed contributions; every page groups its contributions by kind; reading joins and acknowledges nothing
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
 spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, matched terms, and bounded advisory maturity; reading changes nothing
-spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
+spice://task/HANDLE/design  design show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items with publication text and receipt state; reading settles nothing
 spice://inbox  inbox [?limit=N&max-bytes=N&max-text=N&after=ID]; reading acknowledges nothing
 spice://lanes  lane list [?limit=N&max-bytes=N&after=LANE]
@@ -147,7 +147,7 @@ enum Shape {
     Room { handle: TaskHandle },
     RoomRelevance { handle: TaskHandle },
     RoomAwareness { handle: TaskHandle },
-    Preparation { handle: TaskHandle },
+    Design { handle: TaskHandle },
     Inbox,
     RoomInbox,
     Lanes,
@@ -327,7 +327,7 @@ const SERVED: &[&[&str]] = &[
     &["room", "result"],
     &["room", "relevance"],
     &["room", "awareness"],
-    &["preparation", "show"],
+    &["design", "show"],
     &["board", "graph"],
     &["doc", "ledger"],
     &["inbox"],
@@ -353,7 +353,7 @@ impl Shape {
             Self::Artifacts { .. }
             | Self::RoomRelevance { .. }
             | Self::RoomAwareness { .. }
-            | Self::Preparation { .. }
+            | Self::Design { .. }
             | Self::Lanes
             | Self::RoomInbox => ROWS,
             Self::Room { .. } => ROOM,
@@ -406,7 +406,7 @@ impl Shape {
             Self::Room { handle } => format!("task/{handle}/room"),
             Self::RoomRelevance { handle } => format!("task/{handle}/room/relevance"),
             Self::RoomAwareness { handle } => format!("task/{handle}/room/awareness"),
-            Self::Preparation { handle } => format!("task/{handle}/preparation"),
+            Self::Design { handle } => format!("task/{handle}/design"),
             Self::Inbox => "inbox".to_owned(),
             Self::RoomInbox => "room/inbox".to_owned(),
             Self::Lanes => "lanes".to_owned(),
@@ -439,7 +439,7 @@ impl Shape {
             Self::Room { handle } => words(&["room", "history", handle.as_str()]),
             Self::RoomRelevance { handle } => words(&["room", "relevance", handle.as_str()]),
             Self::RoomAwareness { handle } => words(&["room", "awareness", handle.as_str()]),
-            Self::Preparation { handle } => words(&["preparation", "show", handle.as_str()]),
+            Self::Design { handle } => words(&["design", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
             Self::RoomInbox => words(&["room", "inbox"]),
             Self::Lanes => words(&["lane", "list"]),
@@ -586,8 +586,8 @@ impl Shape {
                 },
                 rest,
             ),
-            ["preparation", "show", task, rest @ ..] => (
-                Self::Preparation {
+            ["design", "show", task, rest @ ..] => (
+                Self::Design {
                     handle: handle(task)?,
                 },
                 rest,
@@ -751,7 +751,7 @@ fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
         ["room"] => Shape::Room { handle },
         ["room", "relevance"] => Shape::RoomRelevance { handle },
         ["room", "awareness"] => Shape::RoomAwareness { handle },
-        ["preparation"] => Shape::Preparation { handle },
+        ["design"] => Shape::Design { handle },
         [verb] => {
             refuse_unserved(&["task", verb], url)?;
             return Err(unknown(url));
@@ -1134,8 +1134,8 @@ impl Seat {
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
             ["room", ..] => room_document(repository, leaf, contract)?,
-            ["preparation", "show"] => {
-                let outcome = crate::preparation_command::run_at(repository, leaf, contract);
+            ["design", "show"] => {
+                let outcome = crate::design_command::run_at(repository, leaf, contract);
                 rendered(&outcome, render::render_display(&outcome, Form::Text))?
             }
             ["lane", "list"] => {
@@ -1228,7 +1228,7 @@ fn rendered<B>(
 pub(crate) const SEAT_GUIDE: &str = "\
 <system-notice>
 # spice:// reads
-This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, room inbox and results, preparation authority, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
+This seat serves `spice://` through `read`: `spice://` is the index naming every resource and the CLI read it answers (board, tasks, task detail, ledger, artifacts, room history, room inbox and results, Design pass authority, dependency graph, inbox, lanes, session briefing, turns, sweep, and context).
 - A collection ends with `resources:`, the URLs of what it contains.
 - Query parameters are the read's own flags; a withheld page ends with `continue:` and the URL that resumes it; a trailing `:N-M` selects lines.
 - Reading changes nothing: it acknowledges no steering, claims nothing, and may repeat freely.

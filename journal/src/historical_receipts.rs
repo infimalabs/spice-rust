@@ -1,9 +1,11 @@
 //! Retired receipt authority, never an executable command registry.
 //!
 //! A retired kind's receipts stay verifiable evidence after its command is
-//! gone. `gate::findings` receipts stand in their own table; `steer::tell`
-//! and `preparation::authorize` receipts stay among the command receipts they
-//! were committed with. A `task::edit` receipt whose request carried a retired
+//! gone. `gate::findings` receipts stand in their own table; `steer::tell`,
+//! `preparation::authorize`, and the retired critique, coverage, and nudge
+//! (`preparation::critique`, `preparation::cover`, `preparation::nudge`)
+//! receipts stay among the command receipts they were committed with. A
+//! `task::edit` receipt whose request carried a retired
 //! evidence change stands in the historical table while current edits keep
 //! their live receipts. The retained registry never makes these receipts
 //! executable again.
@@ -30,6 +32,12 @@ enum HistoricalKind {
     GroupStance,
     #[serde(rename = "preparation::authorize")]
     PreparationAuthorize,
+    #[serde(rename = "preparation::cover")]
+    PreparationCover,
+    #[serde(rename = "preparation::critique")]
+    PreparationCritique,
+    #[serde(rename = "preparation::nudge")]
+    PreparationNudge,
     #[serde(rename = "room::close")]
     RoomClose,
     #[serde(rename = "room::control")]
@@ -52,6 +60,9 @@ impl HistoricalKind {
             Self::GroupStance => "group::stance",
             Self::GateFindings => "gate::findings",
             Self::PreparationAuthorize => "preparation::authorize",
+            Self::PreparationCover => "preparation::cover",
+            Self::PreparationCritique => "preparation::critique",
+            Self::PreparationNudge => "preparation::nudge",
             Self::RoomClose => "room::close",
             Self::RoomControl => "room::control",
             Self::RoomCoordinate => "room::coordinate",
@@ -65,13 +76,27 @@ impl HistoricalKind {
     /// Whether receipts of this kind stand among the command receipts rather
     /// than in the historical table.
     const fn in_place(self) -> bool {
-        matches!(self, Self::PreparationAuthorize | Self::SteerTell)
+        matches!(
+            self,
+            Self::PreparationAuthorize
+                | Self::PreparationCover
+                | Self::PreparationCritique
+                | Self::PreparationNudge
+                | Self::SteerTell
+        )
     }
 }
 
 /// Whether a command receipt row carries a retired kind that stays in place.
 pub(crate) fn retired_in_place(kind: &str) -> bool {
-    matches!(kind, "preparation::authorize" | "steer::tell")
+    matches!(
+        kind,
+        "preparation::authorize"
+            | "preparation::cover"
+            | "preparation::critique"
+            | "preparation::nudge"
+            | "steer::tell"
+    )
 }
 
 #[derive(Deserialize, Serialize)]

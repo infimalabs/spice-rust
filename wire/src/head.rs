@@ -94,7 +94,7 @@ and note reports that another task or another report already covers.
 Give each cause one output: rewrite its report Plan's title, description, and acceptance with \
 `spice task modify` to name the real fix, or file a better-scoped task under this Design. Name \
 in the justification every report the operator should reject, and why. Propose with \
-`spice preparation propose` only when every output carries concrete acceptance, citing the \
+`spice design propose` only when every output carries concrete acceptance, citing the \
 evidence.";
 /// Fixed pitch of every opportunistic OOPS Design generation.
 pub const OOPS_DESIGN_PITCH: &str = "Unexpected behavior lands here as reports that an agent \

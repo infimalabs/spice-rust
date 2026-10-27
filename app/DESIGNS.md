@@ -15,12 +15,11 @@ Standing terms run from durable to volatile: lifecycle first, then deferral,
 then pass cycle or claim state. The most volatile term therefore comes last,
 limiting label jitter as the Design moves.
 
-- **open, deferred**: open and deferred. No lane can possess it, it invites
-  no lane, and a nudge refuses, until the operator wakes it or moves it into a
-  working group.
+- **open, deferred**: open and deferred. No lane can possess it and it invites
+  no lane until the operator wakes it or moves it into a working group.
 - **open, claimed**: open, undeferred, and claimed by a lane for one pass.
 - **open, CYCLE**: open and undeferred, named by its pass cycle, so
-  allocation, capture, and a nudge may reach it once that cycle allows.
+  allocation and capture may reach it once that cycle allows.
 - **concluded done**: the operator concluded it done.
 - **concluded collapsed**: the operator collapsed it, with the durable reason
   that collapse recorded.
@@ -104,13 +103,13 @@ version:
   hold. It atomically records the decision and concludes the Design collapsed.
 
 **Preview decision** mutates nothing. **Submit decision** sends one
-`preparation decide` command witnessing the Design's statement, workflow, and
+`design decide` command witnessing the Design's statement, workflow, and
 proposal heads, the exact Design pass proposal fact, governed input statements,
 accepted output transitions, and absence of the new decision and output
 authorizations. Resolution atomically records every verdict and comment plus
-authorization for exactly the accepted outputs; there is no coverage-record
-prerequisite, later Accept stage, or separate Authorize action. Coverage
-remains readable evidence. Rejected-output comments and the overall comment
+authorization for exactly the accepted outputs; there is no later Accept stage
+or separate Authorize action. Retained review coverage remains readable
+evidence. Rejected-output comments and the overall comment
 become input to the Design's current or next holder.
 
 The first click marks that exact version pending before the socket write, so a
@@ -130,41 +129,24 @@ button controls preserve keyboard order in normal and narrow layouts.
 
 ## Preparation authority
 
-A room for a controlling task also exposes its Design pass proposals, critiques,
-review coverage, decisions, and execution-authorization records in immutable
-journal order. Each record preserves exact outputs, governed inputs, source
-link, every output verdict and comment, the overall comment, and accepted
-outputs; review evidence and execution authorization remain distinct.
-Historical Select, Return, and Collapse records remain readable. The same
-authority is available through bounded `spice preparation show HANDLE` and
-`spice://task/HANDLE/preparation` pages.
+A room for a controlling task also exposes its Design pass proposals,
+decisions, and execution-authorization records, and any retained historical
+critiques and review coverage, in immutable journal order. Each record
+preserves exact outputs, governed inputs, source link, every output verdict
+and comment, the overall comment, and accepted outputs; review evidence and
+execution authorization remain distinct. Historical Select, Return, and
+Collapse records remain readable. The same authority is available through
+bounded `spice design show HANDLE` and `spice://task/HANDLE/design` pages.
 Reading or opening these records joins, acknowledges, and changes nothing.
 
-## Nudge
+## Stopping a held Design
 
-The design menu's **Nudge** control, beneath the room's standing, is the
-operator's one way to push an open Design at a lane; the room records no
-coordination. It shows while the Design is open and undeferred; a deferred,
-concluded, or deleted one shows no control, since the resident refuses to
-nudge a deferred Design and names `spice task wake`. The button stays
-disabled while the resident does not offer `preparation nudge`. The
-submission witnesses the anchor's statement and workflow heads, so a moved
-anchor refuses with the resident's reason. The resident readies the Design
-and messages the one free lane whose retained session best matches it, waking
-a vacant lane when no seated one is free; the composer's report names that
-lane, or says the Design waits ready for allocation because every lane holds
-other work or none can be woken.
-
-Deferring a held Design, through its task detail's Deferral fact, sends its
-holder one stop direction asking it to checkpoint and `spice task free`. The
-standing shows that stop request until that exact claim is completed, freed,
-or lapsed; it never force-frees work or releases child claims and unrelated
-direction.
-
-The native command surface is `spice preparation nudge HANDLE`. Nothing
-repeats a nudge on the operator's behalf: each asks one lane to hold and
-propose, and only another operator command, or Design outreach's own
-once-per-item-per-session bound, asks again.
+The operator puts a lane on an open Design by telling it to `spice task
+capture HANDLE`; the room records no coordination. Deferring a held Design,
+through its task detail's Deferral fact, sends its holder one stop direction
+asking it to checkpoint and `spice task free`. The standing shows that stop
+request until that exact claim is completed, freed, or lapsed; it never
+force-frees work or releases child claims and unrelated direction.
 
 ## Room standing
 

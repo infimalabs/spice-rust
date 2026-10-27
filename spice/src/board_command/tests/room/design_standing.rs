@@ -55,13 +55,6 @@ pub(in super::super) fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
     }
 }
 
-fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
-    match next_board(bus, epoch, Actor::Lane(seat.lane)).next {
-        Some(NextWorkState::Candidate { task }) => Some(task.statement.body.born),
-        _ => None,
-    }
-}
-
 pub(in super::super) fn active_holder(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -197,20 +190,13 @@ fn move_to(
     )
 }
 
-/// Ready an ungrouped `design` for its proposal through the operator's nudge.
-fn ready(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
-    let current = board(bus, epoch, Actor::Operator);
-    assert_committed(nudge_design(bus, epoch, Actor::Operator, &current, design));
-}
-
 #[test]
 fn deferring_a_held_design_asks_its_holder_to_park_once() {
     let (root, bus, epoch, seats) = fixture("design-defer-held", 2);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Held design");
-    ready(&bus, epoch, &task);
     let holder = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &holder, &task);
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
     let before = at(&board(&bus, epoch, Actor::Operator), &task)
         .statement
         .clone();
@@ -242,11 +228,12 @@ fn deferring_a_held_design_asks_its_holder_to_park_once() {
 
     free_active(&bus, epoch, &holder, &seats[0], &task);
     assert_eq!(active_holder(&bus, epoch, &task), None);
-    assert_eq!(offered(&bus, epoch, &seats[0]), None);
-    assert_eq!(
-        offered(&bus, epoch, &seats[1]),
-        None,
-        "a parked deferred Design is not reoffered"
+    assert!(
+        matches!(
+            win_named(&bus, epoch, &seats[1], &task, "capture"),
+            Outcome::Refusal(_)
+        ),
+        "a parked deferred Design is not recaptured"
     );
     assert_eq!(
         at(&board(&bus, epoch, Actor::Operator), &task).statement,
@@ -261,8 +248,7 @@ fn a_repeated_deferral_stops_a_holder_left_unstopped() {
     let (root, bus, epoch, seats) = fixture("design-defer-owed", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Deferred under its holder");
-    ready(&bus, epoch, &task);
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &task);
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
     defer_unstopped(&bus, &task);
     assert!(live_stop(&bus, &task).is_none());
 
@@ -287,9 +273,8 @@ fn the_holders_own_deferral_releases_its_design_without_a_stop() {
     let (root, bus, epoch, seats) = fixture("design-defer-self", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Self-deferred design");
-    ready(&bus, epoch, &task);
     let holder = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &holder, &task);
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
     let held = board(&bus, epoch, holder.clone());
     let heads = at(&held, &task);
     let lease = heads.lease.as_ref().expect("claimed task has a lease");
@@ -323,9 +308,8 @@ fn a_vacant_holder_is_asked_to_park_through_its_lane() {
     let (root, bus, epoch, seats) = fixture("design-defer-vacant", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Vacant holder design");
-    ready(&bus, epoch, &task);
     let holder = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &holder, &task);
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
     vacate(&bus, epoch, &seats[0]);
 
     assert_committed(defer(&bus, epoch, &task).0);
@@ -347,13 +331,8 @@ fn grouping_gates_no_possession() {
     let (root, bus, epoch, seats) = fixture("design-group-possession", 1);
     prove_seat_addresses(&bus, epoch, &seats);
     let task = design(&bus, epoch, "Grouped design");
-    ready(&bus, epoch, &task);
     assert_committed(move_to(&bus, epoch, &task, Some(&fixture_group())));
-    assert_eq!(
-        offered(&bus, epoch, &seats[0]),
-        Some(born(&task)),
-        "a grouped undeferred Design follows ordinary possession"
-    );
+    // A grouped undeferred Design follows ordinary possession.
     let holder = Actor::Lane(seats[0].lane);
     assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
 
@@ -366,18 +345,15 @@ fn grouping_gates_no_possession() {
 
 #[test]
 fn moving_a_deferred_design_into_a_group_wakes_it_and_moving_out_does_not() {
-    let (root, bus, epoch, seats) = fixture("design-group-wake", 1);
+    let (root, bus, epoch, _) = fixture("design-group-wake", 1);
     let anchor = design(&bus, epoch, "Group anchor");
     let task = design(&bus, epoch, "Deferred design");
-    ready(&bus, epoch, &task);
     let group = fixture_group();
     assert_committed(move_to(&bus, epoch, &anchor, Some(&group)));
 
     assert_committed(defer(&bus, epoch, &task).0);
-    assert_eq!(offered(&bus, epoch, &seats[0]), None);
     assert_committed(move_to(&bus, epoch, &task, Some(&group)));
     assert_eq!(deferral(&bus, epoch, &task), None, "joining a group wakes");
-    assert_eq!(offered(&bus, epoch, &seats[0]), Some(born(&task)));
 
     assert_committed(defer(&bus, epoch, &task).0);
     assert_committed(move_to(&bus, epoch, &task, None));
@@ -395,26 +371,20 @@ fn moving_a_deferred_design_into_a_group_wakes_it_and_moving_out_does_not() {
 }
 
 #[test]
-fn a_deferred_design_refuses_a_nudge() {
-    let (root, bus, epoch, _) = fixture("design-defer-nudge", 0);
-    let task = design(&bus, epoch, "Deferred nudge design");
-    assert_committed(defer(&bus, epoch, &task).0);
-    let current = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        refused(&nudge_design(&bus, epoch, Actor::Operator, &current, &task)),
-        "preparation::nudge-deferred"
-    );
-    clean(&root, bus);
-}
-
-#[test]
-fn an_offer_read_before_the_design_was_deferred_cannot_claim_it() {
+fn a_capture_read_before_the_design_was_deferred_cannot_claim_it() {
     let (root, bus, epoch, seats) = fixture("design-defer-stale", 1);
     let task = design(&bus, epoch, "Stale offer design");
-    ready(&bus, epoch, &task);
     let lane = Actor::Lane(seats[0].lane);
     let available = board(&bus, epoch, lane.clone());
-    let stale = claim_expected(&available, &task, &seats[0]);
+    let heads = at(&available, &task);
+    let rule: Name = "capture".parse().expect("capture rule");
+    let stale = vec![
+        statement_witness(heads),
+        workflow_witness(heads),
+        claim_witness(heads),
+        Witness::Eligibility { rule: rule.clone() },
+        residency(&available, &seats[0]),
+    ];
 
     assert_committed(defer(&bus, epoch, &task).0);
     let outcome = issue(
@@ -424,7 +394,7 @@ fn an_offer_read_before_the_design_was_deferred_cannot_claim_it() {
         CommandKind::ClaimWin,
         stale,
         &ClaimWin {
-            rule: "next".parse().expect("allocator rule"),
+            rule,
             recovery: None,
         },
     );

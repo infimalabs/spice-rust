@@ -383,12 +383,6 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// The open Design's exact statement and workflow heads.
-    pub const NUDGE: Self = Self {
-        required: &[WitnessKind::Task, WitnessKind::Workflow],
-        optional: &[],
-        authority: Authority::Operator,
-    };
 
     /// A new directive names the lane it lands on as it found it, occupied
     /// or vacant; there is no prior disposition to re-prove.
@@ -572,12 +566,9 @@ impl CommandKind {
             Self::RoomContribute => Law::ROOM_CONTRIBUTE,
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::DesignPropose => Law::DESIGN_PROPOSE,
-            Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord
-            | Self::CandidateWithdraw => Law::PROPOSAL_RECORD,
+            Self::CandidateWithdraw => Law::PROPOSAL_RECORD,
             Self::PreparationDecide => Law::PREPARATION_DECIDE,
             Self::OutputAdopt => Law::ADOPT,
-            Self::DesignNudge => Law::NUDGE,
             _ => self.task_law(),
         }
     }

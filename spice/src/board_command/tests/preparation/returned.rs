@@ -63,8 +63,7 @@ impl Returnable {
     ) -> Self {
         let (root, bus, epoch, seats) = fixture(name, lanes);
         let design = add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
-        group_design(&bus, epoch, &design);
-        claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+        capture_design(&bus, epoch, &seats[0], &design);
         let outputs = [
             add_plan_output(&bus, epoch, &design, "First output"),
             add_plan_output(&bus, epoch, &design, "Second output"),
@@ -165,15 +164,9 @@ impl Returnable {
         );
     }
 
+    /// Capture the Design by name for `seat`, as a lane told to take it does.
     fn claim(&self, seat: usize) {
-        let seat = &self.seats[seat];
-        claim_task(
-            &self.bus,
-            self.epoch,
-            seat,
-            &Actor::Lane(seat.lane),
-            &self.design,
-        );
+        capture_for(&self.bus, self.epoch, &self.seats[seat], &self.design);
     }
 
     fn decision_outcomes(&self) -> Vec<Value> {
@@ -294,15 +287,8 @@ fn feedback_remains_owed_when_the_claim_moves_before_consumption() {
         .pop()
         .expect("first holder is owed input");
     fixture.free(0);
-    // Freeing without a proposal abandons the pass; the operator readies the next.
-    let current = board(&fixture.bus, fixture.epoch, Actor::Operator);
-    assert_committed(nudge_design(
-        &fixture.bus,
-        fixture.epoch,
-        Actor::Operator,
-        &current,
-        &fixture.design,
-    ));
+    // Freeing without a proposal abandons the pass; the next lane takes the
+    // Design by name.
     fixture.claim(1);
     assert!(record_return(&fixture.bus, &stale).is_err());
     assert_eq!(

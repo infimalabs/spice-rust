@@ -159,17 +159,5 @@ pub(super) async fn send_preparation(
             )
             .await
         }
-        crate::client_action::PreparationRequest::Nudge { request, expected } => {
-            send_typed(
-                principal,
-                writer,
-                actions,
-                pending,
-                CommandKind::DesignNudge,
-                expected.clone(),
-                request.clone(),
-            )
-            .await
-        }
     }
 }
