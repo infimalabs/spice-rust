@@ -5,6 +5,7 @@ use super::contribution::{contribute, contributed, contribution_body};
 use super::*;
 
 use crate::board_command::client::{derive_proposal, held_design};
+use crate::board_command::tests::room::design_standing::win_named;
 use wire::rooms::RoomContributionKind;
 
 /// The proposal the client derives from `board` for the Design it holds.
@@ -231,5 +232,61 @@ fn a_derived_proposal_witnesses_the_heads_it_read_and_refuses_once_they_move() {
         at(&after, &design).design_cycle.proposal.is_some(),
         "the pass awaits the operator's decision"
     );
+    clean(&root, bus);
+}
+
+/// A lane holding no Design is told both claim routes, and following the named
+/// one claims a Design still gathering input, whose pass then records.
+#[test]
+fn an_unheld_gathering_design_is_claimed_by_name_and_its_pass_proposed() {
+    let (root, bus, epoch, seats) = fixture("preparation-gathering-repair", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Gathering Design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    stand_design(&bus, epoch, &design);
+    let output = add_plan_output(&bus, epoch, &design, "Gathering output");
+    let unheld = board(&bus, epoch, lane.clone());
+    assert_eq!(
+        unheld
+            .design_cycles
+            .get(&design.born().expect("design stamp")),
+        Some(&wire::rooms::DesignCycle::GatheringInput)
+    );
+
+    let by_name = format!("`spice task capture {design}`");
+    for (named, capture) in [
+        (None, "`spice task capture HANDLE`"),
+        (Some(&design), by_name.as_str()),
+    ] {
+        let Err(Outcome::Refusal(refusal)) = held_design(&unheld, named) else {
+            panic!("holding no Design derives nothing");
+        };
+        assert_eq!(refusal.reason(), "preparation::design-unheld");
+        for command in ["`spice task next`", capture] {
+            assert!(
+                refusal.explanation().contains(command),
+                "{named:?} remedy names {command}: {}",
+                refusal.explanation()
+            );
+        }
+    }
+
+    assert_committed(win_named(&bus, epoch, &seats[0], &design, "capture"));
+    let held = board(&bus, epoch, lane);
+    let proposal = derived(&held, &output, 1_760_000_000_000_301);
+    assert_committed(propose(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &output,
+        proposal,
+        room_head(&bus, &design),
+    ));
     clean(&root, bus);
 }
