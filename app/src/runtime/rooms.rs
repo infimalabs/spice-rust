@@ -129,6 +129,23 @@ impl DesignStanding {
     }
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+/// The action one room standing presents next. A typed cycle is the sole
+/// policy for an open Design; settled and unavailable anchors retain their
+/// own presentation.
+pub(crate) fn design_next_action(
+    settled: bool,
+    cycle: Option<&wire::rooms::DesignCyclePresentation>,
+) -> String {
+    if settled {
+        return "The anchor is settled; nothing remains to do here.".to_owned();
+    }
+    match cycle {
+        Some(cycle) => cycle.action.clone(),
+        None => "Tell a lane to capture this Design for its next pass.".to_owned(),
+    }
+}
+
 /// One stable room-timeline card.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoomEvent {

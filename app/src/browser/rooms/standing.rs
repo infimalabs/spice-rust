@@ -4,16 +4,18 @@
 //! of authority, and rendering it mounts no view and wakes no lane.
 
 use wasm_bindgen::JsCast as _;
-use wire::intent::{BoardTask, DesignStanding};
+use wire::intent::BoardTask;
 use wire::rooms::{
-    DesignAvailability, DesignCycle, DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd,
-    RoomProgressStanding, RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
+    DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd, RoomProgressStanding,
+    RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
 };
 use wire::{SequenceCode, TaskStamp};
 use yew::prelude::*;
 
 use crate::AppRuntime;
-use crate::runtime::{ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant};
+use crate::runtime::{
+    ParticipantReason, Relevance, RoomAnchorAuthority, RoomParticipant, design_next_action,
+};
 use crate::watchband;
 
 /// The standing section of one design's menu and of its read view; `row` is
@@ -55,10 +57,9 @@ pub(super) fn render_standing(
             }
             {cycle.as_ref().map_or_else(Html::default, |cycle| render_cycle(room, cycle))}
             <p class="room-standing-next" data-room-next="">
-                {next_action(
+                {design_next_action(
                     settled,
-                    lifecycle.as_ref(),
-                    cycle.as_ref().zip(row).map(|(cycle, row)| (cycle, row.design_availability())),
+                    cycle.as_ref(),
                 )}
             </p>
             {render_lanes(runtime, &participants)}
@@ -68,46 +69,6 @@ pub(super) fn render_standing(
                 </ul>
             }
         </section>
-    }
-}
-
-/// The one next useful action the current authority supports, as one
-/// sentence naming who acts and on what. Deferred Designs use the shared
-/// cycle action because possession determines whether wake-and-claim or
-/// checkpoint-and-free is valid; non-deferred prose stays local and concise.
-fn next_action(
-    settled: bool,
-    lifecycle: Option<&DesignStanding>,
-    cycle: Option<(&DesignCyclePresentation, DesignAvailability)>,
-) -> String {
-    if settled {
-        return "The anchor is settled; nothing remains to do here.".to_owned();
-    }
-    match cycle {
-        Some((cycle, _)) if lifecycle == Some(&DesignStanding::Deferred) => cycle.action.clone(),
-        Some((cycle, availability)) => {
-            cycle_next(cycle.cycle, availability == DesignAvailability::Claimed).to_owned()
-        }
-        None => "Tell a lane to capture this Design for its next pass.".to_owned(),
-    }
-}
-
-/// Who moves an undeferred open Design's pass cycle forward next, and how.
-const fn cycle_next(cycle: DesignCycle, claimed: bool) -> &'static str {
-    match (cycle, claimed) {
-        (DesignCycle::GatheringInput, _) => {
-            "Lanes or you add input next: a vote, a question, or a post in this room."
-        }
-        (DesignCycle::ReadyForProposal, false) => {
-            "A lane claims this Design next and ends its pass with one proposal."
-        }
-        (DesignCycle::ReadyForProposal, true) => {
-            "The holding lane ends this pass with one proposal."
-        }
-        (DesignCycle::AwaitingDecision, _) => "You decide the proposal awaiting decision next.",
-        (DesignCycle::WaitingOnSelectedWork, _) => {
-            "The work this Design selected finishes next; it is the Design's prerequisite set."
-        }
     }
 }
 

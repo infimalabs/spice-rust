@@ -47,6 +47,8 @@ pub use conversation_text::{ConversationText, ItemConcern};
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use rooms::design_next_action;
 pub use rooms::{
     CandidateWithdrawalRecord, Contribution, Conversation, ConversationProjection, Delivery,
     DesignStanding, OperatorItem, ParticipantReason, PreparationProjection, Relevance,
