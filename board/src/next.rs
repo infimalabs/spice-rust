@@ -147,20 +147,26 @@ pub fn design_cycle(entry: &Entry, resolved: &ResolvedTasks) -> Option<DesignCyc
     })
 }
 
-/// Whether an open Design's pass cycle holds it from every lane: it gathers
-/// input, awaits the operator's decision, or waits on work it released.
+/// Whether an open Design's pass cycle holds it from every automatic route:
+/// it gathers input, awaits the operator's decision, or waits on work it
+/// released. Allocation, steal, and work-driven lane starts wait for it.
 #[must_use]
 pub fn design_held(entry: &Entry, resolved: &ResolvedTasks) -> bool {
     design_cycle(entry, resolved).is_some_and(|cycle| cycle != DesignCycle::ReadyForProposal)
 }
 
-/// Why an open Design's cycle holds it from a named claim: the cycle it is
-/// in and the exact action that moves it, when that cycle is not ready for
-/// proposal.
+/// Why an open Design's cycle holds it even from a named claim: the cycle it
+/// is in and the exact action that moves it, while it awaits the operator's
+/// decision or waits on work it released. A Design still gathering input is
+/// not held from a named claim, so a lane may force its pass before it steeps.
 #[must_use]
 pub fn design_hold(entry: &Entry, resolved: &ResolvedTasks) -> Option<(DesignCycle, String)> {
     let cycle = design_cycle(entry, resolved)?;
-    (cycle != DesignCycle::ReadyForProposal).then(|| {
+    matches!(
+        cycle,
+        DesignCycle::AwaitingDecision | DesignCycle::WaitingOnSelectedWork
+    )
+    .then(|| {
         (
             cycle,
             cycle.next_action(entry.handle(), entry.design().cycle),
@@ -953,6 +959,12 @@ fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
 }
 
 fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
+    open_to(entry, actor, completed) && !design_held(entry, completed)
+}
+
+/// Every operational clause except the Design pass cycle, which automatic
+/// routes and a named claim gate differently.
+fn open_to(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
     let workflow = entry.workflow();
     workflow.status.is_pending()
         && workflow.deferral.is_none()
@@ -961,7 +973,6 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
             .reviewer()
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
-        && !design_held(entry, completed)
         && !passive_design(entry)
 }
 
@@ -1026,11 +1037,10 @@ pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> 
     entry.statement().requirements.are_satisfied_by(environment)
 }
 
-/// Whether one named entry satisfies the same eligibility law as allocation.
+/// Whether one entry satisfies the same eligibility law as allocation.
 ///
-/// Exact capture and recovery admit through this one predicate too; the
-/// entry's own lifecycle and workflow guards still decide whether work can
-/// advance.
+/// Board readiness and standing read this predicate; exact capture and
+/// recovery admit through [`capturable_entry`].
 #[must_use]
 pub fn eligible_entry(
     satisfied: &ResolvedTasks,
@@ -1039,6 +1049,26 @@ pub fn eligible_entry(
     environment: &wire::Environment,
 ) -> bool {
     workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
+}
+
+/// Whether one named entry may be captured or recovered.
+///
+/// [`eligible_entry`], except that an open Design still gathering input is
+/// admitted: claiming it by name forces its pass before it steeps, while
+/// allocation, steal, and work-driven starts wait until it is ready. A Design
+/// awaiting decision or waiting on released work stays [held](design_hold).
+#[must_use]
+pub fn capturable_entry(
+    satisfied: &ResolvedTasks,
+    entry: &Entry,
+    actor: &Actor,
+    environment: &wire::Environment,
+) -> bool {
+    entry.is_filed()
+        && open_to(entry, actor, satisfied)
+        && design_hold(entry, satisfied).is_none()
+        && environment_satisfied(entry, environment)
+        && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the team's current task scope.
