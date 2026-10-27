@@ -200,7 +200,6 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
     )
     .expect("independent phase")
     .with_phase_handoff(Some(board::PhaseHandoff::new(
-        board::PhaseHandoffKind::Independent,
         prior.clone(),
         instant("2026-08-01T06:00:03.000Z"),
     )));
@@ -278,58 +277,6 @@ fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
             after,
         ),
         None,
-    );
-}
-
-#[test]
-fn continuation_handoff_sticks_to_its_prior_author_then_opens_to_peers() {
-    let prior = Actor::Spice;
-    let continuation = entry("BOARD-a1").with_phase_handoff(Some(board::PhaseHandoff::new(
-        board::PhaseHandoffKind::Continue,
-        prior.clone(),
-        instant("2026-08-01T06:00:03.000Z"),
-    )));
-    let mut critical_head = statement("BOARD-z1");
-    critical_head.priority = Some(wire::TaskPriority::Critical);
-    let critical =
-        admitted(critical_head, workflow("todo"), None, None).expect("critical peer work");
-    let entries = [continuation.clone(), critical];
-    let before = instant("2026-08-01T06:00:02.000Z");
-    let selected = board::select_at(
-        &entries,
-        &prior,
-        &all_projects(),
-        board::NextConfig::default(),
-        &environment(),
-        before,
-    )
-    .expect("the prior author receives its continuation");
-    assert_eq!(selected.entry().handle(), continuation.handle());
-
-    let peer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
-    assert!(
-        board::select_at(
-            std::slice::from_ref(&continuation),
-            &peer,
-            &all_projects(),
-            board::NextConfig::default(),
-            &environment(),
-            before,
-        )
-        .is_none(),
-        "a peer cannot race the continuation owner",
-    );
-    assert!(
-        board::select_at(
-            std::slice::from_ref(&continuation),
-            &peer,
-            &all_projects(),
-            board::NextConfig::default(),
-            &environment(),
-            instant("2026-08-01T06:00:03.000Z"),
-        )
-        .is_some(),
-        "the continuation opens when its prior author does not take it",
     );
 }
 

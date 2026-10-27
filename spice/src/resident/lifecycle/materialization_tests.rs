@@ -176,12 +176,24 @@ fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
     );
     assert_eq!(
         nudged.phase_handoff(),
-        Some(&board::PhaseHandoff::new(
-            board::PhaseHandoffKind::Continue,
-            Actor::Lane(uuid(2)),
-            "2030-04-12T18:46:06.271Z".parse().expect("hold end"),
-        )),
-        "allocation holds the nudged Design for its recipient for the hold window"
+        None,
+        "a retained nudge holds the Design for no lane, not even the one it messaged"
+    );
+    assert!(
+        board::select(
+            std::slice::from_ref(&nudged),
+            &Actor::Lane(uuid(3)),
+            &wire::TeamSubscription {
+                team: team(),
+                formed_at: None,
+                policy: wire::intent::TeamLife::Drain,
+                fast_mode: false,
+            },
+            &wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+                .expect("the compiled journal schema is positive"),
+        )
+        .is_some(),
+        "a lane the nudge never messaged is allocated the nudged Design"
     );
     bus.shutdown().expect("cycle fixture bus stops");
 }

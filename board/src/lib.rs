@@ -37,10 +37,8 @@ pub use next::{
     stealable_entry, unaccepted_output_of, work_waits, work_waits_resolved,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
-pub use phase::{HANDOFF_SECONDS, NUDGE_HOLD_SECONDS, PhaseRefusal, Transition, TransitionKind};
-pub use task::{
-    Dependency, Entry, Family, PhaseHandoff, PhaseHandoffKind, Project, ProjectError, TaskError,
-};
+pub use phase::{HANDOFF_SECONDS, PhaseRefusal, Transition, TransitionKind};
+pub use task::{Dependency, Entry, Family, PhaseHandoff, Project, ProjectError, TaskError};
 pub use urgency::{
     Urgency, priority_from_authored, priority_from_document, priority_label, priority_score,
     priority_to_document,
