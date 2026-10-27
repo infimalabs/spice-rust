@@ -893,7 +893,6 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["task", "next"][..], CommandKind::ClaimWin),
         (&["task", "status"][..], CommandKind::BoardRead),
         (&["task", "show"][..], CommandKind::BoardRead),
-        (&["task", "reclaim"][..], CommandKind::ClaimRenew),
         (&["task", "capture"][..], CommandKind::ClaimWin),
         (&["task", "add"][..], CommandKind::TaskAdd),
         (&["task", "plan"][..], CommandKind::TaskAdd),

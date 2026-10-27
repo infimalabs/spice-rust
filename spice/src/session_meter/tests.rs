@@ -27,7 +27,6 @@ fn state(remaining: Option<u64>) -> WorkingState {
             elapsed: Some(Duration::from_secs(90)),
             remaining: remaining.map(Duration::from_secs),
             rolling: false,
-            reclaim_extends: true,
         }),
         last_taste: "fallbacks".to_owned(),
         narration: None,
@@ -168,33 +167,11 @@ fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
     let first_boundary = meter
         .evaluate(&state(Some(599)), Duration::from_secs(13))
         .expect("middle to first boundary evaluates");
-    let mut not_reclaimable = state(Some(598));
-    not_reclaimable
-        .claim
-        .as_mut()
-        .expect("fixture claim")
-        .reclaim_extends = false;
-    let free_guidance = meter
-        .evaluate(&not_reclaimable, Duration::from_secs(14))
-        .expect("eligibility change evaluates");
-    let same_eligibility = meter
-        .evaluate(&not_reclaimable, Duration::from_secs(15))
-        .expect("same eligibility evaluates");
-    let mut quiet_state = state(Some(600));
-    quiet_state
-        .claim
-        .as_mut()
-        .expect("fixture claim")
-        .reclaim_extends = false;
+    let quiet_state = state(Some(600));
     let quiet = meter
         .evaluate(&quiet_state, Duration::from_secs(16))
         .expect("countdown exit evaluates");
-    let mut renewed_state = state(Some(700));
-    renewed_state
-        .claim
-        .as_mut()
-        .expect("fixture claim")
-        .reclaim_extends = false;
+    let renewed_state = state(Some(700));
     let renewed = meter
         .evaluate(&renewed_state, Duration::from_secs(17))
         .expect("renewed lease evaluates");
@@ -203,8 +180,6 @@ fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
     assert_eq!(same_band.announcement, None);
     assert!(middle_boundary.announcement.is_some());
     assert!(first_boundary.announcement.is_some());
-    assert!(free_guidance.announcement.is_some());
-    assert_eq!(same_eligibility.announcement, None);
     assert!(quiet.announcement.is_some());
     assert_eq!(renewed.announcement, None);
     fs::remove_dir_all(root).expect("fixture cleanup");
@@ -217,13 +192,11 @@ fn rolled_lease_names_its_roll_and_only_warns_once_the_roll_stops() {
     let mut rolling = state(Some(88));
     let claim = rolling.claim.as_mut().expect("fixture claim");
     claim.rolling = true;
-    claim.reclaim_extends = true;
 
     let decision = meter
         .evaluate(&rolling, Duration::from_secs(1))
         .expect("rolling lease evaluates");
     let line = decision.announcement.expect("new state speaks once");
-    assert!(!line.contains("spice task reclaim"));
     assert!(!line.contains("spice task free"));
     assert_eq!(
         decision.refresh_after,

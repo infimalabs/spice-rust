@@ -368,11 +368,12 @@ pub(crate) fn fold(
     if let Some(task) = fact.task_subject() {
         match fact.kind() {
             // A Design pass names the claim position that winning, carrying,
-            // or rebinding established; a lease renewal only extends that
-            // lease, and replay moves the claim an explicit reclaim rewrote.
+            // rebinding, or generation acknowledgement established; a lease
+            // renewal only extends that lease.
             wire::FactKind::ClaimWon
             | wire::FactKind::ClaimCarried
-            | wire::FactKind::ClaimRebound => {
+            | wire::FactKind::ClaimRebound
+            | wire::FactKind::ClaimAcknowledged => {
                 authority.set_active_claim(task, Some(seq));
                 return Ok(());
             }

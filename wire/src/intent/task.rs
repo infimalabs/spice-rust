@@ -512,23 +512,23 @@ pub struct ClaimAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub holder: Option<Actor>,
-    /// Resulting lease expiry when this command explicitly renewed possession.
+    /// Resulting lease expiry for legacy explicit-renewal records.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub expiry: Option<Box<crate::Instant>>,
-    /// Task generation the claim acknowledges after an explicit reclaim, so
-    /// the holder knows completion is admitted against the current statement.
+    /// Task generation accepted by `task next`, so the holder knows completion
+    /// is admitted against the current statement.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub acknowledged: Option<u64>,
-    /// The reclaimed lease sits at the indefinite approval horizon and stayed
-    /// there: the reclaim acknowledged the generation and moved no expiry.
+    /// The lease sits at the indefinite approval horizon and stayed there
+    /// while `task next` accepted the generation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
     /// Non-blocking overlap warnings discovered from the claim-time board.

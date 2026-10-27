@@ -23,8 +23,8 @@ obey without ACK/NAK. An assignment requires immediate `spice task show
 show it before allocation. An owed Design request selected from the continuing
 session's retained evidence precedes allocation. Answer one listed question with
 `spice room contribute --question N` or `spice room leave --clause`; either
-ends it and its listening, granting no claim or work. A generation reminder
-requires `spice task reclaim`.
+ends it and its listening, granting no claim or work. On a generation reminder,
+run `spice task next`.
 
 ## Steering and rooms
 

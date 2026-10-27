@@ -71,6 +71,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TaskAssign
         | CommandKind::ClaimWin
         | CommandKind::ClaimCarry
+        | CommandKind::ClaimRefresh
         | CommandKind::ClaimRenew
         | CommandKind::ClaimFree
         | CommandKind::ClaimLapse

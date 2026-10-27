@@ -482,7 +482,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn automatic_claim_starts_short_with_a_one_hour_reclaim_horizon() {
+    fn automatic_claim_starts_short_with_a_one_hour_maximum() {
         let (at, expiry, maximum) = claim_deadlines().expect("automatic deadlines build");
 
         assert_eq!(

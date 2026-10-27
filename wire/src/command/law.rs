@@ -295,6 +295,19 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
+    /// Exact statement, workflow, claim, and lease heads plus current lane
+    /// occupancy and resident epoch.
+    pub const REFRESH: Self = Self {
+        required: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+        ],
+        optional: &[],
+        authority: Authority::Connected,
+    };
     /// Exact claim head, lease head, bound lane and occupant, and resident
     /// epoch.
     pub const POSSESSION: Self = Self {
@@ -599,6 +612,7 @@ impl CommandKind {
             Self::TaskAssign => Law::ASSIGN,
             Self::ClaimWin => Law::WIN,
             Self::ClaimFree | Self::ClaimLapse => Law::FREE,
+            Self::ClaimRefresh => Law::REFRESH,
             Self::ClaimCarry | Self::ClaimRenew => Law::POSSESSION,
             _ => self.non_task_law(),
         }

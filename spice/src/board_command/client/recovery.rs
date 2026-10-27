@@ -173,8 +173,9 @@ fn capture_recovery_preflight(
             "claim::active-exists",
             Some(active.handle().to_string()),
             &format!(
-                "run spice task reclaim {} before capturing another task",
-                active.handle()
+                "finish task {} before capturing another task, or run spice task free {}",
+                active.handle(),
+                active.handle(),
             ),
         ));
     }

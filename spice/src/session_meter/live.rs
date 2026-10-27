@@ -243,9 +243,6 @@ fn collect_lane(
         .map(|(heads, lease)| {
             let now = jiff::Timestamp::now();
             let remaining = duration_since(lease.expiry.get(), now);
-            let reclaim_extends = remaining.is_some_and(|remaining| {
-                remaining < Duration::from_secs(crate::claim_lease::DEFAULT_RECLAIM_SECONDS)
-            });
             // The claim only reaches here once its epoch and occupant match the
             // lane's seated occupant, which is the resident's own renewal
             // eligibility; an iced lease is the one live claim it never rolls.
@@ -261,7 +258,6 @@ fn collect_lane(
                 elapsed: duration_since(now, lease.start.get()),
                 remaining: remaining.or(Some(Duration::ZERO)),
                 rolling,
-                reclaim_extends,
             })
         })
         .transpose()?;

@@ -91,7 +91,6 @@ fn dispatch_client(
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),
         ["task", "next"] => client_next(repository, contract).outcome,
-        ["task", "reclaim"] => client_reclaim(repository, contract, matches),
         ["task", "add" | "plan" | "design"] => client_add(repository, contract, matches),
         ["task", "capture"] => client_capture(repository, contract, matches),
         ["task", "oops"] => client_oops(repository, contract, matches),
@@ -385,7 +384,7 @@ fn client_next(repository: Host<'_>, contract: &Contract) -> TaskNext {
         };
         let task = match next {
             NextWorkState::Active { task } => {
-                return Outcome::Reply(existing_next_claim_reply(&board, task));
+                return refresh_active_claim(repository, contract, &board, task);
             }
             NextWorkState::Candidate { task } => task,
             NextWorkState::DesignRequest { request } => {
@@ -446,6 +445,72 @@ fn client_next(repository: Host<'_>, contract: &Contract) -> TaskNext {
             .and_then(|board| next_drain_readout(&board));
     }
     TaskNext { outcome, drain }
+}
+
+fn refresh_active_claim(
+    repository: Host<'_>,
+    contract: &Contract,
+    board: &BoardAnswer,
+    task: &NextWorkTask,
+) -> Outcome<CommandAnswer> {
+    let claim = match task.claim.as_ref() {
+        Some(claim) => claim,
+        None => {
+            return protocol_fault(
+                "claim::head-missing",
+                "an active next-work decision has no claim head",
+            );
+        }
+    };
+    let lease = match task.lease.as_ref() {
+        Some(lease) => lease,
+        None => {
+            return protocol_fault(
+                "claim::lease-missing",
+                "an active next-work decision has no lease head",
+            );
+        }
+    };
+    let (lane, occupant) = match actor_seat(board) {
+        Ok(seat) => seat,
+        Err(outcome) => return outcome,
+    };
+    let current_residency = claim.body.lane == lane
+        && claim.body.occupant == occupant
+        && claim.body.epoch == board.residency.body.epoch
+        && lease.body.epoch == board.residency.body.epoch;
+    if current_residency && !claim.body.is_stale(&task.workflow.body) {
+        return Outcome::Reply(existing_next_claim_reply(board, task));
+    }
+    let stamp = task.statement.body.born.clone();
+    crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::ClaimRefresh,
+        vec![
+            Witness::Task {
+                task: stamp.clone(),
+                head: task.statement.position,
+            },
+            Witness::Workflow {
+                task: stamp.clone(),
+                head: task.workflow.position,
+                phase: task.workflow.body.phase.clone(),
+            },
+            Witness::Claim {
+                task: stamp.clone(),
+                head: Some(claim.position),
+            },
+            Witness::Lease {
+                task: stamp,
+                head: lease.position,
+            },
+            residency_witness(board, lane, occupant),
+        ],
+        &TaskRef {
+            task: TaskHandle::for_project(&task.statement.body.project, &task.statement.body.born),
+        },
+    )
 }
 
 fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<CommandAnswer> {
@@ -523,102 +588,6 @@ fn retryable_task_next(outcome: &Outcome<CommandAnswer>) -> bool {
                     )
                 )
     )
-}
-
-fn client_reclaim(
-    repository: Host<'_>,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let (task, read) = match mutation_read(contract, matches) {
-        Ok(read) => read,
-        Err(outcome) => return outcome,
-    };
-    mutate_from_board(repository, contract, read, |board| {
-        let (task, heads) = match task {
-            Some(task) => {
-                let heads = named_task_heads(&board, &task)?;
-                (heads.statement.body.handle.clone(), heads)
-            }
-            None => reclaim_active(&board)?,
-        };
-        let seconds = matches.get_one::<String>("lease-seconds").map_or(
-            Ok(spice::claim_lease::DEFAULT_RECLAIM_SECONDS),
-            |written| {
-                written.parse::<u64>().map_err(|error| {
-                    refusal(
-                        "claim::lease-seconds-invalid",
-                        Some(written.clone()),
-                        &error.to_string(),
-                    )
-                })
-            },
-        )?;
-        if seconds == 0 {
-            return Err(refusal(
-                "claim::lease-seconds-zero",
-                Some(seconds.to_string()),
-                "request a positive bounded lease extension",
-            ));
-        }
-        let claim = reclaim_claim(heads, &task, &board.principal)?;
-        let lease = heads.lease.as_ref().ok_or_else(|| {
-            protocol_fault(
-                "claim::lease-missing",
-                "an active claim head has no durable lease head",
-            )
-        })?;
-        let (lane, occupant) = actor_seat(&board)?;
-        Ok((
-            CommandKind::ClaimRenew,
-            vec![
-                Witness::Claim {
-                    task: heads.statement.body.born.clone(),
-                    head: Some(claim.position),
-                },
-                Witness::Lease {
-                    task: heads.statement.body.born.clone(),
-                    head: lease.position,
-                },
-                residency_witness(&board, lane, occupant),
-            ],
-            serde_json::to_value(ClaimRenew {
-                task,
-                lease_seconds: seconds,
-            })
-            .expect("typed intent encodes"),
-        ))
-    })
-}
-
-/// Resolve the implicit reclaim target without losing status-first recovery.
-pub(super) fn reclaim_active(
-    board: &BoardAnswer,
-) -> Result<(TaskHandle, &BoardTask), Outcome<CommandAnswer>> {
-    match sole_active(board) {
-        Err(Outcome::Refusal(refusal)) if refusal.reason() == "claim::active-missing" => Err(
-            reclaim_authority_refusal("claim::active-missing", Some(board.principal.to_string())),
-        ),
-        outcome => outcome,
-    }
-}
-
-pub(super) fn reclaim_claim<'a>(
-    heads: &'a BoardTask,
-    task: &TaskHandle,
-    principal: &Actor,
-) -> Result<&'a Positioned<ClaimHead>, Outcome<CommandAnswer>> {
-    let claim = heads
-        .claim
-        .as_ref()
-        .ok_or_else(|| reclaim_authority_refusal("claim::head-missing", Some(task.to_string())))?;
-    if claim.body.disposition != ClaimDisposition::Active || claim.body.actor != *principal {
-        return Err(reclaim_authority_refusal(
-            "claim::ownership-refused",
-            Some(task.to_string()),
-        ));
-    }
-    Ok(claim)
 }
 
 fn client_note(
@@ -1404,15 +1373,15 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, repository),
         wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, repository),
         wire::intent::Intent::TaskFile(file) => task_file(bus, command, file, repository),
+        wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimRefresh => {
+            claim_refresh(bus, command, task)
+        }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
             claim_free(bus, command, task, repository)
         }
         wire::intent::Intent::TaskDepends(depends) => task_depends(bus, command, depends),
         wire::intent::Intent::ClaimWin(win) => {
             claim_win(bus, command, win, repository, allocation, profiles)
-        }
-        wire::intent::Intent::ClaimRenew(renew) if command.kind() == CommandKind::ClaimRenew => {
-            claim_reclaim(bus, command, renew)
         }
         wire::intent::Intent::TaskDone(done) => task_done(bus, command, done, repository),
         wire::intent::Intent::TaskReview(review) => task_review(bus, command, review, repository),

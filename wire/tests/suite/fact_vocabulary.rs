@@ -43,6 +43,7 @@ const PINNED: &[(&str, &str)] = &[
     ("ClaimWon", "claim::won"),
     ("ClaimCarried", "claim::carried"),
     ("ClaimRebound", "claim::rebound"),
+    ("ClaimAcknowledged", "claim::acknowledged"),
     ("ClaimFreed", "claim::freed"),
     ("ClaimLapsed", "claim::lapsed"),
     ("ClaimRenewed", "claim::renewed"),

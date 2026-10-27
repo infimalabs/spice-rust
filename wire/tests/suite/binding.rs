@@ -124,6 +124,7 @@ const BODIES: &[(CommandKind, &str)] = &[
   "successor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
 }"#,
     ),
+    (CommandKind::ClaimRefresh, r#"{ "task": "SPICE-1kKRRsDP" }"#),
     (
         CommandKind::ClaimRenew,
         r#"{ "task": "SPICE-1kKRRsDP", "lease_seconds": 900 }"#,

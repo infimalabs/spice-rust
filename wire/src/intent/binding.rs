@@ -541,6 +541,7 @@ impl CommandKind {
             | Self::TaskAssign
             | Self::ClaimWin
             | Self::ClaimCarry
+            | Self::ClaimRefresh
             | Self::ClaimRenew
             | Self::ClaimFree
             | Self::ClaimLapse
@@ -620,6 +621,7 @@ impl CommandKind {
             Self::TaskAssign => Binding::of(B::TaskAssign, A::Task),
             Self::ClaimWin
             | Self::ClaimCarry
+            | Self::ClaimRefresh
             | Self::ClaimRenew
             | Self::ClaimFree
             | Self::ClaimLapse => self.claim_binding(),
@@ -650,6 +652,7 @@ impl CommandKind {
         match self {
             Self::ClaimWin => Binding::of(B::ClaimWin, A::Claim),
             Self::ClaimCarry => Binding::of(B::ClaimCarry, A::Claim),
+            Self::ClaimRefresh => Binding::of(B::TaskRef, A::Claim),
             Self::ClaimRenew => Binding::of(B::ClaimRenew, A::Claim),
             Self::ClaimFree | Self::ClaimLapse => Binding::of(B::TaskRef, A::Claim),
             _ => panic!("claim command binding partition is closed"),

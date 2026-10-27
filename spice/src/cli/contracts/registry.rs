@@ -747,21 +747,11 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task next",
         OperatorOrLane,
         Command,
-        [ClaimWon],
+        [ClaimWon, ClaimAcknowledged, ClaimRebound],
         [Resident, Toolful],
         TASK_GIT_TOOLS,
         Reply,
         "board::next"
-    ),
-    row!(
-        ["task", "reclaim"],
-        "task reclaim [HANDLE] [--lease-seconds SECONDS]",
-        Lane,
-        Command,
-        [ClaimRenewed, ClaimRebound],
-        [Resident, LaneCapability],
-        Reply,
-        "board::reclaim"
     ),
     row!(
         ["task", "add"],

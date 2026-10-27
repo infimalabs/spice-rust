@@ -85,16 +85,11 @@ impl<W: Write + Send + 'static> Driver<W> {
         };
         let message = format!(
             "<system-notice>\nTask {} changed after this claim last acknowledged it: \
-             generation {} is {} by {} at position {}. Run `spice task reclaim {}` \
-             to take the current task before continuing. Completion and review remain \
-             refused until the reclaim succeeds. This is a private authority reminder; \
+             generation {} is {} by {} at position {}. Run `spice task next` \
+             to read and accept the current statement before continuing. Completion and review remain \
+             refused until task next succeeds. This is a private authority reminder; \
              no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
-            notice.task,
-            notice.generation,
-            notice.change,
-            notice.editor,
-            notice.position,
-            notice.task,
+            notice.task, notice.generation, notice.change, notice.editor, notice.position,
         );
         if self
             .background(&format!("task:{}", notice.task), &message)

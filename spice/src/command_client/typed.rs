@@ -48,7 +48,12 @@ pub(crate) fn execute_typed<B: Serialize>(
             "selected CLI contract has no resident command mapping",
         );
     };
-    if mapped_kind != kind {
+    if mapped_kind != kind
+        && !matches!(
+            (contract.path, kind),
+            (["task", "next"], CommandKind::ClaimRefresh)
+        )
+    {
         return protocol_fault(
             "command::mapping-mismatch",
             "selected CLI contract does not own the requested wire kind",
@@ -108,7 +113,6 @@ fn task_kind_for(verb: &str) -> Option<CommandKind> {
     Some(match verb {
         "list" | "status" | "show" => CommandKind::BoardRead,
         "next" | "recover" | "capture" => CommandKind::ClaimWin,
-        "reclaim" => CommandKind::ClaimRenew,
         "add" | "plan" | "design" => CommandKind::TaskAdd,
         "oops" => CommandKind::TaskOopsAdd,
         "done" => CommandKind::TaskDone,

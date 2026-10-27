@@ -59,6 +59,12 @@ impl Acknowledgements {
             }
             return None;
         }
+        if let Some(acknowledged) = fact.read::<wire::body::ClaimAcknowledged>() {
+            if let Some(claim) = self.claims.get_mut(acknowledged.task.as_str()) {
+                claim.current = true;
+            }
+            return None;
+        }
         if let Some(renewed) = fact.read::<wire::body::ClaimRenewed>() {
             let claim = self.claims.get_mut(renewed.task.as_str())?;
             if *actor == Actor::Spice || claim.current {

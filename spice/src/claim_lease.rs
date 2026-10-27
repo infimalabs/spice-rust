@@ -3,14 +3,8 @@
 /// Short expiry granted before an automatically launched agent proves health.
 pub const AUTOMATIC_PROVISIONAL_SECONDS: i64 = 60;
 
-/// Default duration requested when an owner reclaims its active task.
-pub const DEFAULT_RECLAIM_SECONDS: u64 = 60 * 60;
-
-/// Fresh maximum horizon minted by an accepted explicit reclaim.
-pub const RECLAIM_HORIZON_SECONDS: i64 = DEFAULT_RECLAIM_SECONDS as i64;
-
-/// Reclaim horizon available after an automatically launched agent proves health.
-pub const AUTOMATIC_MAXIMUM_SECONDS: i64 = RECLAIM_HORIZON_SECONDS;
+/// Horizon available after an automatically launched agent proves health.
+pub const AUTOMATIC_MAXIMUM_SECONDS: i64 = 60 * 60;
 
 /// Whether a lease is represented by the canonical indefinite horizon.
 #[must_use]

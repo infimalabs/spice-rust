@@ -794,11 +794,11 @@ fn renew_claim(
             _ => return Ok(Fired::Stale),
         }
     }
-    let reclaim_horizon = shifted(
+    let rolling_horizon = shifted(
         at,
         std::time::Duration::from_secs(crate::board_command::AUTOMATIC_MAXIMUM_SECONDS as u64),
     )?;
-    let maximum = std::cmp::max(reclaim_horizon, authority.lease.body().maximum);
+    let maximum = std::cmp::max(rolling_horizon, authority.lease.body().maximum);
     let origin = resident_origin(authority.epoch)?;
     let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);
     let guarded = authority.clone();
