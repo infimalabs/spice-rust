@@ -1,3 +1,5 @@
+use super::preparation::add_controller;
+use super::room::design_standing::win_named;
 use super::*;
 
 use wire::intent::TeamLife;
@@ -244,6 +246,33 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             "{summary:?} is absent from:\n{status}"
         );
     }
+    clean(&root, bus);
+}
+
+/// A dry lane's Gathering count mixes a Design another lane already holds
+/// with one nobody holds: both count once under the cycle.
+#[test]
+fn a_dry_gathering_count_mixes_held_and_unheld_designs() {
+    let (root, bus, epoch, seats) = fixture("next-read-gathering-held", 2);
+    let held = add_controller(&bus, epoch, "Held design", wire::TaskIntent::Design, None);
+    let unheld = add_controller(&bus, epoch, "Unheld design", wire::TaskIntent::Design, None);
+    stand_design(&bus, epoch, &held);
+    stand_design(&bus, epoch, &unheld);
+    assert_committed(win_named(&bus, epoch, &seats[1], &held, "capture"));
+    subscription::configure_subscription(&bus, epoch, &seats[0], TeamLife::Steer);
+
+    let answer = next_board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let Some(NextWorkState::Dry { board: counts, .. }) = answer.next else {
+        panic!("a steered lane stays dry")
+    };
+    assert_eq!(
+        counts.designs,
+        wire::rooms::DesignCycleCounts {
+            gathering_input: 2,
+            ..Default::default()
+        },
+        "the held Gathering Design counts under its cycle beside the unheld one"
+    );
     clean(&root, bus);
 }
 

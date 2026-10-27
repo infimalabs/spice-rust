@@ -122,16 +122,17 @@ impl ParkedCounts {
     }
 }
 
-/// Who moves Designs in `cycle` forward, as the drain readout names it.
+/// The parked cycle state an aggregate Design count names in the drain
+/// readout. One count can mix unclaimed, held, and deferred Designs, so the
+/// reason describes the cycle and never names who acts next; per-task surfaces
+/// name the exact next action from the Design's own cycle presentation.
 const fn design_reason(cycle: wire::rooms::DesignCycle) -> &'static str {
     match cycle {
-        wire::rooms::DesignCycle::GatheringInput => {
-            "Designs whose contributors or operator supply the next input"
-        }
+        wire::rooms::DesignCycle::GatheringInput => "Designs gathering input for their next pass",
         wire::rooms::DesignCycle::ReadyForProposal => {
-            "Designs a lane claims to record one proposal"
+            "Designs whose next pass can end in a proposal"
         }
-        wire::rooms::DesignCycle::AwaitingDecision => "Designs whose proposal the operator decides",
+        wire::rooms::DesignCycle::AwaitingDecision => "Designs holding an undecided proposal",
         wire::rooms::DesignCycle::WaitingOnSelectedWork => {
             "Designs waiting for the work they selected to finish"
         }
