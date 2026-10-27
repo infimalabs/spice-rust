@@ -18,8 +18,8 @@ pub(super) use claim::Possession;
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
 use claim::{PreparedClaim, claim_room, prepare_capture_claim};
 pub(super) use claim::{
-    claim_activation_next_action, claim_lease, claim_win, mint_claim, refuse_held_design,
-    task_parked_commits,
+    claim_activation_next_action, claim_lease, claim_win, mint_claim, named_claim_ineligible,
+    refuse_held_design, task_parked_commits,
 };
 pub(super) use edit::task_edit;
 pub(super) use oops::task_oops_add;

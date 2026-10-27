@@ -193,18 +193,8 @@ fn capture_recovery_preflight(
         board::capturable_entry(&satisfied, entry, &board.principal, &board.environment())
     };
     if !eligible {
-        return Err(refusal(
-            if stealing {
-                "claim::steal-ineligible"
-            } else {
-                "claim::capture-ineligible"
-            },
-            Some(heads.statement.body.handle.to_string()),
-            if stealing {
-                "capture --steal only a ready, pending task, held or not"
-            } else {
-                "capture only an unclaimed, ready, pending task"
-            },
+        return Err(super::super::mutation::named_claim_ineligible(
+            entry, stealing,
         ));
     }
     let (lane, occupant) = actor_seat(board)?;
