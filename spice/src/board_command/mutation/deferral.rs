@@ -207,9 +207,14 @@ fn append_filing<'a>(
     // add --preparation` writes.
     let statement_fact = filed;
     write.workflow_head(entry.born().clone(), filed, move |_| workflow);
-    write.task_head(statement_fact, move |position| TaskHead {
-        revision: position,
-        ..statement
+    write.task_head(statement_fact, move |position| {
+        published_statement(
+            TaskHead {
+                revision: position,
+                ..statement
+            },
+            position,
+        )
     });
     match atomic_claim {
         Some(claim) => claim.prepared.append(write, command, post),

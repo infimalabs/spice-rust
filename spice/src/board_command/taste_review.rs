@@ -102,9 +102,22 @@ pub(super) fn keep_taste_hold(taste: &mut Option<TasteHold>, review: &TasteRevie
                 plan: None,
                 matches: review.matches.clone(),
                 rechecks: 0,
+                opened: None,
             });
         }
     }
+}
+
+/// The statement a policy-reading write publishes at `fact`.
+///
+/// A hold this write opened records `fact` as its opening, so the lane told
+/// about the hold is the one whose wording it found, never a later writer that
+/// only carried it through.
+pub(super) fn published_statement(mut statement: TaskHead, fact: wire::Seq) -> TaskHead {
+    if let Some(hold) = &mut statement.taste {
+        hold.record_opening(fact);
+    }
+    statement
 }
 
 /// Carry a statement's taste hold through one policy read of its rewrite.

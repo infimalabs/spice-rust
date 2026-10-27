@@ -127,10 +127,10 @@ fn acknowledgement_clears_prior_generations_and_a_later_edit_gets_a_new_identity
 }
 
 #[test]
-fn a_lane_write_that_leaves_a_fresh_hold_tells_that_lane_once() {
+fn only_the_lane_whose_write_opened_a_hold_hears_of_it_once() {
     let fixture = LaunchFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
-    let cursor = bus.cursor().expect("cursor reads");
+    let lane = Actor::Lane(fixture.lane);
     let hold = wire::TasteHold {
         plan: None,
         matches: vec![wire::TasteMatch {
@@ -140,15 +140,39 @@ fn a_lane_write_that_leaves_a_fresh_hold_tells_that_lane_once() {
             finding: None,
         }],
         rechecks: 0,
+        opened: None,
     };
-    retitle(&bus, &task, Actor::Lane(fixture.lane), Some(hold.clone()));
-    let snapshot = bus.task_snapshot().expect("held snapshot reads");
 
-    let [(lane, notice)] = taste_holds(&bus, &snapshot, cursor)
+    // The operator's policy read opens the hold; the lane then rewires the
+    // task's dependencies, carrying the hold through without reading policy.
+    let cursor = bus.cursor().expect("cursor reads");
+    restate(&bus, &task, Actor::Operator, Hold::Read(Some(hold.clone())));
+    restate(&bus, &task, lane.clone(), Hold::CarriedThrough);
+    let snapshot = bus.task_snapshot().expect("carried snapshot reads");
+    assert!(
+        taste_holds(&bus, &snapshot, cursor)
+            .expect("carried holds project")
+            .is_empty(),
+        "a lane that only carried another writer's hold is not told it wrote it",
+    );
+
+    // Cleared, then reopened by the lane's own policy-reading write, then
+    // carried through once more by that lane's dependency edit.
+    restate(&bus, &task, Actor::Operator, Hold::Read(None));
+    let cursor = bus.cursor().expect("cursor reads");
+    let opening = restate(&bus, &task, lane.clone(), Hold::Read(Some(hold)));
+    restate(&bus, &task, lane, Hold::CarriedThrough);
+    let snapshot = bus.task_snapshot().expect("reopened snapshot reads");
+    let [(told, notice)] = taste_holds(&bus, &snapshot, cursor)
         .expect("hold notices project")
         .try_into()
-        .expect("the opening write's lane hears the hold");
-    assert_eq!((lane, notice.occupant), (fixture.lane, fixture.occupant));
+        .expect("the opening write's lane hears the hold once");
+    assert_eq!((told, notice.occupant), (fixture.lane, fixture.occupant));
+    assert_eq!(
+        notice.position,
+        opening.get(),
+        "the notice names the write that opened the hold, not the later carrier",
+    );
     assert_eq!(
         notice.task,
         TaskHandle::for_project("task.claim", &task).to_string()
@@ -165,25 +189,6 @@ fn a_lane_write_that_leaves_a_fresh_hold_tells_that_lane_once() {
             .expect("first pass projects")
             .is_empty(),
         "the first pass has no earlier observation to announce against",
-    );
-
-    let cursor = bus.cursor().expect("cursor reads");
-    retitle(
-        &bus,
-        &task,
-        Actor::Lane(fixture.lane),
-        Some(wire::TasteHold {
-            rechecks: 1,
-            ..hold.clone()
-        }),
-    );
-    retitle(&bus, &task, Actor::Operator, Some(hold));
-    let snapshot = bus.task_snapshot().expect("rechecked snapshot reads");
-    assert!(
-        taste_holds(&bus, &snapshot, cursor)
-            .expect("operator hold projects")
-            .is_empty(),
-        "only a lane's own fresh hold is told; an operator write tells no lane",
     );
     finish(bus);
 }
@@ -382,11 +387,26 @@ fn note(bus: &Bus, task: &TaskStamp, actor: Actor) {
     committed(bus.commit(write).expect("task note commits"));
 }
 
-/// Revise the statement as `actor`, leaving `taste` as its hold.
-fn retitle(bus: &Bus, task: &TaskStamp, actor: Actor, taste: Option<wire::TasteHold>) {
+/// How one statement write treats the taste hold.
+enum Hold {
+    /// A policy read that leaves this hold, opening it if new, or clears it.
+    Read(Option<wire::TasteHold>),
+    /// A write that reads no policy, such as a dependency edit, and keeps the
+    /// standing hold as it is.
+    CarriedThrough,
+}
+
+/// Revise the statement as `actor`, returning the revision's fact.
+fn restate(bus: &Bus, task: &TaskStamp, actor: Actor, hold: Hold) -> Seq {
     let snapshot = bus.task_snapshot().expect("pre-edit snapshot reads");
     let mut statement = snapshot.tasks()[0].statement().body().clone();
-    statement.taste = taste;
+    let reads_policy = match hold {
+        Hold::Read(taste) => {
+            statement.taste = taste;
+            true
+        }
+        Hold::CarriedThrough => false,
+    };
     let revision = u32::try_from(statement.revision.get())
         .expect("fixture revision fits")
         .saturating_add(1);
@@ -396,17 +416,26 @@ fn retitle(bus: &Bus, task: &TaskStamp, actor: Actor, taste: Option<wire::TasteH
             wire::body::TaskEdited {
                 task: task.clone(),
                 revision,
-                dependencies: None,
+                dependencies: (!reads_policy).then(|| statement.dependencies.clone()),
                 intent: None,
             },
             FactCause::Root,
         )
         .expect("task edit builds");
-    write.task_head(edited, move |position| wire::TaskHead {
-        revision: position,
-        ..statement
+    write.task_head(edited, move |position| {
+        let mut statement = wire::TaskHead {
+            revision: position,
+            ..statement
+        };
+        if let Some(hold) = statement.taste.as_mut().filter(|_| reads_policy) {
+            hold.record_opening(position);
+        }
+        statement
     });
     committed(bus.commit(write).expect("task edit commits"));
+    bus.task_snapshot().expect("edited snapshot reads").tasks()[0]
+        .statement()
+        .position()
 }
 
 fn acknowledge(bus: &Bus, task: &TaskStamp) {

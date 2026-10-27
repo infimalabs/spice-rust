@@ -195,6 +195,7 @@ fn writable_crossing_lifts_standing_tags_into_typed_fields_once() {
             plan: Some(wire::TastePlan::Authored),
             matches: vec![opened],
             rechecks: 0,
+            opened: None,
         })
     );
 
@@ -236,6 +237,7 @@ fn writable_crossing_lifts_audit_evidence_into_plan_only_holds_once() {
             plan: Some(wire::TastePlan::Prepended),
             matches: latest.to_vec(),
             rechecks: 1,
+            opened: None,
         })
     );
     assert_eq!(
@@ -244,6 +246,7 @@ fn writable_crossing_lifts_audit_evidence_into_plan_only_holds_once() {
             plan: Some(wire::TastePlan::Authored),
             matches: vec![opened],
             rechecks: 0,
+            opened: None,
         })
     );
 

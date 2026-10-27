@@ -193,9 +193,29 @@ fn a_matched_filing_records_a_hold_and_keeps_the_authored_flow() {
         "the operator reads what matched",
     );
     assert_eq!(
-        answer.taste.as_ref(),
-        Some(hold),
-        "the filing answer carries the hold"
+        answer.taste.as_ref().map(|taste| &taste.matches),
+        Some(&hold.matches),
+        "the filing answer carries the hold's matches"
+    );
+    let filed = held.statement.position;
+    assert_eq!(
+        hold.opened,
+        Some(filed),
+        "the hold records the filing write that opened it",
+    );
+    add_dependency(&bus, epoch, &review_task, &clean_task);
+    let rewired = board(&bus, epoch, Actor::Operator);
+    let carried = at(&rewired, &review_task);
+    assert_ne!(carried.statement.position, filed);
+    assert_eq!(
+        carried
+            .statement
+            .body
+            .taste
+            .as_ref()
+            .and_then(|hold| hold.opened),
+        Some(filed),
+        "a dependency edit carries the hold without claiming to have opened it",
     );
     let encoded = wire::encode(&answer).expect("task answer encodes");
     assert!(
@@ -256,7 +276,11 @@ fn a_matching_edit_records_a_hold_on_the_statement_alone() {
         .as_ref()
         .expect("a matching edit records a hold");
     assert_eq!((hold.plan, hold.rechecks), (None, 0));
-    assert_eq!(edited.taste.as_ref(), Some(hold));
+    assert_eq!(hold.opened, Some(at(&after, &task).statement.position));
+    assert_eq!(
+        edited.taste.as_ref().map(|taste| &taste.matches),
+        Some(&hold.matches)
+    );
     assert_eq!(flow_of(&after, &task), flow_of(&before, &task));
     assert_eq!(
         at(&after, &task).claim.as_ref().map(|claim| &claim.body),

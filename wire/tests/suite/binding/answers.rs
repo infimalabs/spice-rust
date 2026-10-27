@@ -64,7 +64,8 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
                 "message": "Keep one current path."
               }
             }],
-            "rechecks": 2
+            "rechecks": 2,
+            "opened": 7
           },
           "dependencies": ["1kKRRsDQ"],
           "provenance": "task:1kKRRsDP",
