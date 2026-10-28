@@ -2,22 +2,28 @@
 
 use wire::rooms::{DesignCoverage, DesignItems};
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) fn design_coverage(
-    statement: &wire::TaskHead,
+    intent: Option<wire::TaskIntent>,
+    workflow: &wire::WorkflowHead,
+    questions: &[String],
     items: Option<&DesignItems>,
 ) -> Option<DesignCoverage> {
-    if !statement.intent.is_some_and(wire::TaskIntent::is_design) {
+    if !wire::intent::is_open_design(intent, workflow) {
         return None;
     }
     let quiet = DesignItems::default();
-    Some(items.unwrap_or(&quiet).coverage(&statement.acceptance))
+    Some(items.unwrap_or(&quiet).coverage(questions))
 }
 
 pub(crate) fn design_research(
     statement: &wire::TaskHead,
+    workflow: &wire::WorkflowHead,
     items: Option<&DesignItems>,
 ) -> Option<String> {
-    design_coverage(statement, items).map(|coverage| {
+    design_coverage(statement.intent, workflow, &statement.acceptance, items).map(|coverage| {
         let handle =
             wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing);
         coverage.research_guidance(&statement.acceptance, &handle)

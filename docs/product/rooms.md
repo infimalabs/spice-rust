@@ -232,10 +232,12 @@ owns each rule summarized here.
   Coverage is not concurrence and proves nothing about the research behind a
   charge; maturity's 80% steeping threshold still decides readiness alone, and
   a statement naming no question is covered.
-  Acquisition, refresh and resumed holder context name the current missing
-  questions and direct source-backed item findings before proposing. Statement
-  edits and new charges recompute that advice; changed guidance uses the existing
-  assignment or claim notice path rather than periodic reminders.
+  Acquisition, refresh and resumed context for an open Design pass name the
+  current missing questions and direct source-backed item findings before
+  proposing. Intake phases such as `plan` and `review` keep their own declared
+  deliverables and receive no research-pass advice.
+  Statement edits and new charges recompute that advice; changed guidance uses
+  the existing assignment or claim notice path rather than periodic reminders.
   A mistaken undecided proposal can be retracted by its author with
   `design withdraw WITHDRAWAL_JSON`; the version stays in history but leaves
   the operator's choices.

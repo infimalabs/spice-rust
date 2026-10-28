@@ -214,6 +214,7 @@ impl Error for AuthorityReadError {}
 fn read_design_research(
     read: &JournalRead<'_>,
     statement: &wire::TaskHead,
+    workflow: &wire::WorkflowHead,
 ) -> Result<Option<String>, AuthorityReadError> {
     if !statement.intent.is_some_and(wire::TaskIntent::is_design) {
         return Ok(None);
@@ -223,6 +224,7 @@ fn read_design_research(
         .map_err(AuthorityReadError::Journal)?;
     Ok(crate::board_command::design_research(
         statement,
+        workflow,
         Some(&maturity.items),
     ))
 }
@@ -305,7 +307,7 @@ fn read_authorities(
                     &statement.dependencies,
                     neighbors.iter(),
                 );
-                let research = read_design_research(read, statement)?;
+                let research = read_design_research(read, statement, heads.workflow().body())?;
                 let (statement, workflow, claim, lease) = heads.into_bodies();
                 Entry::new(statement, workflow, claim, lease)
                     .map_err(AuthorityReadError::Board)
