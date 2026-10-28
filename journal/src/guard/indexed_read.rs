@@ -206,6 +206,31 @@ impl JournalRead<'_> {
         Ok(self.cursor)
     }
 
+    /// First durable fact position: 1 for a journal created before the
+    /// four-character boundary, 52³ (`1000`) for one created since.
+    pub fn first_position(&self) -> Result<Option<wire::Seq>, GuardError> {
+        if self.cursor.is_none() {
+            return Ok(None);
+        }
+        read_metrics::observe_query();
+        // Facts are never removed and every committed position precedes the
+        // cursor, so the first rowid in key order is the first visible fact:
+        // one B-tree descent, never a scan.
+        let position = self
+            .connection
+            .query_row(
+                "SELECT seq FROM fact_envelopes ORDER BY seq LIMIT 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_row();
+        position
+            .map(|position| decode_seq(position).map_err(GuardError::Invalid))
+            .transpose()
+    }
+
     /// Read one bounded page of the named fact kinds after an admitted cursor.
     ///
     /// `upper` freezes a historical prefix; `None` uses this guard's cursor.

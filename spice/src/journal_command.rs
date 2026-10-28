@@ -190,10 +190,11 @@ fn stage_artifact_members(
 
 /// Newest facts first, from the caller's `--after SEQ` cursor down.
 ///
-/// Facts occupy every position from 1 through the journal cursor, so the
-/// population at or before a start position is that position. Retained fact
-/// pages are read under the journal's own decoded-byte ceiling and clipped to
-/// rows as they arrive, so a large or oversized fact costs one bounded row.
+/// Facts occupy every position from the journal's first fact through its
+/// cursor, so the population at or before a start position is its distance
+/// from that first fact. Retained fact pages are read under the journal's own
+/// decoded-byte ceiling and clipped to rows as they arrive, so a large or
+/// oversized fact costs one bounded row.
 fn report_inner(
     page: Page,
     contract: &Contract,
@@ -204,25 +205,14 @@ fn report_inner(
     let schema = reader.schema_version().map_err(open_failure)?;
     let text = page.limits().text;
     let retain = page.retain();
-    let (cursor, (start, rows)) = read_authenticated(&state, &reader, contract, ambient, |read| {
-        let horizon = read
-            .cursor()
-            .map_err(|error| Failure::store("journal::read-failed", error.to_string()))?
-            .ok_or_else(cursor_missing)?;
-        let start = match page.after() {
-            None => horizon,
-            Some(after) => after
-                .parse::<Seq>()
-                .ok()
-                .filter(|seq| *seq <= horizon)
-                .ok_or_else(|| {
-                    Failure::Refusal(page.cursor_refusal(&format!("SEQ from 1 to {horizon}")))
-                })?,
-        };
-        let rows = newest_rows(read, start, horizon, retain, text)?;
-        Ok((start, rows))
+    let (cursor, (span, rows)) = read_authenticated(&state, &reader, contract, ambient, |read| {
+        let span = Span::read(read, page.after(), |range| {
+            Failure::Refusal(page.cursor_refusal(&range))
+        })?;
+        let rows = newest_rows(read, span.start, span.horizon, retain, text)?;
+        Ok((span, rows))
     })?;
-    let population = usize::try_from(start.get())
+    let population = usize::try_from(span.population(span.start))
         .map_err(|error| Failure::protocol("journal::count-overflow", error.to_string()))?;
     let entries = page.shown(rows, population).map_err(Failure::Refusal)?;
     Ok((
@@ -230,10 +220,58 @@ fn report_inner(
         JournalReport {
             schema,
             cursor: Some(cursor),
-            facts: cursor.get(),
+            facts: span.population(span.horizon),
             entries,
         },
     ))
+}
+
+/// The positions one journal read covers: its first fact, its horizon, and
+/// the inclusive start an `--after SEQ` names between them.
+struct Span {
+    first: Seq,
+    start: Seq,
+    horizon: Seq,
+}
+
+impl Span {
+    /// Two single-row reads; `refuse` receives the admitted range when `after`
+    /// names no position inside it.
+    fn read(
+        read: &journal::JournalRead<'_>,
+        after: Option<&str>,
+        refuse: impl FnOnce(String) -> Failure,
+    ) -> Result<Self, Failure> {
+        let read_failed =
+            |error: journal::GuardError| Failure::store("journal::read-failed", error.to_string());
+        let horizon = read
+            .cursor()
+            .map_err(read_failed)?
+            .ok_or_else(cursor_missing)?;
+        let first = read
+            .first_position()
+            .map_err(read_failed)?
+            .ok_or_else(cursor_missing)?;
+        let start = match after {
+            None => horizon,
+            Some(after) => after
+                .parse::<Seq>()
+                .ok()
+                .filter(|seq| (first..=horizon).contains(seq))
+                .ok_or_else(|| refuse(format!("SEQ from {first} to {horizon}")))?,
+        };
+        Ok(Self {
+            first,
+            start,
+            horizon,
+        })
+    }
+
+    /// Facts at or before `through`, which positions fill contiguously from
+    /// the first fact.
+    fn population(&self, through: Seq) -> u64 {
+        through.get() - self.first.get() + 1
+    }
 }
 
 /// Up to `retain` rows newest first, starting inclusively at `start`.
