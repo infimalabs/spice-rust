@@ -165,10 +165,12 @@ pub fn deliverable(phase: &Phase) -> Option<&'static str> {
     match phase.as_str() {
         "design" => Some(
             "board state is the deliverable: record exactly one `design propose` \
-             recommendation; that command releases the claim atomically. Start from no: \
-             build only outputs the room's contributions or other cited sources earn, and \
-             propose with `--recommend collapse` when nothing earns an output or the Design \
-             itself; only the operator concludes a Design, and lanes never mark it done",
+             recommendation; that command releases the claim atomically. First investigate \
+             every question and weigh each with a nonzero `spice room contribute HANDLE \
+             --charge=C --question N TEXT`; proposals refuse while any question is uncovered. \
+             Start from no: build only outputs the room's contributions or other cited sources \
+             earn, and propose with `--recommend collapse` when nothing earns an output or the \
+             Design itself; only the operator concludes a Design, and lanes never mark it done",
         ),
         "plan" => Some(
             "board state is the deliverable: make the execution contract explicit or \

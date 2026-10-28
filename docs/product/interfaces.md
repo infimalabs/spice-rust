@@ -124,9 +124,14 @@ holder's justification, and `task adopt` takes two task handles.
   room publication between that read and the write refuses
   (`preparation::proposal-statement-moved`, `proposal-claim-moved`, or
   `board::witness-moved`), and an unacknowledged Design generation refuses
-  `proposal-claim-stale`. `--dry-run` prints the assembled proposal and
-  records nothing. The write records the immutable proposal and releases that
-  exact claim atomically.
+  `proposal-claim-stale`. Every current question of the Design must carry an
+  item-specific nonzero charge of either sign before any recommendation
+  records; otherwise the resident refuses `preparation::questions-uncovered`,
+  observing the uncovered question numbers and naming each question, and moves
+  no claim, flow, or proposal. A Design whose statement names no question is
+  covered. `--dry-run` prints the assembled proposal and records nothing. The
+  write records the immutable proposal and releases that exact claim
+  atomically.
 - **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
   SEQUENCE}`), `source`, and one outcome over an exact proposal under that
   controller. A work proposal uses `{"kind": "resolved", "candidate": …,

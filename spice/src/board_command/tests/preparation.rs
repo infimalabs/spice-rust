@@ -254,6 +254,48 @@ fn retain_candidate_version(
     )
 }
 
+/// Charge each of `design`'s current questions no nonzero charge has weighed
+/// yet, as `seat`'s lane, so a fixture pass clears proposal coverage.
+pub(super) fn cover_questions(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, design: &TaskHandle) {
+    let acceptance = at(&board(bus, epoch, Actor::Operator), design)
+        .statement
+        .body
+        .acceptance
+        .clone();
+    let born = design.born().expect("design stamp");
+    let missing = bus
+        .task_snapshot()
+        .expect("snapshot reads")
+        .facts()
+        .design_items(&born)
+        .cloned()
+        .unwrap_or_default()
+        .coverage(&acceptance)
+        .missing;
+    for question in missing {
+        let visible = board(bus, epoch, Actor::Operator);
+        let heads = at(&visible, design);
+        let body = wire::intent::RoomContribute {
+            room: design.clone(),
+            kind: wire::rooms::RoomContributionKind::charge(1),
+            question: Some(question),
+            text: "Investigated before proposing.".to_owned(),
+            sources: Vec::new(),
+        };
+        let command = fixture_command(
+            epoch,
+            Actor::Lane(seat.lane),
+            CommandKind::RoomContribute,
+            vec![statement_witness(heads), workflow_witness(heads)],
+            &body,
+        );
+        let wire::intent::Intent::RoomContribute(request) = command.body() else {
+            panic!("fixture command carries a contribution");
+        };
+        assert_committed(room_contribute(bus, &command, request, None));
+    }
+}
+
 fn propose_candidate_version(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -263,15 +305,15 @@ fn propose_candidate_version(
     candidate_micros: i64,
     recommendation: wire::rooms::DesignPassRecommendation,
 ) -> (CandidateRef, RoomSource) {
-    let mut current = board(bus, epoch, Actor::Lane(seat.lane));
-    if at(&current, controller)
+    if at(&board(bus, epoch, Actor::Lane(seat.lane)), controller)
         .claim
         .as_ref()
         .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active)
     {
         capture_for(bus, epoch, seat, controller);
-        current = board(bus, epoch, Actor::Lane(seat.lane));
     }
+    cover_questions(bus, epoch, seat, controller);
+    let current = board(bus, epoch, Actor::Lane(seat.lane));
     let candidate = CandidateRef {
         controller: controller.born().expect("controller stamp"),
         candidate: RoomAuthorityStamp::for_micros(candidate_micros).expect("candidate identity"),
