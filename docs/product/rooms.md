@@ -154,8 +154,10 @@ owns each rule summarized here.
   one landing between selection and recording refuses the recording;
   unrelated writes do not release it. The request grants no claim, work,
   workflow state, or wake. `spice room awareness HANDLE` shows its exact
-  opportunity, evidence, statement, session, compaction, matched terms, and
-  asked items.
+  opportunity and evidence in the same plain-language phrases as the delivered
+  request, then its statement, session, compaction, matched terms, and asked
+  items; one conversation used as both opportunity and evidence shows its
+  transcript locus once.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   and contributing-lane totals, requested reach, same-statement
