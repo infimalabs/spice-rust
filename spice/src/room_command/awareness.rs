@@ -279,13 +279,17 @@ impl fmt::Display for DesignAwareness {
 }
 
 fn maturity_summary(maturity: &DesignMaturity, state: &DesignMaturityState) -> String {
+    let contributions = maturity.contributions;
+    let contributing_lanes = maturity.contributing_lanes.len();
+    let requested_lanes = maturity.requested_lanes.len();
     format!(
-        "maturity {}; {} contributions from {} lanes; requests={} to {} lanes",
+        "maturity {}; {contributions} contribution{} from {contributing_lanes} lane{}; \
+         requests={} to {requested_lanes} lane{}",
         state.summary(),
-        maturity.contributions,
-        maturity.contributing_lanes.len(),
+        if contributions == 1 { "" } else { "s" },
+        if contributing_lanes == 1 { "" } else { "s" },
         maturity.requests,
-        maturity.requested_lanes.len(),
+        if requested_lanes == 1 { "" } else { "s" },
     )
 }
 
@@ -363,6 +367,34 @@ mod tests {
             terms: vec!["rendering".to_owned()],
             asks: Vec::new(),
         }
+    }
+
+    #[test]
+    fn maturity_counts_use_singular_nouns_only_for_one() {
+        let state = DesignMaturityState::Fresh;
+        let mut maturity = DesignMaturity::default();
+        assert_eq!(
+            maturity_summary(&maturity, &state),
+            "maturity fresh: no contribution yet; 0 contributions from 0 lanes; requests=0 to 0 lanes",
+        );
+
+        maturity.contributions = 1;
+        maturity.contributing_lanes.push(uuid(1));
+        maturity.requests = 1;
+        maturity.requested_lanes.push(uuid(2));
+        assert_eq!(
+            maturity_summary(&maturity, &state),
+            "maturity fresh: no contribution yet; 1 contribution from 1 lane; requests=1 to 1 lane",
+        );
+
+        maturity.contributions = 2;
+        maturity.contributing_lanes.push(uuid(3));
+        maturity.requests = 2;
+        maturity.requested_lanes.push(uuid(4));
+        assert_eq!(
+            maturity_summary(&maturity, &state),
+            "maturity fresh: no contribution yet; 2 contributions from 2 lanes; requests=2 to 2 lanes",
+        );
     }
 
     #[test]
