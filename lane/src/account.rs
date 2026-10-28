@@ -219,6 +219,7 @@ mod tests {
     const THIRD: &str = "018f82d4-6f59-7d06-92e3-bce913116308";
     /// Bytes the fixture's first batch accounts, starting at the origin.
     const OPENING: u64 = 4096;
+    const INITIAL_SEQUENCE: u64 = 52 * 52 * 52;
 
     /// A batch accounted after another one, and the head it left behind.
     ///
@@ -294,7 +295,10 @@ mod tests {
         assert_eq!(checkpoint(journal), Some(successor.to));
         assert_eq!(
             batches(journal),
-            vec![(1, opening), (2, successor)],
+            vec![
+                (INITIAL_SEQUENCE, opening),
+                (INITIAL_SEQUENCE + 1, successor),
+            ],
             "seating a new generation disturbed the batches the old one wrote",
         );
     }
@@ -324,7 +328,7 @@ mod tests {
         assert_eq!(checkpoint(journal), Some(opening.to));
         assert_eq!(
             batches(journal),
-            vec![(1, opening)],
+            vec![(INITIAL_SEQUENCE, opening)],
             "a refused supersession still appended its batch",
         );
     }

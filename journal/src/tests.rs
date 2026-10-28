@@ -52,6 +52,63 @@ fn fact_budget(rows: usize) -> FactReadBudget {
 }
 
 #[test]
+fn new_journals_start_at_the_four_character_sequence_boundary() {
+    let mut journal = Journal::in_memory().expect("create empty journal");
+    let first_sequence = seq(52 * 52 * 52);
+    let second_sequence = seq(first_sequence.get() + 1);
+    let third_sequence = seq(second_sequence.get() + 1);
+    let mut first = crate::JournalWrite::new(
+        Actor::Operator,
+        "task:1kKRRsDP".parse().expect("fixture origin"),
+        instant(),
+        wire::Producer::CommandDoor,
+    );
+    for note in ["first fact", "second fact"] {
+        first
+            .fact(
+                wire::body::TaskNoted {
+                    task: "1kKRRsDP".parse().expect("fixture task"),
+                    note: note.to_owned(),
+                },
+                crate::FactCause::Root,
+            )
+            .expect("initial fact builds");
+    }
+    let first = journal.apply(first).expect("initial facts commit");
+    assert_eq!(
+        (first.first(), first.last()),
+        (first_sequence, second_sequence)
+    );
+    assert_eq!(
+        journal.read(|read| read.cursor()).unwrap(),
+        Some(second_sequence)
+    );
+
+    let mut next = crate::JournalWrite::new(
+        Actor::Operator,
+        "task:1kKRRsDP".parse().expect("fixture origin"),
+        instant(),
+        wire::Producer::CommandDoor,
+    );
+    next.fact(
+        wire::body::TaskNoted {
+            task: "1kKRRsDP".parse().expect("fixture task"),
+            note: "next fact".to_owned(),
+        },
+        crate::FactCause::Existing(second_sequence),
+    )
+    .expect("next fact builds");
+    let next = journal.apply(next).expect("next fact commits");
+    assert_eq!(
+        (next.first(), next.last()),
+        (third_sequence, third_sequence)
+    );
+    journal
+        .verify()
+        .expect("the four-character journal stream verifies");
+}
+
+#[test]
 fn coherent_authority_verifies_every_required_plane() {
     let journal = authority_fixture();
 

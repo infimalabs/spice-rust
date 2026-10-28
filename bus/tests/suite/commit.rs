@@ -14,6 +14,7 @@ const COMMAND_ONE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 const COMMAND_TWO: &str = "018f82d4-6f59-7d06-92e3-bce9131163c5";
 /// How many retained tasks make a fleet whose snapshot spans several pages.
 const RETAINED_FACTS: usize = 300;
+const INITIAL_SEQUENCE: u64 = 52 * 52 * 52;
 
 #[test]
 fn steering_presentation_batches_refuse_before_crossing_the_fixed_key_ceiling() {
@@ -55,8 +56,14 @@ fn one_writer_commits_then_broadcasts_monotone_cursors() {
         bus.commit(initial_write(uuid(COMMAND_ONE), Arc::clone(&observed)))
             .expect("writer answers"),
     );
-    assert_eq!((first.first(), first.last()), (1, 1));
-    assert_eq!(first.cursor().position().map(Seq::get), Some(1));
+    assert_eq!(
+        (first.first(), first.last()),
+        (INITIAL_SEQUENCE, INITIAL_SEQUENCE)
+    );
+    assert_eq!(
+        first.cursor().position().map(Seq::get),
+        Some(INITIAL_SEQUENCE)
+    );
     assert_eq!(commits.recv().expect("post-durability signal"), first);
     let tasks = bus.task_snapshot().expect("incremental task head reads");
     assert_eq!(tasks.facts().len(), 1);
@@ -68,10 +75,17 @@ fn one_writer_commits_then_broadcasts_monotone_cursors() {
     );
 
     let second = committed(
-        bus.commit(note_write(uuid(COMMAND_TWO), 1, Arc::clone(&observed)))
-            .expect("writer answers"),
+        bus.commit(note_write(
+            uuid(COMMAND_TWO),
+            INITIAL_SEQUENCE,
+            Arc::clone(&observed),
+        ))
+        .expect("writer answers"),
     );
-    assert_eq!((second.first(), second.last()), (2, 2));
+    assert_eq!(
+        (second.first(), second.last()),
+        (INITIAL_SEQUENCE + 1, INITIAL_SEQUENCE + 1)
+    );
     assert!(second.cursor() > first.cursor());
     assert_eq!(commits.recv().expect("second durable signal"), second);
 
@@ -220,7 +234,7 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
     assert_eq!(after.facts().len(), RETAINED_FACTS + 1);
     assert_eq!(
         after.facts().horizon().map(Seq::get),
-        Some((RETAINED_FACTS + 1) as u64)
+        Some(INITIAL_SEQUENCE + RETAINED_FACTS as u64)
     );
     assert_eq!(
         after.materialization_steps(),
@@ -233,17 +247,20 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
         1,
         "a caught-up lifecycle consumer touches only the one-fact suffix"
     );
-    assert_eq!(committed_tail[0].seq.get(), (RETAINED_FACTS + 1) as u64);
+    assert_eq!(
+        committed_tail[0].seq.get(),
+        INITIAL_SEQUENCE + RETAINED_FACTS as u64
+    );
     assert_shared_fact_prefix(&before, &after);
     assert!(
         std::ptr::eq(
             before
                 .facts()
-                .at(Seq::new(1).expect("first"))
+                .at(Seq::new(INITIAL_SEQUENCE).expect("first"))
                 .expect("first fact is retained"),
             after
                 .facts()
-                .at(Seq::new(1).expect("first"))
+                .at(Seq::new(INITIAL_SEQUENCE).expect("first"))
                 .expect("first fact stays retained"),
         ),
         "a position inside the shared prefix is answered from the shared chunk"
@@ -271,7 +288,7 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
     assert!(
         after
             .facts()
-            .at(Seq::new((RETAINED_FACTS + 2) as u64).expect("beyond"))
+            .at(Seq::new(INITIAL_SEQUENCE + RETAINED_FACTS as u64 + 1).expect("beyond"),)
             .is_none(),
         "a position past the horizon is not retained"
     );
@@ -294,12 +311,12 @@ fn retained_fleet(retained: usize) -> (Bus, Seq) {
         instant("2030-04-12T18:44:10.271Z"),
         Producer::CommandDoor,
     );
-    let mut cause = FactCause::Existing(Seq::new(1).expect("initial cause"));
+    let mut cause = FactCause::Existing(Seq::new(INITIAL_SEQUENCE).expect("initial cause"));
     for index in 1..retained {
         cause = FactCause::Pending(append_retained_task(&mut bulk, index, cause));
     }
     let applied = journal.apply(bulk).expect("fleet history commits");
-    assert_eq!(applied.last().get(), retained as u64);
+    assert_eq!(applied.last().get(), INITIAL_SEQUENCE + retained as u64 - 1);
     let bus = Bus::start(journal).expect("dedicated writer starts");
     (bus, applied.last())
 }
@@ -692,7 +709,7 @@ fn refusals_and_faults_leave_every_durable_effect_and_signal_absent() {
     );
     commits.recv().expect("first signal");
 
-    let mut refused = note_write(uuid(COMMAND_TWO), 1, Arc::clone(&observed));
+    let mut refused = note_write(uuid(COMMAND_TWO), INITIAL_SEQUENCE, Arc::clone(&observed));
     refused.guard(JournalGuard::new(|read| {
         if read.cursor()?.is_none() {
             Ok(())
@@ -742,7 +759,7 @@ fn refusals_and_faults_leave_every_durable_effect_and_signal_absent() {
         1
     );
 
-    let faulted = note_write(uuid(COMMAND_ONE), 1, Arc::clone(&observed));
+    let faulted = note_write(uuid(COMMAND_ONE), INITIAL_SEQUENCE, Arc::clone(&observed));
     match bus.commit(faulted).expect("fault answers") {
         CommitOutcome::Fault(_) => {}
         other => panic!("expected fault, found {other:?}"),
@@ -1167,21 +1184,21 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
         )
         .expect("lane renewal fact");
     let landed = committed(bus.commit(write).expect("writer answers"));
-    assert_eq!((landed.first(), landed.last()), (1, 2));
+    assert_commit_range(&landed, INITIAL_SEQUENCE, INITIAL_SEQUENCE + 1);
 
     let mut write = bare_write();
     claim_won(&mut write, "bus.first", phase("todo"), lane, first);
     claim_won(&mut write, "bus.second", phase("todo"), lane, first);
     claim_won(&mut write, "bus.third", phase("review"), lane, successor);
     let landed = committed(bus.commit(write).expect("writer answers"));
-    assert_eq!((landed.first(), landed.last()), (3, 5));
+    assert_commit_range(&landed, INITIAL_SEQUENCE + 2, INITIAL_SEQUENCE + 4);
 
     let snapshot = bus.task_snapshot().expect("task snapshot reads");
     let facts = snapshot.facts();
     assert_eq!(
         facts.latest_claim(&Actor::Operator),
         Some((
-            Seq::new(5).expect("position"),
+            Seq::new(INITIAL_SEQUENCE + 4).expect("position"),
             ClaimCell {
                 project: "bus.third".to_owned(),
                 phase: phase("review"),
@@ -1190,8 +1207,14 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
         "the newest win wins, whatever cells the older ones carried"
     );
     assert_eq!(facts.latest_claim(&Actor::Spice), None);
-    assert_eq!(facts.context_anchor(lane, first), Seq::new(1));
-    assert_eq!(facts.context_anchor(lane, successor), Seq::new(2));
+    assert_eq!(
+        facts.context_anchor(lane, first),
+        Seq::new(INITIAL_SEQUENCE)
+    );
+    assert_eq!(
+        facts.context_anchor(lane, successor),
+        Seq::new(INITIAL_SEQUENCE + 1)
+    );
     assert_eq!(facts.context_anchor(first, lane), None);
 
     let mut write = recognition_write();
@@ -1209,20 +1232,26 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
         )
         .expect("lane compaction fact");
     let landed = committed(bus.commit(write).expect("writer answers"));
-    assert_eq!((landed.first(), landed.last()), (6, 6));
+    assert_commit_range(&landed, INITIAL_SEQUENCE + 5, INITIAL_SEQUENCE + 5);
     let mut write = bare_write();
     claim_won(&mut write, "bus.fourth", phase("todo"), lane, successor);
     let landed = committed(bus.commit(write).expect("writer answers"));
-    assert_eq!((landed.first(), landed.last()), (7, 7));
+    assert_commit_range(&landed, INITIAL_SEQUENCE + 6, INITIAL_SEQUENCE + 6);
 
     let snapshot = bus.task_snapshot().expect("task snapshot advances");
     let facts = snapshot.facts();
-    assert_eq!(facts.context_anchor(lane, first), Seq::new(1));
-    assert_eq!(facts.context_anchor(lane, successor), Seq::new(6));
+    assert_eq!(
+        facts.context_anchor(lane, first),
+        Seq::new(INITIAL_SEQUENCE)
+    );
+    assert_eq!(
+        facts.context_anchor(lane, successor),
+        Seq::new(INITIAL_SEQUENCE + 5)
+    );
     assert_eq!(
         facts.latest_claim(&Actor::Operator),
         Some((
-            Seq::new(7).expect("position"),
+            Seq::new(INITIAL_SEQUENCE + 6).expect("position"),
             ClaimCell {
                 project: "bus.fourth".to_owned(),
                 phase: phase("todo"),
@@ -1343,7 +1372,7 @@ fn cross_origin_write() -> JournalWrite {
                 task: stamp(),
                 note: "invalid cross-origin cause".to_owned(),
             },
-            FactCause::Existing(Seq::new(1).expect("existing cause")),
+            FactCause::Existing(Seq::new(INITIAL_SEQUENCE).expect("existing cause")),
         )
         .expect("registered command-door fact");
     write
@@ -1356,6 +1385,10 @@ fn bare_write() -> JournalWrite {
         instant("2030-04-12T18:44:09.271Z"),
         Producer::CommandDoor,
     )
+}
+
+fn assert_commit_range(commit: &bus::JournalCommit, first: u64, last: u64) {
+    assert_eq!((commit.first(), commit.last()), (first, last));
 }
 
 fn committed(outcome: CommitOutcome) -> bus::JournalCommit {

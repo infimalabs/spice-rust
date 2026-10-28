@@ -40,7 +40,10 @@ impl SteeringSnapshot {
 impl FactSnapshot {
     /// Validates a fact sequence for use by a disposable materialization.
     pub fn from_facts(facts: Vec<wire::Envelope<wire::AnyFact>>) -> Result<Self, SnapshotError> {
-        let mut expected = 1_u64;
+        let mut expected = facts
+            .first()
+            .filter(|fact| fact.seq.get() == crate::INITIAL_SEQUENCE)
+            .map_or(1, |fact| fact.seq.get());
         for fact in &facts {
             if !fact.v.is_current() {
                 return Err(SnapshotError::Invalid {

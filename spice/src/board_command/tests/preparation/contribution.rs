@@ -337,6 +337,7 @@ fn a_cited_journal_fact_reads_with_its_kind_and_task() {
     let journal = |fact: u64| RoomSource::Journal {
         fact: wire::SequenceCode::new(fact),
     };
+    let first = 52 * 52 * 52;
     let statement = at(&visible, &design).statement.position.get();
     let written = contributed(contribute(
         &bus,
@@ -347,7 +348,7 @@ fn a_cited_journal_fact_reads_with_its_kind_and_task() {
             &design,
             RoomContributionKind::charge(0),
             "Cited three ways.",
-            vec![journal(statement), journal(post.get()), journal(1)],
+            vec![journal(statement), journal(post.get()), journal(first)],
         ),
     ));
     let store = artifacts(root.as_ref());
@@ -378,7 +379,7 @@ fn a_cited_journal_fact_reads_with_its_kind_and_task() {
             .iter()
             .map(|summary| (summary.fact.get(), summary.task.clone()))
             .collect::<Vec<_>>(),
-        [(statement, task.clone()), (post.get(), task), (1, None)],
+        [(statement, task.clone()), (post.get(), task), (first, None)],
     );
     assert_ne!(
         answer.facts[0].kind, answer.facts[1].kind,

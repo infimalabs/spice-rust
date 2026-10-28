@@ -789,8 +789,10 @@ fn one_write_maintains_the_projection_that_rebuild_reproduces_without_touching_f
         .connection
         .execute_batch(
             "DELETE FROM authorization_heads;
-             UPDATE proposal_heads SET head_seq = 1 WHERE head_seq = (SELECT max(head_seq) FROM proposal_heads);
-             INSERT INTO room_publications(room, publication, seq) VALUES ('ghost', 'ghost', 2);",
+             UPDATE proposal_heads SET head_seq = (SELECT min(seq) FROM fact_envelopes)
+             WHERE head_seq = (SELECT max(head_seq) FROM proposal_heads);
+             INSERT INTO room_publications(room, publication, seq)
+             VALUES ('ghost', 'ghost', (SELECT seq FROM fact_envelopes ORDER BY seq LIMIT 1 OFFSET 1));",
         )
         .expect("corrupt the projection");
     assert!(refused_classes(&journal).contains(&ViolationClass::Head));

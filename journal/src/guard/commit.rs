@@ -492,7 +492,7 @@ fn assign_positions(
     count: usize,
 ) -> Result<Vec<wire::Seq>, CommitError> {
     let start = match current {
-        None => 1,
+        None => crate::INITIAL_SEQUENCE,
         Some(seq) => seq.get().checked_add(1).ok_or_else(|| {
             CommitError::Fault(CommitFault::new("journal position range exhausted"))
         })?,

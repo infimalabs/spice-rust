@@ -79,6 +79,12 @@
 /// `group::stance` receipts retire to historical authority.
 pub const SCHEMA_VERSION: u32 = 101;
 
+/// First position assigned by a newly created journal.
+///
+/// Retained journals that began at position 1 keep their recorded positions;
+/// only an empty journal starts at this first four-character base52 value.
+const INITIAL_SEQUENCE: u64 = 52 * 52 * 52;
+
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
 ///

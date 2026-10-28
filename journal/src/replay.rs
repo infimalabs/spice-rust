@@ -374,6 +374,9 @@ fn verify_facts(
             envelope_length: stored.get(7).map_err(VerifyError::Sqlite)?,
             envelope: None,
         };
+        if facts.is_empty() && u64::try_from(row.seq).ok() == Some(crate::INITIAL_SEQUENCE) {
+            expected = row.seq;
+        }
         if row.seq != expected {
             violations.push(Violation::new(
                 ViolationClass::Sequence,

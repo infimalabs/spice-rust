@@ -14,6 +14,12 @@ fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero fixture position")
 }
 
+const INITIAL_SEQUENCE: u64 = 52 * 52 * 52;
+
+fn position(ordinal: u64) -> Seq {
+    seq(INITIAL_SEQUENCE + ordinal - 1)
+}
+
 fn accepted(actor: Actor) -> Accepted {
     Accepted {
         wire: WireVersion::CURRENT,
@@ -236,13 +242,13 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
             .iter()
             .map(StreamFact::seq)
             .collect::<Vec<_>>(),
-        [seq(1), seq(2)]
+        [position(1), position(2)]
     );
     assert_eq!(
         facts(&frames[0]).overflow.expect("overflow").continuation,
-        seq(3)
+        position(3)
     );
-    assert_eq!(subscription.cursor(), Some(seq(2)));
+    assert_eq!(subscription.cursor(), Some(position(2)));
     assert!(!subscription.is_live());
 
     let moved = StreamRequest::Continue {
@@ -252,7 +258,7 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
         subject: ViewSubject::Facts,
         cursor: StreamCursor {
             epoch: epoch(),
-            seq: seq(4),
+            seq: position(4),
         },
     };
     assert!(matches!(
@@ -260,7 +266,7 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
         Err(Failure::Refusal(ref refusal))
             if refusal.reason() == "stream::continuation-moved"
     ));
-    assert_eq!(subscription.cursor(), Some(seq(2)));
+    assert_eq!(subscription.cursor(), Some(position(2)));
 
     for (id, cursor) in [(0xc6, 3), (0xc7, 5)] {
         let continuation = StreamRequest::Continue {
@@ -270,7 +276,7 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
             subject: ViewSubject::Facts,
             cursor: StreamCursor {
                 epoch: epoch(),
-                seq: seq(cursor),
+                seq: position(cursor),
             },
         };
         subscription
@@ -278,7 +284,7 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
             .expect("exact continuation answers");
     }
     assert!(subscription.is_live());
-    assert_eq!(subscription.cursor(), Some(seq(6)));
+    assert_eq!(subscription.cursor(), Some(position(6)));
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
@@ -358,7 +364,7 @@ fn reconnect_is_strictly_after_the_admitted_fact_cursor() {
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"))),
-            &request(0xc4, vec![ViewSubject::Facts], Some(seq(4))),
+            &request(0xc4, vec![ViewSubject::Facts], Some(position(4))),
         )
         .expect("same-generation resume begins");
 
@@ -368,9 +374,9 @@ fn reconnect_is_strictly_after_the_admitted_fact_cursor() {
             .iter()
             .map(StreamFact::seq)
             .collect::<Vec<_>>(),
-        [seq(5), seq(6)]
+        [position(5), position(6)]
     );
-    assert_eq!(subscription.cursor(), Some(seq(6)));
+    assert_eq!(subscription.cursor(), Some(position(6)));
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
@@ -382,14 +388,14 @@ fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
-            &request(0xc4, vec![ViewSubject::Facts], Some(seq(2))),
+            &request(0xc4, vec![ViewSubject::Facts], Some(position(2))),
         )
         .expect("operator resume begins");
 
     assert!(facts(&frames[0]).rows.is_empty());
     assert!(facts(&frames[0]).overflow.is_none());
-    assert_eq!(facts(&frames[0]).horizon, seq(6));
-    assert_eq!(subscription.cursor(), Some(seq(6)));
+    assert_eq!(facts(&frames[0]).horizon, position(6));
+    assert_eq!(subscription.cursor(), Some(position(6)));
     assert!(subscription.is_live());
     drop(source);
     bus.shutdown().expect("bus shuts down");
@@ -613,14 +619,14 @@ async fn durable_broadcast_drives_later_updates_without_refresh() {
     let StreamFrame::Fact { fact, .. } = &delivery.frames()[0] else {
         panic!("expected live fact: {delivery:?}");
     };
-    assert_eq!(fact.seq(), seq(3));
+    assert_eq!(fact.seq(), position(3));
     assert_eq!(
         subscription.cursor(),
-        Some(seq(2)),
+        Some(position(2)),
         "materialization cannot move the resumable cursor before send"
     );
     subscription.admit(delivery);
-    assert_eq!(subscription.cursor(), Some(seq(3)));
+    assert_eq!(subscription.cursor(), Some(position(3)));
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
@@ -993,7 +999,7 @@ fn thread_request_walks_one_indexed_barrier_and_names_continuation() {
         epoch: epoch(),
         cursor: StreamCursor {
             epoch: epoch(),
-            seq: seq(5),
+            seq: position(5),
         },
     };
     let frame = source
@@ -1005,9 +1011,9 @@ fn thread_request_walks_one_indexed_barrier_and_names_continuation() {
 
     assert_eq!(
         packed.rows.iter().map(StreamFact::seq).collect::<Vec<_>>(),
-        [seq(5), seq(4)]
+        [position(5), position(4)]
     );
-    assert_eq!(packed.overflow.expect("overflow").continuation, seq(3));
+    assert_eq!(packed.overflow.expect("overflow").continuation, position(3));
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
