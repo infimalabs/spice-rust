@@ -228,13 +228,14 @@ impl fmt::Display for DesignAwareness {
             maturity_summary(&self.maturity, &self.state)
         )?;
         for item in &self.items {
+            let (charges, lanes) = (item.standing.charges, item.standing.lanes);
             write!(
                 formatter,
-                "\nitem {} {}: {} charges from {} lanes: {}",
+                "\nitem {} {}: {charges} charge{} from {lanes} lane{}: {}",
                 item.standing.question,
                 item.standing.state.label(),
-                item.standing.charges,
-                item.standing.lanes,
+                if charges == 1 { "" } else { "s" },
+                if lanes == 1 { "" } else { "s" },
                 item.text,
             )?;
         }
