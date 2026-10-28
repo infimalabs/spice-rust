@@ -256,7 +256,8 @@ quotes, or images a press would send, including a vacant member it would wake.
 A running team with nothing drafted shows no rim; an idle team with no agents or
 drafts disables SEND while the sliders stay usable. In a multi-member team SEND
 reads `FULL SEND` exactly when the submission reaches every member; a broadcast
-preview substitutes its actual recipients.
+preview substitutes its actual recipients. Both labels share a `1.5em` font size
+relative to the control font, without enlarging the disc.
 
 A vacant member takes the same durable steering submission as an occupied one,
 its witness naming no occupant at the current generation; the resident launches
