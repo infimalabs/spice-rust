@@ -224,7 +224,14 @@ owns each rule summarized here.
   governed input and carries the same source-backed justification. A pass
   starts from no: its holder builds only outputs the room's contributions or
   other cited sources earn, and collapse is the expected recommendation when
-  nothing earns an output or the Design itself. A mistaken
+  nothing earns an output or the Design itself. Before any recommendation
+  records, the holder investigates every current question until each carries
+  an item-specific nonzero charge, whatever its sign: the resident reads that
+  coverage from the witnessed statement and refuses an uncovered pass
+  `preparation::questions-uncovered`, naming each gap and moving nothing.
+  Coverage is not concurrence and proves nothing about the research behind a
+  charge; maturity's 80% steeping threshold still decides readiness alone, and
+  a statement naming no question is covered. A mistaken
   undecided proposal can be retracted by its author with `design withdraw
   WITHDRAWAL_JSON`; the version stays in history but leaves the operator's
   choices.

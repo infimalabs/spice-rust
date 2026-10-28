@@ -16,6 +16,10 @@ use super::{
 };
 use crate::{CanonicalUuid, Seq};
 
+mod coverage;
+
+pub use coverage::DesignCoverage;
+
 /// Statement heads retained individually in one maturity projection.
 pub const DESIGN_MATURITY_HEAD_LIMIT: usize = 4;
 /// Lane identities retained in each bounded maturity set.
@@ -848,7 +852,7 @@ mod tests {
         }
     }
 
-    fn contribution(
+    pub(super) fn contribution(
         statement: Option<u64>,
         lane: u8,
         kind: RoomContributionKind,
@@ -869,10 +873,10 @@ mod tests {
         }
     }
 
-    const ITEMS: [&str; 2] = ["Which input steeps a Design?", "Who answers it?"];
+    pub(super) const ITEMS: [&str; 2] = ["Which input steeps a Design?", "Who answers it?"];
 
     /// Lane `lane`'s charge `value` on the item whose text is `item`.
-    fn charge(lane: u8, item: &str, value: i8) -> RoomContributed {
+    pub(super) fn charge(lane: u8, item: &str, value: i8) -> RoomContributed {
         RoomContributed {
             question: RoomQuestion::new(1),
             item: Some(RoomQuestionItem::of(item)),
@@ -891,7 +895,7 @@ mod tests {
             .and_then(DesignItemSeries::needs)
     }
 
-    fn acceptance(items: &[&str]) -> Vec<String> {
+    pub(super) fn acceptance(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| (*item).to_owned()).collect()
     }
 

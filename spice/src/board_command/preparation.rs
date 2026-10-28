@@ -187,6 +187,45 @@ fn require_unblocked_selection(
     Ok(())
 }
 
+/// Refuse a pass while any current question of its Design lacks an
+/// item-specific nonzero charge, naming each uncovered question. Coverage is
+/// read from the admitted statement head, which the proposal witnesses, so an
+/// edit refuses at the guard and a later charge can only add coverage.
+fn require_question_coverage(
+    snapshot: &bus::TaskSnapshot,
+    controller: &TaskStamp,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let heads = task_heads(snapshot, controller)?;
+    let statement = heads.statement().body();
+    let quiet = wire::rooms::DesignItems::default();
+    let coverage = snapshot
+        .facts()
+        .design_items(controller)
+        .unwrap_or(&quiet)
+        .coverage(&statement.acceptance);
+    if coverage.is_full() {
+        return Ok(());
+    }
+    let handle = TaskHandle::for_filing(&statement.project, &statement.born, statement.filing);
+    let (mut questions, mut items) = (Vec::new(), Vec::new());
+    for question in coverage.missing {
+        questions.push(question.to_string());
+        items.push(format!(
+            "question {question}: {}",
+            question.item(&statement.acceptance).unwrap_or_default()
+        ));
+    }
+    Err(refusal(
+        "preparation::questions-uncovered",
+        Some(questions.join(",")),
+        &format!(
+            "investigate every uncovered question of {handle} and weigh each with `spice room \
+             contribute {handle} --charge=C --question N TEXT` before proposing; uncovered: {}",
+            items.join("; ")
+        ),
+    ))
+}
+
 pub(super) fn propose_design(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -205,6 +244,9 @@ pub(super) fn propose_design(
         Err(error) => return store_fault("preparation::heads-unreadable", &error.to_string()),
     };
     if let Err(outcome) = require_design_proposal(&observed, command, proposal) {
+        return outcome;
+    }
+    if let Err(outcome) = require_question_coverage(&observed, &proposal.candidate.controller) {
         return outcome;
     }
     if let Err(outcome) = references::require_scoped_references(bus, proposal) {

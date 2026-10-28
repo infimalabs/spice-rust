@@ -278,6 +278,7 @@ fn an_unheld_gathering_design_is_claimed_by_name_and_its_pass_proposed() {
 
     assert_committed(win_named(&bus, epoch, &seats[0], &design, "capture"));
     let held = board(&bus, epoch, lane);
+    cover_questions(&bus, epoch, &seats[0], &design);
     let proposal = derived(&held, &output, 1_760_000_000_000_301);
     assert_committed(propose(
         &bus,
@@ -288,5 +289,122 @@ fn an_unheld_gathering_design_is_claimed_by_name_and_its_pass_proposed() {
         proposal,
         room_head(&bus, &design),
     ));
+    clean(&root, bus);
+}
+
+/// The refusal a pass earns while `questions` of its Design stay uncovered.
+fn assert_uncovered(outcome: &Outcome<CommandAnswer>, questions: &str, item: &str) {
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("an uncovered question refuses the pass: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "preparation::questions-uncovered");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(|diagnostic| diagnostic.observed()),
+        Some(questions)
+    );
+    assert!(
+        refusal.explanation().contains(item),
+        "the refusal names the uncovered question: {}",
+        refusal.explanation()
+    );
+}
+
+/// A pass refuses while any current question lacks an item-specific nonzero
+/// charge, naming each gap and moving neither claim, flow, nor proposal. A
+/// charge of either sign covers its question, and coverage follows the current
+/// statement, so a question an edit adds must be weighed before the pass
+/// records.
+#[test]
+fn a_pass_records_only_once_every_current_question_is_covered() {
+    let (root, bus, epoch, seats) = fixture("preparation-question-coverage", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Covered Design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    stand_design(&bus, epoch, &design);
+    let output = add_plan_output(&bus, epoch, &design, "Covered output");
+    capture_for(&bus, epoch, &seats[0], &design);
+    let first = at(&board(&bus, epoch, Actor::Operator), &design)
+        .statement
+        .body
+        .acceptance[0]
+        .clone();
+
+    let held = board(&bus, epoch, lane.clone());
+    let uncovered = propose(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &output,
+        derived(&held, &output, 1_760_000_000_000_401),
+        room_head(&bus, &design),
+    );
+    assert_uncovered(&uncovered, "1", &first);
+    let after = board(&bus, epoch, lane.clone());
+    let (before, unmoved) = (at(&held, &design), at(&after, &design));
+    assert_eq!(unmoved.claim, before.claim, "the claim stays active");
+    assert_eq!(unmoved.workflow, before.workflow, "the flow stays put");
+    assert!(unmoved.design_cycle.proposal.is_none(), "nothing publishes");
+
+    // A negative charge covers its question: coverage is not agreement.
+    contributed(contribute(
+        &bus,
+        epoch,
+        root.as_ref(),
+        lane.clone(),
+        contribution_body(
+            &design,
+            RoomContributionKind::charge(-1),
+            "Not needed.",
+            Vec::new(),
+        ),
+    ));
+    let added = "Who owns the follow-up?";
+    assert_committed(super::super::edit::correct(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &TaskEdit {
+            acceptance: vec![first, added.to_owned()],
+            ..super::super::edit::only(&design)
+        },
+    ));
+    refresh_held(&bus, epoch, &lane, &seats[0], &design);
+    let edited = board(&bus, epoch, lane.clone());
+    let partial = propose(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &output,
+        derived(&edited, &output, 1_760_000_000_000_402),
+        room_head(&bus, &design),
+    );
+    assert_uncovered(&partial, "2", added);
+
+    cover_questions(&bus, epoch, &seats[0], &design);
+    assert_committed(propose(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &output,
+        derived(&edited, &output, 1_760_000_000_000_403),
+        room_head(&bus, &design),
+    ));
+    assert!(
+        at(&board(&bus, epoch, Actor::Operator), &design)
+            .design_cycle
+            .proposal
+            .is_some(),
+        "the covered pass records"
+    );
     clean(&root, bus);
 }
