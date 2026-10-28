@@ -131,6 +131,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     task_generation: Mutex<Option<(String, u64, u64, String)>>,
     /// Latest proactive task assignment privately delivered to this occupant.
     task_assignment: Mutex<Option<TaskAssignmentNotice>>,
+    /// Completion contract this occupant was last told for its claim.
+    task_contract: Mutex<Option<(String, u64, String)>>,
     /// Latest claim lapse privately delivered to this occupant.
     claim_lapse: Mutex<Option<ClaimLapseNotice>>,
     /// Latest taste hold privately delivered to this occupant.
@@ -265,6 +267,9 @@ pub(in crate::resident) enum Kick {
     /// A claim this exact occupant held ended; an assignment notice for it
     /// that is still queued is withdrawn rather than delivered stale.
     TaskAssignmentEnded(TaskAssignmentEnd),
+    /// A hand-taken claim's completion contract as it stands now, for this
+    /// exact occupant.
+    TaskContract(TaskContractNotice),
     /// A private background notice whose exact occupant must confirm enqueue.
     BackgroundConfirmed {
         notice: crate::resident::design_input::BackgroundNotice,
@@ -365,6 +370,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             task_generation: Mutex::new(None),
             task_assignment: Mutex::new(None),
             claim_lapse: Mutex::new(None),
+            task_contract: Mutex::new(None),
             taste_hold: Mutex::new(None),
             renewal: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
@@ -1318,18 +1324,14 @@ pub(in crate::resident) fn listen_for_kicks(
                         driver.deliver_narration(&prod);
                     }
                     Ok(Kick::Narration(_)) => {}
-                    Ok(Kick::TaskGeneration(notice)) if notice.occupant == occupant => {
-                        driver.deliver_task_generation(&notice);
-                    }
-                    Ok(Kick::TaskGeneration(_)) => {}
-                    Ok(Kick::TaskAssignment(notice)) if notice.occupant == occupant => {
-                        driver.deliver_task_assignment(&notice);
-                    }
-                    Ok(Kick::TaskAssignment(_)) => {}
-                    Ok(Kick::TaskAssignmentEnded(ended)) if ended.occupant == occupant => {
-                        driver.withdraw_task_assignment(&ended);
-                    }
-                    Ok(Kick::TaskAssignmentEnded(_)) => {}
+                    Ok(
+                        kick @ (Kick::TaskGeneration(_)
+                        | Kick::TaskContract(_)
+                        | Kick::TaskAssignment(_)
+                        | Kick::TaskAssignmentEnded(_)
+                        | Kick::ClaimLapse(_)
+                        | Kick::TasteHold(_)),
+                    ) => driver.deliver_task_notice(occupant, kick),
                     Ok(Kick::BackgroundConfirmed {
                         notice,
                         request,
@@ -1338,14 +1340,6 @@ pub(in crate::resident) fn listen_for_kicks(
                         let accepted = background_accepted(&driver, occupant, &notice);
                         confirmed_background::answer(&reply, request, accepted);
                     }
-                    Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
-                        driver.deliver_claim_lapse(&notice);
-                    }
-                    Ok(Kick::ClaimLapse(_)) => {}
-                    Ok(Kick::TasteHold(notice)) if notice.occupant == occupant => {
-                        driver.deliver_taste_hold(&notice);
-                    }
-                    Ok(Kick::TasteHold(_)) => {}
                     Ok(Kick::MessageRefused(notice)) if notice.occupant == occupant => {
                         driver.deliver_message_refusal(&notice);
                     }
@@ -1397,9 +1391,9 @@ pub(in crate::resident) use registration::FirstTurn;
 pub(in crate::resident) mod renewal;
 mod task_notices;
 pub(in crate::resident) use task_notices::{
-    ClaimLapseNotice, TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice,
-    TasteHoldNotice, TasteState, claim_lapse, task_assignment, task_assignment_ended,
-    task_generation, taste_hold,
+    ClaimLapseNotice, TaskAssignmentEnd, TaskAssignmentNotice, TaskContractNotice,
+    TaskGenerationNotice, TasteHoldNotice, TasteState, claim_lapse, task_assignment,
+    task_assignment_ended, task_contract, task_generation, taste_hold,
 };
 mod steering;
 #[cfg(test)]

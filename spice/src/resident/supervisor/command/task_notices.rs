@@ -1,6 +1,7 @@
 //! Private task-claim notices for one exact occupant: a stale claim
 //! generation, a resident-minted assignment and its withdrawal once the claim
-//! ends, a lapse, and a taste hold a lane's own statement write left standing.
+//! ends, a lapse, a taste hold a lane's own statement write left standing, and
+//! a hand-taken claim's completion contract moving with its linked work.
 //! Each is a keyless background aside under a per-task purpose, so a later
 //! notice for the same task replaces an earlier one still queued at omp's next
 //! step boundary.
@@ -119,6 +120,29 @@ impl TaskAssignmentNotice {
     }
 }
 
+/// The current completion contract of a claim this exact occupant took by
+/// hand, observed while its holder has acknowledged the task's generation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct TaskContractNotice {
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) task: String,
+    pub(in crate::resident) claim: u64,
+    pub(in crate::resident) completion_contract: String,
+}
+
+impl TaskContractNotice {
+    fn text(&self) -> String {
+        format!(
+            "<system-notice>\nTask {}'s completion contract moved with its linked work; its \
+             statement and generation did not, so there is nothing to acknowledge. {} This \
+             is a private authority reminder; no acknowledgment key or visible ACK/NAK is \
+             required.\n</system-notice>",
+            self.task, self.completion_contract,
+        )
+    }
+}
+
 /// One private lapse notice for the lane that held the expired claim, scoped to
 /// that lane's current occupant: a restart may have re-seated the lane since
 /// the claim was won.
@@ -177,8 +201,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         );
         if self
             .background(&format!("task:{}", notice.task), &message)
-            .is_err()
+            .is_ok()
         {
+            self.disclosed_contract(&notice.task, notice.claim, &notice.completion_contract);
+        } else {
             let mut delivered = self
                 .task_generation
                 .lock()
@@ -194,6 +220,89 @@ impl<W: Write + Send + 'static> Driver<W> {
             {
                 *delivered = previous;
             }
+        }
+    }
+
+    /// Record the completion contract this occupant was last told for one claim.
+    fn disclosed_contract(&self, task: &str, claim: u64, contract: &str) {
+        *self
+            .task_contract
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) =
+            Some((task.to_owned(), claim, contract.to_owned()));
+    }
+
+    /// Tell this occupant once each time a hand-taken claim's completion
+    /// contract moves from the one it was last told.
+    ///
+    /// The first observation of a claim is the contract its claim answer, its
+    /// acknowledgement, or a generation notice already disclosed, so it is
+    /// recorded rather than repeated.
+    pub(super) fn deliver_task_contract(&self, notice: &TaskContractNotice) {
+        let previous = {
+            let mut told = self
+                .task_contract
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let current = (
+                notice.task.clone(),
+                notice.claim,
+                notice.completion_contract.clone(),
+            );
+            match told.as_ref() {
+                Some((task, claim, contract)) if task == &notice.task && *claim == notice.claim => {
+                    if contract == &notice.completion_contract {
+                        return;
+                    }
+                }
+                _ => {
+                    *told = Some(current);
+                    return;
+                }
+            }
+            told.replace(current)
+        };
+        if self
+            .background(&format!("contract:{}", notice.task), &notice.text())
+            .is_err()
+        {
+            let mut told = self
+                .task_contract
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if told.as_ref().is_some_and(|(task, claim, contract)| {
+                task == &notice.task
+                    && *claim == notice.claim
+                    && contract == &notice.completion_contract
+            }) {
+                *told = previous;
+            }
+        }
+    }
+
+    /// Deliver one task-claim notice addressed to this exact occupant; a
+    /// notice for another occupant of the lane is dropped.
+    pub(super) fn deliver_task_notice(&self, occupant: CanonicalUuid, kick: Kick) {
+        match kick {
+            Kick::TaskGeneration(notice) if notice.occupant == occupant => {
+                self.deliver_task_generation(&notice);
+            }
+            Kick::TaskContract(notice) if notice.occupant == occupant => {
+                self.deliver_task_contract(&notice);
+            }
+            Kick::TaskAssignment(notice) if notice.occupant == occupant => {
+                self.deliver_task_assignment(&notice);
+            }
+            Kick::TaskAssignmentEnded(ended) if ended.occupant == occupant => {
+                self.withdraw_task_assignment(&ended);
+            }
+            Kick::ClaimLapse(notice) if notice.occupant == occupant => {
+                self.deliver_claim_lapse(&notice);
+            }
+            Kick::TasteHold(notice) if notice.occupant == occupant => {
+                self.deliver_taste_hold(&notice);
+            }
+            _ => {}
         }
     }
 
@@ -319,6 +428,16 @@ pub(in crate::resident) fn task_generation(
     notice: TaskGenerationNotice,
 ) {
     send(paths, lane, &Kick::TaskGeneration(notice));
+}
+
+/// Privately tell the exact claimant occupant that its hand-taken claim's
+/// completion contract stands as projected now.
+pub(in crate::resident) fn task_contract(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: TaskContractNotice,
+) {
+    send(paths, lane, &Kick::TaskContract(notice));
 }
 
 /// Privately notify the exact occupant about a resident-minted assignment.

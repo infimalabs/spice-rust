@@ -3,7 +3,8 @@
 //! The task journal is the authority. A resident-minted claim is announced to
 //! its exact occupant, and each active claim records the task generation it
 //! acknowledged so later edits can require acknowledgement through `task
-//! next`. These projections create
+//! next`. A hand-taken claim whose generation is acknowledged hears its
+//! completion contract as linked work moves it. These projections create
 //! no steering directive or acknowledgment key; the detached occupant driver
 //! deduplicates repeated resident observations by their authority identities.
 
@@ -12,7 +13,8 @@ use wire::TaskHandle;
 
 use super::*;
 use crate::resident::supervisor::command::{
-    TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice, TasteHoldNotice, TasteState,
+    TaskAssignmentEnd, TaskAssignmentNotice, TaskContractNotice, TaskGenerationNotice,
+    TasteHoldNotice, TasteState,
 };
 
 /// Index rows one read returns while a claim trails its task.
@@ -33,6 +35,18 @@ pub(super) fn reconcile(
     }
     for (lane, notice) in notices(bus, snapshot)? {
         super::super::supervisor::command::task_generation(paths, lane, notice);
+    }
+    for held in crate::board_command::manual_claim_contracts(snapshot) {
+        super::super::supervisor::command::task_contract(
+            paths,
+            held.lane,
+            TaskContractNotice {
+                occupant: held.occupant,
+                task: held.task.to_string(),
+                claim: held.claim,
+                completion_contract: held.contract,
+            },
+        );
     }
     for (lane, notice) in taste_holds(bus, snapshot, findings.cursor)? {
         super::super::supervisor::command::taste_hold(paths, lane, notice);
