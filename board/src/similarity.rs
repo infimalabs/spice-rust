@@ -392,23 +392,24 @@ impl MatchCache {
         statements: impl Iterator<Item = &'a TaskHead>,
         background: impl FnOnce() -> Background,
     ) -> Arc<FrequencyProfile> {
-        self.refit(statements, |_| background())
+        self.refit(statements, |_| Some(background()))
     }
 
-    /// [`Self::fit`] for a caller that holds no conversation: a refit keeps
-    /// the background the current fit carries.
-    #[must_use]
+    /// [`Self::fit`] for a caller that holds no conversation. A refit keeps
+    /// the background the current fit carries; before any fit exists, it
+    /// returns an uncached statement-only profile so it cannot freeze an empty
+    /// background into the shared window.
     pub fn fit_carried<'a>(
         &self,
         statements: impl Iterator<Item = &'a TaskHead>,
     ) -> Arc<FrequencyProfile> {
-        self.refit(statements, |carried| carried.cloned().unwrap_or_default())
+        self.refit(statements, |carried| carried.cloned())
     }
 
     fn refit<'a>(
         &self,
         statements: impl Iterator<Item = &'a TaskHead>,
-        background: impl FnOnce(Option<&Background>) -> Background,
+        background: impl FnOnce(Option<&Background>) -> Option<Background>,
     ) -> Arc<FrequencyProfile> {
         let mut recent = BinaryHeap::with_capacity(FREQUENCY_WINDOW + 1);
         for statement in statements {
@@ -428,7 +429,14 @@ impl MatchCache {
             Some((_, frequency)) => Some(Arc::clone(frequency)),
             None => None,
         };
-        let background = background(carried.as_deref().map(|carried| &carried.background));
+        let Some(background) = background(carried.as_deref().map(|carried| &carried.background))
+        else {
+            return Arc::new(FrequencyProfile::of(
+                recent
+                    .into_iter()
+                    .map(|Reverse(RecentStatement(statement))| TermCounts::task(statement)),
+            ));
+        };
         let frequency = Arc::new(FrequencyProfile::fitted(
             recent
                 .into_iter()
@@ -745,6 +753,30 @@ mod tests {
             exact(&edited, &later),
             "a refit without conversation keeps the carried background"
         );
+    }
+
+    #[test]
+    fn a_cold_caller_without_conversation_does_not_freeze_an_empty_background() {
+        let board = [
+            head(1, "Claim cursor paging"),
+            head(2, "Publication boundary retention"),
+        ];
+        let cache = MatchCache::default();
+        let cold = cache.fit_carried(board.iter());
+        assert_eq!(
+            *cold,
+            FrequencyProfile::of(board.iter().map(TermCounts::task)),
+            "a caller without profiles can still score against statements"
+        );
+
+        let held = [document("claim review"), document("claim room")];
+        let fitted = cache.fit(board.iter(), || Background::of(&held));
+        assert_eq!(
+            *fitted,
+            FrequencyProfile::fitted(board.iter().map(TermCounts::task), Background::of(&held),),
+            "the first profile-aware caller establishes the shared background"
+        );
+        assert_ne!(cold.generation(), fitted.generation());
     }
 
     #[test]
