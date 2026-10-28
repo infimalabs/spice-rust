@@ -6,7 +6,6 @@
 
 mod shell;
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -15,7 +14,7 @@ use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
 
 use crate::speech_chunks;
-use crate::speech_owner::PlaybackOwnership;
+use crate::speech_owner::{PlaybackOwnership, PlaybackProgress};
 use crate::speech_rate::system_rate;
 use crate::voice_spread::{self, OfferedVoice};
 use shell::ShellSpeech;
@@ -162,7 +161,7 @@ impl Voice {
 #[derive(Default)]
 pub struct Controller {
     ownership: PlaybackOwnership,
-    media_generation: Rc<Cell<u64>>,
+    progress: Rc<PlaybackProgress>,
     engine: Option<Engine>,
     utterances: Vec<SpeechSynthesisUtterance>,
     on_chunk_end: Vec<Closure<dyn FnMut(JsValue)>>,
@@ -179,7 +178,7 @@ impl Controller {
     /// Stop current playback, invalidate pending work, and begin one replacement.
     pub fn begin(&mut self) -> u64 {
         let generation = self.ownership.begin();
-        self.media_generation.set(generation);
+        self.progress.begin(generation);
         self.release_media();
         generation
     }
@@ -199,8 +198,7 @@ impl Controller {
     /// Stop current playback and invalidate pending work.
     pub fn stop(&mut self) {
         self.ownership.stop();
-        self.media_generation
-            .set(self.media_generation.get().wrapping_add(1));
+        self.progress.stop();
         self.release_media();
     }
 
@@ -295,15 +293,15 @@ impl Controller {
             }
         };
         let rate = system_rate(words_per_minute);
-        let end_generation = Rc::clone(&self.media_generation);
+        let end_progress = Rc::clone(&self.progress);
         let ended = Closure::wrap(Box::new(move |_event: JsValue| {
-            if end_generation.replace(generation.wrapping_add(1)) == generation {
+            if end_progress.finish(generation) {
                 on_end();
             }
         }) as Box<dyn FnMut(_)>);
-        let error_generation = Rc::clone(&self.media_generation);
+        let error_progress = Rc::clone(&self.progress);
         let failed = Closure::wrap(Box::new(move |event: JsValue| {
-            if error_generation.replace(generation.wrapping_add(1)) == generation {
+            if error_progress.finish(generation) {
                 on_error(system_failure(&event));
             }
         }) as Box<dyn FnMut(_)>);
@@ -341,7 +339,7 @@ impl Controller {
         ended: &Closure<dyn FnMut(JsValue)>,
         failed: &Closure<dyn FnMut(JsValue)>,
     ) -> Result<(), String> {
-        let generation = self.media_generation.get();
+        let generation = self.progress.generation();
         let utterances = speech_chunks::browser(text)
             .map(|chunk| {
                 let utterance = SpeechSynthesisUtterance::new_with_text(chunk)
@@ -356,9 +354,9 @@ impl Controller {
         for index in 0..utterances.len().saturating_sub(1) {
             let synthesis = synthesis.clone();
             let next = utterances[index + 1].clone();
-            let media_generation = Rc::clone(&self.media_generation);
+            let progress = Rc::clone(&self.progress);
             let advance = Closure::wrap(Box::new(move |_event: JsValue| {
-                if media_generation.get() == generation {
+                if progress.advance(generation, index) {
                     synthesis.speak(&next);
                 }
             }) as Box<dyn FnMut(_)>);

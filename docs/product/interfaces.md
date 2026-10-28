@@ -395,9 +395,9 @@ offers the downloaded voices the embedded web view withholds (see
 audio on the resident. One global queue speaks entries sequentially and never
 overlaps them. Browser synthesis partitions long text at authored boundaries
 into at most 3,000 UTF-16 code units per platform utterance, preserving the
-complete text in source order and starting each remainder from its
-predecessor's end. Only the browser chain's final end settles its queue entry,
-while any error or stop cancels the active utterance and every remainder. A
+complete text in source order and starting each remainder once from its
+current predecessor's end. Only the browser chain's final end settles its queue
+entry, while any error or stop cancels the active utterance and every remainder. A
 failure is a nonblocking notice that never
 blocks the visible stream — the transcript remains the record. `say.voices` is
 an ordered list of voice names, scoped to
