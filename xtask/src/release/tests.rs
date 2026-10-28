@@ -124,6 +124,7 @@ struct FakeExecutor {
     refusing: Cell<Option<&'static str>>,
     tracked_dirty: Cell<bool>,
     untracked: RefCell<String>,
+    index_flags: RefCell<String>,
     moved_after_native: Cell<bool>,
     moved_symbols_after_uuid: Cell<bool>,
     native_ran: Cell<bool>,
@@ -144,6 +145,7 @@ impl FakeExecutor {
             refusing: Cell::new(None),
             tracked_dirty: Cell::new(false),
             untracked: RefCell::new(String::new()),
+            index_flags: RefCell::new("H xtask/src/lib.rs\0".to_owned()),
             moved_after_native: Cell::new(false),
             moved_symbols_after_uuid: Cell::new(false),
             native_ran: Cell::new(false),
@@ -231,6 +233,7 @@ impl Executor for FakeExecutor {
             "canvas-version" => format!("spice {FIXTURE_VERSION} app {GENERATION}\n").into_bytes(),
             "source-status" if self.tracked_dirty.get() => b" M xtask/src/lib.rs\n".to_vec(),
             "source-status" => self.untracked.borrow().clone().into_bytes(),
+            "source-index-flags" => self.index_flags.borrow().clone().into_bytes(),
             label => panic!("unexpected command label {label}"),
         };
         let record = CommandRecord {
@@ -430,6 +433,7 @@ fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
     let mut expected = vec![
         "source-commit",
         "source-status",
+        "source-index-flags",
         "rust-version",
         "installed-targets",
         "trunk-version",
@@ -449,6 +453,7 @@ fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
         "canvas-version",
         "source-commit",
         "source-status",
+        "source-index-flags",
         "rust-version",
         "installed-targets",
         "trunk-version",
@@ -844,7 +849,7 @@ fn a_refusing_source_status_refuses_rather_than_reading_a_clean_checkout() {
 }
 
 #[test]
-fn only_untracked_release_output_survives_the_source_check() {
+fn only_release_output_and_unhidden_tracked_source_survive_the_source_check() {
     let fixture = Fixture::new();
     let executor = FakeExecutor::new(&fixture, ReleaseTarget::Aarch64AppleDarwin);
     let git = fixture.root.join("git");
@@ -860,6 +865,22 @@ fn only_untracked_release_output_survives_the_source_check() {
         matches!(&stray, TargetBuildError::SourceDirty(reason) if reason.ends_with("manifest.extra")),
         "{stray:?}"
     );
+
+    // Status trusts these index flags, so each flagged entry refuses on its own.
+    executor.untracked.borrow_mut().clear();
+    for (entry, flag) in [
+        ("S xtask/src/release/source.rs", "skip-worktree"),
+        ("s xtask/src/release/source.rs", "skip-worktree"),
+        ("h xtask/src/release/source.rs", "assume-unchanged"),
+    ] {
+        *executor.index_flags.borrow_mut() = format!("H Cargo.toml\0{entry}\0");
+        let hidden = verify_checkout(&executor, &git).expect_err("a hidden entry refuses");
+        assert!(
+            matches!(&hidden, TargetBuildError::SourceDirty(reason)
+                if reason.contains(flag) && reason.ends_with("xtask/src/release/source.rs")),
+            "{entry}: {hidden:?}"
+        );
+    }
 
     executor.tracked_dirty.set(true);
     let modified = verify_checkout(&executor, &git).expect_err("a modified tracked path refuses");
