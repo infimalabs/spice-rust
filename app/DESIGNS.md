@@ -222,10 +222,10 @@ rendered room history. It shows the state word and summary, recent
 statement-head request yield, and folded older-head and unattributed
 historical totals; each current question item's state (quiet, unopposed,
 contested, or concurred) with its votes and lanes reads beside that question
-in the sheet's Contract list. Fresh has no contributions; steeped means
-at least 80% of current items have received a nonzero charge, some item concurs,
-and none is contested. Up to 20% may remain quiet, with the required coverage
-rounded up to whole questions; the summary otherwise
+in the sheet's Contract list. Fresh has no contributions; steeped means at
+least `min(N, ceil(2 ln(1 + N)))` of the N current items have received a
+nonzero charge, some item concurs, and none is contested: every question of one
+to four, four of five or six, five of seven to eleven; the summary otherwise
 names the item and the vote it needs next. Steeped maturity makes the Design's
 first pass ready for a lane, which the standing's pass cycle shows, and narrows
 its invitation reach to the 0.20 floor, so fewer lanes are asked; it is not

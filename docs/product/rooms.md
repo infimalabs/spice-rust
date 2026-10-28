@@ -112,7 +112,7 @@ owns each rule summarized here.
   message never re-weights anything on its own. A short list of common English
   filler is never a term. Each candidate's cosine floor follows its maturity
   alone, never its working group: an unsteeped Design invites at the wide 0.10
-  floor, and a steeped one at the narrow 0.16 floor, once at least 80% of its
+  floor, and a steeped one at the narrow 0.16 floor, once enough of its
   questions have been heard and it is close, so it asks only closely matched lanes. The reach
   widens again as soon as a later charge contests an item or a statement edit
   un-steeps it. The floor decides qualification only; finite cosine score still
@@ -179,11 +179,12 @@ owns each rule summarized here.
   opposite side's last strength-2 charge without a strength-2 charge of its
   own. Zero charges and questions never enter a series. Steeping is
   judged against the current statement's items: fresh means no
-  contribution; steeped means at least 80% of current items have received a
-  nonzero charge, some item concurs, and none is contested. Up to 20% may
-  remain quiet; unopposed items count as heard. Coverage rounds up to whole
-  questions: 4 of 5 or 5 of 6 qualify, while fewer than 5 questions must all be
-  heard. Anything else is steeping and names the lowest
+  contribution; steeped means at least `min(N, ceil(2 ln(1 + N)))` of the N
+  current items have received a nonzero charge, some item concurs, and none is
+  contested; unopposed items count as heard. Every question of one to four must
+  be heard, then four of five or six, five of seven to eleven, six of twelve to
+  nineteen, and seven of twenty to thirty-two, so the heard share declines as a
+  statement grows. Anything else is steeping and names the lowest
   contested item, else the lowest quiet item, else the lowest unopposed item,
   with the input it needs, and counts the items still quiet. `spice room
   awareness HANDLE` and the browser room show each item's state. Steeped
@@ -230,7 +231,7 @@ owns each rule summarized here.
   coverage from the witnessed statement and refuses an uncovered pass
   `preparation::questions-uncovered`, naming each gap and moving nothing.
   Coverage is not concurrence and proves nothing about the research behind a
-  charge; maturity's 80% steeping threshold still decides readiness alone, and
+  charge; maturity's heard-question steeping cutoff still decides readiness alone, and
   a statement naming no question is covered.
   Acquisition, refresh and resumed context for an open Design pass name the
   current missing questions and direct source-backed item findings before
