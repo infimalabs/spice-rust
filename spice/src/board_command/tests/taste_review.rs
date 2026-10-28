@@ -242,6 +242,58 @@ fn a_matched_filing_records_a_hold_and_keeps_the_authored_flow() {
 }
 
 #[test]
+fn an_operator_closed_hold_reads_as_history_without_rewording_guidance() {
+    let (root, bus, epoch, _seats) = fixture("taste-review-settled", 0);
+    let repository = configured_repository(&root, &["delay"]);
+    let (task, outcome) = add_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        "TASTE-settled1",
+        "Delay the lifecycle change",
+        &["focused tests pass"],
+    );
+    assert_committed(outcome);
+    let held = board(&bus, epoch, Actor::Operator);
+    let hold = at(&held, &task).statement.body.taste.clone();
+    assert!(hold.is_some(), "a matched statement is held");
+
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        vec![
+            statement_witness(at(&held, &task)),
+            workflow_witness(at(&held, &task)),
+            claim_witness(at(&held, &task)),
+        ],
+        &TaskClose {
+            task: task.clone(),
+            validation: "the operator settled it".to_owned(),
+            force_claimed: false,
+        },
+    ));
+    let settled = board(&bus, epoch, Actor::Operator);
+    let closed = at(&settled, &task);
+    assert!(!closed.workflow.body.status.is_pending());
+    assert_eq!(
+        closed.statement.body.taste, hold,
+        "closure retains the hold as statement evidence",
+    );
+
+    let shown = task_show(&settled, closed, &[]);
+    assert!(shown.contains("taste_review historical"), "{shown}");
+    assert!(!shown.contains("taste_review required"), "{shown}");
+    assert!(shown.contains("title line 1 taste taskwording"), "{shown}");
+    assert!(shown.ends_with("next: -"), "{shown}");
+    assert!(!shown.contains("spice task modify"), "{shown}");
+    assert!(!shown.contains("spice task done"), "{shown}");
+
+    clean(&root, bus);
+}
+
+#[test]
 fn a_matching_edit_records_a_hold_on_the_statement_alone() {
     let (root, bus, epoch, seats) = fixture("taste-review-edit-hold", 1);
     let repository = configured_repository(&root, &["delay"]);

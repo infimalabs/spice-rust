@@ -541,7 +541,13 @@ pub(in crate::board_command) fn task_show_bounded(
         ]);
     }
     if let Some(hold) = &statement.taste {
-        lines.push("taste_review required".to_owned());
+        // Settlement admits no rewording, so a settled statement's match is
+        // retained evidence rather than a review the task still owes.
+        lines.push(if task.workflow.body.status.is_pending() {
+            "taste_review required".to_owned()
+        } else {
+            "taste_review historical".to_owned()
+        });
         lines.extend(hold.matches.iter().map(taste_match_line));
     }
     lines.extend(requirement_lines(board, statement, &environment));
@@ -1259,7 +1265,10 @@ pub(super) fn next_command_line(
         &board.environment(),
     );
     let handle = &task.statement.body.handle;
-    if transition != NextTransition::File && task.statement.body.taste.is_some() {
+    if transition != NextTransition::File
+        && task.statement.body.taste.is_some()
+        && task.workflow.body.status.is_pending()
+    {
         return Ok(format!("next: spice task modify {handle} --title \"...\""));
     }
     if let Some(next) = design_cycle_next(board, task) {
