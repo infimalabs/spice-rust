@@ -11,11 +11,10 @@
 //!
 //! Term counts are canonical and fit-independent. A [`Prepared`] vector is a
 //! derived cache weighted under one fitted [`Generation`]; two vectors compare
-//! only when they share it. The normalization generation participates in both
-//! fit and statement keys, so changing a fold or stop word cannot reuse a stale
-//! prepared vector. Every matcher (Design awareness, the wake and `task next`
-//! match, and claim overlap) takes its fit and statement vectors from the one
-//! shared [`MatchCache`].
+//! only when they share it. Every cache is process-scoped, so a changed fold or
+//! stop word takes effect with the binary that carries it. Every matcher (Design
+//! awareness, the wake and `task next` match, and claim overlap) takes its fit
+//! and statement vectors from the one shared [`MatchCache`].
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
@@ -34,9 +33,6 @@ pub const FREQUENCY_WINDOW: usize = 256;
 pub const MATCH_SCORE_BASE: f64 = 0.15;
 /// Least cosine at which two concurrently claimed statements warn of overlap.
 pub const CLAIM_OVERLAP_FLOOR: f64 = 0.25;
-/// Identity of the canonical term normalization used by every cache key. Bump
-/// this whenever [`STOP`] or [`normalize`] changes.
-const NORMALIZATION_GENERATION: &[u8] = b"similarity-normalization-v2";
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
@@ -130,7 +126,6 @@ pub struct Generation([u8; 32]);
 impl Generation {
     fn of(statements: usize, document_frequency: &BTreeMap<String, usize>) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(NORMALIZATION_GENERATION);
         hasher.update(&(statements as u64).to_le_bytes());
         for (term, frequency) in document_frequency {
             hasher.update(&(term.len() as u64).to_le_bytes());
@@ -271,7 +266,6 @@ type StatementKey = [u8; 32];
 /// order, so equal keys always count equally.
 fn statement_key(statement: &TaskHead) -> StatementKey {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(NORMALIZATION_GENERATION);
     for text in std::iter::once(statement.title.as_str())
         .chain(statement.description.as_deref())
         .chain(statement.acceptance.iter().map(String::as_str))
