@@ -1,9 +1,10 @@
 //! Deterministic recent-window TF-IDF similarity between task statements.
 //!
 //! Documents use lowercase alphabetic terms from authored task fields. Digit
-//! runs, short words, and common English filler are inert; `-ies` plurals fold
-//! to `-y`, then one ordinary trailing `s` is folded. Workflow vocabulary such
-//! as claim, Design, phase, review, verdict, propose, done, todo, and flow stays
+//! runs, short words, and common English filler are inert; `-ies` plurals and
+//! long-stem `-ie` singulars fold to `-y`, then one ordinary trailing `s` is
+//! folded. Workflow vocabulary such as claim, Design, phase, review, verdict,
+//! propose, done, todo, and flow stays
 //! subject matter and is left to fitted inverse document frequency rather than
 //! stopped globally. Logarithmic term frequency and L2-normalized sparse vectors
 //! then produce one cosine score over a corpus fitted from the most recently
@@ -458,6 +459,12 @@ fn normalize(run: &str) -> Option<String> {
     {
         word.pop();
     }
+    if let Some(stem) = word.strip_suffix("ie")
+        && stem.chars().count() >= MIN_TERM_CHARS
+    {
+        word.truncate(word.len() - "ie".len());
+        word.push('y');
+    }
     (word.chars().count() >= MIN_TERM_CHARS
         && word.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
         && !STOP.contains(&word.as_str()))
@@ -625,15 +632,15 @@ mod tests {
     #[test]
     fn explanations_keep_the_strongest_products_then_store_them_sorted() {
         let profile = FrequencyProfile::of([document(
-            "alpha bravo charlie delta foxtrot gamma hotel india",
+            "alpha bravo charly delta foxtrot gamma hotel india",
         )]);
-        let text = "alpha alpha alpha bravo bravo charlie delta foxtrot gamma hotel india";
+        let text = "alpha alpha alpha bravo bravo charly delta foxtrot gamma hotel india";
         let left = profile.prepare(&document(text)).unwrap();
         let right = profile.prepare(&document(text)).unwrap();
         let terms = left.explanation(&right);
         assert_eq!(
             terms,
-            ["alpha", "bravo", "charlie", "delta", "foxtrot", "gamma"]
+            ["alpha", "bravo", "charly", "delta", "foxtrot", "gamma"]
         );
         assert_eq!(terms.len(), DESIGN_NOTICE_SHOWN_TERMS);
     }
@@ -703,8 +710,14 @@ mod tests {
     }
 
     #[test]
-    fn plural_folding_merges_ies_and_keeps_workflow_vocabulary() {
+    fn plural_and_ie_folding_share_canonical_terms() {
+        assert_eq!(document("cookie cookies cooky").0["cooky"], 3);
         assert_eq!(document("boundary boundaries").0["boundary"], 2);
+        assert_eq!(
+            document("movie movies").0["movie"],
+            2,
+            "a short stem keeps the existing singular form"
+        );
         assert_eq!(
             document("claim design phase review verdict propose done todo flow")
                 .0
