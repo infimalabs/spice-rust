@@ -91,6 +91,29 @@ pub(super) fn verify_checkout<E: Executor>(
             )));
         }
     }
+    // Status trusts the assume-unchanged and skip-worktree index flags, so a
+    // tracked file under either can differ from HEAD while status stays
+    // silent. No release flow sets them, so an entry carrying one is local
+    // state whose bytes status cannot vouch for, and it refuses. Reading the
+    // flags writes nothing, leaving the caller's index and configuration as
+    // found.
+    let flags = successful(executor.execute(CommandSpec::new(
+        "source-index-flags",
+        git,
+        ["ls-files", "-v", "-z"],
+    ))?)?;
+    let flags = text(&flags.stdout, "source index flags")?;
+    for entry in flags.split_terminator('\0') {
+        let (tag, path) = entry.split_at_checked(2).unwrap_or((entry, ""));
+        let hidden = match tag.as_bytes().first() {
+            Some(b'S' | b's') => "skip-worktree",
+            Some(byte) if byte.is_ascii_lowercase() => "assume-unchanged",
+            _ => continue,
+        };
+        return Err(TargetBuildError::SourceDirty(format!(
+            "index flag {hidden} hides tracked source from status: {path}"
+        )));
+    }
     Ok(())
 }
 

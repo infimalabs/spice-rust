@@ -465,12 +465,14 @@ Until the hosted route is usable, this local cross-build is how Windows
 executables ship. `windows-appliance` therefore captures HEAD and applies the
 release source rule before it builds: from a checkout equal to HEAD, with only
 release output untracked, it links the same release product version the Darwin
-and Linux stages of that commit report. Before reporting success, it verifies
-that HEAD and the clean checkout still match. A changed commit or newly dirty
-source refuses rather than reporting a release executable. An initially dirty
-checkout still names the difference and links the `-dev` version. The result is
-not a staged payload and carries no receipt; Cargo's intermediate executable
-may remain after a refusal.
+and Linux stages of that commit report. A tracked path the index marks
+assume-unchanged or skip-worktree counts as dirty, because status cannot vouch
+for its bytes; the rule reads those flags and never changes them. Before
+reporting success, it verifies that HEAD and the clean checkout still match. A
+changed commit or newly dirty source refuses rather than reporting a release
+executable. An initially dirty checkout still names the difference and links
+the `-dev` version. The result is not a staged payload and carries no receipt;
+Cargo's intermediate executable may remain after a refusal.
 
 Only the x64 PE crosses into the guest; the initial guest needs neither Rust nor
 Visual Studio, and Windows 11 ARM executes it through Microsoft x64 emulation.
