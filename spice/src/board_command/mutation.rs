@@ -467,6 +467,15 @@ where
     }
     let answer = wire::intent::TaskAnswer {
         taste: answered_taste(command.actor(), post.statement().taste.as_ref()),
+        completion_contract: Some(
+            completion_contract(
+                &post.statement().acceptance,
+                post.born(),
+                &post.statement().dependencies,
+                snapshot.entries.iter(),
+            )
+            .into_boxed_str(),
+        ),
         task,
         status: "pending".to_owned(),
         completion: None,
@@ -815,6 +824,7 @@ pub(super) fn task_note(
     }
     let answer = wire::intent::TaskAnswer {
         taste: None,
+        completion_contract: None,
         task: entry.handle().clone(),
         status: "noted".to_owned(),
         completion: None,
@@ -895,7 +905,7 @@ pub(super) fn task_depends_with(
         return outcome;
     }
     let next = next_action(&snapshot, &post);
-    commit_dependency_edit(bus, command, depends, entry, statement, next, at)
+    commit_dependency_edit(bus, command, depends, &snapshot, statement, next, at)
 }
 
 fn require_dependency_witness(
@@ -969,11 +979,21 @@ fn commit_dependency_edit(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     depends: &TaskDepends,
-    entry: &Entry,
+    snapshot: &ValidatedSnapshot,
     statement: TaskHead,
     next: Option<Box<str>>,
     at: Instant,
 ) -> Outcome<CommandAnswer> {
+    let entry = task_entry(&snapshot.entries, &depends.task).expect("dependency edit admitted");
+    let completion_contract = Some(
+        completion_contract(
+            &statement.acceptance,
+            &statement.born,
+            &statement.dependencies,
+            snapshot.entries.iter(),
+        )
+        .into_boxed_str(),
+    );
     let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
@@ -1002,6 +1022,7 @@ fn commit_dependency_edit(
     });
     let answer = wire::intent::TaskAnswer {
         taste: None,
+        completion_contract,
         task: entry.handle().clone(),
         status: "edited".to_owned(),
         completion: None,

@@ -28,6 +28,7 @@ pub(in crate::resident) struct TaskGenerationNotice {
     /// The statement's taste hold as it stands now, when the holder must hear it.
     #[serde(default)]
     pub(in crate::resident) taste: Option<TasteState>,
+    pub(in crate::resident) completion_contract: String,
 }
 
 /// Where a claimant's statement stands against the taste policy.
@@ -66,6 +67,7 @@ pub(in crate::resident) struct TasteHoldNotice {
     pub(in crate::resident) position: u64,
     /// Each place the policy matched, findings withheld.
     pub(in crate::resident) matches: Vec<String>,
+    pub(in crate::resident) completion_contract: String,
 }
 
 impl TasteHoldNotice {
@@ -75,11 +77,12 @@ impl TasteHoldNotice {
              for taste review at {}. No phase of it completes while the hold stands, \
              whichever lane holds it. Change what the statement says, then run `spice task \
              modify {}` so the complete current taste policy rechecks it. This is a private \
-             taste notice; no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
+             taste notice; no acknowledgment key or visible ACK/NAK is required. {}\n</system-notice>",
             self.position,
             self.task,
             self.matches.join("; "),
             self.task,
+            self.completion_contract,
         )
     }
 }
@@ -92,6 +95,7 @@ pub(in crate::resident) struct TaskAssignmentNotice {
     pub(in crate::resident) task: String,
     pub(in crate::resident) claim: u64,
     pub(in crate::resident) phase: String,
+    pub(in crate::resident) completion_contract: String,
 }
 
 /// One ended claim, scoped to the exact occupant that held it when it ended.
@@ -109,8 +113,8 @@ impl TaskAssignmentNotice {
             "<system-notice>\nTask {} was assigned to this lane in phase {}. Continue \
              this task now; run `spice task show {} --full` for its contract before asking \
              the allocator for work. This is a private assignment notice; no \
-             acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
-            self.task, self.phase, self.task,
+             acknowledgment key or visible ACK/NAK is required. {}\n</system-notice>",
+            self.task, self.phase, self.task, self.completion_contract,
         )
     }
 }
@@ -134,12 +138,24 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .task_generation
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if delivered.as_ref().is_some_and(|(task, claim, generation)| {
-                task == &notice.task && *claim == notice.claim && *generation >= notice.generation
-            }) {
+            if delivered
+                .as_ref()
+                .is_some_and(|(task, claim, generation, contract)| {
+                    task == &notice.task
+                        && *claim == notice.claim
+                        && (*generation > notice.generation
+                            || (*generation == notice.generation
+                                && contract == &notice.completion_contract))
+                })
+            {
                 return;
             }
-            delivered.replace((notice.task.clone(), notice.claim, notice.generation))
+            delivered.replace((
+                notice.task.clone(),
+                notice.claim,
+                notice.generation,
+                notice.completion_contract.clone(),
+            ))
         };
         let taste = notice
             .taste
@@ -151,8 +167,13 @@ impl<W: Write + Send + 'static> Driver<W> {
              generation {} is {} by {} at position {}.{taste} Run `spice task next` \
              to read and accept the current statement before continuing. Completion and review remain \
              refused until task next succeeds. This is a private authority reminder; \
-             no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
-            notice.task, notice.generation, notice.change, notice.editor, notice.position,
+             no acknowledgment key or visible ACK/NAK is required. {}\n</system-notice>",
+            notice.task,
+            notice.generation,
+            notice.change,
+            notice.editor,
+            notice.position,
+            notice.completion_contract,
         );
         if self
             .background(&format!("task:{}", notice.task), &message)
@@ -162,9 +183,15 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .task_generation
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if delivered.as_ref().is_some_and(|(task, claim, generation)| {
-                task == &notice.task && *claim == notice.claim && *generation == notice.generation
-            }) {
+            if delivered
+                .as_ref()
+                .is_some_and(|(task, claim, generation, contract)| {
+                    task == &notice.task
+                        && *claim == notice.claim
+                        && *generation == notice.generation
+                        && contract == &notice.completion_contract
+                })
+            {
                 *delivered = previous;
             }
         }
@@ -177,10 +204,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .task_assignment
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if delivered
-                .as_ref()
-                .is_some_and(|told| told.task == notice.task && told.claim == notice.claim)
-            {
+            if delivered.as_ref().is_some_and(|told| told == notice) {
                 return;
             }
             delivered.replace(notice.clone())

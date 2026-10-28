@@ -127,8 +127,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Tokens a visible acknowledgment header named without holding them, and
     /// already corrected in this context.
     misdirected: Mutex<BTreeSet<String>>,
-    /// Latest claimed-task generation privately delivered to this occupant.
-    task_generation: Mutex<Option<(String, u64, u64)>>,
+    /// Latest claimed-task generation and current completion disclosure delivered.
+    task_generation: Mutex<Option<(String, u64, u64, String)>>,
     /// Latest proactive task assignment privately delivered to this occupant.
     task_assignment: Mutex<Option<TaskAssignmentNotice>>,
     /// Latest claim lapse privately delivered to this occupant.

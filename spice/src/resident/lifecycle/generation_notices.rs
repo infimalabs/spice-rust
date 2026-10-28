@@ -111,6 +111,12 @@ fn taste_holds(
                     task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
                     position: opening.get(),
                     matches: hold_places(hold),
+                    completion_contract: crate::board_command::completion_contract(
+                        &statement.acceptance,
+                        &statement.born,
+                        &statement.dependencies,
+                        snapshot.tasks().iter(),
+                    ),
                 },
             ))
         })
@@ -136,6 +142,12 @@ fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskA
                     task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
                     claim: claim.claimed.get(),
                     phase: heads.workflow().body().phase.to_string(),
+                    completion_contract: crate::board_command::completion_contract(
+                        &statement.acceptance,
+                        &statement.born,
+                        &statement.dependencies,
+                        snapshot.tasks().iter(),
+                    ),
                 },
             ))
         })
@@ -183,16 +195,17 @@ fn notices(
 ) -> CommandResult<Vec<(CanonicalUuid, TaskGenerationNotice)>> {
     let mut notices = Vec::new();
     for heads in snapshot.tasks() {
-        notices.extend(task_notices(bus, snapshot.facts(), heads)?);
+        notices.extend(task_notices(bus, snapshot, heads)?);
     }
     Ok(notices)
 }
 
 fn task_notices(
     bus: &Bus,
-    facts: &bus::TaskFacts,
+    snapshot: &bus::TaskSnapshot,
     heads: &TaskHeads,
 ) -> CommandResult<Vec<(CanonicalUuid, TaskGenerationNotice)>> {
+    let facts = snapshot.facts();
     let Some(claim) = heads
         .claim()
         .map(JournalHead::body)
@@ -249,6 +262,12 @@ fn task_notices(
                     editor: envelope.actor.to_string(),
                     position: advance.position.get(),
                     taste,
+                    completion_contract: crate::board_command::completion_contract(
+                        &statement.acceptance,
+                        &statement.born,
+                        &statement.dependencies,
+                        snapshot.tasks().iter(),
+                    ),
                 },
             ));
         }

@@ -184,8 +184,7 @@ fn context_tasks(
         if !unaccepted.is_empty() || !open_designs.is_empty() {
             selected.extend(
                 observed
-                    .tasks()
-                    .iter()
+                    .allocation_frontier()
                     .filter(|child| {
                         let statement = child.statement().body();
                         let workflow = child.workflow().body();

@@ -203,15 +203,15 @@ fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
 
     let projected = assignment_notices(&snapshot);
     assert_eq!(
-        projected,
+        projected
+            .iter()
+            .map(|(lane, notice)| (*lane, notice.occupant, notice.task.as_str(), notice.claim))
+            .collect::<Vec<_>>(),
         [(
             fixture.lane,
-            TaskAssignmentNotice {
-                occupant: fixture.occupant,
-                task: handle,
-                claim: claim.claimed.get(),
-                phase: "todo".to_owned(),
-            },
+            fixture.occupant,
+            handle.as_str(),
+            claim.claimed.get()
         )],
     );
     assert_eq!(

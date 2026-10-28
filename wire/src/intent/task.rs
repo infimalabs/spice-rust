@@ -452,6 +452,13 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub taste: Option<crate::TasteHold>,
+    /// Current acceptance authority, independent of the statement's taste hold.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub completion_contract: Option<Box<str>>,
     /// Task the answer concerns.
     pub task: TaskHandle,
     /// Its status after the transaction.
@@ -619,6 +626,13 @@ pub struct ClaimStatement {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Current own, linked, or unspecified acceptance contract.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub completion_contract: Option<Box<str>>,
 }
 
 /// The phase one claim answer was assigned in, and what it authorizes.

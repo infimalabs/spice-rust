@@ -74,8 +74,10 @@ wake. Design questions: `spice room contribute HANDLE --ask TEXT`.
   split, or release stale scope rather than force it.
 - Plan/Design purpose survives phases; done cannot replace review. Ambient
   creation binds unless another `--origin`; `--preparation` binds explicitly.
-  Done and clean review need acceptance, own or on directly linked work; a
-  Plan warranting no work uses `task done --disposition KIND [--cover REF]`.
+  An unspecified completion contract permits work, not successful completion:
+  add own AC, link existing pending AC-bearing work in either dependency direction,
+  or use an applicable `task done --disposition no-work|duplicate|covered|deferred
+  [--cover REF]`. Taste is an independent statement hold; neither changes flow.
   Positive review releases outputs to dependencies without authorizing them.
   A Design pass ends with `design propose JUSTIFICATION`, assembled from
   acceptance-bearing outputs built under the claim and the room (none:

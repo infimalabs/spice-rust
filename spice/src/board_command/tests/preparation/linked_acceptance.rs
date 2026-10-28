@@ -1,5 +1,5 @@
-//! A Design pass proposal resting on acceptance lent by completed linked work,
-//! witnessed from the dependency-scoped read the propose client makes.
+//! Design proposal admission reads current acceptance and workflow in either
+//! dependency direction; settled work never lends its acceptance.
 
 use super::*;
 
@@ -134,13 +134,12 @@ fn propose_conclusion(
 }
 
 #[test]
-fn a_design_proposes_on_acceptance_from_completed_work_linked_either_way() {
+fn a_design_proposes_on_acceptance_from_pending_work_linked_either_way() {
     let (root, bus, epoch, seats) = fixture("design-linked-acceptance", 2);
-    let worker = Actor::Lane(seats[1].lane);
     let forward = add_unaccepted_design(&bus, epoch, "Forward Design");
     let reverse = add_unaccepted_design(&bus, epoch, "Reverse Design");
 
-    // A completed prerequisite carrying acceptance lends it to the Design.
+    // The holder can acquire the Design before an operator adds its prerequisite.
     let prerequisite = add_project_with_acceptance(
         &bus,
         epoch,
@@ -150,11 +149,10 @@ fn a_design_proposes_on_acceptance_from_completed_work_linked_either_way() {
         Some("todo"),
         &["the prerequisite behavior is verified"],
     );
-    claim_task(&bus, epoch, &seats[1], &worker, &prerequisite);
-    finish(&bus, epoch, &seats[1], &prerequisite);
+    capture_for(&bus, epoch, &seats[0], &forward);
     connect_child(&bus, epoch, &forward, &prerequisite);
 
-    // So does completed work that came to depend on the Design.
+    // Pending work depending on the Design lends acceptance too.
     let dependent = add_project_with_acceptance(
         &bus,
         epoch,
@@ -164,15 +162,7 @@ fn a_design_proposes_on_acceptance_from_completed_work_linked_either_way() {
         Some("todo"),
         &["the dependent behavior is verified"],
     );
-    claim_task(&bus, epoch, &seats[1], &worker, &dependent);
     connect_child(&bus, epoch, &dependent, &reverse);
-    finish(&bus, epoch, &seats[1], &dependent);
-    let settled = board(&bus, epoch, Actor::Operator);
-    for lender in [&prerequisite, &dependent] {
-        assert!(at(&settled, lender).workflow.body.status.is_completed());
-    }
-
-    capture_for(&bus, epoch, &seats[0], &forward);
     let unwitnessed = propose_conclusion(
         &bus,
         epoch,
@@ -208,6 +198,48 @@ fn a_design_proposes_on_acceptance_from_completed_work_linked_either_way() {
         assert!(at(&proposed, design).design_cycle.proposal.is_some());
     }
     clean(&root, bus);
+}
+
+#[test]
+fn settled_work_cannot_supply_a_designs_acceptance_in_either_direction() {
+    for reverse in [false, true] {
+        let (root, bus, epoch, seats) = fixture("settled-lender", 2);
+        let design = add_unaccepted_design(&bus, epoch, "Unspecified Design");
+        let lender = add_project_with_acceptance(
+            &bus,
+            epoch,
+            "LENDER-settled",
+            "Accepted work",
+            "board.test",
+            Some("todo"),
+            &["the observable result meets its contract"],
+        );
+        claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &lender);
+        if reverse {
+            connect_child(&bus, epoch, &lender, &design);
+        }
+        finish(&bus, epoch, &seats[1], &lender);
+        if !reverse {
+            connect_child(&bus, epoch, &design, &lender);
+        }
+        capture_for(&bus, epoch, &seats[0], &design);
+        let outcome =
+            propose_conclusion(&bus, epoch, &seats[0], &design, 1_760_000_000_000_310, true);
+        assert!(
+            matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == "task::acceptance-missing"),
+            "{outcome:?}"
+        );
+        let view = board(&bus, epoch, Actor::Operator);
+        let heads = at(&view, &design);
+        assert!(heads.design_cycle.proposal.is_none());
+        assert!(
+            heads
+                .claim
+                .as_ref()
+                .is_some_and(|claim| claim.body.disposition == ClaimDisposition::Active)
+        );
+        clean(&root, bus);
+    }
 }
 
 #[test]

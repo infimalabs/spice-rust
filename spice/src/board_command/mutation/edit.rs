@@ -55,7 +55,7 @@ pub(in crate::board_command) fn task_edit(
             Ok(prepared) => prepared,
             Err(outcome) => return outcome,
         };
-    publish_correction(bus, command, edit, statement, publication)
+    publish_correction(bus, command, edit, statement, publication, &snapshot)
 }
 
 fn prepare_correction(
@@ -298,6 +298,7 @@ fn publish_correction(
     edit: &TaskEdit,
     statement: TaskHead,
     publication: CorrectionPublication,
+    snapshot: &ValidatedSnapshot,
 ) -> Outcome<CommandAnswer> {
     let CorrectionPublication {
         next,
@@ -334,6 +335,15 @@ fn publish_correction(
     }
     let rendered = TaskHandle::for_filing(&statement.project, &statement.born, statement.filing);
     let taste = answered_taste(command.actor(), statement.taste.as_ref());
+    let completion_contract = Some(
+        completion_contract(
+            &statement.acceptance,
+            &statement.born,
+            &statement.dependencies,
+            snapshot.entries.iter(),
+        )
+        .into_boxed_str(),
+    );
     write.task_head(edited, move |position| {
         published_statement(
             TaskHead {
@@ -346,6 +356,7 @@ fn publish_correction(
     requirement_change.write_lease(&mut write, edited);
     let answer = wire::intent::TaskAnswer {
         taste,
+        completion_contract,
         task: rendered,
         status,
         completion: None,

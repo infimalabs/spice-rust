@@ -13,6 +13,7 @@ fn task_generation_reminders_are_private_and_deduplicated_by_authority() {
         editor: "operator".to_owned(),
         position: 44,
         taste: None,
+        completion_contract: "Completion contract: own AC.".to_owned(),
     };
 
     driver.deliver_task_generation(&notice);
@@ -45,6 +46,7 @@ fn task_assignment_notices_are_private_and_deduplicated_by_claim() {
         task: "CLAIM-1kKRRsDP".to_owned(),
         claim: 33,
         phase: "todo".to_owned(),
+        completion_contract: "Completion contract: own AC.".to_owned(),
     };
 
     driver.deliver_task_assignment(&notice);
@@ -80,6 +82,7 @@ fn an_ended_claim_withdraws_only_its_own_queued_assignment_notice() {
         task: "CLAIM-1kKRRsDP".to_owned(),
         claim: 33,
         phase: "plan".to_owned(),
+        completion_contract: "Completion contract: own AC.".to_owned(),
     };
     let ended = |claim| TaskAssignmentEnd {
         occupant: notice.occupant,
@@ -163,12 +166,14 @@ fn taste_hold_notices_are_private_deduplicated_and_keep_a_queued_assignment() {
         task: "CLAIM-1kKRRsDP".to_owned(),
         claim: 33,
         phase: "todo".to_owned(),
+        completion_contract: "Completion contract: own AC.".to_owned(),
     };
     let hold = TasteHoldNotice {
         occupant: assignment.occupant,
         task: assignment.task.clone(),
         position: 44,
         matches: vec!["title line 1 taste taskwording".to_owned()],
+        completion_contract: "Completion contract: own AC.".to_owned(),
     };
 
     driver.deliver_task_assignment(&assignment);
@@ -191,4 +196,47 @@ fn taste_hold_notices_are_private_deduplicated_and_keep_a_queued_assignment() {
         3,
         "a later write that leaves a fresh hold is a distinct notice",
     );
+}
+
+#[test]
+fn changed_completion_authority_replaces_notices_without_a_new_claim_or_generation() {
+    let sink = Sink::default();
+    let assignment_driver = driver(&sink);
+    let mut assignment = TaskAssignmentNotice {
+        occupant: crate::resident::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        phase: "todo".to_owned(),
+        completion_contract: "own AC".to_owned(),
+    };
+    assignment_driver.deliver_task_assignment(&assignment);
+    assignment.completion_contract = "unspecified".to_owned();
+    assignment_driver.deliver_task_assignment(&assignment);
+    assignment_driver.deliver_task_assignment(&assignment);
+    let frames = sink.answered(2);
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0]["purpose"], frames[1]["purpose"]);
+    assert_ne!(frames[0]["message"], frames[1]["message"]);
+
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let mut generation = TaskGenerationNotice {
+        occupant: assignment.occupant,
+        task: assignment.task,
+        claim: assignment.claim,
+        generation: 4,
+        change: "task edited".to_owned(),
+        editor: "operator".to_owned(),
+        position: 44,
+        taste: None,
+        completion_contract: "own AC".to_owned(),
+    };
+    driver.deliver_task_generation(&generation);
+    generation.completion_contract = "unspecified".to_owned();
+    driver.deliver_task_generation(&generation);
+    driver.deliver_task_generation(&generation);
+    let frames = sink.answered(2);
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0]["purpose"], frames[1]["purpose"]);
+    assert_ne!(frames[0]["message"], frames[1]["message"]);
 }

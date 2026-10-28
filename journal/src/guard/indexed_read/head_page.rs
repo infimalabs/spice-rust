@@ -65,6 +65,28 @@ impl JournalRead<'_> {
         )
     }
 
+    /// Current direct neighbors in either dependency direction, including settled work.
+    pub fn task_neighbor_head_page(
+        &self,
+        task: &wire::TaskStamp,
+        dependencies: &[wire::TaskStamp],
+        after: Option<&wire::TaskStamp>,
+        budget: FactReadBudget,
+    ) -> Result<TaskHeadPage, GuardError> {
+        let dependencies = serde_json::to_string(dependencies)
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        self.task_head_page_with(
+            TASK_NEIGHBOR_PAGE_SQL,
+            params![
+                task.as_str(),
+                dependencies,
+                after.map(wire::TaskStamp::as_str),
+                query_limit(budget)?
+            ],
+            budget,
+        )
+    }
+
     fn task_head_page_with<P: rusqlite::Params>(
         &self,
         sql: &str,
@@ -233,6 +255,23 @@ const TASK_PROJECT_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
   LEFT JOIN claim_heads AS claim ON claim.stamp = keys.stamp \
   LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
  ORDER BY keys.stamp LIMIT ?3";
+
+const TASK_NEIGHBOR_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
+    SELECT stamp FROM task_heads \
+     WHERE stamp > COALESCE(?3, '') AND (\
+       stamp IN (SELECT value FROM json_each(?2)) OR \
+       EXISTS (SELECT 1 FROM json_each(CAST(body AS TEXT), '$.dependencies') WHERE value = ?1)) \
+     ORDER BY stamp LIMIT ?4\
+) SELECT keys.stamp, statement.head_seq, length(statement.body), statement.body, \
+         workflow.head_seq, length(workflow.body), workflow.body, \
+         claim.head_seq, length(claim.body), claim.body, \
+         lease.head_seq, length(lease.body), lease.body \
+  FROM task_keys AS keys \
+  LEFT JOIN task_heads AS statement ON statement.stamp = keys.stamp \
+  LEFT JOIN workflow_heads AS workflow ON workflow.stamp = keys.stamp \
+  LEFT JOIN claim_heads AS claim ON claim.stamp = keys.stamp \
+  LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
+ ORDER BY keys.stamp LIMIT ?4";
 
 #[cfg(test)]
 pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result<(), String> {

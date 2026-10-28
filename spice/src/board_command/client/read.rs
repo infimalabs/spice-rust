@@ -484,19 +484,10 @@ fn task_items_label(statement: &wire::intent::BoardStatement) -> &'static str {
     }
 }
 
-pub(in crate::board_command) fn task_show_bounded(
-    board: &BoardAnswer,
-    task: &BoardTask,
-    artifacts: &[artifact::Artifact],
-    history: TaskShowHistory<'_>,
-    origin_context: Option<&str>,
-    room: Option<TaskShowRoom>,
-    options: &TaskShowOptions,
-) -> Result<String, Outcome<CommandAnswer>> {
+fn task_header_lines(board: &BoardAnswer, task: &BoardTask) -> Vec<String> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
-    let environment = board.environment();
-    let mut lines = vec![
+    vec![
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
         format!("pitch: {}", statement.pitch),
@@ -513,7 +504,27 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("phase {}", workflow.phase),
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
-    ];
+        completion_contract(
+            &statement.acceptance,
+            &statement.born,
+            &statement.dependencies,
+            board.tasks.iter(),
+        ),
+    ]
+}
+
+pub(in crate::board_command) fn task_show_bounded(
+    board: &BoardAnswer,
+    task: &BoardTask,
+    artifacts: &[artifact::Artifact],
+    history: TaskShowHistory<'_>,
+    origin_context: Option<&str>,
+    room: Option<TaskShowRoom>,
+    options: &TaskShowOptions,
+) -> Result<String, Outcome<CommandAnswer>> {
+    let statement = &task.statement.body;
+    let environment = board.environment();
+    let mut lines = task_header_lines(board, task);
     lines.extend(
         task.design_standing()
             .map(|standing| format!("standing {standing}")),
@@ -1169,7 +1180,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     if workflow.flow.len() == 1 && workflow.flow.first() == Some(&workflow.phase) {
         return vec![
             "phase_guidance:".to_owned(),
-            "  phase:plan is this task's entire flow; completing it needs an acceptance contract: acceptance on this task, or work carrying acceptance joined to it by a dependency in either direction."
+            "  phase:plan is this task's entire flow; completing it needs an acceptance contract: acceptance on this task, or pending work carrying acceptance joined to it by a dependency in either direction."
                 .to_owned(),
             "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and depends on that Plan; --preparation HANDLE associates it explicitly. A sub-Plan waits on its parent Plan like any other constructed task. Origin alone creates no edge."
                 .to_owned(),
@@ -1187,7 +1198,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         "phase_guidance:".to_owned(),
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
             .to_owned(),
-        "  Completing this phase needs an acceptance contract: acceptance on this task, or work carrying acceptance joined to it by a dependency in either direction. A Plan whose need warrants no work records why with spice task done --disposition no-work|duplicate|covered|deferred."
+        "  Completing this phase needs an acceptance contract: acceptance on this task, or pending work carrying acceptance joined to it by a dependency in either direction. A Plan whose need warrants no work records why with spice task done --disposition no-work|duplicate|covered|deferred."
             .to_owned(),
         "  Ordinary output creation without an explicit origin associates with the ambient controller. Use --preparation HANDLE for explicit association; a preparation Plan may run while its Design is unfinished. Origin alone does not schedule work."
             .to_owned(),
@@ -1308,6 +1319,27 @@ pub(in crate::board_command) fn task_status(
     } else {
         holds.join(" ")
     };
+    let unspecified = rows
+        .iter()
+        .copied()
+        .filter(|entry| {
+            matches!(
+                project_acceptance(
+                    &entry.statement().acceptance,
+                    entry.born(),
+                    &entry.statement().dependencies,
+                    entries.iter(),
+                ),
+                Acceptance::Missing
+            )
+        })
+        .map(|entry| entry.handle().to_string())
+        .collect::<Vec<_>>();
+    let unspecified = if unspecified.is_empty() {
+        "-".to_owned()
+    } else {
+        unspecified.join(" ")
+    };
     // The parked split is shared with the empty-drain readout so the two
     // surfaces cannot disagree on a count.
     let satisfied = board::resolved_tasks(&entries);
@@ -1340,7 +1372,7 @@ pub(in crate::board_command) fn task_status(
         .map(|cycle| format!(" {}={}", cycle.key(), parked.designs.get(*cycle)))
         .collect::<String>();
     Ok(format!(
-        "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
+        "claim {claim}\ntaste-review {taste_review}\ncompletion-unspecified {unspecified}\nactor {}\nfilter {}\n\
          active {active}\nready {ready}\n\
          review {review}\nblocked {blocked}\n\
          waiting {workflow_waiting}\ndeferred {deferred}\n\

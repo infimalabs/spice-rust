@@ -193,9 +193,8 @@ pub(super) fn client_design_propose(
 }
 
 /// Push the witnesses for the linked work a Design without its own
-/// acceptance borrows one from. The open board carries settled prerequisites
-/// only as readiness evidence and no settled dependents, so the lenders come
-/// from a read of the Design's own dependency scope.
+/// acceptance borrows one from. Read its dependency scope so settled
+/// prerequisites remain visible as non-lenders, rather than absent authority.
 fn borrowed_acceptance_witnesses(
     repository: Host<'_>,
     design: &BoardTask,

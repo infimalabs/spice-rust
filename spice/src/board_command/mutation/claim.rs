@@ -391,6 +391,15 @@ fn claim_answer(
             pitch: selected.statement().pitch.clone(),
             description: selected.statement().description.clone(),
             acceptance: selected.statement().acceptance.clone(),
+            completion_contract: Some(
+                completion_contract(
+                    &selected.statement().acceptance,
+                    selected.born(),
+                    &selected.statement().dependencies,
+                    entries.iter(),
+                )
+                .into_boxed_str(),
+            ),
         })),
         holder: Some(command.actor().clone()),
         expiry: None,

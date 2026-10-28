@@ -319,6 +319,7 @@ fn held(held_work: &HeldWorkView) -> Vec<String> {
         claim.flow.join(" → ")
     ));
     rows.push(format!("pitch: {}", claim.pitch));
+    rows.push(claim.completion_contract.clone());
     if let Some(description) = &claim.description {
         rows.push(format!("description: {description}"));
     }
@@ -506,6 +507,7 @@ mod tests {
                 thread: Some("thread".to_owned()),
                 lane: Some("lane".to_owned()),
                 own_claim: Some(HeldClaimView {
+                    completion_contract: "Completion contract: own AC.".to_owned(),
                     handle: "TASK-held".to_owned(),
                     project: "p".to_owned(),
                     phase: "todo".to_owned(),
