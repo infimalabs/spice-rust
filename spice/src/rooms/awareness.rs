@@ -6,6 +6,12 @@
 /// Most rendered bytes of whole open questions one Design request carries.
 pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
 
+/// The stance every Design request body opens with, whether it asks about
+/// question items or about the whole Design.
+const START_FROM_NO: &str = "Start from no: this Design and each question must earn its place \
+     from evidence. A negative charge is the expected answer when a question has not; charge \
+     every question negative when the Design itself should not exist.";
+
 /// The exact source and authored excerpt of the work that supported one Design
 /// request, phrased from the supporting claim's phase or as conversation.
 fn supporting_work(request: &wire::intent::DesignRequest) -> String {
@@ -126,7 +132,7 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         questions.push_str("\n- none recorded");
     }
     format!(
-        "{head}Open questions:{questions}\n\
+        "{head}{START_FROM_NO}\nOpen questions:{questions}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). A \
          concrete observation, risk, or counterexample helps, and declining is equally fine: \
          answer exactly once with `spice room contribute {design} --charge=C --question N \
@@ -180,10 +186,7 @@ fn item_request(request: &wire::intent::DesignRequest) -> String {
             .to_owned(),
     };
     format!(
-        "Start from no: this Design and each question must earn its place from evidence. A \
-         negative charge is the expected answer when a question has not; charge every question \
-         negative when the Design itself should not exist.\n\
-         Weigh any one or more of these questions:{questions}{recharge}\n\
+        "{START_FROM_NO}\nWeigh any one or more of these questions:{questions}{recharge}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). Weigh \
          question N with `spice room contribute {design} --charge=C --question N [--cite \
          KEY...] TEXT`, where C runs from -2 to +2, ±1 is an opinion, and 0 or ±2 cites what it \
