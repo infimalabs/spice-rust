@@ -286,8 +286,9 @@ ownership, voice spread, and stop-all lifecycle. A browser instead partitions
 long text at authored boundaries into utterances of at most 3,000 UTF-16 code
 units, below [Android's platform synthesis
 limit](https://developer.android.com/reference/android/speech/tts/TextToSpeech#getMaxSpeechInputLength()),
-and starts each next utterance only when the current one ends. Only the final
-end settles the app queue entry; an error or cancellation clears the active
+and starts each next utterance only once, from the current chunk's end. Replayed
+or late chunk ends cannot repeat a successor. Only the final end settles the
+app queue entry; an error or cancellation clears the active
 utterance and every remainder. The desktop shell keeps one native utterance
 because it does not cross that browser bridge.
 
