@@ -779,3 +779,103 @@ fn filing_a_draft_can_claim_it_in_the_same_transaction() {
     assert_eq!(claim.holder, Some(lane));
     clean(&root, bus);
 }
+
+#[test]
+fn a_draft_lends_acceptance_only_after_it_is_filed() {
+    let (root, bus, epoch, seats) = fixture("draft-acceptance-lender", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let borrower = add_project_with_acceptance(
+        &bus,
+        epoch,
+        "DRAFT-borrower",
+        "Filed work without acceptance",
+        "board.test",
+        Some("todo"),
+        &[],
+    );
+    let draft_stamp = stamp("DRAFT-lender");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence {
+            task: draft_stamp.clone(),
+        }],
+        &TaskAdd {
+            depends: vec![borrower.clone()],
+            ..draft_add("DRAFT-lender", None, &["The filed borrower is verified"])
+        },
+    ));
+    let draft = TaskHandle::for_filing("board.test", &draft_stamp, wire::TaskFiling::Draft);
+    let visible = board(&bus, epoch, lane.clone());
+    assert!(
+        task_show(&visible, at(&visible, &borrower), &[])
+            .contains("Completion contract: unspecified."),
+        "an unfiled Draft asserts no completion authority",
+    );
+
+    claim_task(&bus, epoch, seat, &lane, &borrower);
+    let held = board(&bus, epoch, lane.clone());
+    let refused = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        progress_witnesses(&held, at(&held, &borrower), seat.lane, seat.occupant, false)
+            .expect("held task has completion witnesses"),
+        &TaskDone {
+            task: borrower.clone(),
+            validation: "the Draft has not been filed".to_owned(),
+            disposition: None,
+            operation: Some(completion_operation()),
+        },
+    );
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == "task::acceptance-missing"),
+        "{refused:?}"
+    );
+    let still_held = board(&bus, epoch, lane.clone());
+    let borrower_heads = at(&still_held, &borrower);
+    assert!(borrower_heads.workflow.body.status.is_pending());
+    assert!(borrower_heads.claim.as_ref().is_some_and(|claim| {
+        claim.body.actor == lane && claim.body.disposition == ClaimDisposition::Active
+    }));
+
+    assert_committed(file(&bus, epoch, &draft));
+    let lender = TaskHandle::for_project("board.test", &draft_stamp);
+    let refreshed = board(&bus, epoch, lane.clone());
+    assert!(
+        task_show(&refreshed, at(&refreshed, &borrower), &[]).contains(lender.as_str()),
+        "filing activates the Draft's retained acceptance and dependency",
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(
+            &refreshed,
+            at(&refreshed, &borrower),
+            seat.lane,
+            seat.occupant,
+            false,
+        )
+        .expect("filed lender is witnessed"),
+        &TaskDone {
+            task: borrower.clone(),
+            validation: "the filed lender carries the acceptance contract".to_owned(),
+            disposition: None,
+            operation: Some(completion_operation()),
+        },
+    ));
+    assert!(
+        at(&board(&bus, epoch, Actor::Operator), &borrower)
+            .workflow
+            .body
+            .status
+            .is_completed()
+    );
+    clean(&root, bus);
+}
