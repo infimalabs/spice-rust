@@ -313,10 +313,10 @@ pub enum ToolMoment {
         name: String,
         /// Vendor call payload, serialized as JSON.
         arguments: String,
-        /// The assistant's declared purpose for the call, kept when the
-        /// settled message carries no visible text: a provider can settle the
-        /// prose before a tool call as paraphrased reasoning, leaving the
-        /// intent as the message's only verbatim assistant words.
+        /// The assistant's declared purpose for the call, written verbatim
+        /// beside any visible text of the same message: a provider can settle
+        /// the prose before a tool call as paraphrased reasoning, and either
+        /// way the intent is assistant words the transcript keeps exactly.
         intent: Option<String>,
     },
     /// A running call published updated state.

@@ -107,14 +107,22 @@ pub(super) fn intent_represented(
     else {
         return false;
     };
-    let Some(open) = open(record, state) else {
-        return false;
-    };
     let keys = steering_keys(std::iter::once(intent.as_str()));
-    !keys.is_empty()
-        && keys
-            .iter()
-            .all(|key| open.answers.values().any(|answers| answers.contains(key)))
+    if keys.is_empty() {
+        return false;
+    }
+    let settled = steering_keys(record.events.iter().filter_map(|(_, event)| match event {
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+            Some(prose.text.as_str())
+        }
+        _ => None,
+    }));
+    let streamed = open(record, state);
+    keys.iter().all(|key| {
+        settled.contains(key)
+            || streamed
+                .is_some_and(|open| open.answers.values().any(|answers| answers.contains(key)))
+    })
 }
 
 pub(super) fn remember(

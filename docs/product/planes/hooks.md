@@ -108,8 +108,8 @@ notice deliver exactly one; a notice that fails to write gives the claim back.
 ### Acknowledgment corrections
 
 [Assistant text on the lane tape](../invariants/identity.md#steering-acknowledgment-evidence-is-assistant-prose-on-the-lane-tape)
-is the acknowledgment evidence: visible prose, or a narrated tool call's declared
-intent when no visible prose accompanies it. Reasoning, tool arguments and quoted
+is the acknowledgment evidence: visible prose, and the declared intent of every
+tool call in the same message. Reasoning, tool arguments and quoted
 examples do not qualify. `ACK KEY [KEY ...]: response` can retire several keys;
 `NAK KEY: reason` declines one. Recognition happens on landing, not at turn end.
 

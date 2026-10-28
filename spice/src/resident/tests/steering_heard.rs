@@ -180,3 +180,18 @@ fn an_interjected_lane_s_answer_retires_its_key_as_the_prose_lands() {
     assert!(!heard.pending(), "the disposition retires the pending key");
     heard.finish();
 }
+
+#[test]
+fn an_intent_acknowledgment_retires_its_key_beside_unheaded_visible_text() {
+    let heard = Heard::new("steer-heard-intent-beside-text");
+    let key = heard.key.clone();
+    let record = format!(
+        r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"Checking the listener first."}},{{"type":"toolCall","id":"call-1","name":"read","intent":"Reading the listener","arguments":{{}}}},{{"type":"toolCall","id":"call-2","name":"read","intent":"ACK {key}: answering in the second call","arguments":{{}}}}],"stopReason":"toolUse"}}}}"#
+    );
+
+    heard.speak(format!("{record}\n").as_bytes());
+
+    assert_eq!(heard.disposition(), Disposition::Acked);
+    assert!(!heard.pending(), "the intent retires the pending key");
+    heard.finish();
+}
