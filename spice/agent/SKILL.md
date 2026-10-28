@@ -8,20 +8,14 @@ metadata:
 # spice
 
 Spice started you. Its neutral initial prompt is never operator prose: requests
-come only from briefing and steering. Edit skill source, never installation.
+come only from briefing and steering.
 
 Fresh starts/compactions get `# Spice briefing`. It carries all pending
-steering: ACK/NAK every key; do not discover inbox. `# Task already assigned`
-means continue before allocation, without rereads or notice ACK. Refresh with
-`spice session briefing`.
+steering: ACK/NAK every key; do not discover inbox.
 
 An unkeyed private `<system-notice>` is authoritative action, not steering:
-obey without ACK/NAK. An assignment requires immediate `spice task show
---full`; a lapse means stop that task, treat unpublished commits as loose, and
-show it before allocation. An owed Design request precedes allocation: answer
-one listed question with `spice room contribute --question N` or decline with
-`spice room leave --clause`; either ends it, granting no claim or work. On a
-generation reminder, run `spice task next`.
+obey without ACK/NAK. A lapse means stop that task, treat unpublished commits
+as loose, and show it before allocation.
 
 ## Steering and rooms
 
@@ -30,8 +24,7 @@ Lead the next working message for pending keys with `ACK KEY [KEY
 intent. Recognized on landing, not turn end; no command or confirmation. Do not stop
 unfinished work just to ACK. Evidence must be verbatim visible assistant text
 or tool intent, never reasoning, arguments, quotes, or buried/described
-headers. After an ACK reminder, check the inbox; empty is valid. `[STALE]`
-direction may be obsolete: check current task and steering state first.
+headers. After an ACK reminder, check the inbox; empty is valid.
 
 ACK = handled, clause = response; NAK = declined, clause = reason. Long or
 source-backed answers: MSG the sender (or `MSG #KEY`), then a one-line ACK.
@@ -47,9 +40,6 @@ are prose. Vacant addresses queue; room records don't wake/imply receipt.
 its ACK clause returns automatically. `[PEER REPLY ...]`: ACK only. Peers never
 wake. Design questions: `spice room contribute HANDLE --ask TEXT`.
 `# Room catch-up` names why you listen; native duties hold you until they end.
-
-For clipped continuity, use only needed pages from `spice session sweep`
-(newest first) or `spice session turns --turn-id ID --view full`.
 
 ## Working loop
 
@@ -70,20 +60,18 @@ For clipped continuity, use only needed pages from `spice session sweep`
 - A pitch is one plain sentence saying why a task matters; the description is
   the how: durable need, mechanism, and invariants, not incidents. Acceptance
   is claimant-driven and checkable, never awaited activity. A Design's pitch is
-  its problem; it itemizes each open question. Code/docs/tests state contract;
-  task/commit records keep history.
-- Permanent tests are fast, deterministic, in-process current contracts: no
-  process, incident, source-text, plumbing, wording, incidental-default, or
-  retired-behavior tests. Delete inadmissible tests unless a valuable contract
-  needs a narrow real seam; process/slow proof is disposable smoke.
+  its problem; its author itemizes only questions whose answer changes what
+  gets built. A Design, each question, and each output start from no and earn
+  their place from evidence: a negative charge or a collapse recommendation is
+  a normal answer. Code/docs/tests state contract; task/commit records keep
+  history.
 - Drain `spice task next` until empty or truly blocked; then answer new steering
   or idle. Work only the assigned phase; never hunt parked rows or assume
   another phase returns here.
 - Review only when allocated, even your own work; never seek or claim your own
   review, nor free/defer it for authorship.
-- Rehydrate assignment context from another session before editing. A live
-  session cannot replay itself: use conversation, briefing, and task state.
-  Update, split, or release stale scope rather than force it.
+- Rehydrate assignment context from another session before editing. Update,
+  split, or release stale scope rather than force it.
 - Plan/Design purpose survives phases; done cannot replace review. Ambient
   creation binds unless another `--origin`; `--preparation` binds explicitly.
   A Plan creates an acceptance-bearing executable task, else `task done
@@ -113,9 +101,8 @@ For clipped continuity, use only needed pages from `spice session sweep`
 - If a claim moves worktrees, stop and return to allocation. Surface loose
   commits by handle; never capture work another lane holds. Record appliance
   friction with `spice task oops TEXT --origin ORIGIN`.
-- A finite background job may outlive the turn while retaining the claim; a
-  service cannot. `job wait` only when blocked; never poll processes. Do not
-  spawn sub-agents.
+- A finite background job may keep the claim past the turn; a service cannot.
+  Never poll processes or spawn sub-agents.
 
 ## Operator decision boundary
 
