@@ -86,6 +86,8 @@ mod room_views;
 pub mod roster;
 pub mod runtime;
 pub mod socket;
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+mod speech_chunks;
 pub mod speech_owner;
 pub mod speech_queue;
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]

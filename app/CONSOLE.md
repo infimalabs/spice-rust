@@ -282,8 +282,14 @@ which its handlers never fire. Requests travel over shell IPC and answers
 arrive as evaluated script, so the surface needs no token or content-security
 exception. A new document silences what the previous one left speaking. The
 speech controller uses the surface, when present, with the same queue,
-ownership, voice spread, and stop-all lifecycle; a browser keeps
-`speechSynthesis`.
+ownership, voice spread, and stop-all lifecycle. A browser instead partitions
+long text at authored boundaries into utterances of at most 3,000 UTF-16 code
+units, below [Android's platform synthesis
+limit](https://developer.android.com/reference/android/speech/tts/TextToSpeech#getMaxSpeechInputLength()),
+and starts each next utterance only when the current one ends. Only the final
+end settles the app queue entry; an error or cancellation clears the active
+utterance and every remainder. The desktop shell keeps one native utterance
+because it does not cross that browser bridge.
 
 ## Composer and stream
 
