@@ -112,8 +112,8 @@ owns each rule summarized here.
   message never re-weights anything on its own. A short list of common English
   filler is never a term. Each candidate's cosine floor follows its maturity
   alone, never its working group: an unsteeped Design invites at the wide 0.10
-  floor, and a steeped one at the narrow 0.16 floor, since every question has
-  been heard and it is close, so it asks only closely matched lanes. The reach
+  floor, and a steeped one at the narrow 0.16 floor, once at least 80% of its
+  questions have been heard and it is close, so it asks only closely matched lanes. The reach
   widens again as soon as a later charge contests an item or a statement edit
   un-steeps it. The floor decides qualification only; finite cosine score still
   decides ranking. One opportunity selects one Design at most; one session has
@@ -179,9 +179,11 @@ owns each rule summarized here.
   opposite side's last strength-2 charge without a strength-2 charge of its
   own. Zero charges and questions never enter a series. Steeping is
   judged against the current statement's items: fresh means no
-  contribution; steeped means every current item has been charged, some
-  item concurs, and none is contested, so a quiet item blocks and an
-  unopposed one does not; anything else is steeping and names the lowest
+  contribution; steeped means at least 80% of current items have received a
+  nonzero charge, some item concurs, and none is contested. Up to 20% may
+  remain quiet; unopposed items count as heard. Coverage rounds up to whole
+  questions: 4 of 5 or 5 of 6 qualify, while fewer than 5 questions must all be
+  heard. Anything else is steeping and names the lowest
   contested item, else the lowest quiet item, else the lowest unopposed item,
   with the input it needs, and counts the items still quiet. `spice room
   awareness HANDLE` and the browser room show each item's state. Steeped
