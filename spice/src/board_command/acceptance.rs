@@ -2,11 +2,11 @@
 //!
 //! A phase advance, a final completion, a clean review verdict, and a Design
 //! pass proposal each need an acceptance contract: substantive acceptance on
-//! the task's own statement, or on a task directly linked to it by a
+//! the task's own statement, or on filed work directly linked to it by a
 //! dependency in either direction. Linked work lends its acceptance while it
-//! is pending, whatever its intent or however it came
-//! to be linked. The rule reads current statements and links when the task
-//! completes; no statement, acceptance, or link change rewrites a flow.
+//! is pending, whatever its intent. Unfiled Drafts assert no completion
+//! authority. The rule reads current statements and links when the task
+//! completes; no statement, acceptance, filing, or link change rewrites a flow.
 
 use super::*;
 
@@ -60,6 +60,7 @@ pub(crate) trait AcceptanceRow {
     fn acceptance(&self) -> &[String];
     fn born(&self) -> &wire::TaskStamp;
     fn dependencies(&self) -> &[wire::TaskStamp];
+    fn filing(&self) -> wire::TaskFiling;
     fn workflow(&self) -> &wire::WorkflowHead;
     fn acceptance_handle(&self) -> String;
 }
@@ -73,6 +74,9 @@ impl AcceptanceRow for BoardTask {
     }
     fn dependencies(&self) -> &[wire::TaskStamp] {
         &self.statement.body.dependencies
+    }
+    fn filing(&self) -> wire::TaskFiling {
+        self.statement.body.filing
     }
     fn workflow(&self) -> &wire::WorkflowHead {
         &self.workflow.body
@@ -92,6 +96,9 @@ impl AcceptanceRow for Entry {
     fn dependencies(&self) -> &[wire::TaskStamp] {
         &self.statement().dependencies
     }
+    fn filing(&self) -> wire::TaskFiling {
+        self.statement().filing
+    }
     fn workflow(&self) -> &wire::WorkflowHead {
         self.workflow()
     }
@@ -109,6 +116,9 @@ impl AcceptanceRow for journal::TaskHeads {
     }
     fn dependencies(&self) -> &[wire::TaskStamp] {
         &self.statement().body().dependencies
+    }
+    fn filing(&self) -> wire::TaskFiling {
+        self.statement().body().filing
     }
     fn workflow(&self) -> &wire::WorkflowHead {
         self.workflow().body()
@@ -131,13 +141,13 @@ pub(super) fn project_acceptance<'a, T: AcceptanceRow + 'a>(
     let mut linked = Vec::new();
     for dependency in dependencies {
         if let Some(row) = rows.clone().find(|row| row.born() == dependency)
-            && lends(row.acceptance(), row.workflow())
+            && lends(row.acceptance(), row.filing(), row.workflow())
         {
             linked.push(row);
         }
     }
     linked.extend(rows.filter(|row| {
-        row.dependencies().contains(born) && lends(row.acceptance(), row.workflow())
+        row.dependencies().contains(born) && lends(row.acceptance(), row.filing(), row.workflow())
     }));
     if linked.is_empty() {
         Acceptance::Missing
@@ -163,9 +173,14 @@ pub(crate) fn completion_contract<'a, T: AcceptanceRow + 'a>(
     }
 }
 
-/// Whether linked work in this state lends its acceptance to its neighbors.
-pub(super) fn lends(acceptance: &[String], workflow: &wire::WorkflowHead) -> bool {
-    workflow.status.is_pending() && substantive_acceptance(acceptance)
+/// Whether linked filed work in this state lends its acceptance to its
+/// neighbors.
+pub(super) fn lends(
+    acceptance: &[String],
+    filing: wire::TaskFiling,
+    workflow: &wire::WorkflowHead,
+) -> bool {
+    filing.is_filed() && workflow.status.is_pending() && substantive_acceptance(acceptance)
 }
 
 /// Whether a task with this statement and workflow lends its acceptance to a
@@ -173,11 +188,12 @@ pub(super) fn lends(acceptance: &[String], workflow: &wire::WorkflowHead) -> boo
 /// acceptance carry these pending lenders regardless of edge direction.
 pub(super) fn lends_across(
     acceptance: &[String],
+    filing: wire::TaskFiling,
     workflow: &wire::WorkflowHead,
     dependencies: &[wire::TaskStamp],
     borrowers: &std::collections::BTreeSet<wire::TaskStamp>,
 ) -> bool {
-    lends(acceptance, workflow)
+    lends(acceptance, filing, workflow)
         && dependencies
             .iter()
             .any(|dependency| borrowers.contains(dependency))

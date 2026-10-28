@@ -190,6 +190,7 @@ fn context_tasks(
                         let workflow = child.workflow().body();
                         lends_across(
                             &statement.acceptance,
+                            statement.filing,
                             workflow,
                             &statement.dependencies,
                             &unaccepted,
