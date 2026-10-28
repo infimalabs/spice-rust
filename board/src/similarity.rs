@@ -1,16 +1,21 @@
 //! Deterministic recent-window TF-IDF similarity between task statements.
 //!
 //! Documents use lowercase alphabetic terms from authored task fields. Digit
-//! runs, short words, and function words are inert; one trailing `s` is folded.
-//! A corpus fitted from the most recently revised statements supplies smooth
-//! inverse document frequency. Logarithmic term frequency and L2-normalized
-//! sparse vectors then produce one cosine score.
+//! runs, short words, and common English filler are inert; `-ies` plurals fold
+//! to `-y`, then one ordinary trailing `s` is folded. Workflow vocabulary such
+//! as claim, Design, phase, review, verdict, propose, done, todo, and flow stays
+//! subject matter and is left to fitted inverse document frequency rather than
+//! stopped globally. Logarithmic term frequency and L2-normalized sparse vectors
+//! then produce one cosine score over a corpus fitted from the most recently
+//! revised statements.
 //!
 //! Term counts are canonical and fit-independent. A [`Prepared`] vector is a
 //! derived cache weighted under one fitted [`Generation`]; two vectors compare
-//! only when they share it. Every matcher (Design awareness, the
-//! wake and `task next` match, and claim overlap) takes its fit and statement
-//! vectors from the one shared [`MatchCache`].
+//! only when they share it. The normalization generation participates in both
+//! fit and statement keys, so changing a fold or stop word cannot reuse a stale
+//! prepared vector. Every matcher (Design awareness, the wake and `task next`
+//! match, and claim overlap) takes its fit and statement vectors from the one
+//! shared [`MatchCache`].
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
@@ -29,15 +34,22 @@ pub const FREQUENCY_WINDOW: usize = 256;
 pub const MATCH_SCORE_BASE: f64 = 0.15;
 /// Least cosine at which two concurrently claimed statements warn of overlap.
 pub const CLAIM_OVERLAP_FLOOR: f64 = 0.25;
+/// Identity of the canonical term normalization used by every cache key. Bump
+/// this whenever [`STOP`] or [`normalize`] changes.
+const NORMALIZATION_GENERATION: &[u8] = b"similarity-normalization-v2";
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
-    "about", "after", "also", "been", "before", "being", "both", "cannot", "could", "does", "each",
-    "every", "from", "have", "into", "just", "like", "many", "more", "most", "much", "must",
-    "never", "none", "only", "other", "over", "same", "should", "some", "such", "than", "that",
-    "their", "them", "then", "there", "these", "they", "this", "those", "through", "under",
-    "until", "very", "what", "when", "where", "whether", "which", "while", "will", "with",
-    "within", "without", "would", "your",
+    "about", "account", "after", "again", "already", "also", "always", "around", "because", "been",
+    "before", "being", "between", "both", "cannot", "could", "covered", "does", "during", "each",
+    "earn", "either", "enough", "even", "ever", "every", "first", "from", "further", "have",
+    "here", "however", "into", "just", "keep", "last", "later", "least", "like", "made", "make",
+    "many", "might", "more", "most", "much", "must", "need", "never", "next", "none", "once",
+    "only", "other", "over", "perhaps", "rather", "same", "should", "since", "some", "still",
+    "such", "than", "that", "their", "them", "then", "there", "these", "they", "this", "those",
+    "through", "together", "under", "until", "upon", "used", "using", "very", "well", "were",
+    "what", "when", "where", "whether", "which", "while", "whole", "will", "with", "within",
+    "without", "work", "would", "your",
 ];
 
 /// Normalized term occurrence counts for one document.
@@ -118,6 +130,7 @@ pub struct Generation([u8; 32]);
 impl Generation {
     fn of(statements: usize, document_frequency: &BTreeMap<String, usize>) -> Self {
         let mut hasher = blake3::Hasher::new();
+        hasher.update(NORMALIZATION_GENERATION);
         hasher.update(&(statements as u64).to_le_bytes());
         for (term, frequency) in document_frequency {
             hasher.update(&(term.len() as u64).to_le_bytes());
@@ -258,6 +271,7 @@ type StatementKey = [u8; 32];
 /// order, so equal keys always count equally.
 fn statement_key(statement: &TaskHead) -> StatementKey {
     let mut hasher = blake3::Hasher::new();
+    hasher.update(NORMALIZATION_GENERATION);
     for text in std::iter::once(statement.title.as_str())
         .chain(statement.description.as_deref())
         .chain(statement.acceptance.iter().map(String::as_str))
@@ -435,13 +449,21 @@ fn normalize(run: &str) -> Option<String> {
     if run.chars().any(char::is_numeric) {
         return None;
     }
-    let word = run.to_lowercase();
-    let word = match word.strip_suffix('s') {
-        Some(stem) if stem.chars().count() >= MIN_TERM_CHARS && !stem.ends_with('s') => {
-            stem.to_owned()
-        }
-        _ => word,
-    };
+    let mut word = run.to_lowercase();
+    if STOP.contains(&word.as_str()) {
+        return None;
+    }
+    if let Some(stem) = word.strip_suffix("ies")
+        && stem.chars().count() >= MIN_TERM_CHARS
+    {
+        word.truncate(word.len() - "ies".len());
+        word.push('y');
+    } else if let Some(stem) = word.strip_suffix('s')
+        && stem.chars().count() >= MIN_TERM_CHARS
+        && !stem.ends_with('s')
+    {
+        word.pop();
+    }
     (word.chars().count() >= MIN_TERM_CHARS
         && word.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
         && !STOP.contains(&word.as_str()))
@@ -662,7 +684,7 @@ mod tests {
                 .0
                 .into_keys()
                 .collect::<Vec<_>>(),
-            ["design", "lane", "room", "task", "work"]
+            ["design", "lane", "room", "task"]
         );
         assert_eq!(
             document("İstanbul 𝐁𝐎𝐋𝐃 builds")
@@ -671,6 +693,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["build"],
             "a word whose lowercase holds a mark or an uppercase letter is never recorded"
+        );
+    }
+
+    #[test]
+    fn added_filler_cannot_create_similarity() {
+        let filler = "account again already always around because between covered during earn \
+                      either enough even ever first further here however keep last later least \
+                      made make might need next once perhaps rather since still together upon \
+                      used using well were whole work";
+        let left = document(&format!("alpha {filler}"));
+        let right = document(&format!("bravo {filler}"));
+        let profile = FrequencyProfile::of([left.clone(), right.clone()]);
+        close(profile.score(&left, &right).expect("documents score"), 0.0);
+    }
+
+    #[test]
+    fn plural_folding_merges_ies_and_keeps_workflow_vocabulary() {
+        assert_eq!(document("boundary boundaries").0["boundary"], 2);
+        assert_eq!(
+            document("claim design phase review verdict propose done todo flow")
+                .0
+                .into_keys()
+                .collect::<Vec<_>>(),
+            [
+                "claim", "design", "done", "flow", "phase", "propose", "review", "todo", "verdict"
+            ]
         );
     }
 }
