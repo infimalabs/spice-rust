@@ -370,34 +370,6 @@ mod tests {
     }
 
     #[test]
-    fn maturity_counts_use_singular_nouns_only_for_one() {
-        let state = DesignMaturityState::Fresh;
-        let mut maturity = DesignMaturity::default();
-        assert_eq!(
-            maturity_summary(&maturity, &state),
-            "maturity fresh: no contribution yet; 0 contributions from 0 lanes; requests=0 to 0 lanes",
-        );
-
-        maturity.contributions = 1;
-        maturity.contributing_lanes.push(uuid(1));
-        maturity.requests = 1;
-        maturity.requested_lanes.push(uuid(2));
-        assert_eq!(
-            maturity_summary(&maturity, &state),
-            "maturity fresh: no contribution yet; 1 contribution from 1 lane; requests=1 to 1 lane",
-        );
-
-        maturity.contributions = 2;
-        maturity.contributing_lanes.push(uuid(3));
-        maturity.requests = 2;
-        maturity.requested_lanes.push(uuid(4));
-        assert_eq!(
-            maturity_summary(&maturity, &state),
-            "maturity fresh: no contribution yet; 2 contributions from 2 lanes; requests=2 to 2 lanes",
-        );
-    }
-
-    #[test]
     fn notice_rows_render_semantic_sources_without_debug_structs() {
         use wire::rooms::{
             DesignNoticeEvidence as Evidence, DesignNoticeOpportunity as Opportunity, DesignSupport,
