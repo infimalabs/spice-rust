@@ -53,12 +53,6 @@ pub(super) fn taste_matches_refusal(
     refusal("task::taste-review-required", Some(observed), &detail)
 }
 
-pub(super) fn substantive_acceptance(acceptance: &[String]) -> bool {
-    acceptance
-        .iter()
-        .any(|criterion| !criterion.trim().is_empty())
-}
-
 pub(super) fn validate_acceptance(acceptance: &[String]) -> Result<(), Outcome<CommandAnswer>> {
     if acceptance
         .iter()

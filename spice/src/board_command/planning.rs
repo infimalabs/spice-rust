@@ -57,10 +57,7 @@ fn constructs_work(phase: &str) -> bool {
     matches!(phase, "plan" | DESIGN_PHASE)
 }
 
-pub(super) fn requires_construction(
-    intent: Option<wire::TaskIntent>,
-    flow: &[wire::Phase],
-) -> bool {
+pub(super) fn declares_plan(intent: Option<wire::TaskIntent>, flow: &[wire::Phase]) -> bool {
     intent == Some(wire::TaskIntent::Plan)
         || (intent.is_none()
             && flow.iter().any(|phase| phase.as_str() == "plan")
@@ -73,7 +70,7 @@ pub(super) fn requires_construction(
 /// commits and recovered work never become part of one.
 pub(super) fn planning_deliverable(entry: &Entry) -> bool {
     entry.statement().intent.is_some()
-        || requires_construction(entry.statement().intent, &entry.workflow().flow)
+        || declares_plan(entry.statement().intent, &entry.workflow().flow)
         || entry.workflow().phase.as_str() == "design"
 }
 
@@ -121,7 +118,7 @@ pub(super) fn preparation_parent<'a>(
         ));
     }
     Ok((parent.statement.body.intent.is_some()
-        || requires_construction(parent.statement.body.intent, &parent.workflow.body.flow)
+        || declares_plan(parent.statement.body.intent, &parent.workflow.body.flow)
         || constructs_work(parent.workflow.body.phase.as_str()))
     .then_some(parent))
 }
@@ -157,7 +154,7 @@ pub(super) fn bind_preparation(
     if !parent.workflow.body.status.is_pending()
         || (parent.statement.body.intent.is_none()
             && !constructs_work(parent.workflow.body.phase.as_str())
-            && !requires_construction(parent.statement.body.intent, &parent.workflow.body.flow))
+            && !declares_plan(parent.statement.body.intent, &parent.workflow.body.flow))
         || (parent
             .statement
             .body
@@ -190,7 +187,7 @@ pub(super) fn bind_preparation(
 pub(super) fn correction_preparation(entry: &BoardTask) -> Option<wire::TaskPreparation> {
     let statement = &entry.statement.body;
     if statement.intent.is_none()
-        && !requires_construction(statement.intent, &entry.workflow.body.flow)
+        && !declares_plan(statement.intent, &entry.workflow.body.flow)
         && statement.preparation.is_none()
     {
         return None;
@@ -235,7 +232,8 @@ pub(super) fn accepted_construction(task: &BoardTask) -> bool {
     )
 }
 
-/// Whether work in this state discharges a Plan's construction duty.
+/// Whether work in this state is accepted non-planning output that answers a
+/// Plan's need, which contradicts a no-construction disposition.
 fn constructs(
     intent: Option<wire::TaskIntent>,
     acceptance: &[String],
@@ -243,15 +241,15 @@ fn constructs(
 ) -> bool {
     (workflow.status.is_pending() || workflow.concluded_positively())
         && intent.is_none()
-        && !requires_construction(intent, &workflow.flow)
+        && !declares_plan(intent, &workflow.flow)
         && substantive_acceptance(acceptance)
 }
 
 /// Refuse a created, filed, edited, or relinked statement whose post state
-/// would discharge the construction duty of a pending Plan that already
-/// recorded a no-construction disposition, so the two routes never both hold,
-/// in either order. Corrections carry preparation without construction and
-/// pass.
+/// would give a pending Plan that already recorded a no-construction
+/// disposition accepted output, so the disposition and constructed work never
+/// both hold, in either order. Corrections carry preparation without
+/// construction and pass.
 pub(super) fn refuse_disposed_construction(
     snapshot: &ValidatedSnapshot,
     statement: &TaskHead,

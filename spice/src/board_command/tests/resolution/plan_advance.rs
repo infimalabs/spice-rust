@@ -467,7 +467,7 @@ fn selected_plan_reads_gate_completion_with_current_reverse_child_heads() {
         stale_expected,
         &done,
     );
-    assert_refusal(refused, "task::plan-witness-missing");
+    assert_refusal(refused, "task::acceptance-witness-missing");
 
     let refreshed = progress_read(&bus, epoch, lane.clone(), Vec::new(), true);
     let CommandAnswer::Task(answer) = assert_committed(issue(
@@ -562,6 +562,6 @@ fn plan_only_completion_rejects_reverse_children_without_pending_acceptance() {
             operation: Some(completion_operation()),
         },
     );
-    assert_refusal(refused, "task::plan-incomplete");
+    assert_refusal(refused, "task::acceptance-missing");
     clean(&root, bus);
 }

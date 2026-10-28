@@ -427,6 +427,8 @@ pub(super) fn add(
     add_project(bus, epoch, actor, task, title, "board.test", flow)
 }
 
+/// Add one ordinary task under its named flow, or `todo,review`, carrying the
+/// one acceptance criterion every successful completion needs.
 pub(super) fn add_project(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -441,7 +443,12 @@ pub(super) fn add_project(
         epoch,
         actor,
         task,
-        authored_add(title, project, flow, &[]),
+        authored_add(
+            title,
+            project,
+            flow.or(Some("todo,review")),
+            &["the fixture work is verified"],
+        ),
     )
 }
 

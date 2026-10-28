@@ -332,7 +332,7 @@ fn done_transition(
             "complete only the currently held workflow phase",
         )
     })?;
-    admit_plan_transition(snapshot, entry, command, &transition, disposition)?;
+    admit_completion(snapshot, entry, command, disposition)?;
     Ok((at, active.lane(), transition))
 }
 
@@ -366,73 +366,31 @@ fn refuse_taste_hold(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
         .map_or(Ok(()), |hold| Err(taste_hold_refusal(entry, hold)))
 }
 
-fn admit_plan_transition(
+/// Admit a successful completion: a phase advance, a final completion, or a
+/// clean review verdict.
+///
+/// A Plan's validated no-construction disposition closes its plan phase
+/// without acceptance, and the one disposition recorded then stands for every
+/// later phase; closing the plan phase again restates it. Every other
+/// successful completion rests on the task's acceptance contract.
+fn admit_completion(
     snapshot: &ValidatedSnapshot,
     entry: &Entry,
     command: &wire::AdmittedCommand,
-    transition: &board::Transition,
     disposition: Option<&body::PlanDisposition>,
 ) -> Result<(), Outcome<CommandAnswer>> {
     if let Some(disposition) = disposition {
-        admit_disposition(snapshot, entry, command, disposition)?;
+        let plan = visible_task(snapshot, entry.born())?;
+        require_expected(command, &statement_witness(plan))?;
+        require_expected(command, &workflow_witness(plan))?;
+        return admit_disposition(snapshot, entry, command, disposition);
     }
-    if entry.statement().intent == Some(wire::TaskIntent::Design)
-        && matches!(
-            transition.kind(),
-            board::TransitionKind::Advance { to, .. } if to.as_str() == "design"
-        )
+    if entry.workflow().phase.as_str() != "plan"
+        && snapshot.facts.plan_disposition(entry.born()).is_some()
     {
         return Ok(());
     }
-    let owner = planning::construction_owner(entry.born(), entry.statement().preparation.as_ref());
-    let task = visible_task(snapshot, owner)?;
-    let construction_required = task.workflow.body.status.is_pending()
-        && planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow);
-    if !construction_required && entry.workflow().phase.as_str() != "plan" {
-        return Ok(());
-    }
-    require_expected(command, &statement_witness(task))?;
-    require_expected(command, &workflow_witness(task))?;
-    let completes_plan = matches!(
-        transition.kind(),
-        board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
-    );
-    if disposition.is_some() {
-        return Ok(());
-    }
-    if !construction_required
-        && !completes_plan
-        && substantive_acceptance(&entry.statement().acceptance)
-    {
-        return Ok(());
-    }
-    if let Some(child) = accepted_pending_child(snapshot, entry)? {
-        require_expected(command, &statement_witness(child))?;
-        require_expected(command, &workflow_witness(child))?;
-        return Ok(());
-    }
-    // The one disposition recorded when the plan phase closed stands for every
-    // later phase; closing the plan phase again restates it.
-    if owner == entry.born()
-        && entry.workflow().phase.as_str() != "plan"
-        && snapshot.facts.plan_disposition(owner).is_some()
-    {
-        return Ok(());
-    }
-    let remedy = if completes_plan {
-        "connect a pending child carrying acceptance before completing a plan-only flow, or \
-         record why no work is warranted with --disposition no-work|duplicate|covered|deferred \
-         [--cover HANDLE|COMMIT]"
-    } else {
-        "add acceptance to the task, or connect a pending child carrying acceptance, before \
-         closing the plan phase; a Plan whose need warrants no work records why with \
-         --disposition no-work|duplicate|covered|deferred [--cover HANDLE|COMMIT]"
-    };
-    Err(refusal(
-        "task::plan-incomplete",
-        Some(entry.handle().to_string()),
-        remedy,
-    ))
+    require_acceptance(snapshot, command, entry.born())
 }
 
 /// Admit a Plan lane's no-construction disposition on the completion that
@@ -472,7 +430,7 @@ fn admit_disposition(
     }
     if owner != plan
         || entry.workflow().phase.as_str() != "plan"
-        || !planning::requires_construction(entry.statement().intent, &entry.workflow().flow)
+        || !planning::declares_plan(entry.statement().intent, &entry.workflow().flow)
     {
         return Err(refusal(
             "task::disposition-refused",
@@ -480,8 +438,8 @@ fn admit_disposition(
             "record a no-construction disposition only when completing a Plan's own plan phase",
         ));
     }
-    // Work the Plan constructed, or any linked work that already satisfies its
-    // construction duty, contradicts a claim that no work is warranted.
+    // Work the Plan constructed, or linked accepted output that answers its
+    // need, contradicts a claim that no work is warranted.
     let constructed = snapshot.answer.tasks.iter().find(|task| {
         task.workflow.body.status.is_pending()
             && task
@@ -953,7 +911,7 @@ fn prepare_review(
     let statement = match verdict {
         body::Verdict::Clean => {
             refuse_taste_hold(entry)?;
-            admit_plan_transition(&snapshot, entry, command, &transition, None)?;
+            admit_completion(&snapshot, entry, command, None)?;
             entry.statement().clone()
         }
         body::Verdict::Finding => correction_statement(&snapshot, command, entry, review)?,

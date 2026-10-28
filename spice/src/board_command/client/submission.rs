@@ -812,7 +812,8 @@ pub(in crate::board_command) fn mutation_read(
                 .expect("a parsed handle carries a canonical task stamp")
         })
         .collect();
-    // Plan progress witnesses inspect prerequisite heads, including settled ones.
+    // Completion witnesses inspect the linked work carrying a task's
+    // acceptance, including settled prerequisites.
     let mut dependencies = matches!(contract.path, ["task", "done" | "review"]);
     // Every handle an option names joins the scoped read; a preparation
     // controller is otherwise absent from it.

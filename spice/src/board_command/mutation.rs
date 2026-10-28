@@ -894,38 +894,6 @@ pub(super) fn task_depends_with(
     {
         return outcome;
     }
-    if depends.remove
-        && post.workflow().phase.as_str() == "plan"
-        && (post.workflow().flow.len() == 1
-            || !substantive_acceptance(&post.statement().acceptance))
-    {
-        match accepted_pending_child(&snapshot, &post) {
-            Ok(Some(child)) => {
-                if let Err(outcome) = require_dependency_witness(
-                    command,
-                    &statement_witness(child),
-                    "read the current plan and its remaining accepted child before removing a dependency",
-                ) {
-                    return outcome;
-                }
-                if let Err(outcome) = require_dependency_witness(
-                    command,
-                    &workflow_witness(child),
-                    "read the current plan and its remaining accepted child before removing a dependency",
-                ) {
-                    return outcome;
-                }
-            }
-            Ok(None) => {
-                return refusal(
-                    "task::plan-acceptance-orphaned",
-                    Some(entry.handle().to_string()),
-                    "retain a pending dependency carrying acceptance while the plan relies on one",
-                );
-            }
-            Err(outcome) => return outcome,
-        }
-    }
     let next = next_action(&snapshot, &post);
     commit_dependency_edit(bus, command, depends, entry, statement, next, at)
 }

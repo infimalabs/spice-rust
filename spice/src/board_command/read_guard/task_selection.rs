@@ -158,25 +158,7 @@ fn context_tasks(
         }));
     }
     if dependencies {
-        let construction_owners = selected
-            .iter()
-            .filter_map(|task| {
-                observed
-                    .tasks()
-                    .binary_search_by(|heads| heads.statement().body().born.cmp(task))
-                    .ok()
-                    .and_then(|index| {
-                        observed.tasks()[index]
-                            .statement()
-                            .body()
-                            .preparation
-                            .as_ref()
-                    })
-                    .map(|preparation| preparation.construction.clone())
-            })
-            .collect::<Vec<_>>();
-        selected.extend(construction_owners);
-        let mut selected_plans = std::collections::BTreeSet::new();
+        let mut unaccepted = std::collections::BTreeSet::new();
         let mut open_designs = std::collections::BTreeSet::new();
         for task in &selected {
             let Ok(index) = observed
@@ -186,24 +168,20 @@ fn context_tasks(
                 continue;
             };
             let heads = &observed.tasks()[index];
-            let workflow = heads.workflow().body();
-            if workflow.status.is_pending()
-                && (workflow.phase.as_str() == "plan"
-                    || planning::requires_construction(
-                        heads.statement().body().intent,
-                        &workflow.flow,
-                    ))
-            {
-                selected_plans.insert(task.clone());
+            if !substantive_acceptance(&heads.statement().body().acceptance) {
+                unaccepted.insert(task.clone());
             }
-            if wire::intent::is_open_design(heads.statement().body().intent, workflow) {
+            if wire::intent::is_open_design(
+                heads.statement().body().intent,
+                heads.workflow().body(),
+            ) {
                 open_designs.insert(task.clone());
             }
         }
-        // A Plan's children are the outputs still gated by it; an open
-        // Design also carries the pending construction roots it released and
-        // now waits on as prerequisites.
-        if !selected_plans.is_empty() || !open_designs.is_empty() {
+        // A task without its own acceptance carries the work depending on it
+        // that lends it one; an open Design also carries the pending
+        // construction roots it released and now waits on as prerequisites.
+        if !unaccepted.is_empty() || !open_designs.is_empty() {
             selected.extend(
                 observed
                     .tasks()
@@ -211,19 +189,19 @@ fn context_tasks(
                     .filter(|child| {
                         let statement = child.statement().body();
                         let workflow = child.workflow().body();
-                        !workflow.status.is_deleted()
-                            && substantive_acceptance(&statement.acceptance)
-                            && (statement
+                        (lends(&statement.acceptance, workflow)
+                            && statement
                                 .dependencies
                                 .iter()
-                                .any(|dependency| selected_plans.contains(dependency))
-                                || (workflow.status.is_pending()
-                                    && wire::intent::released_construction_root(
-                                        &statement.born,
-                                        &statement.dependencies,
-                                        statement.preparation.as_ref(),
-                                    )
-                                    .is_some_and(|parent| open_designs.contains(parent))))
+                                .any(|dependency| unaccepted.contains(dependency)))
+                            || (workflow.status.is_pending()
+                                && substantive_acceptance(&statement.acceptance)
+                                && wire::intent::released_construction_root(
+                                    &statement.born,
+                                    &statement.dependencies,
+                                    statement.preparation.as_ref(),
+                                )
+                                .is_some_and(|parent| open_designs.contains(parent)))
                     })
                     .map(|child| child.statement().body().born.clone()),
             );

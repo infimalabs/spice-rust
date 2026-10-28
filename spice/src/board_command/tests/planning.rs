@@ -650,22 +650,177 @@ fn claimed_wake_cannot_adopt_implementation_into_a_planning_deliverable() {
 }
 
 #[test]
-fn plan_review_cannot_replace_required_child_construction_with_own_acceptance() {
-    let (root, bus, epoch, seats) = fixture("planning-construction", 1);
-    let task = add_planning(
+fn an_explicit_plan_completes_on_its_own_acceptance_and_refuses_without_any() {
+    let (root, bus, epoch, seats) = fixture("planning-construction", 2);
+    let unspecified = add_planning_with(
+        &bus,
+        epoch,
+        "Construct unspecified contracts",
+        wire::TaskIntent::Plan,
+        Some("plan,review"),
+        &[],
+    );
+    let result = done(&bus, epoch, &seats[0], &unspecified);
+    let Outcome::Refusal(refusal) = result else {
+        panic!("a Plan without any acceptance must refuse: {result:?}");
+    };
+    assert_eq!(refusal.reason(), "task::acceptance-missing");
+    let view = board(&bus, epoch, Actor::Operator);
+    let held = at(&view, &unspecified);
+    assert_eq!(held.workflow.body.phase.as_str(), "plan");
+    assert_eq!(
+        held.workflow
+            .body
+            .flow
+            .iter()
+            .map(wire::Phase::as_str)
+            .collect::<Vec<_>>(),
+        ["plan", "review"]
+    );
+    assert!(held.claim.as_ref().is_some_and(|claim| {
+        claim.body.disposition == ClaimDisposition::Active
+            && claim.body.actor == Actor::Lane(seats[0].lane)
+    }));
+
+    let accepted = add_planning(
         &bus,
         epoch,
         "Construct contracts",
         wire::TaskIntent::Plan,
         Some("plan,review"),
     );
+    assert_committed(done(&bus, epoch, &seats[1], &accepted));
+    let view = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&view, &accepted).workflow.body.phase.as_str(), "review");
+    clean(&root, bus);
+}
+
+#[test]
+fn ordinary_work_completes_on_its_own_or_a_prerequisites_acceptance() {
+    let (root, bus, epoch, seats) = fixture("ordinary-acceptance", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add_project_with_acceptance(
+        &bus,
+        epoch,
+        "ORDINARY-unspec",
+        "Unspecified work",
+        "board.test",
+        Some("todo,review"),
+        &[],
+    );
     let result = done(&bus, epoch, &seats[0], &task);
     let Outcome::Refusal(refusal) = result else {
-        panic!("planning without a constructed child must refuse: {result:?}");
+        panic!("ordinary work without acceptance must refuse: {result:?}");
     };
-    assert_eq!(refusal.reason(), "task::plan-incomplete");
+    assert_eq!(refusal.reason(), "task::acceptance-missing");
     let view = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&view, &task).workflow.body.phase.as_str(), "plan");
+    let held = at(&view, &task);
+    assert_eq!(held.workflow.body.phase.as_str(), "todo");
+    assert!(held.claim.as_ref().is_some_and(|claim| {
+        claim.body.disposition == ClaimDisposition::Active && claim.body.actor == lane
+    }));
+
+    let prerequisite = add_project_with_acceptance(
+        &bus,
+        epoch,
+        "ORDINARY-prereq",
+        "Accepted prerequisite",
+        "board.test",
+        Some("todo"),
+        &["the prerequisite behavior is verified"],
+    );
+    connect_child(&bus, epoch, &task, &prerequisite);
+    assert_committed(complete(&bus, epoch, &seats[0], &task));
+    let view = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&view, &task).workflow.body.phase.as_str(), "review");
+    clean(&root, bus);
+}
+
+#[test]
+fn clean_review_needs_acceptance_while_a_finding_does_not() {
+    let (root, bus, epoch, seats) = fixture("review-acceptance", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let task = add_project_with_acceptance(
+        &bus,
+        epoch,
+        "REVIEW-unspec",
+        "Unspecified review",
+        "board.test",
+        Some("review"),
+        &[],
+    );
+    claim_task(&bus, epoch, &seats[0], &actor, &task);
+    let view = board(&bus, epoch, actor.clone());
+    let verdict = |finding: &str, then: Vec<wire::intent::ReviewFollowup>| TaskReview {
+        task: task.clone(),
+        finding: finding.to_owned(),
+        note: None,
+        followup: Vec::new(),
+        then,
+    };
+    let refused = issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskReview,
+        progress_witnesses(
+            &view,
+            at(&view, &task),
+            seats[0].lane,
+            seats[0].occupant,
+            true,
+        )
+        .expect("review witnesses"),
+        &verdict("clean", Vec::new()),
+    );
+    let Outcome::Refusal(refusal) = refused else {
+        panic!("a clean review without acceptance must refuse: {refused:?}");
+    };
+    assert_eq!(refusal.reason(), "task::acceptance-missing");
+
+    let view = board(&bus, epoch, actor.clone());
+    assert_eq!(at(&view, &task).workflow.body.phase.as_str(), "review");
+    let correction = stamp("Specify the reviewed work");
+    let mut expected = progress_witnesses(
+        &view,
+        at(&view, &task),
+        seats[0].lane,
+        seats[0].occupant,
+        true,
+    )
+    .expect("finding witnesses");
+    expected.push(Witness::Absence {
+        task: correction.clone(),
+    });
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor,
+        CommandKind::TaskReview,
+        expected,
+        &verdict(
+            "The work states no acceptance",
+            vec![wire::intent::ReviewFollowup {
+                task: correction,
+                add: TaskAdd {
+                    preparation: None,
+                    intent: None,
+                    title: "Specify the reviewed work".to_owned(),
+                    pitch: "This work keeps the fixture honest.".to_owned(),
+                    project: Some("board.test".to_owned()),
+                    description: None,
+                    acceptance: vec!["the reviewed work states its contract".to_owned()],
+                    requirements: wire::EnvironmentRequirements::default(),
+                    origin: None,
+                    flow: Some("todo".to_owned()),
+                    depends: Vec::new(),
+                    claim: false,
+                    draft: false,
+                },
+            }],
+        ),
+    ));
     clean(&root, bus);
 }
 
@@ -893,14 +1048,15 @@ fn a_plan_disposition_refuses_beside_a_live_output_or_an_unwitnessed_cover() {
 }
 
 #[test]
-fn operator_closed_child_cannot_satisfy_plan_construction() {
+fn operator_closed_work_lends_no_acceptance() {
     let (root, bus, epoch, seats) = fixture("planning-closed-construction", 1);
-    let plan = add_planning(
+    let plan = add_planning_with(
         &bus,
         epoch,
         "Construct retained contracts",
         wire::TaskIntent::Plan,
         Some("plan,review"),
+        &[],
     );
     let child = add_project_with_acceptance(
         &bus,
@@ -933,9 +1089,9 @@ fn operator_closed_child_cannot_satisfy_plan_construction() {
 
     let result = done(&bus, epoch, &seats[0], &plan);
     let Outcome::Refusal(refusal) = result else {
-        panic!("operator-closed work must not construct a plan: {result:?}");
+        panic!("operator-closed work must not lend acceptance: {result:?}");
     };
-    assert_eq!(refusal.reason(), "task::plan-incomplete");
+    assert_eq!(refusal.reason(), "task::acceptance-missing");
     let view = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&view, &plan).workflow.body.phase.as_str(), "plan");
     clean(&root, bus);
@@ -1131,8 +1287,8 @@ fn settling_one_controller_preserves_a_branch_owned_by_another_open_controller()
 }
 
 #[test]
-fn planning_corrections_keep_the_original_construction_duty_and_later_declared_phases() {
-    let (root, bus, epoch, seats) = fixture("planning-correction-duty", 1);
+fn a_correction_completes_on_the_acceptance_of_the_task_it_corrects() {
+    let (root, bus, epoch, seats) = fixture("planning-correction-acceptance", 1);
     let actor = Actor::Lane(seats[0].lane);
     authorize_lane_creation(&bus, epoch, &seats[0]);
     let plan = add_planning(
@@ -1188,41 +1344,9 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
             }],
         },
     ));
+    // The reviewed Plan depends on its correction, so the correction, which
+    // carries no acceptance of its own, completes on the Plan's.
     claim_task(&bus, epoch, &seats[0], &actor, &correction);
-    let view = board(&bus, epoch, actor.clone());
-    let verdict = TaskReview {
-        task: correction.clone(),
-        finding: "clean".to_owned(),
-        note: None,
-        then: Vec::new(),
-        followup: Vec::new(),
-    };
-    let refused = issue(
-        &bus,
-        epoch,
-        actor.clone(),
-        CommandKind::TaskReview,
-        progress_witnesses(
-            &view,
-            at(&view, &correction),
-            seats[0].lane,
-            seats[0].occupant,
-            true,
-        )
-        .expect("correction witnesses"),
-        &verdict,
-    );
-    assert!(
-        matches!(refused, Outcome::Refusal(refusal) if refusal.reason() == "task::plan-incomplete")
-    );
-    add_associated(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "Executable output contract",
-        Some(&plan),
-        None,
-    );
     let view = board(&bus, epoch, actor.clone());
     let reply = assert_committed(issue(
         &bus,
@@ -1236,8 +1360,14 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
             seats[0].occupant,
             true,
         )
-        .expect("constructed correction witnesses"),
-        &verdict,
+        .expect("correction witnesses"),
+        &TaskReview {
+            task: correction.clone(),
+            finding: "clean".to_owned(),
+            note: None,
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
     ));
     let CommandAnswer::Task(answer) = reply else {
         panic!("review returns task state");
@@ -1249,92 +1379,5 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
         "verify"
     );
     assert!(at(&view, &plan).workflow.body.status.is_pending());
-    clean(&root, bus);
-}
-
-#[test]
-fn a_correction_outlives_its_settled_plan_without_the_construction_duty() {
-    let (root, bus, epoch, seats) = fixture("planning-correction-settled", 1);
-    let actor = Actor::Lane(seats[0].lane);
-    authorize_lane_creation(&bus, epoch, &seats[0]);
-    let plan = add_planning(
-        &bus,
-        epoch,
-        "Construct executable contract",
-        wire::TaskIntent::Plan,
-        Some("review"),
-    );
-    claim_task(&bus, epoch, &seats[0], &actor, &plan);
-    let view = board(&bus, epoch, actor.clone());
-    let correction_born = stamp("Repair the plan");
-    let correction = TaskHandle::for_project("board.test", &correction_born);
-    let mut expected = progress_witnesses(
-        &view,
-        at(&view, &plan),
-        seats[0].lane,
-        seats[0].occupant,
-        true,
-    )
-    .expect("review witnesses");
-    expected.push(Witness::Absence {
-        task: correction_born.clone(),
-    });
-    assert_committed(issue(
-        &bus,
-        epoch,
-        actor.clone(),
-        CommandKind::TaskReview,
-        expected,
-        &TaskReview {
-            task: plan.clone(),
-            finding: "The executable contract is absent".to_owned(),
-            note: None,
-            followup: Vec::new(),
-            then: vec![wire::intent::ReviewFollowup {
-                task: correction_born,
-                add: TaskAdd {
-                    preparation: None,
-                    intent: None,
-                    title: "Repair the plan".to_owned(),
-                    pitch: "This work keeps the fixture honest.".to_owned(),
-                    project: Some("board.test".to_owned()),
-                    description: None,
-                    acceptance: Vec::new(),
-                    requirements: wire::EnvironmentRequirements::default(),
-                    origin: None,
-                    flow: Some("todo".to_owned()),
-                    depends: Vec::new(),
-                    claim: false,
-                    draft: false,
-                },
-            }],
-        },
-    ));
-    let operator_view = board(&bus, epoch, Actor::Operator);
-    let heads = at(&operator_view, &plan);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskClose,
-        vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-        ],
-        &TaskClose {
-            task: plan,
-            validation: "The plan is withdrawn".to_owned(),
-            force_claimed: false,
-        },
-    ));
-    claim_and_complete_task(&bus, epoch, &seats[0], &actor, &correction);
-    assert!(
-        at(&board(&bus, epoch, actor), &correction)
-            .workflow
-            .body
-            .status
-            .is_completed()
-    );
     clean(&root, bus);
 }

@@ -230,6 +230,9 @@ pub(super) fn propose_design(
             "read the current board and retry the proposal",
         );
     };
+    if let Err(outcome) = require_acceptance(&snapshot, command, entry.born()) {
+        return outcome;
+    }
     let claim = entry
         .claim()
         .expect("proposal admission proved the controller has an active claim");
@@ -370,7 +373,7 @@ pub(super) fn adopt_output(
     }
     if !parent_heads.workflow().body().status.is_pending()
         || active_claim(parent_heads)
-        || !requires_construction(
+        || !declares_plan(
             parent_heads.statement().body().intent,
             &parent_heads.workflow().body().flow,
         )
