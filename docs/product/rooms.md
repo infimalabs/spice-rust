@@ -68,7 +68,11 @@ owns each rule summarized here.
   [typed](invariants/identity.md#identity-a-lane-contributes-typed-problem-space-records-to-an-open-design)
   charge from -2 to +2 weighing one question item of the Design statement it
   witnessed, or a question. A ±1 charge is an opinion; 0 and ±2 cite at least
-  one source. Each KEY resolves by form: a task handle or stamp cites that
+  one source. Contributors start from no: the Design and each question must
+  earn its place from evidence. A negative charge is the expected answer when
+  a question has not; charging every question negative says the Design itself
+  should not exist. This is the stance every Design request renders.
+  Each KEY resolves by form: a task handle or stamp cites that
   task's statement head fact, a publication stamp a contribution in this
   room, a base-52 code that journal fact, and a hex digest a retained
   artifact. Its answer carries `source`, the exact JSON a candidate reference
