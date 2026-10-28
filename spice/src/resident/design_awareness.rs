@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use board::similarity::{
-    FrequencyProfile, GenerationMismatch, MATCH_SCORE_BASE, Prepared, TermCounts,
+    FrequencyProfile, GenerationMismatch, NARROW_MATCH_FLOOR, Prepared, TermCounts,
+    WIDE_MATCH_FLOOR,
 };
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::request_questions;
@@ -36,17 +37,14 @@ const COMPLETION_PAGE_ROWS: usize = 64;
 const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
 /// Profile opportunities admitted to one in-memory page.
 const PROFILE_OPPORTUNITY_PAGE: usize = 64;
-/// Denominator shared by the exact reach weighting ratios.
-const MATCH_SCORE_PARTS: f64 = 3.0;
 
 /// Candidate-owned relevance floor for one Design request's reach.
 #[must_use]
 pub(crate) fn match_score_floor(reach: DesignReach) -> f64 {
-    let parts = match reach {
-        DesignReach::Wide => 2.0,
-        DesignReach::Narrow => 4.0,
-    };
-    MATCH_SCORE_BASE * parts / MATCH_SCORE_PARTS
+    match reach {
+        DesignReach::Wide => WIDE_MATCH_FLOOR,
+        DesignReach::Narrow => NARROW_MATCH_FLOOR,
+    }
 }
 
 /// The reach one Design's invitations clear, from its maturity alone: wide
@@ -298,8 +296,11 @@ fn plan_profile_requests(
     if opportunities.is_empty() {
         return Ok(Vec::new());
     }
+    let mut state = message_surface::lock_state(profiles)?;
     let matcher = board::similarity::MatchCache::shared();
-    let frequency = matcher.fit(entries.iter().map(board::Entry::statement));
+    let frequency = matcher.fit(entries.iter().map(board::Entry::statement), || {
+        state.profiles.conversation_background()
+    });
     let prepared = prepare_open_designs(entries, matcher, &frequency);
     let scoring = Scoring {
         facts,
@@ -307,7 +308,6 @@ fn plan_profile_requests(
         prepared: &prepared,
     };
 
-    let mut state = message_surface::lock_state(profiles)?;
     let mut planned_sessions = BTreeSet::new();
     let mut planned = Vec::new();
     for opportunity in opportunities {

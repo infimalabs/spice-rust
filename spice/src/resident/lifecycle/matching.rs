@@ -29,8 +29,10 @@ impl<'a> RetainedMatch<'a> {
         };
         let state = message_surface::lock_state(profiles)?;
         Ok(Some(Self {
+            frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement), || {
+                state.profiles.conversation_background()
+            }),
             state: RefCell::new(state),
-            frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement)),
         }))
     }
 

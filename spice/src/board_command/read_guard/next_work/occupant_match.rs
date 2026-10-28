@@ -48,8 +48,10 @@ impl<'a> OccupantMatch<'a> {
         };
         let state = message_surface::lock_state(profiles).map_err(command_answer_outcome)?;
         Ok(Some(Self {
+            frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement), || {
+                state.profiles.conversation_background()
+            }),
             state: RefCell::new(state),
-            frequency: MatchCache::shared().fit(entries.iter().map(Entry::statement)),
             lane,
             occupant,
         }))

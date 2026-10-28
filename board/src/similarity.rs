@@ -1,21 +1,27 @@
-//! Deterministic recent-window TF-IDF similarity between task statements.
+//! Deterministic recent-window TF-IDF similarity between task statements,
+//! tempered by how ordinary each term is in lane conversation.
 //!
 //! Documents use lowercase alphabetic terms from authored task fields. Digit
 //! runs, short words, and common English filler are inert; `-ies` plurals and
 //! long-stem `-ie` singulars fold to `-y`, then one ordinary trailing `s` is
 //! folded. Workflow vocabulary such as claim, Design, phase, review, verdict,
-//! propose, done, todo, and flow stays
-//! subject matter and is left to fitted inverse document frequency rather than
-//! stopped globally. Logarithmic term frequency and L2-normalized sparse vectors
-//! then produce one cosine score over a corpus fitted from the most recently
-//! revised statements.
+//! propose, done, todo, and flow stays subject matter: it is never stopped
+//! globally, and is left to fitted inverse document frequency over the most
+//! recently revised statements and to the conversation [`Background`]. A
+//! term's weight is logarithmic term frequency times statement inverse
+//! document frequency times the [`CONVERSATION_RARITY_EXPONENT`] power of its
+//! conversation inverse document frequency normalized by an unseen term's, so
+//! a term in every held message keeps about a third of its weight and an empty
+//! background is plain statement TF-IDF. L2-normalized sparse vectors then
+//! produce one cosine score.
 //!
 //! Term counts are canonical and fit-independent. A [`Prepared`] vector is a
 //! derived cache weighted under one fitted [`Generation`]; two vectors compare
 //! only when they share it. Every cache is process-scoped, so a changed fold or
 //! stop word takes effect with the binary that carries it. Every matcher (Design
 //! awareness, the wake and `task next` match, and claim overlap) takes its fit
-//! and statement vectors from the one shared [`MatchCache`].
+//! and statement vectors from the one shared [`MatchCache`], which counts the
+//! background only when the statement window refits.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
@@ -30,10 +36,18 @@ pub const MIN_TERM_CHARS: usize = 4;
 /// Most recently revised task statements, open or completed, in the frequency
 /// corpus.
 pub const FREQUENCY_WINDOW: usize = 256;
-/// Balanced cosine-similarity base for reach-weighted Design request floors.
-pub const MATCH_SCORE_BASE: f64 = 0.15;
+/// Least cosine at which a wide Design request, over unsteeped items, invites
+/// a lane.
+pub const WIDE_MATCH_FLOOR: f64 = 0.10;
+/// Least cosine at which a narrow Design request, over steeped items, invites
+/// a lane.
+pub const NARROW_MATCH_FLOOR: f64 = 0.16;
 /// Least cosine at which two concurrently claimed statements warn of overlap.
 pub const CLAIM_OVERLAP_FLOOR: f64 = 0.25;
+/// Power on a term's normalized conversation rarity in its weight: a term in
+/// every held message keeps about a third of its statement weight, and a term
+/// absent from conversation keeps all of it.
+pub const CONVERSATION_RARITY_EXPONENT: f64 = 0.5;
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
@@ -117,21 +131,32 @@ impl TermCounts {
     }
 }
 
-/// Identity of one fitted document-frequency table.
+/// Identity of one fitted pair of document-frequency tables.
 ///
-/// Two fits over the same statements share a generation, and any change to the
-/// population or a term's document frequency names a different one.
+/// Two fits over the same statements and background share a generation, and
+/// any change to either population or any term's document frequency names a
+/// different one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Generation([u8; 32]);
 
 impl Generation {
-    fn of(statements: usize, document_frequency: &BTreeMap<String, usize>) -> Self {
+    fn of(
+        statements: usize,
+        document_frequency: &BTreeMap<String, usize>,
+        background: &Background,
+    ) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&(statements as u64).to_le_bytes());
-        for (term, frequency) in document_frequency {
-            hasher.update(&(term.len() as u64).to_le_bytes());
-            hasher.update(term.as_bytes());
-            hasher.update(&(*frequency as u64).to_le_bytes());
+        for (documents, frequencies) in [
+            (statements, document_frequency),
+            (background.documents, &background.document_frequency),
+        ] {
+            hasher.update(&(documents as u64).to_le_bytes());
+            hasher.update(&(frequencies.len() as u64).to_le_bytes());
+            for (term, frequency) in frequencies {
+                hasher.update(&(term.len() as u64).to_le_bytes());
+                hasher.update(term.as_bytes());
+                hasher.update(&(*frequency as u64).to_le_bytes());
+            }
         }
         Self(*hasher.finalize().as_bytes())
     }
@@ -213,31 +238,66 @@ impl Prepared {
     }
 }
 
-/// Bounded statement document frequencies shared by both compared texts.
+/// Document frequencies of terms across the conversation lanes currently hold:
+/// how ordinary a term is in what lanes say, whatever the board says.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Background {
+    documents: usize,
+    document_frequency: BTreeMap<String, usize>,
+}
+
+impl Background {
+    /// Count term presence across conversation documents.
+    #[must_use]
+    pub fn of<'a>(documents: impl IntoIterator<Item = &'a TermCounts>) -> Self {
+        let (documents, document_frequency) = presence(documents);
+        Self {
+            documents,
+            document_frequency,
+        }
+    }
+
+    /// The share of its statement weight `term` keeps: one for a term no held
+    /// message uses, or when nothing is held; lowest for a term in every held
+    /// message.
+    fn rarity(&self, term: &str) -> f64 {
+        if self.documents == 0 {
+            return 1.0;
+        }
+        let documents = self.documents as f64;
+        let frequency = *self.document_frequency.get(term).unwrap_or(&0) as f64;
+        (inverse_frequency(documents, frequency) / inverse_frequency(documents, 0.0))
+            .powf(CONVERSATION_RARITY_EXPONENT)
+    }
+}
+
+/// Bounded statement document frequencies shared by both compared texts,
+/// tempered by the conversation background counted when they were fitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrequencyProfile {
     statements: usize,
     document_frequency: BTreeMap<String, usize>,
+    background: Background,
     generation: Generation,
 }
 
 impl FrequencyProfile {
-    /// Fit one profile from document-presence counts.
+    /// Fit one profile from statement presence counts alone.
     #[must_use]
     pub fn of(documents: impl IntoIterator<Item = TermCounts>) -> Self {
-        let mut statements = 0_usize;
-        let mut document_frequency = BTreeMap::<String, usize>::new();
-        for document in documents {
-            statements = statements.saturating_add(1);
-            for term in document.terms() {
-                let count = document_frequency.entry(term.clone()).or_default();
-                *count = count.saturating_add(1);
-            }
-        }
+        Self::fitted(documents, Background::default())
+    }
+
+    /// Fit one profile from statement presence counts and a conversation
+    /// background.
+    #[must_use]
+    pub fn fitted(documents: impl IntoIterator<Item = TermCounts>, background: Background) -> Self {
+        let (statements, document_frequency) = presence(documents);
         Self {
-            generation: Generation::of(statements, &document_frequency),
+            generation: Generation::of(statements, &document_frequency, &background),
             statements,
             document_frequency,
+            background,
         }
     }
 
@@ -248,15 +308,38 @@ impl FrequencyProfile {
     }
 }
 
+/// How many documents there are and how many hold each term.
+fn presence<D: std::borrow::Borrow<TermCounts>>(
+    documents: impl IntoIterator<Item = D>,
+) -> (usize, BTreeMap<String, usize>) {
+    let mut count = 0_usize;
+    let mut document_frequency = BTreeMap::<String, usize>::new();
+    for document in documents {
+        count = count.saturating_add(1);
+        for term in document.borrow().terms() {
+            let frequency = document_frequency.entry(term.clone()).or_default();
+            *frequency = frequency.saturating_add(1);
+        }
+    }
+    (count, document_frequency)
+}
+
+/// Smoothed inverse frequency of a term `frequency` of `documents` hold.
+fn inverse_frequency(documents: f64, frequency: f64) -> f64 {
+    1.0 + ((documents + 1.0) / (frequency + 1.0)).ln()
+}
+
 /// The fitted recent window and the task vectors weighted under it, so every
 /// matcher over an unchanged board reuses one fit.
 ///
 /// Keys are content, never journal positions: the fit is keyed by the
 /// window's statements and each vector by its statement's counted text, so
 /// equal keys always mean equal inputs and one cache may serve any journal.
-/// Vectors are dropped whole when the window moves; a vector asked under any
-/// other fit is weighted afresh and not kept. The lock is a leaf, held only
-/// inside these methods.
+/// The conversation [`Background`] is counted only when the window refits, so
+/// conversation alone never refits the window or drops a vector. Vectors are
+/// dropped whole when the window moves; a vector asked under any other fit is
+/// weighted afresh and not kept. The lock is a leaf, held only inside these
+/// methods and never while a background is counted.
 #[derive(Debug, Default)]
 pub struct MatchCache(Mutex<FittedWindow>);
 
@@ -301,9 +384,32 @@ impl MatchCache {
     }
 
     /// The fit over the [`FREQUENCY_WINDOW`] most recently revised task
-    /// statements, refitted only when that window's statements changed.
+    /// statements, refitted only when that window's statements changed; a
+    /// refit counts `background` then, and only then.
     #[must_use]
-    pub fn fit<'a>(&self, statements: impl Iterator<Item = &'a TaskHead>) -> Arc<FrequencyProfile> {
+    pub fn fit<'a>(
+        &self,
+        statements: impl Iterator<Item = &'a TaskHead>,
+        background: impl FnOnce() -> Background,
+    ) -> Arc<FrequencyProfile> {
+        self.refit(statements, |_| background())
+    }
+
+    /// [`Self::fit`] for a caller that holds no conversation: a refit keeps
+    /// the background the current fit carries.
+    #[must_use]
+    pub fn fit_carried<'a>(
+        &self,
+        statements: impl Iterator<Item = &'a TaskHead>,
+    ) -> Arc<FrequencyProfile> {
+        self.refit(statements, |carried| carried.cloned().unwrap_or_default())
+    }
+
+    fn refit<'a>(
+        &self,
+        statements: impl Iterator<Item = &'a TaskHead>,
+        background: impl FnOnce(Option<&Background>) -> Background,
+    ) -> Arc<FrequencyProfile> {
         let mut recent = BinaryHeap::with_capacity(FREQUENCY_WINDOW + 1);
         for statement in statements {
             recent.push(Reverse(RecentStatement(statement)));
@@ -317,17 +423,19 @@ impl MatchCache {
             hasher.update(&statement_key(statement));
         }
         let key = *hasher.finalize().as_bytes();
-        let mut window = self.window();
-        if let Some((current, frequency)) = &window.fit
-            && *current == key
-        {
-            return Arc::clone(frequency);
-        }
-        let frequency =
-            Arc::new(FrequencyProfile::of(recent.into_iter().map(
-                |Reverse(RecentStatement(statement))| TermCounts::task(statement),
-            )));
-        *window = FittedWindow {
+        let carried = match &self.window().fit {
+            Some((current, frequency)) if *current == key => return Arc::clone(frequency),
+            Some((_, frequency)) => Some(Arc::clone(frequency)),
+            None => None,
+        };
+        let background = background(carried.as_deref().map(|carried| &carried.background));
+        let frequency = Arc::new(FrequencyProfile::fitted(
+            recent
+                .into_iter()
+                .map(|Reverse(RecentStatement(statement))| TermCounts::task(statement)),
+            background,
+        ));
+        *self.window() = FittedWindow {
             fit: Some((key, Arc::clone(&frequency))),
             prepared: BTreeMap::new(),
         };
@@ -398,8 +506,8 @@ impl FrequencyProfile {
         for (term, count) in &document.0 {
             let frequency = *self.document_frequency.get(term).unwrap_or(&0) as f64;
             let tf = 1.0 + f64::from(*count).ln();
-            let idf = 1.0 + ((population + 1.0) / (frequency + 1.0)).ln();
-            let weight = tf * idf;
+            let idf = inverse_frequency(population, frequency);
+            let weight = tf * idf * self.background.rarity(term);
             if !weight.is_finite() {
                 return None;
             }
@@ -543,10 +651,10 @@ mod tests {
         let uncached =
             |statements: &[TaskHead]| FrequencyProfile::of(statements.iter().map(TermCounts::task));
         let cache = MatchCache::default();
-        let fit = cache.fit(board.iter());
+        let fit = cache.fit(board.iter(), Background::default);
         assert_eq!(*fit, uncached(&board), "the cached fit is the exact fit");
         assert!(
-            Arc::ptr_eq(&fit, &cache.fit(board.iter().rev())),
+            Arc::ptr_eq(&fit, &cache.fit(board.iter().rev(), Background::default)),
             "an unchanged window, in any order, reuses its fit"
         );
         let vector = cache.prepare(&fit, &board[0]).expect("weighted statement");
@@ -562,7 +670,7 @@ mod tests {
         // The same positions under other text, as another journal would hold.
         let mut edited = board.clone();
         edited[1] = head(2, "Publication boundary retention cursor");
-        let refit = cache.fit(edited.iter());
+        let refit = cache.fit(edited.iter(), Background::default);
         assert_eq!(
             *refit,
             uncached(&edited),
@@ -586,6 +694,78 @@ mod tests {
             stale.generation(),
             fit.generation(),
             "a vector asked under a superseded fit stays in that fit's generation"
+        );
+    }
+
+    #[test]
+    fn conversation_counts_only_when_the_statement_window_refits() {
+        let board = [
+            head(1, "Snapshot cursor paging"),
+            head(2, "Publication boundary retention"),
+        ];
+        let exact = |statements: &[TaskHead], held: &[TermCounts]| {
+            FrequencyProfile::fitted(
+                statements.iter().map(TermCounts::task),
+                Background::of(held),
+            )
+        };
+        let held = [document("snapshot cursor review")];
+        let cache = MatchCache::default();
+        let fit = cache.fit(board.iter(), || Background::of(&held));
+        assert_eq!(*fit, exact(&board, &held));
+        let vector = cache.prepare(&fit, &board[0]).expect("weighted statement");
+
+        let unchanged = cache.fit(board.iter(), || {
+            panic!("conversation alone must not refit the window")
+        });
+        assert!(Arc::ptr_eq(&fit, &unchanged));
+        assert!(Arc::ptr_eq(
+            &vector,
+            &cache.prepare(&unchanged, &board[0]).expect("weighted")
+        ));
+
+        let mut edited = board.clone();
+        edited[1] = head(2, "Publication boundary retention cursor");
+        let later = [
+            document("publication boundary"),
+            document("boundary review"),
+        ];
+        let refit = cache.fit(edited.iter(), || Background::of(&later));
+        assert_eq!(
+            *refit,
+            exact(&edited, &later),
+            "a refit takes the current background"
+        );
+        assert_ne!(refit.generation(), exact(&edited, &[]).generation());
+
+        edited[0] = head(1, "Snapshot cursor paging moved");
+        let carried = cache.fit_carried(edited.iter());
+        assert_eq!(
+            *carried,
+            exact(&edited, &later),
+            "a refit without conversation keeps the carried background"
+        );
+    }
+
+    #[test]
+    fn a_term_common_in_conversation_weighs_less_than_one_it_never_uses() {
+        let statements = [document("claim cursor"), document("paging snapshot")];
+        let weights = |held: &[TermCounts]| {
+            FrequencyProfile::fitted(statements.iter().cloned(), Background::of(held))
+                .prepare(&document("claim cursor"))
+                .expect("weighted")
+                .weights
+        };
+
+        let plain = weights(&[]);
+        close(plain["claim"], std::f64::consts::FRAC_1_SQRT_2);
+        close(plain["cursor"], std::f64::consts::FRAC_1_SQRT_2);
+
+        let tempered = weights(&[document("claim lane"), document("claim room")]);
+        assert!(tempered["claim"] < tempered["cursor"]);
+        close(
+            tempered["claim"] / tempered["cursor"],
+            (1.0 / (1.0 + 3.0_f64.ln())).powf(CONVERSATION_RARITY_EXPONENT),
         );
     }
 
@@ -626,7 +806,7 @@ mod tests {
             .chain((64..127).map(generated_word))
             .collect::<Vec<_>>()
             .join(" ");
-        assert!(profile.score(&document(&left), &document(&right)).unwrap() < MATCH_SCORE_BASE);
+        assert!(profile.score(&document(&left), &document(&right)).unwrap() < WIDE_MATCH_FLOOR);
     }
 
     #[test]

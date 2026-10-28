@@ -1,5 +1,5 @@
 use super::*;
-use board::similarity::MATCH_SCORE_BASE;
+use board::similarity::NARROW_MATCH_FLOOR;
 
 fn word(index: usize) -> String {
     let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);
@@ -151,7 +151,7 @@ fn relevance_is_the_best_view_unchanged_by_unrelated_or_repeated_evidence() {
                     &design_identity,
                     &design,
                     &design_vector,
-                    MATCH_SCORE_BASE,
+                    NARROW_MATCH_FLOOR,
                 )],
             )
             .unwrap()
@@ -260,8 +260,8 @@ fn ties_prefer_the_lower_design_then_the_newer_card_then_the_earlier_view() {
         .select(
             &frequency,
             [
-                DesignCandidate::new(&late, &higher, &vector, MATCH_SCORE_BASE),
-                DesignCandidate::new(&early, &lower, &vector, MATCH_SCORE_BASE),
+                DesignCandidate::new(&late, &higher, &vector, NARROW_MATCH_FLOOR),
+                DesignCandidate::new(&early, &lower, &vector, NARROW_MATCH_FLOOR),
             ],
         )
         .unwrap()
@@ -282,7 +282,7 @@ fn ties_prefer_the_lower_design_then_the_newer_card_then_the_earlier_view() {
                 &early,
                 &lower,
                 &vector,
-                MATCH_SCORE_BASE,
+                NARROW_MATCH_FLOOR,
             )],
         )
         .unwrap()
@@ -398,7 +398,7 @@ fn vectors_from_another_frequency_generation_are_refused() {
                     &identity,
                     &"design",
                     &stale,
-                    MATCH_SCORE_BASE,
+                    NARROW_MATCH_FLOOR,
                 )],
             )
             .is_err()
@@ -411,7 +411,7 @@ fn vectors_from_another_frequency_generation_are_refused() {
                     &identity,
                     &"design",
                     &current,
-                    MATCH_SCORE_BASE,
+                    NARROW_MATCH_FLOOR,
                 )],
             )
             .unwrap()

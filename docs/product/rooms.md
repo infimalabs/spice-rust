@@ -105,11 +105,16 @@ owns each rule summarized here.
   filed open Design. Retained task statement/completion and message/passage
   views use the same 256-statement corpus, logarithmic term frequency, smooth
   inverse document frequency, L2 normalization, and durable Design-identity
-  tie break. Each candidate's cosine floor follows its maturity alone, never
-  its working group: an unsteeped Design invites at the wide 0.10 floor, and a
-  steeped one at the narrow 0.20 floor, since every question has been heard
-  and it is close, so it asks only closely matched lanes. The reach widens
-  again as soon as a later charge contests an item or a statement edit
+  tie break. Each term's weight is further scaled by the square root of its
+  normalized rarity in the conversation occupied sessions hold, so workflow
+  vocabulary every lane says keeps about a third of its weight; that
+  conversation is counted only when the statement corpus refits, so a new
+  message never re-weights anything on its own. A short list of common English
+  filler is never a term. Each candidate's cosine floor follows its maturity
+  alone, never its working group: an unsteeped Design invites at the wide 0.10
+  floor, and a steeped one at the narrow 0.16 floor, since every question has
+  been heard and it is close, so it asks only closely matched lanes. The reach
+  widens again as soon as a later charge contests an item or a statement edit
   un-steeps it. The floor decides qualification only; finite cosine score still
   decides ranking. One opportunity selects one Design at most; one session has
   one unanswered request at most. Whether a lane is asked is decided on the
@@ -181,7 +186,7 @@ owns each rule summarized here.
   with the input it needs, and counts the items still quiet. `spice room
   awareness HANDLE` and the browser room show each item's state. Steeped
   maturity makes a Design's first pass ready and narrows its invitation reach
-  to the 0.20 floor. Beyond those two effects the state is
+  to the 0.16 floor. Beyond those two effects the state is
   advisory: it never changes standing, possession, grouping, selection, or
   authorization.
 
