@@ -73,6 +73,21 @@ pub(super) fn lends(acceptance: &[String], workflow: &wire::WorkflowHead) -> boo
         && substantive_acceptance(acceptance)
 }
 
+/// Whether a task with this statement and workflow lends its acceptance to a
+/// member of `borrowers` by depending on it. Reads that project a borrower's
+/// acceptance carry these lenders even after they settle.
+pub(super) fn lends_across(
+    acceptance: &[String],
+    workflow: &wire::WorkflowHead,
+    dependencies: &[wire::TaskStamp],
+    borrowers: &std::collections::BTreeSet<wire::TaskStamp>,
+) -> bool {
+    lends(acceptance, workflow)
+        && dependencies
+            .iter()
+            .any(|dependency| borrowers.contains(dependency))
+}
+
 fn lends_acceptance(task: &BoardTask) -> bool {
     lends(&task.statement.body.acceptance, &task.workflow.body)
 }

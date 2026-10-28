@@ -189,19 +189,19 @@ fn context_tasks(
                     .filter(|child| {
                         let statement = child.statement().body();
                         let workflow = child.workflow().body();
-                        (lends(&statement.acceptance, workflow)
-                            && statement
-                                .dependencies
-                                .iter()
-                                .any(|dependency| unaccepted.contains(dependency)))
-                            || (workflow.status.is_pending()
-                                && substantive_acceptance(&statement.acceptance)
-                                && wire::intent::released_construction_root(
-                                    &statement.born,
-                                    &statement.dependencies,
-                                    statement.preparation.as_ref(),
-                                )
-                                .is_some_and(|parent| open_designs.contains(parent)))
+                        lends_across(
+                            &statement.acceptance,
+                            workflow,
+                            &statement.dependencies,
+                            &unaccepted,
+                        ) || (workflow.status.is_pending()
+                            && substantive_acceptance(&statement.acceptance)
+                            && wire::intent::released_construction_root(
+                                &statement.born,
+                                &statement.dependencies,
+                                statement.preparation.as_ref(),
+                            )
+                            .is_some_and(|parent| open_designs.contains(parent)))
                     })
                     .map(|child| child.statement().body().born.clone()),
             );

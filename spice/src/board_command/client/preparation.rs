@@ -166,7 +166,7 @@ pub(super) fn client_design_propose(
             Err(outcome) => return outcome,
         }
     }
-    if let Err(outcome) = acceptance_witnesses(&board, design, &mut expected) {
+    if let Err(outcome) = borrowed_acceptance_witnesses(repository, design, &mut expected) {
         return outcome;
     }
     expected.push(Witness::Proposal {
@@ -190,6 +190,31 @@ pub(super) fn client_design_propose(
         },
     );
     with_cycle(repository, &born, outcome)
+}
+
+/// Push the witnesses for the linked work a Design without its own
+/// acceptance borrows one from. The open board carries settled prerequisites
+/// only as readiness evidence and no settled dependents, so the lenders come
+/// from a read of the Design's own dependency scope.
+fn borrowed_acceptance_witnesses(
+    repository: Host<'_>,
+    design: &BoardTask,
+    expected: &mut Vec<Witness>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if substantive_acceptance(&design.statement.body.acceptance) {
+        return Ok(());
+    }
+    let born = &design.statement.body.born;
+    let scope = current_board(
+        repository,
+        BoardRead::Tasks {
+            tasks: vec![born.clone()],
+            dependencies: true,
+            claims: false,
+            history: false,
+        },
+    )?;
+    acceptance_witnesses(&scope, task(&scope, born)?, expected)
 }
 
 /// One `--cite RELATION=KEY` split into its relation word and its key, which

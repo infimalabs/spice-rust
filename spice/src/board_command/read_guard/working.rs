@@ -52,8 +52,35 @@ fn working_task_selection(
     observed: &bus::TaskSnapshot,
     roots: &[wire::TaskStamp],
 ) -> std::collections::BTreeSet<wire::TaskStamp> {
+    // A root without its own acceptance may borrow it from work depending on
+    // it. The live graph holds the pending lenders; a positively concluded one
+    // is settled, so only this scan projects it.
+    let borrowers = roots
+        .iter()
+        .filter(|root| {
+            observed
+                .task_heads(root)
+                .is_some_and(|heads| !substantive_acceptance(&heads.statement().body().acceptance))
+        })
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let candidates = if borrowers.is_empty() {
+        &[][..]
+    } else {
+        observed.tasks()
+    };
+    let lenders = candidates.iter().filter(|heads| {
+        let statement = heads.statement().body();
+        lends_across(
+            &statement.acceptance,
+            heads.workflow().body(),
+            &statement.dependencies,
+            &borrowers,
+        )
+    });
     let pending = observed
         .allocation_frontier()
+        .chain(lenders)
         .map(|heads| heads.statement().body().born.clone())
         .chain(roots.iter().cloned())
         .collect::<Vec<_>>();
