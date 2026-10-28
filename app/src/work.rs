@@ -273,7 +273,7 @@ pub enum WorkMark {
     Blocked,
     /// A Design holding a proposal the operator has not decided.
     Decision,
-    /// A Design ready for proposal that no lane holds.
+    /// A research-ready Design that no lane holds.
     Proposal,
     /// Work the operator set aside until a time; nothing offers it until woken.
     Deferred,

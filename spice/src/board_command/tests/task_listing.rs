@@ -153,6 +153,7 @@ fn a_won_claim_carries_its_whole_statement() {
             "Second criterion\n  continued".to_owned(),
         ],
         completion_contract: None,
+        design_research: None,
     };
     assert_committed(issue(
         &bus,

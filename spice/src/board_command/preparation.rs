@@ -31,14 +31,14 @@ pub(super) fn dispatch_preparation(
 
 /// How a lane claims the open Design whose pass it means to propose.
 ///
-/// Allocation hands out only a Design ready for proposal, while a Design still
+/// Allocation hands out only a research-ready Design, while a Design still
 /// gathering input is claimed by name, so the remedy names both routes.
 pub(super) fn claim_design_remedy(design: Option<&TaskHandle>) -> String {
     match design {
         Some(design) => format!(
-            "claim {design} before proposing its pass: `spice task next` takes it once it is ready for proposal, and `spice task capture {design}` claims it by name while it gathers input"
+            "claim {design} before proposing its pass: `spice task next` takes it once it is ready for a research pass, and `spice task capture {design}` claims it by name while it gathers input"
         ),
-        None => "claim the open Design before proposing its pass: `spice task next` takes one ready for proposal, and `spice task capture HANDLE` claims an undeferred Design still gathering input by name".to_owned(),
+        None => "claim the open Design before proposing its pass: `spice task next` takes one ready for a research pass, and `spice task capture HANDLE` claims an undeferred Design still gathering input by name".to_owned(),
     }
 }
 

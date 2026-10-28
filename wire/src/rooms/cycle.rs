@@ -55,7 +55,7 @@ pub struct DesignNudged {
 pub enum DesignCycle {
     /// No counted input has arrived since the last pass boundary.
     GatheringInput,
-    /// Counted input arrived; a lane may claim the Design and propose.
+    /// Counted input arrived; a lane may claim the Design for a research pass.
     ReadyForProposal,
     /// A proposal the operator has not decided or its author withdrawn.
     AwaitingDecision,
@@ -105,7 +105,7 @@ impl DesignCycle {
     pub const fn label(self) -> &'static str {
         match self {
             Self::GatheringInput => "gathering input",
-            Self::ReadyForProposal => "ready for proposal",
+            Self::ReadyForProposal => "ready for research pass",
             Self::AwaitingDecision => "awaiting decision",
             Self::WaitingOnSelectedWork => "waiting on selected work",
         }
@@ -143,8 +143,9 @@ impl DesignCycle {
                  a lane claim it now with `spice task capture {design}`"
             ),
             Self::ReadyForProposal => format!(
-                "a lane claims {design} through `spice task next` and ends its pass with one \
-                 `spice design propose JUSTIFICATION`"
+                "a lane claims {design} through `spice task next` for a research pass, \
+                 investigates every remaining question, then records one `spice design propose \
+                 JUSTIFICATION`"
             ),
             Self::AwaitingDecision => facts.proposal.map_or_else(
                 || format!("the operator decides the proposal under {design}"),
@@ -181,6 +182,9 @@ pub struct DesignCyclePresentation {
     pub actor: DesignCycleActor,
     /// The exact action that moves the Design forward.
     pub action: String,
+    /// Current research obligation, separate from allocation readiness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research: Option<String>,
     /// How the latest pass ended its claim, once any pass has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_pass: Option<DesignPassEnd>,
@@ -216,9 +220,11 @@ impl DesignCyclePresentation {
         facts: DesignCycleFacts,
         design: &TaskHandle,
         availability: DesignAvailability,
+        coverage: &super::DesignCoverage,
+        questions: &[String],
     ) -> Self {
         let code = |seq: Seq| SequenceCode::new(seq.get());
-        let (actor, action) = match (cycle, availability) {
+        let (actor, mut action) = match (cycle, availability) {
             (
                 DesignCycle::GatheringInput | DesignCycle::ReadyForProposal,
                 DesignAvailability::DeferredUnclaimed,
@@ -251,10 +257,28 @@ impl DesignCyclePresentation {
             ),
             _ => (cycle.next_actor(), cycle.next_action(design, facts)),
         };
+        let research = matches!(
+            cycle,
+            DesignCycle::GatheringInput | DesignCycle::ReadyForProposal
+        )
+        .then(|| coverage.research_guidance(questions, design));
+        if !coverage.is_full()
+            && matches!(
+                cycle,
+                DesignCycle::GatheringInput | DesignCycle::ReadyForProposal
+            )
+            && availability == DesignAvailability::Claimed
+        {
+            action = format!(
+                "the holding lane investigates the remaining questions and records source-backed \
+                 findings before `spice design propose JUSTIFICATION` ends this pass of {design}"
+            );
+        }
         Self {
             cycle,
             actor,
             action,
+            research,
             last_pass: facts.end,
             proposal: facts.proposal.map(code),
             decision: facts.decision.map(code),
@@ -269,6 +293,7 @@ impl DesignCyclePresentation {
             format!("cycle {}", self.cycle.label()),
             format!("cycle-actor {}", self.actor.label()),
         ];
+        lines.extend(self.research.iter().cloned());
         lines.extend(
             self.last_pass
                 .map(|end| format!("last-pass {}", end.label())),

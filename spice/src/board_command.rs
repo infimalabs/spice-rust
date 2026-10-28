@@ -105,6 +105,8 @@ fn claim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<Co
 mod acceptance;
 use acceptance::*;
 pub(crate) use acceptance::{completion_contract, manual_claim_contracts, substantive_acceptance};
+mod research;
+pub(crate) use research::{design_coverage, design_research};
 mod client;
 pub(super) use client::*;
 mod client_document;

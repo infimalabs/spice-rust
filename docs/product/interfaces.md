@@ -117,7 +117,7 @@ holder's justification, and `task adopt` takes two task handles.
   it. The Design is the open Design the caller holds an active claim on
   (`--design HANDLE` names it when the caller holds several; holding none
   refuses `preparation::design-unheld`, naming `spice task next` for a Design
-  ready for proposal and `spice task capture HANDLE` for an undeferred Design
+  ready for a research pass and `spice task capture HANDLE` for an undeferred Design
   still gathering input), the candidate stamp is minted fresh,
   and the Design's statement and claim heads, each output and input, and the
   room's newest publication are witnessed, so a statement edit, claim move, or
@@ -158,7 +158,7 @@ holder's justification, and `task adopt` takes two task handles.
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed; a disband leaves every Design ungrouped and its deferral unchanged |
 | Design possession | undeferred open Design, grouped or not | a deferred Design refuses capture as `claim::capture-ineligible` and steal as `claim::steal-ineligible`: run `spice task wake DESIGN` (`--claim` to take it), or move it into a working group, which wakes it. An operator `spice task defer DESIGN` of a held Design asks its holder to checkpoint and `spice task free`; a repeat asks again only when no stop stands for the current claim |
-| Steeping Design | open, undeferred Design whose cycle is not yet ready for proposal | allocation never offers it; capture, steal, or recovery by name claims a Design still gathering input before it steeps, a steal taking it from any holder, and its holder ends the pass with `spice design propose`; `claim::design-held` on capture, steal, or recovery of a Design awaiting decision or waiting on selected work, naming the Design, its cycle, and that cycle's next action |
+| Steeping Design | open, undeferred Design whose cycle is not yet ready for a research pass | allocation never offers it; capture, steal, or recovery by name claims a Design still gathering input before it steeps, a steal taking it from any holder, and its holder investigates every remaining question before ending the pass with `spice design propose`; `claim::design-held` on capture, steal, or recovery of a Design awaiting decision or waiting on selected work, naming the Design, its cycle, and that cycle's next action |
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large` |

@@ -633,6 +633,13 @@ pub struct ClaimStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub completion_contract: Option<Box<str>>,
+    /// Current Design research obligation, independent of the completion contract.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub design_research: Option<Box<str>>,
 }
 
 /// The phase one claim answer was assigned in, and what it authorizes.

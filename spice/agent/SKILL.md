@@ -81,6 +81,7 @@ wake. Design questions: `spice room contribute HANDLE --ask TEXT`.
   or use an applicable `task done --disposition no-work|duplicate|covered|deferred
   [--cover REF]`. Taste is an independent statement hold; neither changes flow.
   Positive review releases outputs to dependencies without authorizing them.
+  Research readiness opens a pass, not a complete proposal.
   Investigate and charge every Design question before its pass ends with
   `design propose JUSTIFICATION`, assembled from acceptance-bearing outputs
   built under the claim and the room (none: `--recommend conclude|collapse`).

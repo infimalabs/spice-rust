@@ -1,13 +1,18 @@
 //! Current-statement question coverage, folded from the same item series that
 //! maturity weighs but judged apart from it.
 
+use std::fmt::Write as _;
+
+use serde::{Deserialize, Serialize};
+
 use super::{DesignItemState, DesignItems};
 use crate::rooms::RoomQuestion;
 
 /// One current statement's question coverage, in statement order. A question
 /// is covered once an item-specific nonzero charge weighed it; coverage proves
 /// neither concurrence nor the quality of the research behind the charge.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DesignCoverage {
     /// Questions some item-specific nonzero charge weighed.
     pub covered: Vec<RoomQuestion>,
@@ -21,6 +26,37 @@ impl DesignCoverage {
     #[must_use]
     pub fn is_full(&self) -> bool {
         self.missing.is_empty()
+    }
+
+    /// Current-question research instruction, separate from pass readiness.
+    #[must_use]
+    pub fn research_guidance(&self, questions: &[String], design: &crate::TaskHandle) -> String {
+        if self.is_full() {
+            return "Design research: all current questions are covered; verify the findings before proposing. Coverage is not concurrence or proof of research quality.".to_owned();
+        }
+        let mut guidance =
+            String::from("Design research: investigate remaining questions before proposing: ");
+        for (offset, question) in self.missing.iter().enumerate() {
+            if offset != 0 {
+                guidance.push_str("; ");
+            }
+            write!(
+                guidance,
+                "{question}: {}",
+                question
+                    .item(questions)
+                    .expect("coverage belongs to the current statement")
+            )
+            .expect("writing to a String succeeds");
+        }
+        write!(
+            guidance,
+            ". Record source-backed findings with `spice room contribute {design} --question N \
+             --charge=C --cite SOURCE` (nonzero charge, either sign; coverage is not concurrence \
+             or proof of research quality)."
+        )
+        .expect("writing to a String succeeds");
+        guidance
     }
 }
 

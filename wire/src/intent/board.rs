@@ -458,6 +458,13 @@ pub struct BoardTask {
         skip_serializing_if = "crate::rooms::DesignCycleFacts::is_empty"
     )]
     pub design_cycle: crate::rooms::DesignCycleFacts,
+    /// Current-statement question coverage, independent of research readiness.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub design_coverage: Option<crate::rooms::DesignCoverage>,
     /// Decision on the latest unwithdrawn candidate version naming this
     /// output, whether its verdict released or rejected the output; absent
     /// while that version is open or no decision ruled on it.
@@ -607,6 +614,7 @@ impl BoardTask {
             explicit_release: false,
             grouped: false,
             design_cycle: crate::rooms::DesignCycleFacts::default(),
+            design_coverage: None,
             preparation_decision: None,
             collapse_reason: None,
             controlled: Vec::new(),
@@ -634,6 +642,21 @@ impl BoardTask {
     pub const fn with_design_cycle(mut self, cycle: crate::rooms::DesignCycleFacts) -> Self {
         self.design_cycle = cycle;
         self
+    }
+
+    /// Attach coverage computed against this row's current questions.
+    #[must_use]
+    pub fn with_design_coverage(mut self, coverage: Option<crate::rooms::DesignCoverage>) -> Self {
+        self.design_coverage = coverage;
+        self
+    }
+
+    /// The research obligation for the holder of this Design's current pass.
+    #[must_use]
+    pub fn design_research(&self) -> Option<String> {
+        self.design_coverage.as_ref().map(|coverage| {
+            coverage.research_guidance(&self.statement.body.acceptance, &self.statement.body.handle)
+        })
     }
 
     /// Attach the decision classifying this output for selection waiting.

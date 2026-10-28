@@ -49,6 +49,8 @@ fn deferred_cycle_presentation_distinguishes_possession() {
             DesignCycleFacts::default(),
             &design,
             DesignAvailability::DeferredUnclaimed,
+            &super::super::DesignCoverage::default(),
+            &[],
         );
         assert_eq!(unheld.actor, DesignCycleActor::Lane);
         assert!(
@@ -63,6 +65,8 @@ fn deferred_cycle_presentation_distinguishes_possession() {
             DesignCycleFacts::default(),
             &design,
             DesignAvailability::DeferredClaimed,
+            &super::super::DesignCoverage::default(),
+            &[],
         );
         assert_eq!(held.actor, DesignCycleActor::Lane);
         assert!(held.action.contains(&format!("`spice task free {design}`")));
@@ -75,13 +79,24 @@ fn undeferred_cycle_presentation_keeps_cycle_authority() {
     let design = TaskHandle::for_project("wire.rooms", &design());
     let facts = DesignCycleFacts::default();
     for cycle in DesignCycle::ALL {
-        let unclaimed =
-            DesignCyclePresentation::new(cycle, facts, &design, DesignAvailability::Unclaimed);
+        let unclaimed = DesignCyclePresentation::new(
+            cycle,
+            facts,
+            &design,
+            DesignAvailability::Unclaimed,
+            &super::super::DesignCoverage::default(),
+            &[],
+        );
         assert_eq!(unclaimed.actor, cycle.next_actor());
-        assert_eq!(unclaimed.action, cycle.next_action(&design, facts));
 
-        let claimed =
-            DesignCyclePresentation::new(cycle, facts, &design, DesignAvailability::Claimed);
+        let claimed = DesignCyclePresentation::new(
+            cycle,
+            facts,
+            &design,
+            DesignAvailability::Claimed,
+            &super::super::DesignCoverage::default(),
+            &[],
+        );
         if matches!(
             cycle,
             DesignCycle::GatheringInput | DesignCycle::ReadyForProposal

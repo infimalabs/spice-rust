@@ -309,7 +309,7 @@ impl<'a> PreparedClaim<'a> {
         claim_answer(
             command,
             selected,
-            &snapshot.entries,
+            snapshot,
             ClaimReading {
                 next: Some(claim_activation_next_action(selected)),
                 origin_context,
@@ -374,7 +374,7 @@ struct ClaimReading {
 fn claim_answer(
     command: &wire::AdmittedCommand,
     selected: &Entry,
-    entries: &[Entry],
+    snapshot: &ValidatedSnapshot,
     reading: ClaimReading,
     transplant: Option<&wire::intent::ClaimTransplant>,
     nothing_stolen: bool,
@@ -391,12 +391,19 @@ fn claim_answer(
             pitch: selected.statement().pitch.clone(),
             description: selected.statement().description.clone(),
             acceptance: selected.statement().acceptance.clone(),
+            design_research: snapshot
+                .answer
+                .tasks
+                .iter()
+                .find(|task| task.statement.body.born == *selected.born())
+                .and_then(BoardTask::design_research)
+                .map(String::into_boxed_str),
             completion_contract: Some(
                 completion_contract(
                     &selected.statement().acceptance,
                     selected.born(),
                     &selected.statement().dependencies,
-                    entries.iter(),
+                    snapshot.entries.iter(),
                 )
                 .into_boxed_str(),
             ),
@@ -405,7 +412,7 @@ fn claim_answer(
         expiry: None,
         acknowledged: None,
         held: false,
-        warnings: board::claim_overlaps(selected, entries)
+        warnings: board::claim_overlaps(selected, &snapshot.entries)
             .into_iter()
             .map(|overlap| wire::intent::ClaimWarning {
                 task: overlap.task,
@@ -507,7 +514,7 @@ pub(in crate::board_command) fn commit_claim(
     let answer = claim_answer(
         command,
         &selected,
-        &snapshot.entries,
+        &snapshot,
         ClaimReading {
             next,
             origin_context,

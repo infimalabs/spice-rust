@@ -272,6 +272,7 @@ fn board_task(
         explicit_release: false,
         grouped: false,
         design_cycle: wire::rooms::DesignCycleFacts::default(),
+        design_coverage: None,
         preparation_decision: None,
         collapse_reason: None,
         controlled: Vec::new(),

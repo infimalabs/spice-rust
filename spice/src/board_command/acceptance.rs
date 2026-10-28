@@ -173,13 +173,14 @@ pub(crate) fn completion_contract<'a, T: AcceptanceRow + 'a>(
     }
 }
 
-/// One claim's current completion contract, for that claim's exact occupant.
+/// One claim's current completion and research guidance for its exact occupant.
 pub(crate) struct ClaimContract {
     pub(crate) lane: wire::CanonicalUuid,
     pub(crate) occupant: wire::CanonicalUuid,
     pub(crate) task: TaskHandle,
     pub(crate) claim: u64,
     pub(crate) contract: String,
+    pub(crate) design_research: Option<String>,
 }
 
 /// The current completion contract of every active claim a lane took by hand
@@ -214,6 +215,10 @@ pub(crate) fn manual_claim_contracts(snapshot: &bus::TaskSnapshot) -> Vec<ClaimC
                 occupant: claim.occupant,
                 task: TaskHandle::for_project(&statement.project, &statement.born),
                 claim: claim.claimed.get(),
+                design_research: design_research(
+                    statement,
+                    snapshot.facts().design_items(&statement.born),
+                ),
                 contract: completion_contract(
                     &statement.acceptance,
                     &statement.born,
