@@ -20,7 +20,7 @@ pub(super) fn publish(
             observations: &state.observations,
             unavailable_tool_terminals: &record.unavailable_tool_terminals,
             prose_origin: None,
-            suppress_intent: false,
+            suppress_answer: false,
         },
         &mut state.previews,
         None,

@@ -161,10 +161,10 @@ fn blank_text_presents_no_card_and_keeps_a_sibling_intent() {
     assert_eq!(prose, ["ACK 1kQwPZtK: Settled tool caption."]);
 }
 
-/// An intent's acknowledgment presents beside the visible text of its own
-/// message, and one answered in both presents once.
+/// A later event answering the same key presents once under transcript order;
+/// answers to distinct keys remain independent.
 #[test]
-fn an_acknowledging_intent_beside_visible_text_presents_once() {
+fn acknowledgement_events_present_the_transcript_winner_once() {
     let prose = |record: &[u8]| {
         let publisher = publish_records(&[record]);
         let messages = publisher.0.lock().expect("message lock");
@@ -185,7 +185,25 @@ fn an_acknowledging_intent_beside_visible_text_presents_once() {
         prose(
             br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQwPZtK: answered in the text."},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: answered in the call.","arguments":{}}],"stopReason":"toolUse"}}"#
         ),
-        ["ACK 1kQwPZtK: answered in the text."]
+        ["ACK 1kQwPZtK: answered in the call."]
+    );
+    assert_eq!(
+        prose(
+            br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQwPZtK: accepted in text."},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kQwPZtK: declined in intent.","arguments":{}}],"stopReason":"toolUse"}}"#
+        ),
+        ["NAK 1kQwPZtK: declined in intent."]
+    );
+    assert_eq!(
+        prose(
+            br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"NAK 1kQwPZtK: declined in text."},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: accepted in intent.","arguments":{}}],"stopReason":"toolUse"}}"#
+        ),
+        ["ACK 1kQwPZtK: accepted in intent."]
+    );
+    assert_eq!(
+        prose(
+            br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQwPZtK: first key."},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kQwPZtL: second key.","arguments":{}}],"stopReason":"toolUse"}}"#
+        ),
+        ["ACK 1kQwPZtK: first key.", "NAK 1kQwPZtL: second key."]
     );
 }
 

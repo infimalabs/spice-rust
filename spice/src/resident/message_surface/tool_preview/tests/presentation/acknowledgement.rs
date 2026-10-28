@@ -680,7 +680,7 @@ fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
             observations: &MessageObservations::default(),
             unavailable_tool_terminals: &[],
             prose_origin: None,
-            suppress_intent: false,
+            suppress_answer: false,
         },
         &mut CallPreviews::default(),
         Some(&directives),

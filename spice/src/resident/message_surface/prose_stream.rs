@@ -91,38 +91,41 @@ pub(super) fn settled_block(
         && open(record, state).is_some_and(|open| open.answers.contains_key(&ordinal))
 }
 
-pub(super) fn intent_represented(
+/// Whether a later answer in this provider message owns every steering key this
+/// event answers.
+///
+/// Transcript retirement reads complete events newest-first, so presentation
+/// uses the same event order instead of preferring visible text over a later
+/// tool intent. A completed streamed answer remains authoritative over its
+/// settled intent fallback because it was recognized when it landed.
+pub(super) fn answer_superseded(
     record: &AgentRecord<'_>,
     state: &MessageState,
+    position: usize,
     decoded: &listen::Event,
 ) -> bool {
-    let listen::Event::Tool(listen::Tool {
-        moment:
-            listen::ToolMoment::Call {
-                intent: Some(intent),
-                ..
-            },
-        ..
-    }) = decoded
-    else {
+    let Some(text) = decoded.assistant_text() else {
         return false;
     };
-    let keys = steering_keys(std::iter::once(intent.as_str()));
+    let keys = steering_keys(std::iter::once(text));
     if keys.is_empty() {
         return false;
     }
-    let settled = steering_keys(record.events.iter().filter_map(|(_, event)| match event {
-        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
-            Some(prose.text.as_str())
-        }
-        _ => None,
-    }));
+    let later = steering_keys(
+        record
+            .events
+            .iter()
+            .skip(position + 1)
+            .filter_map(|(_, event)| event.assistant_text()),
+    );
+    if keys.iter().all(|key| later.contains(key)) {
+        return true;
+    }
     let streamed = open(record, state);
-    keys.iter().all(|key| {
-        settled.contains(key)
-            || streamed
-                .is_some_and(|open| open.answers.values().any(|answers| answers.contains(key)))
-    })
+    matches!(decoded, listen::Event::Tool(_))
+        && keys.iter().all(|key| {
+            streamed.is_some_and(|open| open.answers.values().any(|answers| answers.contains(key)))
+        })
 }
 
 pub(super) fn remember(
