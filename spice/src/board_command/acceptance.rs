@@ -163,6 +163,58 @@ pub(crate) fn completion_contract<'a, T: AcceptanceRow + 'a>(
     }
 }
 
+/// One claim's current completion contract, for that claim's exact occupant.
+pub(crate) struct ClaimContract {
+    pub(crate) lane: wire::CanonicalUuid,
+    pub(crate) occupant: wire::CanonicalUuid,
+    pub(crate) task: TaskHandle,
+    pub(crate) claim: u64,
+    pub(crate) contract: String,
+}
+
+/// The current completion contract of every active claim a lane took by hand
+/// whose holder has acknowledged its task's current generation.
+///
+/// Linked work settling, or new work linking, moves such a contract without
+/// moving the borrower's generation, so nothing else tells the holder. A
+/// resident-minted claim hears it through its assignment notice, and a claim
+/// trailing its generation through its generation notice. Only pending work
+/// lends acceptance and only pending work carries an active claim, so the
+/// projection reads the live frontier alone.
+pub(crate) fn manual_claim_contracts(snapshot: &bus::TaskSnapshot) -> Vec<ClaimContract> {
+    let held = snapshot
+        .allocation_frontier()
+        .filter_map(|heads| {
+            let claim = heads.claim()?.body();
+            (claim.disposition == ClaimDisposition::Active
+                && claim.acknowledged >= heads.workflow().body().generation
+                && !is_automatic_claim(claim, snapshot.facts()))
+            .then_some((heads, claim))
+        })
+        .collect::<Vec<_>>();
+    if held.is_empty() {
+        return Vec::new();
+    }
+    let rows = snapshot.allocation_frontier().collect::<Vec<_>>();
+    held.into_iter()
+        .map(|(heads, claim)| {
+            let statement = heads.statement().body();
+            ClaimContract {
+                lane: claim.lane,
+                occupant: claim.occupant,
+                task: TaskHandle::for_project(&statement.project, &statement.born),
+                claim: claim.claimed.get(),
+                contract: completion_contract(
+                    &statement.acceptance,
+                    &statement.born,
+                    &statement.dependencies,
+                    rows.iter().copied(),
+                ),
+            }
+        })
+        .collect()
+}
+
 /// Whether linked work in this state lends its acceptance to its neighbors.
 pub(super) fn lends(acceptance: &[String], workflow: &wire::WorkflowHead) -> bool {
     workflow.status.is_pending() && substantive_acceptance(acceptance)

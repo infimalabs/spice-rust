@@ -240,3 +240,74 @@ fn changed_completion_authority_replaces_notices_without_a_new_claim_or_generati
     assert_eq!(frames[0]["purpose"], frames[1]["purpose"]);
     assert_ne!(frames[0]["message"], frames[1]["message"]);
 }
+
+#[test]
+fn a_hand_taken_claim_hears_each_contract_change_once_after_what_it_was_told() {
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let mut notice = TaskContractNotice {
+        occupant: crate::resident::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        completion_contract: "linked AC (LEND-1)".to_owned(),
+    };
+    // The claim answer already told the first observation.
+    driver.deliver_task_contract(&notice);
+    driver.deliver_task_contract(&notice);
+    notice.completion_contract = "unspecified".to_owned();
+    driver.deliver_task_contract(&notice);
+    driver.deliver_task_contract(&notice);
+    notice.completion_contract = "linked AC (LEND-2)".to_owned();
+    driver.deliver_task_contract(&notice);
+    let frames = sink.answered(2);
+    assert_eq!(
+        frames.len(),
+        2,
+        "each change is told once, the baseline never"
+    );
+    for (frame, contract) in frames.iter().zip(["unspecified", "linked AC (LEND-2)"]) {
+        assert_eq!(
+            frame["type"], "aside",
+            "a contract change is a private notice"
+        );
+        assert!(
+            frame["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(contract)),
+            "{frame}"
+        );
+    }
+
+    // A generation notice that disclosed the current contract leaves nothing
+    // for the contract notice to repeat.
+    driver.deliver_task_generation(&TaskGenerationNotice {
+        occupant: notice.occupant,
+        task: notice.task.clone(),
+        claim: notice.claim,
+        generation: 4,
+        change: "task edited".to_owned(),
+        editor: "operator".to_owned(),
+        position: 44,
+        taste: None,
+        completion_contract: "own AC".to_owned(),
+    });
+    notice.completion_contract = "own AC".to_owned();
+    driver.deliver_task_contract(&notice);
+    assert_eq!(
+        sink.answered(3).len(),
+        3,
+        "only the generation notice was told"
+    );
+
+    // A later claim starts from what its own claim answer told.
+    driver.deliver_task_contract(&TaskContractNotice {
+        claim: 34,
+        completion_contract: "unspecified".to_owned(),
+        ..notice
+    });
+    assert_eq!(
+        sink.answered(3).len(),
+        3,
+        "a new claim's first observation is its baseline"
+    );
+}
