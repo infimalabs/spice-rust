@@ -30,6 +30,8 @@ pub(in crate::resident) struct TaskGenerationNotice {
     #[serde(default)]
     pub(in crate::resident) taste: Option<TasteState>,
     pub(in crate::resident) completion_contract: String,
+    #[serde(default)]
+    pub(in crate::resident) design_research: Option<String>,
 }
 
 /// Where a claimant's statement stands against the taste policy.
@@ -97,6 +99,8 @@ pub(in crate::resident) struct TaskAssignmentNotice {
     pub(in crate::resident) claim: u64,
     pub(in crate::resident) phase: String,
     pub(in crate::resident) completion_contract: String,
+    #[serde(default)]
+    pub(in crate::resident) design_research: Option<String>,
 }
 
 /// One ended claim, scoped to the exact occupant that held it when it ended.
@@ -114,14 +118,18 @@ impl TaskAssignmentNotice {
             "<system-notice>\nTask {} was assigned to this lane in phase {}. Continue \
              this task now; run `spice task show {} --full` for its contract before asking \
              the allocator for work. This is a private assignment notice; no \
-             acknowledgment key or visible ACK/NAK is required. {}\n</system-notice>",
-            self.task, self.phase, self.task, self.completion_contract,
+             acknowledgment key or visible ACK/NAK is required. {} {}\n</system-notice>",
+            self.task,
+            self.phase,
+            self.task,
+            self.completion_contract,
+            self.design_research.as_deref().unwrap_or(""),
         )
     }
 }
 
-/// The current completion contract of a claim this exact occupant took by
-/// hand, observed while its holder has acknowledged the task's generation.
+/// Current completion and research guidance for a hand-taken claim whose
+/// holder has acknowledged the task's generation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::resident) struct TaskContractNotice {
@@ -129,16 +137,18 @@ pub(in crate::resident) struct TaskContractNotice {
     pub(in crate::resident) task: String,
     pub(in crate::resident) claim: u64,
     pub(in crate::resident) completion_contract: String,
+    #[serde(default)]
+    pub(in crate::resident) design_research: Option<String>,
 }
 
 impl TaskContractNotice {
     fn text(&self) -> String {
         format!(
-            "<system-notice>\nTask {}'s completion contract moved with its linked work; its \
-             statement and generation did not, so there is nothing to acknowledge. {} This \
-             is a private authority reminder; no acknowledgment key or visible ACK/NAK is \
-             required.\n</system-notice>",
-            self.task, self.completion_contract,
+            "<system-notice>\nCurrent work guidance for task {}: {} {} This is a private \
+             authority reminder; no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
+            self.task,
+            self.completion_contract,
+            self.design_research.as_deref().unwrap_or(""),
         )
     }
 }
@@ -162,23 +172,25 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .task_generation
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if delivered
-                .as_ref()
-                .is_some_and(|(task, claim, generation, contract)| {
-                    task == &notice.task
-                        && *claim == notice.claim
-                        && (*generation > notice.generation
-                            || (*generation == notice.generation
-                                && contract == &notice.completion_contract))
-                })
-            {
+            if delivered.as_ref().is_some_and(|(key, generation)| {
+                key.task == notice.task
+                    && key.claim == notice.claim
+                    && (*generation > notice.generation
+                        || (*generation == notice.generation
+                            && key.completion_contract == notice.completion_contract
+                            && key.design_research == notice.design_research))
+            }) {
                 return;
             }
             delivered.replace((
-                notice.task.clone(),
-                notice.claim,
+                TaskContractNotice {
+                    occupant: notice.occupant,
+                    task: notice.task.clone(),
+                    claim: notice.claim,
+                    completion_contract: notice.completion_contract.clone(),
+                    design_research: notice.design_research.clone(),
+                },
                 notice.generation,
-                notice.completion_contract.clone(),
             ))
         };
         let taste = notice
@@ -191,49 +203,66 @@ impl<W: Write + Send + 'static> Driver<W> {
              generation {} is {} by {} at position {}.{taste} Run `spice task next` \
              to read and accept the current statement before continuing. Completion and review remain \
              refused until task next succeeds. This is a private authority reminder; \
-             no acknowledgment key or visible ACK/NAK is required. {}\n</system-notice>",
+             no acknowledgment key or visible ACK/NAK is required. {} {}\n</system-notice>",
             notice.task,
             notice.generation,
             notice.change,
             notice.editor,
             notice.position,
             notice.completion_contract,
+            notice.design_research.as_deref().unwrap_or(""),
         );
         if self
             .background(&format!("task:{}", notice.task), &message)
             .is_ok()
         {
-            self.disclosed_contract(&notice.task, notice.claim, &notice.completion_contract);
+            self.disclosed_contract(
+                notice.occupant,
+                &notice.task,
+                notice.claim,
+                &notice.completion_contract,
+                notice.design_research.as_deref(),
+            );
         } else {
             let mut delivered = self
                 .task_generation
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if delivered
-                .as_ref()
-                .is_some_and(|(task, claim, generation, contract)| {
-                    task == &notice.task
-                        && *claim == notice.claim
-                        && *generation == notice.generation
-                        && contract == &notice.completion_contract
-                })
-            {
+            if delivered.as_ref().is_some_and(|(key, generation)| {
+                key.task == notice.task
+                    && key.claim == notice.claim
+                    && *generation == notice.generation
+                    && key.completion_contract == notice.completion_contract
+                    && key.design_research == notice.design_research
+            }) {
                 *delivered = previous;
             }
         }
     }
 
-    /// Record the completion contract this occupant was last told for one claim.
-    fn disclosed_contract(&self, task: &str, claim: u64, contract: &str) {
+    /// Record the completion and research guidance last told for one claim.
+    fn disclosed_contract(
+        &self,
+        occupant: CanonicalUuid,
+        task: &str,
+        claim: u64,
+        contract: &str,
+        research: Option<&str>,
+    ) {
         *self
             .task_contract
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) =
-            Some((task.to_owned(), claim, contract.to_owned()));
+            .unwrap_or_else(PoisonError::into_inner) = Some(TaskContractNotice {
+            occupant,
+            task: task.to_owned(),
+            claim,
+            completion_contract: contract.to_owned(),
+            design_research: research.map(str::to_owned),
+        });
     }
 
-    /// Tell this occupant once each time a hand-taken claim's completion
-    /// contract moves from the one it was last told.
+    /// Tell this occupant once each time a hand-taken claim's completion or
+    /// research guidance changes from the last disclosure.
     ///
     /// The first observation of a claim is the contract its claim answer, its
     /// acknowledgement, or a generation notice already disclosed, so it is
@@ -244,23 +273,17 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .task_contract
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            let current = (
-                notice.task.clone(),
-                notice.claim,
-                notice.completion_contract.clone(),
-            );
-            match told.as_ref() {
-                Some((task, claim, contract)) if task == &notice.task && *claim == notice.claim => {
-                    if contract == &notice.completion_contract {
-                        return;
-                    }
-                }
-                _ => {
-                    *told = Some(current);
-                    return;
-                }
+            if told.as_ref() == Some(notice) {
+                return;
             }
-            told.replace(current)
+            let same_claim = told
+                .as_ref()
+                .is_some_and(|key| key.task == notice.task && key.claim == notice.claim);
+            let previous = told.replace(notice.clone());
+            if !same_claim {
+                return;
+            }
+            previous
         };
         if self
             .background(&format!("contract:{}", notice.task), &notice.text())
@@ -270,11 +293,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .task_contract
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if told.as_ref().is_some_and(|(task, claim, contract)| {
-                task == &notice.task
-                    && *claim == notice.claim
-                    && contract == &notice.completion_contract
-            }) {
+            if told.as_ref() == Some(notice) {
                 *told = previous;
             }
         }

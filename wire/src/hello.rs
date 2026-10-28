@@ -32,9 +32,8 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 18 drops project visibility and depth policy from board
-    /// answers: a project is one exact label.
-    pub const CURRENT: Self = Self(18);
+    /// Version 19 carries current-question coverage in Design board rows.
+    pub const CURRENT: Self = Self(19);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

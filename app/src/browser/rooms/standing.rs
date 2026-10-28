@@ -36,6 +36,8 @@ pub(super) fn render_standing(
             row.design_cycle,
             &row.statement.body.handle,
             row.design_availability(),
+            row.design_coverage.as_ref()?,
+            &row.statement.body.acceptance,
         ))
     });
     let settled = lifecycle.as_ref().map_or_else(
@@ -56,6 +58,9 @@ pub(super) fn render_standing(
                 </p>
             }
             {cycle.as_ref().map_or_else(Html::default, |cycle| render_cycle(room, cycle))}
+            if let Some(research) = cycle.as_ref().and_then(|cycle| cycle.research.as_deref()) {
+                <p class="room-standing-research" data-design-research="">{research}</p>
+            }
             <p class="room-standing-next" data-room-next="">
                 {design_next_action(
                     settled,

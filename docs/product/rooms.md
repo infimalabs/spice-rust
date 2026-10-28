@@ -231,10 +231,14 @@ owns each rule summarized here.
   `preparation::questions-uncovered`, naming each gap and moving nothing.
   Coverage is not concurrence and proves nothing about the research behind a
   charge; maturity's 80% steeping threshold still decides readiness alone, and
-  a statement naming no question is covered. A mistaken
-  undecided proposal can be retracted by its author with `design withdraw
-  WITHDRAWAL_JSON`; the version stays in history but leaves the operator's
-  choices.
+  a statement naming no question is covered.
+  Acquisition, refresh and resumed holder context name the current missing
+  questions and direct source-backed item findings before proposing. Statement
+  edits and new charges recompute that advice; changed guidance uses the existing
+  assignment or claim notice path rather than periodic reminders.
+  A mistaken undecided proposal can be retracted by its author with
+  `design withdraw WITHDRAWAL_JSON`; the version stays in history but leaves
+  the operator's choices.
   When a predecessor proposal's immutable receipt does not prove an active
   claim, migration preserves that missing horizon as historical absence instead
   of fabricating a claim. New proposal commands still require the exact active
@@ -269,9 +273,11 @@ owns each rule summarized here.
      a lane may claim it by name with `spice task capture DESIGN`, or take it
      from its holder with `spice task capture DESIGN --steal`, and end that
      pass with one proposal.
-  2. **Ready for proposal**: a lane acts. Allocation offers the active Design;
-     its holder ends the pass with one `design propose`, which releases
-     the claim. Freeing or lapsing instead abandons the pass, and the cycle
+  2. **Ready for research pass**: a lane acts. Allocation offers the active
+     Design so its holder can investigate every remaining question and record
+     item-specific, source-backed findings before `design propose`. Research
+     readiness does not imply full proposal coverage. The proposal releases
+     the claim; freeing or lapsing instead abandons the pass, and the cycle
      shows that the last pass ended without a proposal.
   3. **Awaiting decision**: the operator acts on the cited proposal with
      `design decide`. Accepting work releases its outputs and closes the

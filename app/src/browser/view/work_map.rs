@@ -409,7 +409,7 @@ pub(in crate::browser) fn task_tone(
             availability: availability.key(),
             disposition: None,
             mark: Some(WorkMark::Proposal.key()),
-            label: "Ready for proposal",
+            label: "Ready for a research pass",
         });
     }
     let label = match availability {

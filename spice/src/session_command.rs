@@ -199,10 +199,17 @@ fn resume_page(authorities: Option<&authority::RecallAuthorities>) -> String {
     let claim = authorities.map_or_else(
         || UNREAD.to_owned(),
         |read| match (&read.held_work.own_claim, &read.held_work.own_claim_unread) {
-            (Some(claim), _) => format!(
-                "`{}` in phase `{}`\n- {}",
-                claim.handle, claim.phase, claim.completion_contract
-            ),
+            (Some(claim), _) => {
+                let mut summary = format!(
+                    "`{}` in phase `{}`\n- {}",
+                    claim.handle, claim.phase, claim.completion_contract
+                );
+                if let Some(research) = &claim.design_research {
+                    summary.push_str("\n- ");
+                    summary.push_str(research);
+                }
+                summary
+            }
             (None, Some(refusal)) => format!("unknown, not none: {refusal}"),
             (None, None) => "none".to_owned(),
         },
@@ -781,6 +788,7 @@ mod tests {
     fn held_task_notice_is_emitted_only_for_a_fresh_start() {
         let claim = model::HeldClaimView {
             completion_contract: "Completion contract: own AC.".to_owned(),
+            design_research: None,
             handle: "SESSION-held".to_owned(),
             project: "spice.session".to_owned(),
             phase: "todo".to_owned(),

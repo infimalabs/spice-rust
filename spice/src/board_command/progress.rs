@@ -59,6 +59,13 @@ pub(super) fn claim_refresh_with_clock(
             pitch: entry.statement().pitch.clone(),
             description: entry.statement().description.clone(),
             acceptance: entry.statement().acceptance.clone(),
+            design_research: snapshot
+                .answer
+                .tasks
+                .iter()
+                .find(|task| task.statement.body.born == *entry.born())
+                .and_then(BoardTask::design_research)
+                .map(String::into_boxed_str),
             completion_contract: Some(
                 completion_contract(
                     &entry.statement().acceptance,

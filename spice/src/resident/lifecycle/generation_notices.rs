@@ -45,6 +45,7 @@ pub(super) fn reconcile(
                 task: held.task.to_string(),
                 claim: held.claim,
                 completion_contract: held.contract,
+                design_research: held.design_research,
             },
         );
     }
@@ -156,6 +157,10 @@ fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskA
                     task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
                     claim: claim.claimed.get(),
                     phase: heads.workflow().body().phase.to_string(),
+                    design_research: crate::board_command::design_research(
+                        statement,
+                        snapshot.facts().design_items(&statement.born),
+                    ),
                     completion_contract: crate::board_command::completion_contract(
                         &statement.acceptance,
                         &statement.born,
@@ -276,6 +281,10 @@ fn task_notices(
                     editor: envelope.actor.to_string(),
                     position: advance.position.get(),
                     taste,
+                    design_research: crate::board_command::design_research(
+                        statement,
+                        facts.design_items(&statement.born),
+                    ),
                     completion_contract: crate::board_command::completion_contract(
                         &statement.acceptance,
                         &statement.born,

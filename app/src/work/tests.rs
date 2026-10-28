@@ -62,6 +62,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         claim_context: None,
         git_context: None,
         parked_commits: None,
+        design_coverage: None,
     }
 }
 

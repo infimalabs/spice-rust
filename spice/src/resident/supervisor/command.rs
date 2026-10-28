@@ -128,11 +128,11 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// already corrected in this context.
     misdirected: Mutex<BTreeSet<String>>,
     /// Latest claimed-task generation and current completion disclosure delivered.
-    task_generation: Mutex<Option<(String, u64, u64, String)>>,
+    task_generation: Mutex<Option<(TaskContractNotice, u64)>>,
     /// Latest proactive task assignment privately delivered to this occupant.
     task_assignment: Mutex<Option<TaskAssignmentNotice>>,
-    /// Completion contract this occupant was last told for its claim.
-    task_contract: Mutex<Option<(String, u64, String)>>,
+    /// Completion and research guidance this occupant was last told for its claim.
+    task_contract: Mutex<Option<TaskContractNotice>>,
     /// Latest claim lapse privately delivered to this occupant.
     claim_lapse: Mutex<Option<ClaimLapseNotice>>,
     /// Latest taste hold privately delivered to this occupant.

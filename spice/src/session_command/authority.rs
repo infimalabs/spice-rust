@@ -211,6 +211,22 @@ impl fmt::Display for AuthorityReadError {
 
 impl Error for AuthorityReadError {}
 
+fn read_design_research(
+    read: &JournalRead<'_>,
+    statement: &wire::TaskHead,
+) -> Result<Option<String>, AuthorityReadError> {
+    if !statement.intent.is_some_and(wire::TaskIntent::is_design) {
+        return Ok(None);
+    }
+    let maturity = read
+        .design_maturity(&statement.born)
+        .map_err(AuthorityReadError::Journal)?;
+    Ok(crate::board_command::design_research(
+        statement,
+        Some(&maturity.items),
+    ))
+}
+
 fn read_authorities(
     read: &JournalRead<'_>,
     seat: Seat<'_>,
@@ -289,10 +305,11 @@ fn read_authorities(
                     &statement.dependencies,
                     neighbors.iter(),
                 );
+                let research = read_design_research(read, statement)?;
                 let (statement, workflow, claim, lease) = heads.into_bodies();
                 Entry::new(statement, workflow, claim, lease)
                     .map_err(AuthorityReadError::Board)
-                    .map(|entry| Some(held_claim(&entry, contract)))
+                    .map(|entry| Some(held_claim(&entry, contract, research)))
             })
         });
     let peer_claims = read
@@ -496,10 +513,15 @@ fn unavailable_probe(recall: &mut RecallAuthorities, authority: &str, probe: &st
     });
 }
 
-fn held_claim(entry: &Entry, completion_contract: String) -> HeldClaimView {
+fn held_claim(
+    entry: &Entry,
+    completion_contract: String,
+    design_research: Option<String>,
+) -> HeldClaimView {
     let statement = entry.statement();
     HeldClaimView {
         completion_contract,
+        design_research,
         handle: entry.handle().to_string(),
         project: statement.project.clone(),
         phase: entry.workflow().phase.to_string(),

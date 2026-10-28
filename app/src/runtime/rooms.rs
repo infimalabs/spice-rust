@@ -129,7 +129,7 @@ impl DesignStanding {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 /// The action one room standing presents next. A typed cycle is the sole
 /// policy for an open Design; settled and unavailable anchors retain their
 /// own presentation.

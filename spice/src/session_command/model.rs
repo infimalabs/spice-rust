@@ -363,6 +363,8 @@ pub(crate) struct HeldClaimView {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) acceptance: Vec<String>,
     pub(crate) completion_contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) design_research: Option<String>,
 }
 
 /// One operator direction this lane already retired, newest first: context

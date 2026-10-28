@@ -198,6 +198,10 @@ impl TaskProjection<'_> {
             .flatten();
         let grouped = self.facts.grouped(&statement.body.born);
         let design = self.facts.design(&statement.body);
+        let coverage = design_coverage(
+            &statement.body,
+            self.facts.design_items(&statement.body.born),
+        );
         let statement_born = statement.body.born.clone();
         let preparation_decision = self.facts.preparation_decision(&statement_born).cloned();
         let entry = Entry::new(
@@ -240,6 +244,7 @@ impl TaskProjection<'_> {
         .with_explicit_release(explicit_release)
         .with_grouped(grouped)
         .with_design_cycle(design)
+        .with_design_coverage(coverage)
         .with_preparation_decision(preparation_decision)
         .with_collapse_reason(
             self.facts

@@ -68,8 +68,9 @@ on both the node frame and its state tag sets it apart from passive and
 in-flight's solid frames and deleted work's dashed one. Both passive and waiting
 Designs consume the resident's cycle without changing allocation policy.
 `DONE` remains quiet settled provenance
-with a single neutral frame and rounded tag. `READY FOR PROPOSAL` marks the
-unpossessed Design whose tab wears the proposal mark, in its live tone, and
+with a single neutral frame and rounded tag. `READY FOR A RESEARCH PASS` marks
+the unpossessed Design whose tab wears the pass mark, in its live tone; room
+standing names questions still requiring research before a proposal, and
 `AWAITING DECISION` the Design whose tab wears the decision mark, in warning.
 The outline and tag shapes keep the states distinct without color, including
 reduced-contrast and forced-color presentation; waiting never borrows warning,

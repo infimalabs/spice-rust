@@ -14,6 +14,7 @@ fn task_generation_reminders_are_private_and_deduplicated_by_authority() {
         position: 44,
         taste: None,
         completion_contract: "Completion contract: own AC.".to_owned(),
+        design_research: None,
     };
 
     driver.deliver_task_generation(&notice);
@@ -47,6 +48,7 @@ fn task_assignment_notices_are_private_and_deduplicated_by_claim() {
         claim: 33,
         phase: "todo".to_owned(),
         completion_contract: "Completion contract: own AC.".to_owned(),
+        design_research: None,
     };
 
     driver.deliver_task_assignment(&notice);
@@ -83,6 +85,7 @@ fn an_ended_claim_withdraws_only_its_own_queued_assignment_notice() {
         claim: 33,
         phase: "plan".to_owned(),
         completion_contract: "Completion contract: own AC.".to_owned(),
+        design_research: None,
     };
     let ended = |claim| TaskAssignmentEnd {
         occupant: notice.occupant,
@@ -167,6 +170,7 @@ fn taste_hold_notices_are_private_deduplicated_and_keep_a_queued_assignment() {
         claim: 33,
         phase: "todo".to_owned(),
         completion_contract: "Completion contract: own AC.".to_owned(),
+        design_research: None,
     };
     let hold = TasteHoldNotice {
         occupant: assignment.occupant,
@@ -208,6 +212,7 @@ fn changed_completion_authority_replaces_notices_without_a_new_claim_or_generati
         claim: 33,
         phase: "todo".to_owned(),
         completion_contract: "own AC".to_owned(),
+        design_research: None,
     };
     assignment_driver.deliver_task_assignment(&assignment);
     assignment.completion_contract = "unspecified".to_owned();
@@ -217,6 +222,14 @@ fn changed_completion_authority_replaces_notices_without_a_new_claim_or_generati
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0]["purpose"], frames[1]["purpose"]);
     assert_ne!(frames[0]["message"], frames[1]["message"]);
+    assignment.design_research = Some("Investigate question 2.".to_owned());
+    assignment_driver.deliver_task_assignment(&assignment);
+    assignment_driver.deliver_task_assignment(&assignment);
+    assert_eq!(
+        sink.answered(3).len(),
+        3,
+        "research changes replace the assignment once"
+    );
 
     let sink = Sink::default();
     let driver = driver(&sink);
@@ -230,6 +243,7 @@ fn changed_completion_authority_replaces_notices_without_a_new_claim_or_generati
         position: 44,
         taste: None,
         completion_contract: "own AC".to_owned(),
+        design_research: None,
     };
     driver.deliver_task_generation(&generation);
     generation.completion_contract = "unspecified".to_owned();
@@ -239,6 +253,14 @@ fn changed_completion_authority_replaces_notices_without_a_new_claim_or_generati
     assert_eq!(frames.len(), 2);
     assert_eq!(frames[0]["purpose"], frames[1]["purpose"]);
     assert_ne!(frames[0]["message"], frames[1]["message"]);
+    generation.design_research = Some("Investigate question 2.".to_owned());
+    driver.deliver_task_generation(&generation);
+    driver.deliver_task_generation(&generation);
+    assert_eq!(
+        sink.answered(3).len(),
+        3,
+        "research changes replace the generation notice once"
+    );
 }
 
 #[test]
@@ -250,6 +272,7 @@ fn a_hand_taken_claim_hears_each_contract_change_once_after_what_it_was_told() {
         task: "CLAIM-1kKRRsDP".to_owned(),
         claim: 33,
         completion_contract: "linked AC (LEND-1)".to_owned(),
+        design_research: None,
     };
     // The claim answer already told the first observation.
     driver.deliver_task_contract(&notice);
@@ -290,6 +313,7 @@ fn a_hand_taken_claim_hears_each_contract_change_once_after_what_it_was_told() {
         position: 44,
         taste: None,
         completion_contract: "own AC".to_owned(),
+        design_research: None,
     });
     notice.completion_contract = "own AC".to_owned();
     driver.deliver_task_contract(&notice);
@@ -297,6 +321,14 @@ fn a_hand_taken_claim_hears_each_contract_change_once_after_what_it_was_told() {
         sink.answered(3).len(),
         3,
         "only the generation notice was told"
+    );
+    notice.design_research = Some("Investigate question 2.".to_owned());
+    driver.deliver_task_contract(&notice);
+    driver.deliver_task_contract(&notice);
+    assert_eq!(
+        sink.answered(4).len(),
+        4,
+        "research changes are told once without a new generation"
     );
 
     // A later claim starts from what its own claim answer told.
@@ -306,8 +338,8 @@ fn a_hand_taken_claim_hears_each_contract_change_once_after_what_it_was_told() {
         ..notice
     });
     assert_eq!(
-        sink.answered(3).len(),
-        3,
+        sink.answered(4).len(),
+        4,
         "a new claim's first observation is its baseline"
     );
 }
