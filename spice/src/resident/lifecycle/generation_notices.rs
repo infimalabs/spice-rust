@@ -159,6 +159,7 @@ fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskA
                     phase: heads.workflow().body().phase.to_string(),
                     design_research: crate::board_command::design_research(
                         statement,
+                        heads.workflow().body(),
                         snapshot.facts().design_items(&statement.born),
                     ),
                     completion_contract: crate::board_command::completion_contract(
@@ -283,6 +284,7 @@ fn task_notices(
                     taste,
                     design_research: crate::board_command::design_research(
                         statement,
+                        heads.workflow().body(),
                         facts.design_items(&statement.born),
                     ),
                     completion_contract: crate::board_command::completion_contract(

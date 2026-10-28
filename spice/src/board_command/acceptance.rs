@@ -217,6 +217,7 @@ pub(crate) fn manual_claim_contracts(snapshot: &bus::TaskSnapshot) -> Vec<ClaimC
                 claim: claim.claimed.get(),
                 design_research: design_research(
                     statement,
+                    heads.workflow().body(),
                     snapshot.facts().design_items(&statement.born),
                 ),
                 contract: completion_contract(

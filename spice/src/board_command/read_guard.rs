@@ -199,7 +199,9 @@ impl TaskProjection<'_> {
         let grouped = self.facts.grouped(&statement.body.born);
         let design = self.facts.design(&statement.body);
         let coverage = design_coverage(
-            &statement.body,
+            statement.body.intent,
+            &workflow.body,
+            &statement.body.acceptance,
             self.facts.design_items(&statement.body.born),
         );
         let statement_born = statement.body.born.clone();
