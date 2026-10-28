@@ -284,7 +284,7 @@ pub(in crate::resident) enum Kick {
     /// An authored packet reached someone but missed an address, or its
     /// grammar refused before durable judgment.
     MessageRefused(MessageRefusalNotice),
-    /// An MSG packet this exact occupant authored was recorded in rooms.
+    /// The receipt for an MSG packet this exact occupant authored and sent.
     MessageRecorded(MessageRecordedNotice),
     /// Current renewal intent for this exact occupant.
     Renewal(renewal::Notice),
@@ -634,7 +634,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _ = self.background(&format!("msg:{}", notice.packet), &notice.text());
     }
 
-    /// Tell this exact occupant which rooms an MSG packet it authored recorded in.
+    /// Tell this exact occupant what an MSG packet it authored and sent reached.
     fn deliver_message_recorded(&self, notice: &MessageRecordedNotice) {
         let _ = self.background(&format!("msg-recorded:{}", notice.packet), &notice.text());
     }
@@ -1198,8 +1198,8 @@ pub(in crate::resident) fn message_refused(
     send(paths, lane, &Kick::MessageRefused(notice));
 }
 
-/// Privately tell the exact authoring occupant which rooms its MSG packet
-/// recorded in.
+/// Privately give the exact authoring occupant the receipt for an MSG packet
+/// it sent: how many recipients it reached and which rooms it recorded in.
 pub(in crate::resident) fn message_recorded(
     paths: &RuntimePaths,
     lane: CanonicalUuid,

@@ -35,6 +35,9 @@ mod delivery;
 #[path = "steering_message/replies.rs"]
 mod replies;
 
+#[path = "steering_message/receipts.rs"]
+mod receipts;
+
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;
@@ -269,6 +272,20 @@ impl Lanes {
         Vec<Result<steering::Published, steering::Unpublished>>,
         String,
     ) {
+        self.hear_with(lane, author, steering::Refusals::Record)
+    }
+
+    /// Hear every record on the lane's tape as authored by `author`, telling
+    /// the author privately under [`steering::Refusals::Notify`].
+    fn hear_with(
+        &self,
+        lane: u8,
+        author: CanonicalUuid,
+        refusals: steering::Refusals,
+    ) -> (
+        Vec<Result<steering::Published, steering::Unpublished>>,
+        String,
+    ) {
         let (source, records) = self.records(lane);
         let mut outcomes = Vec::new();
         let mut diagnostics = Vec::new();
@@ -292,7 +309,7 @@ impl Lanes {
                     locus: record.locus,
                     events: &events,
                 },
-                steering::Refusals::Record,
+                refusals,
                 &mut diagnostics,
             ));
         }
