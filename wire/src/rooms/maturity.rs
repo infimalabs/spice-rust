@@ -322,8 +322,8 @@ impl DesignItems {
             .collect()
     }
 
-    /// Whether every current item has been charged, one concurs, and none is
-    /// contested.
+    /// Whether at least 80% of current items have been charged, one concurs,
+    /// and none is contested.
     #[must_use]
     pub fn steeped(&self, acceptance: &[String]) -> bool {
         steeped(&self.states(acceptance))
@@ -403,10 +403,18 @@ impl DesignItems {
 }
 
 fn steeped(states: &[DesignItemState]) -> bool {
-    states.contains(&DesignItemState::Concurred)
-        && !states
-            .iter()
-            .any(|state| matches!(state, DesignItemState::Quiet | DesignItemState::Contested))
+    let mut quiet = 0;
+    let mut concurred = false;
+    for state in states {
+        match state {
+            DesignItemState::Quiet => quiet += 1,
+            DesignItemState::Concurred => concurred = true,
+            DesignItemState::Contested => return false,
+            DesignItemState::UnopposedFor | DesignItemState::UnopposedAgainst => {}
+        }
+    }
+    // At most one fifth may be quiet; integer division rounds coverage up.
+    concurred && quiet <= states.len() / 5
 }
 
 /// One recent statement head's request and contribution evidence.
@@ -553,15 +561,15 @@ pub struct DesignItemNeed {
 
 /// Advisory state judged per current question item.
 ///
-/// Steeped iff every current item has been charged, some item concurs, and
-/// none is contested. Unopposed items never block; a quiet item does, so a
-/// Design keeps its group's invite reach until every question is heard.
+/// Steeped iff at least 80% of current items have been charged, some item
+/// concurs, and none is contested. Unopposed items count as heard; up to 20%
+/// may remain quiet. Steeped maturity narrows the Design's invitation reach.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum DesignMaturityState {
     /// No contribution exists.
     Fresh,
-    /// Some current item is quiet or contested, or none concurs.
+    /// Too few current items are charged, some item is contested, or none concurs.
     Steeping {
         /// The lowest-index contested item, else the lowest-index quiet item,
         /// else the lowest-index unopposed item; none when the statement names
@@ -571,7 +579,7 @@ pub enum DesignMaturityState {
         /// Current items no charge has weighed.
         quiet: usize,
     },
-    /// Every current item is charged, some concurs, and none is contested.
+    /// At least 80% of current items are charged, some concurs, and none is contested.
     Steeped,
 }
 
@@ -1124,7 +1132,95 @@ mod tests {
     }
 
     #[test]
-    fn a_design_steeps_iff_every_current_item_is_heard_one_concurs_and_none_is_contested() {
+    fn eighty_percent_coverage_rounds_up_to_whole_questions() {
+        for (total, answered, expected) in [
+            (0, 0, false),
+            (1, 0, false),
+            (1, 1, true),
+            (4, 3, false),
+            (4, 4, true),
+            (5, 3, false),
+            (5, 4, true),
+            (6, 4, false),
+            (6, 5, true),
+            (10, 8, true),
+            (32, 25, false),
+            (32, 26, true),
+        ] {
+            let current: Vec<_> = (1..=total)
+                .map(|question| format!("Who answers question {question}?"))
+                .collect();
+            let mut maturity = DesignMaturity::default();
+            for item in current.iter().take(answered) {
+                maturity.observe_contribution(&charge(1, item, -1));
+            }
+            if answered > 0 {
+                maturity.observe_contribution(&charge(2, &current[0], -2));
+            }
+            assert_eq!(
+                maturity.items.steeped(&current),
+                expected,
+                "{answered}/{total} questions answered"
+            );
+        }
+    }
+
+    #[test]
+    fn eighty_percent_coverage_preserves_concurrence_and_contention_guards() {
+        let mut current = acceptance(&[
+            "Who defines the input?",
+            "Who owns the state?",
+            "Who reports errors?",
+            "Who checks the result?",
+            "Who handles cleanup?",
+        ]);
+        let mut maturity = DesignMaturity::default();
+        for item in &current[..4] {
+            maturity.observe_contribution(&charge(1, item, 1));
+        }
+        assert_eq!(
+            maturity.state(&current),
+            DesignMaturityState::Steeping {
+                next: need(5, DesignItemState::Quiet, DesignItemInput::AnyCharge),
+                quiet: 1,
+            }
+        );
+        maturity.observe_contribution(&charge(2, &current[0], 2));
+        assert_eq!(maturity.state(&current), DesignMaturityState::Steeped);
+
+        current.push("Who handles cancellation?".to_owned());
+        assert_eq!(
+            maturity.state(&current),
+            DesignMaturityState::Steeping {
+                next: need(5, DesignItemState::Quiet, DesignItemInput::AnyCharge),
+                quiet: 2,
+            }
+        );
+        current.pop();
+        assert_eq!(
+            maturity.state(&[]),
+            DesignMaturityState::Steeping {
+                next: None,
+                quiet: 0,
+            }
+        );
+
+        maturity.observe_contribution(&charge(2, &current[1], -1));
+        assert_eq!(
+            maturity.state(&current),
+            DesignMaturityState::Steeping {
+                next: need(
+                    2,
+                    DesignItemState::Contested,
+                    DesignItemInput::NegativeAgreement,
+                ),
+                quiet: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn a_design_tracks_current_items_and_prioritizes_contested_input() {
         let mut maturity = DesignMaturity::default();
         let current = acceptance(&ITEMS);
         assert_eq!(maturity.state(&current), DesignMaturityState::Fresh);
