@@ -370,6 +370,7 @@ fn settle(
     };
     let answer = wire::intent::TaskAnswer {
         taste: None,
+        completion_contract: None,
         task: entry.handle().clone(),
         status: settlement.status().to_owned(),
         completion: None,

@@ -320,6 +320,15 @@ fn file_unfiled(
     };
     let answer = wire::intent::TaskAnswer {
         taste: answered_taste(command.actor(), post.statement().taste.as_ref()),
+        completion_contract: Some(
+            completion_contract(
+                &post.statement().acceptance,
+                post.born(),
+                &post.statement().dependencies,
+                snapshot.entries.iter(),
+            )
+            .into_boxed_str(),
+        ),
         task: post.handle().clone(),
         status: "filed".to_owned(),
         completion: None,
@@ -632,6 +641,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
     };
     let answer = wire::intent::TaskAnswer {
         taste: None,
+        completion_contract: None,
         task: entry.handle().clone(),
         status: if deferral.is_some() {
             "deferred".to_owned()

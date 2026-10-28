@@ -59,6 +59,15 @@ pub(super) fn claim_refresh_with_clock(
             pitch: entry.statement().pitch.clone(),
             description: entry.statement().description.clone(),
             acceptance: entry.statement().acceptance.clone(),
+            completion_contract: Some(
+                completion_contract(
+                    &entry.statement().acceptance,
+                    entry.born(),
+                    &entry.statement().dependencies,
+                    snapshot.entries.iter(),
+                )
+                .into_boxed_str(),
+            ),
         })),
         holder: Some(command.actor().clone()),
         expiry: None,
@@ -269,6 +278,7 @@ fn replay_task_completion(
         position: ReplyPosition::Committed(SeqRange { first, last }),
         body: CommandAnswer::Task(Box::new(wire::intent::TaskAnswer {
             taste: None,
+            completion_contract: None,
             task: entry.handle().clone(),
             status: terminal.status.to_string(),
             completion: None,
@@ -607,6 +617,7 @@ fn append_done(
     };
     Ok(wire::intent::TaskAnswer {
         taste: None,
+        completion_contract: None,
         task: entry.handle().clone(),
         status,
         completion: None,
@@ -1152,6 +1163,7 @@ fn review_answer(
 ) -> wire::intent::TaskAnswer {
     wire::intent::TaskAnswer {
         taste: None,
+        completion_contract: None,
         task,
         status,
         completion: None,

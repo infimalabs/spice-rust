@@ -109,7 +109,7 @@ struct ObservedAuthorities {
     residency_error: Option<AuthorityReadError>,
     hold: Option<Result<Option<wire::body::LaneHeld>, AuthorityReadError>>,
     ledger: Option<Result<steer::Ledger, AuthorityReadError>>,
-    own_claim: Option<Result<Option<Entry>, AuthorityReadError>>,
+    own_claim: Option<Result<Option<HeldClaimView>, AuthorityReadError>>,
     peer_claims: Option<Result<usize, AuthorityReadError>>,
     directions: Option<Result<Vec<journal::RetiredSteering>, AuthorityReadError>>,
     board: Option<Result<BoardGlanceView, AuthorityReadError>>,
@@ -263,10 +263,36 @@ fn read_authorities(
         .map_err(AuthorityReadError::Journal)
         .and_then(|heads| {
             heads.map_or(Ok(None), |heads| {
+                let statement = heads.statement().body();
+                let mut neighbors = Vec::new();
+                if !crate::board_command::substantive_acceptance(&statement.acceptance) {
+                    let mut after = None;
+                    loop {
+                        let page = read
+                            .task_neighbor_head_page(
+                                &statement.born,
+                                &statement.dependencies,
+                                after.as_ref(),
+                                journal::FactReadBudget::RETAINED,
+                            )
+                            .map_err(AuthorityReadError::Journal)?;
+                        neighbors.extend(page.rows);
+                        match page.continuation {
+                            Some(cursor) => after = Some(cursor),
+                            None => break,
+                        }
+                    }
+                }
+                let contract = crate::board_command::completion_contract(
+                    &statement.acceptance,
+                    &statement.born,
+                    &statement.dependencies,
+                    neighbors.iter(),
+                );
                 let (statement, workflow, claim, lease) = heads.into_bodies();
                 Entry::new(statement, workflow, claim, lease)
                     .map_err(AuthorityReadError::Board)
-                    .map(Some)
+                    .map(|entry| Some(held_claim(&entry, contract)))
             })
         });
     let peer_claims = read
@@ -398,7 +424,7 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
     if let Some(own_claim) = observed.own_claim {
         match own_claim {
             Ok(entry) => {
-                recall.held_work.own_claim = entry.as_ref().map(held_claim);
+                recall.held_work.own_claim = entry;
                 recall.held_work.own_claim_unread = None;
             }
             Err(error) => {
@@ -470,9 +496,10 @@ fn unavailable_probe(recall: &mut RecallAuthorities, authority: &str, probe: &st
     });
 }
 
-fn held_claim(entry: &Entry) -> HeldClaimView {
+fn held_claim(entry: &Entry, completion_contract: String) -> HeldClaimView {
     let statement = entry.statement();
     HeldClaimView {
+        completion_contract,
         handle: entry.handle().to_string(),
         project: statement.project.clone(),
         phase: entry.workflow().phase.to_string(),

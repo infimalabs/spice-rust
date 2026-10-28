@@ -69,3 +69,89 @@ fn assert_page_probe_metrics(budget: FactReadBudget) {
     assert!(metrics.decoded_bytes > 0);
     assert!(metrics.decoded_bytes <= budget.decoded_bytes() as u64);
 }
+
+#[test]
+fn direct_task_neighbors_follow_both_current_edge_directions_across_pages() {
+    let journal = authority_fixture();
+    let original: TaskStamp = "1kKRRsDP".parse().expect("fixture stamp");
+    let heads = journal
+        .read(|read| read.task_heads_for(&original))
+        .expect("fixture reads")
+        .expect("fixture task exists");
+    let root = TaskStamp::for_micros(10).expect("root stamp");
+    let prerequisite = TaskStamp::for_micros(11).expect("prerequisite stamp");
+    let dependent = TaskStamp::for_micros(12).expect("dependent stamp");
+    let unrelated = TaskStamp::for_micros(13).expect("unrelated stamp");
+    for stamp in [&root, &prerequisite, &dependent, &unrelated] {
+        let mut statement = heads.statement().body().clone();
+        statement.born = stamp.clone();
+        statement.dependencies = if stamp == &dependent {
+            vec![root.clone()]
+        } else {
+            Vec::new()
+        };
+        journal
+            .connection
+            .execute(
+                "INSERT INTO task_heads(stamp, head_seq, body) VALUES (?1, ?2, ?3)",
+                params![
+                    stamp.as_str(),
+                    statement.revision.get() as i64,
+                    wire::encode(&statement).expect("statement encodes")
+                ],
+            )
+            .expect("insert neighbor statement");
+        journal
+            .connection
+            .execute(
+                "INSERT INTO workflow_heads(stamp, head_seq, body) VALUES (?1, ?2, ?3)",
+                params![
+                    stamp.as_str(),
+                    heads.workflow().position().get() as i64,
+                    wire::encode(heads.workflow().body()).expect("workflow encodes")
+                ],
+            )
+            .expect("insert neighbor workflow");
+    }
+    let budget = FactReadBudget::new(1, MAX_RETAINED_FACT_PAGE_BYTES).expect("one-row budget");
+    let first = journal
+        .read(|read| {
+            read.task_neighbor_head_page(&root, std::slice::from_ref(&prerequisite), None, budget)
+        })
+        .expect("first neighbor page");
+    assert_eq!(
+        first
+            .rows
+            .iter()
+            .map(|row| &row.statement().body().born)
+            .collect::<Vec<_>>(),
+        [&prerequisite]
+    );
+    let second = journal
+        .read(|read| {
+            read.task_neighbor_head_page(
+                &root,
+                std::slice::from_ref(&prerequisite),
+                first.continuation.as_ref(),
+                budget,
+            )
+        })
+        .expect("second neighbor page");
+    assert_eq!(
+        second
+            .rows
+            .iter()
+            .map(|row| &row.statement().body().born)
+            .collect::<Vec<_>>(),
+        [&dependent]
+    );
+    assert!(second.continuation.is_none());
+    journal.connection.execute(
+        "UPDATE task_heads SET body = CAST(json_set(CAST(body AS TEXT), '$.dependencies', json('[]')) AS BLOB) WHERE stamp = ?1",
+        params![dependent.as_str()],
+    ).expect("unlink dependent");
+    let removed = journal
+        .read(|read| read.task_neighbor_head_page(&root, &[], None, budget))
+        .expect("unlinked neighbor page");
+    assert!(removed.rows.is_empty());
+}

@@ -4,26 +4,26 @@
 //! pass proposal each need an acceptance contract: substantive acceptance on
 //! the task's own statement, or on a task directly linked to it by a
 //! dependency in either direction. Linked work lends its acceptance while it
-//! is pending or positively concluded, whatever its intent or however it came
+//! is pending, whatever its intent or however it came
 //! to be linked. The rule reads current statements and links when the task
 //! completes; no statement, acceptance, or link change rewrites a flow.
 
 use super::*;
 
 /// Whether any criterion says something.
-pub(super) fn substantive_acceptance(acceptance: &[String]) -> bool {
+pub(crate) fn substantive_acceptance(acceptance: &[String]) -> bool {
     acceptance
         .iter()
         .any(|criterion| !criterion.trim().is_empty())
 }
 
 /// Where one task's acceptance contract stands.
-pub(super) enum Acceptance<'a> {
+pub(crate) enum Acceptance<'a, T = BoardTask> {
     /// The task's own statement carries substantive acceptance.
     Own,
     /// Only directly linked work does: the task's own prerequisites in
     /// statement order, then the tasks that depend on it in board order.
-    Linked(Vec<&'a BoardTask>),
+    Linked(Vec<&'a T>),
     /// Neither the task nor any directly linked work does.
     Missing,
 }
@@ -33,49 +33,144 @@ pub(super) fn acceptance<'a>(
     board: &'a BoardAnswer,
     statement: &wire::intent::BoardStatement,
 ) -> Result<Acceptance<'a>, Outcome<CommandAnswer>> {
-    if substantive_acceptance(&statement.acceptance) {
-        return Ok(Acceptance::Own);
-    }
-    let mut linked = Vec::new();
-    for dependency in &statement.dependencies {
-        let prerequisite = board
-            .tasks
-            .iter()
-            .find(|task| task.statement.body.born == *dependency)
-            .ok_or_else(|| {
-                protocol_fault(
+    if !substantive_acceptance(&statement.acceptance) {
+        for dependency in &statement.dependencies {
+            if !board
+                .tasks
+                .iter()
+                .any(|task| task.statement.body.born == *dependency)
+            {
+                return Err(protocol_fault(
                     "task::board-incoherent",
                     "a stored dependency has no visible board task",
-                )
-            })?;
-        if lends_acceptance(prerequisite) {
-            linked.push(prerequisite);
+                ));
+            }
         }
     }
-    linked.extend(board.tasks.iter().filter(|dependent| {
-        dependent
-            .statement
-            .body
-            .dependencies
-            .contains(&statement.born)
-            && lends_acceptance(dependent)
+    Ok(project_acceptance(
+        &statement.acceptance,
+        &statement.born,
+        &statement.dependencies,
+        board.tasks.iter(),
+    ))
+}
+
+/// Borrowed current authority shared by completion and claimant disclosure.
+pub(crate) trait AcceptanceRow {
+    fn acceptance(&self) -> &[String];
+    fn born(&self) -> &wire::TaskStamp;
+    fn dependencies(&self) -> &[wire::TaskStamp];
+    fn workflow(&self) -> &wire::WorkflowHead;
+    fn acceptance_handle(&self) -> String;
+}
+
+impl AcceptanceRow for BoardTask {
+    fn acceptance(&self) -> &[String] {
+        &self.statement.body.acceptance
+    }
+    fn born(&self) -> &wire::TaskStamp {
+        &self.statement.body.born
+    }
+    fn dependencies(&self) -> &[wire::TaskStamp] {
+        &self.statement.body.dependencies
+    }
+    fn workflow(&self) -> &wire::WorkflowHead {
+        &self.workflow.body
+    }
+    fn acceptance_handle(&self) -> String {
+        self.statement.body.handle.to_string()
+    }
+}
+
+impl AcceptanceRow for Entry {
+    fn acceptance(&self) -> &[String] {
+        &self.statement().acceptance
+    }
+    fn born(&self) -> &wire::TaskStamp {
+        self.born()
+    }
+    fn dependencies(&self) -> &[wire::TaskStamp] {
+        &self.statement().dependencies
+    }
+    fn workflow(&self) -> &wire::WorkflowHead {
+        self.workflow()
+    }
+    fn acceptance_handle(&self) -> String {
+        self.handle().to_string()
+    }
+}
+
+impl AcceptanceRow for journal::TaskHeads {
+    fn acceptance(&self) -> &[String] {
+        &self.statement().body().acceptance
+    }
+    fn born(&self) -> &wire::TaskStamp {
+        &self.statement().body().born
+    }
+    fn dependencies(&self) -> &[wire::TaskStamp] {
+        &self.statement().body().dependencies
+    }
+    fn workflow(&self) -> &wire::WorkflowHead {
+        self.workflow().body()
+    }
+    fn acceptance_handle(&self) -> String {
+        let statement = self.statement().body();
+        wire::TaskHandle::for_project(&statement.project, &statement.born).to_string()
+    }
+}
+
+pub(super) fn project_acceptance<'a, T: AcceptanceRow + 'a>(
+    own: &[String],
+    born: &wire::TaskStamp,
+    dependencies: &[wire::TaskStamp],
+    rows: impl Iterator<Item = &'a T> + Clone,
+) -> Acceptance<'a, T> {
+    if substantive_acceptance(own) {
+        return Acceptance::Own;
+    }
+    let mut linked = Vec::new();
+    for dependency in dependencies {
+        if let Some(row) = rows.clone().find(|row| row.born() == dependency)
+            && lends(row.acceptance(), row.workflow())
+        {
+            linked.push(row);
+        }
+    }
+    linked.extend(rows.filter(|row| {
+        row.dependencies().contains(born) && lends(row.acceptance(), row.workflow())
     }));
-    Ok(if linked.is_empty() {
+    if linked.is_empty() {
         Acceptance::Missing
     } else {
         Acceptance::Linked(linked)
-    })
+    }
+}
+
+/// Current completion contract, independent of taste, possession and flow.
+pub(crate) fn completion_contract<'a, T: AcceptanceRow + 'a>(
+    own: &[String],
+    born: &wire::TaskStamp,
+    dependencies: &[wire::TaskStamp],
+    rows: impl Iterator<Item = &'a T> + Clone,
+) -> String {
+    match project_acceptance(own, born, dependencies, rows) {
+        Acceptance::Own => "Completion contract: own AC.".to_owned(),
+        Acceptance::Linked(rows) => format!(
+            "Completion contract: linked AC ({}).",
+            rows.iter().map(|row| row.acceptance_handle()).collect::<Vec<_>>().join(", "),
+        ),
+        Acceptance::Missing => "Completion contract: unspecified. Work may continue; successful completion needs own AC, directly linked pending AC-bearing work in either direction, or an applicable no-work/duplicate/covered/deferred disposition. No allocation hold or phase change.".to_owned(),
+    }
 }
 
 /// Whether linked work in this state lends its acceptance to its neighbors.
 pub(super) fn lends(acceptance: &[String], workflow: &wire::WorkflowHead) -> bool {
-    (workflow.status.is_pending() || workflow.concluded_positively())
-        && substantive_acceptance(acceptance)
+    workflow.status.is_pending() && substantive_acceptance(acceptance)
 }
 
 /// Whether a task with this statement and workflow lends its acceptance to a
 /// member of `borrowers` by depending on it. Reads that project a borrower's
-/// acceptance carry these lenders even after they settle.
+/// acceptance carry these pending lenders regardless of edge direction.
 pub(super) fn lends_across(
     acceptance: &[String],
     workflow: &wire::WorkflowHead,
@@ -86,10 +181,6 @@ pub(super) fn lends_across(
         && dependencies
             .iter()
             .any(|dependency| borrowers.contains(dependency))
-}
-
-fn lends_acceptance(task: &BoardTask) -> bool {
-    lends(&task.statement.body.acceptance, &task.workflow.body)
 }
 
 /// Push the witnesses guarding the linked work `task`'s acceptance rests on;
@@ -136,7 +227,7 @@ pub(super) fn require_acceptance(
             Some(handle.clone()),
             &format!(
                 "a task completes only on an acceptance contract: add one with `spice task \
-                 modify {handle} --acceptance TEXT`, or link work carrying acceptance with \
+                 modify {handle} --acceptance TEXT`, or link pending work carrying acceptance with \
                  `spice task depends`; a Plan whose need warrants no work records why with \
                  `spice task done --disposition no-work|duplicate|covered|deferred [--cover \
                  HANDLE|COMMIT]`"
