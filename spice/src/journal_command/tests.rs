@@ -1,8 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use super::{Failure, Span, newest_rows};
 
-use super::newest_rows;
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 const FACTS: u64 = 7;
 const INITIAL_SEQUENCE: u64 = 52 * 52 * 52;
 
@@ -45,21 +42,27 @@ fn continuations_visit_every_fact_once_newest_first() {
     assert_eq!(visited, (1..=FACTS).rev().map(position).collect::<Vec<_>>());
 }
 
+#[test]
+fn a_journal_read_spans_its_facts_from_the_first_position() {
+    let fixture = Fixture::new();
+    assert_eq!(fixture.span(None), Some((FACTS, FACTS)));
+    let older = wire::Seq::new(position(3)).expect("seq").to_string();
+    assert_eq!(fixture.span(Some(&older)), Some((3, FACTS)));
+    let below = wire::Seq::new(position(1) - 1).expect("seq").to_string();
+    assert_eq!(
+        fixture.span(Some(&below)),
+        None,
+        "a start before the journal refuses"
+    );
+}
+
 struct Fixture {
-    root: std::path::PathBuf,
     journal: journal::Journal,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "spice-journal-page-{}-{}",
-            std::process::id(),
-            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&root).expect("create journal page scratch");
-        let mut journal =
-            journal::Journal::open(root.join("authority.sqlite3")).expect("fixture journal opens");
+        let mut journal = journal::Journal::in_memory().expect("fixture journal opens");
         for offset in 0..FACTS {
             let mut write = journal::JournalWrite::new(
                 wire::Actor::Operator,
@@ -80,7 +83,7 @@ impl Fixture {
                 .expect("fixture fact builds");
             journal.apply(write).expect("fixture fact commits");
         }
-        Self { root, journal }
+        Self { journal }
     }
 
     fn page(&self, start: u64, retain: usize) -> Vec<u64> {
@@ -100,10 +103,18 @@ impl Fixture {
             })
             .collect()
     }
-}
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.root).expect("remove journal page scratch");
+    /// Facts at or before the read's start and in the whole journal, or none
+    /// when `after` names no position inside the journal.
+    fn span(&self, after: Option<&str>) -> Option<(u64, u64)> {
+        self.journal
+            .read(|read| {
+                Ok(Span::read(read, after, |_| {
+                    Failure::protocol("journal::fixture-refused", String::new())
+                }))
+            })
+            .expect("fixture snapshot reads")
+            .ok()
+            .map(|span| (span.population(span.start), span.population(span.horizon)))
     }
 }
