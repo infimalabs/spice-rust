@@ -66,7 +66,9 @@ pub(super) fn report(
             for lane in lanes {
                 notify_inbox(paths, *lane);
             }
-            if !rooms.is_empty() || *operator || !queued.is_empty() || !redirected.is_empty() {
+            let beyond =
+                !rooms.is_empty() || *operator || !queued.is_empty() || !redirected.is_empty();
+            if beyond || !lanes.is_empty() {
                 teller.published(
                     &Recorded {
                         rooms,
@@ -173,9 +175,11 @@ impl Teller<'_> {
         );
     }
 
-    /// Record what the packet published beyond its deliveries and, under
-    /// [`Refusals::Notify`], tell the author privately; no participant
-    /// receipt is implied.
+    /// Tell the author privately, under [`Refusals::Notify`], how many
+    /// recipients the packet reached and what it published beyond those
+    /// deliveries, so a packet that sent always earns a receipt; no participant
+    /// acknowledgment is implied. Only what goes beyond plain delivery reaches
+    /// the diagnostic.
     fn published(&self, outcome: &Recorded<'_>, diagnostic: &mut dyn io::Write) {
         let (record, locus) = (self.record, self.locus);
         let Recorded {
@@ -198,18 +202,20 @@ impl Teller<'_> {
         if !redirected.is_empty() {
             let _ = write!(outcome, " redirected [{}]", redirected.join("; "));
         }
-        let _ = writeln!(
-            diagnostic,
-            "lane {} packet `{}` at record {}:{} event {} line {}:{} recorded in [{}]{outcome}",
-            record.lane,
-            self.header,
-            locus.member,
-            locus.offset,
-            locus.event,
-            locus.line,
-            locus.column,
-            rooms.join(", "),
-        );
+        if !rooms.is_empty() || !outcome.is_empty() {
+            let _ = writeln!(
+                diagnostic,
+                "lane {} packet `{}` at record {}:{} event {} line {}:{} recorded in [{}]{outcome}",
+                record.lane,
+                self.header,
+                locus.member,
+                locus.offset,
+                locus.event,
+                locus.line,
+                locus.column,
+                rooms.join(", "),
+            );
+        }
         if self.refusals == Refusals::Notify {
             crate::resident::supervisor::command::message_recorded(
                 self.paths,
@@ -232,9 +238,10 @@ impl Teller<'_> {
     }
 }
 
-/// One private record of what a packet published beyond its deliveries: the
-/// rooms it recorded in and the operator item it opened, scoped to the
-/// packet's authoring occupant.
+/// One private receipt for a packet that sent: how many recipients it reached
+/// and what it published beyond those deliveries, such as the rooms it
+/// recorded in and the operator item it opened, scoped to the packet's
+/// authoring occupant.
 #[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::resident) struct MessageRecordedNotice {
