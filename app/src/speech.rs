@@ -6,12 +6,15 @@
 
 mod shell;
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
 
+use crate::speech_chunks;
 use crate::speech_owner::PlaybackOwnership;
 use crate::speech_rate::system_rate;
 use crate::voice_spread::{self, OfferedVoice};
@@ -24,8 +27,8 @@ const MAX_OFFERED_VOICES: usize = 8;
 
 /// What the browser did with one system-speech request.
 pub enum SystemStart {
-    /// The utterance is with the browser. `notice` is the premium gap an
-    /// automatic spread stepped down from, carried once per page.
+    /// The shell utterance or browser utterance chain is queued. `notice` is
+    /// the premium gap an automatic spread stepped down from, carried once per page.
     Speaking { notice: Option<String> },
     /// The browser has published no voices yet, so no candidate can be
     /// matched and no utterance was started. The installed `voiceschanged`
@@ -33,13 +36,13 @@ pub enum SystemStart {
     AwaitingVoices,
 }
 
-/// What one system utterance reports back to the playback owner.
+/// What one system-speech entry reports back to the playback owner.
 pub struct SystemObservers<Voices, Ended, Failed> {
     /// The browser published its voice list, so the request can resume.
     pub voices: Voices,
-    /// The utterance finished speaking.
+    /// The shell utterance or complete browser chain finished speaking.
     pub ended: Ended,
-    /// The utterance failed, carrying the browser's own error code.
+    /// One utterance failed, carrying the synthesizer's own error code.
     pub failed: Failed,
 }
 
@@ -155,12 +158,14 @@ impl Voice {
     }
 }
 
-/// One playback owner. Replacements always stop the prior utterance first.
+/// One playback owner. Replacements always stop the prior chain first.
 #[derive(Default)]
 pub struct Controller {
     ownership: PlaybackOwnership,
+    media_generation: Rc<Cell<u64>>,
     engine: Option<Engine>,
-    utterance: Option<SpeechSynthesisUtterance>,
+    utterances: Vec<SpeechSynthesisUtterance>,
+    on_chunk_end: Vec<Closure<dyn FnMut(JsValue)>>,
     on_end: Option<Closure<dyn FnMut(JsValue)>>,
     on_error: Option<Closure<dyn FnMut(JsValue)>>,
     on_voices: Option<Closure<dyn FnMut(JsValue)>>,
@@ -171,9 +176,10 @@ pub struct Controller {
 }
 
 impl Controller {
-    /// Stop the current utterance, invalidate pending work, and begin one replacement.
+    /// Stop current playback, invalidate pending work, and begin one replacement.
     pub fn begin(&mut self) -> u64 {
         let generation = self.ownership.begin();
+        self.media_generation.set(generation);
         self.release_media();
         generation
     }
@@ -193,12 +199,14 @@ impl Controller {
     /// Stop current playback and invalidate pending work.
     pub fn stop(&mut self) {
         self.ownership.stop();
+        self.media_generation
+            .set(self.media_generation.get().wrapping_add(1));
         self.release_media();
     }
 
     /// Release synthesizer resources without changing playback ownership.
     fn release_media(&mut self) {
-        if let Some(utterance) = &self.utterance {
+        for utterance in &self.utterances {
             utterance.set_onend(None);
             utterance.set_onerror(None);
         }
@@ -207,7 +215,8 @@ impl Controller {
             engine.cancel();
         }
         self.engine = None;
-        self.utterance = None;
+        self.utterances.clear();
+        self.on_chunk_end.clear();
         self.on_end = None;
         self.on_error = None;
         self.on_voices = None;
@@ -286,21 +295,22 @@ impl Controller {
             }
         };
         let rate = system_rate(words_per_minute);
-        let ended = Closure::wrap(Box::new(move |_event: JsValue| on_end()) as Box<dyn FnMut(_)>);
-        let failed = Closure::wrap(
-            Box::new(move |event: JsValue| on_error(system_failure(&event))) as Box<dyn FnMut(_)>,
-        );
+        let end_generation = Rc::clone(&self.media_generation);
+        let ended = Closure::wrap(Box::new(move |_event: JsValue| {
+            if end_generation.replace(generation.wrapping_add(1)) == generation {
+                on_end();
+            }
+        }) as Box<dyn FnMut(_)>);
+        let error_generation = Rc::clone(&self.media_generation);
+        let failed = Closure::wrap(Box::new(move |event: JsValue| {
+            if error_generation.replace(generation.wrapping_add(1)) == generation {
+                on_error(system_failure(&event));
+            }
+        }) as Box<dyn FnMut(_)>);
         engine.observe_voices(None);
         match &engine {
             Engine::Browser(synthesis) => {
-                let utterance = SpeechSynthesisUtterance::new_with_text(text)
-                    .map_err(|_| "system speech utterance could not be created".to_owned())?;
-                utterance.set_voice(voice.as_ref().and_then(|voice| voice.browser.as_ref()));
-                utterance.set_rate(rate);
-                utterance.set_onend(Some(ended.as_ref().unchecked_ref()));
-                utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
-                synthesis.speak(&utterance);
-                self.utterance = Some(utterance);
+                self.start_browser_chain(synthesis, text, voice.as_ref(), rate, &ended, &failed)?
             }
             Engine::Shell(shell) => {
                 let handlers = js_sys::Object::new();
@@ -317,6 +327,56 @@ impl Controller {
         self.on_error = Some(failed);
         self.on_voices = None;
         Ok(SystemStart::Speaking { notice })
+    }
+
+    /// Build one browser chain before starting it, then expose only its first
+    /// utterance to the platform. Each admitted end starts exactly one
+    /// successor while this generation still owns playback.
+    fn start_browser_chain(
+        &mut self,
+        synthesis: &SpeechSynthesis,
+        text: &str,
+        voice: Option<&Voice>,
+        rate: f32,
+        ended: &Closure<dyn FnMut(JsValue)>,
+        failed: &Closure<dyn FnMut(JsValue)>,
+    ) -> Result<(), String> {
+        let generation = self.media_generation.get();
+        let utterances = speech_chunks::browser(text)
+            .map(|chunk| {
+                let utterance = SpeechSynthesisUtterance::new_with_text(chunk)
+                    .map_err(|_| "system speech utterance could not be created".to_owned())?;
+                utterance.set_voice(voice.and_then(|voice| voice.browser.as_ref()));
+                utterance.set_rate(rate);
+                utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
+                Ok(utterance)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut chunk_ends = Vec::new();
+        for index in 0..utterances.len().saturating_sub(1) {
+            let synthesis = synthesis.clone();
+            let next = utterances[index + 1].clone();
+            let media_generation = Rc::clone(&self.media_generation);
+            let advance = Closure::wrap(Box::new(move |_event: JsValue| {
+                if media_generation.get() == generation {
+                    synthesis.speak(&next);
+                }
+            }) as Box<dyn FnMut(_)>);
+            utterances[index].set_onend(Some(advance.as_ref().unchecked_ref()));
+            chunk_ends.push(advance);
+        }
+        utterances
+            .last()
+            .expect("the chunker yields one utterance for every input")
+            .set_onend(Some(ended.as_ref().unchecked_ref()));
+        self.utterances = utterances;
+        self.on_chunk_end = chunk_ends;
+        synthesis.speak(
+            self.utterances
+                .first()
+                .expect("the retained chain is nonempty"),
+        );
+        Ok(())
     }
 
     /// The voices `engine` publishes, or `None` once the observer that

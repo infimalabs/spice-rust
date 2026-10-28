@@ -392,10 +392,15 @@ Speech is the viewing device's own system synthesis: the browser's
 `speechSynthesis`, or under `spice app` the desktop shell's synthesizer, which
 offers the downloaded voices the embedded web view withholds (see
 [the console's speech surface](../../app/CONSOLE.md#speech)); nothing renders
-audio on the resident. One global queue speaks sequentially and never overlaps
-utterances. An utterance settles on the browser's end or error, and a failure
-is a nonblocking notice that never blocks the visible stream — the transcript
-remains the record. `say.voices` is an ordered list of voice names, scoped to
+audio on the resident. One global queue speaks entries sequentially and never
+overlaps them. Browser synthesis partitions long text at authored boundaries
+into at most 3,000 UTF-16 code units per platform utterance, preserving the
+complete text in source order and starting each remainder from its
+predecessor's end. Only the browser chain's final end settles its queue entry,
+while any error or stop cancels the active utterance and every remainder. A
+failure is a nonblocking notice that never
+blocks the visible stream — the transcript remains the record. `say.voices` is
+an ordered list of voice names, scoped to
 the agent's worktree: each device speaks an agent's messages with the first
 listed name it publishes, and the agent keeps that voice for the page. With an
 empty list, an Apple mobile browser—iPhone, iPad, iPod, or iPadOS presenting
