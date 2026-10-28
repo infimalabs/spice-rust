@@ -45,7 +45,9 @@ catalog and its New working group and ungrouped Designs targets; the catalog's
 heading row matches Jobs, Resident topology, and Provider quota at every width.
 A design tile is an agent tile's twin: its handle in its accent, its standing
 ending line one, its title beneath, and a click opening its read view. It wears
-its console channel's accent, or the Design base while ungrouped. A
+its console channel's accent. Ungrouped Designs deal the palette as unassigned
+agents do, but from its last accent backwards: plum first, then teal, red,
+gold, blue, and green by list position. A
 working-group card is its Open control: activating it mounts that group's
 console.
 

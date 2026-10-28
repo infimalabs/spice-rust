@@ -19,14 +19,27 @@ pub fn group_console(groups: &[WorkingGroup], group: &RoomAuthorityStamp) -> usi
 }
 
 /// The accent slot `design` wears wherever it is named: the deal of its place
-/// in its group's console, or [`DESIGN_BASE`] while no group holds it.
+/// in its group's console, else of its place in the `ungrouped` list, which
+/// deals from the palette's end backwards as the first group console does, the
+/// way unassigned agents deal from its start. A design in neither list wears
+/// [`DESIGN_BASE`].
 #[must_use]
-pub fn design_accent(groups: &[WorkingGroup], design: &TaskStamp) -> usize {
+pub fn design_accent(
+    groups: &[WorkingGroup],
+    ungrouped: &[TaskStamp],
+    design: &TaskStamp,
+) -> usize {
     groups
         .iter()
         .find_map(|group| {
             let position = group.anchors.iter().position(|anchor| anchor == design)?;
             Some(group_accent(group_console(groups, &group.group), position))
+        })
+        .or_else(|| {
+            ungrouped
+                .iter()
+                .position(|candidate| candidate == design)
+                .map(|position| group_accent(0, position))
         })
         .unwrap_or(DESIGN_BASE)
 }
@@ -60,16 +73,28 @@ mod tests {
         assert_eq!(group_console(&groups, &groups[0].group), 1);
 
         assert_eq!(
-            design_accent(&groups, &stamp(1_600_000_000_000_002)),
+            design_accent(&groups, &[], &stamp(1_600_000_000_000_002)),
             group_accent(1, 1)
         );
         assert_eq!(
-            design_accent(&groups, &stamp(1_600_000_000_000_003)),
+            design_accent(&groups, &[], &stamp(1_600_000_000_000_003)),
             group_accent(0, 0)
         );
         assert_eq!(
-            design_accent(&groups, &stamp(1_600_000_000_000_004)),
+            design_accent(&groups, &[], &stamp(1_600_000_000_000_004)),
             DESIGN_BASE
         );
+    }
+
+    #[test]
+    fn ungrouped_designs_deal_the_palette_backwards_from_plum_by_list_position() {
+        let ungrouped = (0..7)
+            .map(|offset| stamp(1_600_000_000_000_010 + offset))
+            .collect::<Vec<_>>();
+        let dealt = ungrouped
+            .iter()
+            .map(|design| design_accent(&[], &ungrouped, design))
+            .collect::<Vec<_>>();
+        assert_eq!(dealt, [DESIGN_BASE, 4, 3, 2, 1, 0, DESIGN_BASE]);
     }
 }

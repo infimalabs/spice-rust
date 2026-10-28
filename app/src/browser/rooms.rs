@@ -451,8 +451,9 @@ fn render_roster(
             activate: Callback::from(move |()| controls.open(group.clone(), None)),
         }
     };
+    let roster = Rc::new(crate::roster::working_groups(partition, tasks));
     let member = |design: &TaskStamp, _grouped: bool| {
-        let accent = crate::watchband::design_accent(&partition.groups, design);
+        let accent = crate::watchband::design_accent(&partition.groups, roster.ungrouped(), design);
         render_design(runtime, work, design, accent)
     };
     let revision = partition.revision;
@@ -462,7 +463,7 @@ fn render_roster(
     };
     roster::render(RosterView {
         wording: &GROUP_WORDING,
-        roster: Rc::new(crate::roster::working_groups(partition, tasks)),
+        roster: roster.clone(),
         revision,
         enabled: runtime.offers(CommandKind::WorkingGroupMove)
             && runtime.offers(CommandKind::WorkingGroupArrange),
