@@ -15,6 +15,7 @@ const FIRST: u64 = 4;
 const SECOND: u64 = 5;
 const SUCCESSOR: u64 = 6;
 const RENEWED: u64 = 7;
+const INITIAL_SEQUENCE: u64 = 52 * 52 * 52;
 
 #[test]
 fn a_birth_address_names_its_seated_occupant_and_distinct_births_stay_distinct() {
@@ -28,14 +29,17 @@ fn a_birth_address_names_its_seated_occupant_and_distinct_births_stay_distinct()
         .facts()
         .occupant_address(uuid(LANE_B), uuid(SECOND))
         .expect("second birth is proved");
-    assert_eq!((first, second), (address(2), address(3)));
+    assert_eq!(
+        (first, second),
+        (address(INITIAL_SEQUENCE + 1), address(INITIAL_SEQUENCE + 2))
+    );
     assert_eq!(
         bus.resolve_occupant(first).expect("resolver answers"),
-        Ok(birth(2, LANE_A, FIRST))
+        Ok(birth(INITIAL_SEQUENCE + 1, LANE_A, FIRST))
     );
     assert_eq!(
         bus.resolve_occupant(second).expect("resolver answers"),
-        Ok(birth(3, LANE_B, SECOND))
+        Ok(birth(INITIAL_SEQUENCE + 2, LANE_B, SECOND))
     );
     assert_eq!(
         facts.facts().occupant_address(uuid(LANE_B), uuid(FIRST)),
@@ -51,13 +55,14 @@ fn a_birth_address_names_its_seated_occupant_and_distinct_births_stay_distinct()
 fn an_address_off_a_birth_fact_is_refused_by_name() {
     let bus = seeded();
     assert_eq!(
-        bus.resolve_occupant(address(1)).expect("resolver answers"),
+        bus.resolve_occupant(address(INITIAL_SEQUENCE))
+            .expect("resolver answers"),
         Err(AddressRefusal::NotBirth {
-            address: address(1),
+            address: address(INITIAL_SEQUENCE),
             kind: FactKind::UpSeated,
         })
     );
-    for missing in [4, u64::MAX] {
+    for missing in [INITIAL_SEQUENCE + 3, u64::MAX] {
         assert_eq!(
             bus.occupant_birth(address(missing))
                 .expect("resolver answers"),
@@ -81,13 +86,15 @@ fn a_successor_expires_its_predecessor_address_and_receives_its_own() {
     });
     commit(&bus, write);
 
-    let predecessor = birth(2, LANE_A, FIRST);
+    let predecessor = birth(INITIAL_SEQUENCE + 1, LANE_A, FIRST);
     assert_eq!(
-        bus.resolve_occupant(address(2)).expect("resolver answers"),
+        bus.resolve_occupant(address(INITIAL_SEQUENCE + 1))
+            .expect("resolver answers"),
         Err(AddressRefusal::Expired { birth: predecessor })
     );
     assert_eq!(
-        bus.occupant_birth(address(2)).expect("resolver answers"),
+        bus.occupant_birth(address(INITIAL_SEQUENCE + 1))
+            .expect("resolver answers"),
         Ok(predecessor),
         "historical identity stays readable"
     );
@@ -96,10 +103,10 @@ fn a_successor_expires_its_predecessor_address_and_receives_its_own() {
         .facts()
         .occupant_address(uuid(LANE_A), uuid(SUCCESSOR))
         .expect("successor birth is proved");
-    assert_eq!(successor, address(4));
+    assert_eq!(successor, address(INITIAL_SEQUENCE + 3));
     assert_eq!(
         bus.resolve_occupant(successor).expect("resolver answers"),
-        Ok(birth(4, LANE_A, SUCCESSOR))
+        Ok(birth(INITIAL_SEQUENCE + 3, LANE_A, SUCCESSOR))
     );
     bus.shutdown().expect("writer stops");
 }
@@ -116,7 +123,7 @@ fn a_repeated_birth_proves_no_occupant() {
     let refusal = AddressRefusal::RepeatedBirth {
         occupant: uuid(FIRST),
     };
-    for position in [2, 4] {
+    for position in [INITIAL_SEQUENCE + 1, INITIAL_SEQUENCE + 3] {
         assert_eq!(
             bus.occupant_birth(address(position))
                 .expect("resolver answers"),
@@ -165,9 +172,10 @@ fn a_seat_without_a_retained_birth_has_no_address() {
         })
     );
     assert_eq!(
-        bus.resolve_occupant(address(4)).expect("resolver answers"),
+        bus.resolve_occupant(address(INITIAL_SEQUENCE + 3))
+            .expect("resolver answers"),
         Err(AddressRefusal::NotBirth {
-            address: address(4),
+            address: address(INITIAL_SEQUENCE + 3),
             kind: FactKind::LaneRenewed,
         })
     );
@@ -211,7 +219,7 @@ fn every_seat_address_resolves_to_its_shown_occupant_with_or_without_a_resident(
                 uuid(LANE_A),
                 SeatAddress::Seated {
                     occupant: uuid(SUCCESSOR),
-                    address: address(4),
+                    address: address(INITIAL_SEQUENCE + 3),
                 },
             ),
             (
@@ -223,11 +231,12 @@ fn every_seat_address_resolves_to_its_shown_occupant_with_or_without_a_resident(
             ),
             (uuid(LANE_C), SeatAddress::Vacant),
         ],
-        "the replaced occupant's address 2 is never offered for its lane"
+        "the replaced occupant's address is never offered for its lane"
     );
     assert_eq!(
-        bus.resolve_occupant(address(4)).expect("resolver answers"),
-        Ok(birth(4, LANE_A, SUCCESSOR))
+        bus.resolve_occupant(address(INITIAL_SEQUENCE + 3))
+            .expect("resolver answers"),
+        Ok(birth(INITIAL_SEQUENCE + 3, LANE_A, SUCCESSOR))
     );
     bus.shutdown().expect("writer stops");
 }

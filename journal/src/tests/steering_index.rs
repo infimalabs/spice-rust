@@ -263,7 +263,7 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     let snapshot = journal
         .steering_snapshot()
         .expect("steering recovery ignores unrelated bytes");
-    assert_eq!(snapshot.horizon(), Seq::new(2));
+    assert_eq!(snapshot.horizon(), Seq::new(crate::INITIAL_SEQUENCE + 1));
     assert_eq!(snapshot.facts().len(), 1);
     assert_eq!(snapshot.facts()[0].fact.kind(), wire::FactKind::SteerSent);
     assert!(
@@ -529,7 +529,10 @@ fn live_steering_pages_bound_rows_decode_work_and_preserve_continuation_order() 
         .expect("large live set exposes continuation");
     assert_eq!(first.rows().len(), MAX_STEERING_PAGE_ROWS);
     assert_eq!(overflow.omitted, 3);
-    assert_eq!(first.horizon().map(Seq::get), Some((total * 2) as u64));
+    assert_eq!(
+        first.horizon().map(Seq::get),
+        Some(crate::INITIAL_SEQUENCE + (total * 2) as u64 - 1)
+    );
     assert_eq!(
         first_metrics.queries, 2,
         "index horizon plus one page query"

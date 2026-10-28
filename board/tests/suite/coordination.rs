@@ -699,7 +699,7 @@ fn durable_snapshot_owns_one_validated_journal_answer() {
     };
 
     assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
-    assert_eq!(snapshot.cursor(), Cursor::at(seq(1)));
+    assert_eq!(snapshot.cursor(), Cursor::at(seq(52 * 52 * 52)));
     assert_eq!(snapshot.entries().len(), 1);
     assert_eq!(snapshot.entries()[0].handle(), &handle("BOARD-a1"));
 }

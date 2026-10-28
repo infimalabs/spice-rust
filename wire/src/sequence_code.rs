@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn sequence_codes_remain_lossless_and_canonical_at_number_boundaries() {
-        for value in [0, 1, 51, 52, 53, u64::MAX] {
+        for value in [0, 1, 51, 52, 53, 52 * 52 * 52, u64::MAX] {
             let code = SequenceCode::new(value);
             let text = code.to_string();
             assert_eq!(text.parse::<SequenceCode>().unwrap().get(), value);
@@ -100,6 +100,11 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&SequenceCode::new(52)).unwrap(),
             br#""10""#
+        );
+        assert_eq!(
+            SequenceCode::new(52 * 52 * 52).to_string(),
+            "1000",
+            "the first four-character value uses significant digits, not padding",
         );
         for text in [
             "",

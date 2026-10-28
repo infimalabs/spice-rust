@@ -221,8 +221,8 @@ fn contradictory_startup_replay_refuses_without_fold_mutation() {
     let connection = rusqlite::Connection::open(&path).expect("contradiction fixture opens");
     let envelope = connection
         .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE seq = 2",
-            [],
+            "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+            [i64::from(52 * 52 * 52 + 1)],
             |row| row.get::<_, Vec<u8>>(0),
         )
         .expect("read second steering fact");
@@ -230,8 +230,11 @@ fn contradictory_startup_replay_refuses_without_fold_mutation() {
     document["fact"]["key"] = Value::String(KEY.to_owned());
     connection
         .execute(
-            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = 2",
-            [serde_json::to_vec(&document).expect("encode contradictory envelope")],
+            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2",
+            rusqlite::params![
+                serde_json::to_vec(&document).expect("encode contradictory envelope"),
+                i64::from(52 * 52 * 52 + 1),
+            ],
         )
         .expect("store contradictory steering history");
     connection

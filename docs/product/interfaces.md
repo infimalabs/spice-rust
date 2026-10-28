@@ -61,8 +61,11 @@ refusals and faults to standard error.
 Text output, for humans and agents alike, spells every journal position as
 its condensed base-52 sequence code, and every position or cursor a command
 takes back as text (`--after`, a thread reference) admits only that spelling.
-The JSON outcome and wire payloads keep positions as integers. Persisted
-control strings keep their recorded decimal spelling.
+A new journal starts at position $52^3$, rendered canonically as `1000`, so
+every position it creates has at least four significant characters. Retained
+journals continue from their recorded positions without renumbering. The JSON
+outcome and wire payloads keep positions as integers. Persisted control strings
+keep their recorded decimal spelling.
 
 ## Room and Design commands
 
