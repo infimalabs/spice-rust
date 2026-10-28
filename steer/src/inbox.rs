@@ -301,9 +301,9 @@ pub enum Told {
     Replied,
 }
 
-/// Shared repair for visible, narrated and missing acknowledgment headers.
-pub const ACK_GUIDANCE: &str = "Use `ACK KEY [KEY ...]: response` or `NAK KEY: reason` in visible prose or a narrated \
-     tool call's intent. Recognized on landing, not turn end.";
+/// Shared repair for visible, intent-borne and missing acknowledgment headers.
+pub const ACK_GUIDANCE: &str = "Use `ACK KEY [KEY ...]: response` or `NAK KEY: reason` in visible prose or a tool \
+     call's intent. Recognized on landing, not turn end.";
 
 impl Told {
     fn push_pointer(self, rendered: &mut String, key: &str) {

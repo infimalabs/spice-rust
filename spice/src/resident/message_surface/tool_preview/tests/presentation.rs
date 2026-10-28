@@ -161,6 +161,34 @@ fn blank_text_presents_no_card_and_keeps_a_sibling_intent() {
     assert_eq!(prose, ["ACK 1kQwPZtK: Settled tool caption."]);
 }
 
+/// An intent's acknowledgment presents beside the visible text of its own
+/// message, and one answered in both presents once.
+#[test]
+fn an_acknowledging_intent_beside_visible_text_presents_once() {
+    let prose = |record: &[u8]| {
+        let publisher = publish_records(&[record]);
+        let messages = publisher.0.lock().expect("message lock");
+        messages
+            .iter()
+            .filter(|message| message.activity == wire::AgentActivityKind::Prose)
+            .map(|message| message.text.clone())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        prose(
+            br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Checking the listener."},{"type":"toolCall","id":"call-1","name":"read","intent":"Reading the listener","arguments":{}},{"type":"toolCall","id":"call-2","name":"read","intent":"ACK 1kQwPZtK: answered in the call.","arguments":{}}],"stopReason":"toolUse"}}"#
+        ),
+        ["Checking the listener.", "ACK 1kQwPZtK: answered in the call."]
+    );
+    assert_eq!(
+        prose(
+            br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQwPZtK: answered in the text."},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: answered in the call.","arguments":{}}],"stopReason":"toolUse"}}"#
+        ),
+        ["ACK 1kQwPZtK: answered in the text."]
+    );
+}
+
 /// A visible packet presents its own body as the author's outgoing quote even
 /// when the provider settles that block as paraphrased reasoning; the tool
 /// intent repeating its header stays a caption and presents no send.
