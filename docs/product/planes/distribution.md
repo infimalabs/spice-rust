@@ -131,6 +131,13 @@ link—the only byte-changing Windows step—and its content digest is re-admitt
 when packaged, so neither symbol capture nor detached signing can mutate the
 image.
 
+App and release builds resolve the compiler in Cargo order: `RUSTC`,
+`CARGO_BUILD_RUSTC`, the nearest ancestor Cargo config naming `build.rustc`,
+the selected Cargo home's config, then `PATH`. Within a config directory,
+`config` precedes `config.toml`. Configuration is parsed as TOML, so comments,
+inline tables and escaped strings retain their normal meaning; malformed TOML,
+a non-table `build` or a non-string `build.rustc` refuses selection.
+
 The release adapter opens each native executable and Windows PDB once, admits
 the held regular object's cross-platform identity, reads its exact admitted
 length through that handle, and then requires both the handle and its final

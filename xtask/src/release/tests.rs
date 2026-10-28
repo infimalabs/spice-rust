@@ -1311,62 +1311,37 @@ fn the_extension_less_cargo_config_is_the_one_read() {
     );
 }
 
-/// A config that cannot be understood refuses rather than answering.
-///
-/// Five shapes are driven because they stop the reader in five different
-/// places, and two of them hide the key rather than malform it: an inline
-/// `build` table and a quoted dotted key both carry a compiler name that a
-/// reader placing only the two spellings it likes would never see. The danger
-/// is identical in every case -- the `PATH` here holds a working compiler, so a
-/// resolver that stepped over the file would hand back a real path and the
-/// caller would admit a release for a build that was never going to start.
-#[cfg(unix)]
 #[test]
-fn a_cargo_config_that_cannot_be_understood_refuses_the_resolution() {
-    for (label, body, expected) in [
-        (
-            "unclosed header",
-            "[build\nrustc = \"/x\"\n",
-            "a table header does not close",
-        ),
-        (
-            "not a string",
-            "[build]\nrustc = 7\n",
-            "build.rustc is not one quoted string",
-        ),
-        (
-            "build is one value",
-            "build = 7\n",
-            "build is given as one value",
-        ),
-        (
-            "the key inside an inline table",
-            "build = { rustc = \"/hidden\" }\n",
-            "build is given as one value",
-        ),
-        (
-            "the key spelled as one quoted dotted key",
-            "\"build.rustc\" = \"/hidden\"\n",
-            "a key names rustc somewhere this reader cannot place it",
-        ),
+fn invalid_compiler_configuration_is_not_an_absent_selection() {
+    let path = Path::new("config.toml");
+    for document in [
+        "[build\nrustc = \"/x\"\n",
+        "build = 7\n",
+        "[build]\nrustc = 7\n",
     ] {
-        let tree = ConfigTree::new();
-        let written = tree.config("", "config.toml", body);
-        let environment = resolving_environment(tree.path_with_rustc(), None);
-
-        let error = environment
-            .rustc(&tree.build_dir("app"))
-            .expect_err("a config that cannot be understood is refused");
-        let refusal = error.to_string();
-        assert!(
-            refusal.contains(&written.display().to_string()),
-            "the {label} refusal never names the file it read: {refusal}",
-        );
-        assert!(
-            refusal.contains(expected),
-            "the {label} refusal never says what was wrong: {refusal}",
-        );
+        assert!(matches!(
+            named_rustc(document, path),
+            Err(TargetBuildError::CargoConfig { path: observed, .. }) if observed == path
+        ));
     }
+}
+
+#[test]
+fn compiler_configuration_decodes_strings_without_discarding_literal_comments() {
+    let path = Path::new("config.toml");
+    assert_eq!(
+        named_rustc(
+            "[build] # selection\nrustc = \"C:\\\\tools\\\\rust#c.exe\" # explanation\n",
+            path,
+        )
+        .expect("valid compiler configuration"),
+        Some(PathBuf::from(r"C:\tools\rust#c.exe")),
+    );
+    assert_eq!(
+        named_rustc("\"build.rustc\" = \"/not-a-build-setting\"\n", path)
+            .expect("an unrelated quoted key is valid TOML"),
+        None,
+    );
 }
 
 /// A config that exists and cannot be opened refuses rather than answering.

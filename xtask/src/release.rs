@@ -199,11 +199,9 @@ impl ReleaseEnvironment {
     ///
     /// # Errors
     ///
-    /// Returns a Cargo config that exists and cannot be opened, that names
-    /// `build.rustc` as something other than one quoted string, or that puts a
-    /// bare `rustc` key somewhere [`named_rustc`] will not place it. Such a
-    /// file is refused rather than stepped over, because stepping over it would
-    /// answer with the compiler Cargo was not going to run.
+    /// Returns an unreadable or malformed Cargo config, a non-table `build`,
+    /// or a non-string `build.rustc`. Refusal preserves the distinction between
+    /// an invalid configuration and an absent compiler selection.
     pub(crate) fn rustc(&self, build_dir: &Path) -> Result<Option<PathBuf>, TargetBuildError> {
         if let Some(overridden) = self.rustc.as_ref().or(self.build_rustc.as_ref()) {
             return Ok(Some(PathBuf::from(overridden)));
@@ -623,111 +621,29 @@ fn configured_rustc_in(directory: &Path) -> Result<Option<PathBuf>, TargetBuildE
     Ok(None)
 }
 
-/// The `build.rustc` string one Cargo config document names, if it names one.
-///
-/// One key out of a document, read as text the way [`crate::toolchain`] reads
-/// the pin document rather than by admitting a TOML parser into this crate to
-/// reach a single line. Unlike that document this repository does not write
-/// these -- one of them is the developer's own `~/.cargo/config.toml`, which is
-/// an ancestor of every worktree here -- so this reads them under one rule: no
-/// line naming a bare `rustc` key is ever walked past. Either it can be placed,
-/// and it answers, or it cannot, and the file is refused.
-///
-/// That rule is what makes the skipping safe. Every spelling that names a
-/// compiler contains `=`, every line containing `=` is placed here, and so a
-/// line holding neither a header nor a `=` cannot be the key however it is
-/// indented -- the interior of a multi-line array is the ordinary case, and
-/// stopping on it would refuse a `rustflags` list every Cargo reads happily.
-/// What a skip cannot do is hide the key, which is the whole point: a missed
-/// `build.rustc` stages bytes under a compiler nobody chose, while a refusal
-/// names the file and quotes whatever stopped it.
+/// Read `build.rustc` using the same TOML value semantics as Cargo.
 fn named_rustc(document: &str, path: &Path) -> Result<Option<PathBuf>, TargetBuildError> {
     let refuse = |detail: String| TargetBuildError::CargoConfig {
         path: path.to_path_buf(),
         detail,
     };
-    let mut table = String::new();
-    for line in document.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(header) = line.strip_prefix('[') {
-            let Some(header) = header.strip_suffix(']') else {
-                return Err(refuse(format!("a table header does not close: {line}")));
-            };
-            table = header.trim().to_owned();
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let (key, value) = (key.trim(), value.trim());
-        let dotted = key_path(&table, key);
-        if dotted == ["build"] {
-            return Err(refuse(format!(
-                "build is given as one value, so whether it names a rustc cannot be read: {line}"
-            )));
-        }
-        if dotted != ["build", "rustc"] {
-            if names_a_rustc(key) {
-                return Err(refuse(format!(
-                    "a key names rustc somewhere this reader cannot place it: {line}"
-                )));
-            }
-            continue;
-        }
-        let Some(named) = quoted(value) else {
-            return Err(refuse(format!(
-                "build.rustc is not one quoted string: {value}"
-            )));
-        };
-        return Ok(Some(PathBuf::from(named)));
-    }
-    Ok(None)
-}
-
-/// The dotted key one line writes, with the header it sits under in front.
-///
-/// Both halves are split, because Cargo reads `rustc` under a `[build]` header
-/// and a top-level `build.rustc` as the same key, and a reader that knew only
-/// one spelling would miss the other.
-fn key_path(table: &str, key: &str) -> Vec<String> {
-    table
-        .split('.')
-        .chain(key.split('.'))
-        .map(|segment| unquoted(segment.trim()).to_owned())
-        .filter(|segment| !segment.is_empty())
-        .collect()
-}
-
-/// Whether a key names `rustc` itself rather than a longer key starting with it.
-///
-/// `rustc-wrapper` and `rustc-workspace-wrapper` are ordinary `[build]` keys
-/// that decide nothing about which compiler runs, so they are let past; a bare
-/// `rustc` this reader could not place under `build` is not.
-fn names_a_rustc(key: &str) -> bool {
-    key.match_indices("rustc").any(|(at, found)| {
-        let identifier = |character: char| character.is_alphanumeric() || "-_".contains(character);
-        !key[..at].ends_with(identifier) && !key[at + found.len()..].starts_with(identifier)
-    })
-}
-
-/// The contents of one quoted TOML string, if that is the whole value.
-fn quoted(value: &str) -> Option<&str> {
-    value
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .or_else(|| {
+    let document: toml::Table =
+        toml::from_str(document).map_err(|error| refuse(error.to_string()))?;
+    let Some(build) = document.get("build") else {
+        return Ok(None);
+    };
+    let build = build
+        .as_table()
+        .ok_or_else(|| refuse("build must be a table".to_owned()))?;
+    build
+        .get("rustc")
+        .map(|value| {
             value
-                .strip_prefix('\'')
-                .and_then(|rest| rest.strip_suffix('\''))
+                .as_str()
+                .map(PathBuf::from)
+                .ok_or_else(|| refuse("build.rustc must be a string".to_owned()))
         })
-}
-
-/// One key segment with the quotes TOML allows around it removed.
-fn unquoted(segment: &str) -> &str {
-    quoted(segment).unwrap_or(segment)
+        .transpose()
 }
 
 fn find_program(path: &OsStr, name: &'static str) -> Result<PathBuf, TargetBuildError> {
