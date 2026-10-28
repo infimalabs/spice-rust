@@ -931,7 +931,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   mask: radial-gradient(closest-side, transparent calc(100% - var(--team-send-rim-width)), var(--app-mask-opaque) calc(100% - var(--team-send-rim-width) + .5px));
 }
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact])::after { opacity: .4; }
-.team-composer .team-send-label { --team-send-full-opacity: 0; --team-send-full-scale: 0; --team-send-word-offset: 0ch; --team-send-word-scale: 1; position: relative; z-index: 1; display: block; inline-size: 4ch; block-size: 1em; color: var(--ink); text-shadow: 0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent); transform: none; }
+.team-composer .team-send-label { --team-send-full-opacity: 0; --team-send-full-scale: 0; --team-send-word-offset: 0ch; --team-send-word-scale: 1; position: relative; z-index: 1; display: block; inline-size: 4ch; block-size: 1em; font-size: 1.5em; color: var(--ink); text-shadow: 0 .5px .15px color-mix(in srgb, var(--app-highlight-source) 40%, transparent); transform: none; }
 .team-composer .team-send:not(:disabled):is(:active, [data-touch-contact]) .team-send-label { translate: 0 .5px; }
 /* Complete coverage divides the original SEND footprint into two compressed words. */
 .team-composer .team-send-full { position: absolute; inset: 0; inline-size: 4ch; pointer-events: none; color: var(--focus); font-weight: 800; opacity: var(--team-send-full-opacity); transform: scaleX(var(--team-send-full-scale)); transform-origin: left center; transition: transform var(--app-motion-fast) var(--app-ease-standard), opacity var(--app-motion-fast) var(--app-ease-standard); }
