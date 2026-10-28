@@ -139,6 +139,69 @@ fn occupied_zero_refuses_before_task_stamp_clock_underflow() {
 }
 
 #[test]
+fn a_won_claim_carries_its_whole_statement() {
+    let (root, bus, epoch, seats) = fixture("claim-whole-statement", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let born = wire::TaskStamp::for_micros(8_002).expect("fixture task stamp");
+    let task = TaskHandle::for_project("task.cli", &born);
+    let statement = wire::intent::ClaimStatement {
+        title: "Hand the holder its contract".to_owned(),
+        pitch: "The holder works from the whole statement.".to_owned(),
+        description: Some(format!("Why it matters.\n\n{}", "context ".repeat(400))),
+        acceptance: vec![
+            "First criterion".to_owned(),
+            "Second criterion\n  continued".to_owned(),
+        ],
+        completion_contract: None,
+    };
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            preparation: None,
+            intent: None,
+            title: statement.title.clone(),
+            pitch: statement.pitch.clone(),
+            project: Some("task.cli".to_owned()),
+            description: statement.description.clone(),
+            acceptance: statement.acceptance.clone(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some(fixture_origin()),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+            draft: false,
+        },
+    ));
+    let available = board(&bus, epoch, lane.clone());
+    let answer = assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::ClaimWin,
+        claim_expected(&available, &task, &seats[0]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let CommandAnswer::Claim(claim) = answer else {
+        panic!("claim win returned another answer shape");
+    };
+    assert_eq!(claim.task, task);
+    let mut delivered = *claim.statement.expect("a won claim carries its statement");
+    assert!(
+        delivered.completion_contract.take().is_some(),
+        "acquisition discloses the completion contract"
+    );
+    assert_eq!(delivered, statement);
+    clean(&root, bus);
+}
+
+#[test]
 fn active_todo_task_show_prints_the_parser_owned_done_command() {
     let (root, bus, epoch, seats) = fixture("todo-show-next-action", 1);
     let task = add(
