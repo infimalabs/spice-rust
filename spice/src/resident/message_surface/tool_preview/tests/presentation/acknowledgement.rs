@@ -469,6 +469,57 @@ fn shared_acknowledgement_prose_renders_once_after_every_context() {
 }
 
 #[test]
+fn a_partially_superseded_header_presents_each_key_only_on_its_winning_event() {
+    let mut directives = directives(&[
+        ("1kQwPZtK", "Keep the current path."),
+        ("1kQwPZtL", "Keep the independent path."),
+    ]);
+    retire(&mut directives, "1kQwPZtK");
+    retire(&mut directives, "1kQwPZtL");
+    let first_key = "1kQwPZtK"
+        .parse::<steer::Key>()
+        .expect("fixture key parses");
+    let first_directive = directives
+        .directives
+        .get_mut(&first_key)
+        .expect("fixture directive");
+    first_directive.disposition = wire::Disposition::Declined;
+    first_directive
+        .retirement
+        .as_mut()
+        .expect("fixture retirement")
+        .event = 1;
+
+    let first = PresentationEvent {
+        superseded_answers: std::slice::from_ref(&first_key),
+        ..event()
+    };
+    assert_eq!(
+        presented_text("ACK 1kQwPZtK 1kQwPZtL: both accepted.", &directives, first,)
+            .expect("winning part of shared acknowledgment presents"),
+        "> Keep the independent path.\n\n1kQwPZtK: both accepted.",
+    );
+    assert_eq!(
+        presented_acknowledgement("ACK 1kQwPZtK 1kQwPZtL: both accepted.", &directives, first,),
+        Some(wire::MessageAcknowledgement::Acknowledged),
+    );
+
+    let later = PresentationEvent {
+        ordinal: 1,
+        ..event()
+    };
+    assert_eq!(
+        presented_text("NAK 1kQwPZtK: declined in intent.", &directives, later)
+            .expect("reanswering event presents"),
+        "> Keep the current path.\n\nDeclined in intent.",
+    );
+    assert_eq!(
+        presented_acknowledgement("NAK 1kQwPZtK: declined in intent.", &directives, later,),
+        Some(wire::MessageAcknowledgement::Declined),
+    );
+}
+
+#[test]
 fn non_key_text_after_a_recognized_header_remains_response_prose() {
     let directives = directives(&[("1kQwPZtK", "Keep the recognized direction visible.")]);
     for marker in ["ACK", "NAK"] {
@@ -681,6 +732,7 @@ fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
             unavailable_tool_terminals: &[],
             prose_origin: None,
             suppress_answer: false,
+            superseded_answers: &[],
         },
         &mut CallPreviews::default(),
         Some(&directives),

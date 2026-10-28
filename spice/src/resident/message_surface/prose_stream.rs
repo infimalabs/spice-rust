@@ -27,11 +27,12 @@ pub(super) fn observe(record: &AgentRecord<'_>, state: &mut MessageState) {
     );
 }
 
-pub(super) fn origin(
+fn origin(
     record: &AgentRecord<'_>,
     state: &MessageState,
     ordinal: u32,
     decoded: &listen::Event,
+    answers: &BTreeSet<steer::Key>,
 ) -> Option<wire::MessageProseOrigin> {
     let message = record.context.message.as_ref()?;
     let streamed = matches!(decoded, listen::Event::StreamedProse(_));
@@ -63,10 +64,7 @@ pub(super) fn origin(
         },
         streamed,
         intent: matches!(decoded, listen::Event::Tool(_)),
-        answers: steering_keys(std::iter::once(text))
-            .into_iter()
-            .map(|key| key.to_string())
-            .collect(),
+        answers: answers.iter().map(ToString::to_string).collect(),
     })
 }
 
@@ -91,25 +89,52 @@ pub(super) fn settled_block(
         && open(record, state).is_some_and(|open| open.answers.contains_key(&ordinal))
 }
 
-/// Whether a later answer in this provider message owns every steering key this
-/// event answers.
+#[derive(Debug, Default)]
+pub(super) struct AnswerSelection {
+    winners: BTreeSet<steer::Key>,
+    superseded: Vec<steer::Key>,
+}
+
+impl AnswerSelection {
+    pub(super) fn prose_origin(
+        &self,
+        record: &AgentRecord<'_>,
+        state: &MessageState,
+        ordinal: u32,
+        decoded: &listen::Event,
+    ) -> Option<wire::MessageProseOrigin> {
+        (!self.suppresses_event())
+            .then(|| origin(record, state, ordinal, decoded, &self.winners))
+            .flatten()
+    }
+
+    pub(super) fn superseded(&self) -> &[steer::Key] {
+        &self.superseded
+    }
+
+    pub(super) fn suppresses_event(&self) -> bool {
+        self.winners.is_empty() && !self.superseded.is_empty()
+    }
+}
+
+/// Selects the steering keys whose answer this event owns.
 ///
 /// Transcript retirement reads complete events newest-first, so presentation
 /// uses the same event order instead of preferring visible text over a later
 /// tool intent. A completed streamed answer remains authoritative over its
 /// settled intent fallback because it was recognized when it landed.
-pub(super) fn answer_superseded(
+pub(super) fn answer_selection(
     record: &AgentRecord<'_>,
     state: &MessageState,
     position: usize,
     decoded: &listen::Event,
-) -> bool {
+) -> AnswerSelection {
     let Some(text) = decoded.assistant_text() else {
-        return false;
+        return AnswerSelection::default();
     };
     let keys = steering_keys(std::iter::once(text));
     if keys.is_empty() {
-        return false;
+        return AnswerSelection::default();
     }
     let later = steering_keys(
         record
@@ -118,14 +143,21 @@ pub(super) fn answer_superseded(
             .skip(position + 1)
             .filter_map(|(_, event)| event.assistant_text()),
     );
-    if keys.iter().all(|key| later.contains(key)) {
-        return true;
-    }
     let streamed = open(record, state);
-    matches!(decoded, listen::Event::Tool(_))
-        && keys.iter().all(|key| {
-            streamed.is_some_and(|open| open.answers.values().any(|answers| answers.contains(key)))
-        })
+    let streamed_wins = |key: &steer::Key| {
+        matches!(decoded, listen::Event::Tool(_))
+            && streamed
+                .is_some_and(|open| open.answers.values().any(|answers| answers.contains(key)))
+    };
+    let mut selection = AnswerSelection::default();
+    for key in keys {
+        if later.contains(&key) || streamed_wins(&key) {
+            selection.superseded.push(key);
+        } else {
+            selection.winners.insert(key);
+        }
+    }
+    selection
 }
 
 pub(super) fn remember(

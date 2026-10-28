@@ -21,6 +21,7 @@ pub(super) fn publish(
             unavailable_tool_terminals: &record.unavailable_tool_terminals,
             prose_origin: None,
             suppress_answer: false,
+            superseded_answers: &[],
         },
         &mut state.previews,
         None,

@@ -332,8 +332,9 @@ struct DisplayStanding<'a>(&'a EventDirectives<'a>);
 
 impl steer::Standing for DisplayStanding<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
-        (self.0.directives.directives.contains_key(key) || self.0.is_lane_seal(key))
-            .then_some(wire::Disposition::Live)
+        (!self.0.event.superseded_answers.contains(key)
+            && (self.0.directives.directives.contains_key(key) || self.0.is_lane_seal(key)))
+        .then_some(wire::Disposition::Live)
     }
 }
 

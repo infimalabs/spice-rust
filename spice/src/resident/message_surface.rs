@@ -610,6 +610,7 @@ struct AgentEvent<'a> {
     unavailable_tool_terminals: &'a [String],
     prose_origin: Option<wire::MessageProseOrigin>,
     suppress_answer: bool,
+    superseded_answers: &'a [steer::Key],
 }
 
 struct ProjectedMessage {
@@ -788,6 +789,7 @@ pub(super) fn present_acknowledged_prose(
             source: Some(source),
             locus: prose.locus,
             ordinal,
+            superseded_answers: &[],
         },
     )
     .map_err(|error| format!("{error:?}"))
@@ -1221,7 +1223,7 @@ fn has_broadcast_marker(text: &str) -> bool {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct PresentationEvent {
+struct PresentationEvent<'a> {
     lane: CanonicalUuid,
     /// Occupant whose transcript wrote the event, when the presenter knows it;
     /// only an event with an author presents its MSG packets as sends.
@@ -1229,11 +1231,13 @@ struct PresentationEvent {
     source: Option<CanonicalUuid>,
     locus: listen::Locus,
     ordinal: u32,
+    /// Keys whose answer a later event in this captured record owns.
+    superseded_answers: &'a [steer::Key],
 }
 
 struct EventDirectives<'a> {
     directives: &'a PresentationDirectives,
-    event: PresentationEvent,
+    event: PresentationEvent<'a>,
 }
 
 impl EventDirectives<'_> {
@@ -1243,6 +1247,9 @@ impl EventDirectives<'_> {
         disposition: wire::Disposition,
         locus: steer::ack::scan::Locus,
     ) -> bool {
+        if self.event.superseded_answers.contains(key) {
+            return false;
+        }
         let Some(directive) = self.directives.directives.get(key) else {
             return false;
         };
@@ -1264,6 +1271,9 @@ impl EventDirectives<'_> {
     /// speech; later records only reuse its already-authenticated context for
     /// presentation.
     fn answered_for_lane(&self, key: &steer::Key) -> Option<wire::Disposition> {
+        if self.event.superseded_answers.contains(key) {
+            return None;
+        }
         self.directives
             .directives
             .get(key)
@@ -1335,6 +1345,9 @@ impl EventDirectives<'_> {
 
 impl steer::Standing for EventDirectives<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
+        if self.event.superseded_answers.contains(key) {
+            return None;
+        }
         let directive = self.directives.directives.get(key)?;
         if directive.disposition == wire::Disposition::Live
             || (directive.lane == self.event.lane
@@ -1351,7 +1364,7 @@ impl steer::Standing for EventDirectives<'_> {
 
 fn retirement_record_matches(
     retirement: wire::body::TranscriptLocus,
-    event: PresentationEvent,
+    event: PresentationEvent<'_>,
 ) -> bool {
     retirement
         .source
@@ -1364,7 +1377,7 @@ fn retirement_record_matches(
 
 fn retirement_matches(
     retirement: wire::body::TranscriptLocus,
-    event: PresentationEvent,
+    event: PresentationEvent<'_>,
     locus: steer::ack::scan::Locus,
 ) -> bool {
     retirement_record_matches(retirement, event)
