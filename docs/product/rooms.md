@@ -208,7 +208,10 @@ owns each rule summarized here.
   acceptance-bearing outputs of any intent still gated by the Design, such as
   ordinary tasks or Plans it constructed directly, with source-backed
   justification. A conclude or collapse recommendation names no output or
-  governed input and carries the same source-backed justification. A mistaken
+  governed input and carries the same source-backed justification. A pass
+  starts from no: its holder builds only outputs the room's contributions or
+  other cited sources earn, and collapse is the expected recommendation when
+  nothing earns an output or the Design itself. A mistaken
   undecided proposal can be retracted by its author with `design withdraw
   WITHDRAWAL_JSON`; the version stays in history but leaves the operator's
   choices.
