@@ -609,7 +609,7 @@ struct AgentEvent<'a> {
     observations: &'a MessageObservations,
     unavailable_tool_terminals: &'a [String],
     prose_origin: Option<wire::MessageProseOrigin>,
-    suppress_intent: bool,
+    suppress_answer: bool,
 }
 
 struct ProjectedMessage {

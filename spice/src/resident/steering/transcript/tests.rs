@@ -26,6 +26,10 @@ const OMP_PARAPHRASED_END: &[u8] = br#"{"type":"message_end","message":{"role":"
 /// verbatim assistant words are the call's declared intent.
 const OMP_NARRATED_INTENT: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Confirming the revision and checking the listener next.","thinkingSignature":"CAQS/AcKEQgSGAI4AUIJbmFycmF0aW9u"},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"git status","i":"ACK 1kKRRsDS: revision accepted"},"intent":"ACK 1kKRRsDS: revision accepted"}],"stopReason":"toolUse"}}
 "#;
+const TEXT_ACK_INTENT_NAK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: accepted in text."},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kKRRsDS: declined in intent.","arguments":{}}],"stopReason":"toolUse"}}
+"#;
+const TEXT_NAK_INTENT_ACK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"NAK 1kKRRsDS: declined in text."},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kKRRsDS: accepted in intent.","arguments":{}}],"stopReason":"toolUse"}}
+"#;
 
 struct LiveKey;
 
@@ -96,6 +100,35 @@ fn a_leading_header_in_a_narrated_messages_tool_intent_retires_the_key() {
         }
     ));
     assert_eq!(recognition.locus.event, 1);
+}
+
+#[test]
+fn a_mixed_text_and_intent_answer_uses_the_last_decisive_event() {
+    for (record, disposition, answer) in [
+        (
+            TEXT_ACK_INTENT_NAK,
+            Disposition::Declined,
+            "declined in intent.",
+        ),
+        (
+            TEXT_NAK_INTENT_ACK,
+            Disposition::Acked,
+            "accepted in intent.",
+        ),
+    ] {
+        let fixture = Fixture::new(&[record]);
+        let recognition = transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey)
+            .unwrap_or_else(|outcome| panic!("mixed answer is evidence: {outcome:?}"));
+        assert!(matches!(
+            recognition.outcome,
+            ScanOutcome::Retired {
+                disposition: selected,
+                ..
+            } if selected == disposition
+        ));
+        assert_eq!(recognition.answer.as_deref(), Some(answer));
+        assert_eq!(recognition.locus.event, 1);
+    }
 }
 
 #[test]

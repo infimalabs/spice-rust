@@ -83,12 +83,12 @@ pub(super) fn publish_agent_record(
         .is_some_and(|outcome| {
             outcome.agent_invoked && outcome.status == listen::PromptStatus::Completed
         });
-    for &(ordinal, decoded) in record.events {
+    for (position, &(ordinal, decoded)) in record.events.iter().enumerate() {
         if prose_stream::settled_block(&record, state, ordinal, decoded) {
             continue;
         }
-        let suppress_intent = prose_stream::intent_represented(&record, state, decoded);
-        let prose_origin = if suppress_intent {
+        let suppress_answer = prose_stream::answer_superseded(&record, state, position, decoded);
+        let prose_origin = if suppress_answer {
             None
         } else {
             prose_stream::origin(&record, state, ordinal, decoded)
@@ -109,7 +109,7 @@ pub(super) fn publish_agent_record(
             observations: &state.observations,
             unavailable_tool_terminals: record.unavailable_tool_terminals,
             prose_origin,
-            suppress_intent,
+            suppress_answer,
         };
         let markdown_images = state.media_hydration.observe(&event, record.transcript);
         let Some(projected) =
@@ -408,7 +408,7 @@ fn project_event_body(
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<Option<ProjectedEvent>> {
-    if !event.suppress_intent
+    if !event.suppress_answer
         && let Some(prose) = spice::agent_prose::quoteable(event.decoded)
     {
         if let listen::Event::Tool(tool) = event.decoded {

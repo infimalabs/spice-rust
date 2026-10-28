@@ -4,6 +4,7 @@ const START: &str = r#"{"type":"message_start","messageId":"msg-7","message":{"r
 const STREAMED: &str = r#"{"type":"message_update","messageId":"msg-7","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_end","contentIndex":1,"content":"ACK 1kQwPZtK: Original authored reply."}}"#;
 const VERBATIM: &str = r#"{"type":"message_end","messageId":"msg-7","message":{"role":"assistant","timestamp":200,"stopReason":"toolUse","content":[{"type":"thinking","thinking":"private reasoning"},{"type":"text","text":"ACK 1kQwPZtK: Original authored reply."},{"type":"toolCall","id":"call-1","name":"read","arguments":{}}]}}"#;
 const NORMALIZED: &str = r#"{"type":"message_end","messageId":"msg-7","message":{"role":"assistant","timestamp":200,"stopReason":"toolUse","content":[{"type":"thinking","thinking":"paraphrased commentary"},{"type":"thinking","thinking":"private reasoning"},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kQwPZtK: Settled tool caption.","arguments":{}}]}}"#;
+const CONTRADICTED: &str = r#"{"type":"message_end","messageId":"msg-7","message":{"role":"assistant","timestamp":200,"stopReason":"toolUse","content":[{"type":"thinking","thinking":"paraphrased commentary"},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kQwPZtK: Contradicting settled fallback.","arguments":{}}]}}"#;
 const FINAL: &str = r#"{"type":"prompt_result","id":"prompt-1","agentInvoked":true,"status":"completed","sessionSettled":true}"#;
 
 fn identity(last: u8) -> CanonicalUuid {
@@ -31,8 +32,8 @@ fn record(row: &str, offset: u64) -> lane::capture::CaptureRecord {
 }
 
 #[test]
-fn completed_ack_is_visible_before_settlement_and_survives_both_settled_shapes() {
-    for settled in [VERBATIM, NORMALIZED] {
+fn completed_ack_is_visible_before_settlement_and_survives_settled_variants() {
+    for settled in [VERBATIM, NORMALIZED, CONTRADICTED] {
         let bus = Bus::start(journal::Journal::in_memory().expect("authority opens"))
             .expect("bus starts");
         let mut write = journal::JournalWrite::new(
