@@ -1180,8 +1180,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     if workflow.flow.len() == 1 && workflow.flow.first() == Some(&workflow.phase) {
         return vec![
             "phase_guidance:".to_owned(),
-            "  phase:plan is this task's entire flow; completing it needs an acceptance contract: acceptance on this task, or pending work carrying acceptance joined to it by a dependency in either direction."
-                .to_owned(),
+            "  phase:plan is this task's entire flow.".to_owned(),
             "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and depends on that Plan; --preparation HANDLE associates it explicitly. A sub-Plan waits on its parent Plan like any other constructed task. Origin alone creates no edge."
                 .to_owned(),
             "  Explicit --depends adds ordinary prerequisites. A Design dependency is an ordinary editable edge; design decide removes the accepted outputs' exact edges, closes the rejected ones, and from then on the Design waits on each released output as its prerequisite until that output settles. Never add that controller-to-output edge by hand: it is derived from the output's retained preparation."
@@ -1197,8 +1196,6 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     vec![
         "phase_guidance:".to_owned(),
         "  phase:plan makes the execution contract explicit on this task or decomposes it into dependency-connected child tasks."
-            .to_owned(),
-        "  Completing this phase needs an acceptance contract: acceptance on this task, or pending work carrying acceptance joined to it by a dependency in either direction. A Plan whose need warrants no work records why with spice task done --disposition no-work|duplicate|covered|deferred."
             .to_owned(),
         "  Ordinary output creation without an explicit origin associates with the ambient controller. Use --preparation HANDLE for explicit association; a preparation Plan may run while its Design is unfinished. Origin alone does not schedule work."
             .to_owned(),
