@@ -102,6 +102,8 @@ fn claim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<Co
 // ancestors' private items, so the guard tests below call `claim_plan` and
 // `commit_claim` unchanged, and the formatters gate covers each file by
 // construction rather than by an enumeration kept by hand.
+mod acceptance;
+use acceptance::*;
 mod client;
 pub(super) use client::*;
 mod client_document;

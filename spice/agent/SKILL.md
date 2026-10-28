@@ -74,13 +74,14 @@ wake. Design questions: `spice room contribute HANDLE --ask TEXT`.
   split, or release stale scope rather than force it.
 - Plan/Design purpose survives phases; done cannot replace review. Ambient
   creation binds unless another `--origin`; `--preparation` binds explicitly.
-  A Plan creates an acceptance-bearing executable task, else `task done
-  --disposition KIND [--cover REF]`; positive review releases outputs to
-  dependencies without authorizing them. A Design pass ends with `design
-  propose JUSTIFICATION`, assembled from acceptance-bearing outputs built under
-  the claim and the room (none: `--recommend conclude|collapse`). Only the
-  operator concludes a Design; stop means checkpoint/free. Outputs await exact
-  `design decide`, which nothing else bypasses; a veto closes the output.
+  Done and clean review need acceptance, own or on directly linked work; a
+  Plan warranting no work uses `task done --disposition KIND [--cover REF]`.
+  Positive review releases outputs to dependencies without authorizing them.
+  A Design pass ends with `design propose JUSTIFICATION`, assembled from
+  acceptance-bearing outputs built under the claim and the room (none:
+  `--recommend conclude|collapse`). Only the operator concludes a Design;
+  stop means checkpoint/free. Outputs await exact `design decide`, which
+  nothing else bypasses; a veto closes the output.
 - Work incrementally; commit only under the matching claim. Never pull/push or
   alter harness attribution. Release unfinished work via `task free` or
   self-deferral, never stash/gate bypass. Resolve merges/replays before

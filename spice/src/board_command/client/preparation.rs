@@ -166,6 +166,9 @@ pub(super) fn client_design_propose(
             Err(outcome) => return outcome,
         }
     }
+    if let Err(outcome) = acceptance_witnesses(&board, design, &mut expected) {
+        return outcome;
+    }
     expected.push(Witness::Proposal {
         proposal: ProposalRef::Candidate {
             candidate: proposal.candidate.clone(),

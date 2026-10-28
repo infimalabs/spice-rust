@@ -1060,23 +1060,3 @@ pub(super) fn connect_child(
         },
     ));
 }
-
-pub(super) fn claim_free_witnesses(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    lane: &Actor,
-    seat: &Seat,
-    task: &TaskHandle,
-) -> Vec<Witness> {
-    let held = board(bus, epoch, lane.clone());
-    let heads = at(&held, task);
-    let lease = heads.lease.as_ref().expect("claimed task carries lease");
-    vec![
-        claim_witness(heads),
-        Witness::Lease {
-            task: heads.statement.body.born.clone(),
-            head: lease.position,
-        },
-        residency(&held, seat),
-    ]
-}

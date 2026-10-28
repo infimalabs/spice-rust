@@ -820,15 +820,6 @@ fn client_depends(
                 new_edges.push(born.clone());
             }
         }
-        if remove
-            && heads.workflow.body.phase.as_str() == "plan"
-            && (heads.workflow.body.flow.len() == 1
-                || !substantive_acceptance(&heads.statement.body.acceptance))
-            && let Some(child) = dependency_removal_plan_child(board, heads, &after)?
-        {
-            expected.push(statement_witness(child));
-            expected.push(workflow_witness(child));
-        }
         append_dependency_reachability_witnesses(board, &new_edges, &mut expected)?;
         Ok((
             CommandKind::TaskDepends,
@@ -841,27 +832,6 @@ fn client_depends(
             .expect("typed intent encodes"),
         ))
     })
-}
-
-pub(super) fn dependency_removal_plan_child<'a>(
-    board: &'a BoardAnswer,
-    plan: &BoardTask,
-    removed: &[TaskHandle],
-) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {
-    for dependency in &plan.statement.body.dependencies {
-        let child = task_heads_by_stamp(board, dependency)?;
-        if !removed.contains(&child.statement.body.handle) && accepted_construction(child) {
-            return Ok(Some(child));
-        }
-    }
-    Ok(board.tasks.iter().find(|child| {
-        child
-            .statement
-            .body
-            .dependencies
-            .contains(&plan.statement.body.born)
-            && accepted_construction(child)
-    }))
 }
 
 fn client_modify(
@@ -1213,40 +1183,7 @@ pub(super) fn progress_witnesses(
             reviewer,
         });
     }
-    let owner = planning::construction_owner(
-        &heads.statement.body.born,
-        heads.statement.body.preparation.as_ref(),
-    );
-    let construction = task_heads_by_stamp(board, owner)?;
-    if (construction.workflow.body.status.is_pending()
-        && planning::requires_construction(
-            construction.statement.body.intent,
-            &construction.workflow.body.flow,
-        ))
-        || heads.workflow.body.phase.as_str() == "plan"
-    {
-        if owner != &heads.statement.body.born {
-            expected.push(statement_witness(construction));
-            expected.push(workflow_witness(construction));
-        }
-        for dependency in &construction.statement.body.dependencies {
-            let child = task_heads_by_stamp(board, dependency)?;
-            if accepted_construction(child) {
-                expected.push(statement_witness(child));
-                expected.push(workflow_witness(child));
-            }
-        }
-        for child in board
-            .tasks
-            .iter()
-            .filter(|child| child.statement.body.dependencies.contains(owner))
-        {
-            if accepted_construction(child) {
-                expected.push(statement_witness(child));
-                expected.push(workflow_witness(child));
-            }
-        }
-    }
+    acceptance_witnesses(board, heads, &mut expected)?;
     Ok(expected)
 }
 

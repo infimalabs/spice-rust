@@ -87,7 +87,7 @@ fn authored_task_creation_omits_review_behind_review_dependencies_unless_its_flo
     let initial = apply_document(
         &bus,
         epoch,
-        "# Goal\n\n- Review prerequisite\n  Flow: todo, review\n",
+        "# Goal\n\n- Review prerequisite\n  Acceptance: the prerequisite is verified\n  Flow: todo, review\n",
         &initial_board,
     );
     let prerequisite = titled(&initial.board, "Review prerequisite")
@@ -104,7 +104,7 @@ fn authored_task_creation_omits_review_behind_review_dependencies_unless_its_flo
         epoch,
         concat!(
             "# Goal\n\n",
-            "- Review prerequisite\n  Flow: todo, review\n",
+            "- Review prerequisite\n  Acceptance: the prerequisite is verified\n  Flow: todo, review\n",
             "- Dependent correction\n",
             "  After: review-prerequisite\n",
             "- Material correction\n",
@@ -548,7 +548,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
             operation: Some(completion_operation()),
         },
     );
-    assert_refusal(refused, "task::plan-incomplete");
+    assert_refusal(refused, "task::acceptance-missing");
 
     let visible = board(&bus, epoch, Actor::Operator);
     assert_committed(issue(
@@ -642,7 +642,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
             operation: Some(completion_operation()),
         },
     );
-    assert_refusal(refused, "task::plan-witness-missing");
+    assert_refusal(refused, "task::acceptance-witness-missing");
 
     let held = board(&bus, epoch, lane.clone());
     assert_committed(issue(
@@ -671,52 +671,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
 }
 
 #[test]
-fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
-    let (root, bus, epoch, seats) = fixture("plan-only-child", 1);
-    let lane = Actor::Lane(seats[0].lane);
-    let own_acceptance = add_raw_task(
-        &bus,
-        epoch,
-        "PLAN-1kLGp009",
-        "WK-29 own acceptance is not enough",
-        &["plan-only task states intent"],
-        Some("plan"),
-    );
-    claim_task(&bus, epoch, &seats[0], &lane, &own_acceptance);
-    let held = board(&bus, epoch, lane.clone());
-    let refused = issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::TaskDone,
-        progress_witnesses(
-            &held,
-            at(&held, &own_acceptance),
-            seats[0].lane,
-            seats[0].occupant,
-            false,
-        )
-        .expect("plan-only task has witnesses"),
-        &TaskDone {
-            task: own_acceptance.clone(),
-            validation: "own acceptance does not create implementation work".to_owned(),
-            disposition: None,
-            operation: Some(completion_operation()),
-        },
-    );
-    assert_refusal(refused, "task::plan-incomplete");
-    assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimFree,
-        claim_free_witnesses(&bus, epoch, &lane, &seats[0], &own_acceptance),
-        &TaskRef {
-            task: own_acceptance,
-        },
-    ));
-    clean(&root, bus);
-
+fn wk_plan_only_flow_completes_with_a_connected_accepted_child() {
     let (root, bus, epoch, seats) = fixture("plan-only-child-completes", 1);
     let lane = Actor::Lane(seats[0].lane);
     let parent = add_raw_task(
