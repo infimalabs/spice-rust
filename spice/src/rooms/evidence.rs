@@ -541,6 +541,14 @@ impl<K> EvidenceProfile<K> {
     pub fn holds(&self, predicate: impl Fn(&K) -> bool) -> bool {
         self.cards.iter().any(|card| predicate(&card.evidence.key))
     }
+
+    /// The whole-message view of every retained conversation card.
+    pub fn conversation_messages(&self) -> impl Iterator<Item = &TermCounts> {
+        self.cards
+            .iter()
+            .filter(|card| matches!(card.evidence.kind, Kind::Conversation))
+            .filter_map(|card| card.evidence.views.first().map(|(_, counts)| counts))
+    }
 }
 
 impl<K> Card<K> {

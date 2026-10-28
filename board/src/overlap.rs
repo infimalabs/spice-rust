@@ -25,8 +25,9 @@ pub struct ClaimOverlap {
 
 /// Find active claims whose statement overlaps the selected one.
 ///
-/// Every statement is weighted under the shared TF-IDF fit of the recent
-/// window of `entries`. A claim warns when its cosine with the selected
+/// Every statement is weighted under the shared fit of the recent window of
+/// `entries`, with the conversation background that fit already carries. A
+/// claim warns when its cosine with the selected
 /// statement reaches [`CLAIM_OVERLAP_FLOOR`], or when both name one exact
 /// code-shaped identifier few of `entries` carry, so board-wide boilerplate
 /// never qualifies. Project names are deliberately absent: a
@@ -35,7 +36,7 @@ pub struct ClaimOverlap {
 #[must_use]
 pub fn claim_overlaps(selected: &Entry, entries: &[Entry]) -> Vec<ClaimOverlap> {
     let matcher = MatchCache::shared();
-    let frequency = matcher.fit(entries.iter().map(Entry::statement));
+    let frequency = matcher.fit_carried(entries.iter().map(Entry::statement));
     let mut identifier_frequency = BTreeMap::<String, usize>::new();
     for identifier in entries
         .iter()

@@ -5,8 +5,9 @@
 //! therefore uses only the lane, vendor, and vendor-declared resumable identity.
 //! Occupants are lookup witnesses; they are never profile identities.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use board::similarity::Background;
 use wire::{CanonicalUuid, Name, Seq, TaskStamp, body::LaneSessionDeclared};
 
 use super::evidence::{Digest, Evidence, EvidenceProfile, Kind};
@@ -298,6 +299,20 @@ impl SessionProfiles {
     /// Mutable profiles in deterministic session-key order.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&SessionKey, &mut SessionProfile)> {
         self.profiles.iter_mut()
+    }
+
+    /// The conversation every occupied session holds, counted as the
+    /// matchers' background: bounded by the seated occupants, never by
+    /// retained history.
+    #[must_use]
+    pub fn conversation_background(&self) -> Background {
+        let occupied = self.occupants.values().collect::<BTreeSet<_>>();
+        Background::of(
+            occupied
+                .into_iter()
+                .filter_map(|session| self.profiles.get(session))
+                .flat_map(|profile| profile.evidence.conversation_messages()),
+        )
     }
 
     /// Retain one card only when the emitting occupant declared an identity.

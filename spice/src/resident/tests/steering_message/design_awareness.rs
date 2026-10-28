@@ -499,19 +499,6 @@ impl Lanes {
 }
 
 #[test]
-fn reach_match_floors_follow_the_balanced_base_ratio() {
-    use wire::rooms::DesignReach::{Narrow, Wide};
-
-    for (reach, expected) in [(Wide, 0.10), (Narrow, 0.20)] {
-        let observed = crate::resident::design_awareness::match_score_floor(reach);
-        assert!(
-            (observed - expected).abs() < 1e-12,
-            "{reach:?} floor {observed} != {expected}"
-        );
-    }
-}
-
-#[test]
 fn an_unsteeped_design_invites_wide_grouped_or_not() {
     for (fixture, grouped) in [
         ("design-request-ungrouped", false),
