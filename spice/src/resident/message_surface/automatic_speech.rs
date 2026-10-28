@@ -421,7 +421,7 @@ mod tests {
             .expect("fixture publication instant")
     }
 
-    fn event() -> PresentationEvent {
+    fn event() -> PresentationEvent<'static> {
         PresentationEvent {
             lane: lane(),
             author: None,
@@ -432,6 +432,7 @@ mod tests {
                 length: 3,
             },
             ordinal: 0,
+            superseded_answers: &[],
         }
     }
 

@@ -56,13 +56,14 @@ fn operator_attribution() -> wire::QuoteAttribution {
     }
 }
 
-fn event() -> PresentationEvent {
+fn event() -> PresentationEvent<'static> {
     PresentationEvent {
         lane: lane(),
         author: None,
         source: None,
         locus: listen::Locus::new(1, 0, 1),
         ordinal: 0,
+        superseded_answers: &[],
     }
 }
 
@@ -204,6 +205,15 @@ fn acknowledgement_events_present_the_transcript_winner_once() {
             br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQwPZtK: first key."},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kQwPZtL: second key.","arguments":{}}],"stopReason":"toolUse"}}"#
         ),
         ["ACK 1kQwPZtK: first key.", "NAK 1kQwPZtL: second key."]
+    );
+    assert_eq!(
+        prose(
+            br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQwPZtK 1kQwPZtL: both accepted."},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kQwPZtK: declined in intent.","arguments":{}}],"stopReason":"toolUse"}}"#
+        ),
+        [
+            "ACK 1kQwPZtK 1kQwPZtL: both accepted.",
+            "NAK 1kQwPZtK: declined in intent.",
+        ]
     );
 }
 

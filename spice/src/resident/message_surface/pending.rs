@@ -18,7 +18,17 @@ pub(super) struct PendingPresentation {
     locus: wire::MessageLocus,
     keys: BTreeSet<steer::Key>,
     text: String,
-    event: PresentationEvent,
+    event: PendingEvent,
+}
+
+#[derive(Clone, Debug)]
+struct PendingEvent {
+    lane: CanonicalUuid,
+    author: Option<CanonicalUuid>,
+    source: Option<CanonicalUuid>,
+    locus: listen::Locus,
+    ordinal: u32,
+    superseded_answers: Vec<steer::Key>,
 }
 
 impl PendingPresentation {
@@ -27,7 +37,7 @@ impl PendingPresentation {
     pub(super) fn of(
         text: &str,
         directives: Option<&PresentationDirectives>,
-        event: PresentationEvent,
+        event: PresentationEvent<'_>,
         locus: wire::MessageLocus,
     ) -> Option<Self> {
         let standing = EventDirectives {
@@ -44,7 +54,14 @@ impl PendingPresentation {
             locus,
             keys,
             text: text.to_owned(),
-            event,
+            event: PendingEvent {
+                lane: event.lane,
+                author: event.author,
+                source: event.source,
+                locus: event.locus,
+                ordinal: event.ordinal,
+                superseded_answers: event.superseded_answers.to_vec(),
+            },
         })
     }
 
@@ -183,10 +200,18 @@ fn present_again(
     card: &PendingPresentation,
     directives: &PresentationDirectives,
 ) -> CommandResult<()> {
-    let mut event = card.event;
-    if event.source.is_none() {
-        event.source = state.observations.source(card.lane, event.locus);
-    }
+    let source = card
+        .event
+        .source
+        .or_else(|| state.observations.source(card.lane, card.event.locus));
+    let event = PresentationEvent {
+        lane: card.event.lane,
+        author: card.event.author,
+        source,
+        locus: card.event.locus,
+        ordinal: card.event.ordinal,
+        superseded_answers: &card.event.superseded_answers,
+    };
     let presented = present_steering_acknowledgements(&card.text, Some(directives), event)?;
     publisher
         .revise_presentation(card.lane, card.locus, presented.clone())

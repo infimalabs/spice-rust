@@ -69,7 +69,7 @@ fn steering(
     PresentationDirectives::new(directives)
 }
 
-fn event() -> PresentationEvent {
+fn event() -> PresentationEvent<'static> {
     PresentationEvent {
         lane: lane(),
         author: Some(receiver()),
@@ -80,6 +80,7 @@ fn event() -> PresentationEvent {
             length: 1,
         },
         ordinal: 0,
+        superseded_answers: &[],
     }
 }
 

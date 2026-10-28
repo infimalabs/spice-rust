@@ -37,7 +37,7 @@ fn proved(recipients: &[wire::MessageRecipient]) -> PresentationDirectives {
     ledger
 }
 
-fn authored() -> PresentationEvent {
+fn authored() -> PresentationEvent<'static> {
     PresentationEvent {
         author: Some(author()),
         ..event()

@@ -10,6 +10,7 @@ use wire::{CanonicalUuid, Disposition};
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 const KEY: &str = "1kKRRsDS";
+const SECOND_KEY: &str = "1kKRRsDT";
 
 const TRAILING_CALL: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-trailing","name":"bash","arguments":{"command":"git status"}}],"stopReason":"toolUse"}}
 "#;
@@ -30,12 +31,14 @@ const TEXT_ACK_INTENT_NAK: &[u8] = br#"{"type":"message_end","message":{"role":"
 "#;
 const TEXT_NAK_INTENT_ACK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"NAK 1kKRRsDS: declined in text."},{"type":"toolCall","id":"call-1","name":"read","intent":"ACK 1kKRRsDS: accepted in intent.","arguments":{}}],"stopReason":"toolUse"}}
 "#;
+const MULTI_ACK_PARTIAL_INTENT_NAK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS 1kKRRsDT: both accepted."},{"type":"toolCall","id":"call-1","name":"read","intent":"NAK 1kKRRsDS: declined in intent.","arguments":{}}],"stopReason":"toolUse"}}
+"#;
 
 struct LiveKey;
 
 impl steer::Standing for LiveKey {
     fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
-        (key.as_str() == KEY).then_some(Disposition::Live)
+        matches!(key.as_str(), KEY | SECOND_KEY).then_some(Disposition::Live)
     }
 }
 
@@ -129,6 +132,34 @@ fn a_mixed_text_and_intent_answer_uses_the_last_decisive_event() {
         assert_eq!(recognition.answer.as_deref(), Some(answer));
         assert_eq!(recognition.locus.event, 1);
     }
+}
+
+#[test]
+fn a_later_event_reanswers_only_its_key_from_a_multi_key_header() {
+    let fixture = Fixture::new(&[MULTI_ACK_PARTIAL_INTENT_NAK]);
+    let first = transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey)
+        .unwrap_or_else(|outcome| panic!("reanswered key is evidence: {outcome:?}"));
+    assert!(matches!(
+        first.outcome,
+        ScanOutcome::Retired {
+            disposition: Disposition::Declined,
+            ..
+        }
+    ));
+    assert_eq!(first.answer.as_deref(), Some("declined in intent."));
+    assert_eq!(first.locus.event, 1);
+
+    let second = transcript_recognition(&fixture.paths, lane(), &vendor(), SECOND_KEY, &LiveKey)
+        .unwrap_or_else(|outcome| panic!("unrepeated key is evidence: {outcome:?}"));
+    assert!(matches!(
+        second.outcome,
+        ScanOutcome::Retired {
+            disposition: Disposition::Acked,
+            ..
+        }
+    ));
+    assert_eq!(second.answer.as_deref(), Some("both accepted."));
+    assert_eq!(second.locus.event, 0);
 }
 
 #[test]

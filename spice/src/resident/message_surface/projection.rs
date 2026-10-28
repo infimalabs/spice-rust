@@ -87,12 +87,9 @@ pub(super) fn publish_agent_record(
         if prose_stream::settled_block(&record, state, ordinal, decoded) {
             continue;
         }
-        let suppress_answer = prose_stream::answer_superseded(&record, state, position, decoded);
-        let prose_origin = if suppress_answer {
-            None
-        } else {
-            prose_stream::origin(&record, state, ordinal, decoded)
-        };
+        let answer_selection = prose_stream::answer_selection(&record, state, position, decoded);
+        let suppress_answer = answer_selection.suppresses_event();
+        let prose_origin = answer_selection.prose_origin(&record, state, ordinal, decoded);
         // Older tapes without a scoped message identity cannot safely join a
         // completed partial to its settled twin.
         if matches!(decoded, listen::Event::StreamedProse(_)) && prose_origin.is_none() {
@@ -110,6 +107,7 @@ pub(super) fn publish_agent_record(
             unavailable_tool_terminals: record.unavailable_tool_terminals,
             prose_origin,
             suppress_answer,
+            superseded_answers: answer_selection.superseded(),
         };
         let markdown_images = state.media_hydration.observe(&event, record.transcript);
         let Some(projected) =
@@ -318,6 +316,7 @@ fn project_agent_event(
         observations,
         unavailable_tool_terminals,
         prose_origin,
+        superseded_answers,
         ..
     } = event;
     let ProjectedEvent {
@@ -341,6 +340,7 @@ fn project_agent_event(
         source: source.or_else(|| observations.source(lane, locus)),
         locus,
         ordinal,
+        superseded_answers,
     };
     let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
     let observed = authored_synthetic
@@ -423,6 +423,7 @@ fn project_event_body(
                 .or_else(|| event.observations.source(event.lane, prose.locus)),
             locus: prose.locus,
             ordinal: event.ordinal,
+            superseded_answers: event.superseded_answers,
         };
         let (presented, automatic_speech) =
             project_prose_presentation(&prose, steering, presentation_event)?;
@@ -533,6 +534,7 @@ fn project_direction(
             .or_else(|| event.observations.source(event.lane, prose.locus)),
         locus: prose.locus,
         ordinal: event.ordinal,
+        superseded_answers: &[],
     };
     let presentation = direction::present(&prose.text, steering, presentation_event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
@@ -618,10 +620,10 @@ fn event_boundary(decoded: &listen::Event) -> Option<wire::MessageBoundary> {
 }
 
 /// The keys an assistant prose card acknowledged ahead of the journal.
-fn pending_presentation(
+fn pending_presentation<'a>(
     decoded: &listen::Event,
     steering: Option<&PresentationDirectives>,
-    presentation_event: impl Fn(listen::Locus) -> PresentationEvent,
+    presentation_event: impl Fn(listen::Locus) -> PresentationEvent<'a>,
     locus: wire::MessageLocus,
 ) -> Option<pending::PendingPresentation> {
     let prose = spice::agent_prose::quoteable(decoded)?;
@@ -638,11 +640,11 @@ fn pending_presentation(
 /// Only assistant prose short of its final answer has one; the twin repeats
 /// the card with the final-answer phase so its automatic speech is classified
 /// the way the terminal record will be.
-fn terminal_prose_card(
+fn terminal_prose_card<'a>(
     published: &wire::AgentMessage,
     decoded: &listen::Event,
     steering: Option<&PresentationDirectives>,
-    presentation_event: impl FnOnce(listen::Locus) -> PresentationEvent,
+    presentation_event: impl FnOnce(listen::Locus) -> PresentationEvent<'a>,
 ) -> Option<wire::AgentMessage> {
     if published.activity != AgentActivityKind::Prose || published.final_answer {
         return None;
