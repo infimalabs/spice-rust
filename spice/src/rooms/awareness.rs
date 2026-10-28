@@ -2,6 +2,7 @@
 //!
 //! Matching completed work to open Designs scores with the shared statement
 //! engine in [`board::similarity`].
+use std::fmt;
 
 /// Most rendered bytes of whole open questions one Design request carries.
 pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
@@ -11,51 +12,129 @@ pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
 const START_FROM_NO: &str = "Start from no: this Design and each question must earn its place \
      from evidence. A negative charge is the expected answer when a question has not; charge \
      every question negative when the Design itself should not exist.";
+/// The event at which a Design request evaluated one session profile, in the
+/// words shared by the delivered request and the awareness read.
+pub fn notice_opportunity_text(
+    opportunity: &wire::rooms::DesignNoticeOpportunity,
+) -> impl fmt::Display + '_ {
+    NoticeOpportunityText(opportunity)
+}
+
+struct NoticeOpportunityText<'a>(&'a wire::rooms::DesignNoticeOpportunity);
+
+impl fmt::Display for NoticeOpportunityText<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use wire::rooms::DesignNoticeOpportunity as Opportunity;
+
+        match self.0 {
+            Opportunity::TaskCompletion { task, .. } => {
+                write!(formatter, "completion of task {task}")
+            }
+            Opportunity::TaskClaim {
+                task,
+                claim,
+                terminal,
+            } => match terminal {
+                Some(terminal) => write!(
+                    formatter,
+                    "terminal operation {terminal} under task {task} claim {claim}"
+                ),
+                None => write!(formatter, "retained task {task} claim {claim}"),
+            },
+            Opportunity::Conversation { .. } => {
+                formatter.write_str("a settled conversation message")
+            }
+            Opportunity::DesignStatement => formatter.write_str("this Design statement"),
+            Opportunity::ProfileReady { .. } => {
+                formatter.write_str("the completed session profile")
+            }
+            Opportunity::SessionResumed { .. } => formatter.write_str("this resumed session"),
+        }
+    }
+}
+
+/// The retained support for a Design request, without its authored excerpt, in
+/// the words shared by the delivered request and the awareness read.
+pub fn notice_evidence_text(
+    evidence: &wire::rooms::DesignNoticeEvidence,
+) -> impl fmt::Display + '_ {
+    NoticeEvidenceText(evidence)
+}
+
+struct NoticeEvidenceText<'a>(&'a wire::rooms::DesignNoticeEvidence);
+
+impl fmt::Display for NoticeEvidenceText<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use wire::rooms::DesignNoticeEvidence as Evidence;
+
+        let code = |seq: wire::Seq| wire::SequenceCode::new(seq.get());
+        match self.0 {
+            Evidence::Task {
+                task,
+                statement,
+                completed,
+                ..
+            } => write!(
+                formatter,
+                "task {task} (statement revision {}, completion {})",
+                code(*statement),
+                code(*completed),
+            ),
+            Evidence::TaskClaim {
+                task,
+                statement,
+                claim,
+                terminal,
+                ..
+            } => {
+                write!(
+                    formatter,
+                    "task {task} (statement revision {}, claim {claim}",
+                    code(*statement)
+                )?;
+                if let Some(terminal) = terminal {
+                    write!(formatter, ", terminal operation {}", code(*terminal))?;
+                }
+                formatter.write_str(")")
+            }
+            Evidence::Conversation { source } => {
+                let locus = &source.locus;
+                match locus.source {
+                    Some(tape) => write!(
+                        formatter,
+                        "transcript {tape} member {} byte {} length {}",
+                        locus.member, locus.offset, locus.length
+                    ),
+                    None => write!(
+                        formatter,
+                        "transcript member {} byte {}",
+                        locus.member, locus.offset
+                    ),
+                }
+            }
+        }
+    }
+}
 
 /// The exact source and authored excerpt of the work that supported one Design
 /// request, phrased from the supporting claim's phase or as conversation.
 fn supporting_work(request: &wire::intent::DesignRequest) -> String {
     use wire::rooms::DesignNoticeEvidence as Evidence;
 
-    let code = |seq: wire::Seq| wire::SequenceCode::new(seq.get());
     let excerpt = &request.excerpt;
+    let evidence = notice_evidence_text(&request.evidence);
     match &request.evidence {
-        Evidence::Task {
-            task,
-            statement,
-            completed,
-            support,
-        } => format!(
-            "you {} task {task} (statement revision {}, completion {}): \"{excerpt}\". Read \
-             it with `spice task show {task} --history`.",
-            support.verb(),
-            code(*statement),
-            code(*completed),
-        ),
-        Evidence::TaskClaim {
-            task,
-            statement,
-            claim,
-            terminal,
-            support,
-        } => format!(
-            "you {} task {task} (statement revision {}, claim {claim}{}): \"{excerpt}\". Read \
-             it with `spice task show {task} --history`.",
-            support.verb(),
-            code(*statement),
-            terminal.map_or_else(String::new, |terminal| format!(
-                ", terminal operation {}",
-                code(terminal)
-            )),
-        ),
+        Evidence::Task { task, support, .. } | Evidence::TaskClaim { task, support, .. } => {
+            format!(
+                "you {} {evidence}: \"{excerpt}\". Read it with `spice task show {task} \
+                 --history`.",
+                support.verb(),
+            )
+        }
         Evidence::Conversation { source } => {
             let locus = &source.locus;
             let Some(tape) = locus.source else {
-                return format!(
-                    "you explained this in conversation: \"{excerpt}\" (transcript member {} \
-                     byte {}).",
-                    locus.member, locus.offset
-                );
+                return format!("you explained this in conversation: \"{excerpt}\" ({evidence}).");
             };
             let command = shell_words::join([
                 "spice".to_owned(),
@@ -76,9 +155,8 @@ fn supporting_work(request: &wire::intent::DesignRequest) -> String {
                 locus.offset.to_string(),
             ]);
             format!(
-                "you explained this in conversation: \"{excerpt}\" (transcript {tape} member {} \
-                 byte {} length {}). Read it with `{command}`.",
-                locus.member, locus.offset, locus.length
+                "you explained this in conversation: \"{excerpt}\" ({evidence}). Read it with \
+                 `{command}`."
             )
         }
     }
@@ -87,24 +165,8 @@ fn supporting_work(request: &wire::intent::DesignRequest) -> String {
 /// One Design invitation as every command and catch-up surface presents it.
 #[must_use]
 pub fn request_text(request: &wire::intent::DesignRequest) -> String {
-    use wire::rooms::DesignNoticeOpportunity as Opportunity;
-
     let design = &request.design;
-    let opportunity = match &request.opportunity {
-        Opportunity::TaskCompletion { task, .. } => format!("completion of task {task}"),
-        Opportunity::TaskClaim {
-            task,
-            claim,
-            terminal,
-        } => terminal.map_or_else(
-            || format!("retained task {task} claim {claim}"),
-            |terminal| format!("terminal operation {terminal} under task {task} claim {claim}"),
-        ),
-        Opportunity::Conversation { .. } => "a settled conversation message".to_owned(),
-        Opportunity::DesignStatement => "this Design statement".to_owned(),
-        Opportunity::ProfileReady { .. } => "the completed session profile".to_owned(),
-        Opportunity::SessionResumed { .. } => "this resumed session".to_owned(),
-    };
+    let opportunity = notice_opportunity_text(&request.opportunity);
     let support = supporting_work(request);
     let cast = match request.reach {
         Some(wire::rooms::DesignReach::Wide) => {

@@ -290,16 +290,17 @@ fn maturity_summary(maturity: &DesignMaturity, state: &DesignMaturityState) -> S
 
 impl fmt::Display for Noticed {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let opportunity = spice::rooms::awareness::notice_opportunity_text(&self.opportunity);
+        let evidence = spice::rooms::awareness::notice_evidence_text(&self.evidence);
         write!(
             formatter,
-            "{} lane {} occupant {} session {}/{} opportunity {:?} evidence {:?} statement {}",
+            "{} lane {} occupant {} session {}/{} opportunity {opportunity} evidence {evidence} \
+             statement {}",
             self.seq,
             self.lane,
             self.occupant,
             self.session.vendor,
             self.session.identity,
-            self.opportunity,
-            self.evidence,
             self.statement,
         )?;
         if !self.terms.is_empty() {
@@ -315,5 +316,164 @@ impl fmt::Display for Noticed {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uuid(byte: u8) -> CanonicalUuid {
+        format!("00000000-0000-4000-8000-0000000000{byte:02x}")
+            .parse()
+            .expect("fixture uuid")
+    }
+
+    fn conversation() -> wire::rooms::DesignConversationEvidence {
+        wire::rooms::DesignConversationEvidence {
+            locus: wire::body::TranscriptLocus {
+                source: Some(uuid(9)),
+                member: 3,
+                offset: 5,
+                length: 7,
+                event: 0,
+                line: 1,
+                column: 1,
+            },
+            digest: wire::Digest::compute(wire::Domain::RoomSource, b"fixture conversation"),
+        }
+    }
+
+    fn row(
+        opportunity: wire::rooms::DesignNoticeOpportunity,
+        evidence: wire::rooms::DesignNoticeEvidence,
+    ) -> Noticed {
+        Noticed {
+            seq: Seq::new(1).expect("fixture sequence"),
+            lane: uuid(1),
+            occupant: uuid(2),
+            session: wire::rooms::DesignSession {
+                vendor: "omp".parse().expect("fixture vendor"),
+                identity: "fixture-session".to_owned(),
+            },
+            opportunity,
+            evidence,
+            statement: Seq::new(2).expect("fixture statement"),
+            terms: vec!["rendering".to_owned()],
+            asks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn notice_rows_render_semantic_sources_without_debug_structs() {
+        use wire::rooms::{
+            DesignNoticeEvidence as Evidence, DesignNoticeOpportunity as Opportunity, DesignSupport,
+        };
+
+        let task = wire::TaskStamp::for_micros(1_800_000_000_000_000).expect("fixture task stamp");
+        let statement = Seq::new(3).expect("fixture statement");
+        let completed = Seq::new(4).expect("fixture completion");
+        let terminal = Seq::new(5).expect("fixture terminal");
+        let claim = wire::SequenceCode::new(6);
+        let conversation = conversation();
+        let rows = [
+            row(
+                Opportunity::TaskCompletion {
+                    task: task.clone(),
+                    completed,
+                },
+                Evidence::Task {
+                    task: task.clone(),
+                    statement,
+                    completed,
+                    support: DesignSupport::Implemented,
+                },
+            ),
+            row(
+                Opportunity::TaskClaim {
+                    task: task.clone(),
+                    claim,
+                    terminal: None,
+                },
+                Evidence::TaskClaim {
+                    task: task.clone(),
+                    statement,
+                    claim,
+                    terminal: None,
+                    support: DesignSupport::Implemented,
+                },
+            ),
+            row(
+                Opportunity::TaskClaim {
+                    task: task.clone(),
+                    claim,
+                    terminal: Some(terminal),
+                },
+                Evidence::TaskClaim {
+                    task: task.clone(),
+                    statement,
+                    claim,
+                    terminal: Some(terminal),
+                    support: DesignSupport::Implemented,
+                },
+            ),
+            row(
+                Opportunity::Conversation {
+                    source: conversation.clone(),
+                },
+                Evidence::Conversation {
+                    source: conversation.clone(),
+                },
+            ),
+            row(
+                Opportunity::DesignStatement,
+                Evidence::Task {
+                    task: task.clone(),
+                    statement,
+                    completed,
+                    support: DesignSupport::Implemented,
+                },
+            ),
+            row(
+                Opportunity::ProfileReady {
+                    horizon: Some(completed),
+                },
+                Evidence::Task {
+                    task: task.clone(),
+                    statement,
+                    completed,
+                    support: DesignSupport::Implemented,
+                },
+            ),
+            row(
+                Opportunity::SessionResumed {
+                    declaration: completed,
+                },
+                Evidence::Task {
+                    task,
+                    statement,
+                    completed,
+                    support: DesignSupport::Implemented,
+                },
+            ),
+        ]
+        .map(|row| row.to_string());
+
+        for rendered in &rows {
+            assert_eq!(rendered.lines().count(), 1, "{rendered}");
+            for debug in ["{", "CanonicalUuid(", "Digest(", "Some("] {
+                assert!(!rendered.contains(debug), "{rendered}");
+            }
+        }
+        let source = conversation
+            .locus
+            .source
+            .expect("fixture conversation has a source")
+            .to_string();
+        assert_eq!(
+            rows[3].matches(&source).count(),
+            1,
+            "one conversation source is rendered once"
+        );
     }
 }
