@@ -228,7 +228,7 @@ nonzero charge, some item concurs, and none is contested: every question of one
 to four, four of five or six, five of seven to eleven; the summary otherwise
 names the item and the vote it needs next. Steeped maturity makes the Design's
 first pass ready for a lane, which the standing's pass cycle shows, and narrows
-its invitation reach to the 0.20 floor, so fewer lanes are asked; it is not
+its invitation reach to the 0.16 floor, so fewer lanes are asked; it is not
 a danger or workflow state, and maturity never blocks or authorizes a Design
 decision.
 
