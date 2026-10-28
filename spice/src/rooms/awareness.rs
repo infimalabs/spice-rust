@@ -180,7 +180,10 @@ fn item_request(request: &wire::intent::DesignRequest) -> String {
             .to_owned(),
     };
     format!(
-        "Weigh any one or more of these questions:{questions}{recharge}\n\
+        "Start from no: this Design and each question must earn its place from evidence. A \
+         negative charge is the expected answer when a question has not; charge every question \
+         negative when the Design itself should not exist.\n\
+         Weigh any one or more of these questions:{questions}{recharge}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). Weigh \
          question N with `spice room contribute {design} --charge=C --question N [--cite \
          KEY...] TEXT`, where C runs from -2 to +2, ±1 is an opinion, and 0 or ±2 cites what it \
