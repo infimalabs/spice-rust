@@ -149,6 +149,11 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let shadows = if predecessor < crate::migrate::DESIGN_SHADOW_SCHEMA {
+        "DROP TABLE IF EXISTS design_shadows;"
+    } else {
+        ""
+    };
     let typed_rooms: bool = journal
         .connection
         .query_row(
@@ -166,7 +171,8 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
         .connection
         .execute_batch(&format!(
             "{rooms} {groups} {cursors} {horizons} {conversations} \
-             {evidence} {relevance} {principals} {oops_generation} {steering} {release_notes}
+             {evidence} {relevance} {principals} {oops_generation} {steering} {release_notes} \
+             {shadows}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))

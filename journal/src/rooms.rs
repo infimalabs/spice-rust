@@ -62,6 +62,16 @@ CREATE TABLE design_maturity (
     body BLOB NOT NULL
 ) STRICT;
 "#;
+/// Per-Design index of shadow records, created with the schema that first
+/// records them.
+pub(crate) const SHADOW_SCHEMA_SQL: &str = r#"
+CREATE TABLE design_shadows (
+    design TEXT NOT NULL,
+    seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
+    PRIMARY KEY (design, seq)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX design_shadows_design_seq ON design_shadows(design, seq);
+"#;
 pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
 
 /// Room-authority projection tables, created with the current schema.
@@ -188,6 +198,8 @@ pub(crate) struct Projection {
     pub(crate) publications: BTreeMap<(String, String), u64>,
     /// `(Design, notice position)` rows for bounded per-Design reads.
     pub(crate) notices: BTreeMap<(String, u64), ()>,
+    /// `(Design, shadow position)` rows for bounded per-Design reads.
+    pub(crate) shadows: BTreeMap<(String, u64), ()>,
     /// Design to its canonical bounded maturity accumulator.
     pub(crate) maturity: BTreeMap<String, Vec<u8>>,
     /// Repository OOPS generation's head position and canonical body.
@@ -338,6 +350,11 @@ pub(crate) enum Change {
     MaturityNotice {
         seq: u64,
         notice: Box<wire::rooms::DesignNoticed>,
+    },
+    /// One shadow record joined its Design's index.
+    Shadow {
+        seq: u64,
+        design: String,
     },
     MaturityContribution(wire::rooms::RoomContributed),
     MaturityLeave(RoomLeft),

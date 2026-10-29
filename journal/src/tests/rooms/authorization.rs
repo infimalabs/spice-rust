@@ -783,7 +783,8 @@ fn restore_design_pass_predecessor(journal: &Journal) {
         .execute_batch(&format!(
             "DROP TABLE release_corrections;
              DROP TABLE release_landings;
-             DROP TABLE oops_generation_head; {}
+             DROP TABLE oops_generation_head;
+             DROP TABLE design_shadows; {}
              UPDATE journal_schema SET version = 72 WHERE singleton = 1;
              PRAGMA user_version = 72;",
             crate::tests::PREDECESSOR_STEERING_HEADS
@@ -1053,6 +1054,7 @@ fn retained_two_step_selection_crosses_to_one_exact_decision() {
              ) AS BLOB);
              DROP TABLE principal_heads;
              DROP TABLE oops_generation_head;
+             DROP TABLE design_shadows;
              DROP TABLE release_corrections;
              DROP TABLE release_landings;
              DROP INDEX steering_heads_lane_room_created;
@@ -1132,6 +1134,7 @@ fn retained_two_step_return_gains_an_explicit_migration_reason() {
              WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;
              DROP TABLE principal_heads;
              DROP TABLE oops_generation_head;
+             DROP TABLE design_shadows;
              DROP TABLE release_corrections;
              DROP TABLE release_landings;
              DROP INDEX steering_heads_lane_room_created;
@@ -1215,6 +1218,7 @@ fn candidate_less_retained_decision_refuses_with_its_owning_release() {
              WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;
              DROP TABLE principal_heads;
              DROP TABLE oops_generation_head;
+             DROP TABLE design_shadows;
              DROP INDEX steering_heads_lane_room_created;
              ALTER TABLE steering_heads DROP COLUMN room;
              UPDATE journal_schema SET version = 55 WHERE singleton = 1;
