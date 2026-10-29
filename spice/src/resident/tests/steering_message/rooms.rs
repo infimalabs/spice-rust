@@ -109,7 +109,7 @@ impl Lanes {
             generation: 0,
         });
         if let Some(lane) = holder {
-            self.claim(&mut seed, &task, added, lane);
+            self.claim(&mut seed, &task, FactCause::Pending(added), lane);
         }
         commit(&self.bus, seed).expect("task commits");
         format!("ROOMS-{task}").parse().expect("fixture handle")
@@ -144,12 +144,12 @@ impl Lanes {
         commit(&self.bus, close).expect("closure commits");
     }
 
-    /// Stage `lane`'s active claim, with its lease, on the task `added` adds.
+    /// Stage `lane`'s active claim, with its lease, on `task`.
     fn claim(
         &self,
         seed: &mut JournalWrite,
         task: &wire::TaskStamp,
-        added: journal::PendingFact,
+        cause: FactCause,
         lane: CanonicalUuid,
     ) {
         let occupant = current_residency(&self.bus, self.epoch)
@@ -181,7 +181,7 @@ impl Lanes {
                     recovery: None,
                     source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
                 },
-                FactCause::Pending(added),
+                cause,
             )
             .expect("claim fact is valid");
         let epoch = self.epoch;
@@ -204,6 +204,47 @@ impl Lanes {
             maximum: until,
             epoch,
         });
+    }
+
+    /// Commit `lane`'s win of `task`'s claim on its own.
+    pub(super) fn win_claim(&self, task: &wire::TaskHandle, lane: u8) {
+        let task = task.born().expect("fixture handle carries its stamp");
+        let lane = test_uuid(lane);
+        let mut win =
+            write(Actor::Lane(lane), self.epoch, Producer::CommandDoor).expect("win write starts");
+        self.claim(&mut win, &task, FactCause::Root, lane);
+        commit(&self.bus, win).expect("claim win commits");
+    }
+
+    /// Release `task`'s current claim as its holder.
+    pub(super) fn free_claim(&self, task: &wire::TaskHandle) {
+        let task = task.born().expect("fixture handle carries its stamp");
+        let claim = {
+            let task = task.clone();
+            self.bus
+                .read(move |read| read.claim_head(&task))
+                .expect("claim head reads")
+                .expect("the task is claimed")
+                .into_body()
+        };
+        let mut free =
+            write(claim.actor.clone(), self.epoch, Producer::CommandDoor).expect("free starts");
+        let freed = free
+            .fact(
+                wire::body::ClaimFreed {
+                    task: task.clone(),
+                    actor: claim.actor.clone(),
+                    parked: None,
+                },
+                FactCause::Existing(claim.claimed),
+            )
+            .expect("claim release fact is valid");
+        free.claim_head(task, freed, move |fact| wire::ClaimHead {
+            fact,
+            disposition: wire::ClaimDisposition::Freed,
+            ..claim
+        });
+        commit(&self.bus, free).expect("claim release commits");
     }
 
     /// Account every record now on a lane's tape, as its sweep would.
