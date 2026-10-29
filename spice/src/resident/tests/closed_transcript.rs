@@ -122,3 +122,177 @@ fn a_closing_seat_presents_every_record_its_occupant_left_behind() {
     bus.shutdown().expect("closing bus stops");
     fs::remove_dir_all(root).expect("closing fixture cleanup");
 }
+
+/// One continuing-session declaration for `lane` under `occupant`.
+fn continuing_session(
+    lane: CanonicalUuid,
+    epoch: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> wire::body::LaneSessionDeclared {
+    wire::body::LaneSessionDeclared {
+        lane,
+        occupant,
+        worktree: "/worktree".to_owned(),
+        vendor: "omp".parse().expect("fixture vendor"),
+        launch: wire::body::LaneLaunchIdentity::new("model", "effort"),
+        epoch,
+        stream: "session".to_owned(),
+        source: test_uuid(80),
+        identity: "continuing-session".to_owned(),
+        member: 1,
+        offset: 2,
+        length: 3,
+    }
+}
+
+/// Declare `occupant`'s session holding one conversation card, and confirm
+/// that card alone is the matchers' background while the occupant is seated.
+fn seat_conversation(
+    state: &mut MessageState,
+    lane: CanonicalUuid,
+    epoch: CanonicalUuid,
+    occupant: CanonicalUuid,
+) {
+    use board::similarity::Background;
+    use spice::rooms::evidence::{Conversation, Evidence};
+    use spice::rooms::profile::EvidenceKey;
+
+    let conversation = Conversation::read(
+        "The closing sweep vacates an occupant binding while retaining the profile evidence \
+         the departed session gathered for its successor.",
+    )
+    .expect("enough distinct terms for one conversation card");
+    let key = state
+        .profiles
+        .declare(&continuing_session(lane, epoch, occupant));
+    state.profiles.insert(
+        lane,
+        occupant,
+        Evidence::conversation(
+            EvidenceKey::Conversation {
+                source: test_uuid(80),
+                member: 1,
+                offset: 10,
+                length: 20,
+            },
+            &conversation,
+        ),
+    );
+    assert_eq!(
+        state.profiles.conversation_background(),
+        Background::of(
+            state
+                .profiles
+                .profile(&key)
+                .expect("declared profile")
+                .evidence()
+                .conversation_messages()
+        ),
+        "the seated occupant's conversation is the background before it closes",
+    );
+    assert_ne!(
+        state.profiles.conversation_background(),
+        Background::default()
+    );
+}
+
+/// The closing sweep is where a departed occupant leaves the matchers'
+/// background: its exact binding goes, its continuing profile and retained
+/// conversation stay, and a successor that declares the same session is the
+/// one seated holder of that conversation, counted once.
+#[test]
+fn a_closing_seat_leaves_the_conversation_background_but_keeps_its_profile() {
+    use board::similarity::Background;
+
+    let (root, paths) = resident_fixture("closed-transcript-vacancy");
+    let bus = Bus::start(journal::Journal::in_memory().expect("closing authority opens"))
+        .expect("closing bus starts");
+    let lane = test_uuid(5);
+    let occupant = test_uuid(6);
+    let successor = test_uuid(7);
+    let epoch = test_uuid(4);
+    app_announcement::seat_ingestion_residency(&bus, lane, epoch);
+    let mut seats = Seats::new();
+    seats
+        .seat_detached(
+            lane,
+            occupant,
+            Box::new(DetachedFixture {
+                dropped: Arc::new(AtomicU64::new(0)),
+            }),
+        )
+        .expect("the closing fixture occupant is seated");
+    let message_state = std::sync::Mutex::new(MessageState::default());
+    seat_conversation(
+        &mut message_state.lock().expect("message state locks"),
+        lane,
+        epoch,
+        occupant,
+    );
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let steering = steer::Config::default();
+    let source = message_source(bus.reader(), epoch);
+    let publisher = source.message_publisher();
+    let generation = publisher.batch().expect("closing generation begins");
+    let ambient = spice::ambient::capture();
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation, &ambient);
+    let mut diagnostics = Vec::new();
+
+    drop(seats.vacate(lane));
+    for (closed_lane, closed_occupant) in seats.take_vacated() {
+        message_surface::present_closed_transcript(
+            &bus,
+            epoch,
+            &surfaces,
+            message_surface::TasteRecognition::Direct,
+            closed_lane,
+            closed_occupant,
+            CaptureViews::new(&message_state, &mut diagnostics),
+        )
+        .expect("the closing sweep presents");
+    }
+    drop(generation);
+
+    let mut state = message_state.lock().expect("message state locks");
+    assert_eq!(
+        state.profiles.conversation_background(),
+        Background::default(),
+        "a vacated occupant still counts in the background: {}",
+        String::from_utf8_lossy(&diagnostics),
+    );
+    assert!(
+        state.profiles.session(lane, occupant).is_none(),
+        "the vacated binding survived the closing sweep",
+    );
+    let key = state
+        .profiles
+        .declare(&continuing_session(lane, epoch, successor));
+    let retained = state
+        .profiles
+        .profile(&key)
+        .expect("the continuing profile outlives its occupant")
+        .evidence()
+        .conversation_messages()
+        .count();
+    assert_eq!(
+        retained, 1,
+        "the continuing profile lost its retained conversation"
+    );
+    assert_eq!(
+        state.profiles.conversation_background(),
+        Background::of(
+            state
+                .profiles
+                .profile(&key)
+                .expect("declared profile")
+                .evidence()
+                .conversation_messages()
+        ),
+        "a successor resuming the exact session counts that conversation once",
+    );
+    drop(state);
+
+    seats.release_all();
+    bus.shutdown().expect("closing bus stops");
+    fs::remove_dir_all(root).expect("closing fixture cleanup");
+}

@@ -539,21 +539,52 @@ fn hear_swept(
     Ok(())
 }
 
-/// Account and present whatever a lane's tape gained before its seat closed.
+/// Account and present whatever a lane's tape gained before its seat closed,
+/// then take the occupant out of the matchers' background.
 ///
 /// An occupant writes its last records moments before it exits, and the exit
 /// can be accounted before their notices are read; a notice read afterwards
 /// no longer names the seated occupant and is refused. The closing sweep
 /// runs once per vacated seat, before a successor starts, and projects any
 /// remaining records in tape order under that occupant.
+///
+/// The seat is gone whether or not its records were presented, so its exact
+/// binding leaves [`SessionProfiles`] either way: the next background fit
+/// counts only seated occupants, while the continuing profile keeps every
+/// card it retained for a successor that declares the same session. The
+/// fitted generation itself is untouched; it moves at its own refit boundary.
+///
+/// [`SessionProfiles`]: spice::rooms::profile::SessionProfiles
 pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    surfaces: &CaptureSurfaces<'_, P>,
+    recognition: TasteRecognition<'_>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    mut views: CaptureViews<'_>,
+) -> CommandResult<()> {
+    let presented = present_closing_records(
+        bus,
+        epoch,
+        surfaces,
+        recognition,
+        lane,
+        occupant,
+        &mut views,
+    );
+    lock_state(views.state)?.profiles.vacate(lane, occupant);
+    presented
+}
+
+fn present_closing_records<P: AgentMessagePublisher>(
     bus: &Bus,
     epoch: CanonicalUuid,
     surfaces: &CaptureSurfaces<'_, P>,
     mut recognition: TasteRecognition<'_>,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    mut views: CaptureViews<'_>,
+    views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
     // A seat that closed writes nothing more, so nothing may stay held: the
     // closing sweep accounts every span this lane still owes before its
@@ -573,14 +604,14 @@ pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
         state.accounting = held;
         state.observations.extend(observations);
     }
-    sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)?;
+    sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, views)?;
     publish_swept(
         bus,
         epoch,
         surfaces,
         &swept,
         steering::Refusals::Record,
-        &mut views,
+        views,
     )?;
     lock_state(views.state)?.media_hydration.clear_lane(lane);
     Ok(())
