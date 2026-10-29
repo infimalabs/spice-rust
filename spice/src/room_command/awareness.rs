@@ -53,6 +53,8 @@ pub(crate) struct Noticed {
     opportunity: wire::rooms::DesignNoticeOpportunity,
     evidence: wire::rooms::DesignNoticeEvidence,
     statement: Seq,
+    reach: Option<wire::rooms::DesignReach>,
+    matching: Option<wire::rooms::DesignNoticeMatch>,
     terms: Vec<String>,
     /// Question items asked, in asked order; empty asks about the whole Design.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -207,6 +209,8 @@ fn noticed(
         opportunity: body.opportunity,
         evidence: body.evidence,
         statement: body.statement,
+        reach: body.reach,
+        matching: body.matching,
         terms: wire::rooms::shown_notice_terms(&body.terms)
             .into_iter()
             .map(str::to_owned)
@@ -308,6 +312,28 @@ impl fmt::Display for Noticed {
             self.session.identity,
             self.statement,
         )?;
+        match (&self.reach, &self.matching) {
+            (Some(reach), Some(matching)) => write!(
+                formatter,
+                " reach {} score {} floor {} fit {}",
+                match reach {
+                    wire::rooms::DesignReach::Wide => "wide",
+                    wire::rooms::DesignReach::Narrow => "narrow",
+                },
+                matching.score(),
+                matching.floor(),
+                matching.generation().as_str(),
+            )?,
+            (Some(reach), None) => write!(
+                formatter,
+                " reach {} score unavailable",
+                match reach {
+                    wire::rooms::DesignReach::Wide => "wide",
+                    wire::rooms::DesignReach::Narrow => "narrow",
+                },
+            )?,
+            (None, _) => write!(formatter, " reach unavailable score unavailable")?,
+        }
         if !self.terms.is_empty() {
             write!(formatter, " terms {}", self.terms.join(", "))?;
         }
@@ -365,6 +391,8 @@ mod tests {
             evidence,
             statement: Seq::new(2).expect("fixture statement"),
             terms: vec!["rendering".to_owned()],
+            reach: Some(wire::rooms::DesignReach::Wide),
+            matching: None,
             asks: Vec::new(),
         }
     }
@@ -480,5 +508,25 @@ mod tests {
             1,
             "one conversation source is rendered once"
         );
+    }
+
+    #[test]
+    fn notice_rows_distinguish_recorded_match_from_legacy_absence() {
+        let opportunity = wire::rooms::DesignNoticeOpportunity::DesignStatement;
+        let evidence = wire::rooms::DesignNoticeEvidence::Conversation {
+            source: conversation(),
+        };
+        let legacy = row(opportunity.clone(), evidence.clone()).to_string();
+        assert!(legacy.contains("reach wide score unavailable"), "{legacy}");
+        assert!(!legacy.contains("score 0"), "{legacy}");
+
+        let mut recorded = row(opportunity, evidence);
+        recorded.matching = wire::rooms::DesignNoticeMatch::new(0.25, 0.1, [7; 32]);
+        let recorded = recorded.to_string();
+        assert!(
+            recorded.contains("reach wide score 0.25 floor 0.1"),
+            "{recorded}"
+        );
+        assert!(!recorded.contains("score unavailable"), "{recorded}");
     }
 }

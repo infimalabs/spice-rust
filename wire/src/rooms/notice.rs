@@ -21,13 +21,167 @@ pub const DESIGN_NOTICE_SHOWN_TERMS: usize = 6;
 
 /// How widely one Design request was cast, judged from the Design's maturity
 /// when it was selected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DesignReach {
     /// An unsteeped Design invites at the lower relevance floor.
     Wide,
     /// A steeped or OOPS Design invites only at the higher floor.
     Narrow,
+}
+
+/// One exact finite cosine or admission floor.
+///
+/// The canonical decimal spelling round-trips to the original `f64`, including
+/// harmless floating-point overshoot from a mathematically unit cosine, while
+/// remaining readable in retained facts and JSON surfaces.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct DesignSimilarity(String);
+
+impl DesignSimilarity {
+    /// Admit one finite value without rounding or clamping it.
+    #[must_use]
+    pub fn new(value: f64) -> Option<Self> {
+        value.is_finite().then(|| Self(value.to_string()))
+    }
+
+    /// The exact floating-point value this spelling records.
+    #[must_use]
+    pub fn get(&self) -> f64 {
+        self.0
+            .parse()
+            .expect("Design similarity constructors admit canonical decimals")
+    }
+}
+
+impl TryFrom<String> for DesignSimilarity {
+    type Error = &'static str;
+
+    fn try_from(spelling: String) -> Result<Self, Self::Error> {
+        let value = spelling
+            .parse::<f64>()
+            .map_err(|_| "Design similarity must be a canonical finite decimal")?;
+        let admitted = Self::new(value).ok_or("Design similarity must be finite")?;
+        if admitted.0 != spelling {
+            return Err("Design similarity must use its canonical decimal spelling");
+        }
+        Ok(admitted)
+    }
+}
+
+impl From<DesignSimilarity> for String {
+    fn from(value: DesignSimilarity) -> Self {
+        value.0
+    }
+}
+
+/// Stable identity of the statement and conversation frequencies that weighted
+/// one Design similarity.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct DesignFitGeneration(String);
+
+impl DesignFitGeneration {
+    /// Name an already-computed 32-byte fit identity.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(blake3::Hash::from_bytes(bytes).to_hex().to_string())
+    }
+
+    /// Canonical lower-case hexadecimal spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for DesignFitGeneration {
+    type Error = &'static str;
+
+    fn try_from(spelling: String) -> Result<Self, Self::Error> {
+        let hash = blake3::Hash::from_hex(&spelling)
+            .map_err(|_| "Design fit generation must be a 32-byte hexadecimal digest")?;
+        let admitted = Self::from_bytes(*hash.as_bytes());
+        if admitted.0 != spelling {
+            return Err("Design fit generation must use lower-case hexadecimal");
+        }
+        Ok(admitted)
+    }
+}
+
+impl From<DesignFitGeneration> for String {
+    fn from(value: DesignFitGeneration) -> Self {
+        value.0
+    }
+}
+
+/// The exact match that admitted one Design notice.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignNoticeMatch {
+    /// Best-view cosine selected from the retained profile.
+    score: DesignSimilarity,
+    /// Candidate-owned floor in force when selected.
+    floor: DesignSimilarity,
+    /// Frequency fit that weighted both selected vectors.
+    generation: DesignFitGeneration,
+}
+
+impl DesignNoticeMatch {
+    /// Build an admitted match, refusing a score below its recorded floor.
+    #[must_use]
+    pub fn new(score: f64, floor: f64, generation: [u8; 32]) -> Option<Self> {
+        let score = DesignSimilarity::new(score)?;
+        let floor = DesignSimilarity::new(floor)?;
+        (score.get() >= floor.get()).then(|| Self {
+            score,
+            floor,
+            generation: DesignFitGeneration::from_bytes(generation),
+        })
+    }
+
+    /// Best-view cosine selected from the retained profile.
+    #[must_use]
+    pub fn score(&self) -> f64 {
+        self.score.get()
+    }
+
+    /// Candidate-owned floor in force when selected.
+    #[must_use]
+    pub fn floor(&self) -> f64 {
+        self.floor.get()
+    }
+
+    /// Frequency fit that weighted both selected vectors.
+    #[must_use]
+    pub fn generation(&self) -> &DesignFitGeneration {
+        &self.generation
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DesignNoticeMatchWire {
+    score: DesignSimilarity,
+    floor: DesignSimilarity,
+    generation: DesignFitGeneration,
+}
+
+impl<'de> Deserialize<'de> for DesignNoticeMatch {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = DesignNoticeMatchWire::deserialize(deserializer)?;
+        if wire.score.get() < wire.floor.get() {
+            return Err(serde::de::Error::custom(
+                "Design notice score must clear its recorded floor",
+            ));
+        }
+        Ok(Self {
+            score: wire.score,
+            floor: wire.floor,
+            generation: wire.generation,
+        })
+    }
 }
 
 /// Most characters of a Design request's supporting-work excerpt.
@@ -236,6 +390,10 @@ pub struct DesignNoticed {
     /// than the field and on those a retired Passive group's floor admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<DesignReach>,
+    /// Exact score, floor, and frequency fit that admitted this request.
+    /// Absent on records written before match provenance was retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matching: Option<DesignNoticeMatch>,
     /// The question items asked, the best-scoring first and the rest in
     /// statement order. Empty asks about the whole Design: no current item
     /// was askable of the lane, or the record predates items.
@@ -263,7 +421,7 @@ pub struct DesignReturnDelivered {
 
 #[cfg(test)]
 mod tests {
-    use super::{DESIGN_NOTICE_SHOWN_TERMS, shown_notice_terms};
+    use super::{DESIGN_NOTICE_SHOWN_TERMS, DesignNoticeMatch, shown_notice_terms};
 
     #[test]
     fn shown_terms_are_distinct_and_capped_in_record_order() {
@@ -278,5 +436,30 @@ mod tests {
         let many = (0..20).map(|n| format!("term{n:02}")).collect::<Vec<_>>();
         assert_eq!(shown_notice_terms(&many).len(), DESIGN_NOTICE_SHOWN_TERMS);
         assert!(shown_notice_terms(&[]).is_empty());
+    }
+
+    #[test]
+    fn notice_match_round_trips_exact_values_and_refuses_a_missed_floor() {
+        let score = f64::from_bits(0.3_f64.to_bits() + 1);
+        let floor = 0.16;
+        let generation = [0x5a; 32];
+        let matching =
+            DesignNoticeMatch::new(score, floor, generation).expect("score clears floor");
+        let encoded = serde_json::to_value(&matching).expect("match serializes");
+        let decoded: DesignNoticeMatch =
+            serde_json::from_value(encoded).expect("match deserializes");
+        assert_eq!(decoded.score().to_bits(), score.to_bits());
+        assert_eq!(decoded.floor().to_bits(), floor.to_bits());
+        assert_eq!(
+            decoded.generation(),
+            &super::DesignFitGeneration::from_bytes(generation)
+        );
+        assert!(DesignNoticeMatch::new(floor.next_down(), floor, generation).is_none());
+        let invalid = serde_json::json!({
+            "score": "0.1",
+            "floor": "0.2",
+            "generation": super::DesignFitGeneration::from_bytes(generation),
+        });
+        assert!(serde_json::from_value::<DesignNoticeMatch>(invalid).is_err());
     }
 }

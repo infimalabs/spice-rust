@@ -223,6 +223,16 @@ impl RoomEventKind {
     }
 }
 
+/// One lane's newest recorded Design request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecordedAsk {
+    position: Seq,
+    evidence: authority::DesignNoticeEvidence,
+    questions: Vec<authority::RoomQuestion>,
+    reach: Option<authority::DesignReach>,
+    matching: Option<authority::DesignNoticeMatch>,
+}
+
 /// One task-keyed room projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoomState {
@@ -233,16 +243,8 @@ pub struct RoomState {
     /// Each nudge that messaged a lane: its position and the publication that
     /// carried the room's unheard operator posts.
     nudges: BTreeMap<Seq, RoomAuthorityStamp>,
-    /// Each asked lane's newest recorded Design request: its position, exact
-    /// retained evidence, and asked question items in asked order.
-    asked: BTreeMap<
-        CanonicalUuid,
-        (
-            Seq,
-            authority::DesignNoticeEvidence,
-            Vec<authority::RoomQuestion>,
-        ),
-    >,
+    /// Each asked lane's newest recorded Design request.
+    asked: BTreeMap<CanonicalUuid, RecordedAsk>,
 }
 
 impl RoomState {
@@ -276,6 +278,8 @@ pub enum ParticipantReason {
     Asked {
         evidence: authority::DesignNoticeEvidence,
         questions: Vec<authority::RoomQuestion>,
+        reach: Option<authority::DesignReach>,
+        matching: Option<authority::DesignNoticeMatch>,
     },
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
@@ -772,11 +776,13 @@ impl RoomProjection {
             .asked
             .insert(
                 body.lane,
-                (
+                RecordedAsk {
                     position,
-                    body.evidence.clone(),
-                    body.asks.iter().map(|ask| ask.question).collect(),
-                ),
+                    evidence: body.evidence.clone(),
+                    questions: body.asks.iter().map(|ask| ask.question).collect(),
+                    reach: body.reach,
+                    matching: body.matching.clone(),
+                },
             );
         self.maturity
             .entry(body.design.clone())
