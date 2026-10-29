@@ -1,4 +1,4 @@
-//! One bounded job list and full-width inspector share the global-menu slot.
+//! One bounded job list and inspector, global or scoped to selected tasks.
 
 use super::super::clock::Age;
 use super::*;
@@ -22,6 +22,7 @@ struct Selection {
     label: AttrValue,
     accent: AttrValue,
     admitted: Option<crate::socket::SessionScope>,
+    task: Option<wire::TaskStamp>,
 }
 
 struct Row {
@@ -51,6 +52,7 @@ struct JobsProps {
     inspect: bool,
     can_stop: bool,
     scope: Option<crate::socket::SessionScope>,
+    tasks: Option<Rc<[wire::TaskStamp]>>,
     on_action: Callback<ClientAction, bool>,
 }
 
@@ -59,6 +61,7 @@ pub(super) fn render(
     connection: &Connection,
     runtime: Option<&AppRuntime>,
     sender: &SenderHandle,
+    tasks: Option<&[wire::TaskStamp]>,
 ) -> Html {
     let offered =
         |kind| connection.is_online() && runtime.is_some_and(|runtime| runtime.offers(kind));
@@ -68,7 +71,8 @@ pub(super) fn render(
     let scope = runtime.map(|runtime| runtime.principal().scope());
     let sender = sender.clone();
     let on_action = Callback::from(move |action| admit_action(&sender, action));
-    html! { <Jobs {standings} {ready} {inspect} {can_stop} {scope} {on_action} /> }
+    let tasks = tasks.map(Rc::from);
+    html! { <Jobs {standings} {ready} {inspect} {can_stop} {scope} {tasks} {on_action} /> }
 }
 
 #[function_component(Jobs)]
@@ -82,15 +86,21 @@ fn jobs_view(props: &JobsProps) -> Html {
     let request = use_catalog_refresh(props, &data, &stage);
     let catalog = data.as_ref().filter(|catalog| catalog.scope == props.scope);
     let rows = catalog.and_then(|catalog| catalog.result.as_ref().ok());
-    let jobs = rows.map_or(&[][..], |rows| rows.as_slice());
-    let saved = selected
-        .as_ref()
-        .filter(|selected| selected.admitted == props.scope);
+    let jobs = rows
+        .map_or(&[][..], |rows| rows.as_slice())
+        .iter()
+        .filter(|row| {
+            crate::watchband::job_matches_tasks(row.selection.task.as_ref(), props.tasks.as_deref())
+        });
+    let saved = selected.as_ref().filter(|selected| {
+        selected.admitted == props.scope
+            && crate::watchband::job_matches_tasks(selected.task.as_ref(), props.tasks.as_deref())
+    });
     let live =
-        saved.and_then(|selected| jobs.iter().find(|row| same_job(&row.selection, selected)));
+        saved.and_then(|selected| jobs.clone().find(|row| same_job(&row.selection, selected)));
     let current = live.map(|row| &row.selection).or(saved);
     let visible = jobs
-        .iter()
+        .clone()
         .filter(|row| matches_filter(row, *filter, query.trim()));
     let count = visible.clone().count();
     let position = current.and_then(|selected| {
@@ -99,38 +109,7 @@ fn jobs_view(props: &JobsProps) -> Html {
             .position(|row| same_job(&row.selection, selected))
     });
     let in_list = rows.map(|_| live.is_some());
-    {
-        let stage = stage.clone();
-        let last = last.clone();
-        use_effect_with(
-            current.map(|selection| selection.target.clone()),
-            move |target| {
-                let focus = if let Some(target) = target {
-                    *last.borrow_mut() = Some(target.clone());
-                    web_sys::window()
-                        .and_then(|window| window.document())
-                        .and_then(|document| document.get_element_by_id("spice-job-back"))
-                        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-                        .or_else(|| stage.cast::<web_sys::HtmlElement>())
-                } else {
-                    last.borrow()
-                        .as_ref()
-                        .and_then(|target| {
-                            web_sys::window()?
-                                .document()?
-                                .get_element_by_id(&row_id(target))?
-                                .dyn_into::<web_sys::HtmlElement>()
-                                .ok()
-                        })
-                        .or_else(|| stage.cast::<web_sys::HtmlElement>())
-                };
-                if let Some(focus) = focus {
-                    let _ = focus.focus();
-                }
-                || ()
-            },
-        );
-    }
+    use_job_focus(current, &stage, &last);
     let on_select = {
         let selected = selected.clone();
         Callback::from(move |selection| selected.set(Some(selection)))
@@ -139,7 +118,13 @@ fn jobs_view(props: &JobsProps) -> Html {
         let selected = selected.clone();
         Callback::from(move |()| selected.set(None))
     };
-    let on_nav = navigation(rows.cloned(), &selected, *filter, (*query).clone());
+    let on_nav = navigation(
+        rows.cloned(),
+        &selected,
+        props.tasks.clone(),
+        *filter,
+        (*query).clone(),
+    );
     let oninput = {
         let query = query.clone();
         Callback::from(move |event: InputEvent| {
@@ -160,14 +145,14 @@ fn jobs_view(props: &JobsProps) -> Html {
     };
     let on_scroll_key = Callback::from(chain_scroll_key);
     html! {
-        <section class="app-sheet-section app-spice-jobs" aria-labelledby={HEADING}
+        <section class={classes!("app-sheet-section", "app-spice-jobs", props.tasks.is_some().then_some("work-overview-jobs"))} aria-labelledby={HEADING}
             data-state={if rows.is_some() { "ready" } else { "loading" }}>
             <div class="section-heading">
                 <h2 id={HEADING}><button type="button" class="app-job-reset" onclick={reset}
                     title="Show all jobs; clear filters">{"Jobs"}</button></h2>
                 <input class="app-job-search" type="search" placeholder="Find job…"
                     aria-label="Find jobs by agent, command, or job ID" value={(*query).clone()} {oninput} />
-                {census(jobs, &filter)}
+                {census(jobs.clone(), &filter)}
             </div>
             <div class="app-job-stage" ref={stage} tabindex="-1" data-view={if current.is_some() { "detail" } else { "list" }}
                 onkeydown={on_scroll_key}>
@@ -181,7 +166,7 @@ fn jobs_view(props: &JobsProps) -> Html {
                 } else if rows.is_none() {
                     <p class="app-empty-state">{if props.ready { "Reading keeper jobs…" } else { "Job management is unavailable on this connection." }}</p>
                 } else if count == 0 {
-                    <p class="app-empty-state">{if jobs.is_empty() { "No jobs running or awaiting delivery." }
+                    <p class="app-empty-state">{if jobs.clone().next().is_none() { "No jobs running or awaiting delivery." }
                         else { "No matching jobs. Click Jobs to clear filters." }}</p>
                 } else {
                     <ol class="app-spice-job-board" aria-label="Agent jobs">
@@ -333,6 +318,7 @@ fn project(
                     label: label.clone(),
                     accent: accent.clone(),
                     admitted,
+                    task: job.task,
                 },
                 command: job.command.into(),
                 kind: job.kind,
@@ -355,6 +341,7 @@ fn project(
 fn navigation(
     rows: Option<Rc<Vec<Row>>>,
     selected: &UseStateHandle<Option<Selection>>,
+    tasks: Option<Rc<[wire::TaskStamp]>>,
     filter: Filter,
     query: String,
 ) -> Callback<i32> {
@@ -363,9 +350,10 @@ fn navigation(
         let Some(rows) = &rows else {
             return;
         };
-        let visible = rows
-            .iter()
-            .filter(|row| matches_filter(row, filter, query.trim()));
+        let visible = rows.iter().filter(|row| {
+            crate::watchband::job_matches_tasks(row.selection.task.as_ref(), tasks.as_deref())
+                && matches_filter(row, filter, query.trim())
+        });
         let count = visible.clone().count();
         if count == 0 {
             return;
@@ -479,9 +467,12 @@ fn row_id(target: &LaneJobRef) -> String {
     )
 }
 
-fn census(jobs: &[Row], filter: &UseStateHandle<Filter>) -> Html {
+fn census<'a>(
+    jobs: impl Iterator<Item = &'a Row> + Clone,
+    filter: &UseStateHandle<Filter>,
+) -> Html {
     let unheard = jobs
-        .iter()
+        .clone()
         .filter(|row| row.phase == LaneJobPhase::Ended)
         .count();
     let toggle = |next| {
@@ -491,7 +482,7 @@ fn census(jobs: &[Row], filter: &UseStateHandle<Filter>) -> Html {
     html! {
         <span class="section-count app-spice-job-census" aria-label="Filter jobs">
             {for KINDS.iter().map(|(kind, running, _, plural)| {
-                let count = jobs.iter().filter(|row| row.kind == *kind).count();
+                let count = jobs.clone().filter(|row| row.kind == *kind).count();
                 html! { <button type="button" data-job-kind={kind.as_str()} onclick={toggle(Filter::Kind(*kind))}
                     aria-pressed={(**filter == Filter::Kind(*kind)).to_string()} title={format!("{count} {plural}; click to filter")}>
                     <span aria-hidden="true">{*running}</span><span class="visually-hidden">{format!("{plural}: ")}</span>{count}
@@ -528,4 +519,42 @@ fn render_job(row: &Row, on_select: &Callback<Selection>, ready: bool) -> Html {
             </button>
         </li>
     }
+}
+
+#[hook]
+fn use_job_focus(
+    current: Option<&Selection>,
+    stage: &NodeRef,
+    last: &Rc<std::cell::RefCell<Option<LaneJobRef>>>,
+) {
+    let stage = stage.clone();
+    let last = last.clone();
+    use_effect_with(
+        current.map(|selection| selection.target.clone()),
+        move |target| {
+            let focus = if let Some(target) = target {
+                *last.borrow_mut() = Some(target.clone());
+                web_sys::window()
+                    .and_then(|window| window.document())
+                    .and_then(|document| document.get_element_by_id("spice-job-back"))
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                    .or_else(|| stage.cast::<web_sys::HtmlElement>())
+            } else {
+                last.borrow()
+                    .as_ref()
+                    .and_then(|target| {
+                        web_sys::window()?
+                            .document()?
+                            .get_element_by_id(&row_id(target))?
+                            .dyn_into::<web_sys::HtmlElement>()
+                            .ok()
+                    })
+                    .or_else(|| stage.cast::<web_sys::HtmlElement>())
+            };
+            if let Some(focus) = focus {
+                let _ = focus.focus();
+            }
+            || ()
+        },
+    );
 }

@@ -715,27 +715,19 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
 #[test]
 fn a_task_view_keeps_only_jobs_associated_with_its_selected_tasks() {
     let selected = wire::TaskStamp::for_micros(10).expect("fixture task");
-    let other = wire::TaskStamp::for_micros(20).expect("fixture task");
-    let job = |task| wire::intent::LaneJob {
-        id: "6ZbQk3mPx".to_owned(),
-        command: "cargo test".to_owned(),
-        task,
-        kind: wire::intent::LaneJobKind::Command,
-        standing: wire::intent::LaneJobStanding::Running,
-    };
+    let other_selected = wire::TaskStamp::for_micros(20).expect("fixture task");
+    let unrelated = wire::TaskStamp::for_micros(30).expect("fixture task");
+    let tasks = [selected, other_selected];
 
-    assert!(job_matches_tasks(
-        &job(Some(selected.clone())),
-        std::slice::from_ref(&selected),
-    ));
-    assert!(!job_matches_tasks(
-        &job(Some(other)),
-        std::slice::from_ref(&selected),
-    ));
-    assert!(!job_matches_tasks(
-        &job(None),
-        std::slice::from_ref(&selected),
-    ));
+    for task in &tasks {
+        assert!(job_matches_tasks(Some(task), Some(&tasks)));
+    }
+    assert!(!job_matches_tasks(Some(&unrelated), Some(&tasks)));
+    assert!(!job_matches_tasks(None, Some(&tasks)));
+    assert!(!job_matches_tasks(Some(&tasks[0]), Some(&[])));
+    assert!(!job_matches_tasks(None, Some(&[])));
+    assert!(job_matches_tasks(Some(&unrelated), None));
+    assert!(job_matches_tasks(None, None));
 }
 
 #[test]

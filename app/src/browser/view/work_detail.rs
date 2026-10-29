@@ -13,6 +13,7 @@ use wire::TaskStamp;
 pub(super) struct WorkDetailRender<'a, 'work> {
     pub work: &'a WorkProjection<'work>,
     pub lanes: Option<&'a LaneView>,
+    pub jobs: Html,
     pub navigate: &'a Callback<navigation::Intent>,
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
     pub selection: &'a TaskOverviewSelection,
@@ -42,8 +43,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
     let focus_task = focus_task_callback();
     let count = render.selection.tasks().len();
     let blockers = super::work_blockers::BlockerPresentation::new(render.work, render.selection);
-    let activate_task =
-        work_map::activate_task(render.selection, &focus_task, &render.open_overview);
     let body = html! {
         <div
             class="work-overview"
@@ -87,14 +86,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
                     })}
                 }
             </section>
-            if let Some(lanes) = render.lanes {
-                {super::work_jobs::render(&super::work_jobs::WorkJobsRender {
-                    lanes: &lanes.lanes,
-                    selected: render.selection.tasks(),
-                    work: render.work,
-                    activate_task: &activate_task,
-                })}
-            }
+            {render.jobs.clone()}
         </div>
     };
     let overlay = blockers.render_review(
