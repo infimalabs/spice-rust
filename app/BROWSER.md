@@ -1,33 +1,31 @@
 # Browser checks
 
-## Browser evidence follows the host system theme
+## App checks use OMP's managed Chromium
 
-Use the repository-owned `launchAppBrowser` helper for disposable app browser
-checks. It gives the headless context the host's `prefers-color-scheme`, so
-callers do not repeat theme setup:
-
-```js
-import { chromium } from "playwright";
-import launchAppBrowser from "./app/browser/app.mjs";
-
-const app = await launchAppBrowser(chromium);
-try {
-  await app.page.goto(appUrl);
-  // Inspect or capture the actual app surface.
-} finally {
-  await app.close();
-}
-```
-
-`spice dev xtask -- app-demo` supplies `appUrl`. It stages the worktree's
-current app sources itself before it serves anything, so an app source edit is
-visible without a separate `spice dev xtask -- app`; its
+Use OMP eval's Puppeteer-backed `browser` global for disposable app checks.
+`spice dev xtask -- app-demo` supplies `appUrl` and stages the worktree's
+current app sources before serving them, so an app source edit is visible
+without a separate `spice dev xtask -- app`; its
 `[app-demo] ... sources=... staged_generation=...` line names the source
 identity the served generation was compiled from.
 
-An intentional theme-matrix check passes `contextOptions: { colorScheme }`; the
-returned `colorScheme` and `colorSchemeSource` report the value and whether it
-came from `"system"` or `"explicit"`. A stored `spice:app-theme` preference
+```js
+const tab = await browser.open({
+  name: "spice-app",
+  url: appUrl,
+  app: { tern: false },
+});
+try {
+  await tab.observe();
+  await tab.screenshot({ fullPage: true });
+} finally {
+  await tab.close();
+}
+```
+
+Managed Chromium stays headless by default and installs automatically on first
+use. An intentional theme-matrix check calls
+`await tab.emulate({ colorScheme })`; a stored `spice:app-theme` preference
 still wins over the browser preference.
 
 ## Mosaic card sizing
@@ -299,8 +297,8 @@ provider standing the emblem names.
 The app's `style-src 'self'` policy refuses inline style attributes, so the
 rail is SVG geometry in the pane's measured CSS pixels, every colour and glow
 comes from the stylesheet, and the slide's span and duration reach it as
-custom properties written through CSSOM. A Playwright check of it must
-keep that policy enforced: a context with `bypassCSP` would hide a drawing that
+custom properties written through CSSOM. A browser check of it must keep that
+policy enforced: a context with `bypassCSP` would hide a drawing that
 draws nothing in production.
 
 Yew's `html!` lowercases literal element names, and SVG recognises

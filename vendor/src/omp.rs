@@ -114,17 +114,18 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 /// The tools a lane's occupant runs with, spelled as omp's `--tools` roster.
 ///
 /// `eval` is OMP-owned because its session-scoped kernels are the reason a
-/// task-bound occupant may remain alive between turns. Every tool that would
-/// start a process is left off: `bash` and `wait` would run commands the lane
-/// cannot see or outlive, so the lane registers its own [`SHELL_TOOL`] and
-/// [`JOB_TOOL`] instead and executes every command itself. One agent inhabits
-/// one worktree, so omp's `task` sub-agent tool is left off as well. omp's
-/// `todo` tool is left off for a different reason: the occupant's plan is the
-/// task it holds, whose phases and acceptance the board already carries where
-/// every other lane and the operator can read them, and a private second copy
-/// is a plan no reviewer can check and one that drifts from the row it shadows.
-/// The rest is omp's own roster for a session with no MCP server, so a tool omp
-/// adds later joins only by being named.
+/// task-bound occupant may remain alive between turns. `bash` and `wait` stay
+/// off the roster so lane-managed commands run through the lane's
+/// [`SHELL_TOOL`] and [`JOB_TOOL`].
+///
+/// One agent inhabits one worktree, so omp's `task` sub-agent tool stays off.
+/// [`config_overlay`] also sets the recursion limit to zero because eval's
+/// `agent()` and `workpool()` bridges bypass the top-level roster. omp's `todo`
+/// tool stays off for a different reason: the occupant's plan is the task it
+/// holds, whose phases and acceptance the board already carries where every
+/// other lane and the operator can read them. The rest is omp's own roster for
+/// a session with no MCP server, so a tool omp adds later joins only by being
+/// named.
 pub const TOOLS: &str = "read,write,edit,glob,grep,web_search,eval";
 
 /// [`TOOLS`] plus omp's language-server tool, for a lane whose policy admits
@@ -206,9 +207,9 @@ pub const JOB_HISTORY: wire::output::Surface = wire::output::Surface::new(
 
 /// What the model reads about the lane's shell, in place of omp's `bash`.
 const SHELL_DESCRIPTION: &str = "Runs one shell command in the worktree and returns its \
-output. This is the only way to execute anything: the lane runs the command in its own \
-environment and ends it at the deadline, 15 minutes unless you name one and never more \
-than 60. Chain order-dependent commands with `&&`. The \
+output. The lane runs the command in its own environment and ends it at the deadline, 15 \
+minutes unless you name one and never more than 60. Chain order-dependent commands with \
+`&&`. The \
 native wrapper bounds inline output and supplies a readable full-log path when needed; \
 do not append `tail` just to limit output. A command still running after 60 seconds, or \
 when a message arrives for you, is kept as a \
@@ -380,6 +381,13 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// it. The occupant's plan is the task it holds, and only the allocator
 /// closes that.
 ///
+/// The task recursion limit is zero because omp's eval `agent()` and
+/// `workpool()` bridges invoke the subagent machinery without going through the
+/// omitted top-level `task` tool. The same depth gate removes their prompt
+/// guidance and refuses direct calls. Eval-defined tools are off because only
+/// those subagents consume them. Ordinary `tool.<name>` calls remain on the
+/// registered tool boundary.
+///
 /// Steering transport follows omp's own settings and model capabilities.
 /// Background notices use the SDK aside path, so reminders cannot repeatedly
 /// steer a response that is still trying to answer the operator.
@@ -396,7 +404,9 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: 
     } else {
         "tier:\n  anthropic: none\n"
     });
-    overlay.push_str("todo:\n  reminders: false\n");
+    overlay.push_str(
+        "eval:\n  tools:\n    enabled: false\ntask:\n  maxRecursionDepth: 0\ntodo:\n  reminders: false\n",
+    );
     overlay
 }
 

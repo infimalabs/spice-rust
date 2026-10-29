@@ -53,12 +53,16 @@ append to `<git-common>/.spice/resident.log`. The resident listens on a
 loopback port the kernel picks unless `--host IP` or `--port PORT` names one; a
 named port keeps the URL stable across restarts.
 
-Lanes run the oh-my-pi agent, so `omp` must be on `PATH`. Seat a first lane
-with `spice lane add [WORKTREE]`. A lane wakes and draws work under its
-team's policy, Drive unless `lane.life` or `--life` says otherwise: a Drive
-team starts its vacant lanes as work its own members filed appears, a Drain
-team as any assignable work appears, and a Steer team's lane is started by
-hand with `spice lane wake ID`. `--life` seeds only the policy of the agent's
+Lanes run the oh-my-pi agent, so `omp` 18.13.3 or newer must be on `PATH`.
+Spice keeps OMP's retained Python and JavaScript eval runtimes while disabling
+subagent recursion, including eval's independent `agent()` and `workpool()`
+bridges.
+
+Seat a first lane with `spice lane add [WORKTREE]`. A lane wakes and draws work
+under its team's policy, Drive unless `lane.life` or `--life` says otherwise: a
+Drive team starts its vacant lanes as work its own members filed appears, a
+Drain team as any assignable work appears, and a Steer team's lane is started
+by hand with `spice lane wake ID`. `--life` seeds only the policy of the agent's
 own initial team, the one `lane add` forms when no `--team` is given; a lane
 added with `--team ID` takes that team's policy instead.
 
