@@ -396,6 +396,12 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
                 maturity.observe_request(&notice);
             })?;
         }
+        Change::Shadow { seq, design } => {
+            connection.execute(
+                "INSERT INTO design_shadows(design, seq) VALUES (?1, ?2)",
+                params![design, sql(seq)],
+            )?;
+        }
         Change::MaturityContribution(contribution) => {
             update_maturity(connection, &contribution.room, |maturity| {
                 maturity.observe_contribution(&contribution);
@@ -543,6 +549,11 @@ impl Projection {
                 |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
             )?,
             notices,
+            shadows: table(
+                connection,
+                "SELECT design, seq FROM design_shadows",
+                |row| Ok(((row.get(0)?, unsql(row.get(1)?)), ())),
+            )?,
             maturity,
             oops_generation: load_oops_generation(connection)?,
             partition: connection
@@ -615,9 +626,10 @@ pub(crate) fn write_projection(
     projection: &Projection,
 ) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
-        "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_maturity; \
-         DELETE FROM oops_generation_head; DELETE FROM group_partition; DELETE FROM proposal_heads; \
-         DELETE FROM authorization_heads; DELETE FROM room_cursors; DELETE FROM room_horizons;",
+        "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_shadows; \
+         DELETE FROM design_maturity; DELETE FROM oops_generation_head; DELETE FROM group_partition; \
+         DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors; \
+         DELETE FROM room_horizons;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -628,6 +640,12 @@ pub(crate) fn write_projection(
     for ((design, seq), ()) in &projection.notices {
         connection.execute(
             "INSERT INTO design_notices(design, seq) VALUES (?1, ?2)",
+            params![design, sql(*seq)],
+        )?;
+    }
+    for ((design, seq), ()) in &projection.shadows {
+        connection.execute(
+            "INSERT INTO design_shadows(design, seq) VALUES (?1, ?2)",
             params![design, sql(*seq)],
         )?;
     }

@@ -1,10 +1,14 @@
-//! `spice room awareness HANDLE`: session-profile requests for one Design.
+//! `spice room awareness HANDLE [--shadows]`: session-profile requests for
+//! one Design, or the shadows its floor refused.
 //!
 //! Each row is one admitted `room::noticed` record, oldest first: the requested
 //! lane and continuing vendor session, the exact opportunity, supporting task
 //! or conversation evidence, Design statement, and matched terms as every
-//! surface shows them. Rows page whole in journal order; a page that withholds
-//! any continues at the first withheld one. Reading changes nothing.
+//! surface shows them. With `--shadows` each row is instead one
+//! `room::shadowed` record: a session whose best Design was this one but fell
+//! short of its reach floor, with its score, the floor, and what that lane
+//! later did in the room. Rows page whole in journal order; a page that
+//! withholds any continues at the first withheld one. Reading changes nothing.
 
 use std::fmt;
 
@@ -12,7 +16,10 @@ use clap::ArgMatches;
 use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::Bounded;
-use wire::rooms::{DesignItemStanding, DesignMaturity, DesignMaturityState, DesignNoticed};
+use wire::rooms::{
+    DesignItemStanding, DesignMaturity, DesignMaturityState, DesignNoticed, DesignShadowed,
+    RoomContributed, RoomLeft,
+};
 use wire::{CanonicalUuid, FaultClass, Outcome, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp};
 
 use super::{Failure, current_handle, discover, fault, store};
@@ -20,19 +27,29 @@ use crate::read_page::Page;
 
 /// What a continuation's `--after` names.
 const CURSOR: &str = "an awareness record of this Design";
+/// What a shadow continuation's `--after` names.
+const SHADOW_CURSOR: &str = "a shadow record of this Design";
 
-/// One page of completion requests for one Design.
+/// One page of completion requests, or of shadows, for one Design.
 #[derive(Debug, Serialize)]
 pub(crate) struct DesignAwareness {
     design: TaskHandle,
     anchor: TaskStamp,
-    page: Bounded<Noticed>,
+    page: Rows,
     maturity: DesignMaturity,
     /// Maturity judged against the Design's current statement.
     state: DesignMaturityState,
     /// Each current question item's standing.
     items: Vec<ItemStanding>,
     effect: &'static str,
+}
+
+/// The rows one awareness page carries.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Rows {
+    Noticed(Bounded<Noticed>),
+    Shadowed(Bounded<Shadowed>),
 }
 
 /// One current question item with its text.
@@ -57,6 +74,50 @@ pub(crate) struct Noticed {
     /// Question items asked, in asked order; empty asks about the whole Design.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     asks: Vec<wire::rooms::DesignAsk>,
+}
+
+/// One admitted shadow record and what its lane did in the room afterwards.
+#[derive(Debug, Serialize)]
+pub(crate) struct Shadowed {
+    seq: Seq,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    session: wire::rooms::DesignSession,
+    opportunity: wire::rooms::DesignNoticeOpportunity,
+    evidence: wire::rooms::DesignNoticeEvidence,
+    statement: Seq,
+    terms: Vec<String>,
+    reach: wire::rooms::DesignReach,
+    floor: wire::rooms::MatchScore,
+    score: wire::rooms::MatchScore,
+    generation: wire::rooms::FitGeneration,
+    outcome: ShadowOutcome,
+}
+
+/// The first thing a shadowed lane did in the Design's room after its shadow,
+/// or the Design claim it won since.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub(crate) enum ShadowOutcome {
+    /// The lane contributed to the Design.
+    Contributed { at: Seq },
+    /// The lane left the Design's room.
+    Left { at: Seq },
+    /// The lane won the Design's claim.
+    Captured { at: Seq },
+    /// Nothing yet.
+    None,
+}
+
+impl ShadowOutcome {
+    fn label(self) -> String {
+        match self {
+            Self::Contributed { at } => format!("contributed at {at}"),
+            Self::Left { at } => format!("left at {at}"),
+            Self::Captured { at } => format!("captured at {at}"),
+            Self::None => "none".to_owned(),
+        }
+    }
 }
 
 /// Read one bounded page of a Design's awareness records from the working
@@ -101,18 +162,19 @@ fn awareness(
     path: &[&str],
 ) -> Result<(ReplyPosition, DesignAwareness), Failure> {
     let page = Page::from_matches(matches, path)?;
+    let shadows = matches.get_flag("shadows");
     let (named, anchor) = super::named_room(matches)?;
     let requested = page
         .after()
         .map(|after| {
             after
                 .parse::<Seq>()
-                .map_err(|_| page.cursor_refusal(CURSOR))
+                .map_err(|_| page.cursor_refusal(if shadows { SHADOW_CURSOR } else { CURSOR }))
         })
         .transpose()?;
     let after = requested.and_then(|seq| seq.get().checked_sub(1).and_then(Seq::new));
     let retain = page.retain();
-    let (cursor, design, maturity, acceptance, population, rows) = journal
+    let (cursor, design, maturity, acceptance, rows) = journal
         .read_with(|read| -> Result<_, Failure> {
             let design = current_handle(read, &anchor)?;
             let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
@@ -128,7 +190,12 @@ fn awareness(
                 .map_err(store)?
                 .map(|head| head.body().acceptance.clone())
                 .unwrap_or_default();
-            let population = read.design_notice_count(&anchor, after).map_err(store)?;
+            let population = if shadows {
+                read.design_shadow_count(&anchor, after)
+            } else {
+                read.design_notice_count(&anchor, after)
+            }
+            .map_err(store)?;
             let budget = journal::FactReadBudget::new(
                 retain.clamp(1, journal::FactReadBudget::RETAINED.rows()),
                 journal::FactReadBudget::RETAINED.decoded_bytes(),
@@ -137,17 +204,29 @@ fn awareness(
             let mut rows = Vec::with_capacity(retain.min(population));
             let mut from = after;
             while rows.len() < retain.min(population) {
-                let fetched = read.design_notices(&anchor, from, budget).map_err(store)?;
-                let wanted = retain - rows.len();
-                for envelope in fetched.rows.into_iter().take(wanted) {
-                    rows.push(noticed(read, envelope)?);
+                let fetched = if shadows {
+                    read.design_shadows(&anchor, from, budget)
+                } else {
+                    read.design_notices(&anchor, from, budget)
                 }
+                .map_err(store)?;
+                let wanted = retain - rows.len();
+                rows.extend(fetched.rows.into_iter().take(wanted));
                 match fetched.continuation {
                     Some(next) => from = Some(next),
                     None => break,
                 }
             }
-            Ok((cursor, design, maturity, acceptance, population, rows))
+            let rows = if shadows {
+                Rows::Shadowed(page.shown(shadowed_rows(read, &anchor, rows)?, population)?)
+            } else {
+                let rows = rows
+                    .into_iter()
+                    .map(noticed)
+                    .collect::<Result<Vec<_>, _>>()?;
+                Rows::Noticed(page.shown(keyed(rows, |row| row.seq), population)?)
+            };
+            Ok((cursor, design, maturity, acceptance, rows))
         })
         .map_err(|error| match error {
             journal::ReadError::Journal(error) => store(error),
@@ -156,15 +235,7 @@ fn awareness(
     if let Some(notice) = crate::board_command::rename_notice(&named, &design) {
         eprintln!("{notice}");
     }
-    let page = page.shown(
-        rows.into_iter()
-            .map(|row| {
-                let key = row.seq.to_string();
-                (row, key)
-            })
-            .collect(),
-        population,
-    )?;
+
     let state = maturity.state(&acceptance);
     let items = maturity
         .items
@@ -178,7 +249,7 @@ fn awareness(
         DesignAwareness {
             design,
             anchor,
-            page,
+            page: rows,
             maturity,
             state,
             items,
@@ -187,11 +258,18 @@ fn awareness(
     ))
 }
 
+/// Each row beside its continuation key, the journal position.
+fn keyed<T>(rows: Vec<T>, seq: impl Fn(&T) -> Seq) -> Vec<(T, String)> {
+    rows.into_iter()
+        .map(|row| {
+            let key = seq(&row).to_string();
+            (row, key)
+        })
+        .collect()
+}
+
 /// The row one indexed notice envelope reads as.
-fn noticed(
-    _read: &journal::JournalRead<'_>,
-    envelope: wire::Envelope<wire::AnyFact>,
-) -> Result<Noticed, Failure> {
+fn noticed(envelope: wire::Envelope<wire::AnyFact>) -> Result<Noticed, Failure> {
     let Some(body) = envelope.fact.read::<DesignNoticed>() else {
         return Err(fault(
             FaultClass::Store,
@@ -215,13 +293,141 @@ fn noticed(
     })
 }
 
+/// Each indexed shadow envelope as a row with its lane's later outcome,
+/// keyed by journal position.
+fn shadowed_rows(
+    read: &journal::JournalRead<'_>,
+    anchor: &TaskStamp,
+    envelopes: Vec<wire::Envelope<wire::AnyFact>>,
+) -> Result<Vec<(Shadowed, String)>, Failure> {
+    let mut shadows = Vec::with_capacity(envelopes.len());
+    for envelope in envelopes {
+        let Some(body) = envelope.fact.read::<DesignShadowed>() else {
+            return Err(fault(
+                FaultClass::Store,
+                "room::awareness-index-invalid",
+                "the Design shadow index returned another fact kind",
+            ));
+        };
+        shadows.push((envelope.seq, body));
+    }
+    let outcomes = RoomOutcomes::after(read, anchor, shadows.iter().map(|(seq, _)| *seq).min())?;
+    let rows = shadows
+        .into_iter()
+        .map(|(seq, body)| {
+            let outcome = outcomes.of(body.lane, seq);
+            Shadowed {
+                seq,
+                lane: body.lane,
+                occupant: body.occupant,
+                session: body.session,
+                opportunity: body.opportunity,
+                evidence: body.evidence,
+                statement: body.statement,
+                terms: wire::rooms::shown_notice_terms(&body.terms)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                reach: body.reach,
+                floor: body.floor,
+                score: body.score,
+                generation: body.generation,
+                outcome,
+            }
+        })
+        .collect();
+    Ok(keyed(rows, |row| row.seq))
+}
+
+/// Every lane's room contributions and leaves in one Design's room from a
+/// position on, and the Design's current claim, read once for a page.
+struct RoomOutcomes {
+    /// Each lane's contribution and leave positions, ascending.
+    contributions: std::collections::BTreeMap<CanonicalUuid, Vec<Seq>>,
+    leaves: std::collections::BTreeMap<CanonicalUuid, Vec<Seq>>,
+    /// The lane holding or last holding the Design's claim and when it won.
+    claim: Option<(CanonicalUuid, Seq)>,
+}
+
+impl RoomOutcomes {
+    fn after(
+        read: &journal::JournalRead<'_>,
+        anchor: &TaskStamp,
+        earliest: Option<Seq>,
+    ) -> Result<Self, Failure> {
+        let mut outcomes = Self {
+            contributions: std::collections::BTreeMap::new(),
+            leaves: std::collections::BTreeMap::new(),
+            claim: read
+                .claim_head(anchor)
+                .map_err(store)?
+                .map(|head| (head.body().lane, head.body().claimed)),
+        };
+        let Some(earliest) = earliest else {
+            return Ok(outcomes);
+        };
+        let mut after = Some(earliest);
+        loop {
+            let page = read
+                .room_publications(anchor, after, journal::FactReadBudget::RETAINED)
+                .map_err(store)?;
+            for envelope in &page.rows {
+                if let Some(contributed) = envelope.fact.read::<RoomContributed>() {
+                    outcomes
+                        .contributions
+                        .entry(contributed.lane)
+                        .or_default()
+                        .push(envelope.seq);
+                } else if let Some(left) = envelope.fact.read::<RoomLeft>() {
+                    outcomes
+                        .leaves
+                        .entry(left.lane)
+                        .or_default()
+                        .push(envelope.seq);
+                }
+            }
+            let Some(continuation) = page.continuation else {
+                return Ok(outcomes);
+            };
+            after = Some(continuation);
+        }
+    }
+
+    /// The earliest thing `lane` did after `shadow`, a claim win counting at
+    /// its position.
+    fn of(&self, lane: CanonicalUuid, shadow: Seq) -> ShadowOutcome {
+        let first = |positions: Option<&Vec<Seq>>| {
+            positions.and_then(|positions| positions.iter().copied().find(|at| *at > shadow))
+        };
+        [
+            first(self.contributions.get(&lane)).map(|at| (at, ShadowOutcome::Contributed { at })),
+            first(self.leaves.get(&lane)).map(|at| (at, ShadowOutcome::Left { at })),
+            self.claim
+                .filter(|(holder, claimed)| *holder == lane && *claimed > shadow)
+                .map(|(_, at)| (at, ShadowOutcome::Captured { at })),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(at, _)| *at)
+        .map_or(ShadowOutcome::None, |(_, outcome)| outcome)
+    }
+}
+
 impl fmt::Display for DesignAwareness {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "design {} awareness (background notices; no attention or acknowledgment)",
-            self.design
-        )?;
+        match &self.page {
+            Rows::Noticed(_) => write!(
+                formatter,
+                "design {} awareness (background notices; no attention or acknowledgment)",
+                self.design
+            )?,
+            Rows::Shadowed(_) => write!(
+                formatter,
+                "design {} shadows (sessions whose best Design fell short of its floor; \
+                 nothing was delivered)",
+                self.design
+            )?,
+        }
         write!(
             formatter,
             "\n{}",
@@ -268,13 +474,20 @@ impl fmt::Display for DesignAwareness {
             )?;
         }
         write!(formatter, "\n{}", self.effect)?;
-        for row in &self.page.rows {
-            write!(formatter, "\n{row}")?;
+        match &self.page {
+            Rows::Noticed(page) => rows(formatter, page),
+            Rows::Shadowed(page) => rows(formatter, page),
         }
-        match &self.page.omission {
-            Some(omission) => write!(formatter, "\n{omission}"),
-            None => Ok(()),
-        }
+    }
+}
+
+fn rows<T: fmt::Display>(formatter: &mut fmt::Formatter<'_>, page: &Bounded<T>) -> fmt::Result {
+    for row in &page.rows {
+        write!(formatter, "\n{row}")?;
+    }
+    match &page.omission {
+        Some(omission) => write!(formatter, "\n{omission}"),
+        None => Ok(()),
     }
 }
 
@@ -319,6 +532,33 @@ impl fmt::Display for Noticed {
                 ask.question,
                 ask.state.label()
             )?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Shadowed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let opportunity = spice::rooms::awareness::notice_opportunity_text(&self.opportunity);
+        let evidence = spice::rooms::awareness::notice_evidence_text(&self.evidence);
+        write!(
+            formatter,
+            "{} lane {} occupant {} session {}/{} opportunity {opportunity} evidence {evidence} \
+             statement {} reach {} score {} floor {} generation {} outcome {}",
+            self.seq,
+            self.lane,
+            self.occupant,
+            self.session.vendor,
+            self.session.identity,
+            self.statement,
+            self.reach,
+            self.score,
+            self.floor,
+            self.generation,
+            self.outcome.label(),
+        )?;
+        if !self.terms.is_empty() {
+            write!(formatter, " terms {}", self.terms.join(", "))?;
         }
         Ok(())
     }

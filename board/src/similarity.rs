@@ -162,6 +162,12 @@ impl Generation {
     }
 }
 
+impl From<Generation> for wire::rooms::FitGeneration {
+    fn from(generation: Generation) -> Self {
+        Self::of_hash(&generation.0)
+    }
+}
+
 /// A cosine was asked between vectors weighted under different fits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GenerationMismatch {

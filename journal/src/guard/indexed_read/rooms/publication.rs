@@ -10,6 +10,43 @@ use super::{
     SelectedFactPage, admitted_envelope_length, decode_bounded_fact, probe_limit, read_metrics,
 };
 
+/// One per-Design `(design, seq)` index over a resident-owned fact kind.
+#[derive(Clone, Copy)]
+enum DesignIndex {
+    /// `room::noticed` records in `design_notices`.
+    Notices,
+    /// `room::shadowed` records in `design_shadows`.
+    Shadows,
+}
+
+impl DesignIndex {
+    const fn table(self) -> &'static str {
+        match self {
+            Self::Notices => "design_notices",
+            Self::Shadows => "design_shadows",
+        }
+    }
+
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Notices => "notice",
+            Self::Shadows => "shadow",
+        }
+    }
+
+    /// The Design an indexed fact names, when it is the indexed kind.
+    fn design_of(self, fact: &wire::AnyFact) -> Option<wire::TaskStamp> {
+        match self {
+            Self::Notices => fact
+                .read::<wire::rooms::DesignNoticed>()
+                .map(|notice| notice.design),
+            Self::Shadows => fact
+                .read::<wire::rooms::DesignShadowed>()
+                .map(|shadow| shadow.design),
+        }
+    }
+}
+
 impl JournalRead<'_> {
     /// Rooms whose publication index gained a row in one committed range.
     ///
@@ -130,6 +167,28 @@ impl JournalRead<'_> {
         after: Option<wire::Seq>,
         budget: FactReadBudget,
     ) -> Result<SelectedFactPage, GuardError> {
+        self.design_index_page(DesignIndex::Notices, design, after, budget)
+    }
+
+    /// One bounded page of a Design's shadow records, the sessions whose best
+    /// Design was this one but fell short of its floor, from the per-Design
+    /// index.
+    pub fn design_shadows(
+        &self,
+        design: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        self.design_index_page(DesignIndex::Shadows, design, after, budget)
+    }
+
+    fn design_index_page(
+        &self,
+        index: DesignIndex,
+        design: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
         let Some(horizon) = self.cursor else {
             return Ok(SelectedFactPage {
                 rows: Vec::new(),
@@ -140,20 +199,22 @@ impl JournalRead<'_> {
         let after = after.map_or(Ok(0), |seq| i64::try_from(seq.get()));
         let horizon_sql = i64::try_from(horizon.get());
         let (Ok(after), Ok(horizon_sql)) = (after, horizon_sql) else {
-            return Err(GuardError::Invalid(
-                "Design notice cursor exceeds SQLite".to_owned(),
-            ));
+            return Err(GuardError::Invalid(format!(
+                "Design {} cursor exceeds SQLite",
+                index.noun()
+            )));
         };
         read_metrics::observe_query();
         let mut statement = self
             .connection
-            .prepare(
+            .prepare(&format!(
                 "SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
-                 FROM design_notices AS noticed \
-                 JOIN fact_envelopes AS facts ON facts.seq = noticed.seq \
-                 WHERE noticed.design = ?1 AND noticed.seq > ?2 AND noticed.seq <= ?3 \
-                 ORDER BY noticed.seq LIMIT ?4",
-            )
+                 FROM {} AS indexed \
+                 JOIN fact_envelopes AS facts ON facts.seq = indexed.seq \
+                 WHERE indexed.design = ?1 AND indexed.seq > ?2 AND indexed.seq <= ?3 \
+                 ORDER BY indexed.seq LIMIT ?4",
+                index.table()
+            ))
             .map_err(GuardError::Store)?;
         let mut rows = statement
             .query(params![
@@ -180,10 +241,10 @@ impl JournalRead<'_> {
                 break;
             }
             let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
-            let indexed = fact.fact.read::<wire::rooms::DesignNoticed>();
-            if indexed.as_ref().map(|notice| &notice.design) != Some(design) {
+            if index.design_of(&fact.fact).as_ref() != Some(design) {
                 return Err(GuardError::Invalid(format!(
-                    "Design notice index for {design} names {} fact {seq}",
+                    "Design {} index for {design} names {} fact {seq}",
+                    index.noun(),
                     fact.fact.kind()
                 )));
             }
@@ -232,28 +293,51 @@ impl JournalRead<'_> {
         design: &wire::TaskStamp,
         after: Option<wire::Seq>,
     ) -> Result<usize, GuardError> {
+        self.design_index_count(DesignIndex::Notices, design, after)
+    }
+
+    /// How many of a Design's shadow records lie strictly after `after`, or
+    /// in all without it, through this read transaction's cursor.
+    pub fn design_shadow_count(
+        &self,
+        design: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+    ) -> Result<usize, GuardError> {
+        self.design_index_count(DesignIndex::Shadows, design, after)
+    }
+
+    fn design_index_count(
+        &self,
+        index: DesignIndex,
+        design: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+    ) -> Result<usize, GuardError> {
         let Some(horizon) = self.cursor else {
             return Ok(0);
         };
         let after = after.map_or(Ok(0), |seq| i64::try_from(seq.get()));
         let horizon = i64::try_from(horizon.get());
         let (Ok(after), Ok(horizon)) = (after, horizon) else {
-            return Err(GuardError::Invalid(
-                "Design notice cursor exceeds SQLite".to_owned(),
-            ));
+            return Err(GuardError::Invalid(format!(
+                "Design {} cursor exceeds SQLite",
+                index.noun()
+            )));
         };
         read_metrics::observe_query();
         let count = self
             .connection
             .query_row(
-                "SELECT count(*) FROM design_notices \
-                 WHERE design = ?1 AND seq > ?2 AND seq <= ?3",
+                &format!(
+                    "SELECT count(*) FROM {} WHERE design = ?1 AND seq > ?2 AND seq <= ?3",
+                    index.table()
+                ),
                 params![design.as_str(), after, horizon],
                 |row| row.get::<_, i64>(0),
             )
             .map_err(GuardError::Store)?;
-        usize::try_from(count)
-            .map_err(|_| GuardError::Invalid(format!("Design notice count {count} is negative")))
+        usize::try_from(count).map_err(|_| {
+            GuardError::Invalid(format!("Design {} count {count} is negative", index.noun()))
+        })
     }
 
     /// [`Self::room_publications`] or [`Self::room_publications_newest`],

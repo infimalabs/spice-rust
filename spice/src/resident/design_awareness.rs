@@ -13,12 +13,12 @@ use board::similarity::{
 };
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::request_questions;
-use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest};
+use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest, ProfileSelection};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
     DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems, DesignNoticeEvidence,
-    DesignNoticeOpportunity, DesignNoticed, DesignReach, DesignSession, DesignSupport,
+    DesignNoticeOpportunity, DesignNoticed, DesignReach, DesignSession, DesignSupport, MatchScore,
     RoomContributed, RoomLeft, RoomQuestionItem,
 };
 use wire::{
@@ -28,6 +28,10 @@ use wire::{
 
 use super::room_catch_up::Planning;
 use super::*;
+
+mod shadow;
+
+use shadow::{PlannedShadow, Shadow, record_shadow};
 
 /// Refusal reason of a request a commit after its observation made stale.
 const STALE: &str = "room::awareness-stale";
@@ -85,6 +89,13 @@ struct PlannedRequest {
     reach: Option<DesignReach>,
     asks: Vec<DesignAsk>,
     horizon: Option<Seq>,
+}
+
+/// What one planning pass found for every retained-profile opportunity.
+#[derive(Default)]
+struct Planned {
+    requests: Vec<PlannedRequest>,
+    shadows: Vec<PlannedShadow>,
 }
 
 /// One newly observed task completion and its matching input.
@@ -177,9 +188,10 @@ impl CompletionCursor {
 
 /// Record one best matching open Design for every retained-profile
 /// opportunity, replacing a session's owed request only with a strictly better
-/// match. Nothing is pushed into a lane's turn here: room catch-up carries the
+/// match, and one shadow for every opportunity whose best Design fell short.
+/// Nothing is pushed into a lane's turn here: room catch-up carries the
 /// owed request into the lane's next model input, and `task next` shows it
-/// while the lane holds no claim.
+/// while the lane holds no claim. A shadow reaches no lane at all.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     seats: &Seats,
@@ -195,8 +207,8 @@ pub(in crate::resident) fn reconcile(
     let planning = Planning::load(bus)?;
     bind_current_sessions(planning.snapshot.facts(), &occupied, profiles)?;
     retain_completed_evidence(&completed, profiles)?;
-    let requests = plan_profile_requests(bus, &planning, &occupied, cursor, profiles)?;
-    for request in requests {
+    let planned = plan_profile_requests(bus, &planning, &occupied, cursor, profiles)?;
+    for request in planned.requests {
         match record(bus, &request) {
             Ok(None) => {}
             Ok(Some(stale)) => {
@@ -211,6 +223,25 @@ pub(in crate::resident) fn reconcile(
                     diagnostic,
                     "lane {} request for Design {} was not recorded: {error:?}",
                     request.lane, request.design
+                );
+            }
+        }
+    }
+    for shadow in planned.shadows {
+        match record_shadow(bus, &shadow) {
+            Ok(None) => {}
+            Ok(Some(stale)) => {
+                let _ = writeln!(
+                    diagnostic,
+                    "lane {} shadow for Design {} became stale: {stale}",
+                    shadow.lane, shadow.design
+                );
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    diagnostic,
+                    "lane {} shadow for Design {} was not recorded: {error:?}",
+                    shadow.lane, shadow.design
                 );
             }
         }
@@ -285,7 +316,7 @@ fn plan_profile_requests(
     occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
     cursor: &mut CompletionCursor,
     profiles: &std::sync::Mutex<message_surface::MessageState>,
-) -> CommandResult<Vec<PlannedRequest>> {
+) -> CommandResult<Planned> {
     let entries = &planning.entries;
     let facts = planning.snapshot.facts();
     let opportunities = {
@@ -294,7 +325,7 @@ fn plan_profile_requests(
         take_profile_opportunities(&state.profiles, occupied, cursor)
     };
     if opportunities.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Planned::default());
     }
     let mut state = message_surface::lock_state(profiles)?;
     let matcher = board::similarity::MatchCache::shared();
@@ -309,7 +340,8 @@ fn plan_profile_requests(
     };
 
     let mut planned_sessions = BTreeSet::new();
-    let mut planned = Vec::new();
+    let mut planned_shadows = BTreeSet::new();
+    let mut planned = Planned::default();
     for opportunity in opportunities {
         let lane = opportunity.session.lane;
         let Some(&occupant) = occupied.get(&lane) else {
@@ -333,7 +365,7 @@ fn plan_profile_requests(
                 restated_request(bus, planning, occupant, &session, compaction, owed)?
         {
             planned_sessions.insert(session_identity);
-            planned.push(restated);
+            planned.requests.push(restated);
             continue;
         }
         let owed = owed.map(|(_, notice)| notice.design.clone());
@@ -354,34 +386,39 @@ fn plan_profile_requests(
                 owed.as_ref(),
             )?
         };
-        let Some(Selection {
-            design,
-            statement,
-            evidence,
-            excerpt,
-            terms,
-            reach,
-            asks,
-        }) = selected
-        else {
-            continue;
+        let selection = match selected {
+            Selected::Request(selection) => selection,
+            Selected::Shadow(shadow) => {
+                let shadow_identity = (session_identity, shadow.design.clone(), shadow.statement);
+                if facts.design_was_shadowed_in_session(
+                    lane,
+                    &session,
+                    &shadow.design,
+                    shadow.statement,
+                ) || !planned_shadows.insert(shadow_identity)
+                {
+                    continue;
+                }
+                planned.shadows.push(shadow.planned(
+                    lane,
+                    occupant,
+                    session,
+                    durable_opportunity,
+                    planning.horizon,
+                ));
+                continue;
+            }
+            Selected::None => continue,
         };
         planned_sessions.insert(session_identity);
-        planned.push(PlannedRequest {
+        planned.requests.push(selection.planned(
             lane,
             occupant,
             session,
             compaction,
-            opportunity: durable_opportunity,
-            evidence,
-            excerpt,
-            design,
-            statement,
-            terms,
-            reach: Some(reach),
-            asks,
-            horizon: planning.horizon,
-        });
+            durable_opportunity,
+            planning.horizon,
+        ));
     }
     Ok(planned)
 }
@@ -421,12 +458,54 @@ struct Selection {
     asks: Vec<DesignAsk>,
 }
 
+impl Selection {
+    /// This selection as the request one pass commits for `session`.
+    fn planned(
+        self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        session: DesignSession,
+        compaction: Option<Seq>,
+        opportunity: DesignNoticeOpportunity,
+        horizon: Option<Seq>,
+    ) -> PlannedRequest {
+        PlannedRequest {
+            lane,
+            occupant,
+            session,
+            compaction,
+            opportunity,
+            evidence: self.evidence,
+            excerpt: self.excerpt,
+            design: self.design,
+            statement: self.statement,
+            terms: self.terms,
+            reach: Some(self.reach),
+            asks: self.asks,
+            horizon,
+        }
+    }
+}
+
+/// What one opportunity selected for a session.
+enum Selected {
+    /// A Design cleared its floor and is owed to the session.
+    Request(Selection),
+    /// No Design cleared its floor; the best one that fell short, for a
+    /// session that owes nothing and was never asked about it.
+    Shadow(Shadow),
+    /// Nothing to record.
+    None,
+}
+
 /// The best Design `kind` admits that still owes this session an ask, unless
 /// it fails to strictly outrank the Design still owed to the session under the
 /// same frequency generation, current cards, and reach floors. An owed Design
 /// that no longer clears its floor bars nothing. Whether a Design is selected
 /// is judged on its whole statement; the selection then asks every pending
-/// item, the one scoring best against the cards first.
+/// item, the one scoring best against the cards first. When no Design clears
+/// its floor and none is owed, the best that fell short is the session's
+/// shadow unless it was already asked about that Design.
 fn select_design(
     scoring: &Scoring<'_>,
     profile: &mut spice::rooms::profile::SessionProfile,
@@ -434,7 +513,7 @@ fn select_design(
     session: &DesignSession,
     kind: &ProfileOpportunityKind,
     owed: Option<&TaskStamp>,
-) -> CommandResult<Option<Selection>> {
+) -> CommandResult<Selected> {
     let Scoring {
         facts,
         frequency,
@@ -461,22 +540,69 @@ fn select_design(
             .map(|matched| matched.score),
         None => None,
     };
+    let askable = |(design, _): &&(&board::Entry, Arc<Prepared>)| {
+        pending_asks(facts, lane, session, design).is_some()
+    };
     let candidates = prepared
         .iter()
-        .filter(|(design, _)| {
-            opportunity_design_matches(kind, design)
-                && pending_asks(facts, lane, session, design).is_some()
-        })
+        .filter(|(design, _)| opportunity_design_matches(kind, design))
+        .filter(askable)
         .map(candidate);
-    let Some(matched) = profile
+    let matched = match profile
         .evidence_mut()
-        .select(frequency, candidates)
+        .select_or_short(frequency, candidates)
         .map_err(mismatch)?
-    else {
-        return Ok(None);
+    {
+        ProfileSelection::Admitted(matched) => matched,
+        ProfileSelection::Short(short) => {
+            if owed.is_some() {
+                return Ok(Selected::None);
+            }
+            // A statement opportunity evaluates one Design; its shortfall is
+            // a shadow only when that Design is also the session's best among
+            // every Design it could be asked about.
+            let short = if matches!(kind, ProfileOpportunityKind::DesignChanged { .. }) {
+                let design = short.design.born().clone();
+                drop(short);
+                let every = prepared.iter().filter(askable).map(candidate);
+                match profile
+                    .evidence_mut()
+                    .select_or_short(frequency, every)
+                    .map_err(mismatch)?
+                {
+                    ProfileSelection::Short(best) if *best.design.born() == design => best,
+                    ProfileSelection::Admitted(_)
+                    | ProfileSelection::Short(_)
+                    | ProfileSelection::None => return Ok(Selected::None),
+                }
+            } else {
+                short
+            };
+            let design: &board::Entry = short.design;
+            if facts.design_was_noticed_in_session(lane, session, design.born()) {
+                return Ok(Selected::None);
+            }
+            let (Some(floor), Some(score)) = (
+                MatchScore::of_cosine(short.floor),
+                MatchScore::of_cosine(short.score),
+            ) else {
+                return Ok(Selected::None);
+            };
+            return Ok(Selected::Shadow(Shadow {
+                design: design.born().clone(),
+                statement: design.statement().revision,
+                evidence: durable_evidence(short.evidence, short.digest),
+                terms: short.terms,
+                reach: admitting_reach(facts, design),
+                floor,
+                score,
+                generation: frequency.generation().into(),
+            }));
+        }
+        ProfileSelection::None => return Ok(Selected::None),
     };
     if bar.is_some_and(|bar| matched.score <= bar) {
-        return Ok(None);
+        return Ok(Selected::None);
     }
     let design: &board::Entry = matched.design;
     let evidence = durable_evidence(matched.evidence, matched.digest);
@@ -486,7 +612,7 @@ fn select_design(
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
     let asks =
         rank_asks(profile, frequency, design, asks, match_score_floor(reach)).map_err(mismatch)?;
-    Ok(Some(Selection {
+    Ok(Selected::Request(Selection {
         design: design.born().clone(),
         statement: design.statement().revision,
         evidence,
@@ -1268,12 +1394,7 @@ fn unseen_request(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<()
 /// Commit the durable record before `task next` returns it: the guard's stale
 /// cause when a relevant authority moved after its observation.
 fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> {
-    let at = Instant::new(jiff::Timestamp::now())
-        .map_err(|error| environment_fault("room::awareness-clock-invalid", &error.to_string()))?;
-    let origin = format!("lane:{}", request.lane)
-        .parse::<wire::Origin>()
-        .map_err(|error| store_fault("room::awareness-origin-invalid", &error.to_string()))?;
-    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::ResidentRecognition);
+    let mut write = awareness_write(request.lane)?;
     write
         .fact(
             DesignNoticed {
@@ -1297,6 +1418,24 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
     write.guard(journal::JournalGuard::new(move |read| {
         still_owed(read, &observed)
     }));
+    commit_awareness(bus, write)
+}
+
+fn awareness_write(lane: CanonicalUuid) -> CommandResult<JournalWrite> {
+    let at = Instant::new(jiff::Timestamp::now())
+        .map_err(|error| environment_fault("room::awareness-clock-invalid", &error.to_string()))?;
+    let origin = format!("lane:{lane}")
+        .parse::<wire::Origin>()
+        .map_err(|error| store_fault("room::awareness-origin-invalid", &error.to_string()))?;
+    Ok(JournalWrite::new(
+        Actor::Spice,
+        origin,
+        at,
+        Producer::ResidentRecognition,
+    ))
+}
+
+fn commit_awareness(bus: &Bus, write: JournalWrite) -> CommandResult<Option<String>> {
     match bus
         .commit(write)
         .map_err(|error| store_fault("room::awareness-commit", &error.to_string()))?

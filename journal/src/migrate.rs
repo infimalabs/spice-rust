@@ -171,9 +171,11 @@ pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
 pub(crate) const STEERING_ROOM_SCHEMA: u32 = 86;
 /// First schema whose baseline carries the release-note projection.
 pub(crate) const RELEASE_NOTES_SCHEMA: u32 = 88;
+/// First schema whose baseline indexes Design shadow records per Design.
+pub(crate) const DESIGN_SHADOW_SCHEMA: u32 = 102;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (ROOM_HORIZON_SCHEMA, crate::rooms::HORIZON_SCHEMA_SQL),
@@ -189,6 +191,7 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
         OOPS_GENERATION_SCHEMA,
         crate::rooms::OOPS_GENERATION_SCHEMA_SQL,
     ),
+    (DESIGN_SHADOW_SCHEMA, crate::rooms::SHADOW_SCHEMA_SQL),
 ];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";

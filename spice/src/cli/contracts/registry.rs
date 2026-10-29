@@ -593,7 +593,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["room", "awareness"],
-        "room awareness HANDLE [--limit N] [--max-bytes N] [--after POSITION]",
+        "room awareness HANDLE [--shadows] [--limit N] [--max-bytes N] [--after POSITION]",
         OperatorOrLane,
         Read,
         [],

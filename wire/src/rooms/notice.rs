@@ -4,6 +4,8 @@
 //! keeps the asked lane listening to the Design's room until that lane leaves,
 //! and adds no participation, steering, claim, assignment, or wake.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use super::{DecisionRef, DesignItemState, RoomQuestion, RoomQuestionItem};
@@ -28,6 +30,15 @@ pub enum DesignReach {
     Wide,
     /// A steeped or OOPS Design invites only at the higher floor.
     Narrow,
+}
+
+impl fmt::Display for DesignReach {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Wide => "wide",
+            Self::Narrow => "narrow",
+        })
+    }
 }
 
 /// Most characters of a Design request's supporting-work excerpt.
@@ -241,6 +252,108 @@ pub struct DesignNoticed {
     /// was askable of the lane, or the record predates items.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asks: Vec<DesignAsk>,
+}
+
+/// Scale of [`MatchScore`]: one unit is a ten-thousandth of cosine.
+pub const MATCH_SCORE_UNIT: u16 = 10_000;
+
+/// One cosine relevance score or floor in ten-thousandths, truncated, so
+/// records compare exactly and a score below its floor stays below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MatchScore(u16);
+
+impl MatchScore {
+    /// `cosine` truncated to ten-thousandths; `None` outside `[0, 1]` or when
+    /// not finite. Truncation is monotonic, so two cosines keep their order.
+    #[must_use]
+    pub fn of_cosine(cosine: f64) -> Option<Self> {
+        if !cosine.is_finite() || !(0.0..=1.0).contains(&cosine) {
+            return None;
+        }
+        // Bounded to [0, 10000] by the range check, so the cast is exact.
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the product lies in [0, 10000]"
+        )]
+        Some(Self((cosine * f64::from(MATCH_SCORE_UNIT)).floor() as u16))
+    }
+
+    /// The score as a cosine in `[0, 1]`.
+    #[must_use]
+    pub fn cosine(self) -> f64 {
+        f64::from(self.0) / f64::from(MATCH_SCORE_UNIT)
+    }
+}
+
+impl fmt::Display for MatchScore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "0.{:04}", self.0)
+    }
+}
+
+/// Identity of the frequency fit a score was weighted under: the lowercase
+/// hex of the fit's generation hash.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FitGeneration(String);
+
+impl FitGeneration {
+    /// The generation whose hash is `bytes`.
+    #[must_use]
+    pub fn of_hash(bytes: &[u8; 32]) -> Self {
+        Self(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+
+    /// The generation's hex spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for FitGeneration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// The best open Design one continuing session's cards selected at an
+/// opportunity fell short of its reach floor, so no request was recorded.
+///
+/// The record is positional: it names the best candidate that did not clear,
+/// under whatever floor its reach carried at the time, so a later floor change
+/// leaves every earlier shadow self-describing. It delivers nothing, wakes
+/// nothing, grants nothing, and opens no listening; it exists so the invites a
+/// floor excluded can be compared with what the lane later did.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignShadowed {
+    /// Open Design the session's cards scored best against.
+    pub design: TaskStamp,
+    /// Exact Design statement head evaluated.
+    pub statement: Seq,
+    /// Logical lane carrying the continuing session when evaluated.
+    pub lane: CanonicalUuid,
+    /// Occupant carrying the continuing session when evaluated.
+    pub occupant: CanonicalUuid,
+    /// Continuing vendor session whose cards were scored.
+    pub session: DesignSession,
+    /// Event that gave the resident an opportunity to evaluate the profile.
+    pub opportunity: DesignNoticeOpportunity,
+    /// Retained card whose view scored best.
+    pub evidence: DesignNoticeEvidence,
+    /// Strongest shared terms in ascending order.
+    pub terms: Vec<String>,
+    /// Reach whose floor the match fell short of.
+    pub reach: DesignReach,
+    /// That reach's floor when evaluated.
+    pub floor: MatchScore,
+    /// The best cosine any card view scored, below `floor`.
+    pub score: MatchScore,
+    /// Frequency fit the score was weighted under.
+    pub generation: FitGeneration,
 }
 
 /// The resident handed an active Design's holder the operator's newest return
