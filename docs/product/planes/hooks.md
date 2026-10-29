@@ -13,6 +13,13 @@ allow a repository mutation. Agent shell hooks (the wrapper and the supervisor)
 shape and steer the agent's own commands. They have different owners and
 different failure semantics, and are never conflated.
 
+Each installed Git hook contains only its shell header and one `exec` of the
+repository's installed Spice with the hook name and original arguments. The
+launcher owns no environment policy. Native `gate pre-commit` removes Git's
+hook-only repository routing, repeated exec-path prefixes, and only the default
+developer-root variables Git injected before it captures proof authority or
+launches a child.
+
 The wrapper receives each complete top-level command string
 [exactly once](../invariants/identity.md#steering-shell-instrumentation-is-one-shot-at-the-agent-s-own-command-boundary).
 That is the last point at which the command still exists as one string rather

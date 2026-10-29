@@ -75,8 +75,6 @@ const RECORD_VERSION: u16 = 20;
 /// The one earlier schema a refresh still reads: schema 19 published the
 /// agent skill copy that schema 20 discards.
 const CROSSING_VERSION: u16 = 19;
-/// Environment marker exported only by the installed pre-commit launcher.
-pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiptSupport {
     Current,

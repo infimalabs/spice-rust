@@ -167,7 +167,6 @@ fn select_search_path(
     windows_helpers: bool,
     is_file: impl Fn(&Path) -> bool,
 ) -> Option<PathBuf> {
-    let mut helper = None;
     for entry in search_path.into_iter().flat_map(std::env::split_paths) {
         let directory = if entry.is_absolute() {
             entry
@@ -178,49 +177,26 @@ fn select_search_path(
         if !is_file(&candidate) {
             continue;
         }
-        if let Some(public) = public_git_from_helper(&candidate, program, windows_helpers)
+        return windows_public_git(&candidate, program, windows_helpers)
             .filter(|public| is_file(public))
-        {
-            return Some(public);
-        }
-        if named(&directory, "git-core") {
-            helper.get_or_insert(candidate);
-        } else {
-            return Some(candidate);
-        }
+            .or(Some(candidate));
     }
-    helper
+    None
 }
 
-/// The public Git a recognized helper candidate stands in for: Git for
-/// Windows' `mingw64/bin` or `usr/bin` routes to its `cmd`, and a `git-core`
-/// directory beneath `lib` or `libexec` to its prefix's `bin` (or, under
-/// `mingw64`, the installation's `cmd`). Any other directory is ordinary.
-fn public_git_from_helper(
-    candidate: &Path,
-    program: &str,
-    windows_helpers: bool,
-) -> Option<PathBuf> {
+/// Git for Windows' injected `mingw64/bin` and `usr/bin` directories route
+/// back to the distribution's public `cmd` executable. Every other PATH
+/// candidate is selected exactly as found.
+fn windows_public_git(candidate: &Path, program: &str, windows_helpers: bool) -> Option<PathBuf> {
     let directory = candidate.parent()?;
-    if windows_helpers && named(directory, "bin") {
-        let distribution = directory.parent()?;
-        if named(distribution, "mingw64") || named(distribution, "usr") {
-            return Some(distribution.parent()?.join("cmd").join(program));
-        }
-    }
-    if !named(directory, "git-core") {
+    if !windows_helpers || !named(directory, "bin") {
         return None;
     }
-    let container = directory.parent()?;
-    if !named(container, "lib") && !named(container, "libexec") {
+    let distribution = directory.parent()?;
+    if !named(distribution, "mingw64") && !named(distribution, "usr") {
         return None;
     }
-    let prefix = container.parent()?;
-    if windows_helpers && named(prefix, "mingw64") {
-        Some(prefix.parent()?.join("cmd").join(program))
-    } else {
-        Some(prefix.join("bin").join(program))
-    }
+    Some(distribution.parent()?.join("cmd").join(program))
 }
 
 /// Whether `path`'s last component is `name`, ignoring ASCII case.
@@ -287,21 +263,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn windows_path_precedes_program_files_and_relative_entries_anchor_once() {
+    fn windows_first_path_git_precedes_program_files_and_relative_entries_anchor_once() {
         let root = Path::new("/work");
         let path = std::env::join_paths([
-            Path::new("mingw64/libexec/git-core"),
+            Path::new("git/libexec/git-core"),
             Path::new("empty"),
             Path::new("tools"),
         ])
         .expect("compose fixture PATH");
-        let expected = root.join("tools").join("git.exe");
-        let helper = root.join("mingw64/libexec/git-core").join("git.exe");
+        let expected = root.join("git/libexec/git-core").join("git.exe");
+        let later = root.join("tools").join("git.exe");
         let (selected, source) = select_windows(
             root,
             Some(&path),
             || -> Result<PathBuf, String> { panic!("PATH selection must not inspect fallback") },
-            |candidate| candidate == expected || candidate == helper,
+            |candidate| candidate == expected || candidate == later,
         )
         .expect("select PATH Git");
 
@@ -310,77 +286,16 @@ mod tests {
     }
 
     #[test]
-    fn a_git_core_helper_normalizes_to_its_public_path_candidate() {
-        let root = Path::new("/work");
-        let path = OsStr::new("mingw64/libexec/git-core");
-        let helper = root.join("mingw64/libexec/git-core").join("git.exe");
-        let expected = root.join("cmd").join("git.exe");
-        let (selected, source) = select_windows(
-            root,
-            Some(path),
-            || -> Result<PathBuf, String> { panic!("PATH selection must not inspect fallback") },
-            |candidate| candidate == helper || candidate == expected,
-        )
-        .expect("select normalized PATH Git");
-
-        assert_eq!(selected, expected);
-        assert_eq!(source, GitProgramSource::SearchPath);
-    }
-
-    #[test]
-    fn only_a_git_core_directory_normalizes_to_its_off_path_public_git() {
-        let root = Path::new("/work");
-        for (entry, program, windows, public, expected) in [
-            (
-                "kit/libexec/tools",
-                "git",
-                false,
-                "kit/bin/git",
-                "kit/libexec/tools/git",
-            ),
-            (
-                "kit/lib/tools",
-                "git",
-                false,
-                "kit/bin/git",
-                "kit/lib/tools/git",
-            ),
-            (
-                "kit/libexec/git-core",
-                "git",
-                false,
-                "kit/bin/git",
-                "kit/bin/git",
-            ),
-            (
-                "kit/lib/git-core",
-                "git",
-                false,
-                "kit/bin/git",
-                "kit/bin/git",
-            ),
-            (
-                "mingw64/libexec/tools",
-                "git.exe",
-                true,
-                "cmd/git.exe",
-                "mingw64/libexec/tools/git.exe",
-            ),
-            (
-                "mingw64/libexec/git-core",
-                "git.exe",
-                true,
-                "cmd/git.exe",
-                "cmd/git.exe",
-            ),
-        ] {
-            let candidate = root.join(entry).join(program);
-            let public = root.join(public);
+    fn windows_injected_distribution_bins_still_route_to_public_git() {
+        let root = Path::new("/work/Git");
+        let public = root.join("cmd/git.exe");
+        for entry in ["mingw64/bin", "usr/bin"] {
+            let helper = root.join(entry).join("git.exe");
             let selected =
-                select_search_path(root, Some(OsStr::new(entry)), program, windows, |path| {
-                    path == candidate || path == public
+                select_search_path(root, Some(OsStr::new(entry)), "git.exe", true, |path| {
+                    path == helper || path == public
                 });
-            assert_eq!(selected, Some(root.join(expected)), "{entry}");
+            assert_eq!(selected, Some(public.clone()), "{entry}");
         }
     }
 
