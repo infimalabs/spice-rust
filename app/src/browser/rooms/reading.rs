@@ -105,17 +105,12 @@ pub(in crate::browser) fn render_task_room(
                         {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                         {super::approval::render_approval(runtime, controls, sender, open_task, room)}
                     }
-                    <section class="room-history" aria-label="Room conversation">
-                        if cards.is_empty() {
-                            <p class="room-empty">{"No room publications."}</p>
-                        } else {
-                            <header>
-                                <h4>{"Conversation"}</h4>
-                                <span>{cards.len()}</span>
-                            </header>
-                            {for cards.into_iter().map(|(_, card)| card)}
-                        }
-                    </section>
+                    {render_history(
+                        room,
+                        design,
+                        cards.len(),
+                        html! { {for cards.into_iter().map(|(_, card)| card)} },
+                    )}
                 </>
             };
             (pair, body)
@@ -139,6 +134,42 @@ pub(in crate::browser) fn render_task_room(
             {composer}
             {body}
         </section>
+    }
+}
+
+fn render_history(room: &TaskStamp, design: bool, count: usize, cards: Html) -> Html {
+    let body = if count == 0 {
+        html! { <p class="room-empty">{"No room publications."}</p> }
+    } else {
+        cards
+    };
+    if design {
+        html! {
+            <details
+                key={room.to_string()}
+                class="app-sheet-block room-conversation"
+                data-sheet-block="conversation"
+            >
+                <summary>
+                    <span class="room-conversation-marker" aria-hidden="true">{"▸"}</span>
+                    {"Conversation"}
+                    <span class="app-count-badge">{count}</span>
+                </summary>
+                <section class="room-history" aria-label="Room conversation">{body}</section>
+            </details>
+        }
+    } else {
+        html! {
+            <section class="room-history" aria-label="Room conversation">
+                if count > 0 {
+                    <header>
+                        <h4>{"Conversation"}</h4>
+                        <span>{count}</span>
+                    </header>
+                }
+                {body}
+            </section>
+        }
     }
 }
 

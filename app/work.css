@@ -733,6 +733,8 @@
 .room-approval,
 .room-approval-withdrawn,
 .room-history { display: grid; gap: 8px; }
+.room-conversation-marker { display: inline-block; }
+.room-conversation[open] > summary > .room-conversation-marker { transform: rotate(90deg); }
 .room-reading > .app-section-heading { justify-content: start; }
 
 /* A Design's Standing shares one row with a column of Maturity over the
