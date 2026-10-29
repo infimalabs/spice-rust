@@ -132,7 +132,7 @@ fn cross_notice(
         fact.insert("statement".to_owned(), Value::from(statement));
     }
     fact.remove("provenance");
-    Ok(())
+    super::design_admission::admit(fact)
 }
 
 fn refusal(seq: i64, detail: &str) -> OpenError {

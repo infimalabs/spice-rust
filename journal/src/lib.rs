@@ -76,8 +76,11 @@
 /// admitting stance as the reach its maturity now derives. Schema 101 retires
 /// the working-group brake: each open Design a Paused group held becomes
 /// deferred, every partition and arrange request drops its stance, and
-/// `group::stance` receipts retire to historical authority.
-pub const SCHEMA_VERSION: u32 = 101;
+/// `group::stance` receipts retire to historical authority. Schema 102 gives
+/// every retained Design request one required admission: its recorded match
+/// as scored, else its reach as unscored or none as unreached, naming the last
+/// schema that wrote it, since replay cannot recover a score never kept.
+pub const SCHEMA_VERSION: u32 = 102;
 
 /// First position assigned by a newly created journal.
 ///

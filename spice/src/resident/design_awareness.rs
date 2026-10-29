@@ -17,9 +17,9 @@ use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
-    DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems, DesignNoticeEvidence,
-    DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed, DesignReach, DesignSession,
-    DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
+    DesignAdmission, DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems,
+    DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed, DesignReach,
+    DesignSession, DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -82,8 +82,7 @@ struct PlannedRequest {
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
-    reach: Option<DesignReach>,
-    matching: Option<DesignNoticeMatch>,
+    admission: DesignAdmission,
     asks: Vec<DesignAsk>,
     horizon: Option<Seq>,
 }
@@ -361,7 +360,6 @@ fn plan_profile_requests(
             evidence,
             excerpt,
             terms,
-            reach,
             matching,
             asks,
         }) = selected
@@ -380,9 +378,8 @@ fn plan_profile_requests(
             design,
             statement,
             terms,
-            reach: Some(reach),
+            admission: DesignAdmission::Scored(matching),
             asks,
-            matching: Some(matching),
             horizon: planning.horizon,
         });
     }
@@ -420,7 +417,6 @@ struct Selection {
     evidence: DesignNoticeEvidence,
     excerpt: String,
     terms: Vec<String>,
-    reach: DesignReach,
     asks: Vec<DesignAsk>,
     matching: DesignNoticeMatch,
 }
@@ -488,14 +484,18 @@ fn select_design(
     let terms = matched.terms;
     let reach = admitting_reach(facts, design);
     let floor = match_score_floor(reach);
-    let matching =
-        DesignNoticeMatch::new(matched.score, floor, frequency.generation().into_bytes())
-            .ok_or_else(|| {
-                store_fault(
-                    "room::awareness-match-invalid",
-                    "the selected finite cosine did not clear its recorded floor",
-                )
-            })?;
+    let matching = DesignNoticeMatch::new(
+        reach,
+        matched.score,
+        floor,
+        frequency.generation().into_bytes(),
+    )
+    .ok_or_else(|| {
+        store_fault(
+            "room::awareness-match-invalid",
+            "the selected finite cosine did not clear its recorded floor",
+        )
+    })?;
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
     let asks = rank_asks(profile, frequency, design, asks, floor).map_err(mismatch)?;
     Ok(Some(Selection {
@@ -504,7 +504,6 @@ fn select_design(
         evidence,
         excerpt,
         terms,
-        reach,
         asks,
         matching,
     }))
@@ -916,8 +915,7 @@ fn restated_request(
         design: notice.design.clone(),
         statement: notice.statement,
         terms: notice.terms.clone(),
-        reach: notice.reach,
-        matching: notice.matching.clone(),
+        admission: notice.admission.clone(),
         asks: notice.asks.clone(),
         horizon: planning.horizon,
     }))
@@ -984,7 +982,7 @@ fn design_request(
             .into_iter()
             .map(str::to_owned)
             .collect(),
-        reach: notice.reach,
+        admission: notice.admission.clone(),
         asks,
     }
 }
@@ -1301,9 +1299,8 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 evidence: request.evidence.clone(),
                 excerpt: request.excerpt.clone(),
                 terms: request.terms.clone(),
-                reach: request.reach,
+                admission: request.admission.clone(),
                 asks: request.asks.clone(),
-                matching: request.matching.clone(),
             },
             FactCause::Root,
         )

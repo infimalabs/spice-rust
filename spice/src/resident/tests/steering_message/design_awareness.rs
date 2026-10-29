@@ -523,9 +523,12 @@ fn an_unsteeped_design_invites_wide_grouped_or_not() {
             .request(&config, FIRST)
             .expect("a filed open Design can be requested grouped or not");
         assert_eq!(request.design, design, "grouped {grouped}");
-        assert_eq!(
-            request.reach,
-            Some(wire::rooms::DesignReach::Wide),
+        assert!(
+            matches!(
+                &request.admission,
+                wire::rooms::DesignAdmission::Scored(matching)
+                    if matching.reach() == wire::rooms::DesignReach::Wide
+            ),
             "grouped {grouped} moved the reach"
         );
         seated.release_all();
@@ -683,10 +686,9 @@ fn profile_selection_uses_the_shared_tfidf_statement_window() {
     assert_eq!(notices[0].design, stamp(&distinctive));
     assert_eq!(notices[0].terms, request.terms);
     let notice = &notices[0];
-    let matching = notice
-        .matching
-        .as_ref()
-        .expect("new notices record their admitted match");
+    let wire::rooms::DesignAdmission::Scored(matching) = &notice.admission else {
+        panic!("new notices record their scored admission");
+    };
     assert_eq!(
         matching.score(),
         expected_score,
@@ -694,9 +696,7 @@ fn profile_selection_uses_the_shared_tfidf_statement_window() {
     );
     assert_eq!(
         matching.floor(),
-        crate::resident::design_awareness::match_score_floor(
-            notice.reach.expect("new notices record their reach"),
-        ),
+        crate::resident::design_awareness::match_score_floor(matching.reach(),),
     );
     let expected_generation =
         wire::rooms::DesignFitGeneration::from_bytes(expected_fit.generation().into_bytes());
@@ -1093,7 +1093,7 @@ fn a_resumed_occupant_is_told_the_owed_request_once() {
     );
     assert_eq!(notices[1].occupant, successor);
     assert_eq!(notices[1].design, notices[0].design);
-    assert_eq!(notices[1].matching, notices[0].matching);
+    assert_eq!(notices[1].admission, notices[0].admission);
     assert!(matches!(
         notices[1].opportunity,
         wire::rooms::DesignNoticeOpportunity::SessionResumed { .. }

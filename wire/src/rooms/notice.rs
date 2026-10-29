@@ -120,6 +120,8 @@ impl From<DesignFitGeneration> for String {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignNoticeMatch {
+    /// Reach whose floor admitted the match.
+    reach: DesignReach,
     /// Best-view cosine selected from the retained profile.
     score: DesignSimilarity,
     /// Candidate-owned floor in force when selected.
@@ -131,14 +133,21 @@ pub struct DesignNoticeMatch {
 impl DesignNoticeMatch {
     /// Build an admitted match, refusing a score below its recorded floor.
     #[must_use]
-    pub fn new(score: f64, floor: f64, generation: [u8; 32]) -> Option<Self> {
+    pub fn new(reach: DesignReach, score: f64, floor: f64, generation: [u8; 32]) -> Option<Self> {
         let score = DesignSimilarity::new(score)?;
         let floor = DesignSimilarity::new(floor)?;
         (score.get() >= floor.get()).then(|| Self {
+            reach,
             score,
             floor,
             generation: DesignFitGeneration::from_bytes(generation),
         })
+    }
+
+    /// Reach whose floor admitted the match.
+    #[must_use]
+    pub const fn reach(&self) -> DesignReach {
+        self.reach
     }
 
     /// Best-view cosine selected from the retained profile.
@@ -163,6 +172,7 @@ impl DesignNoticeMatch {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DesignNoticeMatchWire {
+    reach: DesignReach,
     score: DesignSimilarity,
     floor: DesignSimilarity,
     generation: DesignFitGeneration,
@@ -177,11 +187,36 @@ impl<'de> Deserialize<'de> for DesignNoticeMatch {
             ));
         }
         Ok(Self {
+            reach: wire.reach,
             score: wire.score,
             floor: wire.floor,
             generation: wire.generation,
         })
     }
+}
+
+/// How the selection that admitted one Design request stands on record.
+///
+/// Selection writes [`Self::Scored`]. The other variants are what a release
+/// that retained less recorded: the journal crossing names that release on
+/// each such record instead of inventing the values it never kept.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DesignAdmission {
+    /// The exact match selection computed.
+    Scored(DesignNoticeMatch),
+    /// Admitted at `reach` by `release`, which did not retain the score.
+    Unscored {
+        /// Reach whose floor admitted the match.
+        reach: DesignReach,
+        /// Last release that wrote this shape.
+        release: String,
+    },
+    /// Recorded by `release`, which retained neither score nor reach.
+    Unreached {
+        /// Last release that wrote this shape.
+        release: String,
+    },
 }
 
 /// Most characters of a Design request's supporting-work excerpt.
@@ -386,14 +421,8 @@ pub struct DesignNoticed {
     pub excerpt: String,
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
-    /// Reach whose relevance floor admitted the match. Absent on records older
-    /// than the field and on those a retired Passive group's floor admitted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reach: Option<DesignReach>,
-    /// Exact score, floor, and frequency fit that admitted this request.
-    /// Absent on records written before match provenance was retained.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub matching: Option<DesignNoticeMatch>,
+    /// How the selection that admitted this request stands on record.
+    pub admission: DesignAdmission,
     /// The question items asked, the best-scoring first and the rest in
     /// statement order. Empty asks about the whole Design: no current item
     /// was askable of the lane, or the record predates items.
@@ -421,7 +450,7 @@ pub struct DesignReturnDelivered {
 
 #[cfg(test)]
 mod tests {
-    use super::{DESIGN_NOTICE_SHOWN_TERMS, DesignNoticeMatch, shown_notice_terms};
+    use super::{DESIGN_NOTICE_SHOWN_TERMS, DesignNoticeMatch, DesignReach, shown_notice_terms};
 
     #[test]
     fn shown_terms_are_distinct_and_capped_in_record_order() {
@@ -443,19 +472,24 @@ mod tests {
         let score = f64::from_bits(0.3_f64.to_bits() + 1);
         let floor = 0.16;
         let generation = [0x5a; 32];
-        let matching =
-            DesignNoticeMatch::new(score, floor, generation).expect("score clears floor");
+        let matching = DesignNoticeMatch::new(DesignReach::Narrow, score, floor, generation)
+            .expect("score clears floor");
         let encoded = serde_json::to_value(&matching).expect("match serializes");
         let decoded: DesignNoticeMatch =
             serde_json::from_value(encoded).expect("match deserializes");
+        assert_eq!(decoded.reach(), DesignReach::Narrow);
         assert_eq!(decoded.score().to_bits(), score.to_bits());
         assert_eq!(decoded.floor().to_bits(), floor.to_bits());
         assert_eq!(
             decoded.generation(),
             &super::DesignFitGeneration::from_bytes(generation)
         );
-        assert!(DesignNoticeMatch::new(floor.next_down(), floor, generation).is_none());
+        assert!(
+            DesignNoticeMatch::new(DesignReach::Narrow, floor.next_down(), floor, generation)
+                .is_none()
+        );
         let invalid = serde_json::json!({
+            "reach": "narrow",
             "score": "0.1",
             "floor": "0.2",
             "generation": super::DesignFitGeneration::from_bytes(generation),

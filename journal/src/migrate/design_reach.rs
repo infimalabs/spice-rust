@@ -10,7 +10,7 @@
 use rusqlite::Transaction;
 use serde_json::Value;
 
-use super::{OpenError, design_asks, residual};
+use super::{OpenError, design_admission, design_asks, residual};
 
 /// Last schema whose Design requests recorded an admitting stance.
 const STANCE_RELEASE: &str = "schema-99";
@@ -37,7 +37,7 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
             if fact.contains_key("ask") {
                 design_asks::list_single_ask(fact)?;
             }
-            Ok(())
+            design_admission::admit(fact)
         },
     )
 }

@@ -426,8 +426,9 @@ fn noticed_at(
             },
             excerpt: "fixture rooms".to_owned(),
             terms: vec!["rooms".to_owned()],
-            reach: None,
-            matching: None,
+            admission: wire::rooms::DesignAdmission::Unreached {
+                release: "schema-101".to_owned(),
+            },
             asks: Vec::new(),
         },
     )
