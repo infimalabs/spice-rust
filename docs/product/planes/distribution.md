@@ -774,9 +774,12 @@ the installed executable's directory. It reclaims such a file once it is
 owner-only, owned by the current principal, older than the grace period, and
 its minting process has exited; a file still in use stays for a later pass.
 
-**Invariant —** Hook activation runs Git for Windows from the system Program
-Files folder (`Git\cmd\git.exe`), never one found on `PATH`. `core.hooksPath`,
-the generated hook launchers, and the alternate `GIT_INDEX_FILE` of a task's
+**Invariant —** Hook activation and gate execution share one Windows Git
+selection. The first regular `git.exe` on `PATH` is resolved to an absolute
+path; only its absence admits `Git\cmd\git.exe` beneath the shell-resolved
+Program Files folder, and that exceptional selection is announced. A selected
+executable that fails is not replaced by the fallback. `core.hooksPath`, the
+generated hook launchers, and the alternate `GIT_INDEX_FILE` of a task's
 worktree snapshot or integration tree name local-drive paths in Git's `C:/...`
 form, never the verbatim `\\?\C:\` form canonicalization yields, beside which
 Git for Windows cannot create a lock. A path outside a local drive refuses.

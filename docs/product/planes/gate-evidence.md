@@ -76,9 +76,25 @@ supplies it. They neither embed the release builder's home nor synthesize a
 runtime replacement; when HOME is absent, Cargo uses its own host resolution
 or reports its own failure.
 
-Live Git observations use the platform-pinned executable: `/usr/bin/git` on
-Unix, or `Git\cmd\git.exe` beneath Windows' system Program Files folder. They do
-not select an executable from the hook's search path.
+Live Git observations resolve the first regular `git` (`git.exe` on Windows)
+on the normalized `PATH` to one absolute executable. A Git-injected
+`git-core` helper prefix normalizes to that installation's public `bin/git` or
+`cmd/git.exe` when present. Git for Windows' leading `mingw64/bin`, `usr/bin`,
+shell-added user `bin`, and public `cmd` routing collapse from environment
+authority when that same public directory contains Git; the exact selected Git
+path and bytes remain bound separately. A direct producer and Git-invoked hook
+therefore select and prove the same tool. Only an absent PATH candidate admits
+`/usr/bin/git` on Unix or
+`Git\cmd\git.exe`
+beneath the shell-resolved Windows Program Files folder, announced with that
+path. A selected tool's resolution, launch, or command failure never tries the
+platform default. The selected path and executable bytes participate in proof
+authority, so changing Git cannot reuse evidence from another tool.
+
+Windows proof environments canonicalize case-insensitive variable names.
+Git Bash's `MSYSTEM` terminal defaults, redundant `HOME`/`USERPROFILE`, and
+redundant `TMPDIR`/`TEMP` pairs are routing rather than compiler authority, so
+the hook consumes the same semantic environment its parent producer supplied.
 
 Pre-commit verifies every owed receipt, runs the live-only checks, and publishes
 one admission for the candidate tree. Several admissions may exist for one tree

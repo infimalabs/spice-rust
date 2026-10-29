@@ -397,17 +397,21 @@ pub(crate) fn acquire_toolchain_arm_tools(
     contract: &Contract,
     gate_id: GateId,
 ) -> Result<Vec<ToolEvidence>, ToolchainError> {
-    let Some(declaration) = TOOLCHAIN_ARMS
+    let mut tools: Vec<ToolEvidence> = TOOLCHAIN_ARMS
         .into_iter()
         .find(|declaration| declaration.id == gate_id)
-    else {
-        return Ok(Vec::new());
-    };
-    Ok(declaration
-        .tools
-        .iter()
-        .map(|requirement| probe(requirement, source, contract.bounds()))
-        .collect())
+        .map(|declaration| {
+            declaration
+                .tools
+                .iter()
+                .map(|requirement| probe(requirement, source, contract.bounds()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if matches!(gate_id, GateId::MergeIntegrity | GateId::Staging) {
+        tools.push(git_tool_evidence(source, contract.bounds()));
+    }
+    Ok(tools)
 }
 
 /// Digest the complete executable-file closure used by reusable toolchain arms.
@@ -428,8 +432,10 @@ pub(crate) fn toolchain_executable_authority(
         .into_iter()
         .map(|(name, program)| executable_authority_record(source, name, program))
         .collect::<Result<Vec<_>, String>>()?;
-    let bytes =
-        wire::encode(&records).map_err(|error| format!("encode proof tool authority: {error}"))?;
+    let git =
+        crate::git::executable_authority(source.rim().directory(), source.rim().search_path())?;
+    let bytes = wire::encode(&(records, git))
+        .map_err(|error| format!("encode proof tool authority: {error}"))?;
     Ok(Digest::compute(Domain::GateTool, &bytes))
 }
 
@@ -935,6 +941,25 @@ fn probe(
     })
 }
 
+fn git_tool_evidence(source: &ToolchainSource<'_>, bounds: &Bounds) -> ToolEvidence {
+    let rim = source.rim();
+    let Ok(selected) = crate::git::program(rim.directory(), rim.search_path()) else {
+        return ToolEvidence::Missing {
+            name: "git".to_owned(),
+            requested_program: "git".to_owned(),
+        };
+    };
+    let requested = selected.path().to_string_lossy().into_owned();
+    probe_resolved_with(
+        "git",
+        &requested,
+        &["--version"],
+        selected.path().to_path_buf(),
+        read_program,
+        &|program, arguments| version_output(program, arguments, source.root, bounds),
+    )
+}
+
 /// Probe one executable through the supplied byte reader and version probe.
 ///
 /// Both boundaries keep the identity contract testable in process without
@@ -953,9 +978,27 @@ fn probe_with(
             requested_program: requirement.program.to_owned(),
         };
     };
+    probe_resolved_with(
+        requirement.name,
+        requirement.program,
+        requirement.version_argv,
+        resolved,
+        read_program,
+        version,
+    )
+}
+
+fn probe_resolved_with(
+    name: &str,
+    requested_program: &str,
+    version_argv: &[&str],
+    resolved: PathBuf,
+    read_program: ProgramReader,
+    version: VersionProbe<'_>,
+) -> ToolEvidence {
     let unprobed = |failure| ToolEvidence::Unprobed {
-        name: requirement.name.to_owned(),
-        requested_program: requirement.program.to_owned(),
+        name: name.to_owned(),
+        requested_program: requested_program.to_owned(),
         resolved_program: resolved.to_string_lossy().into_owned(),
         failure,
     };
@@ -967,10 +1010,10 @@ fn probe_with(
     if !launchable {
         return unprobed(ProbeFailure::NotStarted);
     }
-    match version(&resolved, requirement.version_argv) {
+    match version(&resolved, version_argv) {
         Ok(version) => ToolEvidence::Identified {
-            name: requirement.name.to_owned(),
-            requested_program: requirement.program.to_owned(),
+            name: name.to_owned(),
+            requested_program: requested_program.to_owned(),
             resolved_program: resolved.to_string_lossy().into_owned(),
             version,
             digest: Digest::compute(Domain::GateTool, &bytes)

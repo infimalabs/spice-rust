@@ -2,7 +2,7 @@ use gate::metrics::BaselineCapture;
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, CoreArmInput, CoreArmReport, CoreEvidence,
     CoreInputs, CoreObservation, CoreReport, CoreSource, GateId, LatchEntry, ParsedContract,
-    Selector, acquire_core, evaluate_core,
+    RimCapture, Selector, acquire_core, evaluate_core,
 };
 
 use std::fs;
@@ -160,7 +160,8 @@ pub(crate) fn acquired_inputs(
         .expect("materialize the captured index");
     let contract = selected_contract(tree.root());
     let baselines = captured_baselines(repository, &contract);
-    let source = CoreSource::capture(&tree, &contract, claim, actor, latches)
+    let rim = rim(repository);
+    let source = CoreSource::capture(&tree, &contract, claim, actor, latches, &rim)
         .expect("capture one immutable core source");
     let inputs =
         acquire_core(&source, &contract, &baselines).expect("acquire one complete core battery");
@@ -183,6 +184,10 @@ pub(crate) fn acquired_inputs(
         );
     }
     inputs
+}
+pub(crate) fn rim(repository: &Tree) -> RimCapture {
+    RimCapture::new(repository.root.clone(), None, std::iter::empty::<String>())
+        .expect("fixture repository is one absolute rim")
 }
 
 /// Committed texts captured beside a direct core fixture source.

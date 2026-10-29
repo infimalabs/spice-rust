@@ -19,6 +19,7 @@
 //! later state that can cross into a report under the captured digest.
 
 use crate::measure::spawn;
+use crate::toolchain::RimCapture;
 use serde::{Deserialize, Serialize};
 use sill::{Argv, Completion, Environment};
 use std::ffi::{OsStr, OsString};
@@ -56,13 +57,6 @@ mod merge_control;
 
 use merge_control::GitControlSeal;
 
-/// The one program both Git-declared arms observe through.
-///
-/// Compiled absolutely, like every other gate tool, so acquisition reads no
-/// ambient search path and two machines cannot silently observe two different
-/// programs. A build without it starts nothing and says so.
-#[cfg(not(windows))]
-const GIT: &str = "/usr/bin/git";
 static GIT_SUBPROCESSES: AtomicU64 = AtomicU64::new(0);
 
 /// Number of Git subprocess launches attempted by this process.
@@ -230,8 +224,9 @@ impl CoreSource {
         claim: ClaimCapture,
         actor: ActorCapture,
         latches: &[LatchEntry],
+        rim: &RimCapture,
     ) -> Result<Self, CoreInputError> {
-        Self::capture_inner(tree, contract, claim, actor, latches)
+        Self::capture_inner(tree, contract, claim, actor, latches, rim)
     }
 
     fn capture_inner(
@@ -240,13 +235,17 @@ impl CoreSource {
         claim: ClaimCapture,
         actor: ActorCapture,
         latches: &[LatchEntry],
+        rim: &RimCapture,
     ) -> Result<Self, CoreInputError> {
         // Taken before the walk because these are the only subjects here that
         // can still move: the selected tree was sealed at materialization,
         // while the repository and its allocator-owned merge controls stay
         // live and writable underneath the run.
         let git_controls = GitControlSeal::capture(tree.repository())?;
-        let git = GitObservations::capture(tree, contract.bounds());
+        let git_program = crate::git::program(rim.directory(), rim.search_path())
+            .map_err(|error| CoreInputError::new(format!("resolve Git executable: {error}")))?;
+        git_program.announce_secondary();
+        let git = GitObservations::capture(tree, contract.bounds(), git_program.path());
         git_controls.verify()?;
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
@@ -343,13 +342,15 @@ struct GitObservations {
 }
 
 impl GitObservations {
-    fn capture(tree: &SelectedTree, bounds: &Bounds) -> Self {
+    fn capture(tree: &SelectedTree, bounds: &Bounds, git_program: &Path) -> Self {
         let repository = tree.repository();
         let isolation = GitIsolation::create(tree);
         let ((merge_integrity, staging), clean_merge_tree) = thread::scope(|scope| {
-            let merge_integrity = scope.spawn(|| merge_integrity(tree, bounds, isolation.as_ref()));
-            let staging = scope.spawn(|| staging(tree, bounds));
-            let clean_merge_tree = clean_merge_tree(repository, bounds, isolation.as_ref().ok());
+            let merge_integrity =
+                scope.spawn(|| merge_integrity(tree, bounds, isolation.as_ref(), git_program));
+            let staging = scope.spawn(|| staging(tree, bounds, git_program));
+            let clean_merge_tree =
+                clean_merge_tree(repository, bounds, isolation.as_ref().ok(), git_program);
             (
                 (
                     merge_integrity
@@ -786,6 +787,7 @@ fn merge_integrity(
     tree: &SelectedTree,
     bounds: &Bounds,
     isolation: Result<&GitIsolation, &String>,
+    git_program: &Path,
 ) -> CoreObservation {
     let repository = tree.repository();
     match merge_head_path(repository) {
@@ -807,7 +809,12 @@ fn merge_integrity(
             .into_observation();
         }
     };
-    let head_tree = match git_tree(repository, bounds, &["rev-parse", "HEAD^{tree}"]) {
+    let head_tree = match git_tree(
+        git_program,
+        repository,
+        bounds,
+        &["rev-parse", "HEAD^{tree}"],
+    ) {
         Ok(tree) => tree,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -834,7 +841,14 @@ fn merge_integrity(
             return GitRefusal::Unmeasured(reason.clone()).into_observation();
         }
     };
-    let (code, output) = match isolated_git(repository, bounds, arguments, &[0, 1], isolation) {
+    let (code, output) = match isolated_git(
+        git_program,
+        repository,
+        bounds,
+        arguments,
+        &[0, 1],
+        isolation,
+    ) {
         Ok(pair) => pair,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -868,6 +882,7 @@ fn clean_merge_tree(
     repository: &Path,
     bounds: &Bounds,
     isolation: Option<&GitIsolation>,
+    git_program: &Path,
 ) -> Option<CleanMergeTree> {
     let merge_head_path = merge_head_path(repository).ok()??;
     let merge_heads = fs::read_to_string(merge_head_path).ok()?;
@@ -879,10 +894,18 @@ fn clean_merge_tree(
     if merge_heads.next().is_some() {
         return None;
     }
-    let (_, head) = git(repository, bounds, &["rev-parse", "HEAD"], &[0]).ok()?;
+    let (_, head) = git(
+        git_program,
+        repository,
+        bounds,
+        &["rev-parse", "HEAD"],
+        &[0],
+    )
+    .ok()?;
     let head = head.trim().to_owned();
     validate_git_tree(&head).ok()?;
     let (code, output) = isolated_git(
+        git_program,
         repository,
         bounds,
         &["merge-tree", "--write-tree", &head, merging],
@@ -930,8 +953,13 @@ fn parse_merge_tree(output: &str) -> Result<(String, Vec<String>), GitRefusal> {
     Ok((tree, conflicted))
 }
 
-fn git_tree(repository: &Path, bounds: &Bounds, arguments: &[&str]) -> Result<String, GitRefusal> {
-    let (_, output) = git(repository, bounds, arguments, &[0])?;
+fn git_tree(
+    git_program: &Path,
+    repository: &Path,
+    bounds: &Bounds,
+    arguments: &[&str],
+) -> Result<String, GitRefusal> {
+    let (_, output) = git(git_program, repository, bounds, arguments, &[0])?;
     let tree = output.trim().to_owned();
     validate_git_tree(&tree).map_err(|error| {
         GitRefusal::Unmeasured(format!(
@@ -961,7 +989,7 @@ fn merge_head_path(repository: &Path) -> Result<Option<PathBuf>, GitRefusal> {
     }
 }
 
-fn staging(tree: &SelectedTree, bounds: &Bounds) -> CoreObservation {
+fn staging(tree: &SelectedTree, bounds: &Bounds, git_program: &Path) -> CoreObservation {
     if staging_worktree_matches(tree) {
         return measured(CoreEvidence::Staging(
             StagingEvidence::new(std::iter::empty::<&str>())
@@ -970,11 +998,17 @@ fn staging(tree: &SelectedTree, bounds: &Bounds) -> CoreObservation {
     }
     let repository = tree.repository();
     let arguments = &["diff", "--cached", "--name-only", "--diff-filter=ACMR"];
-    let staged = match git(repository, bounds, arguments, &[0]) {
+    let staged = match git(git_program, repository, bounds, arguments, &[0]) {
         Ok((_, output)) => output,
         Err(refusal) => return refusal.into_observation(),
     };
-    let unstaged = match git(repository, bounds, &["diff", "--name-only"], &[0]) {
+    let unstaged = match git(
+        git_program,
+        repository,
+        bounds,
+        &["diff", "--name-only"],
+        &[0],
+    ) {
         Ok((_, output)) => output,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -1068,6 +1102,7 @@ impl GitRefusal {
 /// each their own typed evidence. None of them is a measurement, and none of
 /// them refuses the battery.
 fn git(
+    git_program: &Path,
     repository: &Path,
     bounds: &Bounds,
     arguments: &[&str],
@@ -1079,10 +1114,18 @@ fn git(
         ("GIT_CONFIG_NOSYSTEM", "1"),
     ])
     .map_err(|error| GitRefusal::Unmeasured(format!("git environment: {error}")))?;
-    git_with_environment(repository, bounds, arguments, accepted, environment)
+    git_with_environment(
+        git_program,
+        repository,
+        bounds,
+        arguments,
+        accepted,
+        environment,
+    )
 }
 
 fn isolated_git(
+    git_program: &Path,
     repository: &Path,
     bounds: &Bounds,
     arguments: &[&str],
@@ -1090,6 +1133,7 @@ fn isolated_git(
     isolation: &GitIsolation,
 ) -> Result<(i32, String), GitRefusal> {
     git_with_environment(
+        git_program,
         repository,
         bounds,
         arguments,
@@ -1099,19 +1143,14 @@ fn isolated_git(
 }
 
 fn git_with_environment(
+    git_program: &Path,
     repository: &Path,
     bounds: &Bounds,
     arguments: &[&str],
     accepted: &[i32],
     environment: Environment,
 ) -> Result<(i32, String), GitRefusal> {
-    #[cfg(windows)]
-    let program = sill::program_files()
-        .map_err(|error| GitRefusal::Unavailable(format!("resolve system Git: {error}")))?
-        .join(r"Git\cmd\git.exe");
-    #[cfg(not(windows))]
-    let program = GIT;
-    let argv = Argv::new(program, arguments.iter().map(OsStr::new))
+    let argv = Argv::new(git_program.as_os_str(), arguments.iter().map(OsStr::new))
         .map_err(|error| GitRefusal::Unmeasured(format!("git argument vector: {error}")))?;
     let mut spec = bounds.spec(argv, repository);
     spec.environment = environment;

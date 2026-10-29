@@ -44,8 +44,9 @@ pub(super) fn apply_expected(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
+    search_path: Option<&OsStr>,
 ) -> Result<InstallReceipt, InstallError> {
-    let prepared = prepare(repository, spice_binary)?;
+    let prepared = prepare(repository, spice_binary, search_path)?;
     if prepared.digest() != expected {
         return Err(InstallError::DigestMismatch {
             expected: expected.clone(),
@@ -263,11 +264,12 @@ fn apply_activation(
 pub(super) fn prepare(
     repository: &Repository,
     spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
 ) -> Result<PreparedInstall, InstallError> {
     super::ref_storage::verify_files_storage(repository)?;
     match read_record_for_refresh(repository)? {
-        Some(refresh) => prepare_over(repository, spice_binary, refresh),
-        None => fresh(build_plan(repository, spice_binary)?, None),
+        Some(refresh) => prepare_over(repository, spice_binary, refresh, search_path),
+        None => fresh(build_plan(repository, spice_binary, search_path)?, None),
     }
 }
 
@@ -276,18 +278,22 @@ pub(super) fn prepare_over(
     repository: &Repository,
     spice_binary: Option<&Path>,
     refresh: RefreshRecord,
+    search_path: Option<&OsStr>,
 ) -> Result<PreparedInstall, InstallError> {
     let repair = refresh.is_repairable();
     let LoadedRecord { record, generation } = refresh.into_loaded();
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
-        return fresh(build_plan(repository, spice_binary)?, Some(generation));
+        return fresh(
+            build_plan(repository, spice_binary, search_path)?,
+            Some(generation),
+        );
     }
     if record.status == InstallStatus::Complete
-        && (repair || refresh_required(repository, &record.plan, spice_binary)?)
+        && (repair || refresh_required(repository, &record.plan, spice_binary, search_path)?)
     {
         return fresh(
-            refresh_plan(repository, spice_binary, &record)?,
+            refresh_plan(repository, spice_binary, &record, search_path)?,
             Some(generation),
         );
     }
@@ -316,6 +322,7 @@ fn refresh_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
     record: &InstallRecord,
+    search_path: Option<&OsStr>,
 ) -> Result<InstallPlan, InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
@@ -326,6 +333,7 @@ fn refresh_plan(
         spice_binary,
         Some(&record.plan),
         binary_superseded.as_ref(),
+        search_path,
     )
 }
 
@@ -333,9 +341,10 @@ fn refresh_required(
     repository: &Repository,
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
 ) -> Result<bool, InstallError> {
     Ok(current_build_differs(repository, plan, spice_binary)?
-        || hook_activation::topology_changed(repository, plan)?)
+        || hook_activation::topology_changed(repository, plan, search_path)?)
 }
 
 fn apply_operation(

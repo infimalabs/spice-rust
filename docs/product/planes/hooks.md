@@ -31,13 +31,14 @@ session and OMP's native Windows discovery agree. Session discovery outside
 the occupant uses the same resolver. Missing home or temp sources refuse.
 
 Explicit `SHELL` selects the native interpreter behind interception. Without
-it on Windows, the supervisor locates `bin/bash.exe` beside the installer's
-admitted Program Files Git `cmd/git.exe`; both must be regular files.
-Discovery inspects files, never executes Git or searches `PATH`, and never
-substitutes `ComSpec` or PowerShell for a POSIX interpreter. Windows also admits
-`HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `PATHEXT`, and
-`ComSpec` for the vendor and its tools; unrelated variables remain excluded.
-Unix home, temp, shell, and ambient admission rules are unchanged.
+it on Windows, the supervisor uses installer and gate Git selection—`PATH`
+first, then the warned Program Files default—and locates `bin/bash.exe` beside
+that exact `cmd/git.exe`; both must be regular files. Discovery inspects files
+and the search path but never executes Git or substitutes `ComSpec` or
+PowerShell for a POSIX interpreter. Windows also admits `HOMEDRIVE`,
+`HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `PATHEXT`, and `ComSpec`
+for the vendor and its tools; unrelated variables remain excluded. Unix home,
+temp, shell, and ambient admission rules are unchanged.
 
 Session publication and discovery share OMP's directory encoder. On Windows,
 temp scope precedes home scope when the temporary directory nests beneath the

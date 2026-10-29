@@ -844,7 +844,64 @@ fn normalized_search_path(value: &OsStr) -> OsString {
         seen.push(path.clone());
         true
     });
+    let retained = retained.collect::<Vec<_>>();
+    let retained = if cfg!(windows) {
+        normalized_windows_git_search_path(retained)
+    } else {
+        retained
+    };
     std::env::join_paths(retained).unwrap_or_else(|_| value.to_owned())
+}
+
+fn normalized_windows_git_search_path(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    normalized_windows_git_search_path_with(paths, |path| {
+        path.file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("cmd"))
+            && path.join("git.exe").is_file()
+    })
+}
+
+fn normalized_windows_git_search_path_with(
+    mut paths: Vec<PathBuf>,
+    is_public_git: impl Fn(&Path) -> bool,
+) -> Vec<PathBuf> {
+    let public = paths.iter().find(|path| is_public_git(path)).cloned();
+    if let Some(public) = public.as_ref() {
+        paths.retain(|path| !windows_path_eq(path, public));
+    }
+    let routed = paths
+        .iter()
+        .take_while(|path| windows_git_routing(path))
+        .count();
+    let shell_prefix = routed >= 2;
+    if public.is_none() && !shell_prefix {
+        return paths;
+    }
+    let mut routed = if shell_prefix { routed } else { 0 };
+    if paths.get(routed).is_some_and(|path| windows_user_bin(path)) {
+        routed += 1;
+    }
+    paths.drain(..routed);
+    paths
+}
+
+fn windows_git_routing(path: &Path) -> bool {
+    let spelling = path.to_string_lossy().replace('\\', "/");
+    let spelling = spelling.to_ascii_lowercase();
+    spelling.ends_with("/mingw64/libexec/git-core")
+        || spelling.ends_with("/mingw64/bin")
+        || spelling.ends_with("/usr/bin")
+}
+
+fn windows_user_bin(path: &Path) -> bool {
+    let spelling = path.to_string_lossy().replace('\\', "/");
+    let spelling = spelling.to_ascii_lowercase();
+    spelling.ends_with("/bin") && spelling.contains("/users/")
+}
+
+fn windows_path_eq(left: &Path, right: &Path) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
 }
 
 /// Produce one receipt. Subprocess output is retained under `captures`, never

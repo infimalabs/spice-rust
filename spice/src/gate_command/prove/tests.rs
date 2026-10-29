@@ -212,6 +212,48 @@ fn a_repeated_search_path_entry_does_not_partition_environment_identity() {
     );
 }
 
+#[test]
+fn windows_git_hook_routing_reconstructs_the_producers_search_path() {
+    let root = Path::new("drive/Program Files/Git");
+    let custom = PathBuf::from("drive/tools");
+    let public = root.join("cmd");
+    let system = PathBuf::from("drive/Windows/System32");
+    let user_bin = ["drive", "Users", "spice", "bin"]
+        .iter()
+        .collect::<PathBuf>();
+    let direct = vec![custom.clone(), public.clone(), system.clone()];
+    let hook = vec![
+        root.join("mingw64/bin"),
+        root.join("usr/bin"),
+        user_bin.clone(),
+        custom.clone(),
+        public.clone(),
+        system.clone(),
+    ];
+    let public_first_hook = vec![
+        public.clone(),
+        root.join("mingw64/bin"),
+        root.join("usr/bin"),
+        user_bin.clone(),
+        custom.clone(),
+        system.clone(),
+    ];
+    let fallback_hook = vec![
+        root.join("mingw64/bin"),
+        root.join("usr/bin"),
+        user_bin,
+        system.clone(),
+    ];
+    let normalize = |paths| {
+        normalized_windows_git_search_path_with(paths, |path| windows_path_eq(path, &public))
+    };
+
+    assert_eq!(normalize(direct), vec![custom.clone(), system.clone()]);
+    assert_eq!(normalize(hook), vec![custom.clone(), system.clone()]);
+    assert_eq!(normalize(public_first_hook), vec![custom, system.clone()]);
+    assert_eq!(normalize(fallback_hook), vec![system]);
+}
+
 fn search_path(paths: &[&str]) -> OsString {
     std::env::join_paths(paths.iter().map(Path::new)).expect("fixture PATH composes")
 }

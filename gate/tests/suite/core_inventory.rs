@@ -6,7 +6,7 @@ use gate::{
 
 use super::support::{
     Tree, acquired, acquired_arm, captured_baselines, contract_repository, git_commit,
-    git_repository, measured, policy_document, selected_contract, workspace_document,
+    git_repository, measured, policy_document, rim, selected_contract, workspace_document,
 };
 
 #[test]
@@ -531,12 +531,14 @@ fn inventory_refusal(repository: &Tree) -> String {
         .expect("materialize the captured index");
     let contract = selected_contract(tree.root());
     let baselines = captured_baselines(repository, &contract);
+    let rim = rim(repository);
     let source = CoreSource::capture(
         &tree,
         &contract,
         ClaimCapture::Idle,
         ActorCapture::Absent,
         &[],
+        &rim,
     )
     .expect("capture one immutable core source");
     acquire_core(&source, &contract, &baselines)

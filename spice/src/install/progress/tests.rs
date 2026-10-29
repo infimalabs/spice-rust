@@ -63,7 +63,7 @@ fn parent_reversals(plan: &InstallPlan) -> Vec<(Location, String)> {
 }
 
 fn install_without_binary(repository: &Repository) -> Vec<(Location, String)> {
-    let prepared = prepare(repository, None).expect("install prepares");
+    let prepared = prepare(repository, None, None).expect("install prepares");
     let reversals = parent_reversals(prepared.plan());
     apply_prepared_record(repository, None, prepared).expect("install applies");
     reversals
@@ -73,7 +73,8 @@ fn refresh_without_binary(repository: &Repository) -> Vec<(Location, String)> {
     let LoadedRecord { record, generation } = read_record(repository)
         .expect("receipt reads")
         .expect("receipt exists");
-    let plan = refresh_plan(repository, None, &record).expect("refresh plan carries ownership");
+    let plan =
+        refresh_plan(repository, None, &record, None).expect("refresh plan carries ownership");
     let reversals = parent_reversals(&plan);
     let prepared = fresh(plan, Some(generation)).expect("refresh prepares");
     apply_prepared_record(repository, None, prepared).expect("refresh applies");
@@ -196,7 +197,7 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     // Start a real apply and stop after the preserved target moved but
     // before its completion reached the receipt: the one admitted
     // ahead-of-record crash frontier.
-    let prepared = prepare(&repository, None).expect("install prepares");
+    let prepared = prepare(&repository, None, None).expect("install prepares");
     let PreparedInstall {
         mut record,
         receipt,
@@ -250,7 +251,7 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     assert!(changed);
     drop(record);
 
-    let resumed = prepare(&repository, None).expect("interrupted apply reloads");
+    let resumed = prepare(&repository, None, None).expect("interrupted apply reloads");
     apply_prepared_record(&repository, None, resumed).expect("interrupted apply completes");
     let record_length = fs::metadata(repository.state_root().join(RECORD_PATH))
         .expect("receipt metadata reads")
@@ -299,7 +300,7 @@ fn previewed_changes(repository: &Repository, binary: &Path) -> Vec<String> {
             self.0.write_text(formatter, &"APPLY")
         }
     }
-    let prepared = prepare(repository, Some(binary)).expect("install prepares");
+    let prepared = prepare(repository, Some(binary), None).expect("install prepares");
     let text = Text(InstallPreview::from_prepared(prepared).expect("plan previews")).to_string();
     assert!(text.ends_with("APPLY"), "{text}");
     text.lines()
@@ -323,7 +324,7 @@ fn a_preview_over_a_complete_install_of_the_same_build_changes_nothing() {
         path
     };
     let (first, second) = (build("first-spice"), build("second-spice"));
-    let prepared = prepare(&repository, Some(&first)).expect("install prepares");
+    let prepared = prepare(&repository, Some(&first), None).expect("install prepares");
     apply_prepared_record(&repository, Some(&first), prepared).expect("install applies");
 
     assert_eq!(

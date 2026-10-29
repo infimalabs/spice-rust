@@ -60,11 +60,13 @@ trait Host {
 }
 
 /// The digest-bound installer and real child processes.
-struct System;
+struct System {
+    search_path: Option<OsString>,
+}
 
 impl Host for System {
     fn install(&mut self, repository: &Repository, binary: &Path) -> Result<Digest, InstallError> {
-        refresh_install(repository, binary)
+        refresh_install(repository, binary, self.search_path.as_deref())
     }
 
     fn run(&mut self, command: &mut Command) -> std::io::Result<Output> {
@@ -101,7 +103,15 @@ pub(super) fn perform(
         &build_root,
         output,
     )?;
-    install_built(&mut System, &repository, built, request, output)
+    install_built(
+        &mut System {
+            search_path: environment.path.clone(),
+        },
+        &repository,
+        built,
+        request,
+        output,
+    )
 }
 
 /// Refuse a refresh from a lane this repository seats, before anything builds.
@@ -359,8 +369,12 @@ const fn schema_rollback_safe(before: Option<u32>, after: Option<u32>) -> bool {
 /// The plan is derived once and carried into apply, which proves the sources,
 /// destinations, and receipt it was derived from are unchanged before any
 /// mutation instead of deriving the plan a second time.
-pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest, InstallError> {
-    let prepared = install::prepare(repository, Some(binary))?;
+pub fn refresh_install(
+    repository: &Repository,
+    binary: &Path,
+    search_path: Option<&OsStr>,
+) -> Result<Digest, InstallError> {
+    let prepared = install::prepare(repository, Some(binary), search_path)?;
     let digest = prepared.digest().clone();
     install::apply_prepared(repository, Some(binary), prepared)?;
     Ok(digest)

@@ -3,6 +3,7 @@
 //! Plans are side-effect free; apply re-plans and reverses only exact images.
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -434,8 +435,9 @@ pub fn capture_generation(repository: &Repository) -> Result<Option<Digest>, Ins
 pub fn preview(
     repository: &Repository,
     spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
 ) -> Result<InstallPreview, InstallError> {
-    progress::prepare(repository, spice_binary).and_then(InstallPreview::from_prepared)
+    progress::prepare(repository, spice_binary, search_path).and_then(InstallPreview::from_prepared)
 }
 
 /// Derive the exact plan [`apply_prepared`] would execute, keeping it for this
@@ -443,8 +445,9 @@ pub fn preview(
 pub fn prepare(
     repository: &Repository,
     spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
 ) -> Result<PreparedInstall, InstallError> {
-    progress::prepare(repository, spice_binary)
+    progress::prepare(repository, spice_binary, search_path)
 }
 
 /// Apply only the exact current plan named by `expected`.
@@ -456,8 +459,9 @@ pub fn apply(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
+    search_path: Option<&OsStr>,
 ) -> Result<InstallReceipt, InstallError> {
-    apply_expected(repository, spice_binary, expected)
+    apply_expected(repository, spice_binary, expected, search_path)
 }
 
 /// Apply a plan this process prepared, without deriving it a second time.
@@ -506,8 +510,9 @@ pub fn unapply(repository: &Repository) -> Result<InstallReceipt, InstallError> 
 fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
 ) -> Result<InstallPlan, InstallError> {
-    build_plan_over(repository, spice_binary, None, None)
+    build_plan_over(repository, spice_binary, None, None, search_path)
 }
 
 /// Assemble every planned operation in canonical order: the fixed prefix, the
@@ -560,6 +565,7 @@ fn build_plan_over(
     spice_binary: Option<&Path>,
     installed: Option<&InstallPlan>,
     binary_superseded: Option<&GeneratedImage>,
+    search_path: Option<&OsStr>,
 ) -> Result<InstallPlan, InstallError> {
     ensure_state_root(repository)?;
     let binary = spice_binary
@@ -604,7 +610,7 @@ fn build_plan_over(
     .collect::<Result<Vec<_>, _>>()?;
     let hook_activation = spice_binary
         .is_some()
-        .then(|| hook_activation::plan(repository, installed, false))
+        .then(|| hook_activation::plan(repository, installed, false, search_path))
         .transpose()?;
     let plan = InstallPlan {
         version: PLAN_VERSION,

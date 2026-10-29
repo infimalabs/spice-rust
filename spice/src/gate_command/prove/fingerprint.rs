@@ -29,8 +29,9 @@ pub(super) fn authority(
     policy: Digest,
     gate_set: Digest,
 ) -> Result<ActionFingerprintAuthority, ProveFailure> {
-    let gate_environment = normalized_action_environment(anchor.compiler_environment());
-    let (_, gate_environment) = environment(&gate_environment)?;
+    let (_, gate_environment) = environment(&normalized_action_environment(
+        anchor.compiler_environment(),
+    ))?;
     let proof_tools = anchor.proof_tool_authority().map_err(ProveFailure::run)?;
     let tools = digest_encoded(Domain::GateTool, &(context.tools(), &proof_tools))?;
     let needs_cargo = anchor.root().join("Cargo.lock").is_file();

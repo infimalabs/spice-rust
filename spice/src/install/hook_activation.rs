@@ -5,10 +5,8 @@
 //! `git worktree list` and `git config --local`/`--worktree` address them.
 //! Only the effective selection across every scope runs Git. That read spans
 //! the installation, system, global, and command scopes under Git's include
-//! rules, and where the installation and system files live is compiled into
-//! the Git executable: gix finds them only by executing a Git looked up on
-//! `PATH`, so an in-process read would still run Git while trusting a less
-//! specific executable than the one pinned here.
+//! rules and uses the same concrete platform executable as gate acquisition:
+//! selected from `PATH` before the warned platform default.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -22,25 +20,20 @@ use super::{BINARY_PATH, InstallError, InstallPlan, Repository, installed_git_ho
 
 const HOOK_KEY: &str = "core.hooksPath";
 
-/// The system Git the effective hook read runs, never one found on `PATH`,
-/// inside `worktree`.
-#[cfg(not(windows))]
-fn git_command(_operation: &'static str, worktree: &Path) -> Result<Command, InstallError> {
-    let mut command = Command::new("/usr/bin/git");
-    command.current_dir(worktree);
-    Ok(command)
-}
-
-/// Git for Windows' command entry in the system Program Files folder, never
-/// one found on `PATH`, inside `worktree`.
-#[cfg(windows)]
-fn git_command(operation: &'static str, worktree: &Path) -> Result<Command, InstallError> {
-    let program_files = sill::program_files().map_err(|source| InstallError::GitLaunch {
-        operation,
-        worktree: worktree.to_path_buf(),
-        source,
-    })?;
-    let mut command = Command::new(program_files.join(r"Git\cmd\git.exe"));
+/// The same platform Git selection used by gate acquisition, inside `worktree`.
+fn git_command(
+    operation: &'static str,
+    worktree: &Path,
+    search_path: Option<&OsStr>,
+) -> Result<Command, InstallError> {
+    let selected =
+        gate::git::program(worktree, search_path).map_err(|error| InstallError::GitLaunch {
+            operation,
+            worktree: worktree.to_path_buf(),
+            source: io::Error::other(error),
+        })?;
+    selected.announce_secondary();
+    let mut command = Command::new(selected.path());
     command.current_dir(worktree);
     Ok(command)
 }
@@ -335,6 +328,7 @@ pub(super) fn plan(
     repository: &Repository,
     installed: Option<&InstallPlan>,
     migration: bool,
+    search_path: Option<&OsStr>,
 ) -> Result<HookActivationPlan, InstallError> {
     let hooks = installed_git_hooks(repository);
     let hooks_path = super::git_hooks::git_spelling(&hooks)?;
@@ -354,7 +348,7 @@ pub(super) fn plan(
     let mut mutations = Vec::new();
     for spelling in worktrees {
         let worktree = Path::new(&spelling);
-        let effective = effective_values(worktree)?;
+        let effective = effective_values(worktree, search_path)?;
         if !tolerated(&effective, &hooks_path)
             && !prior.is_some_and(|activation| tolerated(&effective, &activation.hooks_path))
         {
@@ -429,11 +423,12 @@ pub(super) fn plan(
 pub(super) fn topology_changed(
     repository: &Repository,
     installed: &InstallPlan,
+    search_path: Option<&OsStr>,
 ) -> Result<bool, InstallError> {
     let Some(prior) = installed.hook_activation() else {
         return Ok(false);
     };
-    let current = plan(repository, Some(installed), false)?;
+    let current = plan(repository, Some(installed), false, search_path)?;
     let same_worktrees = current
         .observations
         .iter()
@@ -801,8 +796,11 @@ fn worktree_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
 }
 
 /// Every value Git reports across its scopes from `worktree`, in its order.
-fn effective_values(worktree: &Path) -> Result<Vec<String>, InstallError> {
-    let output = git_command("read Git hook selection", worktree)?
+fn effective_values(
+    worktree: &Path,
+    search_path: Option<&OsStr>,
+) -> Result<Vec<String>, InstallError> {
+    let output = git_command("read Git hook selection", worktree, search_path)?
         .args(["config", "--get-all", HOOK_KEY])
         .output()
         .map_err(|source| InstallError::GitLaunch {
