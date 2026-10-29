@@ -343,14 +343,13 @@ fn shadowed_rows(
     Ok(keyed(rows, |row| row.seq))
 }
 
-/// Every lane's room contributions and leaves in one Design's room from a
-/// position on, and the Design's current claim, read once for a page.
+/// Every lane's room contributions, leaves, and claim wins on one Design from
+/// a position on, read once for a page.
 struct RoomOutcomes {
-    /// Each lane's contribution and leave positions, ascending.
+    /// Each lane's contribution, leave, and claim-win positions, ascending.
     contributions: std::collections::BTreeMap<CanonicalUuid, Vec<Seq>>,
     leaves: std::collections::BTreeMap<CanonicalUuid, Vec<Seq>>,
-    /// The lane holding or last holding the Design's claim and when it won.
-    claim: Option<(CanonicalUuid, Seq)>,
+    captures: std::collections::BTreeMap<CanonicalUuid, Vec<Seq>>,
 }
 
 impl RoomOutcomes {
@@ -362,14 +361,39 @@ impl RoomOutcomes {
         let mut outcomes = Self {
             contributions: std::collections::BTreeMap::new(),
             leaves: std::collections::BTreeMap::new(),
-            claim: read
-                .claim_head(anchor)
-                .map_err(store)?
-                .map(|head| (head.body().lane, head.body().claimed)),
+            captures: std::collections::BTreeMap::new(),
         };
         let Some(earliest) = earliest else {
             return Ok(outcomes);
         };
+        // The claim head keeps only the newest win, so a lane whose capture
+        // a later win replaced is found among the claim wins themselves.
+        let mut after = Some(earliest);
+        loop {
+            let page = read
+                .selected_fact_page(
+                    &[wire::FactKind::ClaimWon],
+                    after,
+                    None,
+                    journal::FactReadBudget::RETAINED,
+                )
+                .map_err(store)?;
+            for envelope in &page.rows {
+                if let Some(won) = envelope.fact.read::<wire::body::ClaimWon>()
+                    && won.task == *anchor
+                {
+                    outcomes
+                        .captures
+                        .entry(won.lane)
+                        .or_default()
+                        .push(envelope.seq);
+                }
+            }
+            let Some(continuation) = page.continuation else {
+                break;
+            };
+            after = Some(continuation);
+        }
         let mut after = Some(earliest);
         loop {
             let page = read
@@ -406,9 +430,7 @@ impl RoomOutcomes {
         [
             first(self.contributions.get(&lane)).map(|at| (at, ShadowOutcome::Contributed { at })),
             first(self.leaves.get(&lane)).map(|at| (at, ShadowOutcome::Left { at })),
-            self.claim
-                .filter(|(holder, claimed)| *holder == lane && *claimed > shadow)
-                .map(|(_, at)| (at, ShadowOutcome::Captured { at })),
+            first(self.captures.get(&lane)).map(|at| (at, ShadowOutcome::Captured { at })),
         ]
         .into_iter()
         .flatten()

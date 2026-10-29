@@ -177,6 +177,57 @@ fn awareness_pages_shadows_only_on_request_with_each_lanes_later_outcome() {
 }
 
 #[test]
+fn a_capture_after_the_shadow_survives_a_later_holder() {
+    let lanes = Lanes::new("design-shadow-capture");
+    align_completion_lane(&lanes);
+    let near = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    lanes.win_claim(&near, FIRST);
+    lanes.free_claim(&near);
+    let weak = lanes.seed_task(
+        "dVrD245Kc",
+        WEAK_TITLE,
+        Some(WEAK_DESCRIPTION),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    lanes.complete(&weak, "Kept it warm.");
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
+    assert_eq!(lanes.shadowed().len(), 1);
+    let outcome = || {
+        let page = lanes.room_read(&["awareness", near.as_str(), "--shadows"]);
+        let rows = page["page"]["rows"].as_array().expect("rows").clone();
+        let [shadow] = rows.as_slice() else {
+            panic!("one shadow pages: {rows:?}");
+        };
+        shadow["outcome"].clone()
+    };
+    assert_eq!(
+        outcome(),
+        serde_json::json!({ "kind": "none" }),
+        "a capture before the shadow is not its outcome"
+    );
+
+    lanes.win_claim(&near, FIRST);
+    let captured = lanes
+        .claim_head(&near)
+        .expect("the Design is claimed")
+        .claimed;
+    lanes.free_claim(&near);
+    lanes.win_claim(&near, SECOND);
+    assert_eq!(
+        outcome(),
+        serde_json::json!({ "kind": "captured", "at": captured.get() }),
+        "the lane's capture after its shadow counts after the claim passes on"
+    );
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
 fn a_session_owed_a_request_records_no_shadow() {
     let lanes = Lanes::new("design-shadow-owed");
     align_completion_lane(&lanes);
