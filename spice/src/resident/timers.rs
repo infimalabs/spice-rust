@@ -28,9 +28,8 @@ pub(super) struct Runtime {
     events: tokio::sync::mpsc::UnboundedReceiver<TimerEvent>,
     forwarder: Option<JoinHandle<()>>,
     steering: steer::Config,
-    /// Root of per-lane supervisor records whose kept jobs extend a vacated
-    /// lane's claim.
-    supervisors: PathBuf,
+    /// Supervisor records that decide how a claim's seat renews.
+    records: Box<dyn LaneRecords + Send + Sync>,
     deferrals: BTreeMap<TaskHandle, ArmedDeferral>,
     claims: BTreeMap<TaskHandle, ArmedClaim>,
     renewals: BTreeMap<TaskHandle, ArmedRenewal>,
@@ -119,8 +118,11 @@ struct RenewalAuthority {
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
     deadline: Instant,
+    /// The claim's lane seat at arming; renewal re-proves it.
+    seat: RenewalSeat,
     /// Furthest expiry this renewal may grant, present only while the claim's
-    /// lane is vacant and an unfinished deadline-bounded job of the lane runs.
+    /// seat is unattended and an unfinished deadline-bounded job of the lane
+    /// runs.
     bound: Option<Instant>,
 }
 
@@ -169,6 +171,15 @@ pub(super) enum Fired {
 
 impl Runtime {
     pub(super) fn start(steering: steer::Config, supervisors: PathBuf) -> CommandResult<Self> {
+        Self::start_with_records(steering, Box::new(SupervisorRecords { supervisors }))
+    }
+
+    /// Start over the supplied lane records; production reads them beneath
+    /// the per-lane supervisor root.
+    pub(super) fn start_with_records(
+        steering: steer::Config,
+        records: Box<dyn LaneRecords + Send + Sync>,
+    ) -> CommandResult<Self> {
         let (worker, events) = TimerWorker::start()
             .map_err(|error| environment_fault("bus::timer-start-failed", &error.to_string()))?;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -195,7 +206,7 @@ impl Runtime {
             events: receiver,
             forwarder: Some(forwarder),
             steering,
-            supervisors,
+            records,
             deferrals: BTreeMap::new(),
             claims: BTreeMap::new(),
             renewals: BTreeMap::new(),
@@ -259,9 +270,7 @@ impl Runtime {
         let residency = snapshot.authority.residency();
         let desired_deferrals = desired_deferrals(tasks);
         let desired = desired_claims(tasks, residency)?;
-        let supervisors = &self.supervisors;
-        let desired_renewals =
-            desired_renewals(tasks, residency, |lane| vacated_bound(supervisors, lane))?;
+        let desired_renewals = desired_renewals(tasks, residency, self.records.as_ref())?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         let desired_rooms = rooms::desired(&snapshot.items, residency);
         self.synchronize_deferrals(desired_deferrals)?;
@@ -669,8 +678,7 @@ impl Runtime {
     }
 
     fn renew(&self, bus: &Bus, authority: RenewalAuthority, at: Instant) -> CommandResult<Fired> {
-        let supervisors = &self.supervisors;
-        renew_claim(bus, authority, at, |lane| vacated_bound(supervisors, lane))
+        renew_claim(bus, authority, at, self.records.as_ref())
     }
 
     fn consume_steering(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<()> {
@@ -774,7 +782,7 @@ fn renew_claim(
     bus: &Bus,
     authority: RenewalAuthority,
     at: Instant,
-    vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
+    records: &dyn LaneRecords,
 ) -> CommandResult<Fired> {
     if at < authority.deadline || at >= authority.lease.body().expiry {
         return Ok(Fired::Stale);
@@ -784,10 +792,13 @@ fn renew_claim(
         std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
     )?;
     let mut until = std::cmp::max(rolling, authority.lease.body().expiry);
-    if authority.bound.is_some() {
-        // A vacated lane's claim rolls only on the job still running now,
-        // never past one rolling window beyond that job's delivered ending.
-        match vacated_bound(authority.lane) {
+    // Attendance is re-read now, not taken from arming: an occupant that went
+    // idle since then rolls only on its jobs, and one that reactivated keeps
+    // its turn.
+    if !attended(authority.seat, authority.lane, authority.occupant, records) {
+        // An unattended claim rolls only on the job still running now, never
+        // past one rolling window beyond that job's delivered ending.
+        match records.unattended_bound(authority.lane) {
             Some(bound) if bound > authority.lease.body().expiry => {
                 until = std::cmp::min(until, bound);
             }
@@ -863,8 +874,8 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
     }
 }
 
-/// Renew one vacated claim against the delivered job horizon supplied by an
-/// in-process test, exercising the production bound, authority, guard, and
+/// Renew one unattended claim against the delivered job horizon supplied by
+/// an in-process test, exercising the production bound, authority, guard, and
 /// durable transition.
 #[cfg(test)]
 pub(in crate::resident) fn renew_vacated_claim_at(
@@ -873,12 +884,15 @@ pub(in crate::resident) fn renew_vacated_claim_at(
     at: Instant,
     delivered: Instant,
 ) -> CommandResult<Fired> {
-    let bound = vacated_reclaim_bound(delivered)?;
+    let records = FixedRecords {
+        idle: false,
+        bound: Some(vacated_reclaim_bound(delivered)?),
+    };
     let snapshot = timer_snapshot(bus)?;
     let authority = desired_renewals_with_clock(
         snapshot.authority.tasks(),
         snapshot.authority.residency(),
-        |_| Some(bound),
+        &records,
         || Ok(at),
     )?
     .into_values()
@@ -889,7 +903,26 @@ pub(in crate::resident) fn renew_vacated_claim_at(
             "the fixture claim did not produce vacated renewal authority",
         )
     })?;
-    renew_claim(bus, authority, at, |_| Some(bound))
+    renew_claim(bus, authority, at, &records)
+}
+
+/// Lane records an in-process test fixes: every seated occupant is idle or
+/// not, and every lane's jobs bound an unattended claim alike.
+#[cfg(test)]
+pub(in crate::resident) struct FixedRecords {
+    pub(in crate::resident) idle: bool,
+    pub(in crate::resident) bound: Option<Instant>,
+}
+
+#[cfg(test)]
+impl LaneRecords for FixedRecords {
+    fn idle(&self, _: CanonicalUuid, _: CanonicalUuid) -> bool {
+        self.idle
+    }
+
+    fn unattended_bound(&self, _: CanonicalUuid) -> Option<Instant> {
+        self.bound
+    }
 }
 
 impl Drop for Runtime {
@@ -987,22 +1020,24 @@ fn desired_claims(
     Ok(desired)
 }
 
-/// Roll every live lease whose claim is held by a lane's current occupant, or
-/// by the last occupant of a lane left vacant while one of its
-/// deadline-bounded jobs still runs.
+/// Roll every live lease whose claim is held by a lane's current occupant with
+/// a turn in progress, or by an unattended holder, vacant or idle between
+/// turns, while one of the lane's deadline-bounded jobs still runs.
 ///
 /// Liveness, not the way the claim was minted, decides renewal: a claim won
 /// through allocation rolls exactly like a resident-minted automatic one while
-/// its occupant remains seated, so a lapse follows the occupant leaving rather
-/// than one long foreground command outliving a fixed lease. An occupant that
-/// ends its turn on a kept job leaves the lease rolling as `vacated_bound`
-/// bounds it; a service never qualifies.
+/// its occupant works, so a lapse follows the occupant leaving rather than one
+/// long foreground command outliving a fixed lease. A retained OMP process idle
+/// at a clean boundary holds its claim exactly as a vacant lane would, so a
+/// parked claim lapses on the same schedule with or without retention. An
+/// occupant that ends its turn on a kept job leaves the lease rolling as the
+/// records bound it; a service never qualifies.
 fn desired_renewals(
     tasks: &[journal::TaskHeads],
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
-    vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
+    records: &dyn LaneRecords,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
-    desired_renewals_with_clock(tasks, residency, vacated_bound, || {
+    desired_renewals_with_clock(tasks, residency, records, || {
         Instant::new(jiff::Timestamp::now())
             .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))
     })
@@ -1011,7 +1046,7 @@ fn desired_renewals(
 fn desired_renewals_with_clock(
     tasks: &[journal::TaskHeads],
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
-    vacated_bound: impl Fn(CanonicalUuid) -> Option<Instant>,
+    records: &dyn LaneRecords,
     clock: impl FnOnce() -> CommandResult<Instant>,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
     let Some(residency) = residency else {
@@ -1036,12 +1071,13 @@ fn desired_renewals_with_clock(
         if spice::claim_lease::is_indefinite(lease.body()) || lease.body().expiry <= now {
             continue;
         }
-        let bound = match seat {
-            RenewalSeat::Occupied => None,
-            RenewalSeat::Vacated => match vacated_bound(claim.body().lane) {
+        let bound = if attended(seat, claim.body().lane, claim.body().occupant, records) {
+            None
+        } else {
+            match records.unattended_bound(claim.body().lane) {
                 Some(bound) if bound > lease.body().expiry => Some(bound),
                 _ => continue,
-            },
+            }
         };
         let deadline = renewal_deadline(lease.body())?;
         let task = TaskHandle::for_project(
@@ -1059,6 +1095,7 @@ fn desired_renewals_with_clock(
                 occupant: claim.body().occupant,
                 epoch: claim.body().epoch,
                 deadline,
+                seat,
                 bound,
             },
         );
@@ -1100,14 +1137,9 @@ fn renewal_guard(
     let Some(residency) = read.residency_head()? else {
         return Err(GuardError::refused("claim::renewal-residency-missing"));
     };
-    let expected_seat = if expected.bound.is_some() {
-        RenewalSeat::Vacated
-    } else {
-        RenewalSeat::Occupied
-    };
     if residency.body().state != ResidentState::Seated
         || residency.body().epoch != expected.epoch
-        || renewal_seat(residency.body(), expected.claim.body()) != Some(expected_seat)
+        || renewal_seat(residency.body(), expected.claim.body()) != Some(expected.seat)
     {
         return Err(GuardError::refused("claim::renewal-residency-moved"));
     }
@@ -1146,7 +1178,8 @@ fn coherent_lease<'a>(
     Ok(lease)
 }
 
-/// How a claim's lane relates to the occupant holding it, for renewal.
+/// How a claim's lane relates to the occupant holding it, as the residency
+/// head states it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RenewalSeat {
     /// The lane seats the claim's occupant.
@@ -1168,15 +1201,48 @@ fn renewal_seat(residency: &wire::ResidencyHead, claim: &wire::ClaimHead) -> Opt
     }
 }
 
-/// The furthest a vacated lane's lease may roll: one rolling window past the
-/// instant its unfinished deadline-bounded jobs have all ended and the keeper
-/// wakes the lane to deliver them, so the successor that wake seats still
-/// finds the claim live and promotes it. Unreadable job records extend
-/// nothing, so the claim lapses on the lease it already carries.
-fn vacated_bound(supervisors: &std::path::Path, lane: CanonicalUuid) -> Option<Instant> {
-    let delivered =
-        super::supervisor::terminal::Jobs::beneath(supervisors, lane).finite_horizon()?;
-    vacated_reclaim_bound(delivered).ok()
+/// Whether the claim's occupant has a turn in progress: seated, and not idle
+/// at a clean boundary of a retained OMP process.
+fn attended(
+    seat: RenewalSeat,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    records: &dyn LaneRecords,
+) -> bool {
+    seat == RenewalSeat::Occupied && !records.idle(lane, occupant)
+}
+
+/// What the supervisor records beneath one lane say for renewal that the
+/// journal cannot: whether a seated occupant's OMP process is idle between
+/// turns, and how far the lane's unfinished deadline-bounded jobs let an
+/// unattended claim roll.
+pub(super) trait LaneRecords {
+    /// Whether the seated occupant's supervisor publishes an idle process.
+    fn idle(&self, lane: CanonicalUuid, occupant: CanonicalUuid) -> bool;
+
+    /// The furthest an unattended lane's lease may roll: one rolling window
+    /// past the instant its unfinished deadline-bounded jobs have all ended
+    /// and the keeper wakes the lane to deliver them, so the occupant that
+    /// wake reaches still finds the claim live. Unreadable job records extend
+    /// nothing, so the claim lapses on the lease it already carries.
+    fn unattended_bound(&self, lane: CanonicalUuid) -> Option<Instant>;
+}
+
+/// Per-lane supervisor records beneath one root.
+struct SupervisorRecords {
+    supervisors: PathBuf,
+}
+
+impl LaneRecords for SupervisorRecords {
+    fn idle(&self, lane: CanonicalUuid, occupant: CanonicalUuid) -> bool {
+        super::supervisor::idle_beneath(&self.supervisors, lane, occupant)
+    }
+
+    fn unattended_bound(&self, lane: CanonicalUuid) -> Option<Instant> {
+        let delivered =
+            super::supervisor::terminal::Jobs::beneath(&self.supervisors, lane).finite_horizon()?;
+        vacated_reclaim_bound(delivered).ok()
+    }
 }
 
 fn vacated_reclaim_bound(delivered: Instant) -> CommandResult<Instant> {

@@ -16,11 +16,12 @@ pub(super) enum State {
     Closed,
 }
 
-/// Reads the current task owner and, in production, publishes phase changes.
+/// Reads the current task owner and, in production, publishes phase changes
+/// and reports each one to the resident.
 pub(super) struct Io {
     state: Option<PathBuf>,
     claim: Box<dyn Fn() -> io::Result<Option<ServiceClaim>> + Send + Sync>,
-    idle: Box<dyn Fn() + Send + Sync>,
+    report: Box<dyn Fn(Phase) + Send + Sync>,
 }
 
 impl Default for Io {
@@ -28,7 +29,7 @@ impl Default for Io {
         Self {
             state: None,
             claim: Box::new(|| Ok(None)),
-            idle: Box::new(|| {}),
+            report: Box::new(|_| {}),
         }
     }
 }
@@ -37,12 +38,12 @@ impl Io {
     pub(super) fn new(
         state: PathBuf,
         authority: ServiceAuthority,
-        on_idle: impl Fn() + Send + Sync + 'static,
+        report: impl Fn(Phase) + Send + Sync + 'static,
     ) -> Self {
         Self {
             state: Some(state),
             claim: Box::new(move || authority.current_claim()),
-            idle: Box::new(on_idle),
+            report: Box::new(report),
         }
     }
 
@@ -50,8 +51,8 @@ impl Io {
         (self.claim)()
     }
 
-    fn idle(&self) {
-        (self.idle)();
+    fn report(&self, phase: Phase) {
+        (self.report)(phase);
     }
 
     fn publish(&self, phase: Phase, claim: Option<ServiceClaim>) -> io::Result<()> {
@@ -77,7 +78,7 @@ impl Io {
         Self {
             state: None,
             claim: Box::new(claim),
-            idle: Box::new(|| {}),
+            report: Box::new(|_| {}),
         }
     }
 }
@@ -107,7 +108,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                 admitted: false,
             };
             drop(state);
-            self.retention_io.idle();
+            self.retention_io.report(Phase::Idle);
             return;
         }
         self.close_locked(state);
@@ -138,6 +139,8 @@ impl<W: Write + Send + 'static> Driver<W> {
                     && self.retention_io.publish(Phase::Running, None).is_ok()
                 {
                     *state = State::Active;
+                    drop(state);
+                    self.retention_io.report(Phase::Running);
                     return Ok(());
                 }
                 self.close_locked(state);

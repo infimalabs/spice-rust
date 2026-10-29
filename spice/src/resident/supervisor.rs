@@ -75,6 +75,12 @@ pub(super) enum Notice {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
     },
+    /// The idle process admitted a turn, so its claim renews as attended
+    /// again.
+    Active {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    },
     Exited {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
@@ -433,6 +439,19 @@ pub(super) fn idle_claim(
         .flatten())
 }
 
+/// Whether the supervisor record beneath `supervisors` for this seated
+/// occupant publishes an idle process. Absent or unreadable state is not idle:
+/// the claim keeps its attended schedule, and adoption reports the record.
+pub(super) fn idle_beneath(
+    supervisors: &Path,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> bool {
+    let path = occupant_directory(supervisors, lane, occupant).join("state.json");
+    read_state(&path)
+        .is_ok_and(|state| matches_state(&state, lane, occupant) && state.phase == Phase::Idle)
+}
+
 /// Ask every occupied command driver to reconcile an idle claim owner against
 /// the journal snapshot that triggered this lifecycle pass.
 pub(super) fn reconcile_claims(paths: &RuntimePaths, snapshot: &bus::TaskSnapshot) {
@@ -597,8 +616,11 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
                 repository.worktree_root().to_path_buf(),
                 terminal,
                 service_authority.clone(),
-                move || {
-                    idle_reporter.send(&Notice::Idle { lane, occupant });
+                move |phase| {
+                    idle_reporter.send(&match phase {
+                        Phase::Idle => Notice::Idle { lane, occupant },
+                        _ => Notice::Active { lane, occupant },
+                    });
                 },
             )?;
             reporter.drive(Arc::clone(&driver));
@@ -706,8 +728,11 @@ pub(super) fn supervisor_directory(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> PathBuf {
-    paths
-        .supervisors
+    occupant_directory(&paths.supervisors, lane, occupant)
+}
+
+fn occupant_directory(supervisors: &Path, lane: CanonicalUuid, occupant: CanonicalUuid) -> PathBuf {
+    supervisors
         .join(lane.to_string())
         .join(occupant.to_string())
 }

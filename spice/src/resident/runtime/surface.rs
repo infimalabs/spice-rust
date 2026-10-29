@@ -721,7 +721,9 @@ impl LiveSurface<'_, '_> {
                 return Ok(());
             }
         };
-        if let super::supervisor::Notice::Idle { .. } = notice {
+        if let super::supervisor::Notice::Idle { .. } | super::supervisor::Notice::Active { .. } =
+            notice
+        {
             return self
                 .wakes
                 .reconcile(self.command_surface, self.seats, self.diagnostic);
@@ -887,6 +889,7 @@ fn message_notice_identity(
     match notice {
         Notice::Record { lane, occupant, .. }
         | Notice::Idle { lane, occupant }
+        | Notice::Active { lane, occupant }
         | Notice::Exited { lane, occupant }
         | Notice::Failed { lane, occupant, .. } => Some((*lane, *occupant)),
         Notice::Asked { .. } | Notice::FastRefused { .. } => None,
