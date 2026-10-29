@@ -439,15 +439,21 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .activity-trace [data-trace-marker="failure"] { fill: var(--danger); stroke: none; }
 .activity-trace [data-trace-marker="direction"] { fill: var(--ink); stroke: none; }
 .activity-trace [data-trace-marker="direction"][data-accent] { fill: var(--accent-slot); }
-/* The trace renderer replaces a frame every four seconds across its ten-minute
-   window: 150 authoritative positions. Stepping at that same cadence avoids
-   repainting nested SVG between samples. */
-@keyframes trace-flow { to { translate: var(--trace-flow-span) 0; } }
-.activity-trace .trace-flow {
-  animation: trace-flow var(--trace-flow-duration) steps(150, end) forwards;
+/* A settled trace is inert. At its four-second data boundary the existing
+   history crosses one sampled position briefly; transition completion mounts
+   the frame for the new instant. */
+.activity-trace .trace-flow { transform: translateX(0); }
+.activity-trace .trace-flow[data-trace-moving="true"] {
+  transform: translateX(var(--trace-flow-shift));
+  transition: transform var(--trace-flow-transition-duration) ease-out;
+  will-change: transform;
 }
 @media (prefers-reduced-motion: reduce) {
-  .activity-trace .trace-flow { animation: none; }
+  .activity-trace .trace-flow[data-trace-moving="true"] {
+    transform: none;
+    transition: none;
+    will-change: auto;
+  }
 }
 
 .app-presence-pip--work {
