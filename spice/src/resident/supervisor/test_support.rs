@@ -56,6 +56,7 @@ fn ended_state(
         // through this record could ever be signalled.
         group: Some(i32::MAX.unsigned_abs()),
         session: Some(session),
+        claim: None,
         git: Some("fixture-head".to_owned()),
         started_millis: Some(now_millis()?),
         runtime_millis: Some(4 * 60 * 60 * 1_000),

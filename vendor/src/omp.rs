@@ -113,30 +113,31 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 
 /// The tools a lane's occupant runs with, spelled as omp's `--tools` roster.
 ///
-/// Every tool that would start a process is left off: `bash`, `eval`, and
-/// `hub` would run commands the lane cannot see or outlive, so the lane
-/// registers its own [`SHELL_TOOL`] instead and executes every command
-/// itself. One agent inhabits one worktree, so omp's `task` sub-agent tool
-/// is left off as well. omp's `todo`
-/// tool is left off for a different reason: the occupant's plan is the task
-/// it holds, whose phases and acceptance the board already carries where
-/// every other lane and the operator can read them, and a private second
-/// copy is a plan no reviewer can check and one that drifts from the row it
-/// shadows. The rest is omp's own roster for a session with no MCP server,
-/// so a tool omp adds later joins only by being named.
-pub const TOOLS: &str = "read,write,edit,glob,grep,web_search";
+/// `eval` is OMP-owned because its session-scoped kernels are the reason a
+/// task-bound occupant may remain alive between turns. Every tool that would
+/// start a process is left off: `bash` and `wait` would run commands the lane
+/// cannot see or outlive, so the lane registers its own [`SHELL_TOOL`] and
+/// [`JOB_TOOL`] instead and executes every command itself. One agent inhabits
+/// one worktree, so omp's `task` sub-agent tool is left off as well. omp's
+/// `todo` tool is left off for a different reason: the occupant's plan is the
+/// task it holds, whose phases and acceptance the board already carries where
+/// every other lane and the operator can read them, and a private second copy
+/// is a plan no reviewer can check and one that drifts from the row it shadows.
+/// The rest is omp's own roster for a session with no MCP server, so a tool omp
+/// adds later joins only by being named.
+pub const TOOLS: &str = "read,write,edit,glob,grep,web_search,eval";
 
 /// [`TOOLS`] plus omp's language-server tool, for a lane whose policy admits
 /// it, as the built-in default does.
 ///
 /// The tool starts language servers, which is why it rides on that policy
-/// disposition rather than sitting in the roster above. The servers
-/// stay inside the occupant's own process tree: [`config_overlay`] declines
-/// omp's shared broker, and resident launch composition separately disables
-/// the external lspmux route through its child environment.
-/// What each server is and how it runs is the worktree's own business, read
-/// from the repository's `.omp/lsp.json`; this crate names no server.
-pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,web_search,lsp";
+/// disposition rather than sitting in the roster above. The servers stay
+/// inside the occupant's own process tree: [`config_overlay`] declines omp's
+/// shared broker, and resident launch composition separately disables the
+/// external lspmux route through its child environment. What each server is
+/// and how it runs is the worktree's own business, read from the repository's
+/// `.omp/lsp.json`; this crate names no server.
+pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,web_search,eval,lsp";
 
 /// Request identity of the `set_host_tools` command that registers the
 /// lane's shell ahead of the first turn.

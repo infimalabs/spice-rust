@@ -28,6 +28,7 @@ impl BackgroundNotice {
     fn confirmed_fits(&self) -> bool {
         serde_json::to_vec(&Kick::BackgroundConfirmed {
             notice: self.clone(),
+            owner: None,
             request: "00000000-0000-0000-0000-000000000000".to_owned(),
             reply:
                 "/tmp/spice-b-0000000000000000000000000000000000000000000000000000000000000000.sock"

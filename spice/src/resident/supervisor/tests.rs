@@ -45,6 +45,7 @@ fn terminal_state(
         phase: Phase::Exited,
         group: Some(412),
         session: Some(session),
+        claim: None,
         git: Some("fixture-head".to_owned()),
         started_millis: Some(now_millis().expect("fixture time")),
         runtime_millis: Some(4 * 60 * 60 * 1_000),
@@ -56,7 +57,7 @@ fn terminal_state(
 }
 
 #[test]
-fn replacement_adopts_running_and_terminal_supervisors_across_request_versions() {
+fn replacement_adopts_current_running_and_terminal_supervisors() {
     let root = std::env::temp_dir().join(format!(
         "spice-terminal-supervisor-{}-{}",
         std::process::id(),
@@ -99,61 +100,56 @@ fn replacement_adopts_running_and_terminal_supervisors_across_request_versions()
         disposition: "occupied".to_owned(),
     };
 
-    // State v2 and the request-v3 release's identical state must both
-    // survive resident replacement, including subsequent supervisor writes.
-    for version in [2, 3] {
-        for expected in [
-            PersistedCompletion::Exited { status_raw: 0 },
-            PersistedCompletion::TimedOut { status_raw: 0 },
-            PersistedCompletion::Cancelled { status_raw: 7 << 8 },
-        ] {
-            let mut terminal = terminal_state(
-                &root,
-                lane,
-                occupant,
-                row.session.clone().expect("fixture session"),
-                expected.clone(),
-            );
-            terminal.version = version;
-            let mut running = terminal.clone();
-            running.phase = Phase::Running;
-            running.completion = CompletionField::none();
-            let path = directory.join("state.json");
-            publish_json(&path, &running).expect("running state publishes");
-            let adopted = adopt(&paths, &row)
-                .expect("running state reads")
-                .expect("running supervisor is adoptable");
-            let Adoption::Running(adopted) = adopted else {
-                panic!("live supervisor was not adopted");
-            };
-            assert_eq!(adopted.occupant, occupant);
-            assert_eq!(adopted.group, 412);
-            assert_eq!(
-                adopted.session,
-                row.session.clone().expect("fixture session")
-            );
-            let DetachedWait::Running(process) = adopted
-                .process
-                .wait_for(Duration::ZERO)
-                .expect("adopted supervisor remains running")
-            else {
-                panic!("live supervisor was mistaken for a terminal state");
-            };
+    for expected in [
+        PersistedCompletion::Exited { status_raw: 0 },
+        PersistedCompletion::TimedOut { status_raw: 0 },
+        PersistedCompletion::Cancelled { status_raw: 7 << 8 },
+    ] {
+        let terminal = terminal_state(
+            &root,
+            lane,
+            occupant,
+            row.session.clone().expect("fixture session"),
+            expected.clone(),
+        );
+        let mut running = terminal.clone();
+        running.phase = Phase::Running;
+        running.completion = CompletionField::none();
+        let path = directory.join("state.json");
+        publish_json(&path, &running).expect("running state publishes");
+        let adopted = adopt(&paths, &row)
+            .expect("running state reads")
+            .expect("running supervisor is adoptable");
+        let Adoption::Running(adopted) = adopted else {
+            panic!("live supervisor was not adopted");
+        };
+        assert_eq!(adopted.occupant, occupant);
+        assert_eq!(adopted.group, 412);
+        assert_eq!(
+            adopted.session,
+            row.session.clone().expect("fixture session")
+        );
+        let DetachedWait::Running(process) = adopted
+            .process
+            .wait_for(Duration::ZERO)
+            .expect("adopted supervisor remains running")
+        else {
+            panic!("live supervisor was mistaken for a terminal state");
+        };
 
-            publish_json(&path, &terminal).expect("terminal state publishes");
-            let outcome = process.wait().expect("adopted supervisor completion reads");
-            assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
-            let adopted = adopt(&paths, &row)
-                .expect("terminal state reads")
-                .expect("terminal supervisor is adoptable");
-            let Adoption::Exited(adopted) = adopted else {
-                panic!("terminal supervisor was mistaken for a live launch");
-            };
-            assert_eq!(adopted.occupant, occupant);
-            assert_eq!(adopted.group, 412);
-            let outcome = adopted.process.wait().expect("terminal status reads");
-            assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
-        }
+        publish_json(&path, &terminal).expect("terminal state publishes");
+        let outcome = process.wait().expect("adopted supervisor completion reads");
+        assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
+        let adopted = adopt(&paths, &row)
+            .expect("terminal state reads")
+            .expect("terminal supervisor is adoptable");
+        let Adoption::Exited(adopted) = adopted else {
+            panic!("terminal supervisor was mistaken for a live launch");
+        };
+        assert_eq!(adopted.occupant, occupant);
+        assert_eq!(adopted.group, 412);
+        let outcome = adopted.process.wait().expect("terminal status reads");
+        assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
     }
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
@@ -354,15 +350,32 @@ fn unsupported_state_versions_are_refused_without_a_legacy_execution_path() {
     ));
     fs::create_dir_all(&root).expect("fixture directory creates");
     let state = root.join("state.json");
-    for version in [1, 4] {
+    let current = serde_json::to_value(State {
+        version: STATE_VERSION,
+        supervisor: std::process::id(),
+        worktree: root.to_string_lossy().into_owned(),
+        vendor: "omp".to_owned(),
+        lane: uuid(1),
+        occupant: uuid(2),
+        phase: Phase::Starting,
+        group: None,
+        session: None,
+        claim: None,
+        git: None,
+        started_millis: None,
+        runtime_millis: None,
+        grace_millis: None,
+        reap_millis: None,
+        completion: CompletionField::none(),
+        failure: None,
+    })
+    .expect("current state encodes");
+    for version in [1, 2, 3] {
+        let mut retained = current.clone();
+        retained["version"] = serde_json::Value::from(version);
         fs::write(
             &state,
-            serde_json::to_vec(&serde_json::json!({
-                "version": version,
-                "phase": "exited",
-                "status_raw": 0,
-            }))
-            .expect("unsupported fixture encodes"),
+            serde_json::to_vec(&retained).expect("unsupported fixture encodes"),
         )
         .expect("unsupported fixture writes");
 

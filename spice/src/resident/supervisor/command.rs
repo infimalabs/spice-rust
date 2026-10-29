@@ -31,7 +31,9 @@ use vendor::omp::{JobCall, JobOp, ShellCall};
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
-use super::terminal::{Control, Event as JobEvent, Handle, Job, Report, Run, Terminal};
+use super::terminal::{
+    Control, Event as JobEvent, Handle, Job, Report, Run, ServiceAuthority, ServiceClaim, Terminal,
+};
 use crate::resident::steering::{MessageRecordedNotice, MessageRefusalNotice};
 use steering::{ActivityReminder, InboxDelivery, ReasoningReminder};
 
@@ -78,6 +80,8 @@ impl Default for Readers {
 
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
+    retention: Mutex<retention::State>,
+    retention_io: retention::Io,
     read_inbox: InboxReader,
     /// Read once per compaction, off the decoding path, since a briefing
     /// scans the transcript and the journal.
@@ -273,6 +277,8 @@ pub(in crate::resident) enum Kick {
     /// A private background notice whose exact occupant must confirm enqueue.
     BackgroundConfirmed {
         notice: crate::resident::design_input::BackgroundNotice,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<ServiceClaim>,
         request: String,
         reply: PathBuf,
     },
@@ -296,6 +302,10 @@ pub(in crate::resident) enum Kick {
         retune: LiveRetune,
         reply: PathBuf,
     },
+    /// Reconcile an idle process's exact task owner.
+    ReconcileClaim,
+    /// Update the held-claim parking projection for this exact owner.
+    ClaimActivation { owner: ServiceClaim, admitted: bool },
     /// The lane is being drained: interrupt the turn and end the input.
     Abort,
 }
@@ -314,13 +324,15 @@ impl<W: Write + Send + 'static> Driver<W> {
         lane: CanonicalUuid,
         worktree: PathBuf,
         terminal: Option<Terminal>,
+        authority: ServiceAuthority,
+        on_idle: impl Fn() + Send + Sync + 'static,
     ) -> io::Result<Arc<Self>> {
         let inbox = inbox::Reader::new(state, lane, &worktree)?;
         let sessions = current::Sessions::new(lane, worktree.clone())?;
         let uri_server = current::resource_server(lane, worktree, terminal.clone())?;
         let briefing = Arc::clone(&sessions);
         let seating = terminal.clone();
-        Ok(Self::with_server(
+        Ok(Self::with_runtime(
             stdin,
             Readers {
                 inbox: Box::new(move || inbox.read()),
@@ -331,15 +343,35 @@ impl<W: Write + Send + 'static> Driver<W> {
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
+            retention::Io::new(state.to_path_buf(), authority, on_idle),
         ))
     }
 
+    #[cfg(test)]
     fn with_server(
         stdin: W,
         readers: Readers,
         uri_server: uri::UriServer,
         seal: steer::Key,
         terminal: Option<Terminal>,
+    ) -> Arc<Self> {
+        Self::with_runtime(
+            stdin,
+            readers,
+            uri_server,
+            seal,
+            terminal,
+            retention::Io::default(),
+        )
+    }
+
+    fn with_runtime(
+        stdin: W,
+        readers: Readers,
+        uri_server: uri::UriServer,
+        seal: steer::Key,
+        terminal: Option<Terminal>,
+        retention_io: retention::Io,
     ) -> Arc<Self> {
         let Readers {
             inbox,
@@ -348,6 +380,8 @@ impl<W: Write + Send + 'static> Driver<W> {
             seated,
         } = readers;
         Arc::new(Self {
+            retention: Mutex::new(retention::State::Active),
+            retention_io,
             stdin: Mutex::new(Some(stdin)),
             read_inbox: inbox,
             read_briefing: briefing,
@@ -658,9 +692,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         let previous = queued.get(purpose).map_or("", String::as_str);
         let message = update(previous);
         if previous == message {
-            return Ok(());
+            return self.activate();
         }
         if !self.registration.holds_first_turn() {
+            self.activate()?;
             let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
             self.write(&vendor::omp::aside_request(sequence, purpose, &message))?;
         }
@@ -815,7 +850,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             if let Some(refusal) = self.continue_without_fast(decoded) {
                 return Some(Raised::FastRefused(refusal));
             }
-            self.close();
+            self.settle();
         }
         asked.map(Raised::Ask)
     }
@@ -958,6 +993,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         if !job.events() || self.hold_job(job, None) {
             return;
         }
+        if self.activate().is_err() {
+            return;
+        }
         let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(stream) = stdin.as_mut() else {
             return;
@@ -993,6 +1031,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// behind it, unclaimed.
     fn deliver(&self, job: &Job, report: Option<&Report>) {
         if self.hold_job(job, Some(report)) {
+            return;
+        }
+        if self.activate().is_err() {
             return;
         }
         let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1083,13 +1124,23 @@ impl<W: Write + Send + 'static> Driver<W> {
 
     /// End the child's input; further deliveries are dropped.
     pub(in crate::resident) fn close(&self) {
-        self.stdin
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        self.finish();
     }
 
     fn write(&self, bytes: &[u8]) -> io::Result<()> {
+        // The activity state and stdin are one write boundary: settlement,
+        // reconciliation, and drain cannot interleave after activation but
+        // before the command reaches OMP.
+        let state = self
+            .retention
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if *state != retention::State::Active {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "the OMP command stream is idle",
+            ));
+        }
         let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(stream) = stdin.as_mut() else {
             return Err(io::Error::new(
@@ -1147,6 +1198,21 @@ pub(in crate::resident) fn kick(paths: &RuntimePaths, lane: CanonicalUuid) {
     send(paths, lane, &Kick::Inbox);
 }
 
+/// Reconcile an idle process's exact task owner at the task-service boundary.
+pub(in crate::resident) fn reconcile_claim(paths: &RuntimePaths, lane: CanonicalUuid) {
+    send(paths, lane, &Kick::ReconcileClaim);
+}
+
+/// Publish whether the exact idle claim may consume a new unit of work.
+pub(in crate::resident) fn claim_activation(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    owner: ServiceClaim,
+    admitted: bool,
+) {
+    send(paths, lane, &Kick::ClaimActivation { owner, admitted });
+}
+
 /// Tell an already-running lane that its bounded room catch-up file changed.
 /// A vacant lane has no kick door, so this operation has no wake authority.
 pub(in crate::resident) fn room_catch_up(paths: &RuntimePaths, lane: CanonicalUuid) {
@@ -1186,6 +1252,16 @@ pub(in crate::resident) fn confirmed_background_notice(
     notice: crate::resident::design_input::BackgroundNotice,
 ) -> io::Result<bool> {
     confirmed_background::send(paths, lane, notice)
+}
+
+/// Admit and queue one held-claim continuation as one exact-owner operation.
+pub(in crate::resident) fn confirmed_retained_notice(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: crate::resident::design_input::BackgroundNotice,
+    owner: ServiceClaim,
+) -> io::Result<bool> {
+    confirmed_background::send_retained(paths, lane, notice, owner)
 }
 
 /// Privately tell the exact authoring occupant about a partial-delivery miss
@@ -1334,11 +1410,18 @@ pub(in crate::resident) fn listen_for_kicks(
                     ) => driver.deliver_task_notice(occupant, kick),
                     Ok(Kick::BackgroundConfirmed {
                         notice,
+                        owner,
                         request,
                         reply,
-                    }) => {
+                    }) if notice.occupant == occupant => {
+                        if let Some(owner) = owner {
+                            driver.claim_activation(owner, true);
+                        }
                         let accepted = background_accepted(&driver, occupant, &notice);
                         confirmed_background::answer(&reply, request, accepted);
+                    }
+                    Ok(Kick::BackgroundConfirmed { request, reply, .. }) => {
+                        confirmed_background::answer(&reply, request, false);
                     }
                     Ok(Kick::MessageRefused(notice)) if notice.occupant == occupant => {
                         driver.deliver_message_refusal(&notice);
@@ -1359,6 +1442,10 @@ pub(in crate::resident) fn listen_for_kicks(
                         reply,
                     }) if target == occupant => driver.retune(request, retune, reply),
                     Ok(Kick::Retune { .. }) => {}
+                    Ok(Kick::ReconcileClaim) => driver.reconcile_claim(),
+                    Ok(Kick::ClaimActivation { owner, admitted }) => {
+                        driver.claim_activation(owner, admitted);
+                    }
                     Ok(Kick::Abort) => driver.abort(),
                     Err(_) => {}
                 }
@@ -1387,6 +1474,7 @@ pub(in crate::resident::supervisor) mod current;
 mod event_tests;
 pub(in crate::resident::supervisor) mod inbox;
 mod registration;
+mod retention;
 pub(in crate::resident) use registration::FirstTurn;
 pub(in crate::resident) mod renewal;
 mod task_notices;

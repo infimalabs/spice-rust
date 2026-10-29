@@ -52,9 +52,7 @@ const ENTRY: &str = "__lane-supervisor";
 // Launch requests are consumed by this executable generation. Durable state
 // is also consumed by replacement residents, so version its schema separately.
 const REQUEST_VERSION: u32 = 3;
-const STATE_VERSION: u32 = 2;
-// The fast-mode release bumped the shared version without changing State.
-const REQUEST_V3_STATE_VERSION: u32 = 3;
+const STATE_VERSION: u32 = 4;
 const REQUEST_BYTES: u64 = 64 * 1024;
 const STATE_BYTES: u64 = 64 * 1024;
 #[cfg(not(test))]
@@ -70,6 +68,12 @@ pub(super) enum Notice {
         stream: String,
         boundary: String,
         locus: wire::TapeLocus,
+    },
+    /// The process reached a clean claim-owned boundary and needs the
+    /// resident's held-claim scheduler to decide its next activation.
+    Idle {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
     },
     Exited {
         lane: CanonicalUuid,
@@ -127,6 +131,8 @@ struct State {
     phase: Phase,
     group: Option<u32>,
     session: Option<wire::LaneSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim: Option<terminal::ServiceClaim>,
     git: Option<String>,
     started_millis: Option<u64>,
     runtime_millis: Option<u64>,
@@ -187,25 +193,31 @@ impl PersistedCompletion {
 enum Phase {
     Starting,
     Running,
+    Idle,
     Exited,
     Failed,
 }
 
 impl State {
     fn validate(self) -> io::Result<Self> {
-        match (self.phase, self.completion.as_ref()) {
-            (Phase::Exited, Some(_)) | (Phase::Starting | Phase::Running | Phase::Failed, None) => {
-                Ok(self)
+        let completion = self.completion.as_ref();
+        let valid = match self.phase {
+            Phase::Idle => self.claim.is_some() && completion.is_none(),
+            Phase::Exited => self.claim.is_none() && completion.is_some(),
+            Phase::Starting | Phase::Running | Phase::Failed => {
+                self.claim.is_none() && completion.is_none()
             }
-            (Phase::Exited, None) => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "exited supervisor state has no typed completion",
-            )),
-            (phase, Some(_)) => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{phase:?} supervisor state carries a terminal completion"),
-            )),
+        };
+        if valid {
+            return Ok(self);
         }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{:?} supervisor state has an invalid claim or completion",
+                self.phase
+            ),
+        ))
     }
 }
 
@@ -386,10 +398,12 @@ pub(super) fn adopt(
         return Ok(None);
     };
     match state.phase {
-        Phase::Running if process_exists(state.supervisor)? => state_launch(paths, path, state)
-            .map(Adoption::Running)
-            .map(Some),
-        Phase::Running => Ok(Some(Adoption::Failed(
+        Phase::Running | Phase::Idle if process_exists(state.supervisor)? => {
+            state_launch(paths, path, state)
+                .map(Adoption::Running)
+                .map(Some)
+        }
+        Phase::Running | Phase::Idle => Ok(Some(Adoption::Failed(
             ending::SUPERVISOR_DISAPPEARED.to_owned(),
         ))),
         Phase::Exited => state_launch(paths, path, state)
@@ -401,6 +415,34 @@ pub(super) fn adopt(
         Phase::Starting => Ok(Some(Adoption::Failed(
             ending::DID_NOT_FINISH_STARTING.to_owned(),
         ))),
+    }
+}
+
+/// The exact claim owned by an idle live occupant, when its durable supervisor
+/// state proves one.
+pub(super) fn idle_claim(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<Option<terminal::ServiceClaim>> {
+    let Some((_, state)) = ending::durable_state(paths, lane, occupant)? else {
+        return Ok(None);
+    };
+    Ok((state.phase == Phase::Idle)
+        .then_some(state.claim)
+        .flatten())
+}
+
+/// Ask every occupied command driver to reconcile an idle claim owner against
+/// the journal snapshot that triggered this lifecycle pass.
+pub(super) fn reconcile_claims(paths: &RuntimePaths, snapshot: &bus::TaskSnapshot) {
+    let Some(residency) = snapshot.residency() else {
+        return;
+    };
+    for row in &residency.body().lanes {
+        if row.occupant.is_some() {
+            command::reconcile_claim(paths, row.lane);
+        }
     }
 }
 
@@ -420,14 +462,14 @@ fn await_running(
     // authority; returning its handle lets the resident commit the start and
     // then observe the exact ending instead of turning a harmless race into
     // resident failure.
-    let events = (state.phase == Phase::Running).then_some(events);
+    let events = matches!(state.phase, Phase::Running | Phase::Idle).then_some(events);
     let door = command::kick_path(paths, lane);
     state_launch_inner(path.to_path_buf(), door, state, events)
 }
 
 fn state_launch(paths: &RuntimePaths, path: PathBuf, state: State) -> CommandResult<Launch> {
     let door = command::kick_path(paths, state.lane);
-    let events = if state.phase == Phase::Running {
+    let events = if matches!(state.phase, Phase::Running | Phase::Idle) {
         Some(StateEvents::arm(&path, state.supervisor).map_err(|error| {
             environment_fault("lane::supervisor-observer-unavailable", &error.to_string())
         })?)
@@ -475,6 +517,7 @@ fn run(request_path: &Path, ambient: &Ambient) -> io::Result<()> {
         group: None,
         session: None,
         git: None,
+        claim: None,
         started_millis: None,
         runtime_millis: None,
         grace_millis: None,
@@ -486,6 +529,8 @@ fn run(request_path: &Path, ambient: &Ambient) -> io::Result<()> {
     if let Err(error) = run_agent(&request, starting.clone(), ambient) {
         let mut failed = read_state(&request.state).unwrap_or(starting);
         failed.phase = Phase::Failed;
+        failed.claim = None;
+        failed.completion = CompletionField::none();
         failed.failure = Some(error.to_string());
         publish_json(&request.state, &failed)?;
         return Err(error);
@@ -532,7 +577,7 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
     let jobs = terminal::Jobs::for_lane(&paths, request.lane);
     let service_authority =
         terminal::ServiceAuthority::new(paths.journal.clone(), request.lane, request.occupant);
-    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs, service_authority);
+    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs, service_authority.clone());
     let observation = OccupantLaunch::observation(launch.capture).map_err(outcome_error)?;
     let mut running = spawn_occupant(&vendor, launch.spec, observation)?;
     let group = running.id();
@@ -542,12 +587,19 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
     let _door = launch
         .opening
         .map(|opening| {
+            let idle_reporter = Arc::clone(&reporter);
+            let lane = request.lane;
+            let occupant = request.occupant;
             let driver = command::Driver::new(
                 running.take_stdin()?,
                 &request.state,
                 request.lane,
                 repository.worktree_root().to_path_buf(),
                 terminal,
+                service_authority.clone(),
+                move || {
+                    idle_reporter.send(&Notice::Idle { lane, occupant });
+                },
             )?;
             reporter.drive(Arc::clone(&driver));
             driver.open(&opening, launch.first_prompt)?;
@@ -564,17 +616,28 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
     state.phase = Phase::Running;
     state.group = Some(group);
     state.session = Some(session);
+    state.claim = None;
     state.git = Some(git);
     state.started_millis = Some(started_millis);
     state.runtime_millis = Some(duration_millis(runtime)?);
     state.grace_millis = Some(duration_millis(grace)?);
     state.reap_millis = Some(duration_millis(reap)?);
     publish_json(&request.state, &state)?;
+    finish_agent(request, state, running, reporter.as_ref())
+}
+
+fn finish_agent(
+    request: &Request,
+    mut state: State,
+    running: sill::Running,
+    reporter: &DurableReporter,
+) -> io::Result<()> {
     let outcome = match running.wait() {
         Ok(outcome) => outcome,
         Err(error) => {
             let failure = error.to_string();
             state.phase = Phase::Failed;
+            state.claim = None;
             state.failure = Some(failure.clone());
             publish_json(&request.state, &state)?;
             reporter.send(&Notice::Failed {
@@ -588,6 +651,7 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
     if let Some(observation_failure) = outcome.observation_failure() {
         let failure = observation_failure.to_string();
         state.phase = Phase::Failed;
+        state.claim = None;
         state.completion = CompletionField::none();
         state.failure = Some(failure.clone());
         publish_json(&request.state, &state)?;
@@ -599,6 +663,7 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
         return Ok(());
     }
     state.phase = Phase::Exited;
+    state.claim = None;
     state.completion = CompletionField::some(PersistedCompletion::capture(outcome.completion()));
     publish_json(&request.state, &state)?;
     reporter.send(&Notice::Exited {
@@ -692,7 +757,7 @@ fn read_state(path: &Path) -> io::Result<State> {
                 "supervisor state has no valid contract version",
             )
         })?;
-    if !matches!(version, STATE_VERSION | REQUEST_V3_STATE_VERSION) {
+    if version != STATE_VERSION {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(

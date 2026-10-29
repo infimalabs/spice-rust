@@ -78,14 +78,13 @@ exited occupant never receives a successor's prod.
 [Pending steering](../invariants/identity.md#steering-pending-steering-reaches-each-admitted-agent-boundary)
 reaches non-shell work because an unheard key interrupts outstanding tool waits.
 
-Every turn exit vacates the lane, including exit code zero. A backgrounded
-command survives under its detached keeper; a command whose keeper cannot
-launch fails its call and leaves no kept job. If its ending, or an event of a
-command started with `events`, stays unheard through the delivery grace, the
-keeper requests a lane wake, and the successor's startup catch-up delivers the
-unheard events and then the ending. An agent holding a claim may therefore end
-its turn while a deadline-bounded job runs; it is woken with its claim when the
-job ends or emits an event. `job wait` is for a finite job whose result blocks
+An OMP turn that settles with an exact active claim leaves its occupant idle;
+without a claim it exits and vacates the lane. A backgrounded command survives
+under its detached keeper; a command whose keeper cannot launch fails its call
+and leaves no kept job. If its ending, or an event of a command started with
+`events`, stays unheard through the delivery grace, the keeper wakes the
+matching retained occupant when its claim remains admitted, or requests a lane
+wake for a successor. `job wait` is for a finite job whose result blocks
 current work. While it blocks, the lane's current activity remains that wait:
 the exact job and its latest bounded output replace any earlier tool as the
 operator-visible status. That output refreshes within a few seconds of the job

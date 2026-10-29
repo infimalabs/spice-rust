@@ -20,9 +20,9 @@ use wire::{
     TaskStamp,
 };
 
-use super::lane_surface;
 use super::shutdown::{current_residency, guard_residency};
 use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_fault, write};
+use super::{lane_surface, supervisor};
 
 mod availability;
 mod holds;
@@ -37,7 +37,7 @@ mod review_feedback;
 mod targets;
 pub(in crate::resident) use launch::PendingLaunch;
 use launch::{Launching, pending_launch};
-use targets::{await_regular_jobs, project_targets};
+use targets::{await_regular_jobs, project_retained_targets, project_targets};
 #[cfg(test)]
 mod job_hold_tests;
 #[cfg(test)]
@@ -124,6 +124,7 @@ enum Attempted {
     Started,
     DeadLettered(super::steering::DeadLettered),
     Launching(Launching),
+    Retry(&'static str),
 }
 
 /// Process-local lifecycle backoff; durable eligibility remains in the bus.
@@ -368,6 +369,7 @@ impl Runtime {
                 cursor.is_none(),
                 diagnostic,
             );
+            supervisor::reconcile_claims(paths, &snapshot);
         }
         if generation_notices::reconcile(
             bus,
@@ -409,6 +411,12 @@ impl Runtime {
         await_regular_jobs(&mut targets, now, |lane| {
             super::supervisor::terminal::Jobs::for_lane(paths, lane).finite_horizon()
         });
+        let retained = project_retained_targets(&snapshot, &self.projection, paths, now)?;
+        let retained_lanes = retained
+            .iter()
+            .map(|target| target.lane)
+            .collect::<BTreeSet<_>>();
+        targets.extend(retained);
         targets.retain(|target| !self.launching.contains(&target.lane));
         self.backoff.retain_targets(&targets);
         let task = match resolve(&targets, &self.backoff, now) {
@@ -425,7 +433,14 @@ impl Runtime {
                 })
             }
             Resolution::Attempt { trigger, lane } => {
-                let result = self.attempt(trigger, lane, resident, seats, &snapshot);
+                let result = self.attempt(
+                    trigger,
+                    lane,
+                    retained_lanes.contains(&lane),
+                    resident,
+                    seats,
+                    &snapshot,
+                );
                 self.settle_attempt(now, trigger, lane, result, launches, diagnostic)?
             }
         };
@@ -472,6 +487,9 @@ impl Runtime {
                 self.backoff.release(lane);
                 dead.log(diagnostic, trigger.as_str(), lane);
                 Ok(None)
+            }
+            Ok(Attempted::Retry(reason)) => {
+                self.backoff.refused(trigger, lane, reason, now, diagnostic)
             }
             Err(Outcome::Refusal(refusal)) => {
                 self.backoff
@@ -535,6 +553,7 @@ impl Runtime {
         &mut self,
         trigger: Trigger,
         lane: CanonicalUuid,
+        retained: bool,
         resident: &Resident<'_>,
         seats: &mut Seats,
         snapshot: &bus::TaskSnapshot,
@@ -586,6 +605,7 @@ impl Runtime {
                     Err(failure) => Err(failure),
                 }
             }
+            Trigger::HeldClaim if retained => continue_retained(paths, snapshot, lane),
             Trigger::HeldClaim => match lane_surface::begin_automatic_wake(
                 bus,
                 paths,
@@ -648,6 +668,44 @@ impl Runtime {
     }
 }
 
+fn continue_retained(
+    paths: &RuntimePaths,
+    snapshot: &bus::TaskSnapshot,
+    lane: CanonicalUuid,
+) -> CommandResult<Attempted> {
+    let occupant = snapshot
+        .residency()
+        .and_then(|head| {
+            head.body()
+                .lanes
+                .iter()
+                .find(|row| row.lane == lane)
+                .and_then(|row| row.occupant)
+        })
+        .ok_or_else(|| {
+            store_fault(
+                "lifecycle::retained-seat-missing",
+                "a retained continuation target has no occupant",
+            )
+        })?;
+    let Some(owner) = supervisor::idle_claim(paths, lane, occupant)? else {
+        return Ok(Attempted::Retry("lifecycle::retained-seat-unavailable"));
+    };
+    let notice = super::design_input::BackgroundNotice {
+        occupant,
+        purpose: "retained-claim".to_owned(),
+        text: "<system-notice>\nYour retained lane's held claim is ready to continue. Continue \
+               it now; run `spice task next` to read its current guidance before requesting \
+               other work. This is a private continuation notice; no acknowledgment key or \
+               visible ACK/NAK is required.\n</system-notice>"
+            .to_owned(),
+    };
+    match supervisor::command::confirmed_retained_notice(paths, lane, notice, owner) {
+        Ok(true) => Ok(Attempted::Started),
+        Ok(false) | Err(_) => Ok(Attempted::Retry("lifecycle::retained-seat-unavailable")),
+    }
+}
+
 fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
     match outcome {
         Outcome::Reply(_) => unreachable!("a failing lifecycle fold returned a reply"),
@@ -656,11 +714,12 @@ fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
     }
 }
 
-const RETRYABLE_START_REFUSALS: [&str; 4] = [
+const RETRYABLE_START_REFUSALS: [&str; 5] = [
     "lifecycle::wake-capacity-moved",
     "lifecycle::wake-inbox-moved",
     "lifecycle::held-claim-head-moved",
     "lifecycle::held-claim-lease-moved",
+    "lifecycle::retained-seat-unavailable",
 ];
 
 fn start_refusal_is_retryable(reason: &str) -> bool {

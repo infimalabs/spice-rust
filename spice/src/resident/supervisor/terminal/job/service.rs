@@ -20,7 +20,7 @@ pub(in crate::resident) struct ServiceClaim {
 }
 
 impl ServiceClaim {
-    pub(super) fn matches(&self, heads: &journal::TaskHeads) -> bool {
+    pub(in crate::resident) fn matches(&self, heads: &journal::TaskHeads) -> bool {
         heads.statement().body().born == self.task
             && heads.workflow().body().phase.as_str() == self.phase
             && heads.claim().is_some_and(|head| {
@@ -32,8 +32,16 @@ impl ServiceClaim {
             })
     }
 
+    pub(in crate::resident) const fn task(&self) -> &TaskStamp {
+        &self.task
+    }
+
     #[cfg(test)]
-    pub(super) fn for_tests(task: TaskStamp, lane: CanonicalUuid, occupant: CanonicalUuid) -> Self {
+    pub(in crate::resident) fn for_tests(
+        task: TaskStamp,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> Self {
         Self {
             task,
             claimed: Seq::new(1).expect("fixture claim position"),
@@ -109,6 +117,15 @@ impl ServiceAuthority {
             authority: self,
         });
         Ok((task, admission))
+    }
+
+    /// The exact active claim this occupant holds now.
+    ///
+    /// Unlike a service's birth-fixed owner, an OMP process reads this at a
+    /// clean settlement boundary so work acquired during the turn becomes the
+    /// process's owner before it idles.
+    pub(in crate::resident) fn current_claim(&self) -> io::Result<Option<ServiceClaim>> {
+        self.claim(true).map(|(_, claim)| claim)
     }
 
     /// The current occupant's active task and, only when needed for a service,

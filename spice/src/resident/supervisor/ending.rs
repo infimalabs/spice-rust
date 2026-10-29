@@ -87,7 +87,7 @@ pub(in crate::resident) fn published_ending(
     let ending = match state.phase {
         Phase::Exited => PublishedEnding::Exited,
         Phase::Failed => PublishedEnding::Failed(failure_detail(state.failure)),
-        Phase::Running | Phase::Starting => {
+        Phase::Running | Phase::Idle | Phase::Starting => {
             PublishedEnding::Failed(SUPERVISOR_DISAPPEARED.to_owned())
         }
     };
@@ -163,6 +163,7 @@ mod tests {
             phase: Phase::Running,
             group: Some(412),
             session: Some(session(root, lane, occupant)),
+            claim: None,
             git: Some("fixture-head".to_owned()),
             started_millis: Some(now_millis().expect("fixture time")),
             runtime_millis: Some(4 * 60 * 60 * 1_000),

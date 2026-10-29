@@ -271,9 +271,10 @@ first, with an exact continuation. Every job records the exact ambient task
 held at launch, or no task when the turn is unclaimed. A task overview lists
 only jobs carrying one of its selected task identities.
 
-`wait` passively observes a finite job and leaves it running. An occupant
-holding a claim may end its turn while a deadline-bounded job runs; the lane
-stays vacant until that job ends or emits an event, then wakes a successor that
+`wait` passively observes a finite job and leaves it running. A process whose
+turn settles with an admitted exact claim remains idle, so an event or ending
+reactivates that same occupant. When no process is retained, the lane stays
+vacant until the job ends or emits an event and then wakes a successor that
 still holds the claim. A service never ends on its own and never keeps a lane
 idle. A service launched while a task is held runs while that exact claim win
 remains active or until `stop`, surviving occupant succession within the claim.

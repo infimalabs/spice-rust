@@ -28,7 +28,7 @@ pub(super) mod job;
 mod tests;
 
 pub(in crate::resident) use job::{
-    Control, Event, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
+    Control, Event, Handle, Job, Jobs, ServiceAuthority, ServiceClaim, reconcile_services,
     reconcile_turn_services,
 };
 use job::{Ended, Ending, Looked, Observed, Tail};

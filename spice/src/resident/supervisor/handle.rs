@@ -88,7 +88,7 @@ impl Handle {
                         .unwrap_or_else(|| "supervisor failed".to_owned()),
                 ),
             )),
-            Phase::Starting | Phase::Running => Ok(None),
+            Phase::Starting | Phase::Running | Phase::Idle => Ok(None),
         }
     }
 
