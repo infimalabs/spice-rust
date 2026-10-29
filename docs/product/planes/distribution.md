@@ -58,8 +58,8 @@ parallel verification or publication body would be a second release authority.
 ### A versioned commit is sealed before publication
 
 **Invariant —** Every landing is a version: its product version is derived from
-`dist/VERSION` and the commit's own instant, as described under Version
-identity in the Rust profile. Release requires clean HEAD at the release
+`dist/VERSION` and the commit's own instant, as described under [Version
+identity](../implementation.md#version-identity). Release requires clean HEAD at the release
 commit, already integrated in the tracked source branch, with requested,
 compiled, and tracked product versions in agreement. Compiled is this
 executable's `dist/VERSION` applied to the release commit, and tracked is the

@@ -354,7 +354,7 @@ fn the_same_generation_and_tracked_sources_assemble_one_rack() {
         ("spice/agent/SKILL.md", b"# spice\n"),
         ("docs/README.md", b"# Docs\n"),
         ("docs/planes/distribution.md", b"# Distribution\n"),
-        ("docs/product/rust.md", b"# Rust\n"),
+        ("docs/product/implementation.md", b"# Implementation\n"),
     ];
     for (index, root) in roots.iter().enumerate() {
         publish_fixture(root, "first");

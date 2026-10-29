@@ -20,7 +20,7 @@ The code is authoritative; a disagreement is a documentation defect.
 | [planes.md](planes.md) | Session forensics, metrics and hooks, gate evidence, distribution, and principles. |
 | [interfaces.md](interfaces.md) | Task documents, the JSON outcome, bounded reads, kept jobs, extensions, diagnostics, and media. |
 | [checks.md](checks.md) | The checks that can refuse a commit. |
-| [rust.md](rust.md) | Concrete appliance choices and the code that owns each, including [Mosaic card lineage](mosaic-rust.md). |
+| [implementation.md](implementation.md) | Concrete appliance choices and the code that owns each, including [Mosaic card lineage](mosaic.md). |
 
 Start with [value](value.md) and [loops](loops.md), then use the
 [register](invariants.md) as the contract.
