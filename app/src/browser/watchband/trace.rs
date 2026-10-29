@@ -7,6 +7,7 @@
 use std::rc::Rc;
 
 use gloo_timers::callback::Timeout;
+use wasm_bindgen::JsCast;
 use yew::prelude::*;
 
 use super::super::clock::now_millis;
@@ -233,7 +234,14 @@ fn use_trace_boundary(
     }
     let current = *frame;
     Callback::from(move |event: web_sys::TransitionEvent| {
-        if event.property_name() == "transform"
+        let connected = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Node>().ok())
+            .is_some_and(|target| target.is_connected());
+        // A new data frame replaces the keyed moving node. Its cancellation
+        // must not overwrite that newer frame with this callback's boundary.
+        if connected
+            && event.property_name() == "transform"
             && let Some(boundary) = current.target
         {
             frame.set(TraceFrame::settled(boundary));
