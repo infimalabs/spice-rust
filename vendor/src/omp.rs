@@ -784,9 +784,14 @@ pub fn launch(
     sill::spawn(record.spec(process)).map_err(LaunchError::Spawn)
 }
 
-fn request_line(request: &impl Serialize) -> Vec<u8> {
-    let mut line = serde_json::to_vec(request).expect("an RPC request is representable as JSON");
+fn append_request_line(line: &mut Vec<u8>, request: &impl Serialize) {
+    serde_json::to_writer(&mut *line, request).expect("an RPC request is representable as JSON");
     line.push(b'\n');
+}
+
+fn request_line(request: &impl Serialize) -> Vec<u8> {
+    let mut line = Vec::new();
+    append_request_line(&mut line, request);
     line
 }
 
@@ -1277,25 +1282,63 @@ pub fn host_tool_refused(id: &str, reason: &str) -> Vec<u8> {
     }))
 }
 
-/// The answer to one read of a host-owned URI: the resource as Markdown.
+/// Append the answer to one read or write of a host-owned URI.
+pub fn append_host_uri_result(output: &mut Vec<u8>, id: &str, content: &str) {
+    #[derive(Serialize)]
+    struct Result<'a> {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        id: &'a str,
+        content: &'a str,
+        #[serde(rename = "contentType")]
+        content_type: &'static str,
+    }
+    append_request_line(
+        output,
+        &Result {
+            kind: "host_uri_result",
+            id,
+            content,
+            content_type: "text/markdown",
+        },
+    );
+}
+
+/// The answer to one read or write of a host-owned URI.
 #[must_use]
 pub fn host_uri_result(id: &str, content: &str) -> Vec<u8> {
-    request_line(&serde_json::json!({
-        "type": "host_uri_result",
-        "id": id,
-        "content": content,
-        "contentType": "text/markdown",
-    }))
+    let mut output = Vec::new();
+    append_host_uri_result(&mut output, id, content);
+    output
+}
+
+/// Append the answer to a host-owned URI request the lane does not serve.
+pub fn append_host_uri_refused(output: &mut Vec<u8>, id: &str, reason: &str) {
+    #[derive(Serialize)]
+    struct Refusal<'a> {
+        #[serde(rename = "type")]
+        kind: &'static str,
+        id: &'a str,
+        #[serde(rename = "isError")]
+        is_error: bool,
+        error: &'a str,
+    }
+    append_request_line(
+        output,
+        &Refusal {
+            kind: "host_uri_result",
+            id,
+            is_error: true,
+            error: reason,
+        },
+    );
 }
 
 /// The answer to a host-owned URI request the lane does not serve, which
 /// omp surfaces as the tool's error.
 #[must_use]
 pub fn host_uri_refused(id: &str, reason: &str) -> Vec<u8> {
-    request_line(&serde_json::json!({
-        "type": "host_uri_result",
-        "id": id,
-        "isError": true,
-        "error": reason,
-    }))
+    let mut output = Vec::new();
+    append_host_uri_refused(&mut output, id, reason);
+    output
 }

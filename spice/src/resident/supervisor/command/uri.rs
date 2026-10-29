@@ -3,7 +3,8 @@
 //! connection.
 
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{self, Write};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::Driver;
@@ -28,7 +29,57 @@ impl Uris {
     }
 }
 
+fn append_result_frame(output: &mut Vec<u8>, id: &str, answer: &Result<String, String>) {
+    match answer {
+        Ok(content) => vendor::omp::append_host_uri_result(output, id, content),
+        Err(reason) => vendor::omp::append_host_uri_refused(output, id, reason),
+    }
+}
+
+fn result_frame(id: &str, answer: &Result<String, String>) -> Vec<u8> {
+    let mut output = Vec::new();
+    append_result_frame(&mut output, id, answer);
+    output
+}
+
+fn write_notice(url: &str, answer: &Result<String, String>) -> String {
+    let (kind, outcome) = match answer {
+        Ok(receipt) => ("success receipt", receipt),
+        Err(refusal) => ("refusal", refusal),
+    };
+    format!(
+        "<system-notice>\nThe spice:// write to {url} returned this canonical {kind}:\n\n\
+         {outcome}\n\nThis is a private write outcome; no acknowledgment key or visible ACK/NAK \
+         is required.\n</system-notice>"
+    )
+}
+
 impl<W: Write + Send + 'static> Driver<W> {
+    /// Queue one exact background notice before the frame that releases its
+    /// OMP boundary, writing and flushing both commands together.
+    ///
+    /// `after` is serialized only after the aside registration. An empty
+    /// result still registers the notice, which lets a withdrawn durable
+    /// operation disclose its outcome without answering the withdrawn call.
+    fn background_before(
+        &self,
+        purpose: &str,
+        message: &str,
+        after: impl FnOnce(&mut Vec<u8>),
+    ) -> io::Result<()> {
+        let mut queued = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.activate()?;
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut delivery = vendor::omp::aside_request(sequence, purpose, message);
+        after(&mut delivery);
+        self.write(&delivery)?;
+        queued.insert(purpose.to_owned(), message.to_owned());
+        Ok(())
+    }
+
     /// Answer one host URI request, a read or a write carrying its content,
     /// on its own thread so the stream keeps being read. Any other operation
     /// is refused at once.
@@ -76,23 +127,34 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// Answer one request unless omp withdrew it meanwhile. The pending set
-    /// stays locked across the answer, so a withdrawal either lands first and
-    /// silences it or lands after omp already holds it. A withdrawn write
-    /// that already committed stays committed; only its answer is silenced.
+    /// Finish one request after its resource operation. The pending set stays
+    /// locked across delivery, so a withdrawal either suppresses the ordinary
+    /// result or arrives after OMP already holds it.
+    ///
+    /// Reads have no durable outcome and stay silent once withdrawn. Writes
+    /// always queue their native outcome for this exact occupant; the result,
+    /// when still pending, follows that aside in the same stdin write.
     fn answer_uri(&self, id: &str, url: &str, access: Access<'_>) {
+        let write = matches!(&access, Access::Write(_));
         let answer = (self.uris.server)(url, access);
         let mut pending = self
             .uris
             .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if !pending.remove(id) {
+        let pending = pending.remove(id);
+        if !write {
+            if pending {
+                let _answered = self.write(&result_frame(id, &answer));
+            }
             return;
         }
-        let _answered = self.write(&match answer {
-            Ok(content) => vendor::omp::host_uri_result(id, &content),
-            Err(reason) => vendor::omp::host_uri_refused(id, &reason),
+        let purpose = format!("uri-write:{id}");
+        let notice = write_notice(url, &answer);
+        let _answered = self.background_before(&purpose, &notice, |delivery| {
+            if pending {
+                append_result_frame(delivery, id, &answer);
+            }
         });
     }
 

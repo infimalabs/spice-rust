@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::io::{self, Write};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -24,12 +25,13 @@ impl Drop for Ended {
 
 /// A driver whose answering threads each announce their exit on the returned
 /// receiver.
-fn driver(
+fn driver_with<W: Write + Send + 'static>(
+    stdin: W,
     serve: impl Fn(&str, Access<'_>) -> Result<String, String> + Send + Sync + 'static,
-) -> (Arc<Driver<Vec<u8>>>, mpsc::Receiver<()>) {
+) -> (Arc<Driver<W>>, mpsc::Receiver<()>) {
     let (ended, exits) = mpsc::channel();
     let driver = Driver::with_server(
-        Vec::new(),
+        stdin,
         crate::resident::supervisor::command::Readers::default(),
         Box::new(move |url: &str, access: Access<'_>| {
             ANSWERING.with(|answering| *answering.borrow_mut() = Some(Ended(ended.clone())));
@@ -41,15 +43,52 @@ fn driver(
     (driver, exits)
 }
 
-fn frames(driver: &Driver<Vec<u8>>) -> Vec<serde_json::Value> {
-    let input = driver.stdin.lock().expect("input locks");
+fn driver(
+    serve: impl Fn(&str, Access<'_>) -> Result<String, String> + Send + Sync + 'static,
+) -> (Arc<Driver<Vec<u8>>>, mpsc::Receiver<()>) {
+    driver_with(Vec::new(), serve)
+}
+
+fn decoded_frames(input: &[u8]) -> Vec<serde_json::Value> {
     input
-        .as_ref()
-        .expect("input remains open")
         .split(|byte| *byte == b'\n')
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_slice(line).expect("a frame"))
         .collect()
+}
+
+fn frames(driver: &Driver<Vec<u8>>) -> Vec<serde_json::Value> {
+    let input = driver.stdin.lock().expect("input locks");
+    decoded_frames(input.as_ref().expect("input remains open"))
+}
+
+fn aside(frame: &serde_json::Value) -> Option<serde_json::Value> {
+    let notice = frame["message"].as_str()?.strip_prefix("/spice-aside ")?;
+    serde_json::from_str(notice).ok()
+}
+
+#[derive(Clone, Default)]
+struct CountingSink(Arc<Mutex<SinkState>>);
+
+#[derive(Default)]
+struct SinkState {
+    bytes: Vec<u8>,
+    writes: usize,
+    flushes: usize,
+}
+
+impl Write for CountingSink {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut state = self.0.lock().expect("sink locks");
+        state.writes += 1;
+        state.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.lock().expect("sink locks").flushes += 1;
+        Ok(())
+    }
 }
 
 /// Receive the exit of each of `answering` threads.
@@ -100,6 +139,14 @@ fn a_read_answers_with_the_resource_or_its_refusal() {
             .expect("pending locks")
             .is_empty()
     );
+    assert!(
+        driver
+            .background
+            .lock()
+            .expect("background locks")
+            .is_empty(),
+        "reads queue no aside"
+    );
 }
 
 #[test]
@@ -123,7 +170,12 @@ fn a_write_reaches_the_server_with_its_content_and_other_operations_are_refused(
     driver.serve_uri("y", "list", TARGET, None);
     // Only the write reaches a thread; malformed operations refuse inline.
     settled(&exits, 1);
-    let mut answers = frames(&driver);
+    let frames = frames(&driver);
+    let mut answers: Vec<_> = frames
+        .iter()
+        .filter(|frame| frame["type"] == "host_uri_result")
+        .cloned()
+        .collect();
     answers.sort_by_key(|frame| frame["id"].as_str().map(str::to_owned));
     let refused = |id: &str| {
         serde_json::json!({
@@ -146,6 +198,18 @@ fn a_write_reaches_the_server_with_its_content_and_other_operations_are_refused(
             refused("y"),
         ]
     );
+    let (aside_index, notice) = frames
+        .iter()
+        .enumerate()
+        .find_map(|(index, frame)| aside(frame).map(|notice| (index, notice)))
+        .expect("the write queues an aside");
+    assert_eq!(notice["purpose"], "uri-write:w");
+    assert!(
+        notice["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("edited"))
+    );
+    assert_eq!(frames[aside_index + 1]["id"], "w");
     assert_eq!(
         *written.lock().expect("writes lock"),
         [("spice://task/X/description".to_owned(), "new".to_owned())]
@@ -158,6 +222,81 @@ fn a_write_reaches_the_server_with_its_content_and_other_operations_are_refused(
             .expect("pending locks")
             .is_empty()
     );
+}
+
+#[test]
+fn a_write_registers_its_aside_and_result_in_one_write_and_flush() {
+    for (answer, refused) in [
+        (Ok("committed receipt".to_owned()), false),
+        (Err("stale digest".to_owned()), true),
+    ] {
+        let outcome = match &answer {
+            Ok(receipt) | Err(receipt) => receipt.clone(),
+        };
+        let sink = CountingSink::default();
+        let (driver, exits) = driver_with(sink.clone(), move |_, access| {
+            assert!(matches!(access, Access::Write("new")));
+            answer.clone()
+        });
+        driver.serve_uri("w", "write", "spice://task/X/description", Some("new"));
+        settled(&exits, 1);
+
+        let state = sink.0.lock().expect("sink locks");
+        assert_eq!((state.writes, state.flushes), (1, 1));
+        let frames = decoded_frames(&state.bytes);
+        assert_eq!(frames.len(), 2);
+        let notice = aside(&frames[0]).expect("aside precedes the result");
+        assert_eq!(notice["purpose"], "uri-write:w");
+        assert!(
+            notice["message"]
+                .as_str()
+                .is_some_and(|message| message.contains(&outcome))
+        );
+        assert_eq!(frames[1]["id"], "w");
+        assert_eq!(frames[1]["isError"].as_bool().unwrap_or(false), refused);
+    }
+}
+
+fn withdrawn_write(answer: Result<String, String>) -> Vec<serde_json::Value> {
+    let (entered, writing) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let (entered, released) = (Mutex::new(entered), Mutex::new(released));
+    let (driver, exits) = driver(move |_, access| {
+        assert!(matches!(access, Access::Write("new")));
+        entered.lock().expect("entry").send(()).expect("test waits");
+        released
+            .lock()
+            .expect("release")
+            .recv()
+            .expect("test releases");
+        answer.clone()
+    });
+    driver.serve_uri("w", "write", "spice://task/X/description", Some("new"));
+    writing.recv().expect("the write began");
+    driver.cancel("w");
+    release.send(()).expect("the write waits");
+    settled(&exits, 1);
+    frames(&driver)
+}
+
+#[test]
+fn a_withdrawn_write_discloses_only_its_native_outcome() {
+    for (answer, success, outcome) in [
+        (
+            Ok("committed receipt".to_owned()),
+            true,
+            "committed receipt",
+        ),
+        (Err("stale digest".to_owned()), false, "stale digest"),
+    ] {
+        let frames = withdrawn_write(answer);
+        assert_eq!(frames.len(), 1, "a withdrawn write has no ordinary result");
+        let notice = aside(&frames[0]).expect("the outcome remains queued");
+        assert_eq!(notice["purpose"], "uri-write:w");
+        let message = notice["message"].as_str().expect("notice has text");
+        assert!(message.contains(outcome));
+        assert_eq!(message.contains("success receipt"), success);
+    }
 }
 
 #[test]
