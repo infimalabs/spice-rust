@@ -61,15 +61,24 @@ directory, and a failed action's refusal carries a bounded tail and that path.
 A shell pipeline can mask the prover's exit status; preserve the status rather
 than inferring success from a filter or the last progress line.
 
-Direct proof and the installed pre-commit hook normalize Git-only routing before
-they identify a compiler environment. On macOS the hook removes only the
-default compiler paths injected by Command Line Tools Git or full Xcode Git;
+Direct proof and the installed pre-commit hook normalize Git-only routing and
+shell prompt metadata before they identify a compiler environment. Windows'
+hidden per-drive working directories (`=C:`, for example) are location-only,
+like `PWD`, and never partition proof identity. Routing exclusions include
+Git for Windows' injected `PLINK_PROTOCOL`. The hook removes Git's prepended
+helper directory using either its native spelling or its MSYS shell spelling.
+On macOS it also removes only the default compiler paths injected by Command
+Line Tools Git or full Xcode Git;
 nondefault and unrelated toolchain paths remain inputs. The same staged action
 therefore has one environment identity outside and inside the hook.
 Rust and app compile arms use HOME only when the captured compiler environment
 supplies it. They neither embed the release builder's home nor synthesize a
 runtime replacement; when HOME is absent, Cargo uses its own host resolution
 or reports its own failure.
+
+Live Git observations use the platform-pinned executable: `/usr/bin/git` on
+Unix, or `Git\cmd\git.exe` beneath Windows' system Program Files folder. They do
+not select an executable from the hook's search path.
 
 Pre-commit verifies every owed receipt, runs the live-only checks, and publishes
 one admission for the candidate tree. Several admissions may exist for one tree

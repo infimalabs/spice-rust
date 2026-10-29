@@ -336,6 +336,7 @@ fn isolated_execution_rebinds_the_lane_to_the_manual_cargo_home() {
 fn git_commit_metadata_normalizes_to_the_compiler_environment() {
     let producer = compiler_environment_from([
         (OsString::from("HOME"), OsString::from("/fixture/home")),
+        (OsString::from("PS1"), OsString::from("interactive prompt")),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
@@ -367,6 +368,7 @@ fn git_commit_metadata_normalizes_to_the_compiler_environment() {
         ),
         (OsString::from("GIT_OPTIONAL_LOCKS"), OsString::from("0")),
         (OsString::from("GIT_PAGER"), OsString::from("cat")),
+        (OsString::from("PLINK_PROTOCOL"), OsString::from("ssh")),
         (
             OsString::from("GIT_INDEX_FILE"),
             OsString::from("/fixture/git/index"),

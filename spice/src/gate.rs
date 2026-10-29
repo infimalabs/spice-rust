@@ -22,6 +22,7 @@ use ::gate::{
 use gix::bstr::ByteSlice as _;
 use wire::Digest;
 
+#[cfg(not(windows))]
 const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
@@ -821,7 +822,13 @@ fn parse_selected_changes(output: &[u8]) -> Result<Vec<String>, RunError> {
 }
 
 fn git_os(repository: &Path, arguments: &[OsString]) -> Result<Vec<u8>, RunError> {
-    let output = Command::new(GIT)
+    #[cfg(windows)]
+    let program = sill::program_files()
+        .map_err(|error| RunError::fault("gate::git-unavailable", error))?
+        .join(r"Git\cmd\git.exe");
+    #[cfg(not(windows))]
+    let program = Path::new(GIT);
+    let output = Command::new(program.as_os_str())
         .arg("-C")
         .arg(repository)
         .args(arguments)
@@ -832,7 +839,7 @@ fn git_os(repository: &Path, arguments: &[OsString]) -> Result<Vec<u8>, RunError
             "gate::git-refused",
             format!(
                 "{} {:?} exited {:?}: {}",
-                GIT,
+                program.display(),
                 arguments,
                 output.status.code(),
                 String::from_utf8_lossy(&output.stderr).trim()

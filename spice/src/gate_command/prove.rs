@@ -810,6 +810,9 @@ fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsStri
             !LOCATION_ONLY
                 .iter()
                 .any(|candidate| name == OsStr::new(candidate))
+                // Windows carries per-drive working directories as hidden
+                // `=C:` entries, not semantic compiler inputs.
+                && !matches!(name.as_encoded_bytes(), [b'=', b'A'..=b'Z' | b'a'..=b'z', b':'])
                 && !DISABLED_WRAPPERS
                     .iter()
                     .any(|candidate| name == OsStr::new(candidate))
