@@ -61,6 +61,7 @@ use merge_control::GitControlSeal;
 /// Compiled absolutely, like every other gate tool, so acquisition reads no
 /// ambient search path and two machines cannot silently observe two different
 /// programs. A build without it starts nothing and says so.
+#[cfg(not(windows))]
 const GIT: &str = "/usr/bin/git";
 static GIT_SUBPROCESSES: AtomicU64 = AtomicU64::new(0);
 
@@ -1104,7 +1105,13 @@ fn git_with_environment(
     accepted: &[i32],
     environment: Environment,
 ) -> Result<(i32, String), GitRefusal> {
-    let argv = Argv::new(GIT, arguments.iter().map(OsStr::new))
+    #[cfg(windows)]
+    let program = sill::program_files()
+        .map_err(|error| GitRefusal::Unavailable(format!("resolve system Git: {error}")))?
+        .join(r"Git\cmd\git.exe");
+    #[cfg(not(windows))]
+    let program = GIT;
+    let argv = Argv::new(program, arguments.iter().map(OsStr::new))
         .map_err(|error| GitRefusal::Unmeasured(format!("git argument vector: {error}")))?;
     let mut spec = bounds.spec(argv, repository);
     spec.environment = environment;

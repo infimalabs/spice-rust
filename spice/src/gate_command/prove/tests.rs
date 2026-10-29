@@ -101,6 +101,7 @@ fn cargo_selectors_are_explicit_and_keep_canonical_report_order() {
 fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
     let normalized = normalized_action_environment(&[
         (OsString::from("PWD"), OsString::from("/worktree-a")),
+        (OsString::from("=C:"), OsString::from("C:\\worktree-a")),
         (
             OsString::from("CARGO_TARGET_DIR"),
             OsString::from("/worktree-a/target"),
@@ -147,6 +148,11 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
     assert_eq!(
         normalized,
         normalized_action_environment(&[
+            (OsString::from("=C:"), OsString::from("C:\\Git\\bin")),
+            (
+                OsString::from("=d:"),
+                OsString::from("D:\\another-directory")
+            ),
             (
                 OsString::from("CARGO_HOME"),
                 OsString::from("/worktree-b/another-private-cargo"),

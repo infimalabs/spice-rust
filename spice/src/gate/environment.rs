@@ -93,6 +93,7 @@ fn retained(name: &OsStr) -> bool {
     bytes != SHELL_LAST_COMMAND.as_bytes()
         && bytes != SHELL_OLD_DIRECTORY.as_bytes()
         && bytes != SHELL_LEVEL.as_bytes()
+        && bytes != b"PS1"
         && bytes != b"CARGO"
         && bytes != b"CARGO_MANIFEST_DIR"
         && bytes != b"CARGO_MANIFEST_PATH"
@@ -111,6 +112,7 @@ fn retained(name: &OsStr) -> bool {
         && bytes != b"GIT_EXEC_PATH"
         && bytes != b"GIT_OPTIONAL_LOCKS"
         && bytes != b"GIT_PAGER"
+        && bytes != b"PLINK_PROTOCOL"
         && !SESSION_IDENTITY
             .iter()
             .any(|candidate| name == OsStr::new(candidate))
