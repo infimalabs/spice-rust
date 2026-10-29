@@ -296,3 +296,109 @@ fn a_closing_seat_leaves_the_conversation_background_but_keeps_its_profile() {
     bus.shutdown().expect("closing bus stops");
     fs::remove_dir_all(root).expect("closing fixture cleanup");
 }
+
+/// A failed batch acquisition leaves the seat ledger as the retry authority.
+#[test]
+fn closing_batch_failure_does_not_take_vacancies() {
+    let mut seats = Seats::new();
+    for (lane, occupant) in [(test_uuid(2), test_uuid(12)), (test_uuid(1), test_uuid(11))] {
+        seats
+            .seat_detached(
+                lane,
+                occupant,
+                Box::new(DetachedFixture {
+                    dropped: Arc::new(AtomicU64::new(0)),
+                }),
+            )
+            .expect("the fixture occupant is seated");
+    }
+    drop(seats.vacate(test_uuid(2)));
+    drop(seats.vacate(test_uuid(1)));
+
+    let failed = runtime::reap::begin_vacated_batch(&mut seats, || -> CommandResult<()> {
+        Err(Outcome::Fault(wire::Fault {
+            class: wire::FaultClass::Store,
+            reason: "serve::message-publish-failed".to_owned(),
+            detail: "batch lock unavailable".to_owned(),
+        }))
+    })
+    .expect_err("batch acquisition fails");
+    assert!(matches!(failed, Outcome::Fault(fault) if fault.class == wire::FaultClass::Store));
+    assert!(
+        seats.has_vacated(),
+        "batch failure drained the vacancy ledger"
+    );
+
+    let (batch, vacated) = runtime::reap::begin_vacated_batch(&mut seats, || Ok("batch"))
+        .expect("the next batch begins")
+        .expect("vacancies remain");
+    assert_eq!(batch, "batch");
+    assert_eq!(
+        vacated,
+        vec![(test_uuid(1), test_uuid(11)), (test_uuid(2), test_uuid(12)),],
+        "a successful take is deterministic rather than vacate ordered"
+    );
+    assert!(!seats.has_vacated());
+}
+
+/// One terminal presentation cannot strand later exact profile bindings.
+#[test]
+fn closing_sweep_attempts_every_vacancy_before_returning_the_first_failure() {
+    let epoch = test_uuid(90);
+    let first = (test_uuid(1), test_uuid(11));
+    let later = (test_uuid(2), test_uuid(12));
+    let message_state = std::sync::Mutex::new(MessageState::default());
+    {
+        let mut state = message_state.lock().expect("message state locks");
+        state
+            .profiles
+            .declare(&continuing_session(first.0, epoch, first.1));
+        state
+            .profiles
+            .declare(&continuing_session(later.0, epoch, later.1));
+    }
+    let mut attempted = Vec::new();
+    let mut diagnostic = Vec::new();
+
+    let failure =
+        runtime::reap::attempt_vacated(vec![first, later], &mut diagnostic, |lane, occupant, _| {
+            attempted.push((lane, occupant));
+            message_state
+                .lock()
+                .expect("message state locks")
+                .profiles
+                .vacate(lane, occupant);
+            if (lane, occupant) == first {
+                Err(Outcome::Fault(wire::Fault {
+                    class: wire::FaultClass::Protocol,
+                    reason: "transcript::record-invalid".to_owned(),
+                    detail: "the first closing record is malformed".to_owned(),
+                }))
+            } else {
+                Err(Outcome::Fault(wire::Fault {
+                    class: wire::FaultClass::Store,
+                    reason: "journal::commit-failed".to_owned(),
+                    detail: "database is locked".to_owned(),
+                }))
+            }
+        })
+        .expect_err("the first terminal presentation is returned");
+
+    assert!(
+        matches!(
+            failure,
+            Outcome::Fault(fault)
+                if fault.class == wire::FaultClass::Protocol
+                    && fault.reason == "transcript::record-invalid"
+        ),
+        "the later deferred store fault replaced the first terminal outcome"
+    );
+    assert_eq!(attempted, vec![first, later], "a later vacancy was skipped");
+    let state = message_state.lock().expect("message state locks");
+    assert!(state.profiles.session(first.0, first.1).is_none());
+    assert!(state.profiles.session(later.0, later.1).is_none());
+    assert_eq!(
+        String::from_utf8(diagnostic).expect("diagnostic is text"),
+        "closing transcript sweep deferred to the next reconciliation: journal::commit-failed: database is locked\n"
+    );
+}

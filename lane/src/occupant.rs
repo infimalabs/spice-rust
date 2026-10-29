@@ -458,6 +458,12 @@ impl Seats {
         Some(occupant)
     }
 
+    /// Whether a closing sweep still owes at least one vacated occupant.
+    #[must_use]
+    pub fn has_vacated(&self) -> bool {
+        !self.vacated.is_empty()
+    }
+
     /// Every `(lane, occupant)` vacated since the last take, in vacate order.
     ///
     /// A seat closes moments after its occupant wrote its last records, and

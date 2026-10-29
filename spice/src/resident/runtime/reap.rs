@@ -19,6 +19,9 @@ use std::collections::BTreeSet;
 use super::last_word::LastWord;
 use super::*;
 
+type Vacancy = (CanonicalUuid, CanonicalUuid);
+type BegunVacancies<B> = Option<(B, Vec<Vacancy>)>;
+
 /// Account one occupant exit against residency, steering, and lifecycle holds.
 ///
 /// The supervisor notice and the seat sweep both land here, so an exit is
@@ -193,13 +196,55 @@ pub(in crate::resident) fn sweep_seats(
     Ok(())
 }
 
+/// Begin one closing batch without taking ownership of vacancy work early.
+///
+/// Acquiring the message batch can fail before any tape is presentable. The
+/// seat ledger remains the retry authority until that acquisition succeeds.
+pub(in crate::resident) fn begin_vacated_batch<B>(
+    seats: &mut Seats,
+    begin: impl FnOnce() -> CommandResult<B>,
+) -> CommandResult<BegunVacancies<B>> {
+    if !seats.has_vacated() {
+        return Ok(None);
+    }
+    let batch = begin()?;
+    let mut vacated = seats.take_vacated();
+    vacated.sort_unstable();
+    Ok(Some((batch, vacated)))
+}
+
+/// Attempt every drained vacancy and return the first terminal outcome.
+///
+/// Store faults remain deferred housekeeping diagnostics. Protocol,
+/// environment, and refusal outcomes cannot strand later occupant bindings:
+/// each attempt owns its binding cleanup and all attempts run before the first
+/// terminal outcome is returned.
+pub(in crate::resident) fn attempt_vacated(
+    vacated: Vec<Vacancy>,
+    diagnostic: &mut dyn io::Write,
+    mut attempt: impl FnMut(CanonicalUuid, CanonicalUuid, &mut dyn io::Write) -> CommandResult<()>,
+) -> CommandResult<()> {
+    let mut first_terminal = None;
+    for (lane, occupant) in vacated {
+        let result = attempt(lane, occupant, diagnostic);
+        if let Err(outcome) =
+            super::deferral::defer_store_fault(result, diagnostic, "closing transcript sweep")
+            && first_terminal.is_none()
+        {
+            first_terminal = Some(outcome);
+        }
+    }
+    first_terminal.map_or(Ok(()), Err)
+}
+
 /// Present what every seat vacated this turn left on its tape.
 ///
 /// Every path that closes a seat, a supervisor exit or failure notice, the
 /// seat sweep for a lost ending, an operator stop, records the occupant in the
 /// seat ledger. The closing sweep runs here, after the turn, where the taste,
-/// steering, and app surfaces all exist; a refused commit is deferred the
-/// way exit accounting defers it.
+/// steering, and app surfaces all exist. Batch acquisition precedes the
+/// deterministic take from the seat ledger; after that take every entry is
+/// attempted before the first terminal outcome is returned.
 pub(in crate::resident) fn present_closed_transcripts(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
@@ -209,14 +254,24 @@ pub(in crate::resident) fn present_closed_transcripts(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let (bus, epoch) = (command_surface.bus(), command_surface.epoch());
-    let vacated = seats.take_vacated();
-    if vacated.is_empty() {
+    let begun = begin_vacated_batch(seats, || {
+        message_publisher
+            .batch()
+            .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))
+    });
+    let Some((generation, vacated)) = (match begun {
+        Ok(begun) => begun,
+        Err(outcome) => {
+            return super::deferral::defer_store_fault(
+                Err(outcome),
+                diagnostic,
+                "closing transcript batch",
+            );
+        }
+    }) else {
         return Ok(());
-    }
-    let generation = message_publisher
-        .batch()
-        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))?;
-    for (lane, occupant) in vacated {
+    };
+    let presented = attempt_vacated(vacated, diagnostic, |lane, occupant, diagnostic| {
         let surfaces = CaptureSurfaces::new(
             command_surface.paths,
             &command_surface.config.taste,
@@ -229,7 +284,7 @@ pub(in crate::resident) fn present_closed_transcripts(
             message_surface::TasteRecognition::Direct,
             message_surface::TasteRecognition::Deferred,
         );
-        let presented = message_surface::present_closed_transcript(
+        message_surface::present_closed_transcript(
             bus,
             epoch,
             &surfaces,
@@ -237,11 +292,23 @@ pub(in crate::resident) fn present_closed_transcripts(
             lane,
             occupant,
             message_surface::CaptureViews::new(message_state, diagnostic),
-        );
-        super::deferral::defer_store_fault(presented, diagnostic, "closing transcript sweep")?;
-    }
-    generation
+        )
+    });
+    let committed = generation
         .commit()
         .map(drop)
-        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()))
+        .map_err(|error| store_fault("serve::message-publish-failed", &error.to_string()));
+    let committed =
+        super::deferral::defer_store_fault(committed, diagnostic, "closing transcript batch");
+    match (presented, committed) {
+        (Err(first), Err(later)) => {
+            let _ = writeln!(
+                diagnostic,
+                "closing transcript batch failed after an earlier terminal outcome: {later:?}"
+            );
+            Err(first)
+        }
+        (Err(first), Ok(())) => Err(first),
+        (Ok(()), committed) => committed,
+    }
 }
