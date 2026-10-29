@@ -29,7 +29,7 @@ their condensed base52 sequence codes, never as decimal integers. The
 Preparation authority menu follows the same rule inside its displayed records;
 wire and journal payloads retain their machine encoding. The one exception is
 the header's journal cursor, which leads with the integer position and follows
-it with the code in parentheses, as in `1234567 (7sbY)`, because that integer
+it with the code in parentheses, as in `1234567 (8mYg)`, because that integer
 is what the resident and CLI readers report. Authored numbers, counts, and
 transcript offsets are not journal positions.
 
