@@ -140,9 +140,10 @@ fn step(width: f64) -> f64 {
 
 /// Redraws on new activity and, while anything is shown, once per trace step,
 /// so old activity leaves without a new frame; the pane's size is measured
-/// after each draw. Between redraws the compositor slides each frame left at
-/// the window's own rate, the true picture of a frame `now` ago, so the next
-/// frame lands where its predecessor had slid instead of jumping a step.
+/// after each draw. Between redraws CSS advances exactly one sampled position,
+/// then the replacement frame lands at that same position. Avoiding
+/// interpolation between samples also avoids invalidating nested SVG every
+/// display frame.
 #[function_component(ActivityTrace)]
 pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     let tick = use_state(|| 0_u64);

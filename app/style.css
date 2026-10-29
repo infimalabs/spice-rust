@@ -439,10 +439,13 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .activity-trace [data-trace-marker="failure"] { fill: var(--danger); stroke: none; }
 .activity-trace [data-trace-marker="direction"] { fill: var(--ink); stroke: none; }
 .activity-trace [data-trace-marker="direction"][data-accent] { fill: var(--accent-slot); }
-/* Each frame slides left at the window's own rate until the next replaces it;
-   the trace sets the span and duration from the drawn width and its window. */
+/* The trace renderer replaces a frame every four seconds across its ten-minute
+   window: 150 authoritative positions. Stepping at that same cadence avoids
+   repainting nested SVG between samples. */
 @keyframes trace-flow { to { translate: var(--trace-flow-span) 0; } }
-.activity-trace .trace-flow { animation: trace-flow var(--trace-flow-duration) linear forwards; }
+.activity-trace .trace-flow {
+  animation: trace-flow var(--trace-flow-duration) steps(150, end) forwards;
+}
 @media (prefers-reduced-motion: reduce) {
   .activity-trace .trace-flow { animation: none; }
 }
