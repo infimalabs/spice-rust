@@ -26,7 +26,6 @@ pub(super) fn render_standing(
     row: Option<&BoardTask>,
 ) -> Html {
     let projection = runtime.room_projection();
-    let participants = projection.participants(room, runtime.board());
     let relevance = projection.relevance(room).collect::<Vec<_>>();
     let lifecycle = row.and_then(BoardTask::design_standing);
     let cycle = row.and_then(|row| {
@@ -67,7 +66,6 @@ pub(super) fn render_standing(
                     cycle.as_ref(),
                 )}
             </p>
-            {render_lanes(runtime, &participants)}
             if !relevance.is_empty() {
                 <ul class="room-standing-relevance" aria-label="Shadow relevance observations">
                     {for relevance.iter().rev().map(|relevance| render_observation(&relevance.value))}
@@ -140,18 +138,52 @@ pub(super) fn focus_in_place(selector: String) -> Callback<MouseEvent> {
     })
 }
 
-fn render_lanes(runtime: &AppRuntime, participants: &[RoomParticipant]) -> Html {
-    if participants.is_empty() {
-        return html! { <p class="room-standing-empty">{"No lane is involved."}</p> };
-    }
-    html! {
-        <ul class="room-standing-lanes" aria-label="Why each lane is involved">
-            {for participants.iter().map(|participant| render_lane(runtime, participant))}
-        </ul>
+/// Why each lane is involved: the summary counts the involved and seated
+/// lanes, and each lane reads as one line.
+pub(super) fn lanes_block(runtime: &AppRuntime, room: &TaskStamp) -> super::RoomBlock {
+    let participants = runtime
+        .room_projection()
+        .participants(room, runtime.board());
+    let lanes = participants
+        .iter()
+        .map(|participant| lane_row(runtime, participant))
+        .collect::<Vec<_>>();
+    let seated = lanes
+        .iter()
+        .filter(|lane| lane.availability == "seated")
+        .count();
+    super::RoomBlock {
+        key: "lanes",
+        label: "Lanes",
+        summary: html! {
+            <>
+                {"Lanes"}
+                <span class="app-count-badge">{lanes.len()}</span>
+                if !lanes.is_empty() {
+                    <span class="room-block-meta">{format!("{seated} seated")}</span>
+                }
+            </>
+        },
+        body: if lanes.is_empty() {
+            html! { <p class="muted">{"No lane is involved."}</p> }
+        } else {
+            html! {
+                <ul class="room-standing-lanes" aria-label="Why each lane is involved">
+                    {for lanes.into_iter().map(|lane| lane.html)}
+                </ul>
+            }
+        },
     }
 }
 
-fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
+/// One lane's roster line beside its availability, so the summary can count
+/// seated lanes without resolving each member twice.
+struct LaneRow {
+    availability: &'static str,
+    html: Html,
+}
+
+fn lane_row(runtime: &AppRuntime, participant: &RoomParticipant) -> LaneRow {
     let member = runtime.lanes().and_then(|lanes| {
         lanes
             .lanes
@@ -159,8 +191,11 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
             .flat_map(|team| &team.members)
             .find(|member| member.lane == participant.lane)
     });
+    let lane = participant.lane.to_string();
+    // A lane no team lists reads by its UUID's first group; the whole UUID
+    // stays in the title and `data-lane`.
     let label = member.map_or_else(
-        || participant.lane.to_string(),
+        || lane.split('-').next().unwrap_or(&lane).to_owned(),
         |member| {
             watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned()
         },
@@ -179,16 +214,17 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
             _ => None,
         })
         .collect::<Vec<_>>();
-    html! {
-        <li key={participant.lane.to_string()} data-lane={participant.lane.to_string()}>
+    let html = html! {
+        <li key={lane.clone()} data-lane={lane.clone()}>
             if let Some(href) = href {
                 <a
                     class="room-standing-lane"
                     {href}
+                    title={lane.clone()}
                     aria-label={format!("Open {label} in Chat")}
                 >{label.clone()}</a>
             } else {
-                <span class="room-standing-lane">{label}</span>
+                <span class="room-standing-lane" title={lane}>{label}</span>
             }
             <span class="room-standing-availability" data-availability={availability}>{availability}</span>
             if let Some(latest) = publications.last() {
@@ -200,13 +236,13 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
             }
             {for participant.reasons.iter().filter_map(|reason| render_reason(runtime, reason))}
         </li>
-    }
+    };
+    LaneRow { availability, html }
 }
 
 /// One non-history reason as a chip naming its source; publication history
 /// renders once per lane instead.
 fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Html> {
-    let leave;
     let invitation;
     let (kind, label, source) = match reason {
         ParticipantReason::Publication(_) => return None,
@@ -247,19 +283,18 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "Asked to stop",
             format!("Stop request {key} on its current claim"),
         ),
+        // The clause reads in full as the room's Left card; the roster keeps
+        // only the fact, with the clause in its title.
         ParticipantReason::Left {
             publication,
             clause,
-        } => {
-            leave = format!("Left: {clause}");
-            (
-                "left",
-                leave.as_str(),
-                format!(
-                    "Left at {publication}; only native work and duties keep this lane listening"
-                ),
-            )
-        }
+        } => (
+            "left",
+            "Left",
+            format!(
+                "Left: {clause}\nLeft at {publication}; only native work and duties keep this lane listening"
+            ),
+        ),
     };
     Some(reason_chip(kind, label, &source))
 }

@@ -346,26 +346,33 @@ fn render_available(
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == statement.born);
-    // A Design's history fills the column its Maturity leaves short beside the
-    // room's lane list; any other task closes its sheet with it.
+    // A Design's history closes the room's strip of Lanes and Maturity;
+    // any other task closes its sheet with it.
     let in_room = render.runtime.is_some() && row.design_standing().is_some();
     let facts = facts(render, answer);
     let [description, acceptance, history] =
         crate::task_sheet::sheet_blocks(statement, facts.len());
     let facts = html! { <dl class="app-fact-grid">{for facts}</dl> };
-    let history = sheet_block(
-        &history,
-        if in_room {
-            "room-provenance"
+    let (room_history, closing) = if in_room {
+        let body = if history.count == 0 {
+            html! { <p class="muted">{history.empty}</p> }
         } else {
-            "app-sheet-section"
-        },
-        facts,
-    );
-    let (aside, closing) = if in_room {
-        (history, Html::default())
+            facts
+        };
+        let block = super::super::rooms::RoomBlock {
+            key: "history",
+            label: history.label,
+            summary: html! {
+                <>
+                    {history.label}
+                    <span class="app-count-badge">{history.count}</span>
+                </>
+            },
+            body,
+        };
+        (Some(block), Html::default())
     } else {
-        (Html::default(), history)
+        (None, sheet_block(&history, "app-sheet-section", facts))
     };
     let resolves = |task: &TaskStamp| selection_has(render.selection, task);
     html! {
@@ -391,7 +398,7 @@ fn render_available(
                 projected.map_or(row, |task| task.row()),
             )}
             {task_detail::render_media(&answer.media)}
-            {render_room(render, answer, aside)}
+            {render_room(render, answer, room_history)}
             {render_relationships(render.work, projected, statement, &RelationTargets {
                 selection: render.selection,
                 focus: focus_task,
@@ -505,7 +512,7 @@ fn item_standings(
 fn render_room(
     render: &WorkDetailRender<'_, '_>,
     answer: &wire::intent::TaskDetailAnswer,
-    aside: Html,
+    history: Option<super::super::rooms::RoomBlock>,
 ) -> Html {
     let statement = &answer.task.statement.body;
     let note_id = format!("work-detail-note-{}", statement.born);
@@ -563,7 +570,7 @@ fn render_room(
             &render.open_message_task,
             &answer.task,
             composer,
-            aside,
+            history,
         ),
         None => html! { <section class="app-sheet-section room-reading">{composer}</section> },
     }

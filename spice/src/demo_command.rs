@@ -831,7 +831,34 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         &["design", "review"],
         DEMO_LANES[1],
         "2026-07-11T05:07:00.000000Z",
-    )
+    )?;
+    // The other lane stepped out of the Design's room, so its standing shows
+    // a departed lane beside the working one.
+    let leaver = uuid(DEMO_LANES[0].lane);
+    let at = instant("2026-07-11T05:08:00.000000Z");
+    let mut write = JournalWrite::new(
+        Actor::Lane(leaver),
+        format!("task:{DEMO_OOPS_BATCH_STAMP}")
+            .parse()
+            .expect("demo Design origin is valid"),
+        at,
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::rooms::RoomLeft {
+                room: batch,
+                publication: wire::rooms::RoomAuthorityStamp::for_micros(at.get().as_microsecond())
+                    .expect("the leave instant names a publication"),
+                lane: leaver,
+                clause: "Matched on vocabulary only; no source-backed evidence on these reports."
+                    .to_owned(),
+            },
+            FactCause::Root,
+        )
+        .map_err(build_failure)?;
+    journal.apply(write).map_err(commit_failure)?;
+    Ok(())
 }
 
 /// One seeded OOPS task in its authored flow, recorded at `at`: the Design

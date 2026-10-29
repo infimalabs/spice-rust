@@ -25,11 +25,13 @@ use crate::runtime::{DesignStanding, RoomAnchorAuthority, RoomEventKind, RoomPro
 use crate::work::WorkProjection;
 
 mod approval;
+mod blocks;
 mod conclusion;
 mod console;
 mod contributions;
 mod reading;
 mod standing;
+pub(super) use blocks::RoomBlock;
 pub(super) use console::{GroupRender, design_of_key, group_base, render_group_surfaces};
 pub(super) use reading::render_task_room;
 

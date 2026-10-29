@@ -718,7 +718,6 @@
 .room-approval > header,
 .room-approval-withdrawn > header,
 .room-conclusion > header,
-.room-maturity > header, .room-provenance > header,
 .room-standing > header,
 .room-history > header {
   display: flex;
@@ -726,7 +725,7 @@
   color: var(--muted);
   font-size: var(--app-type-meta);
 }
-:is(.room-standing, .room-maturity, .room-provenance, .room-conclusion, .room-approval, .room-approval-withdrawn, .room-approval-card, .room-history) > header > h4 { margin: 0; color: inherit; font-size: inherit; }
+:is(.room-standing, .room-conclusion, .room-approval, .room-approval-withdrawn, .room-approval-card, .room-history) > header > h4 { margin: 0; color: inherit; font-size: inherit; }
 .room-approval-card > header > h4 { text-transform: none; }
 
 .room-reading,
@@ -737,28 +736,60 @@
 .room-conversation[open] > summary > .room-conversation-marker { transform: rotate(90deg); }
 .room-reading > .app-section-heading { justify-content: start; }
 
-/* A Design's Standing shares one row with a column of Maturity over the
-   task's provenance facts, so the lifecycle, how near the Design is to
-   steeping, and its record read together and the lane list leaves no idle
-   column beside it: the closed History block takes the height Maturity leaves
-   and reads as label-value rows once opened. The same framed History follows the loading notice
-   while the room is not yet readable. */
-.room-design-pair, .room-design-aside { display: grid; gap: 8px; }
-.room-design-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.room-design-aside { grid-template-rows: auto minmax(0, 1fr); }
-.room-design-pair > section, .room-maturity, .room-provenance {
-  grid-column: auto;
+/* A Design's Standing spans the room; under it one strip carries the
+   summaries of Lanes, Maturity and History, each sized to its own words and
+   never moved by what is open. The one opened block reads in a full-width
+   panel beneath the strip, its line items balanced across as many columns as
+   the room's width fits, so no block stands beside another's empty height.
+   The same strip carries History alone while the room is not yet readable. */
+.room-design-pair { display: grid; gap: 8px; }
+.room-design-pair > section {
   padding: 8px;
   border: var(--app-edge-soft);
   border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
   font-size: var(--app-type-detail);
 }
-.room-design-pair > .room-standing, .room-maturity, .room-provenance { display: grid; align-content: start; gap: 6px; }
-.room-maturity > :is(p, dl, small) { margin: 0; }
-.room-provenance .app-fact-grid { grid-template-columns: max-content minmax(0, 1fr); gap: 4px 8px; margin: 0; }
-.room-provenance .app-fact-grid > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
-.room-provenance .app-fact-grid dd { margin: 0; }
+.room-design-pair > .room-standing { display: grid; align-content: start; gap: 6px; }
+.room-blocks { display: grid; gap: 4px; min-width: 0; }
+.room-block-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+.room-block-tab {
+  display: inline-flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-height: 1.75rem;
+  padding: 2px 8px;
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-compact);
+  background: var(--control-surface-soft);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--app-type-detail);
+  font-weight: 700;
+  text-align: start;
+  cursor: pointer;
+}
+.room-block-tab[aria-expanded="true"] { border-color: var(--ink); }
+.room-block-tab .app-count-badge { font-size: var(--app-type-chip); font-weight: 600; }
+.room-block-meta { color: var(--muted); font-weight: 400; }
+.room-block-panel {
+  padding: 8px;
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-compact);
+  background: var(--control-surface-soft);
+  font-size: var(--app-type-detail);
+  columns: 15rem;
+  column-gap: 20px;
+}
+/* Each line item stays whole in one column; the lists that hold them flow as
+   plain blocks so their items, not the lists, balance across columns. */
+.room-block-panel :is(ul, dl.app-fact-grid) { display: block; margin: 0; padding: 0; list-style: none; }
+.room-block-panel :is(p, li, .app-fact-grid > div) { margin: 0 0 4px; break-inside: avoid; }
+.room-block-panel .app-fact-grid > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 8px; }
+.room-block-panel .app-fact-grid > div:has(.app-origin-request) { column-span: all; }
+.room-block-panel .app-fact-grid dd { margin: 0; }
 .room-maturity-state {
   color: var(--ink);
   font-weight: 650;
@@ -766,13 +797,11 @@
   letter-spacing: 0.04em;
 }
 .room-maturity-folded { color: var(--muted); }
-.room-maturity-heads { display: grid; gap: 3px; }
-.room-maturity-heads p {
+.room-maturity-head {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 4px 10px;
-  margin: 0;
 }
 /* A Design question reads its standing beside the question's words. */
 [data-task-contract] > li[data-item-state] {
@@ -962,8 +991,8 @@
 .room-standing-scope { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 8px; }
 .room-standing-scope dt { color: var(--muted); }
 .room-standing-scope dd { margin: 0; overflow-wrap: anywhere; }
-.room-standing ul { display: grid; gap: 4px; padding: 0; list-style: none; }
-.room-standing-lanes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.room-standing ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.room-standing-lanes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 4px; }
 .room-standing-lane { font-weight: 600; }
 .room-standing-availability { color: var(--muted); }
 .room-standing-availability[data-availability="seated"] { color: var(--app-semantic-live); }
