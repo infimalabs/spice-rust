@@ -25,6 +25,8 @@ pub use stage::ReleaseStage;
 const WORKSPACE_MOUNT: &str = "/workspace";
 const CARGO_HOME: &str = "/cargo-home";
 const CARGO_TARGET: &str = "/cargo-target";
+/// Where Rosetta writes a thread-context file it cannot keep in memory.
+const TEMPORARY: &str = "/tmp";
 const RUST_TEST_THREADS: &str = "1";
 const ATTESTATION_PREFIX: &str = "spice-proof-attestation-v2:";
 const BATTERY_KEEPALIVE_SCRIPT: &str = "while :; do sleep 3600; done";
@@ -630,6 +632,16 @@ impl Container {
             // completes the whole mutation member.
             "--tmpfs".to_owned(),
             format!("{CARGO_TARGET}:rw,exec,mode=0700,size=4g"),
+            // Rosetta, which translates this amd64 image on an arm64 Docker
+            // host, backs a thread context with a temporary file under `/tmp`
+            // when it cannot keep it in memory, and aborts the thread when
+            // that file cannot be created. Under a read-only root that abort
+            // took every new thread and process in a sealed stage and left
+            // its `xtask` waiting on a mutex until killed. Empty, private to
+            // this container, and the one scratch nothing is pointed at:
+            // `TMPDIR` stays under the target directory the image fixes.
+            "--tmpfs".to_owned(),
+            format!("{TEMPORARY}:rw,nosuid,nodev,noexec,mode=1777"),
             "--workdir".to_owned(),
             WORKSPACE_MOUNT.to_owned(),
             "--env".to_owned(),

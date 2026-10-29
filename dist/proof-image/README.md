@@ -46,6 +46,12 @@ four production surfaces invoke one:
   `dist/stage` is the one writable worktree path, the Cargo home and target
   are fresh, and the network is disabled. A Linux host stages natively.
 
+Both sealed containers also mount an empty, non-executable tmpfs at `/tmp`.
+Nothing in the build is pointed at it (`TMPDIR` stays under the target
+directory the image fixes); it exists for Rosetta, which translates the amd64
+image on an arm64 Docker host and aborts any thread whose context it must back
+with a temporary file there when that file cannot be created.
+
 Any further production invocation must declare its constraint here.
 
 ## Cleanup

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{
     CARGO_HOME, CARGO_TARGET, Container, ContainerError, ExecutionCompletion, RUN_PLATFORM,
-    WORKSPACE_MOUNT,
+    TEMPORARY, WORKSPACE_MOUNT,
 };
 
 /// Where the release pipeline publishes target payloads, relative to the
@@ -91,6 +91,9 @@ impl Container {
             // destroys the volume with this exact container.
             "--mount".to_owned(),
             format!("type=volume,destination={CARGO_TARGET}"),
+            // Rosetta's thread-context temporary file; see `battery_spec`.
+            "--tmpfs".to_owned(),
+            format!("{TEMPORARY}:rw,nosuid,nodev,noexec,mode=1777"),
             "--workdir".to_owned(),
             WORKSPACE_MOUNT.to_owned(),
             "--env".to_owned(),

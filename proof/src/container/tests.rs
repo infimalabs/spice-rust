@@ -162,6 +162,8 @@ fn one_battery_scope_disables_network_and_mounts_fresh_empty_caches() {
             "/cargo-home:rw,noexec,mode=0700".to_owned(),
             "--tmpfs".to_owned(),
             "/cargo-target:rw,exec,mode=0700,size=4g".to_owned(),
+            "--tmpfs".to_owned(),
+            "/tmp:rw,nosuid,nodev,noexec,mode=1777".to_owned(),
             "--workdir".to_owned(),
             "/workspace".to_owned(),
             "--env".to_owned(),
