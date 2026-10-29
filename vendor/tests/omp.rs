@@ -63,6 +63,25 @@ fn the_occupants_plan_is_the_task_it_holds_rather_than_a_list_only_it_can_read()
 }
 
 #[test]
+fn omp_cannot_delegate_around_the_lane_allocator() {
+    for roster in [omp::TOOLS, omp::LSP_TOOLS] {
+        assert!(
+            !roster.split(',').any(|tool| tool == "task"),
+            "one occupant cannot allocate another agent"
+        );
+    }
+    let overlay = omp::config_overlay(170_000, false, false);
+    assert!(
+        overlay.contains("task:\n  maxRecursionDepth: 0\n"),
+        "eval agent and workpool bridges share omp's task-depth gate"
+    );
+    assert!(
+        overlay.contains("eval:\n  tools:\n    enabled: false\n"),
+        "kernel-defined tools have no admitted subagent consumer"
+    );
+}
+
+#[test]
 fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
     let arguments = |json: serde_json::Value| json.as_object().expect("an argument object").clone();
     assert_eq!(
@@ -376,7 +395,7 @@ fn the_compaction_threshold_rides_an_overlay_the_lane_must_have_written() {
     // its `--config` overlay; the layout is omp's own config.yml.
     assert_eq!(
         omp::config_overlay(170_000, false, false),
-        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\ntier:\n  anthropic: none\ntodo:\n  reminders: false\n"
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\ntier:\n  anthropic: none\neval:\n  tools:\n    enabled: false\ntask:\n  maxRecursionDepth: 0\ntodo:\n  reminders: false\n"
     );
 
     let mut unwritten = fixture(Resume::Fresh);
@@ -409,7 +428,7 @@ fn the_language_server_disposition_names_the_tool_and_keeps_its_servers_in_the_l
     // which is exactly the process the lane could neither see nor reap.
     assert_eq!(
         omp::config_overlay(170_000, true, false),
-        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\ntier:\n  anthropic: none\ntodo:\n  reminders: false\n"
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\ntier:\n  anthropic: none\neval:\n  tools:\n    enabled: false\ntask:\n  maxRecursionDepth: 0\ntodo:\n  reminders: false\n"
     );
 
     let mut implicit = fixture(Resume::Fresh);

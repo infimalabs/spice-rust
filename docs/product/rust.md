@@ -34,6 +34,13 @@ extension clears OMP's steering flag on the copy handed to the provider, so a
 steered message reaches the model as the lane wrote it, not inside OMP's
 generated priority notice.
 
+The RPC overlay sets OMP's task recursion depth to zero. Omitting the top-level
+`task` tool is insufficient: eval's `agent()` and `workpool()` helpers invoke
+the same subagent machinery directly, so the depth gate both removes their
+guidance and refuses calls. Eval-defined tools are disabled with those
+consumers. Ordinary eval `tool.<name>` calls still cross the registered tool
+boundary.
+
 The first turn is one `prompt` request with follow-up admission. A fresh or
 idle session starts it immediately; a resumed session that restored an
 in-flight turn queues it once behind that owner. OMP therefore answers the

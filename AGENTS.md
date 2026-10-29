@@ -71,13 +71,14 @@ throwaway script or smoke check and do not retain it in the permanent suite.
 
 ## Browser verification
 
-Run non-interactive browser checks through Playwright, never by launching
-Chrome, Safari, or Firefox executables directly, even with a headless flag.
-Headless mode can hide browser content without suppressing native operating
-system dialogs; on macOS, a direct launch can still show Keychain authorization.
-For app checks, use the repository-owned `launchAppBrowser` helper documented in
-[`app/BROWSER.md`](app/BROWSER.md), pass it Playwright's `chromium`, keep its
-headless default, and close the returned session in `finally`.
+Run non-interactive browser checks through OMP eval's Puppeteer-backed
+`browser` global, never by launching Chrome, Safari, or Firefox executables
+directly, even with a headless flag. Headless mode can hide browser content
+without suppressing native operating system dialogs; on macOS, a direct launch
+can still show Keychain authorization. Read `xd://eval/browser` before first
+use. For app checks, start `spice dev xtask -- app-demo`, open its `appUrl` with
+`browser.open({ app: { tern: false }, ... })`, keep managed Chromium's headless
+default, inspect the actual surface, and close the tab in `finally`.
 
 ## Rust source organization
 
