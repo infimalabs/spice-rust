@@ -454,6 +454,8 @@ stateDiagram-v2
   prediction in that floor until a post-acceptance read covers the same
   directive and key; only captured identity retires it, never a decrement or a
   timeout.
+- A lane's activity trace advances at its sampled redraw cadence. Intermediate
+  display frames carry no additional activity data and do not repaint the SVG.
 - An unsafe draft or queued submission guards page exit with the browser's
   unload confirmation.
 - A late completion never steals focus the operator has since moved.
