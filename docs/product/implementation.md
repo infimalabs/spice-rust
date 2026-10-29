@@ -1,8 +1,8 @@
-# Rust implementation profile
+# Spice implementation profile
 
 [Spice product model](README.md)
 
-The concrete choices of the Rust appliance that no other document states, and
+The concrete choices of the appliance that no other document states, and
 the code that owns each. The live code is authoritative.
 
 ## Task identity
@@ -153,7 +153,7 @@ no runtime network or package request.
 Owners: [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs),
 [`app/src/browser/mermaid.rs`](../../app/src/browser/mermaid.rs), and
 [`app/renderer/renderer-000.txt`](../../app/renderer/renderer-000.txt). Which
-activity becomes a Mosaic card lives in [Mosaic card lineage](mosaic-rust.md).
+activity becomes a Mosaic card lives in [Mosaic card lineage](mosaic.md).
 
 Each staged generation G also has one app ZIP, `generations/G.zip`, beside its
 unzipped directory, which stays the development hot-swap source. Its members are

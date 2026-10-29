@@ -34,8 +34,8 @@ speaker and destination, and integrated work retains its task boundary. The
 operator can review or ship work without reconstructing provenance from chat.
 
 The authority rules live in [the invariant
-register](invariants.md); the concrete appliance bindings live in [the Rust
-profile](rust.md).
+register](invariants.md); the concrete appliance bindings live in [the
+implementation profile](implementation.md).
 
 ### Calm
 

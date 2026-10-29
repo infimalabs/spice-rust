@@ -175,7 +175,7 @@ pub(super) fn case_html(case: &Case) -> String {
 
 fn head(title: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"description\" content=\"An evidence-linked field guide to work landing in a self-hosting Rust appliance\"><title>{}</title><link rel=\"stylesheet\" href=\"assets/style.css\"></head><body>",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"description\" content=\"An evidence-linked field guide to work landing in a self-hosting appliance\"><title>{}</title><link rel=\"stylesheet\" href=\"assets/style.css\"></head><body>",
         escape(title)
     )
 }

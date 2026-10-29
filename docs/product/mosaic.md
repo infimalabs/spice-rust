@@ -1,6 +1,6 @@
 # Mosaic card lineage
 
-[Spice Rust implementation profile](rust.md)
+[Spice implementation profile](implementation.md)
 
 The Mosaic shows prose, failure, sign-out, compaction, fresh-session, and
 image-bearing tool activity as cards. Turn starts, reasoning, and imageless tool

@@ -36,7 +36,7 @@ The contracts live at [lane and team](../model/states.md#lane-and-team),
 
 See [Mosaic layout](../loops.md#l-message--the-mosaic),
 [reading stability](../loops.md#the-jitter-contract),
-[history demand](../mosaic-rust.md#mosaic-card-lineage),
+[history demand](../mosaic.md#mosaic-card-lineage),
 [submission recovery](../loops.md#l-draft--the-watchband), and
 [speech failure](../model/failures.md#the-failure-behavior-table).
 Concrete presentation belongs to the [browser](../../../app/BROWSER.md) and
