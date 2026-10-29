@@ -9,6 +9,7 @@ use wire::intent::BoardTask;
 use wire::rooms::{DesignItemInput, DesignMaturity, DesignMaturityHead, DesignMaturityState};
 use yew::prelude::*;
 
+use super::blocks::{RoomBlock, RoomBlocks};
 use super::{Controls, RoomProjectionStatus, card};
 use crate::AppRuntime;
 use crate::browser::sender::SenderHandle;
@@ -16,11 +17,10 @@ use crate::browser::sender::SenderHandle;
 /// The read view of one task's room around `composer`. `detail` is the
 /// task's row from its task detail; the board's row wins while the board
 /// carries it, since only the board follows working-group moves. A Design's
-/// room pairs its Standing with a column of Maturity over `aside` (the
-/// sheet's provenance facts) above the composer, so the shorter column fills
-/// the height the lane list takes, and adds its Design authority above the
-/// same conversation. While the room is still loading, `aside` follows the
-/// loading notice so the facts never disappear.
+/// room shows its Standing over one strip of Lanes, Maturity and `history`
+/// (the sheet's provenance facts) above the composer, and adds its Design
+/// authority above the same conversation. While the room is still loading,
+/// `history` alone follows the loading notice so the facts never disappear.
 pub(in crate::browser) fn render_task_room(
     runtime: &AppRuntime,
     controls: &Controls,
@@ -28,7 +28,7 @@ pub(in crate::browser) fn render_task_room(
     open_task: &Callback<(TaskStamp, web_sys::Element)>,
     detail: &BoardTask,
     composer: Html,
-    aside: Html,
+    history: Option<RoomBlock>,
 ) -> Html {
     let room = &detail.statement.body.born;
     let row = runtime
@@ -39,11 +39,11 @@ pub(in crate::browser) fn render_task_room(
     let projection = runtime.room_projection();
     let (pair, body) = match projection.status() {
         RoomProjectionStatus::Loading => (
-            aside,
+            strip(room, history.into_iter().collect()),
             html! { <p class="room-empty" aria-busy="true">{"Loading room…"}</p> },
         ),
         RoomProjectionStatus::RequiresSnapshot => (
-            aside,
+            strip(room, history.into_iter().collect()),
             html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> },
         ),
         RoomProjectionStatus::Available => {
@@ -83,21 +83,21 @@ pub(in crate::browser) fn render_task_room(
                 .collect::<Vec<_>>();
             cards.sort_by_key(|(position, _)| std::cmp::Reverse(*position));
             let pair = if design {
+                let blocks = [
+                    super::standing::lanes_block(runtime, room),
+                    maturity_block(projection.maturity(room), &row.statement.body.acceptance),
+                ]
+                .into_iter()
+                .chain(history)
+                .collect();
                 html! {
                     <div class="room-design-pair">
                         {super::standing::render_standing(runtime, room, Some(row))}
-                        <div class="room-design-aside">
-                            {render_maturity(
-                                projection.maturity(room),
-                                room,
-                                &row.statement.body.acceptance,
-                            )}
-                            {aside}
-                        </div>
+                        {strip(room, blocks)}
                     </div>
                 }
             } else {
-                aside
+                strip(room, history.into_iter().collect())
             };
             let body = html! {
                 <>
@@ -134,6 +134,15 @@ pub(in crate::browser) fn render_task_room(
             {composer}
             {body}
         </section>
+    }
+}
+
+/// `blocks` as one strip keyed by `room`, or nothing when there are none.
+fn strip(room: &TaskStamp, blocks: Vec<RoomBlock>) -> Html {
+    if blocks.is_empty() {
+        Html::default()
+    } else {
+        html! { <RoomBlocks key={room.to_string()} room={room.to_string()} {blocks} /> }
     }
 }
 
@@ -174,12 +183,9 @@ fn render_history(room: &TaskStamp, design: bool, count: usize, cards: Html) -> 
 }
 
 /// `design`'s maturity judged against `acceptance`, its current statement's
-/// question items; each item's own standing reads in the Contract list.
-fn render_maturity(
-    maturity: Option<&DesignMaturity>,
-    design: &TaskStamp,
-    acceptance: &[String],
-) -> Html {
+/// question items: the summary keeps the state and the newest head's answers
+/// in view; each item's own standing reads in the Contract list.
+fn maturity_block(maturity: Option<&DesignMaturity>, acceptance: &[String]) -> RoomBlock {
     let empty = DesignMaturity::default();
     let maturity = maturity.unwrap_or(&empty);
     let judged = maturity.state(acceptance);
@@ -188,49 +194,59 @@ fn render_maturity(
         DesignMaturityState::Steeping { .. } => "steeping",
         DesignMaturityState::Steeped => "steeped",
     };
-    html! {
-        <section
-            class="room-maturity"
-            aria-label="Design maturity"
-            data-design={design.to_string()}
-            data-maturity-state={state}
-        >
-            <header>
-                <h4>{"Maturity"}</h4>
-                <span class="room-maturity-state">{state}</span>
-            </header>
-            <p>{summary(&judged)}</p>
-            if !maturity.recent_heads.is_empty() {
-                <div class="room-maturity-heads" aria-label="Maturity by statement">
-                    {for maturity.recent_heads.iter().rev().map(render_head)}
-                </div>
-            }
-            if maturity.older_heads.statement_heads > 0 {
-                <p class="room-maturity-folded">
-                    {format!(
-                        "{} older statement heads folded · {} asked lanes contributed · {} declined",
-                        maturity.older_heads.statement_heads,
-                        maturity.older_heads.requested_contributor_lane_heads,
-                        maturity.older_heads.requested_decliner_lane_heads,
-                    )}
-                </p>
-            }
-            if maturity.unrecorded_head.contributions > 0 {
-                <p class="room-maturity-folded">
-                    {format!(
-                        "{} historical contributions have an unrecorded statement head",
-                        maturity.unrecorded_head.contributions,
-                    )}
-                </p>
-            }
-        </section>
+    let summary = summary(&judged);
+    let newest = maturity.recent_heads.last().map(|head| {
+        format!(
+            "{} of {} answered",
+            head.requested_contributors() + head.requested_decliners(),
+            bounded_count(head.requested_lanes.len(), head.requested_lanes_truncated),
+        )
+    });
+    RoomBlock {
+        key: "maturity",
+        label: "Maturity",
+        summary: html! {
+            <>
+                {"Maturity"}
+                <span class="room-maturity-state" data-maturity-state={state} title={summary.clone()}>
+                    {state}
+                </span>
+                if let Some(newest) = newest {
+                    <span class="room-block-meta">{newest}</span>
+                }
+            </>
+        },
+        body: html! {
+            <>
+                <p>{summary}</p>
+                {for maturity.recent_heads.iter().rev().map(render_head)}
+                if maturity.older_heads.statement_heads > 0 {
+                    <p class="room-maturity-folded">
+                        {format!(
+                            "{} older statement heads folded · {} asked lanes contributed · {} declined",
+                            maturity.older_heads.statement_heads,
+                            maturity.older_heads.requested_contributor_lane_heads,
+                            maturity.older_heads.requested_decliner_lane_heads,
+                        )}
+                    </p>
+                }
+                if maturity.unrecorded_head.contributions > 0 {
+                    <p class="room-maturity-folded">
+                        {format!(
+                            "{} historical contributions have an unrecorded statement head",
+                            maturity.unrecorded_head.contributions,
+                        )}
+                    </p>
+                }
+            </>
+        },
     }
 }
 
 /// One statement head's answers from the lanes it asked.
 fn render_head(head: &DesignMaturityHead) -> Html {
     html! {
-        <p>
+        <p class="room-maturity-head">
             <code>{wire::SequenceCode::new(head.statement.get()).to_string()}</code>
             <span>
                 {format!(

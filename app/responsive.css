@@ -40,7 +40,6 @@
 @media (max-width: 720px) {
   .shell { --app-shell-edge-inline: 8px; }
   .shell { --app-frame-edge-block-end: 8px; }
-  .room-design-pair { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 560px) {

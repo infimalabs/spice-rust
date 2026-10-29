@@ -810,6 +810,11 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                 </header>
                 {render_group_actions(render, channel)}
                 {super::standing::render_standing(render.runtime, &channel.stamp, render.runtime.board().and_then(|board| board.row(&channel.stamp)))}
+                <super::blocks::RoomBlocks
+                    key={channel.stamp.to_string()}
+                    room={channel.stamp.to_string()}
+                    blocks={vec![super::standing::lanes_block(render.runtime, &channel.stamp)]}
+                />
                 {render_preparation(render.runtime, &channel.stamp)}
             </div>
         </details>
