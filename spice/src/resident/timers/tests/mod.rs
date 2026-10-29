@@ -14,6 +14,7 @@ use super::*;
 
 mod deferral_fixture;
 use deferral_fixture::*;
+mod idle_seat;
 mod lane_held_claim;
 mod trust_ice;
 

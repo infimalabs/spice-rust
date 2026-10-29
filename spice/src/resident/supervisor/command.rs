@@ -31,6 +31,7 @@ use vendor::omp::{JobCall, JobOp, ShellCall};
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
+use super::Phase;
 use super::terminal::{
     Control, Event as JobEvent, Handle, Job, Report, Run, ServiceAuthority, ServiceClaim, Terminal,
 };
@@ -325,7 +326,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         worktree: PathBuf,
         terminal: Option<Terminal>,
         authority: ServiceAuthority,
-        on_idle: impl Fn() + Send + Sync + 'static,
+        report: impl Fn(Phase) + Send + Sync + 'static,
     ) -> io::Result<Arc<Self>> {
         let inbox = inbox::Reader::new(state, lane, &worktree)?;
         let sessions = current::Sessions::new(lane, worktree.clone())?;
@@ -343,7 +344,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
-            retention::Io::new(state.to_path_buf(), authority, on_idle),
+            retention::Io::new(state.to_path_buf(), authority, report),
         ))
     }
 
