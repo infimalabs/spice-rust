@@ -65,10 +65,11 @@ Direct proof and the installed pre-commit hook normalize Git-only routing and
 shell prompt metadata before they identify a compiler environment. Windows'
 hidden per-drive working directories (`=C:`, for example) are location-only,
 like `PWD`, and never partition proof identity. Routing exclusions include
-Git for Windows' injected `PLINK_PROTOCOL`. The hook removes Git's prepended
-helper directory using either its native spelling or its MSYS shell spelling.
-On macOS it also removes only the default compiler paths injected by Command
-Line Tools Git or full Xcode Git;
+Git for Windows' injected `PLINK_PROTOCOL`. Native `gate pre-commit` removes
+every leading copy of `GIT_EXEC_PATH` from `PATH`, accepting both its native
+and MSYS spelling, then removes Git's repository-local routing before any
+proof environment or child is captured. On macOS it also removes only the
+default compiler paths injected by Command Line Tools Git or full Xcode Git;
 nondefault and unrelated toolchain paths remain inputs. The same staged action
 therefore has one environment identity outside and inside the hook.
 Rust and app compile arms use HOME only when the captured compiler environment
@@ -77,13 +78,13 @@ runtime replacement; when HOME is absent, Cargo uses its own host resolution
 or reports its own failure.
 
 Live Git observations resolve the first regular `git` (`git.exe` on Windows)
-on the normalized `PATH` to one absolute executable. A Git-injected
-`git-core` helper prefix normalizes to that installation's public `bin/git` or
-`cmd/git.exe` when present. Git for Windows' leading `mingw64/bin`, `usr/bin`,
-shell-added user `bin`, and public `cmd` routing collapse from environment
-authority when that same public directory contains Git; the exact selected Git
-path and bytes remain bound separately. A direct producer and Git-invoked hook
-therefore select and prove the same tool. Only an absent PATH candidate admits
+on the normalized `PATH` to one absolute executable. A `git-core` entry is used
+exactly where `PATH` placed it. Git for Windows' leading `mingw64/bin` and
+`usr/bin` still route to that installation's public `cmd/git.exe`; shell-added
+user `bin` and public `cmd` routing collapse from environment authority when
+that same public directory contains Git. The exact selected Git path and bytes
+remain bound separately. A direct producer and Git-invoked hook therefore
+select and prove the same tool. Only an absent PATH candidate admits
 `/usr/bin/git` on Unix or
 `Git\cmd\git.exe`
 beneath the shell-resolved Windows Program Files folder, announced with that

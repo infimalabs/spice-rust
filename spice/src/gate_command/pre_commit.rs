@@ -25,6 +25,7 @@ use wire::{
 mod admission;
 mod configured;
 mod dispatch;
+mod hook_environment;
 mod parent;
 mod profile;
 mod terminal;
@@ -338,8 +339,9 @@ pub(super) fn run(
     live: bool,
     ambient: &Ambient,
 ) -> Outcome<Report> {
+    let ambient = hook_environment::normalize(ambient);
     let mut profile = profile::Profile::new(profile_output);
-    let outcome = run_profiled(&mut profile, configuration, live, ambient);
+    let outcome = run_profiled(&mut profile, configuration, live, &ambient);
     profile.publish();
     outcome
 }
@@ -367,10 +369,11 @@ fn run_profiled(
         Err(error) => return fault("cargo-output::lease-unavailable", error),
     };
     let capture_started = Instant::now();
-    let generation = if ambient
-        .get(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
-        .is_some()
-    {
+    let installed = match installed_appliance_invocation(&repository) {
+        Ok(installed) => installed,
+        Err(failure) => return worker_failure(failure),
+    };
+    let generation = if installed {
         match capture_appliance_generation_fence(&repository) {
             Ok(generation) => generation,
             Err(failure) => return worker_failure(failure),
@@ -702,6 +705,35 @@ fn worker_run(
         }
         Err(failure) => write_failure(terminal, &failure),
     }
+}
+
+fn installed_appliance_invocation(repository: &Repository) -> Result<bool, WorkerFailure> {
+    let current = env::current_exe().map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-executable-unavailable".to_owned(),
+        detail: error.to_string(),
+        fault: true,
+    })?;
+    let installed = spice::install::installed_binary(repository);
+    if current == installed {
+        return Ok(true);
+    }
+    let installed = match fs::canonicalize(&installed) {
+        Ok(installed) => installed,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(WorkerFailure {
+                reason: "gate::pre-commit-installed-appliance-unavailable".to_owned(),
+                detail: format!("cannot resolve {}: {error}", installed.display()),
+                fault: true,
+            });
+        }
+    };
+    let current = fs::canonicalize(&current).map_err(|error| WorkerFailure {
+        reason: "gate::pre-commit-executable-unavailable".to_owned(),
+        detail: format!("cannot resolve {}: {error}", current.display()),
+        fault: true,
+    })?;
+    Ok(current == installed)
 }
 
 fn capture_appliance_generation_fence(

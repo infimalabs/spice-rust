@@ -32,12 +32,8 @@ pub(super) fn launcher(common_git: &Path, hook: GitHook) -> Result<Vec<u8>, Inst
     if spelling.chars().any(is_line_separator) {
         return Err(unrepresentable(&installed, "contains a line separator"));
     }
-    let prelude = match hook {
-        GitHook::PreCommit => PRE_COMMIT_ENVIRONMENT,
-        GitHook::CommitMessage | GitHook::ReferenceTransaction => "",
-    };
     Ok(format!(
-        "#!/bin/sh -eu\n{prelude}exec {} gate {} \"$@\"\n",
+        "#!/bin/sh -eu\nexec {} gate {} \"$@\"\n",
         quote(&spelling),
         hook.command(),
     )
@@ -50,37 +46,6 @@ pub(super) fn git_spelling(path: &Path) -> Result<String, InstallError> {
         .map(std::borrow::Cow::into_owned)
         .map_err(|reason| unrepresentable(path, reason))
 }
-
-const PRE_COMMIT_ENVIRONMENT: &str = concat!(
-    "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE=1\n",
-    "export SPICE_SHELL_HOOK_INSTALLED_APPLIANCE\n",
-    "git_exec_path=${GIT_EXEC_PATH-}\n",
-    "git_exec_path_shell=$git_exec_path\n",
-    "case $git_exec_path in\n",
-    "  [A-Za-z]:/*) git_exec_path_shell=$(CDPATH= cd \"$git_exec_path\" && pwd) ;;\n",
-    "esac\n",
-    "while [ -n \"$git_exec_path\" ]; do\n",
-    "  case ${PATH-} in\n",
-    "    \"$git_exec_path\":*) PATH=${PATH#\"$git_exec_path\":}; export PATH ;;\n",
-    "    \"$git_exec_path_shell\":*) PATH=${PATH#\"$git_exec_path_shell\":}; export PATH ;;\n",
-    "    *) break ;;\n",
-    "  esac\n",
-    "done\n",
-    "unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n",
-    "case $git_exec_path in\n",
-    "  /Library/Developer/CommandLineTools/*)\n",
-    "    developer_root=/Library/Developer/CommandLineTools ;;\n",
-    "  /Applications/Xcode.app/Contents/Developer/*)\n",
-    "    developer_root=/Applications/Xcode.app/Contents/Developer ;;\n",
-    "  *) developer_root= ;;\n",
-    "esac\n",
-    "if [ -n \"$developer_root\" ]; then\n",
-    "  [ \"${CPATH-}\" != /usr/local/include ] || unset CPATH\n",
-    "  [ \"${LIBRARY_PATH-}\" != /usr/local/lib ] || unset LIBRARY_PATH\n",
-    "  case ${SDKROOT-} in \"$developer_root\"/*) unset SDKROOT ;; esac\n",
-    "  case ${MANPATH-} in *\"$developer_root\"*) unset MANPATH ;; esac\n",
-    "fi\n",
-);
 
 fn quote(spelling: &str) -> String {
     let mut quoted = String::with_capacity(spelling.len() + 2);
@@ -129,6 +94,29 @@ mod tests {
                     ..
                 }
             ));
+        }
+    }
+
+    #[test]
+    fn every_hook_launcher_contains_one_exec_command_and_no_environment_prelude() {
+        let root = if cfg!(windows) {
+            Path::new("C:/git/common")
+        } else {
+            Path::new("/git/common")
+        };
+        for hook in [
+            GitHook::PreCommit,
+            GitHook::CommitMessage,
+            GitHook::ReferenceTransaction,
+        ] {
+            let launcher = String::from_utf8(launcher(root, hook).expect("render launcher"))
+                .expect("launcher is UTF-8");
+            let lines = launcher.lines().collect::<Vec<_>>();
+            assert_eq!(lines.len(), 2, "{hook:?}: {launcher}");
+            assert_eq!(lines[0], "#!/bin/sh -eu");
+            assert!(lines[1].starts_with("exec "), "{hook:?}: {launcher}");
+            assert_eq!(launcher.matches("exec ").count(), 1, "{hook:?}: {launcher}");
+            assert!(!launcher.contains("GIT_EXEC_PATH"), "{hook:?}: {launcher}");
         }
     }
 }
