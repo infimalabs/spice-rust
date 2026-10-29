@@ -60,8 +60,10 @@ fn noticed(
             "maturity".to_owned(),
             "measure".to_owned(),
         ],
-        reach: None,
-        matching: None,
+        admission: wire::rooms::DesignAdmission::Scored(
+            wire::rooms::DesignNoticeMatch::new(wire::rooms::DesignReach::Wide, 0.2, 0.1, [1; 32])
+                .expect("fixture match clears its floor"),
+        ),
         asks: Vec::new(),
     };
     let mut write = JournalWrite::new(

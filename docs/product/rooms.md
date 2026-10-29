@@ -127,14 +127,18 @@ owns each rule summarized here.
   read with the problem sentence, scores best against any retained card view
   at or above the floor leads.
   A `room::noticed` record names the exact Design statement, session,
-  compaction race witness, opportunity, evidence and immutable identity, the
-  reach whose floor admitted the match, its exact best-view cosine, the floor
-  then in force, the frequency-fit generation that weighted it, at most six
-  strongest weighted overlaps, and the asked items. Retained records from
-  before match provenance show the score as unavailable, never zero. A wide
-  invitation says so: its match was cast slightly wider than usual under the
-  lower floor, so the invited lane weighs the listed terms accordingly.
-  Each item is asked once per
+  compaction race witness, opportunity, evidence and immutable identity, one
+  required admission, at most six strongest weighted overlaps, and the asked
+  items. Selection records the admission as scored: the reach whose floor
+  admitted the match, its exact best-view cosine, the floor then in force, and
+  the frequency-fit generation that weighted it. Replay cannot recover the
+  score of a request recorded before scores were retained, because selection
+  weighed resident transcript profiles the journal never kept; schema 103
+  crossed each such record once to unscored with its retained reach, or to
+  unreached when it kept none, naming `schema-102`, the last schema that wrote
+  it. No reader invents a score for it. A wide invitation says so: its match
+  was cast slightly wider than usual under the lower floor, so the invited
+  lane weighs the listed terms accordingly. Each item is asked once per
   continuing session, and a Design with no item the lane may be asked is asked
   as a whole once, unless every current item concurs: then nothing is left to
   weigh and the Design asks nobody. An item request settles on the lane's own
@@ -163,11 +167,11 @@ owns each rule summarized here.
   unrelated writes do not release it. The request grants no claim, work,
   workflow state, or wake. `spice room awareness HANDLE` shows its exact
   opportunity and evidence in the same plain-language phrases as the delivered
-  request, then its statement, session, compaction, reach, score, floor,
-  frequency fit, matched terms, and asked items; one conversation used as both
-  opportunity and evidence shows its transcript locus once. The browser places
-  the score beside the reach on the asked-lane chip and retains complete match
-  provenance in its accessible title.
+  request, then its statement, session, compaction, admission, matched terms,
+  and asked items; one conversation used as both opportunity and evidence
+  shows its transcript locus once. The browser places the score beside the
+  reach on the asked-lane chip and retains the complete admission, including
+  an unscored record's release, in its accessible title.
 - **Design shadows.** When a session's best Design at an opportunity shares a
   term with its cards yet falls short of its reach floor, and the session owes
   no request and was never asked about that Design, Spice records one

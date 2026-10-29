@@ -66,8 +66,7 @@ impl RoomProjection {
                         ParticipantReason::Asked {
                             evidence: ask.evidence.clone(),
                             questions: ask.questions.clone(),
-                            reach: ask.reach,
-                            matching: ask.matching.clone(),
+                            admission: ask.admission.clone(),
                         },
                     );
                 }

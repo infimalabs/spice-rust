@@ -12,6 +12,7 @@ mod contribution_charges;
 mod contribution_items;
 mod creation_contexts;
 mod decisions;
+mod design_admission;
 mod design_asks;
 mod design_invitations;
 mod design_reach;
@@ -453,9 +454,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     task_tags::cross_facts(&transaction, &taste_audits)?;
     taste_holds::cross_facts(&transaction, &taste_audits)?;
     settings_receipts::cross(&transaction)?;
-    design_invitations::cross(&transaction)?;
-    awareness::cross(&transaction)?;
-    maturity::cross(&transaction)?;
+    cross_design_notices(&transaction)?;
     cross_retained_notes(&transaction, version)?;
     preparation_edges::cross(&transaction)?;
     if version < RELEASE_NOTES_SCHEMA {
@@ -467,6 +466,15 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+/// Bind, then admit, every retained Design notice before maturity folds them:
+/// each later step decodes what the earlier ones crossed.
+fn cross_design_notices(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    design_invitations::cross(transaction)?;
+    awareness::cross(transaction)?;
+    design_admission::cross(transaction)?;
+    maturity::cross(transaction)
 }
 
 fn cross_schema_shape(

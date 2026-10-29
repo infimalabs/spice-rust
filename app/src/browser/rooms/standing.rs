@@ -213,10 +213,9 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
         ParticipantReason::Asked {
             evidence,
             questions,
-            reach,
-            matching,
+            admission,
         } => {
-            let (label, scoring) = invitation_match(*reach, matching.as_ref());
+            let (label, scoring) = invitation_match(admission);
             invitation = label;
             (
                 "invitation",
@@ -266,33 +265,43 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
 }
 
 /// Compact visible score beside its reach, plus complete audit provenance for
-/// the chip title. Retained notices predating match provenance never read as
-/// zero.
-fn invitation_match(
-    reach: Option<wire::rooms::DesignReach>,
-    matching: Option<&wire::rooms::DesignNoticeMatch>,
-) -> (String, String) {
-    let reach = reach.map_or("reach unavailable", |reach| match reach {
+/// the chip title. A request recorded before scores were retained names the
+/// release that recorded it instead of a score.
+fn invitation_match(admission: &wire::rooms::DesignAdmission) -> (String, String) {
+    let reach = |reach: wire::rooms::DesignReach| match reach {
         wire::rooms::DesignReach::Wide => "wide",
         wire::rooms::DesignReach::Narrow => "narrow",
-    });
-    match matching {
-        Some(matching) => (
-            format!(
-                "Asked · {reach} {score:.3}/{floor:.3}",
-                score = matching.score(),
-                floor = matching.floor(),
-            ),
-            format!(
-                "{reach} match score {score}, floor {floor}, fit {generation}",
-                score = matching.score(),
-                floor = matching.floor(),
-                generation = matching.generation().as_str(),
-            ),
-        ),
-        None => (
-            format!("Asked · {reach} score unavailable"),
-            format!("{reach} match score unavailable"),
+    };
+    match admission {
+        wire::rooms::DesignAdmission::Scored(matching) => {
+            let reach = reach(matching.reach());
+            (
+                format!(
+                    "Asked · {reach} {score:.3}/{floor:.3}",
+                    score = matching.score(),
+                    floor = matching.floor(),
+                ),
+                format!(
+                    "{reach} match score {score}, floor {floor}, fit {generation}",
+                    score = matching.score(),
+                    floor = matching.floor(),
+                    generation = matching.generation().as_str(),
+                ),
+            )
+        }
+        wire::rooms::DesignAdmission::Unscored {
+            reach: admitted,
+            release,
+        } => {
+            let reach = reach(*admitted);
+            (
+                format!("Asked · {reach}"),
+                format!("{reach} match recorded unscored by {release}"),
+            )
+        }
+        wire::rooms::DesignAdmission::Unreached { release } => (
+            "Asked".to_owned(),
+            format!("match recorded without reach or score by {release}"),
         ),
     }
 }

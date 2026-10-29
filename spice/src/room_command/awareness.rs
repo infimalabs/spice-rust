@@ -70,8 +70,7 @@ pub(crate) struct Noticed {
     opportunity: wire::rooms::DesignNoticeOpportunity,
     evidence: wire::rooms::DesignNoticeEvidence,
     statement: Seq,
-    reach: Option<wire::rooms::DesignReach>,
-    matching: Option<wire::rooms::DesignNoticeMatch>,
+    admission: wire::rooms::DesignAdmission,
     terms: Vec<String>,
     /// Question items asked, in asked order; empty asks about the whole Design.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -287,8 +286,7 @@ fn noticed(envelope: wire::Envelope<wire::AnyFact>) -> Result<Noticed, Failure> 
         opportunity: body.opportunity,
         evidence: body.evidence,
         statement: body.statement,
-        reach: body.reach,
-        matching: body.matching,
+        admission: body.admission,
         terms: wire::rooms::shown_notice_terms(&body.terms)
             .into_iter()
             .map(str::to_owned)
@@ -547,27 +545,30 @@ impl fmt::Display for Noticed {
             self.session.identity,
             self.statement,
         )?;
-        match (&self.reach, &self.matching) {
-            (Some(reach), Some(matching)) => write!(
+        let reach = |reach: wire::rooms::DesignReach| match reach {
+            wire::rooms::DesignReach::Wide => "wide",
+            wire::rooms::DesignReach::Narrow => "narrow",
+        };
+        match &self.admission {
+            wire::rooms::DesignAdmission::Scored(matching) => write!(
                 formatter,
                 " reach {} score {} floor {} fit {}",
-                match reach {
-                    wire::rooms::DesignReach::Wide => "wide",
-                    wire::rooms::DesignReach::Narrow => "narrow",
-                },
+                reach(matching.reach()),
                 matching.score(),
                 matching.floor(),
                 matching.generation().as_str(),
             )?,
-            (Some(reach), None) => write!(
+            wire::rooms::DesignAdmission::Unscored {
+                reach: admitted,
+                release,
+            } => write!(
                 formatter,
-                " reach {} score unavailable",
-                match reach {
-                    wire::rooms::DesignReach::Wide => "wide",
-                    wire::rooms::DesignReach::Narrow => "narrow",
-                },
+                " reach {} unscored by {release}",
+                reach(*admitted)
             )?,
-            (None, _) => write!(formatter, " reach unavailable score unavailable")?,
+            wire::rooms::DesignAdmission::Unreached { release } => {
+                write!(formatter, " unreached by {release}")?;
+            }
         }
         if !self.terms.is_empty() {
             write!(formatter, " terms {}", self.terms.join(", "))?;
@@ -653,8 +654,10 @@ mod tests {
             evidence,
             statement: Seq::new(2).expect("fixture statement"),
             terms: vec!["rendering".to_owned()],
-            reach: Some(wire::rooms::DesignReach::Wide),
-            matching: None,
+            admission: wire::rooms::DesignAdmission::Unscored {
+                reach: wire::rooms::DesignReach::Wide,
+                release: "schema-102".to_owned(),
+            },
             asks: Vec::new(),
         }
     }
@@ -773,22 +776,41 @@ mod tests {
     }
 
     #[test]
-    fn notice_rows_distinguish_recorded_match_from_legacy_absence() {
+    fn notice_rows_render_each_admission_with_its_recorded_values_only() {
         let opportunity = wire::rooms::DesignNoticeOpportunity::DesignStatement;
         let evidence = wire::rooms::DesignNoticeEvidence::Conversation {
             source: conversation(),
         };
-        let legacy = row(opportunity.clone(), evidence.clone()).to_string();
-        assert!(legacy.contains("reach wide score unavailable"), "{legacy}");
-        assert!(!legacy.contains("score 0"), "{legacy}");
-
-        let mut recorded = row(opportunity, evidence);
-        recorded.matching = wire::rooms::DesignNoticeMatch::new(0.25, 0.1, [7; 32]);
-        let recorded = recorded.to_string();
+        let unscored = row(opportunity.clone(), evidence.clone()).to_string();
         assert!(
-            recorded.contains("reach wide score 0.25 floor 0.1"),
-            "{recorded}"
+            unscored.contains("reach wide unscored by schema-102"),
+            "{unscored}"
         );
-        assert!(!recorded.contains("score unavailable"), "{recorded}");
+        assert!(!unscored.contains(" score "), "{unscored}");
+
+        let mut unreached = row(opportunity.clone(), evidence.clone());
+        unreached.admission = wire::rooms::DesignAdmission::Unreached {
+            release: "schema-102".to_owned(),
+        };
+        let unreached = unreached.to_string();
+        assert!(unreached.contains("unreached by schema-102"), "{unreached}");
+        assert!(!unreached.contains("reach wide"), "{unreached}");
+
+        let mut scored = row(opportunity, evidence);
+        scored.admission = wire::rooms::DesignAdmission::Scored(
+            wire::rooms::DesignNoticeMatch::new(
+                wire::rooms::DesignReach::Narrow,
+                0.25,
+                0.1,
+                [7; 32],
+            )
+            .expect("fixture match clears its floor"),
+        );
+        let scored = scored.to_string();
+        assert!(
+            scored.contains("reach narrow score 0.25 floor 0.1"),
+            "{scored}"
+        );
+        assert!(!scored.contains("unscored"), "{scored}");
     }
 }

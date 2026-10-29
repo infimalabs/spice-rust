@@ -18,7 +18,10 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         wire::FactKind::DesignNoticed,
         "json_type(CAST(envelope AS TEXT), '$.fact.ask') IS NOT NULL",
         SINGLE_ASK_RELEASE,
-        |_, fact| list_single_ask(fact),
+        |_, fact| {
+            list_single_ask(fact)?;
+            super::design_admission::admit(fact)
+        },
     )
 }
 

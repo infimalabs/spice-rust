@@ -39,8 +39,15 @@ fn notice(statement: u64, lane: u8) -> DesignNoticed {
         },
         excerpt: "measured design maturity".to_owned(),
         terms: Vec::new(),
-        reach: None,
-        matching: None,
+        admission: crate::rooms::DesignAdmission::Scored(
+            crate::rooms::DesignNoticeMatch::new(
+                crate::rooms::DesignReach::Wide,
+                0.2,
+                0.1,
+                [1; 32],
+            )
+            .expect("fixture match clears its floor"),
+        ),
         asks: Vec::new(),
     }
 }
