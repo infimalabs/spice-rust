@@ -337,6 +337,10 @@
    fixed width, so a standing change or an age tick rewrites text in place, and
    oldest-first order keeps every row above a starting job where it was. */
 .app-spice-jobs {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   --app-spice-job-visible: 4;
   --app-spice-job-row: 1.5rem;
   --app-spice-job-gap: 1px;

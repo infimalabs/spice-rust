@@ -11,7 +11,6 @@ mod spice_principals;
 mod spice_sidebar;
 mod work_blockers;
 mod work_detail;
-mod work_jobs;
 mod work_map;
 
 pub(super) use work_map::{WorkMapState, task_tone};
@@ -180,6 +179,13 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
             work_detail::render(work_detail::WorkDetailRender {
                 work,
                 lanes: runtime.and_then(AppRuntime::lanes),
+                jobs: spice_jobs::render(
+                    spice_standings(render, runtime).map(Rc::new),
+                    render.connection,
+                    runtime,
+                    render.sender,
+                    Some(selection.tasks()),
+                ),
                 navigate: render.navigate,
                 creator_messages: runtime.map(AppRuntime::messages).unwrap_or_default(),
                 selection,
@@ -229,7 +235,7 @@ fn render_spice_sidebar(
                 render.sender,
                 super::rooms::render_inbox(runtime, render.room_controls, render.sender),
             )}
-            {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
+            {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender, None)}
             {super::drafts::render_section(runtime, render.draft_controls, render.sender, &render.select_task)}
             {super::rooms::render_catalog(runtime, work, render.room_controls, render.sender)}
             {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}

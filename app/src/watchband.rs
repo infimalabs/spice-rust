@@ -219,11 +219,15 @@ pub fn jobs_kept(jobs: &[wire::intent::LaneJob]) -> Option<String> {
     ))
 }
 
-/// Whether one kept job belongs to any task in an exact overview selection.
-/// Unassociated jobs belong only to their lane and never appear in a task view.
+/// Whether a job's task belongs to the view's exact selection.
+/// `None` is the global view; an empty selection admits no jobs, and an
+/// unassociated job appears only in the global view.
 #[must_use]
-pub fn job_matches_tasks(job: &wire::intent::LaneJob, tasks: &[wire::TaskStamp]) -> bool {
-    job.task.as_ref().is_some_and(|task| tasks.contains(task))
+pub fn job_matches_tasks(
+    task: Option<&wire::TaskStamp>,
+    tasks: Option<&[wire::TaskStamp]>,
+) -> bool {
+    tasks.is_none_or(|tasks| task.is_some_and(|task| tasks.contains(task)))
 }
 
 /// One command a team member keeps, beside the member that keeps it.

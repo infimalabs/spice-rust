@@ -33,6 +33,20 @@ it with the code in parentheses, as in `1234567 (8mYg)`, because that integer
 is what the resident and CLI readers report. Authored numbers, counts, and
 transcript offsets are not journal positions.
 
+## Jobs
+
+The Spice menu shows all retained keeper jobs. Task and Design overviews reuse
+its four-row scrolling list, search, kind and unheard filters, and inspector,
+but include only jobs associated with the objects explicitly selected by that
+view. Dependency-graph neighbors and other jobs from the same agent do not
+expand that selection; unassociated jobs appear only in the global menu.
+
+Counts, search results, and previous/next navigation share that scope. Changing
+the selection removes an out-of-scope inspector, and catalog refreshes update
+the list. The shared inspector retains summary, output, copy, refresh, and
+confirmed termination controls with their existing authority and lifecycle
+checks.
+
 ## Working groups and teams
 
 A working group is a team's design-side twin: one to six ordered Designs in the

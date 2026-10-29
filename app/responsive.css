@@ -46,12 +46,6 @@
 @media (max-width: 560px) {
   .content { padding: 18px 14px 28px; }
   .team-toolbar { --team-chamber-inset: 4px; }
-  .team-task-member { max-width: 100%; }
-  .team-job-table th:nth-child(1) { width: 5.5rem; }
-  .team-job-table th:nth-child(2) { width: 3.5rem; }
-  .team-job-table th:nth-child(4) { width: 4.5rem; }
-  .team-job-table th,
-  .team-job-table td { padding-inline: 6px; }
   th, td { padding: 10px; }
 }
 
