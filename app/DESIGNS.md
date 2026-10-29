@@ -41,7 +41,10 @@ newest first, extended with the room's [standing](#design-standing), its
 positive [conclusion control](#concluding-a-design), and every immutable
 [proposal version and decision](#deciding-a-design-proposal), resolved through
 the Design's birth stamp under its current handle, with the permalink beside
-the heading. The conversation and proposal versions stay readable in every
+the heading. The **Conversation** disclosure starts collapsed and shows its
+publication count; expanding it reveals the complete newest-first history.
+Live updates keep the chosen expansion, while opening another Design starts
+its conversation collapsed. The conversation and proposal versions stay readable in every
 standing. Opening or reading the view moves no group, joins, acknowledges,
 authorizes, and wakes nothing, and commits no journal fact. Operator decision
 controls appear only on an open Design.
@@ -195,7 +198,7 @@ ordinary Design controls.
 
 The Design read view shows each contribution once, in the room conversation
 at its journal position, with its lane, time, vote, text, and every cited
-source; the Conversation header's count is the sheet's only contribution
+source; the Conversation disclosure's count is the sheet's only contribution
 count. The question item a contribution weighs reads as a `Q N` link that
 focuses item N in the sheet's Contract list, so the item's words appear in
 that list and nowhere else on the card. The resident resolves each cited
