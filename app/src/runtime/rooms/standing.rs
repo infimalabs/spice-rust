@@ -56,13 +56,18 @@ impl RoomProjection {
                 let newest = published.entry(lane).or_insert(event.position);
                 *newest = (*newest).max(event.position);
             }
-            for (lane, (asked, evidence, questions)) in &state.asked {
-                if published.get(lane).is_none_or(|answered| asked > answered) {
+            for (lane, ask) in &state.asked {
+                if published
+                    .get(lane)
+                    .is_none_or(|answered| ask.position > *answered)
+                {
                     add(
                         *lane,
                         ParticipantReason::Asked {
-                            evidence: evidence.clone(),
-                            questions: questions.clone(),
+                            evidence: ask.evidence.clone(),
+                            questions: ask.questions.clone(),
+                            reach: ask.reach,
+                            matching: ask.matching.clone(),
                         },
                     );
                 }

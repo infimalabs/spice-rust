@@ -128,10 +128,13 @@ owns each rule summarized here.
   at or above the floor leads.
   A `room::noticed` record names the exact Design statement, session,
   compaction race witness, opportunity, evidence and immutable identity, the
-  reach whose floor admitted the match, at most six strongest weighted
-  overlaps, and the asked items. A wide invitation says so: its match was cast
-  slightly wider than usual under the lower floor, so the invited lane weighs
-  the listed terms accordingly. Each item is asked once per
+  reach whose floor admitted the match, its exact best-view cosine, the floor
+  then in force, the frequency-fit generation that weighted it, at most six
+  strongest weighted overlaps, and the asked items. Retained records from
+  before match provenance show the score as unavailable, never zero. A wide
+  invitation says so: its match was cast slightly wider than usual under the
+  lower floor, so the invited lane weighs the listed terms accordingly.
+  Each item is asked once per
   continuing session, and a Design with no item the lane may be asked is asked
   as a whole once, unless every current item concurs: then nothing is left to
   weigh and the Design asks nobody. An item request settles on the lane's own
@@ -160,9 +163,11 @@ owns each rule summarized here.
   unrelated writes do not release it. The request grants no claim, work,
   workflow state, or wake. `spice room awareness HANDLE` shows its exact
   opportunity and evidence in the same plain-language phrases as the delivered
-  request, then its statement, session, compaction, matched terms, and asked
-  items; one conversation used as both opportunity and evidence shows its
-  transcript locus once.
+  request, then its statement, session, compaction, reach, score, floor,
+  frequency fit, matched terms, and asked items; one conversation used as both
+  opportunity and evidence shows its transcript locus once. The browser places
+  the score beside the reach on the asked-lane chip and retains complete match
+  provenance in its accessible title.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   and contributing-lane totals, requested reach, same-statement

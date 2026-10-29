@@ -207,30 +207,37 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
 /// renders once per lane instead.
 fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Html> {
     let leave;
+    let invitation;
     let (kind, label, source) = match reason {
         ParticipantReason::Publication(_) => return None,
         ParticipantReason::Asked {
             evidence,
             questions,
-        } => (
-            "invitation",
-            "Asked",
-            format!(
-                "{}{}",
-                match evidence {
-                    DesignNoticeEvidence::Task { task, .. }
-                    | DesignNoticeEvidence::TaskClaim { task, .. } => format!(
-                        "A Design request asked this lane from retained evidence about {}",
-                        task_label(runtime, task)
-                    ),
-                    DesignNoticeEvidence::Conversation { source } => format!(
-                        "A Design request asked this lane from retained conversation evidence at member {}, byte {}",
-                        source.locus.member, source.locus.offset
-                    ),
-                },
-                asked_questions(questions)
-            ),
-        ),
+            reach,
+            matching,
+        } => {
+            let (label, scoring) = invitation_match(*reach, matching.as_ref());
+            invitation = label;
+            (
+                "invitation",
+                invitation.as_str(),
+                format!(
+                    "{}; {scoring}{}",
+                    match evidence {
+                        DesignNoticeEvidence::Task { task, .. }
+                        | DesignNoticeEvidence::TaskClaim { task, .. } => format!(
+                            "A Design request asked this lane from retained evidence about {}",
+                            task_label(runtime, task)
+                        ),
+                        DesignNoticeEvidence::Conversation { source } => format!(
+                            "A Design request asked this lane from retained conversation evidence at member {}, byte {}",
+                            source.locus.member, source.locus.offset
+                        ),
+                    },
+                    asked_questions(questions)
+                ),
+            )
+        }
         ParticipantReason::Work(task) => (
             "work",
             "Working",
@@ -256,6 +263,38 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
         }
     };
     Some(reason_chip(kind, label, &source))
+}
+
+/// Compact visible score beside its reach, plus complete audit provenance for
+/// the chip title. Retained notices predating match provenance never read as
+/// zero.
+fn invitation_match(
+    reach: Option<wire::rooms::DesignReach>,
+    matching: Option<&wire::rooms::DesignNoticeMatch>,
+) -> (String, String) {
+    let reach = reach.map_or("reach unavailable", |reach| match reach {
+        wire::rooms::DesignReach::Wide => "wide",
+        wire::rooms::DesignReach::Narrow => "narrow",
+    });
+    match matching {
+        Some(matching) => (
+            format!(
+                "Asked · {reach} {score:.3}/{floor:.3}",
+                score = matching.score(),
+                floor = matching.floor(),
+            ),
+            format!(
+                "{reach} match score {score}, floor {floor}, fit {generation}",
+                score = matching.score(),
+                floor = matching.floor(),
+                generation = matching.generation().as_str(),
+            ),
+        ),
+        None => (
+            format!("Asked · {reach} score unavailable"),
+            format!("{reach} match score unavailable"),
+        ),
+    }
 }
 
 /// The questions a Design request asked, in asked order; nothing for a

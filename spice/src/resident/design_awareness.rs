@@ -18,8 +18,8 @@ use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityK
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
     DesignAsk, DesignConversationEvidence, DesignItemSeries, DesignItems, DesignNoticeEvidence,
-    DesignNoticeOpportunity, DesignNoticed, DesignReach, DesignSession, DesignSupport,
-    RoomContributed, RoomLeft, RoomQuestionItem,
+    DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed, DesignReach, DesignSession,
+    DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -83,6 +83,7 @@ struct PlannedRequest {
     statement: Seq,
     terms: Vec<String>,
     reach: Option<DesignReach>,
+    matching: Option<DesignNoticeMatch>,
     asks: Vec<DesignAsk>,
     horizon: Option<Seq>,
 }
@@ -361,6 +362,7 @@ fn plan_profile_requests(
             excerpt,
             terms,
             reach,
+            matching,
             asks,
         }) = selected
         else {
@@ -380,6 +382,7 @@ fn plan_profile_requests(
             terms,
             reach: Some(reach),
             asks,
+            matching: Some(matching),
             horizon: planning.horizon,
         });
     }
@@ -419,6 +422,7 @@ struct Selection {
     terms: Vec<String>,
     reach: DesignReach,
     asks: Vec<DesignAsk>,
+    matching: DesignNoticeMatch,
 }
 
 /// The best Design `kind` admits that still owes this session an ask, unless
@@ -483,9 +487,17 @@ fn select_design(
     let excerpt = matched.excerpt.to_owned();
     let terms = matched.terms;
     let reach = admitting_reach(facts, design);
+    let floor = match_score_floor(reach);
+    let matching =
+        DesignNoticeMatch::new(matched.score, floor, frequency.generation().into_bytes())
+            .ok_or_else(|| {
+                store_fault(
+                    "room::awareness-match-invalid",
+                    "the selected finite cosine did not clear its recorded floor",
+                )
+            })?;
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
-    let asks =
-        rank_asks(profile, frequency, design, asks, match_score_floor(reach)).map_err(mismatch)?;
+    let asks = rank_asks(profile, frequency, design, asks, floor).map_err(mismatch)?;
     Ok(Some(Selection {
         design: design.born().clone(),
         statement: design.statement().revision,
@@ -494,6 +506,7 @@ fn select_design(
         terms,
         reach,
         asks,
+        matching,
     }))
 }
 
@@ -904,6 +917,7 @@ fn restated_request(
         statement: notice.statement,
         terms: notice.terms.clone(),
         reach: notice.reach,
+        matching: notice.matching.clone(),
         asks: notice.asks.clone(),
         horizon: planning.horizon,
     }))
@@ -1289,6 +1303,7 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 terms: request.terms.clone(),
                 reach: request.reach,
                 asks: request.asks.clone(),
+                matching: request.matching.clone(),
             },
             FactCause::Root,
         )

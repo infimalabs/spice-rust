@@ -639,9 +639,39 @@ fn profile_selection_uses_the_shared_tfidf_statement_window() {
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
     let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
 
     lanes.complete(&task, "Catchup pagination snapshot.");
-    lanes.reconcile_completions(&seated, &mut completions);
+    lanes.reconcile_profiles(&seated, &mut completions, &profiles);
+    let planning =
+        crate::resident::room_catch_up::Planning::load(&lanes.bus).expect("planning reads");
+    let mut state = crate::resident::message_surface::lock_state(&profiles).expect("profiles lock");
+    let matcher = board::similarity::MatchCache::shared();
+    let expected_fit = matcher.fit(planning.entries.iter().map(board::Entry::statement), || {
+        state.profiles.conversation_background()
+    });
+    let selected = planning
+        .entries
+        .iter()
+        .find(|entry| entry.born() == &stamp(&distinctive))
+        .expect("selected Design is in the planning board");
+    let selected = matcher
+        .prepare(&expected_fit, selected.statement())
+        .expect("selected Design has weighted terms");
+    let session = state
+        .profiles
+        .session(test_uuid(FIRST), test_uuid(FIRST))
+        .expect("claimant session is bound")
+        .clone();
+    let expected_score = state
+        .profiles
+        .profile_mut(&session)
+        .expect("claimant profile exists")
+        .evidence_mut()
+        .best_score(&expected_fit, &selected)
+        .expect("profile and Design share a fit")
+        .expect("retained evidence has a finite score");
+    drop(state);
     let request = lanes
         .request(&config, FIRST)
         .expect("resident choice is returned by task next");
@@ -652,6 +682,25 @@ fn profile_selection_uses_the_shared_tfidf_statement_window() {
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].design, stamp(&distinctive));
     assert_eq!(notices[0].terms, request.terms);
+    let notice = &notices[0];
+    let matching = notice
+        .matching
+        .as_ref()
+        .expect("new notices record their admitted match");
+    assert_eq!(
+        matching.score(),
+        expected_score,
+        "the fact records the selected best-view cosine"
+    );
+    assert_eq!(
+        matching.floor(),
+        crate::resident::design_awareness::match_score_floor(
+            notice.reach.expect("new notices record their reach"),
+        ),
+    );
+    let expected_generation =
+        wire::rooms::DesignFitGeneration::from_bytes(expected_fit.generation().into_bytes());
+    assert_eq!(matching.generation(), &expected_generation);
     seated.release_all();
     lanes.finish();
 }
@@ -1044,6 +1093,7 @@ fn a_resumed_occupant_is_told_the_owed_request_once() {
     );
     assert_eq!(notices[1].occupant, successor);
     assert_eq!(notices[1].design, notices[0].design);
+    assert_eq!(notices[1].matching, notices[0].matching);
     assert!(matches!(
         notices[1].opportunity,
         wire::rooms::DesignNoticeOpportunity::SessionResumed { .. }

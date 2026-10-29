@@ -61,6 +61,7 @@ fn noticed(
             "measure".to_owned(),
         ],
         reach: None,
+        matching: None,
         asks: Vec::new(),
     };
     let mut write = JournalWrite::new(

@@ -160,6 +160,12 @@ impl Generation {
         }
         Self(*hasher.finalize().as_bytes())
     }
+
+    /// Stable bytes recorded with a match that this fit weighted.
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; 32] {
+        self.0
+    }
 }
 
 /// A cosine was asked between vectors weighted under different fits.
