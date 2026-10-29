@@ -183,10 +183,7 @@ fn select_search_path(
         {
             return Some(public);
         }
-        if directory
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("git-core"))
-        {
+        if named(&directory, "git-core") {
             helper.get_or_insert(candidate);
         } else {
             return Some(candidate);
@@ -195,42 +192,41 @@ fn select_search_path(
     helper
 }
 
+/// The public Git a recognized helper candidate stands in for: Git for
+/// Windows' `mingw64/bin` or `usr/bin` routes to its `cmd`, and a `git-core`
+/// directory beneath `lib` or `libexec` to its prefix's `bin` (or, under
+/// `mingw64`, the installation's `cmd`). Any other directory is ordinary.
 fn public_git_from_helper(
     candidate: &Path,
     program: &str,
     windows_helpers: bool,
 ) -> Option<PathBuf> {
     let directory = candidate.parent()?;
-    if windows_helpers
-        && directory
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("bin"))
-    {
+    if windows_helpers && named(directory, "bin") {
         let distribution = directory.parent()?;
-        if distribution.file_name().is_some_and(|name| {
-            let name = name.to_string_lossy();
-            name.eq_ignore_ascii_case("mingw64") || name.eq_ignore_ascii_case("usr")
-        }) {
+        if named(distribution, "mingw64") || named(distribution, "usr") {
             return Some(distribution.parent()?.join("cmd").join(program));
         }
     }
+    if !named(directory, "git-core") {
+        return None;
+    }
     let container = directory.parent()?;
-    let container_name = container.file_name()?.to_string_lossy();
-    if !container_name.eq_ignore_ascii_case("lib")
-        && !container_name.eq_ignore_ascii_case("libexec")
-    {
+    if !named(container, "lib") && !named(container, "libexec") {
         return None;
     }
     let prefix = container.parent()?;
-    if windows_helpers
-        && prefix
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("mingw64"))
-    {
+    if windows_helpers && named(prefix, "mingw64") {
         Some(prefix.parent()?.join("cmd").join(program))
     } else {
         Some(prefix.join("bin").join(program))
     }
+}
+
+/// Whether `path`'s last component is `name`, ignoring ASCII case.
+fn named(path: &Path, name: &str) -> bool {
+    path.file_name()
+        .is_some_and(|component| component.to_string_lossy().eq_ignore_ascii_case(name))
 }
 
 #[cfg(any(windows, test))]
@@ -329,6 +325,63 @@ mod tests {
 
         assert_eq!(selected, expected);
         assert_eq!(source, GitProgramSource::SearchPath);
+    }
+
+    #[test]
+    fn only_a_git_core_directory_normalizes_to_its_off_path_public_git() {
+        let root = Path::new("/work");
+        for (entry, program, windows, public, expected) in [
+            (
+                "kit/libexec/tools",
+                "git",
+                false,
+                "kit/bin/git",
+                "kit/libexec/tools/git",
+            ),
+            (
+                "kit/lib/tools",
+                "git",
+                false,
+                "kit/bin/git",
+                "kit/lib/tools/git",
+            ),
+            (
+                "kit/libexec/git-core",
+                "git",
+                false,
+                "kit/bin/git",
+                "kit/bin/git",
+            ),
+            (
+                "kit/lib/git-core",
+                "git",
+                false,
+                "kit/bin/git",
+                "kit/bin/git",
+            ),
+            (
+                "mingw64/libexec/tools",
+                "git.exe",
+                true,
+                "cmd/git.exe",
+                "mingw64/libexec/tools/git.exe",
+            ),
+            (
+                "mingw64/libexec/git-core",
+                "git.exe",
+                true,
+                "cmd/git.exe",
+                "cmd/git.exe",
+            ),
+        ] {
+            let candidate = root.join(entry).join(program);
+            let public = root.join(public);
+            let selected =
+                select_search_path(root, Some(OsStr::new(entry)), program, windows, |path| {
+                    path == candidate || path == public
+                });
+            assert_eq!(selected, Some(root.join(expected)), "{entry}");
+        }
     }
 
     #[test]
