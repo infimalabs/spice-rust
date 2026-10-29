@@ -1,5 +1,6 @@
-//! A task's room read in place: a Design's Standing beside its Maturity and
-//! provenance beneath the room heading, the composer that publishes into the
+//! A task's room read in place: a Design's Standing beneath the room heading
+//! over one strip of Lanes, Maturity and History summaries whose one opened
+//! block reads in a full-width panel, the composer that publishes into the
 //! room, the Design's positive conclusion control, immutable proposal versions
 //! and exact decisions, and the room's conversation newest first, for open and
 //! settled tasks alike. Showing the view joins, groups, or wakes nothing.

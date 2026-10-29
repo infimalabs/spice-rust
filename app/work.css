@@ -737,11 +737,14 @@
 .room-reading > .app-section-heading { justify-content: start; }
 
 /* A Design's Standing spans the room; under it one strip carries the
-   summaries of Lanes, Maturity and History, each sized to its own words and
-   never moved by what is open. The one opened block reads in a full-width
-   panel beneath the strip, its line items balanced across as many columns as
-   the room's width fits, so no block stands beside another's empty height.
-   The same strip carries History alone while the room is not yet readable. */
+   summaries of Lanes, Maturity and History in that order, each sized to its
+   own words and never grown into the strip's spare width or moved by what is
+   open. A narrow room wraps whole summaries onto further rows, and a summary
+   wider than the room wraps its own words. The one opened block reads in a
+   full-width panel beneath the strip, its line items balanced across as many
+   columns as the room's width fits, so no block stands beside another's empty
+   height. The same strip carries History alone while the room is not yet
+   readable. */
 .room-design-pair { display: grid; gap: 8px; }
 .room-design-pair > section {
   padding: 8px;
@@ -755,7 +758,8 @@
 .room-block-strip { display: flex; flex-wrap: wrap; gap: 4px; }
 .room-block-tab {
   display: inline-flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  max-width: 100%;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px 8px;
