@@ -24,11 +24,14 @@ static renderings such as a task overview's Mermaid labels use compact local
 time, so their source and image stay fixed. Canonical UTC
 instants appear only in machine-readable attributes and payloads.
 
-Journal positions, such as facts, statement revisions, claim heads and the
-journal cursor, read as their condensed base52 sequence codes, never as decimal
-integers. The Preparation authority menu follows the same rule inside its
-displayed records; wire and journal payloads retain their machine encoding.
-Authored numbers, counts, and transcript offsets are not journal positions.
+Journal positions, such as facts, statement revisions, and claim heads, read as
+their condensed base52 sequence codes, never as decimal integers. The
+Preparation authority menu follows the same rule inside its displayed records;
+wire and journal payloads retain their machine encoding. The one exception is
+the header's journal cursor, which leads with the integer position and follows
+it with the code in parentheses, as in `1234567 (7sbY)`, because that integer
+is what the resident and CLI readers report. Authored numbers, counts, and
+transcript offsets are not journal positions.
 
 ## Working groups and teams
 

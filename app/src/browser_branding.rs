@@ -23,7 +23,9 @@ pub(crate) enum ConnectionState {
 }
 
 /// The journal cursor the connection label's hover names while that connection
-/// proves the retained app runtime is current.
+/// proves the retained app runtime is current: the integer position first,
+/// then its condensed sequence code in parentheses, the one place the console
+/// leads with the integer because it is what resident and CLI readers report.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCursor {
     pub(crate) value: Option<String>,
@@ -36,7 +38,13 @@ impl JournalCursor {
         if connection != ConnectionState::Online {
             return None;
         }
-        let value = cursor.map(|cursor| wire::SequenceCode::new(cursor.get()).to_string());
+        let value = cursor.map(|cursor| {
+            format!(
+                "{} ({})",
+                cursor.get(),
+                wire::SequenceCode::new(cursor.get())
+            )
+        });
         Some(Self {
             accessible: value.as_ref().map_or_else(
                 || "journal cursor not yet admitted".to_owned(),
@@ -252,8 +260,8 @@ mod tests {
         assert_eq!(
             JournalCursor::resolve(ConnectionState::Online, Some(cursor)),
             Some(JournalCursor {
-                value: Some("p".to_owned()),
-                accessible: "journal cursor p".to_owned(),
+                value: Some("42 (p)".to_owned()),
+                accessible: "journal cursor 42 (p)".to_owned(),
             })
         );
         assert_eq!(
