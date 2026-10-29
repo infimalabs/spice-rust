@@ -887,7 +887,10 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
         completed: wire::Seq::new(8).expect("fixture completion"),
         support: wire::rooms::DesignSupport::Implemented,
     };
-    let matching = wire::rooms::DesignNoticeMatch::new(0.25, 0.1, [7; 32]).expect("fixture match");
+    let admission = wire::rooms::DesignAdmission::Scored(
+        wire::rooms::DesignNoticeMatch::new(wire::rooms::DesignReach::Wide, 0.25, 0.1, [7; 32])
+            .expect("fixture match"),
+    );
     let asked = || {
         let mut runtime = AppRuntime::new(&accepted);
         for frame in opening(&session) {
@@ -913,8 +916,7 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
                     evidence: evidence.clone(),
                     excerpt: "fixture rooms".to_owned(),
                     terms: vec!["rooms".to_owned()],
-                    reach: Some(wire::rooms::DesignReach::Wide),
-                    matching: Some(matching.clone()),
+                    admission: admission.clone(),
                     asks: Vec::new(),
                 },
             ),
@@ -934,8 +936,7 @@ fn an_asked_lane_stands_asked_until_it_answers_or_leaves() {
         Some(vec![app::ParticipantReason::Asked {
             evidence: evidence.clone(),
             questions: Vec::new(),
-            reach: Some(wire::rooms::DesignReach::Wide),
-            matching: Some(matching.clone()),
+            admission: admission.clone(),
         }])
     );
     let contribution = later_publication(1);

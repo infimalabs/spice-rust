@@ -621,6 +621,14 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
     lanes.finish();
 }
 
+/// The admission current selection records, as a fixture notice carries it.
+fn fixture_admission() -> wire::rooms::DesignAdmission {
+    wire::rooms::DesignAdmission::Scored(
+        wire::rooms::DesignNoticeMatch::new(wire::rooms::DesignReach::Wide, 0.2, 0.1, [1; 32])
+            .expect("fixture match clears its floor"),
+    )
+}
+
 fn record_design_request(
     lanes: &Lanes,
     design: &wire::TaskStamp,
@@ -664,8 +672,7 @@ fn record_design_request(
                 },
                 excerpt: "context room".to_owned(),
                 terms: vec!["context".to_owned(), "room".to_owned()],
-                reach: None,
-                matching: None,
+                admission: fixture_admission(),
                 asks: Vec::new(),
             },
             FactCause::Root,
@@ -953,8 +960,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
                     },
                     excerpt: "fixture notice".to_owned(),
                     terms: terms.clone(),
-                    reach: None,
-                    matching: None,
+                    admission: fixture_admission(),
                     asks: Vec::new(),
                 },
                 FactCause::Root,

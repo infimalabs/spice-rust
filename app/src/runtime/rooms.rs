@@ -229,8 +229,7 @@ struct RecordedAsk {
     position: Seq,
     evidence: authority::DesignNoticeEvidence,
     questions: Vec<authority::RoomQuestion>,
-    reach: Option<authority::DesignReach>,
-    matching: Option<authority::DesignNoticeMatch>,
+    admission: authority::DesignAdmission,
 }
 
 /// One task-keyed room projection.
@@ -278,8 +277,7 @@ pub enum ParticipantReason {
     Asked {
         evidence: authority::DesignNoticeEvidence,
         questions: Vec<authority::RoomQuestion>,
-        reach: Option<authority::DesignReach>,
-        matching: Option<authority::DesignNoticeMatch>,
+        admission: authority::DesignAdmission,
     },
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
@@ -780,8 +778,7 @@ impl RoomProjection {
                     position,
                     evidence: body.evidence.clone(),
                     questions: body.asks.iter().map(|ask| ask.question).collect(),
-                    reach: body.reach,
-                    matching: body.matching.clone(),
+                    admission: body.admission.clone(),
                 },
             );
         self.maturity

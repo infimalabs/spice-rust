@@ -13,13 +13,16 @@ use board::similarity::{
 };
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::request_questions;
-use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest, ProfileSelection};
+use spice::rooms::evidence::{
+    DesignCandidate, Digest as ProfileDigest, ProfileMatch, ProfileSelection,
+};
 use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
-    DesignAsk, DesignConversationEvidence, DesignFitGeneration, DesignItemSeries, DesignItems,
-    DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed, DesignReach,
-    DesignSession, DesignSimilarity, DesignSupport, RoomContributed, RoomLeft, RoomQuestionItem,
+    DesignAdmission, DesignAsk, DesignConversationEvidence, DesignFitGeneration, DesignItemSeries,
+    DesignItems, DesignNoticeEvidence, DesignNoticeMatch, DesignNoticeOpportunity, DesignNoticed,
+    DesignReach, DesignSession, DesignSimilarity, DesignSupport, RoomContributed, RoomLeft,
+    RoomQuestionItem,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -86,8 +89,7 @@ struct PlannedRequest {
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
-    reach: Option<DesignReach>,
-    matching: Option<DesignNoticeMatch>,
+    admission: DesignAdmission,
     asks: Vec<DesignAsk>,
     horizon: Option<Seq>,
 }
@@ -455,7 +457,6 @@ struct Selection {
     evidence: DesignNoticeEvidence,
     excerpt: String,
     terms: Vec<String>,
-    reach: DesignReach,
     asks: Vec<DesignAsk>,
     matching: DesignNoticeMatch,
 }
@@ -482,9 +483,8 @@ impl Selection {
             design: self.design,
             statement: self.statement,
             terms: self.terms,
-            reach: Some(self.reach),
+            admission: DesignAdmission::Scored(self.matching),
             asks: self.asks,
-            matching: Some(self.matching),
             horizon,
         }
     }
@@ -608,31 +608,43 @@ fn select_design(
         return Ok(Selected::None);
     }
     let design: &board::Entry = matched.design;
-    let evidence = durable_evidence(matched.evidence, matched.digest);
-    let excerpt = matched.excerpt.to_owned();
-    let terms = matched.terms;
-    let reach = admitting_reach(facts, design);
-    let floor = match_score_floor(reach);
-    let matching =
-        DesignNoticeMatch::new(matched.score, floor, frequency.generation().into_bytes())
-            .ok_or_else(|| {
-                store_fault(
-                    "room::awareness-match-invalid",
-                    "the selected finite cosine did not clear its recorded floor",
-                )
-            })?;
+    let mut selection = admitted(facts, frequency, matched)?;
     let asks = pending_asks(facts, lane, session, design).unwrap_or_default();
-    let asks = rank_asks(profile, frequency, design, asks, floor).map_err(mismatch)?;
-    Ok(Selected::Request(Selection {
+    let floor = match_score_floor(selection.matching.reach());
+    selection.asks = rank_asks(profile, frequency, design, asks, floor).map_err(mismatch)?;
+    Ok(Selected::Request(selection))
+}
+
+/// The selection one admitted match makes, scored under the reach its Design
+/// admits now; its asks are ranked by the caller.
+fn admitted(
+    facts: &bus::TaskFacts,
+    frequency: &FrequencyProfile,
+    matched: ProfileMatch<'_, '_, EvidenceKey, board::Entry>,
+) -> CommandResult<Selection> {
+    let design: &board::Entry = matched.design;
+    let reach = admitting_reach(facts, design);
+    let matching = DesignNoticeMatch::new(
+        reach,
+        matched.score,
+        match_score_floor(reach),
+        frequency.generation().into_bytes(),
+    )
+    .ok_or_else(|| {
+        store_fault(
+            "room::awareness-match-invalid",
+            "the selected finite cosine did not clear its recorded floor",
+        )
+    })?;
+    Ok(Selection {
         design: design.born().clone(),
         statement: design.statement().revision,
-        evidence,
-        excerpt,
-        terms,
-        reach,
-        asks,
+        evidence: durable_evidence(matched.evidence, matched.digest),
+        excerpt: matched.excerpt.to_owned(),
+        terms: matched.terms,
+        asks: Vec::new(),
         matching,
-    }))
+    })
 }
 
 /// What `design` still owes this continuing session: each item its maturity
@@ -1041,8 +1053,7 @@ fn restated_request(
         design: notice.design.clone(),
         statement: notice.statement,
         terms: notice.terms.clone(),
-        reach: notice.reach,
-        matching: notice.matching.clone(),
+        admission: notice.admission.clone(),
         asks: notice.asks.clone(),
         horizon: planning.horizon,
     }))
@@ -1109,7 +1120,7 @@ fn design_request(
             .into_iter()
             .map(str::to_owned)
             .collect(),
-        reach: notice.reach,
+        admission: notice.admission.clone(),
         asks,
     }
 }
@@ -1421,9 +1432,8 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 evidence: request.evidence.clone(),
                 excerpt: request.excerpt.clone(),
                 terms: request.terms.clone(),
-                reach: request.reach,
+                admission: request.admission.clone(),
                 asks: request.asks.clone(),
-                matching: request.matching.clone(),
             },
             FactCause::Root,
         )

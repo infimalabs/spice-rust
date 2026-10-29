@@ -153,6 +153,12 @@ fn current_notice(design: &str) -> serde_json::Value {
         },
         "excerpt": "fixture",
         "terms": ["rooms", "state", "tasks"],
+        "admission": {"scored": {
+            "reach": "wide",
+            "score": "0.3",
+            "floor": "0.1",
+            "generation": wire::rooms::DesignFitGeneration::from_bytes([7; 32]),
+        }},
     })
 }
 
@@ -451,8 +457,9 @@ fn writable_open_crosses_a_retained_single_ask_stanced_notice_whole() {
     journal
         .connection
         .execute_batch(&format!(
-            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
-             '$.fact.ask', json('{planted}'), '$.fact.stance', 'converge') AS BLOB) WHERE seq = 6;
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(json_remove(CAST(envelope AS TEXT), \
+             '$.fact.admission'), '$.fact.ask', json('{planted}'), '$.fact.stance', 'converge') \
+             AS BLOB) WHERE seq = 6;
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
                  (4, 'task:1kKRRsDP', 3, 1, 3),
@@ -480,15 +487,32 @@ fn writable_open_crosses_a_retained_single_ask_stanced_notice_whole() {
         .read::<wire::rooms::DesignNoticed>()
         .expect("crossed fact remains a notice");
     assert_eq!(notice.asks, [ask]);
-    assert_eq!(notice.reach, Some(wire::rooms::DesignReach::Narrow));
+    assert_eq!(
+        notice.admission,
+        wire::rooms::DesignAdmission::Unscored {
+            reach: wire::rooms::DesignReach::Narrow,
+            release: "schema-102".to_owned(),
+        }
+    );
 }
 
 #[test]
-fn writable_open_records_each_retained_notice_stance_as_its_reach() {
-    for (stance, reach) in [
-        ("explore", Some(wire::rooms::DesignReach::Wide)),
-        ("converge", Some(wire::rooms::DesignReach::Narrow)),
-        ("passive", None),
+fn writable_open_records_each_retained_notice_stance_as_its_admission() {
+    use wire::rooms::{DesignAdmission, DesignReach};
+
+    let unscored = |reach| DesignAdmission::Unscored {
+        reach,
+        release: "schema-102".to_owned(),
+    };
+    for (stance, admission) in [
+        ("explore", unscored(DesignReach::Wide)),
+        ("converge", unscored(DesignReach::Narrow)),
+        (
+            "passive",
+            DesignAdmission::Unreached {
+                release: "schema-102".to_owned(),
+            },
+        ),
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("retained-stanced-notice.sqlite3");
@@ -506,8 +530,8 @@ fn writable_open_records_each_retained_notice_stance_as_its_reach() {
         journal
             .connection
             .execute_batch(&format!(
-                "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
-                 '$.fact.stance', '{stance}') AS BLOB) WHERE seq = 6;
+                "UPDATE fact_envelopes SET envelope = CAST(json_set(json_remove(CAST(envelope \
+                 AS TEXT), '$.fact.admission'), '$.fact.stance', '{stance}') AS BLOB) WHERE seq = 6;
                  INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                      (3, 'task:1kKRRsDP', 2, 1, 2),
                      (4, 'task:1kKRRsDP', 3, 1, 3),
@@ -534,8 +558,127 @@ fn writable_open_records_each_retained_notice_stance_as_its_reach() {
             .fact
             .read::<wire::rooms::DesignNoticed>()
             .expect("crossed fact remains a notice");
-        assert_eq!(notice.reach, reach, "{stance} notice reach");
+        assert_eq!(notice.admission, admission, "{stance} notice admission");
     }
+}
+
+/// Plant one schema-102 notice at seq 6, which carries no admission, whose
+/// fact `edit` reshapes as SQL `json_set` arguments, then open it writably.
+fn open_schema_102_notice(scratch: &Scratch, edit: &str) -> Result<Journal, OpenError> {
+    let path = scratch.path().join("schema-102-notice.sqlite3");
+    let journal = authority_file_fixture(&path);
+    plant_invitation_support(&journal);
+    insert_fact(
+        &journal,
+        fact(
+            6,
+            Some(5),
+            FactKind::DesignNoticed,
+            current_notice("1kKRRsDP"),
+        ),
+    );
+    journal
+        .connection
+        .execute_batch(&format!(
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(json_remove(CAST(envelope AS \
+             TEXT), '$.fact.admission'){edit}) AS BLOB) WHERE seq = 6;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3),
+                 (5, 'task:1kKRRsDP', 4, 1, 4),
+                 (6, 'task:1kKRRsDP', 5, 1, 5);
+             UPDATE cursor_head SET seq = 6, wake = 6 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 6 WHERE singleton = 1;"
+        ))
+        .expect("schema-102 notice is planted");
+    restore_predecessor(&journal, 102);
+    drop(journal);
+    Journal::open(&path)
+}
+
+fn notice_bytes(journal: &Journal) -> Vec<u8> {
+    journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 6",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("crossed notice reads")
+}
+
+#[test]
+fn writable_open_crosses_each_schema_102_notice_onto_its_admission_once() {
+    use wire::rooms::{DesignAdmission, DesignFitGeneration, DesignNoticeMatch, DesignReach};
+
+    let generation = DesignFitGeneration::from_bytes([7; 32]);
+    let scored = format!(
+        ", '$.fact.reach', 'narrow', '$.fact.matching', \
+         json('{{\"score\":\"0.3\",\"floor\":\"0.16\",\"generation\":\"{}\"}}')",
+        generation.as_str()
+    );
+    let cases = [
+        (
+            scored.as_str(),
+            DesignAdmission::Scored(
+                DesignNoticeMatch::new(DesignReach::Narrow, 0.3, 0.16, [7; 32])
+                    .expect("fixture match clears its floor"),
+            ),
+        ),
+        (
+            ", '$.fact.reach', 'wide'",
+            DesignAdmission::Unscored {
+                reach: DesignReach::Wide,
+                release: "schema-102".to_owned(),
+            },
+        ),
+        (
+            "",
+            DesignAdmission::Unreached {
+                release: "schema-102".to_owned(),
+            },
+        ),
+    ];
+    for (edit, admission) in cases {
+        let scratch = Scratch::new();
+        let crossed = open_schema_102_notice(&scratch, edit).expect("schema-102 notice crosses");
+        let bytes = notice_bytes(&crossed);
+        let envelope: Envelope<AnyFact> = wire::decode(&bytes).expect("crossed notice decodes");
+        let notice = envelope
+            .fact
+            .read::<wire::rooms::DesignNoticed>()
+            .expect("crossed fact remains a notice");
+        assert_eq!(notice.admission, admission, "{edit}");
+        let path = scratch.path().join("schema-102-notice.sqlite3");
+        drop(crossed);
+        let reopened = Journal::open(&path).expect("crossed authority reopens");
+        assert_eq!(notice_bytes(&reopened), bytes, "reopen rewrites nothing");
+    }
+}
+
+#[test]
+fn writable_open_refuses_a_schema_102_notice_whose_match_misses_its_floor() {
+    let scratch = Scratch::new();
+    let generation = wire::rooms::DesignFitGeneration::from_bytes([7; 32]);
+    let edit = format!(
+        ", '$.fact.reach', 'narrow', '$.fact.matching', \
+         json('{{\"score\":\"0.1\",\"floor\":\"0.16\",\"generation\":\"{}\"}}')",
+        generation.as_str()
+    );
+    let error =
+        open_schema_102_notice(&scratch, &edit).expect_err("a below-floor retained match refuses");
+    assert!(
+        matches!(
+            &error,
+            OpenError::Migration(MigrationError::RetainedRow {
+                table: "fact_envelopes",
+                row,
+                release: "schema-102",
+                ..
+            }) if row == "6"
+        ),
+        "{error}"
+    );
 }
 
 #[test]

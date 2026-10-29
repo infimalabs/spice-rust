@@ -28,10 +28,9 @@ pub struct DesignRequest {
     pub questions: Vec<String>,
     /// Distinctive shared terms that selected this Design.
     pub terms: Vec<String>,
-    /// Reach whose relevance floor admitted the match, when the record kept
-    /// it; an unsteeped Design admits on a wider cast.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reach: Option<crate::rooms::DesignReach>,
+    /// How the selection that admitted the match stands on record; an
+    /// unsteeped Design admits on a wider cast.
+    pub admission: crate::rooms::DesignAdmission,
     /// The question items asked, the best-scoring first and the rest in
     /// statement order; empty asks about the whole Design.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

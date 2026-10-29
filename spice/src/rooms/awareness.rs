@@ -168,12 +168,20 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
     let design = &request.design;
     let opportunity = notice_opportunity_text(&request.opportunity);
     let support = supporting_work(request);
-    let cast = match request.reach {
-        Some(wire::rooms::DesignReach::Wide) => {
-            " Its Design is not yet steeped, so this match was cast slightly wider than usual: \
-             a lower relevance floor admitted it."
+    let wide = match &request.admission {
+        wire::rooms::DesignAdmission::Scored(matching) => {
+            matching.reach() == wire::rooms::DesignReach::Wide
         }
-        _ => "",
+        wire::rooms::DesignAdmission::Unscored { reach, .. } => {
+            *reach == wire::rooms::DesignReach::Wide
+        }
+        wire::rooms::DesignAdmission::Unreached { .. } => false,
+    };
+    let cast = if wide {
+        " Its Design is not yet steeped, so this match was cast slightly wider than usual: \
+         a lower relevance floor admitted it."
+    } else {
+        ""
     };
     let head = format!(
         "Pitch: {}\nDesign request {design} \"{}\" at statement revision {} matched your work \

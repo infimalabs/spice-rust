@@ -78,7 +78,11 @@
 /// deferred, every partition and arrange request drops its stance, and
 /// `group::stance` receipts retire to historical authority. Schema 102 indexes
 /// each Design's shadow records, the best Design a session fell short of.
-pub const SCHEMA_VERSION: u32 = 102;
+/// Schema 103 gives every retained Design request one required admission: its
+/// recorded match as scored, else its reach as unscored or none as unreached,
+/// naming the last schema that wrote it, since replay cannot recover a score
+/// never kept.
+pub const SCHEMA_VERSION: u32 = 103;
 
 /// First position assigned by a newly created journal.
 ///

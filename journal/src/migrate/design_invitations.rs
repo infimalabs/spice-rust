@@ -193,6 +193,9 @@ fn cross_notice(
             bind_presentation(transaction, seq, fact, witnesses)?;
             changed = true;
         }
+        if changed {
+            super::design_admission::admit(fact).map_err(|detail| refusal(seq, &detail))?;
+        }
         changed
     };
     if changed {
