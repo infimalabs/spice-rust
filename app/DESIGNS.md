@@ -158,13 +158,16 @@ the room snapshot, its live facts, the board, and lane topology on every render:
 
 - **Next action**: the one next useful action that authority supports, as one
   sentence naming who acts next and on what, never a command line.
-- **Lanes**: each involved lane with whether it is seated, vacant, or unknown,
-  plus one chip per reason, each naming its source:
+- **Lanes**: a block beneath the standing, the menu's only block and the first
+  of the read view's strip, listing each involved lane with whether it is
+  seated, vacant, or unknown, plus one chip per reason, each naming its source:
   - authored message and contribution history;
   - a recorded Design request the lane has not answered or declined;
   - native work;
   - a claim-bound stop request;
-  - a leave with the lane's clause, the decline of a Design request it owed.
+  - a leave, read as a compact **Left** chip that carries the lane's clause in
+    its title, while the room's Left card shows the clause in full; a leave
+    is the decline of a Design request the lane owed.
   Nothing ages. The lane's next room publication, a contribution or a leave,
   answers a Design request it postdates and ends that request's listening; a
   lane owing no request has nothing to leave. Authored messages and
@@ -217,11 +220,20 @@ after a reconnect; it resolves through the same resident path as
 never creates or answers the session-profile Design requests delivered through
 a lane's own session.
 
-The read view's **Design maturity** panel sits beside the Design's Standing,
-in one row directly under the room heading, and stacks beneath it below 720px.
-It derives from the bounded per-Design measure the room projection folds
-incrementally from streamed requests and contributions, never by folding
-rendered room history. It shows the state word and summary, recent
+A Design's read view shows its Standing across the room directly under the room
+heading. Beneath it one strip carries the **Lanes**, **Maturity**, and
+**History** summaries in that order, each sized to its own words and kept in
+place whatever is open; a narrow room wraps whole summaries onto further rows.
+Activating a summary opens its block, and only that block, in one full-width
+panel beneath the strip with its line items balanced across as many columns as
+the width fits; activating it again closes it. Every mounted strip names its
+own panel, so a Design shown in both its console menu and its read view never
+points one surface's control at the other's panel. While the room is still
+loading, the strip carries History alone.
+
+The **Maturity** block derives from the bounded per-Design measure the room
+projection folds incrementally from streamed requests and contributions, never
+by folding rendered room history. It shows the state word and summary, recent
 statement-head request yield, and folded older-head and unattributed
 historical totals; each current question item's state (quiet, unopposed,
 contested, or concurred) with its votes and lanes reads beside that question
