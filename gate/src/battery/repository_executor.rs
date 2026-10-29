@@ -105,7 +105,7 @@ impl RepositorySelection {
         rim: &RimCapture,
     ) -> Result<RepositorySource, BatteryError> {
         let core = Arc::new(
-            CoreSource::capture(&self.tree, &self.contract, claim, actor, latches).map_err(
+            CoreSource::capture(&self.tree, &self.contract, claim, actor, latches, rim).map_err(
                 |error| BatteryError::new(format!("cannot identify battery source: {error}")),
             )?,
         );

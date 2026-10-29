@@ -10,7 +10,9 @@ use serde_json::Value;
 use std::fs;
 use wire::{Digest, Domain};
 
-use super::support::{acquired, acquired_arm, contract_repository, measured, selected_contract};
+use super::support::{
+    acquired, acquired_arm, contract_repository, measured, rim, selected_contract,
+};
 
 #[test]
 fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
@@ -394,12 +396,14 @@ fn a_disappeared_selected_tree_refuses_capture_with_a_typed_core_input_error() {
 
     let displaced = tree.root().with_file_name("displaced-root");
     fs::rename(tree.root(), &displaced).expect("displace the selected tree root");
+    let rim = rim(&repository);
     let refused = CoreSource::capture(
         &tree,
         &contract,
         ClaimCapture::Idle,
         ActorCapture::Absent,
         &[],
+        &rim,
     );
 
     refused.expect_err("a disappeared selected tree cannot yield one identity");

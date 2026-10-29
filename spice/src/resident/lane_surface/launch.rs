@@ -69,12 +69,12 @@ pub(in crate::resident) trait LaunchProbes {
     /// The resident's own value of the environment variable `name`.
     fn variable(&self, name: &str) -> Option<OsString>;
 
-    /// Git admitted by the Windows installer, independent of PATH.
+    /// Git selected by the same platform policy as installer and gate launches.
     #[cfg(windows)]
-    fn git(&self) -> Option<PathBuf> {
-        sill::program_files()
-            .ok()
-            .map(|root| root.join(r"Git\cmd\git.exe"))
+    fn git(&self, directory: &Path) -> Option<PathBuf> {
+        let selected = gate::git::program(directory, self.variable("PATH").as_deref()).ok()?;
+        selected.announce_secondary();
+        Some(selected.path().to_path_buf())
     }
 }
 
@@ -412,7 +412,7 @@ fn launch_environment(
     lane: CanonicalUuid,
     probes: &dyn LaunchProbes,
 ) -> CommandResult<(Environment, wire::body::RtkHealth)> {
-    let native_shell = native_shell(probes)?;
+    let native_shell = native_shell(probes, repository.worktree_root())?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;

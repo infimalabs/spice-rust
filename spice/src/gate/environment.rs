@@ -78,7 +78,14 @@ pub(super) fn compiler_environment_from_with_cargo_home(
 pub(super) fn compiler_environment_from(
     environment: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> Vec<(OsString, OsString)> {
-    let mut environment = environment
+    compiler_environment_for_platform(environment, cfg!(windows))
+}
+
+fn compiler_environment_for_platform(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+    windows: bool,
+) -> Vec<(OsString, OsString)> {
+    let mut environment = canonical_platform_environment(environment, windows)
         .into_iter()
         .filter(|(name, _)| retained(name))
         .collect::<Vec<_>>();
@@ -86,6 +93,66 @@ pub(super) fn compiler_environment_from(
     bind_implicit_home(&mut environment, RUSTUP_HOME, ".rustup");
     environment.sort();
     environment
+}
+
+fn canonical_platform_environment(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+    windows: bool,
+) -> Vec<(OsString, OsString)> {
+    let mut environment = environment
+        .into_iter()
+        .map(|(name, value)| {
+            let name = if windows {
+                name.to_str()
+                    .map(|name| OsString::from(name.to_ascii_uppercase()))
+                    .unwrap_or(name)
+            } else {
+                name
+            };
+            (name, value)
+        })
+        .collect::<Vec<_>>();
+    if !windows {
+        return environment;
+    }
+    let value = |name: &str| {
+        environment
+            .iter()
+            .find(|(candidate, _)| candidate == OsStr::new(name))
+            .map(|(_, value)| value.clone())
+    };
+    let git_shell = value("MSYSTEM").is_some();
+    let user_profile = value("USERPROFILE");
+    let temp = value("TEMP").or_else(|| value("TMP"));
+    environment.retain(|(name, value)| {
+        if name == OsStr::new("HOME")
+            && user_profile
+                .as_ref()
+                .is_some_and(|profile| windows_value_eq(value, profile))
+        {
+            return false;
+        }
+        if name == OsStr::new("TMPDIR")
+            && temp
+                .as_ref()
+                .is_some_and(|temp| windows_value_eq(value, temp))
+        {
+            return false;
+        }
+        if !git_shell {
+            return true;
+        }
+        !matches!(
+            name.to_str(),
+            Some("MSYSTEM") | Some("COLORTERM") | Some("TERM") | Some("LC_CTYPE")
+        )
+    });
+    environment
+}
+
+fn windows_value_eq(left: &OsStr, right: &OsStr) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
 }
 
 fn retained(name: &OsStr) -> bool {
@@ -173,4 +240,43 @@ fn bind_implicit_home(environment: &mut Vec<(OsString, OsString)>, name: &str, s
         OsString::from(name),
         Path::new(home).join(suffix).into_os_string(),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_for_windows_shell_routing_matches_the_parent_environment() {
+        let direct = compiler_environment_for_platform(
+            [
+                ("ComSpec", r"C:\WINDOWS\system32\cmd.exe"),
+                ("PATH", r"C:\Program Files\Git\cmd;C:\Windows\System32"),
+                ("TEMP", r"C:\spice\tmp"),
+                ("TMP", r"C:\spice\tmp"),
+                ("USERPROFILE", r"C:\Users\spice"),
+            ]
+            .map(|(name, value)| (OsString::from(name), OsString::from(value))),
+            true,
+        );
+        let hook = compiler_environment_for_platform(
+            [
+                ("COMSPEC", r"C:\WINDOWS\system32\cmd.exe"),
+                ("COLORTERM", "truecolor"),
+                ("HOME", r"C:\Users\spice"),
+                ("LC_CTYPE", "C.UTF-8"),
+                ("MSYSTEM", "CLANGARM64"),
+                ("PATH", r"C:\Program Files\Git\cmd;C:\Windows\System32"),
+                ("TEMP", r"C:\spice\tmp"),
+                ("TERM", "xterm-256color"),
+                ("TMP", r"C:\spice\tmp"),
+                ("TMPDIR", r"C:\spice\tmp"),
+                ("USERPROFILE", r"C:\Users\spice"),
+            ]
+            .map(|(name, value)| (OsString::from(name), OsString::from(value))),
+            true,
+        );
+
+        assert_eq!(direct, hook);
+    }
 }

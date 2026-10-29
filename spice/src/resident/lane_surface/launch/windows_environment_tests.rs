@@ -4,7 +4,7 @@ use super::*;
 struct Variables(Vec<(&'static str, OsString)>, Option<PathBuf>);
 
 impl LaunchProbes for Variables {
-    fn git(&self) -> Option<PathBuf> {
+    fn git(&self, _directory: &Path) -> Option<PathBuf> {
         self.1.clone()
     }
     fn advance(&self, repository: &Repository) -> String {
@@ -173,7 +173,7 @@ fn windows_missing_posix_shell_does_not_select_comspec_or_disclose_environment()
         vec![("ComSpec", r"C:\private location\cmd.exe".into())],
         None,
     );
-    let Err(Outcome::Fault(fault)) = native_shell(&probes) else {
+    let Err(Outcome::Fault(fault)) = native_shell(&probes, Path::new(r"C:\work")) else {
         panic!("no supported shell must refuse");
     };
     assert_eq!(fault.reason, "lane::native-shell-unavailable");

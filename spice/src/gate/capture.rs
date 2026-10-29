@@ -40,8 +40,12 @@ pub(super) fn capture_at_inner<'trace>(
         Selector::Staged => RimCapture::staged(directory, search_path),
         Selector::Revision(_) => RimCapture::new(
             directory,
-            search_path,
-            selected_changes(repository.worktree_root(), &selector)?,
+            search_path.clone(),
+            selected_changes(
+                repository.worktree_root(),
+                &selector,
+                search_path.as_deref(),
+            )?,
         ),
     }
     .map_err(|error| RunError::refusal("gate::rim-refused", error))?;

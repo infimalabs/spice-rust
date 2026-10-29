@@ -25,6 +25,8 @@ pub mod evidence_store;
 #[cfg(not(target_arch = "wasm32"))]
 mod execution_diagnostics;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod git;
+#[cfg(not(target_arch = "wasm32"))]
 mod held_root;
 pub mod hygiene;
 pub mod input;

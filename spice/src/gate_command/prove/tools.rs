@@ -111,6 +111,12 @@ fn executed_tools(report: &gate::FocusedArmReport) -> &[gate::ToolEvidence] {
 
 fn report_tools_match(report: &gate::FocusedArmReport, expected: &[gate::ToolEvidence]) -> bool {
     let observed = executed_tools(report);
+    if matches!(
+        report.gate_id(),
+        gate::GateId::MergeIntegrity | gate::GateId::Staging
+    ) {
+        return observed.is_empty();
+    }
     observed == expected
         || (observed.is_empty()
             && matches!(

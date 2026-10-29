@@ -72,7 +72,7 @@ pub(super) fn session_temp(probes: &dyn LaunchProbes) -> CommandResult<PathBuf> 
         })
 }
 
-pub(super) fn native_shell(probes: &dyn LaunchProbes) -> CommandResult<OsString> {
+pub(super) fn native_shell(probes: &dyn LaunchProbes, directory: &Path) -> CommandResult<OsString> {
     if let Some(shell) = probes
         .variable("SHELL")
         .filter(|value| !cfg!(windows) || !value.is_empty())
@@ -81,16 +81,15 @@ pub(super) fn native_shell(probes: &dyn LaunchProbes) -> CommandResult<OsString>
     }
     #[cfg(windows)]
     {
-        // Match install::hook_activation's admitted Git installation. Never
-        // search PATH or route a POSIX wrapper through ComSpec/PowerShell.
-        if let Some(shell) = probes.git().and_then(|git| git_bash(&git)) {
+        if let Some(shell) = probes.git(directory).and_then(|git| git_bash(&git)) {
             return Ok(shell);
         }
     }
+    let _ = directory;
     Err(store_fault(
         "lane::native-shell-unavailable",
         if cfg!(windows) {
-            "SHELL is absent and the admitted Program Files Git installation has no regular git.exe and bin/bash.exe"
+            "SHELL is absent and the admitted Git installation has no regular git.exe and adjacent bin/bash.exe"
         } else {
             "the supervised environment has no native SHELL to restore behind interception"
         },

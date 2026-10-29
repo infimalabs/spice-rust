@@ -9,6 +9,7 @@ use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
 use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
+const PROCESS_PATH: &str = "PATH";
 
 pub(crate) enum Answer {
     Plan(Outcome<PlanPreview>),
@@ -103,7 +104,7 @@ pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> Answer {
                 Err(outcome) => return Answer::Plan(outcome),
             };
             Answer::Plan(result(
-                spice::install::preview(&repository, Some(&executable))
+                spice::install::preview(&repository, Some(&executable), ambient.get(PROCESS_PATH))
                     .map(|preview| PlanPreview::source(preview, &invoked_program())),
             ))
         }
@@ -130,6 +131,7 @@ pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> Answer {
                 &repository,
                 Some(&executable),
                 &digest,
+                ambient.get(PROCESS_PATH),
             )))
         }
         Request::Unapply => Answer::Receipt(result(spice::install::unapply(&repository))),
@@ -448,11 +450,8 @@ fn state_remedy(error: &InstallError) -> Option<String> {
     }
 }
 
-/// The Git the installer itself trusts, spelled for the operator's shell.
-#[cfg(unix)]
-const GIT: &str = "/usr/bin/git";
-#[cfg(windows)]
-const GIT: &str = r#""%ProgramFiles%\Git\cmd\git.exe""#;
+/// The primary Git command the installer resolves, spelled for the operator's shell.
+const GIT: &str = "git";
 
 #[cfg(unix)]
 const INSTALLED_SPICE: &str = ".spice-install/bin/spice";

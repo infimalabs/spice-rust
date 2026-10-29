@@ -22,8 +22,6 @@ use ::gate::{
 use gix::bstr::ByteSlice as _;
 use wire::Digest;
 
-#[cfg(not(windows))]
-const GIT: &str = "/usr/bin/git";
 const PROCESS_PATH: &str = concat!("PA", "TH");
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 
@@ -769,7 +767,11 @@ fn acting_actor(repository: &Path) -> Result<String, RunError> {
     Ok(actor.to_owned())
 }
 
-fn selected_changes(repository: &Path, selector: &Selector) -> Result<Vec<String>, RunError> {
+fn selected_changes(
+    repository: &Path,
+    selector: &Selector,
+    search_path: Option<&OsStr>,
+) -> Result<Vec<String>, RunError> {
     if matches!(selector, Selector::Staged) {
         // Gate rebinds this placeholder from the exact sealed index materialization.
         return Ok(Vec::new());
@@ -797,7 +799,7 @@ fn selected_changes(repository: &Path, selector: &Selector) -> Result<Vec<String
             .collect()
         }
     };
-    let output = git_os(repository, &arguments).map_err(|error| match selector {
+    let output = git_os(repository, search_path, &arguments).map_err(|error| match selector {
         Selector::Revision(_) if !error.is_fault() => {
             RunError::refusal("gate::selection-refused", error.detail())
         }
@@ -821,13 +823,15 @@ fn parse_selected_changes(output: &[u8]) -> Result<Vec<String>, RunError> {
     Ok(changes)
 }
 
-fn git_os(repository: &Path, arguments: &[OsString]) -> Result<Vec<u8>, RunError> {
-    #[cfg(windows)]
-    let program = sill::program_files()
-        .map_err(|error| RunError::fault("gate::git-unavailable", error))?
-        .join(r"Git\cmd\git.exe");
-    #[cfg(not(windows))]
-    let program = Path::new(GIT);
+fn git_os(
+    repository: &Path,
+    search_path: Option<&OsStr>,
+    arguments: &[OsString],
+) -> Result<Vec<u8>, RunError> {
+    let selected = ::gate::git::program(repository, search_path)
+        .map_err(|error| RunError::fault("gate::git-unavailable", error))?;
+    selected.announce_secondary();
+    let program = selected.path();
     let output = Command::new(program.as_os_str())
         .arg("-C")
         .arg(repository)
