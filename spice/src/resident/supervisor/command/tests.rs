@@ -254,11 +254,13 @@ fn confirmed_background_round_trip<W: Write + Send + 'static>(
         let Kick::BackgroundConfirmed {
             notice,
             request,
+            owner,
             reply,
         } = serde_json::from_slice(&kick).expect("background kick decodes")
         else {
             panic!("confirmed delivery sends a confirmed background kick");
         };
+        assert_eq!(owner, None, "ordinary notices carry no retained owner");
         let accepted = background_accepted(&driver, occupant, &notice);
         confirmed_background::answer(&reply, request, accepted);
     });

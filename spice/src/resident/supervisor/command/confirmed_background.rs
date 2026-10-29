@@ -24,15 +24,43 @@ pub(super) fn send(
     lane: CanonicalUuid,
     notice: BackgroundNotice,
 ) -> io::Result<bool> {
-    send_to_door(&kick_path(paths, lane), &paths.common, notice)
+    send_with_owner(paths, lane, notice, None)
 }
 
+pub(super) fn send_retained(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: BackgroundNotice,
+    owner: super::ServiceClaim,
+) -> io::Result<bool> {
+    send_with_owner(paths, lane, notice, Some(owner))
+}
+
+fn send_with_owner(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: BackgroundNotice,
+    owner: Option<super::ServiceClaim>,
+) -> io::Result<bool> {
+    send_to_door_with_owner(&kick_path(paths, lane), &paths.common, notice, owner)
+}
+
+#[cfg(test)]
 /// Send `notice` through the kick door at `door`, awaiting the answer at a
 /// reply door beside it.
 pub(super) fn send_to_door(
     door: &Path,
     identity_source: &Path,
     notice: BackgroundNotice,
+) -> io::Result<bool> {
+    send_to_door_with_owner(door, identity_source, notice, None)
+}
+
+fn send_to_door_with_owner(
+    door: &Path,
+    identity_source: &Path,
+    notice: BackgroundNotice,
+    owner: Option<super::ServiceClaim>,
 ) -> io::Result<bool> {
     let request = new_uuid().to_string();
     let mut identity = blake3::Hasher::new();
@@ -42,6 +70,7 @@ pub(super) fn send_to_door(
     let callback = door::Door::bind(&reply, CALLBACK_REPLY_BYTES)?;
     let kick = Kick::BackgroundConfirmed {
         notice,
+        owner,
         request: request.clone(),
         reply,
     };

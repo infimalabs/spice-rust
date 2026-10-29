@@ -445,6 +445,7 @@ mod tests {
                 }) => {
                     format!("record {occupant} @{}", locus.offset)
                 }
+                Ok(Notice::Idle { occupant, .. }) => format!("idle {occupant}"),
                 Ok(Notice::Exited { occupant, .. }) => format!("exited {occupant}"),
                 Ok(Notice::Failed { occupant, .. }) => format!("failed {occupant}"),
                 Ok(Notice::Asked { request, .. }) => format!("asked {request}"),

@@ -55,8 +55,8 @@ use keeper::{Signal, watch};
 pub(in crate::resident) use launch::Launch;
 use launch::{KeeperLaunch, failed_start_error, launch_detached};
 pub(in crate::resident) use reconcile::{reconcile_services, reconcile_turn_services};
-pub(in crate::resident) use service::{ServiceAdmission, ServiceAuthority};
-use service::{ServiceClaim, ServiceOwner};
+use service::ServiceOwner;
+pub(in crate::resident) use service::{ServiceAdmission, ServiceAuthority, ServiceClaim};
 
 /// The hidden entry the keeper runs under.
 pub(in crate::resident::supervisor) const ENTRY: &str = "__lane-job";

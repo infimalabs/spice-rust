@@ -79,6 +79,9 @@ impl Runtime {
             Ok(Attempted::Launching(_)) => {
                 unreachable!("one launch completion cannot begin another launch")
             }
+            Ok(Attempted::Retry(_)) => {
+                unreachable!("retained-seat delivery does not establish a new process")
+            }
             Err(Outcome::Refusal(refusal)) => {
                 let now = current_instant()?;
                 let _ = self.backoff.refused(

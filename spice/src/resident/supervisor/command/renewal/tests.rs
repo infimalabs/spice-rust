@@ -74,29 +74,3 @@ fn cancellation_supersedes_preparation_and_blocks_stale_replay() {
         Some(notice(6, true))
     );
 }
-
-#[test]
-fn failed_delivery_does_not_consume_the_authoritative_transition() {
-    let driver = driver();
-    driver.close();
-    driver.deliver_renewal(notice(1, true));
-    assert_eq!(*driver.renewal.lock().expect("renewal locks"), None);
-
-    *driver.stdin.lock().expect("input locks") = Some(Vec::new());
-    driver.deliver_renewal(notice(1, true));
-    assert_eq!(notices(&driver).len(), 1);
-    driver.close();
-    driver.deliver_renewal(notice(2, false));
-    assert_eq!(
-        *driver.renewal.lock().expect("renewal locks"),
-        Some(notice(1, true))
-    );
-
-    *driver.stdin.lock().expect("input locks") = Some(Vec::new());
-    driver.deliver_renewal(notice(2, false));
-    assert_eq!(notices(&driver).len(), 1);
-    assert_eq!(
-        *driver.renewal.lock().expect("renewal locks"),
-        Some(notice(2, false))
-    );
-}

@@ -93,6 +93,72 @@ pub(super) fn project_targets<'a>(
     Ok(targets)
 }
 
+/// Project the held-claim continuation for an occupied OMP process whose
+/// durable idle state is still owned by the exact current claim. Ordinary
+/// notices and jobs address the driver directly; only this continuation needs
+/// lifecycle scheduling.
+pub(super) fn project_retained_targets<'a>(
+    snapshot: &bus::TaskSnapshot,
+    projection: &'a Projection,
+    paths: &RuntimePaths,
+    now: Instant,
+) -> CommandResult<Vec<Target<'a>>> {
+    let Some(residency) = snapshot.residency() else {
+        return Ok(Vec::new());
+    };
+    let appliance = spice::version::running().map_err(Outcome::Fault)?;
+    let environment = snapshot
+        .environment()
+        .with_appliance(appliance.product.clone());
+    let selection = projection.selection();
+    let satisfied = selection.resolved();
+    let mut targets = Vec::new();
+    for row in &residency.body().lanes {
+        let Some(occupant) = row.occupant else {
+            continue;
+        };
+        let Some(owner) = super::super::supervisor::idle_claim(paths, row.lane, occupant)? else {
+            continue;
+        };
+        let Some(heads) = snapshot.task_heads(owner.task()) else {
+            super::super::supervisor::command::claim_activation(paths, row.lane, owner, false);
+            continue;
+        };
+        if !owner.matches(heads) {
+            super::super::supervisor::command::claim_activation(paths, row.lane, owner, false);
+            continue;
+        }
+        let (held_claim, parked) = held_claim(
+            projection.entries(),
+            satisfied,
+            projection.ready_at(),
+            row,
+            &environment,
+            now,
+        )?;
+        let admitted = !parked && held_claim != Available::None;
+        super::super::supervisor::command::claim_activation(paths, row.lane, owner, admitted);
+        if held_claim == Available::None {
+            continue;
+        }
+        targets.push(Target {
+            lane: row.lane,
+            last_claim: snapshot
+                .facts()
+                .latest_claim(&Actor::Lane(row.lane))
+                .map(|(claim, _)| claim),
+            pending_inbox: false,
+            held_claim,
+            drain_queue: Available::None,
+            available: Available::None,
+            last_resort: false,
+            task: None,
+            matched: None,
+        });
+    }
+    Ok(targets)
+}
+
 /// The held-claim trigger, and whether the held work is parked on authority no
 /// lane holds: an unsatisfied trust grant, or a Design that awaits the
 /// operator's decision or waits on work it released. A held Design still

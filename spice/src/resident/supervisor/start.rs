@@ -80,7 +80,9 @@ fn published(
             "lane::supervisor-state-mismatched",
             "detached supervisor published another lane or occupant",
         )),
-        Ok(state) if matches!(state.phase, Phase::Running | Phase::Exited) => Ok(Some(state)),
+        Ok(state) if matches!(state.phase, Phase::Running | Phase::Idle | Phase::Exited) => {
+            Ok(Some(state))
+        }
         Ok(state) if state.phase == Phase::Failed => Err(store_fault(
             "lane::supervisor-start-failed",
             state
@@ -122,6 +124,7 @@ mod tests {
             phase,
             group: Some(i32::MAX.unsigned_abs()),
             session: None,
+            claim: None,
             git: Some("fixture-head".to_owned()),
             started_millis: None,
             runtime_millis: None,

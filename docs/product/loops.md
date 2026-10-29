@@ -305,9 +305,11 @@ flowchart TD
 
 - Supervisor phase, UI lane status, and resident lifecycle are separate
   vocabularies and do not form one machine.
-- Every turn or process exit, including code zero, ends that occupant and
-  vacates the lane. [Kept jobs](planes/hooks.md#cadence-is-reachability) deliver
-  their endings to a later occupant.
+- A clean turn boundary with an exact active claim leaves the same occupant idle;
+  later admitted work reuses its OMP session. A boundary with no claim, an idle
+  claim mismatch, or a process exit vacates the lane. [Kept
+  jobs](planes/hooks.md#cadence-is-reachability) deliver to the matching retained
+  occupant when one exists and otherwise to a later occupant.
 - No supervisor request is published until the lane's worktree is admitted as a
   root inside the resident's own Git common directory. A lane naming another
   repository's worktree parks with a refusal; the resident and its other lanes

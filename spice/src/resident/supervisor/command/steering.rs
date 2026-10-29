@@ -379,6 +379,7 @@ impl<W: Write + Send + 'static> Driver<W> {
 
     /// Interject one message as steering, in sequence with the inbox.
     pub(super) fn steer(&self, message: &str) -> io::Result<()> {
+        self.activate()?;
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         self.write(&vendor::omp::steer_request(sequence, message))
     }
