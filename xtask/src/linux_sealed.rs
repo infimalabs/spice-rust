@@ -12,7 +12,11 @@ use crate::{AppBuildError, ReleaseEnvironment};
 
 /// The whole in-image run: compiling `xtask`, the release link, and the
 /// version report, all under emulation on a host of another architecture.
-const STAGE_RUNTIME: Duration = Duration::from_secs(3 * 60 * 60);
+/// Measured at six to eight minutes on an arm64 Docker host, and a little
+/// over two of those are the `xtask` compile on a cold VM; the bound is
+/// generous against that so a deadlocked run is reported within one release
+/// cut rather than hours later.
+const STAGE_RUNTIME: Duration = Duration::from_secs(30 * 60);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(10);
 const REAP: Duration = Duration::from_secs(10);
 const GRACE: Duration = Duration::from_secs(5);
