@@ -297,11 +297,7 @@ impl TranscriptEvidence {
 
 fn scan_failure(token: &str, error: &listen::ScanError, repair: &str) -> Outcome<CommandAnswer> {
     match error {
-        listen::ScanError::WorkLimit { .. }
-        | listen::ScanError::Tape {
-            source: tape::Error::Refused(tape::Refusal::MemberReadLimit { .. }),
-            ..
-        } => search_limited(token, &error.to_string(), repair),
+        listen::ScanError::WorkLimit { .. } => search_limited(token, &error.to_string(), repair),
         _ => typed_store_fault("steer::transcript-tape-unreadable", &error.to_string()),
     }
 }

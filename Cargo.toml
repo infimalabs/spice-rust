@@ -41,6 +41,10 @@ publish = false
 # backend.
 [workspace.dependencies]
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+# Tape archives: upstream Zstandard and its seekable-format implementation,
+# vendored and built by `cc` on every target, without the legacy decoders or
+# the dictionary builder.
+zstd-safe = { version = "7.3", default-features = false, features = ["std", "seekable"] }
 
 [workspace.lints.rust]
 warnings = "deny"

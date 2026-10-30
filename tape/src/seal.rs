@@ -1,26 +1,38 @@
-//! Rotation of plaintext into indexed, immutable gzip members.
+//! Rotation of plaintext into indexed, immutable seekable archives.
 //!
-//! Sealing publishes in one order and that order is the crash contract: the
-//! gzip member first, then the index that names it, then the removal of the
-//! plaintext it was made from. Every prefix of that order is recoverable.
-//! Dying before the member is published leaves the plaintext untouched and the
-//! seal simply has not happened. Dying between the member and the index leaves
-//! an unreferenced member that the next seal overwrites with byte-identical
-//! bytes, because the plaintext it derives from has not moved. Dying between
-//! the index and the removal leaves plaintext whose member the index already
-//! names, which is exactly the residue [`Tape::recover`] deletes.
+//! Sealing one member is three separable steps over a staged file: prepare
+//! streams the plaintext into a [seekable Zstandard archive](crate::archive),
+//! verify reopens the staged archive and the plaintext independently and
+//! compares every decoded byte, and publish renames the verified archive into
+//! place. None of the three touches the plaintext or the index, and a failure
+//! in any of them removes only the staged file.
+//!
+//! A seal publishes in one order and that order is the crash contract: the
+//! verified archive first, then the index that names it, then the removal of
+//! the plaintext it was made from. Every prefix of that order is recoverable.
+//! Dying before the archive is published leaves at most a staged file, which
+//! the next seal removes. Dying between the archive and the index leaves an
+//! unreferenced archive beside plaintext that is still accepting appends;
+//! readers never consult it, and the next seal replaces it. Dying between the
+//! index and the removal leaves plaintext whose member the index already
+//! names. Readers prefer that plaintext, and the next seal's recovery removes
+//! it only after a published archive, or a legacy gzip member, is proven to
+//! reproduce it byte for byte; a missing or unfaithful archive is prepared
+//! again first. Capture never recovers, because recovery verifies an archive.
 //!
 //! Plaintext is therefore never removed before the bytes it holds are
-//! readable from somewhere else.
+//! verifiably readable from somewhere else, and every step runs under the
+//! writer lock, so no append can land in a member being sealed.
 
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
+use std::path::Path;
 
-use flate2::Compression;
-use flate2::write::GzEncoder;
+use flate2::read::GzDecoder;
 
-use crate::{Error, Operation, Refusal, Tape};
+use crate::archive::{self, Archive};
+use crate::{Error, Operation, Refusal, STAGED_PREFIX, STAGED_SUFFIX, Tape, create_private};
 
 /// First line of the index, naming the one format tape writes.
 const FORMAT: &str = "tape 1";
@@ -213,13 +225,13 @@ fn malformed(line: &str) -> Error {
 pub enum Seal {
     /// No member was pending, so nothing rotated.
     Empty,
-    /// One member rotated into an immutable gzip member.
+    /// One member rotated into an immutable seekable archive.
     Sealed {
         /// The member that rotated.
         member: u64,
         /// Plaintext bytes it carried.
         plaintext: u64,
-        /// Bytes the gzip member occupies.
+        /// Bytes the archive occupies.
         compressed: u64,
     },
 }
@@ -372,18 +384,27 @@ impl Tape {
         }
     }
 
-    /// Rotate the member currently accepting appends into a gzip member.
+    /// Rotate the member currently accepting appends into a seekable archive.
     ///
-    /// Sealing an empty or absent member is not a failure; it reports
-    /// [`Seal::Empty`] and leaves the tape alone. A sealed member is never
-    /// rewritten afterwards, so every locus already issued against it keeps
-    /// resolving to the same bytes.
+    /// This is the whole member-level primitive and it owns no policy: any
+    /// holder of the tape may call it at any time, and it seals whatever the
+    /// active member holds. Sealing an empty or absent member is not a
+    /// failure; it reports [`Seal::Empty`] and leaves the tape alone. A sealed
+    /// member is never rewritten afterwards, so every locus already issued
+    /// against it keeps resolving to the same bytes, and the next append
+    /// starts the following member.
+    ///
+    /// The writer lock is held throughout, and the residue of any earlier
+    /// interrupted seal is recovered first. Memory stays independent of the
+    /// member's size: the plaintext is streamed through compression and
+    /// verification, never held.
     ///
     /// # Errors
     ///
-    /// Refuses when another writer holds the tape. Returns an I/O or
-    /// publication failure when the member or index cannot be published; in
-    /// every such case the plaintext is left in place.
+    /// Refuses when another writer holds the tape, when earlier residue
+    /// disagrees with the index, or when the prepared archive does not
+    /// reproduce the plaintext. Returns an I/O or publication failure when a
+    /// step cannot complete. In every case the plaintext stays readable.
     pub fn seal(&self) -> Result<Seal, Error> {
         let _possession = self.possess()?;
         let index = self.read_index()?;
@@ -391,33 +412,183 @@ impl Tape {
 
         let member = index.next_member();
         let plain = self.plain_path(member);
-        let bytes = match fs::read(&plain) {
-            Ok(bytes) => bytes,
+        let plaintext = match fs::metadata(&plain) {
+            Ok(metadata) => metadata.len(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Seal::Empty),
             Err(error) => return Err(Error::io(Operation::ReadPlaintext, plain, error)),
         };
-        if bytes.is_empty() {
+        if plaintext == 0 {
             return Ok(Seal::Empty);
         }
 
-        let compressed = compress(&bytes, &plain)?;
-        self.publish(&self.sealed_path(member), &compressed)?;
+        let compressed = self.archive_member(member, plaintext)?;
 
         let mut sealed = index;
         sealed.members.push(Member {
             member,
-            length: bytes.len() as u64,
+            length: plaintext,
         });
+        fault(Step::PublishIndex)?;
         self.publish(&self.index_path(), sealed.render().as_bytes())?;
-
-        fs::remove_file(&plain)
-            .map_err(|error| Error::io(Operation::RemovePlaintext, plain, error))?;
+        self.remove_plaintext(member)?;
 
         Ok(Seal::Sealed {
             member,
-            plaintext: bytes.len() as u64,
-            compressed: compressed.len() as u64,
+            plaintext,
+            compressed,
         })
+    }
+
+    /// Finish a seal that published its index and stopped before removing
+    /// the plaintext, and discard staged files no holder can still own.
+    ///
+    /// Plaintext whose member the index names cannot be accepting appends,
+    /// so it is residue. It is removed only once a published archive, or a
+    /// legacy gzip member, reproduces it exactly; otherwise its archive is
+    /// prepared, verified, and published again from the residue first. Only
+    /// the last indexed member can hold residue, because every seal recovers
+    /// before it rotates.
+    ///
+    /// # Errors
+    ///
+    /// Refuses residue whose length disagrees with the index, and returns
+    /// any failure to inspect, archive, or remove; the residue then stays.
+    fn recover(&self, index: &Index) -> Result<(), Error> {
+        self.remove_staged()?;
+        let Some(last) = index.last() else {
+            return Ok(());
+        };
+        let residue = self.plain_path(last.member);
+        let observed = match fs::metadata(&residue) {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(Error::io(Operation::ReadPlaintext, residue, error)),
+        };
+        if observed != last.length {
+            return Err(Error::Refused(Refusal::ResidueMismatch {
+                member: last.member,
+                indexed: last.length,
+                observed,
+            }));
+        }
+        if !self.published_reproduces(last.member) {
+            self.archive_member(last.member, last.length)?;
+        }
+        self.remove_plaintext(last.member)
+    }
+
+    /// Prepare, verify, and publish one member's archive from its plaintext.
+    ///
+    /// The plaintext and the index are left untouched; a failure removes the
+    /// staged file and publishes nothing.
+    fn archive_member(&self, member: u64, plaintext: u64) -> Result<u64, Error> {
+        let staged = self.root.join(crate::temporary_name());
+        let prepared = self
+            .prepare_archive(member, plaintext, &staged)
+            .and_then(|compressed| {
+                self.verify_archive(member, plaintext, &staged)?;
+                fault(Step::PublishArchive)?;
+                Ok(compressed)
+            });
+        let compressed = match prepared {
+            Ok(compressed) => compressed,
+            Err(error) => {
+                let _ = fs::remove_file(&staged);
+                return Err(error);
+            }
+        };
+        self.install(&staged, &self.archive_path(member))?;
+        Ok(compressed)
+    }
+
+    /// Stream `plaintext` bytes of a member into a synchronized staged archive.
+    fn prepare_archive(&self, member: u64, plaintext: u64, staged: &Path) -> Result<u64, Error> {
+        let plain = self.plain_path(member);
+        let mut source = File::open(&plain)
+            .map_err(|error| Error::io(Operation::ReadPlaintext, &plain, error))?
+            .take(plaintext);
+        let mut file = create_private(staged)
+            .map_err(|error| Error::io(Operation::PrepareArchive, staged, error))?;
+        let compressed = archive::write(&mut source, &mut file)
+            .map_err(|error| Error::io(Operation::PrepareArchive, staged, error))?;
+        fault(Step::Prepare)?;
+        file.sync_all()
+            .map_err(|error| Error::io(Operation::PrepareArchive, staged, error))?;
+        Ok(compressed)
+    }
+
+    /// Prove a staged archive reproduces the member's plaintext exactly.
+    ///
+    /// Both files are reopened, so the comparison reads what the disk holds
+    /// rather than anything the compressor kept, and it decodes through the
+    /// same validated frames every reader uses. The plaintext must end where
+    /// the archive does.
+    fn verify_archive(&self, member: u64, plaintext: u64, staged: &Path) -> Result<(), Error> {
+        let failed = |error| Error::io(Operation::VerifyArchive, staged, error);
+        let archive = File::open(staged).and_then(Archive::open).map_err(failed)?;
+        if archive.length() != plaintext {
+            return Err(Error::Refused(Refusal::ArchiveMismatch { member }));
+        }
+        let plain = self.plain_path(member);
+        let mut source = File::open(&plain)
+            .map_err(|error| Error::io(Operation::ReadPlaintext, &plain, error))?;
+        let mut frames = archive.reader_from(0).map_err(failed)?;
+        if archive::identical(&mut frames, &mut source).map_err(failed)? {
+            Ok(())
+        } else {
+            Err(Error::Refused(Refusal::ArchiveMismatch { member }))
+        }
+    }
+
+    /// Whether published storage reproduces a member's plaintext exactly.
+    ///
+    /// Any failure answers no: the plaintext is still present, so the
+    /// remedy for an unreadable or unfaithful archive is to prepare it again,
+    /// never to trust it.
+    fn published_reproduces(&self, member: u64) -> bool {
+        let plain = || File::open(self.plain_path(member));
+        if let Ok(file) = File::open(self.archive_path(member)) {
+            return Archive::open(file)
+                .and_then(|archive| archive.reader_from(0))
+                .and_then(|mut frames| archive::identical(&mut frames, &mut plain()?))
+                .unwrap_or(false);
+        }
+        File::open(self.sealed_path(member))
+            .and_then(|file| archive::identical(&mut GzDecoder::new(file), &mut plain()?))
+            .unwrap_or(false)
+    }
+
+    /// Remove a sealed member's plaintext.
+    fn remove_plaintext(&self, member: u64) -> Result<(), Error> {
+        fault(Step::RemovePlaintext)?;
+        let plain = self.plain_path(member);
+        fs::remove_file(&plain).map_err(|error| Error::io(Operation::RemovePlaintext, plain, error))
+    }
+
+    /// Remove staged files left by a holder that stopped before publishing.
+    ///
+    /// Every staging happens under the writer lock, which the caller holds,
+    /// so no staged file can belong to work still in progress.
+    fn remove_staged(&self) -> Result<(), Error> {
+        let entries = fs::read_dir(&self.root)
+            .map_err(|error| Error::io(Operation::RemoveStaged, &self.root, error))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| Error::io(Operation::RemoveStaged, &self.root, error))?;
+            let name = entry.file_name();
+            let staged = name.to_str().is_some_and(|name| {
+                name.starts_with(STAGED_PREFIX) && name.ends_with(STAGED_SUFFIX)
+            });
+            if !staged {
+                continue;
+            }
+            match fs::remove_file(entry.path()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::io(Operation::RemoveStaged, entry.path(), error)),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -459,16 +630,46 @@ fn read_bounded_index(
     Ok((Index::parse(&text)?, index_bytes))
 }
 
-/// Compress plaintext into one gzip member.
-///
-/// The encoder is built with the default header, whose modification time is
-/// zero, so compressing the same plaintext twice produces the same bytes. That
-/// determinism is what makes re-publishing an unreferenced member after a
-/// crash a no-op rather than a rewrite.
-fn compress(bytes: &[u8], plain: &std::path::Path) -> Result<Vec<u8>, Error> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(bytes)
-        .and_then(|()| encoder.finish())
-        .map_err(|error| Error::io(Operation::Compress, plain, error))
+/// The seal steps whose failure the in-process tests force.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Step {
+    /// Writing the staged archive.
+    Prepare,
+    /// Renaming the verified archive into place.
+    PublishArchive,
+    /// Publishing the index naming the sealed member.
+    PublishIndex,
+    /// Removing the sealed member's plaintext.
+    RemovePlaintext,
 }
+
+#[cfg(test)]
+thread_local! {
+    /// The step the current test thread forces to fail.
+    static FAIL: std::cell::Cell<Option<Step>> = const { std::cell::Cell::new(None) };
+}
+
+/// Fail `step` when the current test forces it to; always succeed otherwise.
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "the test build fails steps through the same signature"
+    )
+)]
+fn fault(step: Step) -> Result<(), Error> {
+    #[cfg(test)]
+    if FAIL.get() == Some(step) {
+        return Err(Error::io(
+            Operation::SyncDirectory,
+            format!("{step:?}"),
+            io::Error::other("forced failure"),
+        ));
+    }
+    #[cfg(not(test))]
+    let _ = step;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

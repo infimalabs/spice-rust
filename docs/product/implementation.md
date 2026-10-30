@@ -59,6 +59,23 @@ A command transaction commits its facts, heads, result, and wake cursor
 together. Transcript tape preserves vendor bytes without becoming semantic
 authority.
 
+Tape keeps the member accepting appends as plaintext. `Tape::seal` is the one
+member-level archival primitive and carries no policy: it streams that member
+into a standard seekable Zstandard archive (level 3, frames of at most
+256 KiB, each with its Zstandard content checksum), reopens the staged archive
+and compares every decoded byte with the plaintext, renames it into place,
+publishes the index naming the member, and only then removes the plaintext,
+all under the tape's writer lock. Memory stays fixed per frame whatever the
+member size. Failure at any step leaves the plaintext readable; the next seal
+removes staged residue, replaces an archive the index never named, and removes
+indexed plaintext only after a published archive reproduces it exactly. A
+locus keeps its member, offset, and length across sealing. Readers resolve
+plaintext, then the archive, then a legacy gzip member, treat only a missing
+file as absent, and charge bounded transcript reads for every frame they
+decode. Nothing seals automatically or converts existing members. Owners:
+[`tape/src/seal.rs`](../../tape/src/seal.rs) and
+[`tape/src/read.rs`](../../tape/src/read.rs).
+
 Occupants cooperate under one Unix user. Capabilities bind attribution, lane,
 occupant, and epoch; they are workflow interlocks, not isolation between
 same-user processes. Session authority comes only from an admitted live vendor

@@ -7,47 +7,300 @@
 //! fixture builds that directory and then asks tape to carry on.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use tape::{Index, Locus, Refusal, Seal, Tape};
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use tape::{Extent, Index, Locus, Refusal, Seal, Tape, Window};
 
 /// Bytes chosen to contain a NUL, a newline, and invalid UTF-8, so that any
 /// layer tempted to treat capture as text is caught by the fixture.
 const VERBATIM: &[u8] = b"prose\x00\xff\xfe line\ntool call\r\n{\"partial\": ";
 
+/// Plaintext bytes in every archive frame but the last.
+const FRAME: u64 = 256 * 1024;
+
+/// Bytes in each line of [`noise`], its newline included.
+const LINE_BYTES: u64 = 89;
+
+/// Deterministic plaintext that compresses poorly, of any length.
+fn noise(length: u64) -> Vec<u8> {
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    (0..length)
+        .map(|position| {
+            if (position + 1) % LINE_BYTES == 0 {
+                return b'\n';
+            }
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()[0]
+        })
+        .collect()
+}
+
+/// Read a range of `extent`, returning the window and the work it charged.
+fn charged(tape: &Tape, locus: Locus, extent: Extent) -> (Window, u64) {
+    let mut work = None;
+    let window = tape
+        .read_window(locus, extent, |bytes| {
+            work = Some(bytes);
+            Ok::<(), tape::Error>(())
+        })
+        .expect("the range reads");
+    (window, work.expect("every read charges once"))
+}
+
 #[test]
-fn bounded_extent_reads_pay_for_sealing_and_refuse_understated_lengths() {
-    let scratch = Scratch::new("bounded-extent");
+fn archived_reads_charge_only_the_frames_their_range_touches() {
+    let scratch = Scratch::new("frame-charges");
     let tape = Tape::open(scratch.path()).unwrap();
-    let locus = tape.tee(VERBATIM).unwrap();
+    let length = 2 * FRAME + 1000;
+    let bytes = noise(length);
+    let locus = tape.tee(&bytes).unwrap();
+    assert_eq!(locus, Locus::new(1, 0, length));
     let active = tape.extents().unwrap()[0];
-    let suffix = Locus::new(locus.member, locus.length - 1, 1);
+
+    let suffix = Locus::new(1, length - 1, 1);
+    let (window, work) = charged(&tape, suffix, active);
     assert_eq!(
-        tape.read_extent_bounded(suffix, active, 1).unwrap(),
-        &VERBATIM[VERBATIM.len() - 1..]
+        (window.offset, work),
+        (length - 1, 1),
+        "plaintext pays its range"
     );
+    assert_eq!(window.bytes, &bytes[bytes.len() - 1..]);
+
     tape.seal().unwrap();
-    for extent in [active, tape.extents().unwrap()[0]] {
-        assert!(matches!(
-            tape.read_extent_bounded(suffix, extent, 1),
-            Err(tape::Error::Refused(Refusal::MemberReadLimit { .. }))
-        ));
+    let sealed = tape.extents().unwrap()[0];
+    assert!(sealed.sealed);
+    for (law, range, offset, expected) in [
+        (
+            "a full range decodes every frame",
+            Locus::new(1, 0, length),
+            0,
+            length,
+        ),
+        (
+            "a same-frame range decodes its frame",
+            Locus::new(1, FRAME + 10, 20),
+            FRAME,
+            FRAME,
+        ),
+        (
+            "a cross-frame range decodes both frames",
+            Locus::new(1, FRAME - 3, 6),
+            0,
+            2 * FRAME,
+        ),
+        (
+            "an end range decodes only the short last frame",
+            Locus::new(1, length - 1, 1),
+            2 * FRAME,
+            1000,
+        ),
+        (
+            "an empty range decodes nothing",
+            Locus::new(1, length, 0),
+            length,
+            0,
+        ),
+    ] {
+        // An observation from before the seal reads the archive too.
+        for extent in [active, sealed] {
+            let (window, work) = charged(&tape, range, extent);
+            assert_eq!((window.offset, work), (offset, expected), "{law}");
+            let end = usize::try_from(range.offset + range.length).unwrap();
+            assert_eq!(
+                window.bytes,
+                &bytes[usize::try_from(offset).unwrap()..end],
+                "{law}"
+            );
+            assert_eq!(
+                tape.read_extent(range, extent, |_| Ok::<(), tape::Error>(()))
+                    .unwrap(),
+                &bytes[usize::try_from(range.offset).unwrap()..end],
+                "{law}"
+            );
+            assert_eq!(
+                tape.read(range).unwrap(),
+                window.bytes[usize::try_from(range.offset - offset).unwrap()..]
+            );
+        }
+    }
+
+    let refused = tape.read_extent(suffix, sealed, |work| {
+        Err(tape::Error::Refused(Refusal::MemberVanished {
+            member: work,
+        }))
+    });
+    assert!(
+        matches!(
+            refused,
+            Err(tape::Error::Refused(Refusal::MemberVanished {
+                member: 1000
+            }))
+        ),
+        "the charge's refusal is the read's answer"
+    );
+    let mut understated = sealed;
+    understated.length = 1;
+    assert!(
+        tape.read_extent(Locus::new(1, 0, 1), understated, |_| Ok::<(), tape::Error>(
+            ()
+        ))
+        .is_err(),
+        "an archive disagreeing with an understated sealed extent is refused"
+    );
+    scratch.remove();
+}
+
+#[test]
+fn appends_after_archival_leave_every_earlier_locus_intact() {
+    let scratch = Scratch::new("append-after");
+    let tape = Tape::open(scratch.path()).unwrap();
+    let first = tape.tee(&noise(FRAME + 7)).unwrap();
+    tape.seal().unwrap();
+    let second = tape.tee(VERBATIM).unwrap();
+    assert_eq!(second, Locus::new(2, 0, VERBATIM.len() as u64));
+    tape.seal().unwrap();
+    let third = tape.tee(b"tail").unwrap();
+
+    assert_eq!(tape.read(first).unwrap(), noise(FRAME + 7));
+    assert_eq!(tape.read(second).unwrap(), VERBATIM);
+    assert_eq!(tape.read(third).unwrap(), b"tail");
+    assert_eq!(
+        tape.extents()
+            .unwrap()
+            .iter()
+            .map(|extent| (extent.member, extent.sealed))
+            .collect::<Vec<_>>(),
+        [(1, true), (2, true), (3, false)]
+    );
+    scratch.remove();
+}
+
+#[test]
+fn streamed_reads_decode_archives_forward_from_the_frame_they_need() {
+    let scratch = Scratch::new("streamed");
+    let tape = Tape::open(scratch.path()).unwrap();
+    let bytes = noise(3 * FRAME + 11);
+    tape.tee(&bytes).unwrap();
+    tape.seal().unwrap();
+    let extent = tape.extents().unwrap()[0];
+
+    for range in [
+        Locus::new(1, 0, extent.length),
+        Locus::new(1, FRAME + 5, FRAME),
+        Locus::new(1, extent.length, 0),
+    ] {
+        let mut streamed = Vec::new();
+        let mut buffer = [0; 1000];
+        tape.stream_extent(range, extent, &mut buffer, |chunk| {
+            streamed.extend_from_slice(chunk);
+            Ok::<(), tape::Error>(())
+        })
+        .unwrap();
+        let start = usize::try_from(range.offset).unwrap();
         assert_eq!(
-            tape.read_extent_bounded(suffix, extent, locus.length)
-                .unwrap(),
-            &VERBATIM[VERBATIM.len() - 1..]
+            streamed,
+            &bytes[start..start + usize::try_from(range.length).unwrap()]
         );
     }
-    let mut understated = tape.extents().unwrap()[0];
-    understated.length = 1;
+    scratch.remove();
+}
+
+#[test]
+fn a_corrupted_archive_is_an_error_rather_than_an_absence() {
+    let scratch = Scratch::new("corrupted");
+    let tape = Tape::open(scratch.path()).unwrap();
+    let bytes = noise(FRAME + 100);
+    let locus = tape.tee(&bytes).unwrap();
+    tape.seal().unwrap();
+    let extent = tape.extents().unwrap()[0];
+    let path = scratch.path().join("000000000001.zst");
+    let mut archive = fs::read(&path).unwrap();
+    archive[100] ^= 0x10;
+    fs::write(&path, archive).unwrap();
+
+    let first_frame = Locus::new(1, 0, 10);
+    for error in [
+        tape.read(first_frame).unwrap_err(),
+        tape.read_extent(first_frame, extent, |_| Ok::<(), tape::Error>(()))
+            .unwrap_err(),
+        tape.stream_extent(first_frame, extent, &mut [0; 64], |_| {
+            Ok::<(), tape::Error>(())
+        })
+        .unwrap_err(),
+    ] {
+        assert!(
+            matches!(
+                error,
+                tape::Error::Io {
+                    operation: tape::Operation::ReadArchive,
+                    ..
+                }
+            ),
+            "got {error}"
+        );
+    }
+    assert_eq!(
+        tape.read(Locus::new(1, FRAME, 100)).unwrap(),
+        &bytes[usize::try_from(FRAME).unwrap()..],
+        "an intact frame still reads"
+    );
+    assert!(tape.read(locus).is_err());
+    scratch.remove();
+}
+
+#[test]
+fn a_legacy_gzip_member_stays_readable_without_conversion() {
+    let scratch = Scratch::new("legacy-gzip");
+    let tape = Tape::open(scratch.path()).unwrap();
+    let locus = tape.tee(VERBATIM).unwrap();
+    tape.seal().unwrap();
+    // The layout a gzip-era seal left: the member as gzip, no archive.
+    fs::remove_file(scratch.path().join("000000000001.zst")).unwrap();
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(VERBATIM).unwrap();
+    fs::write(
+        scratch.path().join("000000000001.gz"),
+        encoder.finish().unwrap(),
+    )
+    .unwrap();
+    let extent = tape.extents().unwrap()[0];
+
+    assert_eq!(tape.read(locus).unwrap(), VERBATIM);
+    let range = Locus::new(1, 6, 3);
+    let (window, work) = charged(&tape, range, extent);
+    assert_eq!(
+        (window.offset, work),
+        (0, 9),
+        "gzip pays for its whole prefix"
+    );
+    assert_eq!(window.bytes, &VERBATIM[..9]);
+    let mut streamed = Vec::new();
+    tape.stream_extent(range, extent, &mut [0; 2], |chunk| {
+        streamed.extend_from_slice(chunk);
+        Ok::<(), tape::Error>(())
+    })
+    .unwrap();
+    assert_eq!(streamed, &VERBATIM[6..9]);
+
+    let next = tape.tee(b"after").unwrap();
     assert!(matches!(
-        tape.read_extent_bounded(Locus::new(locus.member, 0, 1), understated, 1),
-        Err(tape::Error::Refused(Refusal::MemberReadLimit { .. }))
+        tape.seal().unwrap(),
+        Seal::Sealed { member: 2, .. }
     ));
+    assert!(
+        scratch.path().join("000000000001.gz").exists(),
+        "gzip members are not rewritten"
+    );
+    assert_eq!(tape.read(locus).unwrap(), VERBATIM);
+    assert_eq!(tape.read(next).unwrap(), b"after");
     scratch.remove();
 }
 
@@ -205,16 +458,34 @@ fn a_locus_survives_the_rotation_of_its_member() {
 }
 
 #[test]
-fn sealing_publishes_an_indexed_private_gzip_member() {
+fn sealing_publishes_an_indexed_private_seekable_archive() {
     let scratch = Scratch::new("sealed");
     let tape = Tape::open(scratch.path()).expect("tape opens");
     tape.tee(VERBATIM).expect("bytes are captured");
 
     tape.seal().expect("the member seals");
 
-    let member = scratch.path().join("000000000001.gz");
+    let member = scratch.path().join("000000000001.zst");
     let bytes = fs::read(&member).expect("the sealed member is published");
-    assert_eq!(&bytes[..2], b"\x1f\x8b", "a sealed member is a gzip member");
+    assert_eq!(
+        &bytes[..4],
+        b"\x28\xb5\x2f\xfd",
+        "a sealed member opens with a zstd frame"
+    );
+    assert_eq!(
+        &bytes[bytes.len() - 4..],
+        b"\xb1\xea\x92\x8f",
+        "a sealed member ends with the standard seek table"
+    );
+    assert_eq!(
+        bytes[4] & 0x04,
+        0x04,
+        "every frame carries its Zstandard content checksum"
+    );
+    assert!(
+        !scratch.path().join("000000000001.gz").exists(),
+        "new seals write no gzip member"
+    );
     assert!(
         !scratch.path().join("000000000001.plain").exists(),
         "plaintext is removed once its bytes are readable elsewhere"
@@ -240,7 +511,7 @@ fn a_seal_interrupted_before_its_index_republishes_identical_bytes() {
     let tape = Tape::open(scratch.path()).expect("tape opens");
     let locus = tape.tee(VERBATIM).expect("bytes are captured");
     tape.seal().expect("the member seals");
-    let published = fs::read(scratch.path().join("000000000001.gz")).expect("member readable");
+    let published = fs::read(scratch.path().join("000000000001.zst")).expect("member readable");
 
     // A crash after the member was published and before the index named it:
     // the member is on disk, unreferenced, and the plaintext never went away.
@@ -251,7 +522,7 @@ fn a_seal_interrupted_before_its_index_republishes_identical_bytes() {
 
     assert!(matches!(resumed, Seal::Sealed { member: 1, .. }));
     assert_eq!(
-        fs::read(scratch.path().join("000000000001.gz")).expect("member readable"),
+        fs::read(scratch.path().join("000000000001.zst")).expect("member readable"),
         published,
         "re-sealing the same plaintext republishes byte-identical bytes"
     );
@@ -260,7 +531,59 @@ fn a_seal_interrupted_before_its_index_republishes_identical_bytes() {
 }
 
 #[test]
-fn a_seal_interrupted_before_cleanup_loses_no_bytes() {
+fn residue_beside_an_unfaithful_archive_is_archived_again_before_removal() {
+    let scratch = Scratch::new("residue-repair");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let bytes = noise(FRAME + 3);
+    let locus = tape.tee(&bytes).expect("bytes are captured");
+    tape.seal().expect("the member seals");
+    let archive = scratch.path().join("000000000001.zst");
+    let published = fs::read(&archive).expect("member readable");
+
+    // Residue of an interrupted cleanup, beside an archive that no longer
+    // reproduces it: the residue holds the only faithful copy.
+    fs::write(scratch.path().join("000000000001.plain"), &bytes).expect("residue restored");
+    let mut damaged = published.clone();
+    damaged[40] ^= 0x01;
+    fs::write(&archive, damaged).expect("archive damaged");
+
+    assert_eq!(
+        tape.seal().expect("recovery repairs and finishes"),
+        Seal::Empty
+    );
+    assert_eq!(fs::read(&archive).expect("member readable"), published);
+    assert!(!scratch.path().join("000000000001.plain").exists());
+    assert_eq!(tape.read(locus).expect("locus resolves"), bytes);
+    scratch.remove();
+}
+
+#[test]
+fn residue_disagreeing_with_the_index_is_refused_and_kept() {
+    let scratch = Scratch::new("residue-mismatch");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let locus = tape.tee(VERBATIM).expect("bytes are captured");
+    tape.seal().expect("the member seals");
+    let residue = scratch.path().join("000000000001.plain");
+    fs::write(&residue, b"other").expect("foreign residue planted");
+
+    assert!(matches!(
+        tape.seal(),
+        Err(tape::Error::Refused(Refusal::ResidueMismatch {
+            member: 1,
+            indexed,
+            observed: 5,
+        })) if indexed == VERBATIM.len() as u64
+    ));
+    assert_eq!(fs::read(&residue).expect("residue kept"), b"other");
+    assert!(
+        tape.read(locus).is_err(),
+        "plaintext disagreeing with the index is not served as the member"
+    );
+    scratch.remove();
+}
+
+#[test]
+fn residue_of_an_interrupted_cleanup_stays_readable_until_the_next_seal() {
     let scratch = Scratch::new("interrupted-cleanup");
     let tape = Tape::open(scratch.path()).expect("tape opens");
     let locus = tape.tee(VERBATIM).expect("bytes are captured");
@@ -268,19 +591,26 @@ fn a_seal_interrupted_before_cleanup_loses_no_bytes() {
 
     // A crash after the index named the member and before the plaintext was
     // removed: both copies exist at once.
-    fs::write(scratch.path().join("000000000001.plain"), VERBATIM).expect("plaintext restored");
+    let residue = scratch.path().join("000000000001.plain");
+    fs::write(&residue, VERBATIM).expect("plaintext restored");
 
     let next = tape.tee(b"later").expect("capture continues");
-
     assert_eq!(
-        next.member, 2,
+        next,
+        Locus::new(2, 0, 5),
         "residue of a completed seal does not reopen its member"
     );
-    assert_eq!(next.offset, 0, "the new member starts empty");
-    assert!(
-        !scratch.path().join("000000000001.plain").exists(),
-        "the interrupted seal was completed rather than left behind"
+    assert!(residue.exists(), "capture leaves recovery to the next seal");
+    assert_eq!(
+        tape.read(locus).expect("the residue serves the locus"),
+        VERBATIM
     );
+
+    assert!(matches!(
+        tape.seal().expect("the next seal recovers and rotates"),
+        Seal::Sealed { member: 2, .. }
+    ));
+    assert!(!residue.exists(), "the interrupted seal was completed");
     assert_eq!(
         tape.read(locus).expect("the sealed locus resolves"),
         VERBATIM,
@@ -301,7 +631,7 @@ fn an_empty_member_seals_nothing() {
     assert_eq!(
         tape.seal().expect("sealing is attempted"),
         Seal::Empty,
-        "a member holding no bytes is not worth a gzip member"
+        "a member holding no bytes is not worth an archive"
     );
     scratch.remove();
 }

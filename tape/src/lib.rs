@@ -9,22 +9,32 @@
 //! captures, and never rewrites a member it already sealed. The one promise it
 //! makes is positional: a [`Locus`] handed back by [`Tape::tee`] resolves to
 //! the same bytes forever, whether the member holding it is still plaintext or
-//! has since been rotated into an immutable gzip member.
+//! has since been rotated into an immutable archive.
 //!
 //! A tape directory holds plaintext for the member currently accepting
-//! appends, one gzip member per sealed member, and one index naming every
-//! sealed member and its plaintext length. Naming the plaintext after its own
-//! member number is what makes recovery unambiguous: a plaintext file whose
-//! member the index already lists is the residue of a seal that published and
-//! then died, and finishing that seal is a deletion rather than a guess.
+//! appends, one seekable Zstandard archive (`NNNNNNNNNNNN.zst`) per member
+//! [`Tape::seal`] rotated, and one index naming every sealed member and its
+//! plaintext length. Tapes sealed before archives existed keep their gzip
+//! members (`NNNNNNNNNNNN.gz`), which stay readable as they are. Naming the
+//! plaintext after its own member number is what makes recovery unambiguous:
+//! a plaintext file whose member the index already lists is the residue of a
+//! seal that published and then stopped, and finishing that seal is a
+//! verified deletion rather than a guess.
+//!
+//! Storage is chosen by which file is present, never recorded in the index:
+//! readers resolve a member's plaintext first, then its archive, then a gzip
+//! member, and treat only a missing file as absent. Sealing is a mechanism
+//! without policy. Nothing in this crate decides when a member is large or old
+//! enough to seal, and nothing converts existing members on its own.
 
 #![forbid(unsafe_code)]
 
+mod archive;
 mod read;
 mod seal;
 mod tee;
 
-pub use read::Locus;
+pub use read::{Locus, Window};
 pub use seal::{BoundedExtents, Extent, Index, Member, Seal};
 
 use std::fmt;
@@ -57,6 +67,12 @@ const PRIVATE_DIRECTORY: u32 = 0o700;
 
 /// Distinguishes concurrent stagers within one process.
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
+
+/// Leading text of every staging name.
+const STAGED_PREFIX: &str = ".tape-staged-";
+
+/// Trailing text of every staging name.
+const STAGED_SUFFIX: &str = ".tmp";
 
 /// One capture directory.
 ///
@@ -204,10 +220,16 @@ impl Tape {
             .join(format!("{member:0width$}.plain", width = seal::DIGITS))
     }
 
-    /// Sealed gzip path for one member.
+    /// Legacy sealed gzip path for one member.
     fn sealed_path(&self, member: u64) -> PathBuf {
         self.root
             .join(format!("{member:0width$}.gz", width = seal::DIGITS))
+    }
+
+    /// Seekable archive path for one member.
+    fn archive_path(&self, member: u64) -> PathBuf {
+        self.root
+            .join(format!("{member:0width$}.zst", width = seal::DIGITS))
     }
 
     /// Path of the index.
@@ -268,24 +290,6 @@ impl Tape {
         }
     }
 
-    /// Finish a seal that published its member and died before cleanup.
-    ///
-    /// A plaintext file whose member the index already names cannot be
-    /// accepting appends: the sealed member and the index both exist, so every
-    /// locus in it already resolves against the gzip member. Removing it
-    /// completes the interrupted seal rather than losing bytes.
-    fn recover(&self, index: &Index) -> Result<(), Error> {
-        let Some(last) = index.last() else {
-            return Ok(());
-        };
-        let residue = self.plain_path(last.member);
-        match fs::remove_file(&residue) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(Error::io(Operation::RemovePlaintext, residue, error)),
-        }
-    }
-
     /// Synchronize the tape directory itself.
     ///
     /// Synchronizing a file commits its bytes; it does not commit the name the
@@ -319,14 +323,18 @@ impl Tape {
             let _ = fs::remove_file(&staged);
             return Err(Error::io(Operation::StagePublication, staged, error));
         }
+        self.install(&staged, destination)
+    }
 
-        let target = atomic::Destination::new(destination)
-            .map_err(|error| Error::Publish(Box::new(error)))?;
-        if let Err(error) = target.replace_from(&staged) {
-            let _ = fs::remove_file(&staged);
+    /// Atomically replace `destination` with a closed, synchronized staged
+    /// file, removing the staged file when the replacement fails.
+    fn install(&self, staged: &Path, destination: &Path) -> Result<(), Error> {
+        let replaced =
+            atomic::Destination::new(destination).and_then(|target| target.replace_from(staged));
+        if let Err(error) = replaced {
+            let _ = fs::remove_file(staged);
             return Err(Error::Publish(Box::new(error)));
         }
-
         Ok(())
     }
 }
@@ -418,7 +426,10 @@ fn create_directory(path: &Path) -> Result<(), Error> {
 /// A staging name that cannot collide with a member, an index, or a lock.
 fn temporary_name() -> String {
     let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
-    format!(".tape-staged-{}-{sequence}.tmp", std::process::id())
+    format!(
+        "{STAGED_PREFIX}{}-{sequence}{STAGED_SUFFIX}",
+        std::process::id()
+    )
 }
 
 /// Parse the one framed source identity spelling tape publishes.
@@ -464,10 +475,16 @@ pub enum Operation {
     ReadPlaintext,
     /// Removing plaintext whose member is sealed.
     RemovePlaintext,
-    /// Reading a sealed gzip member.
+    /// Reading a legacy sealed gzip member.
     ReadSealed,
-    /// Compressing a member.
-    Compress,
+    /// Reading a seekable member archive.
+    ReadArchive,
+    /// Compressing a member's plaintext into a staged archive.
+    PrepareArchive,
+    /// Comparing a staged archive against its plaintext.
+    VerifyArchive,
+    /// Removing staged files an interrupted holder left behind.
+    RemoveStaged,
     /// Staging bytes for publication.
     StagePublication,
     /// Reading the index.
@@ -488,8 +505,11 @@ impl fmt::Display for Operation {
             Self::Append => "append verbatim bytes",
             Self::ReadPlaintext => "read plaintext",
             Self::RemovePlaintext => "remove sealed plaintext",
-            Self::ReadSealed => "read sealed member",
-            Self::Compress => "compress member",
+            Self::ReadSealed => "read sealed gzip member",
+            Self::ReadArchive => "read member archive",
+            Self::PrepareArchive => "prepare member archive",
+            Self::VerifyArchive => "verify member archive",
+            Self::RemoveStaged => "remove staged residue",
             Self::StagePublication => "stage publication",
             Self::ReadIndex => "read index",
             Self::InspectExtents => "inspect tape member extents",
@@ -544,17 +564,27 @@ pub enum Refusal {
         /// First non-current line, or the final line when framing is truncated.
         line: String,
     },
-    /// A member was neither plaintext nor sealed across a full retry.
+    /// No plaintext, archive, or gzip member holds a member the read
+    /// expected, including after a full retry against concurrent seals.
     MemberVanished {
         /// Member that could not be resolved.
         member: u64,
     },
-    /// A range or its sealed member exceeds the admitted plaintext work.
-    MemberReadLimit {
-        /// Member whose read was refused.
+    /// Plaintext beside an index entry holds a different length than the
+    /// index names, so it is neither the member's residue nor its source.
+    ResidueMismatch {
+        /// Member the index names.
         member: u64,
-        /// Maximum plaintext bytes admitted for this read.
-        limit: u64,
+        /// Plaintext length the index names.
+        indexed: u64,
+        /// Plaintext length on disk.
+        observed: u64,
+    },
+    /// A prepared archive did not reproduce its member's plaintext exactly,
+    /// so it was not published.
+    ArchiveMismatch {
+        /// Member whose archive was refused.
+        member: u64,
     },
 }
 
@@ -597,11 +627,19 @@ impl fmt::Display for Refusal {
             ),
             Self::MemberVanished { member } => write!(
                 formatter,
-                "member {member} was neither plaintext nor sealed after a full retry"
+                "no plaintext, archive, or gzip storage holds member {member}"
             ),
-            Self::MemberReadLimit { member, limit } => write!(
+            Self::ResidueMismatch {
+                member,
+                indexed,
+                observed,
+            } => write!(
                 formatter,
-                "reading tape member {member} exceeds the {limit}-byte plaintext limit"
+                "plaintext for sealed member {member} holds {observed} byte(s) where the index names {indexed}"
+            ),
+            Self::ArchiveMismatch { member } => write!(
+                formatter,
+                "the prepared archive for member {member} does not reproduce its plaintext"
             ),
         }
     }
@@ -689,13 +727,13 @@ mod tests {
         panic!("no scratch root was free within {CREATE_ATTEMPTS} attempts");
     }
 
-    struct Scratch {
+    pub(crate) struct Scratch {
         root: PathBuf,
         removed: bool,
     }
 
     impl Scratch {
-        fn new(label: &str) -> Self {
+        pub(crate) fn new(label: &str) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             let directory = std::env::temp_dir();
             let process = std::process::id();
@@ -709,11 +747,11 @@ mod tests {
             }
         }
 
-        fn path(&self) -> &Path {
+        pub(crate) fn path(&self) -> &Path {
             &self.root
         }
 
-        fn remove(mut self) {
+        pub(crate) fn remove(mut self) {
             fs::remove_dir_all(&self.root).unwrap_or_else(|error| {
                 panic!(
                     "remove the scratch root at {}: {error}",
@@ -819,7 +857,10 @@ mod tests {
             assert!(name.starts_with('.'), "{name} is not hidden");
             assert!(name.ends_with(".tmp"), "{name} is not marked temporary");
             assert!(
-                !name.ends_with(".gz") && !name.ends_with(".plain") && name != INDEX,
+                !name.ends_with(".gz")
+                    && !name.ends_with(".zst")
+                    && !name.ends_with(".plain")
+                    && name != INDEX,
                 "{name} could be mistaken for tape's own content"
             );
         }

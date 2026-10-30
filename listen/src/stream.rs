@@ -349,31 +349,6 @@ fn unread_range(
     Some((start, extent_end))
 }
 
-fn scan_extent(
-    read: impl FnOnce(Locus, tape::Extent) -> Result<Vec<u8>, ScanError>,
-    dialect: Dialect,
-    source: &SourceId,
-    extent: &tape::Extent,
-    end: Option<Position>,
-    state: &mut ScanState,
-    admit_record: &mut impl FnMut() -> Result<(), ScanError>,
-) -> Result<(), ScanError> {
-    let Some((start, extent_end)) = unread_range(extent, end, state) else {
-        return Ok(());
-    };
-    let locus = Locus::new(extent.member, start, extent_end - start);
-    let fragment = read(locus, *extent)?;
-    feed(
-        extent,
-        start,
-        &fragment,
-        dialect,
-        source,
-        state,
-        admit_record,
-    )
-}
-
 /// Split one contiguous fragment starting at `start` into complete records,
 /// holding bytes after the last delimiter for the next fragment.
 fn feed(
