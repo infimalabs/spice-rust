@@ -813,14 +813,19 @@ binds prior state: a preview refuses, before anything is touched, an existing
 target whose access reaches beyond its owner, because reversal could capture
 its bytes but never restore that access.
 
-**Invariant —** Package preview is lifecycle-effect-free. Apply revalidates
-the previewed private keeper standing before stopping its resident, retains
-that policy while replacing the appliance, then registers and starts exactly
-one owner under the new executable. Reversal unregisters the task and drains
-the resident before removing the executable, then removes the private keeper
-record and logs. An interrupted boundary is derived from the install receipt,
-keeper record, and task standing; rerunning the same direction converges
-without a shell monitor or second installer path.
+**Invariant —** Package preview is lifecycle-effect-free, and a converged
+plan — one the preview reports as no change — stays so under apply: it
+neither registers, enables, restarts, nor recreates the owner, so an explicit
+`spice down` or `spice up --uninstall` survives reapplying the installed
+build. A publishing apply revalidates the previewed private keeper standing
+before stopping its resident, retains that policy while replacing the
+appliance, then registers and starts exactly one owner under the new
+executable; a publication that fails restores the owner it stopped. Reversal
+unregisters the task and drains the resident before removing the executable,
+then removes the private keeper record and logs. An interrupted boundary is
+derived from the install receipt, keeper record, and task standing; rerunning
+the same direction converges without a shell monitor or second installer
+path.
 
 **Invariant —** A receipt generation is the volume serial and file ID of the
 object a name held. An identifier wider than 64 bits, as ReFS may assign,
