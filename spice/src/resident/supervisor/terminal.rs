@@ -474,7 +474,7 @@ impl<'a> EndingClaim<'a> {
 
     fn report(mut self, ended: &Ended) -> Report {
         if !self.running {
-            return told(self.job, ended);
+            self.owned = self.job.claim_heard().unwrap_or(false);
         }
         if !self.owned {
             return Report::answered(format!(

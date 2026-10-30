@@ -142,6 +142,27 @@ fn a_blocking_wait_owns_the_ending_before_the_job_finishes() {
 }
 
 #[test]
+fn a_wait_does_not_repeat_an_ending_already_claimed_for_delivery() {
+    let root = scratch("wait-claimed-ending");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let job = jobs.record_for_tests("cargo test", false, Some(600_000));
+    fs::write(job.log_path(), "finished\n").expect("job output");
+    job.end_for_tests(Ending::Exited { code: 0 });
+    assert!(job.claim_heard().expect("automatic delivery claim"));
+
+    let report = wait(
+        &job,
+        &Control::new(),
+        Duration::from_secs(30),
+        Duration::ZERO,
+        &mut |_| {},
+    );
+
+    assert!(report.output.contains("claimed for automatic delivery"));
+    assert_eq!(report.exit_code, None);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+#[test]
 fn a_finite_wait_reports_what_its_log_gains_though_its_directory_never_changes() {
     let root = scratch("wait-refresh");
     let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
