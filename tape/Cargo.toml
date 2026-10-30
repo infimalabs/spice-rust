@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 atomic = { path = "../atomic" }
-flate2.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 sill = { path = "../sill" }
 uuid = { version = "1.24.0", features = ["js", "v4"] }

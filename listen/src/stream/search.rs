@@ -14,7 +14,7 @@ use super::{Position, Record, ScanError};
 use crate::Dialect;
 
 /// Bytes one backward read asks for; an archived read widens to the start of
-/// the frame holding its first byte, and a gzip read to the member's start.
+/// the frame holding its first byte.
 const SEARCH_CHUNK_BYTES: u64 = 1024 * 1024;
 
 /// How far one backward search covered its tape.

@@ -16,9 +16,9 @@
 //! readers never consult it, and the next seal replaces it. Dying between the
 //! index and the removal leaves plaintext whose member the index already
 //! names. Readers prefer that plaintext, and the next seal's recovery removes
-//! it only after a published archive, or a legacy gzip member, is proven to
-//! reproduce it byte for byte; a missing or unfaithful archive is prepared
-//! again first. Capture never recovers, because recovery verifies an archive.
+//! it only after the current published archive is proven to reproduce it byte
+//! for byte; a missing, unreadable or unfaithful archive is prepared again
+//! first. Capture never recovers, because recovery verifies an archive.
 //!
 //! Plaintext is therefore never removed before the bytes it holds are
 //! verifiably readable from somewhere else, and every step runs under the
@@ -28,8 +28,6 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
-
-use flate2::read::GzDecoder;
 
 use crate::archive::{self, Archive};
 use crate::{Error, Operation, Refusal, STAGED_PREFIX, STAGED_SUFFIX, Tape, create_private};
@@ -443,9 +441,9 @@ impl Tape {
     /// the plaintext, and discard staged files no holder can still own.
     ///
     /// Plaintext whose member the index names cannot be accepting appends,
-    /// so it is residue. It is removed only once a published archive, or a
-    /// legacy gzip member, reproduces it exactly; otherwise its archive is
-    /// prepared, verified, and published again from the residue first. Only
+    /// so it is residue. It is removed only once the current published archive
+    /// reproduces it exactly; otherwise that archive is prepared, verified and
+    /// published again from the residue first. Only
     /// the last indexed member can hold residue, because every seal recovers
     /// before it rotates.
     ///
@@ -546,15 +544,13 @@ impl Tape {
     /// remedy for an unreadable or unfaithful archive is to prepare it again,
     /// never to trust it.
     fn published_reproduces(&self, member: u64) -> bool {
-        let plain = || File::open(self.plain_path(member));
-        if let Ok(file) = File::open(self.archive_path(member)) {
-            return Archive::open(file)
-                .and_then(|archive| archive.reader_from(0))
-                .and_then(|mut frames| archive::identical(&mut frames, &mut plain()?))
-                .unwrap_or(false);
-        }
-        File::open(self.sealed_path(member))
-            .and_then(|file| archive::identical(&mut GzDecoder::new(file), &mut plain()?))
+        File::open(self.archive_path(member))
+            .and_then(Archive::open)
+            .and_then(|archive| archive.reader_from(0))
+            .and_then(|mut frames| {
+                let mut plain = File::open(self.plain_path(member))?;
+                archive::identical(&mut frames, &mut plain)
+            })
             .unwrap_or(false)
     }
 

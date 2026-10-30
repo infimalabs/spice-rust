@@ -65,14 +65,16 @@ into a standard seekable Zstandard archive (level 3, frames of at most
 256 KiB, each with its Zstandard content checksum), reopens the staged archive
 and compares every decoded byte with the plaintext, renames it into place,
 publishes the index naming the member, and only then removes the plaintext,
-all under the tape's writer lock. Memory stays fixed per frame whatever the
-member size. Failure at any step leaves the plaintext readable; the next seal
-removes staged residue, replaces an archive the index never named, and removes
-indexed plaintext only after a published archive reproduces it exactly. A
-locus keeps its member, offset, and length across sealing. Readers resolve
-plaintext, then the archive, then a legacy gzip member, treat only a missing
-file as absent, and charge bounded transcript reads for every frame they
-decode. Nothing seals automatically or converts existing members. Owners:
+all under the tape's writer lock. Payload memory stays frame-bounded; seek
+metadata grows with the frame count. Failure at any step leaves the plaintext
+readable; the next seal removes staged residue, replaces an archive the index
+never named, and removes indexed plaintext only after the current archive
+reproduces it exactly. An unreadable archive is repaired from that plaintext
+or cleanup refuses without removing it; another storage format cannot
+authorize deletion. A locus keeps its member, offset, and length across sealing.
+Readers resolve plaintext, then the current archive, treat only a missing file
+as absent, and charge bounded transcript reads for every frame they decode.
+Nothing seals automatically or converts existing members. Owners:
 [`tape/src/seal.rs`](../../tape/src/seal.rs) and
 [`tape/src/read.rs`](../../tape/src/read.rs).
 

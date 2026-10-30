@@ -7,14 +7,12 @@
 //! fixture builds that directory and then asks tape to carry on.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use flate2::Compression;
-use flate2::write::GzEncoder;
 use tape::{Extent, Index, Locus, Refusal, Seal, Tape, Window};
 
 /// Bytes chosen to contain a NUL, a newline, and invalid UTF-8, so that any
@@ -256,51 +254,29 @@ fn a_corrupted_archive_is_an_error_rather_than_an_absence() {
     scratch.remove();
 }
 
+#[cfg(unix)]
 #[test]
-fn a_legacy_gzip_member_stays_readable_without_conversion() {
-    let scratch = Scratch::new("legacy-gzip");
+fn cleanup_requires_the_storage_normal_readers_select() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = Scratch::new("reader-selected-cleanup");
     let tape = Tape::open(scratch.path()).unwrap();
     let locus = tape.tee(VERBATIM).unwrap();
     tape.seal().unwrap();
-    // The layout a gzip-era seal left: the member as gzip, no archive.
-    fs::remove_file(scratch.path().join("000000000001.zst")).unwrap();
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(VERBATIM).unwrap();
-    fs::write(
-        scratch.path().join("000000000001.gz"),
-        encoder.finish().unwrap(),
-    )
-    .unwrap();
-    let extent = tape.extents().unwrap()[0];
-
-    assert_eq!(tape.read(locus).unwrap(), VERBATIM);
-    let range = Locus::new(1, 6, 3);
-    let (window, work) = charged(&tape, range, extent);
-    assert_eq!(
-        (window.offset, work),
-        (0, 9),
-        "gzip pays for its whole prefix"
+    let plain = scratch.path().join("000000000001.plain");
+    let archive = scratch.path().join("000000000001.zst");
+    fs::write(&plain, VERBATIM).unwrap();
+    fs::remove_file(&archive).unwrap();
+    symlink("000000000001.zst", &archive).unwrap();
+    assert_ne!(
+        fs::File::open(&archive).unwrap_err().kind(),
+        io::ErrorKind::NotFound
     );
-    assert_eq!(window.bytes, &VERBATIM[..9]);
-    let mut streamed = Vec::new();
-    tape.stream_extent(range, extent, &mut [0; 2], |chunk| {
-        streamed.extend_from_slice(chunk);
-        Ok::<(), tape::Error>(())
-    })
-    .unwrap();
-    assert_eq!(streamed, &VERBATIM[6..9]);
 
-    let next = tape.tee(b"after").unwrap();
-    assert!(matches!(
-        tape.seal().unwrap(),
-        Seal::Sealed { member: 2, .. }
-    ));
-    assert!(
-        scratch.path().join("000000000001.gz").exists(),
-        "gzip members are not rewritten"
-    );
+    if tape.seal().is_err() {
+        assert_eq!(fs::read(&plain).unwrap(), VERBATIM);
+    }
     assert_eq!(tape.read(locus).unwrap(), VERBATIM);
-    assert_eq!(tape.read(next).unwrap(), b"after");
     scratch.remove();
 }
 
@@ -481,10 +457,6 @@ fn sealing_publishes_an_indexed_private_seekable_archive() {
         bytes[4] & 0x04,
         0x04,
         "every frame carries its Zstandard content checksum"
-    );
-    assert!(
-        !scratch.path().join("000000000001.gz").exists(),
-        "new seals write no gzip member"
     );
     assert!(
         !scratch.path().join("000000000001.plain").exists(),

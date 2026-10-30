@@ -4742,7 +4742,6 @@ name = "tape"
 version = "0.0.0"
 dependencies = [
  "atomic",
- "flate2",
  "serde",
  "sill",
  "uuid",

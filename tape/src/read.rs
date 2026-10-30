@@ -2,10 +2,9 @@
 //!
 //! A locus is a position in captured bytes, not a position in storage, so it
 //! survives the member it names being archived. One member's bytes resolve
-//! from the first storage present, in one order: its plaintext, then its
-//! seekable archive, then a legacy gzip member. Plaintext comes first because
-//! it is authoritative wherever it survives: sealing removes it only after an
-//! archive that reproduces it and the index naming the member are durable, so
+//! from the first storage present: its plaintext, then its seekable archive.
+//! Plaintext is authoritative wherever it survives: sealing removes it only
+//! after an archive that reproduces it and the index naming it are durable, so
 //! plaintext beside an index entry is a seal's unfinished cleanup, never a
 //! stale copy. Only a missing file counts as absent; any other failure to
 //! open, decode, or verify storage is returned rather than skipped, so
@@ -25,15 +24,13 @@
 //! the member was never issued.
 //!
 //! Bounded reads charge the plaintext bytes they decode before decoding them:
-//! the range itself from plaintext, every frame the range touches from an
-//! archive, and the whole prefix through the range's end from gzip.
+//! the range itself from plaintext and every frame the range touches from an
+//! archive.
 
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::PathBuf;
-
-use flate2::read::GzDecoder;
 
 use crate::archive::Archive;
 use crate::{Error, Extent, Operation, Refusal, Tape};
@@ -92,8 +89,8 @@ impl fmt::Display for Locus {
 ///
 /// Decoding starts where the storage allows rather than where the range
 /// does, so `offset` is at or before the range's own start: the range itself
-/// for plaintext, its first frame for an archive, and zero for gzip. A reader
-/// walking backwards uses the extra bytes instead of decoding them again.
+/// for plaintext and its first frame for an archive. A reader walking backwards
+/// uses the extra bytes instead of decoding them again.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Window {
     /// Member offset of the first byte in `bytes`.
@@ -106,7 +103,6 @@ pub struct Window {
 enum Stored {
     Plain { file: File, length: u64 },
     Archive(Archive),
-    Gzip(File),
 }
 
 impl Tape {
@@ -199,9 +195,8 @@ impl Tape {
     ///
     /// `visit` receives consecutive chunks of at most `buffer.len()` bytes
     /// covering exactly the range. Plaintext is read in place. An archive
-    /// decodes from the frame holding the range's start, one frame at a time;
-    /// a legacy gzip member decodes forward, discarding the bytes before the
-    /// range. Memory stays independent of the member's size.
+    /// decodes from the frame holding the range's start, one frame at a time.
+    /// Memory holds only the current frame and the archive's seek index.
     ///
     /// # Errors
     ///
@@ -294,8 +289,7 @@ impl Tape {
             return Ok(Some(Stored::Archive(archive)));
         }
 
-        let path = self.sealed_path(member);
-        Ok(open_present(&path, Operation::ReadSealed)?.map(Stored::Gzip))
+        Ok(None)
     }
 
     /// Decode a range from resolved storage, charging the work first.
@@ -337,19 +331,6 @@ impl Tape {
                 })?;
                 Ok(Window { offset, bytes })
             }
-            Stored::Gzip(file) => {
-                charge(end)?;
-                let path = self.sealed_path(locus.member);
-                let mut bytes = Vec::new();
-                GzDecoder::new(file)
-                    .take(end)
-                    .read_to_end(&mut bytes)
-                    .map_err(|error| Error::io(Operation::ReadSealed, path, error))?;
-                if (bytes.len() as u64) < end {
-                    return Err(out_of_range(locus, bytes.len() as u64).into());
-                }
-                Ok(Window { offset: 0, bytes })
-            }
         }
     }
 
@@ -374,16 +355,6 @@ impl Tape {
                     .reader_from(locus.offset)
                     .map_err(|error| Error::io(Operation::ReadArchive, &path, error))?;
                 Ok((Operation::ReadArchive, path, Box::new(reader)))
-            }
-            Stored::Gzip(file) => {
-                let path = self.sealed_path(locus.member);
-                let mut decoder = GzDecoder::new(file);
-                let skipped = io::copy(&mut (&mut decoder).take(locus.offset), &mut io::sink())
-                    .map_err(|error| Error::io(Operation::ReadSealed, &path, error))?;
-                if skipped != locus.offset {
-                    return Err(out_of_range(locus, skipped));
-                }
-                Ok((Operation::ReadSealed, path, Box::new(decoder)))
             }
         }
     }

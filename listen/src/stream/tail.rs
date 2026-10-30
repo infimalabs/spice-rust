@@ -120,9 +120,9 @@ pub struct TailScan {
 /// suffix as independent vendor evidence. For active members, the bytes that
 /// retreat crosses are paid for once: the window reads them again, and pays
 /// only from the byte it was asked for. Archived members charge every frame a
-/// read decodes and legacy gzip members their whole decoded prefix, less the
-/// retreat bytes already paid. The end checkpoint remains before an unterminated tail,
-/// so a later forward scan cannot miss the suffix that completes it.
+/// read decodes, less the retreat bytes already paid. The end checkpoint
+/// remains before an unterminated tail, so a later forward scan cannot miss the
+/// suffix that completes it.
 ///
 /// # Errors
 ///
