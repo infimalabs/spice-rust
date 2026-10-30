@@ -758,6 +758,9 @@ impl<W: Write + Send + 'static> Driver<W> {
                     purpose == ROOM_CATCH_UP_PURPOSE || !prose.text.contains(message.as_str())
                 });
         }
+        // Record visible acknowledgements before a host-tool worker can
+        // immediately return and replay the current inbox.
+        self.cancel_answered_reminders(decoded);
         let context = decoded.context();
         let asked = match context.and_then(|context| context.dialog.as_ref()) {
             Some(Dialog::Confirm { id, title, message }) => Some(self.ask(id, title, message)),
@@ -789,7 +792,6 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
         self.restate_waits(decoded);
         let replied = self.observe_visible_reply(decoded);
-        self.cancel_answered_reminders(decoded);
         let compacted = decoded
             .events()
             .iter()

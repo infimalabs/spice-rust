@@ -245,13 +245,17 @@ fn stale_step_preempts_late_blocking_work_and_replays_only_unanswered_direction(
     assert!(seat.driver.preempt_stale(&shell, &shell_control));
     assert!(shell_control.was_interrupted());
 
-    seat.answer_in_intent(ASKED);
     seat.driver.replay_inbox();
     let steered = seat.steered();
     assert_eq!(steered.len(), 2, "{steered:?}");
-    assert!(steered[0].contains(ASKED) && steered[0].contains(LATER));
-    assert!(!steered[1].contains(ASKED), "{steered:?}");
-    assert!(steered[1].contains(LATER), "{steered:?}");
+    assert!(steered[1].contains(ASKED) && steered[1].contains(LATER));
+
+    seat.answer_in_intent(ASKED);
+    seat.driver.replay_inbox();
+    let steered = seat.steered();
+    assert_eq!(steered.len(), 3, "{steered:?}");
+    assert!(!steered[2].contains(ASKED), "{steered:?}");
+    assert!(steered[2].contains(LATER), "{steered:?}");
 
     let wait = Work::Job(JobCall {
         op: JobOp::Wait,
