@@ -14,18 +14,16 @@
 //! A tape directory holds plaintext for the member currently accepting
 //! appends, one seekable Zstandard archive (`NNNNNNNNNNNN.zst`) per member
 //! [`Tape::seal`] rotated, and one index naming every sealed member and its
-//! plaintext length. Tapes sealed before archives existed keep their gzip
-//! members (`NNNNNNNNNNNN.gz`), which stay readable as they are. Naming the
-//! plaintext after its own member number is what makes recovery unambiguous:
+//! plaintext length. Member-numbered plaintext makes recovery unambiguous:
 //! a plaintext file whose member the index already lists is the residue of a
 //! seal that published and then stopped, and finishing that seal is a
 //! verified deletion rather than a guess.
 //!
 //! Storage is chosen by which file is present, never recorded in the index:
-//! readers resolve a member's plaintext first, then its archive, then a gzip
-//! member, and treat only a missing file as absent. Sealing is a mechanism
-//! without policy. Nothing in this crate decides when a member is large or old
-//! enough to seal, and nothing converts existing members on its own.
+//! readers resolve a member's plaintext first, then its archive, and treat
+//! only a missing file as absent. Sealing is a mechanism without policy.
+//! Nothing in this crate decides when a member is large or old enough to
+//! seal, and nothing converts existing members on its own.
 
 #![forbid(unsafe_code)]
 
@@ -218,12 +216,6 @@ impl Tape {
     fn plain_path(&self, member: u64) -> PathBuf {
         self.root
             .join(format!("{member:0width$}.plain", width = seal::DIGITS))
-    }
-
-    /// Legacy sealed gzip path for one member.
-    fn sealed_path(&self, member: u64) -> PathBuf {
-        self.root
-            .join(format!("{member:0width$}.gz", width = seal::DIGITS))
     }
 
     /// Seekable archive path for one member.
@@ -475,8 +467,6 @@ pub enum Operation {
     ReadPlaintext,
     /// Removing plaintext whose member is sealed.
     RemovePlaintext,
-    /// Reading a legacy sealed gzip member.
-    ReadSealed,
     /// Reading a seekable member archive.
     ReadArchive,
     /// Compressing a member's plaintext into a staged archive.
@@ -505,7 +495,6 @@ impl fmt::Display for Operation {
             Self::Append => "append verbatim bytes",
             Self::ReadPlaintext => "read plaintext",
             Self::RemovePlaintext => "remove sealed plaintext",
-            Self::ReadSealed => "read sealed gzip member",
             Self::ReadArchive => "read member archive",
             Self::PrepareArchive => "prepare member archive",
             Self::VerifyArchive => "verify member archive",
@@ -564,8 +553,8 @@ pub enum Refusal {
         /// First non-current line, or the final line when framing is truncated.
         line: String,
     },
-    /// No plaintext, archive, or gzip member holds a member the read
-    /// expected, including after a full retry against concurrent seals.
+    /// No plaintext or archive holds a member the read expected, including
+    /// after a full retry against concurrent seals.
     MemberVanished {
         /// Member that could not be resolved.
         member: u64,
@@ -627,7 +616,7 @@ impl fmt::Display for Refusal {
             ),
             Self::MemberVanished { member } => write!(
                 formatter,
-                "no plaintext, archive, or gzip storage holds member {member}"
+                "no plaintext or archive storage holds member {member}"
             ),
             Self::ResidueMismatch {
                 member,
