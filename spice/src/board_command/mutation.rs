@@ -472,6 +472,7 @@ where
                 &post.statement().acceptance,
                 post.born(),
                 &post.statement().dependencies,
+                post.statement().intent,
                 snapshot.entries.iter(),
             )
             .into_boxed_str(),
@@ -990,6 +991,7 @@ fn commit_dependency_edit(
             &statement.acceptance,
             &statement.born,
             &statement.dependencies,
+            statement.intent,
             snapshot.entries.iter(),
         )
         .into_boxed_str(),

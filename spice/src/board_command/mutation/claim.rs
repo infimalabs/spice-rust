@@ -403,6 +403,7 @@ fn claim_answer(
                     &selected.statement().acceptance,
                     selected.born(),
                     &selected.statement().dependencies,
+                    selected.statement().intent,
                     snapshot.entries.iter(),
                 )
                 .into_boxed_str(),

@@ -508,6 +508,7 @@ fn task_header_lines(board: &BoardAnswer, task: &BoardTask) -> Vec<String> {
             &statement.acceptance,
             &statement.born,
             &statement.dependencies,
+            statement.intent,
             board.tasks.iter(),
         ),
     ]

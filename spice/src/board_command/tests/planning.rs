@@ -650,48 +650,92 @@ fn claimed_wake_cannot_adopt_implementation_into_a_planning_deliverable() {
 }
 
 #[test]
-fn an_explicit_plan_completes_on_its_own_acceptance_and_refuses_without_any() {
-    let (root, bus, epoch, seats) = fixture("planning-construction", 2);
-    let unspecified = add_planning_with(
+fn a_plan_completes_only_through_output_linked_in_either_direction() {
+    let (root, bus, epoch, seats) = fixture("planning-construction", 3);
+    let unlinked = add_planning(
         &bus,
         epoch,
-        "Construct unspecified contracts",
+        "Construct unlinked contracts",
         wire::TaskIntent::Plan,
         Some("plan,review"),
-        &[],
     );
-    let result = done(&bus, epoch, &seats[0], &unspecified);
+    let result = done(&bus, epoch, &seats[0], &unlinked);
     let Outcome::Refusal(refusal) = result else {
-        panic!("a Plan without any acceptance must refuse: {result:?}");
+        panic!("a Plan's own acceptance must not stand in for linked output: {result:?}");
     };
-    assert_eq!(refusal.reason(), "task::acceptance-missing");
+    assert_eq!(refusal.reason(), "task::plan-output-missing");
     let view = board(&bus, epoch, Actor::Operator);
-    let held = at(&view, &unspecified);
+    let held = at(&view, &unlinked);
     assert_eq!(held.workflow.body.phase.as_str(), "plan");
-    assert_eq!(
-        held.workflow
-            .body
-            .flow
-            .iter()
-            .map(wire::Phase::as_str)
-            .collect::<Vec<_>>(),
-        ["plan", "review"]
-    );
     assert!(held.claim.as_ref().is_some_and(|claim| {
         claim.body.disposition == ClaimDisposition::Active
             && claim.body.actor == Actor::Lane(seats[0].lane)
     }));
 
-    let accepted = add_planning(
+    // Settled work that predates a Plan becomes its output once the Plan
+    // depends on it.
+    let existing = add_project_with_acceptance(
         &bus,
         epoch,
-        "Construct contracts",
-        wire::TaskIntent::Plan,
-        Some("plan,review"),
+        "CONTRACT-existing",
+        "Implement the existing contract",
+        "board.test",
+        Some("todo"),
+        &["The existing contract holds"],
     );
-    assert_committed(done(&bus, epoch, &seats[1], &accepted));
+    assert_committed(done(&bus, epoch, &seats[1], &existing));
+    let depending = add_planning(
+        &bus,
+        epoch,
+        "Construct over existing work",
+        wire::TaskIntent::Plan,
+        Some("plan"),
+    );
+    connect_child(&bus, epoch, &depending, &existing);
+    assert_committed(done(&bus, epoch, &seats[1], &depending));
+
+    // So is work created later that depends on the Plan.
+    let constructing = add_planning(
+        &bus,
+        epoch,
+        "Construct later work",
+        wire::TaskIntent::Plan,
+        Some("plan"),
+    );
+    let planner = Actor::Lane(seats[2].lane);
+    authorize_lane_creation(&bus, epoch, &seats[2]);
+    claim_task(&bus, epoch, &seats[2], &planner, &constructing);
+    add_associated(
+        &bus,
+        epoch,
+        planner,
+        "Implement the constructed contract",
+        Some(&constructing),
+        None,
+    );
+    assert_committed(complete(&bus, epoch, &seats[2], &constructing));
     let view = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&view, &accepted).workflow.body.phase.as_str(), "review");
+    for plan in [&depending, &constructing] {
+        assert!(at(&view, plan).workflow.body.status.is_completed());
+    }
+    clean(&root, bus);
+}
+
+#[test]
+fn a_plan_phase_of_ordinary_work_completes_on_its_own_acceptance() {
+    let (root, bus, epoch, seats) = fixture("planning-bookend", 1);
+    let task = add_project_with_acceptance(
+        &bus,
+        epoch,
+        "ORDINARY-planned",
+        "Plan then build the contract",
+        "board.test",
+        Some("plan,todo,review"),
+        &["The planned contract holds"],
+    );
+    assert_committed(done(&bus, epoch, &seats[0], &task));
+    let view = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&view, &task).workflow.body.phase.as_str(), "todo");
     clean(&root, bus);
 }
 
@@ -1048,7 +1092,7 @@ fn a_plan_disposition_refuses_beside_a_live_output_or_an_unwitnessed_cover() {
 }
 
 #[test]
-fn operator_closed_work_lends_no_acceptance() {
+fn operator_closed_work_is_no_plan_output() {
     let (root, bus, epoch, seats) = fixture("planning-closed-construction", 1);
     let plan = add_planning_with(
         &bus,
@@ -1089,9 +1133,9 @@ fn operator_closed_work_lends_no_acceptance() {
 
     let result = done(&bus, epoch, &seats[0], &plan);
     let Outcome::Refusal(refusal) = result else {
-        panic!("operator-closed work must not lend acceptance: {result:?}");
+        panic!("operator-closed work must not count as Plan output: {result:?}");
     };
-    assert_eq!(refusal.reason(), "task::acceptance-missing");
+    assert_eq!(refusal.reason(), "task::plan-output-missing");
     let view = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&view, &plan).workflow.body.phase.as_str(), "plan");
     clean(&root, bus);
@@ -1287,7 +1331,7 @@ fn settling_one_controller_preserves_a_branch_owned_by_another_open_controller()
 }
 
 #[test]
-fn a_correction_completes_on_the_acceptance_of_the_task_it_corrects() {
+fn a_plan_correction_completes_only_through_its_own_linked_output() {
     let (root, bus, epoch, seats) = fixture("planning-correction-acceptance", 1);
     let actor = Actor::Lane(seats[0].lane);
     authorize_lane_creation(&bus, epoch, &seats[0]);
@@ -1344,31 +1388,48 @@ fn a_correction_completes_on_the_acceptance_of_the_task_it_corrects() {
             }],
         },
     ));
-    // The reviewed Plan depends on its correction, so the correction, which
-    // carries no acceptance of its own, completes on the Plan's.
+    // The correction inherits the Plan's intent, so neither the Plan's
+    // acceptance nor its own stands in for linked executable work.
     claim_task(&bus, epoch, &seats[0], &actor, &correction);
-    let view = board(&bus, epoch, actor.clone());
-    let reply = assert_committed(issue(
+    let review = || {
+        let view = board(&bus, epoch, actor.clone());
+        issue(
+            &bus,
+            epoch,
+            actor.clone(),
+            CommandKind::TaskReview,
+            progress_witnesses(
+                &view,
+                at(&view, &correction),
+                seats[0].lane,
+                seats[0].occupant,
+                true,
+            )
+            .expect("correction witnesses"),
+            &TaskReview {
+                task: correction.clone(),
+                finding: "clean".to_owned(),
+                note: None,
+                then: Vec::new(),
+                followup: Vec::new(),
+            },
+        )
+    };
+    let refused = review();
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::plan-output-missing"),
+        "{refused:?}"
+    );
+    add_associated(
         &bus,
         epoch,
         actor.clone(),
-        CommandKind::TaskReview,
-        progress_witnesses(
-            &view,
-            at(&view, &correction),
-            seats[0].lane,
-            seats[0].occupant,
-            true,
-        )
-        .expect("correction witnesses"),
-        &TaskReview {
-            task: correction.clone(),
-            finding: "clean".to_owned(),
-            note: None,
-            then: Vec::new(),
-            followup: Vec::new(),
-        },
-    ));
+        "Implement the corrected contract",
+        Some(&correction),
+        None,
+    );
+    let reply = assert_committed(review());
     let CommandAnswer::Task(answer) = reply else {
         panic!("review returns task state");
     };

@@ -71,6 +71,7 @@ pub(super) fn claim_refresh_with_clock(
                     &entry.statement().acceptance,
                     entry.born(),
                     &entry.statement().dependencies,
+                    entry.statement().intent,
                     snapshot.entries.iter(),
                 )
                 .into_boxed_str(),
@@ -388,7 +389,8 @@ fn refuse_taste_hold(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
 ///
 /// A Plan's validated no-construction disposition closes its plan phase
 /// without acceptance, and the one disposition recorded then stands for every
-/// later phase; closing the plan phase again restates it. Every other
+/// later phase; closing the plan phase again restates it. Any other completion
+/// of a task whose intent is Plan rests on linked executable work; every other
 /// successful completion rests on the task's acceptance contract.
 fn admit_completion(
     snapshot: &ValidatedSnapshot,
@@ -406,6 +408,9 @@ fn admit_completion(
         && snapshot.facts.plan_disposition(entry.born()).is_some()
     {
         return Ok(());
+    }
+    if entry.statement().intent == Some(wire::TaskIntent::Plan) {
+        return planning::require_output(snapshot, command, entry);
     }
     require_acceptance(snapshot, command, entry.born())
 }
@@ -466,7 +471,12 @@ fn admit_disposition(
                 .as_ref()
                 .is_some_and(|preparation| preparation.parent == *plan)
     });
-    if let Some(output) = constructed.or(accepted_pending_child(snapshot, entry)?) {
+    let linked = planning::plan_outputs(
+        plan,
+        &entry.statement().dependencies,
+        snapshot.answer.tasks.iter(),
+    );
+    if let Some(output) = constructed.or(linked.first().copied()) {
         return Err(refusal(
             "task::disposition-beside-output",
             Some(output.statement.body.handle.to_string()),

@@ -325,6 +325,7 @@ fn file_unfiled(
                 &post.statement().acceptance,
                 post.born(),
                 &post.statement().dependencies,
+                post.statement().intent,
                 snapshot.entries.iter(),
             )
             .into_boxed_str(),
