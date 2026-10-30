@@ -196,3 +196,23 @@ fn verification_refuses_an_archive_that_does_not_reproduce_its_plaintext() {
     );
     scratch.remove();
 }
+
+#[test]
+fn bounded_plaintext_inspection_refuses_an_oversized_index() {
+    let scratch = Scratch::new("bounded-plaintext");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    fs::write(tape.index_path(), b"more than four bytes").expect("oversized index plants");
+
+    let error = tape
+        .plaintext_bytes_bounded(4, 1)
+        .expect_err("bounded inspection refuses");
+    assert!(matches!(
+        error.refusal(),
+        Some(Refusal::IndexReadLimit {
+            limit: 4,
+            observed
+        }) if *observed > 4
+    ));
+
+    scratch.remove();
+}

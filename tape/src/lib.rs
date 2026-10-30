@@ -37,7 +37,7 @@ pub use seal::{BoundedExtents, Extent, Index, Member, Seal};
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -51,6 +51,8 @@ const SOURCE: &str = "source";
 
 /// Header of the one source identity form tape writes.
 const SOURCE_FORMAT: &str = "tape-source 1";
+/// Maximum bytes admitted while reading the fixed source identity document.
+const SOURCE_READ_LIMIT: u64 = 64;
 
 /// Name of the writer lock within a tape directory.
 const LOCK: &str = "tape.lock";
@@ -207,8 +209,34 @@ impl Tape {
     /// when its bytes are not the one form tape publishes.
     pub fn source_id(&self) -> Result<SourceId, Error> {
         let path = self.source_path();
-        let text = fs::read_to_string(&path)
+        let file =
+            File::open(&path).map_err(|error| Error::io(Operation::ReadSource, &path, error))?;
+        let metadata = file
+            .metadata()
             .map_err(|error| Error::io(Operation::ReadSource, &path, error))?;
+        if metadata.len() > SOURCE_READ_LIMIT {
+            return Err(Error::Refused(Refusal::SourceReadLimit {
+                limit: SOURCE_READ_LIMIT,
+                observed: metadata.len(),
+            }));
+        }
+        let mut bytes = Vec::with_capacity(SOURCE_READ_LIMIT as usize + 1);
+        file.take(SOURCE_READ_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| Error::io(Operation::ReadSource, &path, error))?;
+        if bytes.len() as u64 > SOURCE_READ_LIMIT {
+            return Err(Error::Refused(Refusal::SourceReadLimit {
+                limit: SOURCE_READ_LIMIT,
+                observed: bytes.len() as u64,
+            }));
+        }
+        let text = String::from_utf8(bytes).map_err(|error| {
+            Error::io(
+                Operation::ReadSource,
+                &path,
+                io::Error::new(io::ErrorKind::InvalidData, error),
+            )
+        })?;
         parse_source(&text)
     }
 
@@ -570,6 +598,13 @@ pub enum Refusal {
         /// First non-current line, or the final line when framing is truncated.
         line: String,
     },
+    /// A source identity exceeds the fixed document read bound.
+    SourceReadLimit {
+        /// Maximum source document bytes admitted by tape.
+        limit: u64,
+        /// Bytes observed before the read was refused.
+        observed: u64,
+    },
     /// No plaintext or archive holds a member the read expected, including
     /// after a full retry against concurrent seals.
     MemberVanished {
@@ -630,6 +665,10 @@ impl fmt::Display for Refusal {
             Self::MalformedSource { line } => write!(
                 formatter,
                 "the source identity line {line:?} is not the current format"
+            ),
+            Self::SourceReadLimit { limit, observed } => write!(
+                formatter,
+                "the {observed}-byte tape source identity exceeds the {limit}-byte read limit"
             ),
             Self::MemberVanished { member } => write!(
                 formatter,
@@ -830,6 +869,30 @@ mod tests {
                 .writer_contended()
                 .expect("the released writer lock is observable")
         );
+
+        scratch.remove();
+    }
+
+    #[test]
+    fn source_identity_reads_are_bounded() {
+        let scratch = Scratch::new("bounded-source");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        fs::write(
+            tape.source_path(),
+            vec![b'x'; SOURCE_READ_LIMIT as usize + 1],
+        )
+        .expect("oversized source plants");
+
+        let error = tape
+            .source_id()
+            .expect_err("oversized source identity refuses");
+        assert!(matches!(
+            error.refusal(),
+            Some(Refusal::SourceReadLimit {
+                limit: SOURCE_READ_LIMIT,
+                observed
+            }) if *observed == SOURCE_READ_LIMIT + 1
+        ));
 
         scratch.remove();
     }
