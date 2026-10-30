@@ -11,16 +11,22 @@ spice dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 spice dev xtask -- proof-image verify
 ```
 
-`build` writes the image archive with its `.sha256` and `.identity` sidecars
-under `target/proof-image/` and refuses unless the built identity matches
-`identity.txt`, the identity the release proof contract records. `load` restores
-an archive on another Docker host from an exact checkout of the same revision,
-verifying checksum and identity. `verify` exercises build and restore as one
-release verification action.
+`build` fingerprints the sorted external package identities in `Cargo.lock`,
+passes that digest into the image's `org.spice.vendor-set` label, and refuses
+unless inspection reports the same label. It writes the image archive with its
+`.sha256` and `.identity` sidecars under `target/proof-image/` and refuses
+unless the built identity matches `identity.txt`, the identity the release proof
+contract records. `load` restores an archive on another Docker host from an
+exact checkout of the same revision, verifying checksum and identity. `verify`
+exercises build and restore as one release verification action.
 
-Linux proof names an absolute Docker or Podman executable as `proof.container`
-and refuses a missing or substituted image before any battery runs; replay uses
-a read-only workspace, empty temporary caches, and no network.
+Linux proof names an absolute Docker or Podman executable as
+`proof.container`. Its one image-inspection admission compares identity,
+platform, and the current worktree's canonical vendor-set digest before any app
+or Rust compilation. A missing, substituted, or stale image refuses with
+`spice dev xtask -- proof-image build`; replay never discovers this state from a
+later Cargo failure. Admitted replay uses a read-only workspace, empty temporary
+caches, and no network.
 
 ## Container invocations
 

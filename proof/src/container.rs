@@ -12,6 +12,7 @@ use sill::{
 };
 use wire::manifest::ProofImage;
 
+use crate::VendorSet;
 use crate::challenge::Challenge;
 use crate::launch::{Launch, LaunchError, System};
 
@@ -447,20 +448,27 @@ const IMAGE_PLATFORM: &str = "amd64 linux";
 /// reach it.
 const RUN_PLATFORM: &str = "linux/amd64";
 
-/// Resolve the pinned identity against what this host actually holds.
+/// Resolve the pinned identity, platform, and vendored source set against what
+/// this host actually holds.
 ///
 /// A digest reference does not verify itself. Docker looks a bare image ID up
 /// directly, but Podman resolves a manifest digest through its local store and
 /// can answer with an image carrying a different identity, so the identity is
 /// read back rather than assumed. Resolution is also the only step that tells a
-/// host which never loaded the appliance apart from one holding the wrong one,
-/// and the platform is read in the same breath because an `arm64` image would
-/// otherwise satisfy every later check while building the wrong binaries.
+/// host which never loaded the appliance apart from one holding the wrong one.
+/// Platform and vendor-set label are read in the same probe: an `arm64` or stale
+/// image would otherwise fail later while building the wrong binaries or asking
+/// Cargo for a source the sealed environment cannot reach.
 fn resolve_image(
     runtime: &OciRuntime,
     image: &ProofImage,
+    vendor_set: &VendorSet,
     limits: Limits,
 ) -> Result<(), ContainerError> {
+    let inspect_format = format!(
+        "{{{{.Id}}}} {{{{.Architecture}}}} {{{{.Os}}}} {{{{index .Config.Labels \"{}\"}}}}",
+        crate::VENDOR_SET_LABEL
+    );
     let stdout = probe(
         runtime.launcher.as_ref(),
         &runtime.binary,
@@ -468,7 +476,7 @@ fn resolve_image(
             "image",
             "inspect",
             "--format",
-            "{{.Id}} {{.Architecture}} {{.Os}}",
+            &inspect_format,
             image.as_str(),
         ],
         "sealed proof image resolution",
@@ -476,9 +484,25 @@ fn resolve_image(
     )
     .map_err(|refusal| refusal.image(image))?;
     let observed = String::from_utf8_lossy(&stdout).trim().to_owned();
-    let expected = format!("{} {IMAGE_PLATFORM}", image.as_str());
-    if observed != expected {
-        return Err(ContainerError::ImageIdentityDrift { expected, observed });
+    let expected_identity = format!("{} {IMAGE_PLATFORM}", image.as_str());
+    let Some((observed_identity, observed_vendor_set)) = observed.rsplit_once(' ') else {
+        return Err(ContainerError::ImageIdentityDrift {
+            expected: expected_identity,
+            observed,
+        });
+    };
+    if observed_identity != expected_identity {
+        return Err(ContainerError::ImageIdentityDrift {
+            expected: expected_identity,
+            observed: observed_identity.to_owned(),
+        });
+    }
+    if observed_vendor_set != vendor_set.as_str() {
+        return Err(ContainerError::ImageVendorSetDrift {
+            image: image.as_str().to_owned(),
+            expected: vendor_set.to_string(),
+            observed: observed_vendor_set.to_owned(),
+        });
     }
     Ok(())
 }
@@ -525,8 +549,8 @@ impl Container {
     ///
     /// # Errors
     ///
-    /// Refuses an unpinned image, an unreadable workspace, or a mount path the
-    /// OCI argument grammar cannot represent exactly.
+    /// Refuses an unpinned or stale image, an unreadable workspace or lockfile,
+    /// or a mount path the OCI argument grammar cannot represent exactly.
     pub fn new(
         runtime: OciRuntime,
         image: impl Into<String>,
@@ -552,7 +576,9 @@ impl Container {
         if spelling.contains([',', '\n', '\r']) {
             return Err(ContainerError::UnrepresentableWorkspace(workspace));
         }
-        resolve_image(&runtime, &image, limits)?;
+        let vendor_set = VendorSet::read(workspace.join("Cargo.lock"))
+            .map_err(|source| ContainerError::VendorSet(Box::new(source)))?;
+        resolve_image(&runtime, &image, &vendor_set, limits)?;
 
         Ok(Self {
             runtime,

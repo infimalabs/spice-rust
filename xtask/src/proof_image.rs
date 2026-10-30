@@ -11,6 +11,7 @@ use sha2::{Digest as _, Sha256};
 
 const BUILD_TAG: &str = "spice-proof-image:build";
 const VENDOR_OPERATION: &str = "cargo vendor --locked --respect-source-config";
+const VENDOR_SET_BUILD_ARGUMENT: &str = "spice_vendor_set";
 const DEFAULT_FAILURE: u8 = 1;
 const REFUSAL: u8 = 65;
 const TOOL_CHECK: &str = concat!(
@@ -72,10 +73,10 @@ fn build_with<R: Runner>(
 ) -> Result<(), ProofImageError> {
     let state = root.join("target/proof-image");
     let context = state.join("context");
-    prepare_build_context(runner, root, archive, &context, output, diagnostic)?;
-    run_image_build(runner, root, &state, &context, diagnostic)?;
+    let vendor_set = prepare_build_context(runner, root, archive, &context, output, diagnostic)?;
+    run_image_build(runner, root, &state, &context, &vendor_set, diagnostic)?;
 
-    let identity = admit_built_image(runner, root)?;
+    let identity = admit_built_image(runner, root, &vendor_set)?;
     exercise_built_image(runner, root, &identity, output, diagnostic)?;
     export_built_image(runner, root, archive, &identity, output, diagnostic)?;
     record_archive_identity(archive, &identity)?;
@@ -91,7 +92,7 @@ fn prepare_build_context<R: Runner>(
     context: &Path,
     output: &mut impl Write,
     diagnostic: &mut impl Write,
-) -> Result<(), ProofImageError> {
+) -> Result<proof::VendorSet, ProofImageError> {
     remove_context(context)?;
     create_directory(context)?;
     create_directory(
@@ -100,6 +101,8 @@ fn prepare_build_context<R: Runner>(
             .ok_or_else(|| ProofImageError::InvalidArchive(archive.to_path_buf()))?,
     )?;
 
+    let lock = root.join("Cargo.lock");
+    let vendor_set = proof::VendorSet::read(&lock).map_err(ProofImageError::VendorSet)?;
     let vendor = context.join("vendor");
     let vendor_run = runner.run(
         VENDOR_OPERATION,
@@ -125,7 +128,14 @@ fn prepare_build_context<R: Runner>(
             &context.join(destination),
         )?;
     }
-    Ok(())
+    let observed = proof::VendorSet::read(&lock).map_err(ProofImageError::VendorSet)?;
+    if observed != vendor_set {
+        return Err(ProofImageError::VendorSetChanged {
+            before: vendor_set,
+            after: observed,
+        });
+    }
+    Ok(vendor_set)
 }
 
 fn run_image_build<R: Runner>(
@@ -133,6 +143,7 @@ fn run_image_build<R: Runner>(
     root: &Path,
     state: &Path,
     context: &Path,
+    vendor_set: &proof::VendorSet,
     diagnostic: &mut impl Write,
 ) -> Result<(), ProofImageError> {
     let build = runner.run(
@@ -146,6 +157,8 @@ fn run_image_build<R: Runner>(
             "linux/amd64".into(),
             "--provenance=false".into(),
             "--sbom=false".into(),
+            "--build-arg".into(),
+            format!("{VENDOR_SET_BUILD_ARGUMENT}={vendor_set}").into(),
             "--tag".into(),
             BUILD_TAG.into(),
             context.as_os_str().to_owned(),
@@ -183,7 +196,11 @@ fn run_image_build<R: Runner>(
     Ok(())
 }
 
-fn admit_built_image<R: Runner>(runner: &mut R, root: &Path) -> Result<String, ProofImageError> {
+fn admit_built_image<R: Runner>(
+    runner: &mut R,
+    root: &Path,
+    vendor_set: &proof::VendorSet,
+) -> Result<String, ProofImageError> {
     let expected = expected_identity(root)?;
     let inspect = runner.run(
         "docker image inspect",
@@ -192,21 +209,37 @@ fn admit_built_image<R: Runner>(runner: &mut R, root: &Path) -> Result<String, P
             "image".into(),
             "inspect".into(),
             "--format".into(),
-            "{{.Id}}".into(),
+            format!(
+                "{{{{.Id}}}} {{{{index .Config.Labels \"{}\"}}}}",
+                proof::VENDOR_SET_LABEL
+            )
+            .into(),
             BUILD_TAG.into(),
         ],
         root,
     )?;
     require_success("docker image inspect", &inspect)?;
-    let identity = one_line("docker image inspect", &inspect.stdout)?;
+    let observed = one_line("docker image inspect", &inspect.stdout)?;
+    let Some((identity, observed_vendor_set)) = observed.rsplit_once(' ') else {
+        return Err(ProofImageError::MalformedOutput {
+            operation: "docker image inspect",
+            observed,
+        });
+    };
     if identity != expected {
         return Err(ProofImageError::IdentityDrift {
             subject: "built proof image",
             expected,
-            observed: identity,
+            observed: identity.to_owned(),
         });
     }
-    Ok(identity)
+    if observed_vendor_set != vendor_set.as_str() {
+        return Err(ProofImageError::VendorSetDrift {
+            expected: vendor_set.to_string(),
+            observed: observed_vendor_set.to_owned(),
+        });
+    }
+    Ok(identity.to_owned())
 }
 
 fn exercise_built_image<R: Runner>(
@@ -522,6 +555,11 @@ pub enum ProofImageError {
         operation: &'static str,
         source: io::Error,
     },
+    VendorSet(proof::VendorSetError),
+    VendorSetChanged {
+        before: proof::VendorSet,
+        after: proof::VendorSet,
+    },
     Exit {
         operation: &'static str,
         code: Option<i32>,
@@ -543,6 +581,10 @@ pub enum ProofImageError {
         expected: String,
         observed: String,
     },
+    VendorSetDrift {
+        expected: String,
+        observed: String,
+    },
 }
 
 impl ProofImageError {
@@ -554,11 +596,16 @@ impl ProofImageError {
                 .and_then(|code| u8::try_from(code).ok())
                 .filter(|code| *code != 0)
                 .unwrap_or(DEFAULT_FAILURE),
-            Self::IdentityDrift { .. } | Self::ChecksumDrift { .. } => REFUSAL,
-            Self::Output(_) | Self::InvalidArchive(_) | Self::Io { .. } | Self::Launch { .. } => {
-                DEFAULT_FAILURE
-            }
-            Self::MalformedOutput { .. } => REFUSAL,
+            Self::IdentityDrift { .. }
+            | Self::ChecksumDrift { .. }
+            | Self::VendorSetChanged { .. }
+            | Self::VendorSetDrift { .. }
+            | Self::MalformedOutput { .. } => REFUSAL,
+            Self::Output(_)
+            | Self::InvalidArchive(_)
+            | Self::Io { .. }
+            | Self::Launch { .. }
+            | Self::VendorSet(_) => DEFAULT_FAILURE,
         }
     }
 }
@@ -582,6 +629,14 @@ impl fmt::Display for ProofImageError {
             Self::Launch { operation, source } => {
                 write!(formatter, "failed to launch {operation}: {source}")
             }
+            Self::VendorSet(source) => {
+                write!(formatter, "cannot derive proof-image vendor set: {source}")
+            }
+            Self::VendorSetChanged { before, after } => write!(
+                formatter,
+                "Cargo.lock vendor set changed while preparing the proof image: before {before}, \
+                 after {after}"
+            ),
             Self::Exit {
                 operation,
                 code: Some(code),
@@ -632,6 +687,10 @@ impl fmt::Display for ProofImageError {
                 formatter,
                 "proof archive checksum drift: expected {expected}, observed {observed}",
             ),
+            Self::VendorSetDrift { expected, observed } => write!(
+                formatter,
+                "built proof image vendor-set label drift: expected {expected}, observed {observed}",
+            ),
         }
     }
 }
@@ -642,12 +701,15 @@ impl std::error::Error for ProofImageError {
             Self::Output(source) | Self::Io { source, .. } | Self::Launch { source, .. } => {
                 Some(source)
             }
+            Self::VendorSet(source) => Some(source),
             Self::InvalidArchive(_)
             | Self::Exit { .. }
             | Self::DroppedBuild { .. }
             | Self::MalformedOutput { .. }
             | Self::IdentityDrift { .. }
-            | Self::ChecksumDrift { .. } => None,
+            | Self::ChecksumDrift { .. }
+            | Self::VendorSetChanged { .. }
+            | Self::VendorSetDrift { .. } => None,
         }
     }
 }
@@ -661,16 +723,16 @@ mod tests {
 
     const IDENTITY: &str =
         "sha256:2d5976ad79b7a4e929a115d8d10ab7b8bd00bb633b5ad6d459d048eb2f817f8a";
-
     #[test]
     fn build_records_the_streamed_archive_checksum_and_admitted_identity() {
         let fixture = Fixture::new();
         let archive = fixture.archive();
+        let vendor_set = fixture.vendor_set();
         fs::write(&archive, b"abc").expect("write fixture archive");
         let mut runner = FakeRunner::new([
             success(b"vendor\n", b""),
             success(b"build\n", b"progress\n"),
-            success(format!("{IDENTITY}\n").as_bytes(), b""),
+            success(format!("{IDENTITY} {vendor_set}\n").as_bytes(), b""),
             success(b"checked\n", b""),
             success(b"saved\n", b""),
         ]);
@@ -718,15 +780,26 @@ mod tests {
                     .into_os_string(),
             ]
         );
+        assert!(
+            runner.calls[1].arguments.windows(2).any(|arguments| {
+                arguments
+                    == [
+                        OsString::from("--build-arg"),
+                        OsString::from(format!("{VENDOR_SET_BUILD_ARGUMENT}={vendor_set}")),
+                    ]
+            }),
+            "image build did not receive the admitted vendor set"
+        );
     }
 
     #[test]
     fn build_identity_must_equal_the_tracked_identity() {
         let fixture = Fixture::new();
+        let vendor_set = fixture.vendor_set();
         let mut runner = FakeRunner::new([
             success(b"", b""),
             success(b"", b""),
-            success(b"sha256:different\n", b""),
+            success(format!("sha256:different {vendor_set}\n").as_bytes(), b""),
         ]);
 
         let error = build_with(
@@ -739,6 +812,30 @@ mod tests {
         .expect_err("identity drift refuses");
 
         assert!(matches!(error, ProofImageError::IdentityDrift { .. }));
+        assert_eq!(error.exit_code(), REFUSAL);
+    }
+    #[test]
+    fn build_vendor_set_label_must_equal_the_lockfile_set() {
+        let fixture = Fixture::new();
+        let mut runner = FakeRunner::new([
+            success(b"", b""),
+            success(b"", b""),
+            success(
+                format!("{IDENTITY} sha256:{}\n", "9".repeat(64)).as_bytes(),
+                b"",
+            ),
+        ]);
+
+        let error = build_with(
+            &mut runner,
+            &fixture.root,
+            &fixture.archive(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+        )
+        .expect_err("vendor-set label drift refuses");
+
+        assert!(matches!(error, ProofImageError::VendorSetDrift { .. }));
         assert_eq!(error.exit_code(), REFUSAL);
     }
 
@@ -953,6 +1050,7 @@ mod tests {
                 fs::write(source.join(name), format!("fixture {name}\n")).unwrap();
             }
             fs::write(source.join("identity.txt"), format!("{IDENTITY}\n")).unwrap();
+            fs::write(root.join("Cargo.lock"), "version = 4\n").unwrap();
             fs::create_dir_all(root.join("target/proof-image"))
                 .expect("create fixture proof-image state");
             Self { root }
@@ -960,6 +1058,11 @@ mod tests {
 
         fn archive(&self) -> PathBuf {
             self.root.join("target/proof-image/image.tar")
+        }
+        fn vendor_set(&self) -> String {
+            proof::VendorSet::read(self.root.join("Cargo.lock"))
+                .expect("fixture vendor set")
+                .to_string()
         }
     }
 

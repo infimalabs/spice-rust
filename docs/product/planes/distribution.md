@@ -207,15 +207,18 @@ Darwin executable outside staging; its result is not a sealed artifact.
 A Linux host stages `x86_64-unknown-linux-musl` natively. Any other host runs
 that same `stage-target` inside the pinned `linux/amd64` proof image
 (`dist/proof-image/identity.txt`, recorded as the payload's `proof_container`
-pin) through the Docker or Podman executable `proof.container` names, so the
-musl link uses the linker the image's root Cargo config pins and
-`release:canvas-version` executes the built executable inside the image.
-The host stages the app first; the image then mounts the worktree and its Git
-common directory read-only, makes `dist/stage` its one writable worktree
-path, and builds with a fresh Cargo home and target and no network. No Cargo
-config above the worktree and no host tool reaches that build. With
-`proof.container` unset or not an admitted runtime, or with the pinned image
-not loaded, staging refuses before any build and names the missing piece.
+pin) through the Docker or Podman executable `proof.container` names. One
+image-inspection admission compares its identity, Linux/amd64 platform, and the
+canonical external package set from `Cargo.lock`; a stale vendor set refuses
+before app or Rust compilation and names `spice dev xtask -- proof-image build`.
+The admitted image uses the linker its root Cargo config pins, and
+`release:canvas-version` executes the built executable inside it. The host then
+stages the app; the image mounts the worktree and its Git common directory
+read-only, makes `dist/stage` its one writable worktree path, and builds with a
+fresh Cargo home and target and no network. No Cargo config above the worktree
+and no host tool reaches that build. With `proof.container` unset or not an
+admitted runtime, or with the pinned image not loaded, staging refuses before
+any build and names the missing piece.
 
 **Invariant —** A native Darwin proof runner is sealed for exactly one
 worktree: `dist/proof-runner/build.sh` bakes that worktree's HEAD commit and
