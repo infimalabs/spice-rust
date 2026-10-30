@@ -43,8 +43,10 @@ impl StepState {
     }
 
     pub(super) fn mark_stale(&mut self) {
+        if !self.is_stale() {
+            self.replayed = false;
+        }
         self.stale = Some(self.current);
-        self.replayed = false;
     }
 
     pub(super) fn is_stale(&self) -> bool {

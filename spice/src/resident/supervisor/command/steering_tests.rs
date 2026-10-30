@@ -262,14 +262,23 @@ fn stale_step_preempts_late_blocking_work_and_replays_only_unanswered_direction(
     assert!(steered[1].contains(ASKED) && steered[1].contains(LATER));
 
     seat.answer_in_intent(ASKED);
-    seat.driver.replay_inbox();
-    assert_eq!(seat.steered().len(), 2, "one generation replays once");
-
     seat.driver
         .step
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .mark_stale();
+    seat.driver.replay_inbox();
+    assert_eq!(seat.steered().len(), 2, "one generation replays once");
+
+    {
+        let mut step = seat
+            .driver
+            .step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        step.started();
+        step.mark_stale();
+    }
     seat.driver.replay_inbox();
     let steered = seat.steered();
     assert_eq!(steered.len(), 3, "{steered:?}");
