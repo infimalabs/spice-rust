@@ -128,3 +128,31 @@ fn guidance_never_changes_the_structured_preview() {
         );
     }
 }
+
+#[test]
+fn a_converged_apply_leaves_the_owner_while_a_publication_ensures_or_restores_it() {
+    // converged, lifecycle, applied, owned
+    let converged_windows = owner_step(true, true, true, false);
+    assert_eq!(
+        converged_windows,
+        OwnerStep::Leave,
+        "a plan previewed as no change recreates no removed owner"
+    );
+    assert_eq!(owner_step(false, true, true, false), OwnerStep::Ensure);
+    assert_eq!(owner_step(false, true, true, true), OwnerStep::Ensure);
+    assert_eq!(
+        owner_step(false, true, false, true),
+        OwnerStep::Ensure,
+        "a failed replacement restores the owner it quiesced"
+    );
+    assert_eq!(
+        owner_step(false, true, false, false),
+        OwnerStep::Leave,
+        "a failed first publication installs nothing"
+    );
+    assert_eq!(
+        owner_step(false, false, true, false),
+        OwnerStep::Leave,
+        "hosts without the facility never register an owner"
+    );
+}

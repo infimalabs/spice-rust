@@ -175,7 +175,8 @@ fn apply_with_keeper(
         });
     }
     let lifecycle = prepared.plan().lifecycle_owner().cloned();
-    let owned = if prepared.converged() {
+    let converged = prepared.converged();
+    let owned = if converged {
         false
     } else if let Some(expected) = &lifecycle {
         match crate::resident::keeper::quiesce_for_install(repository, expected, ambient) {
@@ -186,15 +187,35 @@ fn apply_with_keeper(
         false
     };
     let applied = spice::install::apply_prepared(repository, Some(executable), prepared);
-    let ensure = if lifecycle.is_some() && (applied.is_ok() || owned) {
-        ensure_keeper(repository)
-    } else {
-        Ok(())
+    let ensure = match owner_step(converged, lifecycle.is_some(), applied.is_ok(), owned) {
+        OwnerStep::Ensure => ensure_keeper(repository),
+        OwnerStep::Leave => Ok(()),
     };
     match (applied, ensure) {
         (Ok(receipt), Ok(())) => result(Ok(receipt)),
         (Ok(_), Err(outcome)) => cast_outcome(outcome),
         (Err(error), _) => failure(error),
+    }
+}
+
+/// What a digest-bound apply owes the Windows lifecycle owner once its
+/// publication has run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnerStep {
+    /// Touch nothing: the owner keeps whatever standing it had.
+    Leave,
+    /// Register and start the owner under the installed executable.
+    Ensure,
+}
+
+/// A converged plan previews as no change and so performs none, preserving an
+/// explicit `down` or `up --uninstall`. A publication that ran ensures the
+/// owner when it succeeded, or restores the owner it quiesced when it failed.
+fn owner_step(converged: bool, lifecycle: bool, applied: bool, owned: bool) -> OwnerStep {
+    if lifecycle && !converged && (applied || owned) {
+        OwnerStep::Ensure
+    } else {
+        OwnerStep::Leave
     }
 }
 
