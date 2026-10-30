@@ -5,7 +5,7 @@ mod canvas_selection_tests;
 mod identity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RuntimePaths {
+pub(crate) struct RuntimePaths {
     pub(super) worktree: PathBuf,
     pub(super) common: PathBuf,
     pub(super) runtime: PathBuf,
@@ -15,7 +15,7 @@ pub(super) struct RuntimePaths {
     pub(super) serve: PathBuf,
     pub(super) lane_serve: PathBuf,
     pub(super) degraded: PathBuf,
-    pub(super) tape: PathBuf,
+    pub(crate) tape: PathBuf,
     pub(super) supervisors: PathBuf,
     pub(super) steering_media: PathBuf,
     pub(super) stage: PathBuf,
@@ -155,7 +155,7 @@ impl RuntimePaths {
         Self::from_repository(&repository)
     }
 
-    pub(super) fn from_repository(repository: &Repository) -> CommandResult<Self> {
+    pub(crate) fn from_repository(repository: &Repository) -> CommandResult<Self> {
         let state = repository
             .admit_resident_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;
