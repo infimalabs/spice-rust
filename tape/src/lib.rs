@@ -846,10 +846,7 @@ mod tests {
             assert!(name.starts_with('.'), "{name} is not hidden");
             assert!(name.ends_with(".tmp"), "{name} is not marked temporary");
             assert!(
-                !name.ends_with(".gz")
-                    && !name.ends_with(".zst")
-                    && !name.ends_with(".plain")
-                    && name != INDEX,
+                !name.ends_with(".zst") && !name.ends_with(".plain") && name != INDEX,
                 "{name} could be mistaken for tape's own content"
             );
         }
