@@ -7,13 +7,14 @@ use memchr::{memmem, memrchr_iter};
 use tape::{Extent, Locus, SourceId, Tape};
 
 use super::tail::{
-    TailBudget, TailWork, Window, WorkTracker, bounded_extents, bounded_read, scan_window,
+    TailBudget, TailWork, Window, WorkTracker, bounded_extents, charged_window, scan_window,
     tape_error,
 };
 use super::{Position, Record, ScanError};
 use crate::Dialect;
 
-/// Active-member bytes one backward read inspects.
+/// Bytes one backward read asks for; an archived read widens to the start of
+/// the frame holding its first byte, and a gzip read to the member's start.
 const SEARCH_CHUNK_BYTES: u64 = 1024 * 1024;
 
 /// How far one backward search covered its tape.
@@ -132,25 +133,18 @@ impl Search<'_> {
                         offset: end,
                     }));
                 }
-                let start = if extent.sealed {
-                    0
-                } else {
-                    end.saturating_sub(SEARCH_CHUNK_BYTES)
-                };
-                tracker.read(if extent.sealed {
-                    extent.length
-                } else {
-                    end - start
-                })?;
-                let chunk = bounded_read(
+                let wanted = end.saturating_sub(SEARCH_CHUNK_BYTES);
+                let window = charged_window(
                     self.tape,
-                    Locus::new(extent.member, start, end - start),
+                    Locus::new(extent.member, wanted, end - wanted),
                     *extent,
+                    |work| tracker.read(work),
                 )?;
                 tracker.check_duration()?;
+                let start = window.offset;
                 self.remaining = self.remaining.saturating_sub(end - start);
                 if let ControlFlow::Break(stop) =
-                    self.walk(extent.member, start, chunk, tracker, visit)?
+                    self.walk(extent.member, start, window.bytes, tracker, visit)?
                 {
                     return Ok(stop);
                 }

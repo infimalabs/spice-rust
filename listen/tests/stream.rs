@@ -32,7 +32,7 @@ const MULTI_MEMBER_WINDOW_RECORDS: usize = 7;
 const SCAN_CHUNK_BYTES: usize = 1024 * 1024;
 
 #[test]
-fn a_sealed_tail_cannot_hide_whole_member_decompression_behind_a_small_window() {
+fn a_sealed_tail_cannot_hide_frame_decompression_behind_a_small_window() {
     let scratch = Scratch::new("sealed-tail-work");
     let tape = Tape::open(scratch.path()).unwrap();
     tape.tee(&line(PROSE).repeat(4096)).unwrap();
@@ -57,6 +57,55 @@ fn a_sealed_tail_cannot_hide_whole_member_decompression_behind_a_small_window() 
             ..
         }
     ));
+    scratch.remove();
+}
+
+#[test]
+fn a_sealed_tail_pays_for_the_frames_it_decodes_rather_than_its_member() {
+    const FRAME: u64 = 256 * 1024;
+    let scratch = Scratch::new("sealed-tail-frames");
+    let tape = Tape::open(scratch.path()).unwrap();
+    let records = line(PROSE).repeat(32 * 1024);
+    let member = u64::try_from(records.len()).expect("member length fits");
+    tape.tee(&records).unwrap();
+    tape.seal().unwrap();
+    // A retreat touches at most two frames, and so does the window it found.
+    let allowance = 4 * FRAME + RETREAT_SLACK_BYTES;
+    assert!(
+        member > 2 * allowance,
+        "the member alone exceeds the budget"
+    );
+
+    let tail = scan_tail(
+        scratch.path(),
+        Dialect::Omp,
+        TailBudget::new(
+            SMALL_WINDOW_BYTES,
+            allowance,
+            SMALL_WINDOW_RECORDS,
+            TEST_PASS_LIMIT,
+            TEST_DURATION,
+        )
+        .unwrap(),
+    )
+    .expect("a small window over an archived member is affordable");
+    let span = u64::try_from(line(PROSE).len()).expect("record length fits");
+    assert_eq!(
+        tail.scan.records.len() as u64,
+        SMALL_WINDOW_BYTES / span + 1,
+        "the window holds the newest records whole"
+    );
+    assert_eq!(tail.start.next.member, 1);
+    assert_eq!(
+        tail.start.next.offset % span,
+        0,
+        "the window starts on a record"
+    );
+    assert!(
+        tail.work.source_bytes <= allowance,
+        "{}",
+        tail.work.source_bytes
+    );
     scratch.remove();
 }
 fn tail_budget(window_bytes: u64) -> TailBudget {

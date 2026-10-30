@@ -27,10 +27,10 @@ impl Tape {
     /// returned in any of those cases.
     pub fn tee(&self, bytes: &[u8]) -> Result<Locus, Error> {
         let _possession = self.possess()?;
-        let index = self.read_index()?;
-        self.recover(&index)?;
-
-        let member = index.next_member();
+        // Residue of an interrupted seal is left for the next seal: removing it
+        // means verifying an archive, which a capture path cannot afford, and
+        // residue never receives appends because its member is indexed.
+        let member = self.read_index()?.next_member();
         let path = self.plain_path(member);
         let mut file =
             open_member(&path).map_err(|error| Error::io(Operation::Append, &path, error))?;

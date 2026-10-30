@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use tape::{Extent, Locus, SourceId, Tape};
 
-use super::{Checkpoint, Position, Scan, ScanError, ScanState, scan_extent, validate_position};
+use super::{
+    Checkpoint, Position, Scan, ScanError, ScanState, feed, unread_range, validate_position,
+};
 use crate::Dialect;
 
 /// Bytes inspected at once while locating the preceding complete-record
@@ -117,8 +119,9 @@ pub struct TailScan {
 /// allowance retains bytes and passes, so the scanner never interprets a record
 /// suffix as independent vendor evidence. For active members, the bytes that
 /// retreat crosses are paid for once: the window reads them again, and pays
-/// only from the byte it was asked for. Each sealed read pays for decompression
-/// of the whole member. The end checkpoint remains before an unterminated tail,
+/// only from the byte it was asked for. Archived members charge every frame a
+/// read decodes and legacy gzip members their whole decoded prefix, less the
+/// retreat bytes already paid. The end checkpoint remains before an unterminated tail,
 /// so a later forward scan cannot miss the suffix that completes it.
 ///
 /// # Errors
@@ -425,41 +428,32 @@ pub(super) fn scan_window(
     };
     for extent in extents {
         tracker.pass()?;
-        if extent.member < state.position.member {
-            continue;
-        }
         if end.is_some_and(|end| extent.member > end.member) {
             break;
         }
-        let start = if extent.member == state.position.member {
-            state.position.offset
-        } else {
-            0
+        let Some((start, extent_end)) = unread_range(extent, end, &mut state) else {
+            continue;
         };
-        let extent_end = end
-            .filter(|end| end.member == extent.member)
-            .map_or(extent.length, |end| end.offset.min(extent.length));
-        let unpaid = if extent.sealed && start < extent_end {
-            extent.length
-        } else {
-            window.unpaid(extent, start, extent_end)
-        };
-        if unpaid > 0 {
-            tracker.read(unpaid)?;
-        }
-        let scanned = {
-            let mut admit_record = || tracker.record();
-            scan_extent(
-                |locus, extent| bounded_read(tape, locus, extent),
-                dialect,
-                source,
-                extent,
-                end,
-                &mut state,
-                &mut admit_record,
-            )
-        };
-        scanned?;
+        let length = extent_end - start;
+        let credit = length - window.unpaid(extent, start, extent_end);
+        let fragment = charged_extent(
+            tape,
+            Locus::new(extent.member, start, length),
+            *extent,
+            |work| match work.saturating_sub(credit) {
+                0 => Ok(()),
+                due => tracker.read(due),
+            },
+        )?;
+        feed(
+            extent,
+            start,
+            &fragment,
+            dialect,
+            source,
+            &mut state,
+            &mut || tracker.record(),
+        )?;
         tracker.check_duration()?;
     }
     Ok(state)
@@ -543,12 +537,15 @@ fn preceding_boundary(
         };
         while end > 0 {
             let start = end.saturating_sub(BOUNDARY_CHUNK_BYTES);
-            let length = end - start;
-            tracker.read(if extent.sealed { extent.length } else { length })?;
-            let fragment = bounded_read(tape, Locus::new(extent.member, start, length), extent)?;
+            let window = charged_window(
+                tape,
+                Locus::new(extent.member, start, end - start),
+                extent,
+                |work| tracker.read(work),
+            )?;
             tracker.check_duration()?;
-            if let Some(newline) = fragment.iter().rposition(|byte| *byte == b'\n') {
-                let offset = start + newline as u64 + 1;
+            if let Some(newline) = window.bytes.iter().rposition(|byte| *byte == b'\n') {
+                let offset = window.offset + newline as u64 + 1;
                 return Ok(if extent.sealed && offset == extent.length {
                     Position {
                         member: extent.member + 1,
@@ -561,7 +558,7 @@ fn preceding_boundary(
                     }
                 });
             }
-            end = start;
+            end = window.offset;
         }
     }
     // Every extent back to the first byte carried no newline, so the record
@@ -611,16 +608,47 @@ pub(super) fn tape_error(path: &Path, source: tape::Error) -> ScanError {
     }
 }
 
-pub(super) fn bounded_read(
+/// A charged read's failure: the work budget's refusal or tape's own.
+enum Charged {
+    Budget(ScanError),
+    Tape(tape::Error),
+}
+
+impl From<tape::Error> for Charged {
+    fn from(source: tape::Error) -> Self {
+        Self::Tape(source)
+    }
+}
+
+impl Charged {
+    fn settle(self, tape: &Tape) -> ScanError {
+        match self {
+            Self::Budget(error) => error,
+            Self::Tape(source) => tape_error(tape.root(), source),
+        }
+    }
+}
+
+/// Read exactly `locus`, charging the plaintext tape decodes to produce it
+/// before any of it is decoded.
+pub(super) fn charged_extent(
     tape: &Tape,
     locus: Locus,
     extent: Extent,
+    charge: impl FnOnce(u64) -> Result<(), ScanError>,
 ) -> Result<Vec<u8>, ScanError> {
-    let maximum = if extent.sealed {
-        extent.length
-    } else {
-        locus.length
-    };
-    tape.read_extent_bounded(locus, extent, maximum)
-        .map_err(|source| tape_error(tape.root(), source))
+    tape.read_extent(locus, extent, |work| charge(work).map_err(Charged::Budget))
+        .map_err(|error| error.settle(tape))
+}
+
+/// Read every decoded byte from where storage lets `locus` begin through its
+/// end, charging that work before any of it is decoded.
+pub(super) fn charged_window(
+    tape: &Tape,
+    locus: Locus,
+    extent: Extent,
+    charge: impl FnOnce(u64) -> Result<(), ScanError>,
+) -> Result<tape::Window, ScanError> {
+    tape.read_window(locus, extent, |work| charge(work).map_err(Charged::Budget))
+        .map_err(|error| error.settle(tape))
 }
