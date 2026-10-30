@@ -236,6 +236,31 @@ impl fmt::Display for AppOpen {
     }
 }
 
+/// Receipt for removing one repository's installed Windows lifecycle owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeeperRemoved {
+    /// Task Scheduler path the registration held.
+    pub task: String,
+    /// Whether a resident was serving and was drained on the way out.
+    pub drained: bool,
+}
+
+impl fmt::Display for KeeperRemoved {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "Removed lifecycle owner {}; {}",
+            self.task,
+            if self.drained {
+                "the resident it kept was drained"
+            } else {
+                "no resident was serving"
+            }
+        )
+    }
+}
+
 /// Receipt for one native window session over the console, answered once
 /// the operator closes the window.
 ///

@@ -176,11 +176,23 @@ pub(crate) fn launch(
     open: bool,
     ambient: &Ambient,
 ) -> Outcome<wire::AppOpen> {
+    launch_held(leaf, handoff_token, open, ambient).0
+}
+
+/// [`launch`], also handing back the ready child so a lifecycle owner can
+/// wait on its exit. The child is detached either way; dropping the handle
+/// leaves it running.
+pub(crate) fn launch_held(
+    leaf: &clap::ArgMatches,
+    handoff_token: Option<String>,
+    open: bool,
+    ambient: &Ambient,
+) -> (Outcome<wire::AppOpen>, Option<Child>) {
     let spawned = PreparedLaunch::admit(leaf, handoff_token)
         .and_then(|launch| launch.spawn(leaf, ChildRole::Resident { open }, ambient));
     match spawned {
         Ok(launch) => launch.wait(),
-        Err(outcome) => map_failure(outcome),
+        Err(outcome) => (map_failure(outcome), None),
     }
 }
 
@@ -343,7 +355,7 @@ struct SpawnedLaunch {
 }
 
 impl SpawnedLaunch {
-    fn wait(mut self) -> Outcome<wire::AppOpen> {
+    fn wait(mut self) -> (Outcome<wire::AppOpen>, Option<Child>) {
         let ready = wait_for_ready(
             &mut self.child,
             self.observer,
@@ -357,16 +369,19 @@ impl SpawnedLaunch {
             &mut self.parent_handoff,
         );
         match ready {
-            Ok(discovery) => Outcome::Reply(Reply {
-                position: ReplyPosition::Direct {},
-                body: wire::AppOpen {
-                    endpoint: discovery.endpoint,
-                    epoch: discovery.epoch,
-                },
-            }),
+            Ok(discovery) => (
+                Outcome::Reply(Reply {
+                    position: ReplyPosition::Direct {},
+                    body: wire::AppOpen {
+                        endpoint: discovery.endpoint,
+                        epoch: discovery.epoch,
+                    },
+                }),
+                Some(self.child),
+            ),
             Err(outcome) => {
                 terminate_group(&mut self.child);
-                outcome.map_or_else(
+                let failure = outcome.map_or_else(
                     || {
                         map_failure(environment_fault(
                             "resident::daemon-child-exited",
@@ -374,7 +389,8 @@ impl SpawnedLaunch {
                         ))
                     },
                     map_failure,
-                )
+                );
+                (failure, None)
             }
         }
     }
@@ -542,7 +558,7 @@ fn warn_readiness_pending(log_path: &Path, warn_horizon: Duration, horizon: Dura
 
 /// Set an oversized log aside under [`LOG_ROTATED_SUFFIX`] before a resident
 /// starts appending to a fresh one; a missing or small log is left alone.
-fn rotate_log(path: &Path) -> io::Result<()> {
+pub(crate) fn rotate_log(path: &Path) -> io::Result<()> {
     let oversized = fs::metadata(path).is_ok_and(|metadata| metadata.len() > LOG_ROTATE_BYTES);
     if !oversized {
         return Ok(());
@@ -552,7 +568,7 @@ fn rotate_log(path: &Path) -> io::Result<()> {
     fs::rename(path, rotated)
 }
 
-fn open_log(path: &Path) -> io::Result<File> {
+pub(crate) fn open_log(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).append(true).read(true);
     #[cfg(unix)]

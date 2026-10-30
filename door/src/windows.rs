@@ -323,7 +323,12 @@ fn owner_only() -> io::Result<Descriptor> {
     Ok(Descriptor(descriptor))
 }
 
-fn current_user_sid() -> io::Result<String> {
+/// The string SID of the principal this process runs as.
+///
+/// # Errors
+///
+/// Returns the operating-system refusal opening or reading the process token.
+pub fn current_user_sid() -> io::Result<String> {
     let mut token: HANDLE = null_mut();
     // SAFETY: the current process pseudo-handle needs no closing; `token`
     // receives an owned handle.

@@ -780,6 +780,9 @@ fn down_from_with(
             ));
         }
     };
+    if let Err(outcome) = super::keeper::hold_stopped(&repository) {
+        return typed_outcome(outcome);
+    }
     let paths = match ResidentClientPaths::from_repository(&repository) {
         Ok(paths) => paths,
         Err(outcome) => return typed_outcome(outcome),

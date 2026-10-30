@@ -113,11 +113,17 @@ pub(super) fn resident_up(
     test_app_stage: bool,
     ambient: &spice::ambient::Ambient,
 ) -> ! {
+    if leaf.get_flag("keeper") {
+        deliver(&resident::keeper::keep(ambient), form);
+    }
+    if leaf.get_flag("install") {
+        deliver_display(&resident::keeper::install(leaf, ambient), form);
+    }
+    if leaf.get_flag("uninstall") {
+        deliver_display(&resident::keeper::uninstall(ambient), form);
+    }
     if !leaf.get_flag("foreground") {
-        deliver_display(
-            &resident::launch(leaf, None, leaf.get_flag("open"), ambient),
-            form,
-        );
+        deliver_display(&resident::keeper::up_detached(leaf, ambient), form);
     }
     let child = match resident::ChildLaunch::capture(ambient) {
         Ok(child) => child,
