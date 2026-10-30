@@ -108,7 +108,7 @@ fn a_finite_wait_reports_the_job_and_latest_output_while_it_remains_blocked() {
 }
 
 #[test]
-fn a_blocking_wait_owns_the_ending_before_the_job_finishes() {
+fn a_blocking_wait_claims_only_the_ending_it_reports() {
     let root = scratch("wait-ending-claim");
     let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
     let job = jobs.record_for_tests("cargo test", false, Some(600_000));
@@ -124,9 +124,10 @@ fn a_blocking_wait_owns_the_ending_before_the_job_finishes() {
             if !ended {
                 ended = true;
                 assert!(
-                    !job.claim_heard().expect("automatic delivery claim"),
-                    "the blocking wait reserves the ending"
+                    job.claim_heard().expect("automatic delivery claim"),
+                    "a running wait must not durably mark a future ending delivered"
                 );
+                job.release_heard().expect("release probe claim");
                 job.end_for_tests(Ending::Exited { code: 0 });
             }
         },
