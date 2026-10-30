@@ -24,6 +24,8 @@ pub(crate) struct KeeperRecord {
     pub(crate) task: String,
     /// The appliance registered as the task's action.
     pub(crate) executable: PathBuf,
+    /// Digest of the appliance bytes the running keeper must launch.
+    pub(crate) binary: wire::Digest,
     /// Directory the task starts the keeper in.
     pub(crate) working_directory: PathBuf,
     /// Address the kept resident listens on; port 0 until the first resident
@@ -75,10 +77,22 @@ impl KeeperRecord {
         }
     }
 
-    /// Whether a resident relaunched from `next` would serve differently
-    /// than one running from this record.
+    /// Whether applying `next` requires replacing the running task action,
+    /// rather than merely letting the current keeper relaunch its child.
+    pub(crate) fn owner_changed_by(&self, next: &Self) -> bool {
+        self.binary != next.binary
+            || self.executable != next.executable
+            || self.working_directory != next.working_directory
+    }
+
+    /// Whether applying `next` must retire the current resident or owner.
+    ///
+    /// The running keeper launches its own executable, so changing the
+    /// appliance bytes, executable path, or task working directory is as
+    /// material as changing the resident's listen or access policy.
     pub(crate) fn reconfigured_by(&self, next: &Self) -> bool {
-        self.listen != next.listen
+        self.owner_changed_by(next)
+            || self.listen != next.listen
             || self.allow_insecure_bind != next.allow_insecure_bind
             || self.auth_token != next.auth_token
     }

@@ -191,11 +191,13 @@ access flag refuses with `resident::keeper-installed` and points at
 finds it disabled when the resident exits and stops; the resident stays down
 until `spice up`. `spice up --uninstall` disables the task, drains a serving
 resident, stops and deletes the task, and removes the record, log, and lock.
-Install and apply are idempotent: a reinstall with the same flags keeps the
-pinned port and the serving resident; one that changes the listen address,
-bind consent, or token writes the new record, drains the serving resident
-cleanly, and the keeper relaunches from the new record. Uninstall on an absent
-owner refuses with `resident::keeper-not-installed`. The task runs the user's
+Install and apply are idempotent. A first install drains any ordinary detached
+resident before the keeper takes ownership. A reinstall with the same
+executable, working directory, and flags keeps the pinned port and serving
+resident; one that changes the executable, worktree, listen address, bind
+consent, or token writes the new record, drains the serving resident cleanly,
+retires the previous keeper, and starts the refreshed task. Uninstall on an
+absent owner refuses with `resident::keeper-not-installed`. The task runs the
 unelevated token, so install from an unelevated terminal: an elevated install
 leaves the state directory owned by Administrators, which the kept resident
 and the user's app then fail to admit as their own discovery. `spice app`
