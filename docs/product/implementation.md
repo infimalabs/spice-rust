@@ -74,9 +74,28 @@ or cleanup refuses without removing it; another storage format cannot
 authorize deletion. A locus keeps its member, offset, and length across sealing.
 Readers resolve plaintext, then the current archive, treat only a missing file
 as absent, and charge bounded transcript reads for every frame they decode.
-Nothing seals automatically or converts existing members. Owners:
+Readers and archival share the same storage implementation:
 [`tape/src/seal.rs`](../../tape/src/seal.rs) and
 [`tape/src/read.rs`](../../tape/src/read.rs).
+
+Lane supervisors opportunistically seal only their own lane/vendor tape at
+startup or after clean local capture completion. Retained plaintext, including
+interrupted seal cleanup, must total at least **16 MiB**; this is a minimum
+for maintenance, never a trigger to rotate or interrupt active capture.
+Startup requires a terminal predecessor with durable capture-drain proof and
+waits for its supervisor's kernel exit before opening the next capture.
+That handoff and maintenance run outside the successor's launch horizons.
+Shutdown requires reaping, fully drained selected output and capture delivery,
+and no remaining driver work, even if the agent withdrew the tool call.
+Both boundaries require current lane/vendor/worktree/epoch ownership, no
+authoritative live claim, and no unresolved or unheard lane jobs. Unknown
+eligibility skips maintenance; the tape writer lock refuses contention.
+Shutdown publishes the real completion and ending notice before compression,
+so storage failure is diagnostic and cannot change the agent result or delay
+its ending notification. A retained idle agent, renewal alone, and resident
+restart or shutdown with live supervisors do not trigger archival. No global
+scan or historical conversion runs. Policy owner:
+[`supervisor/archival.rs`](../../spice/src/resident/supervisor/archival.rs).
 
 Occupants cooperate under one Unix user. Capabilities bind attribution, lane,
 occupant, and epoch; they are workflow interlocks, not isolation between

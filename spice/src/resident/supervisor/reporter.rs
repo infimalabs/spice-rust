@@ -43,6 +43,15 @@ impl DurableReporter {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(driver);
     }
 
+    /// Called only after SILL joined every selected capture delivery.
+    pub(super) fn quiescent(&self) -> bool {
+        self.driver
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_none_or(|driver| driver.quiescent())
+    }
+
     pub(super) fn send(&self, notice: &Notice) {
         let Ok(bytes) = serde_json::to_vec(notice) else {
             return;

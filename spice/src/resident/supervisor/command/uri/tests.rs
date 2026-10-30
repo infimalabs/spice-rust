@@ -101,6 +101,34 @@ fn settled(exits: &mpsc::Receiver<()>, answering: usize) {
 }
 
 #[test]
+fn withdrawing_a_tool_does_not_make_its_running_work_quiescent() {
+    let (entered, entry) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (driver, exits) = driver(move |_, _| {
+        entered.send(()).expect("entry remains observed");
+        let _ = released.lock().expect("release locks").recv();
+        Ok("finished".to_owned())
+    });
+    driver.serve_uri("pending", "read", TARGET, None);
+    entry
+        .recv_timeout(Duration::from_secs(10))
+        .expect("tool starts");
+    driver.withdraw_uri("pending");
+    let while_running = driver.quiescent();
+    drop(release);
+    settled(&exits, 1);
+    assert!(
+        !while_running,
+        "withdrawal did not finish the resource operation"
+    );
+    assert!(
+        driver.quiescent(),
+        "only actual completion retires its work"
+    );
+}
+
+#[test]
 fn a_read_answers_with_the_resource_or_its_refusal() {
     let (driver, exits) = driver(|target, _| {
         if target == TARGET {

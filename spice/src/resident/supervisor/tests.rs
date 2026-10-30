@@ -53,6 +53,7 @@ fn terminal_state(
         reap_millis: Some(20_000),
         completion: CompletionField::some(completion),
         failure: None,
+        capture_drained: false,
     }
 }
 
@@ -368,6 +369,7 @@ fn unsupported_state_versions_are_refused_without_a_legacy_execution_path() {
         reap_millis: None,
         completion: CompletionField::none(),
         failure: None,
+        capture_drained: false,
     })
     .expect("current state encodes");
     for version in [1, 2, 3] {

@@ -106,13 +106,13 @@ impl<W: Write + Send + 'static> Driver<W> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id.to_owned());
-        let driver = Arc::clone(self);
+        let worker = self.worker();
         let (answered, url) = (id.to_owned(), url.to_owned());
         let started = std::thread::Builder::new()
             .name("spice-uri".to_owned())
             .spawn(move || {
                 let access = content.as_deref().map_or(Access::Read, Access::Write);
-                driver.answer_uri(&answered, &url, access);
+                worker.driver.answer_uri(&answered, &url, access);
             });
         if let Err(error) = started {
             self.uris
