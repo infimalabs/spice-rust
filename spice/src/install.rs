@@ -70,11 +70,11 @@ pub use symbol_verification::{
 };
 pub use symbols::SymbolProvenance;
 
-const PLAN_VERSION: u16 = 20;
-const RECORD_VERSION: u16 = 20;
-/// The one earlier schema a refresh still reads: schema 19 published the
-/// agent skill copy that schema 20 discards.
-const CROSSING_VERSION: u16 = 19;
+const PLAN_VERSION: u16 = 21;
+const RECORD_VERSION: u16 = 21;
+/// The one earlier schema a refresh still reads. Schema 20 is identical to
+/// the current file plan but predates the Windows lifecycle-owner effect.
+const CROSSING_VERSION: u16 = 20;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReceiptSupport {
     Current,
@@ -84,7 +84,7 @@ enum ReceiptSupport {
     Retired(&'static str),
 }
 
-const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 20] = [
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 21] = [
     (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
     (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
     (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
@@ -103,9 +103,10 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 20] = [
     (16, ReceiptSupport::Retired("INSTALL-dV1QSGJ71")),
     (17, ReceiptSupport::Retired("INSTALL-dVvBGPX6p")),
     (18, ReceiptSupport::Retired("CANVAS-dWF0m0T7z")),
+    (19, ReceiptSupport::Retired("SPICE-dX13sl6Gm")),
     (
         CROSSING_VERSION,
-        ReceiptSupport::Crossing("SPICE-dX13sl6Gm"),
+        ReceiptSupport::Crossing("SPICE-dXQPcW5Jc"),
     ),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
@@ -190,6 +191,18 @@ pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy
 #[doc(hidden)]
 pub const TEST_APP_STAGE_ARGUMENT: &str = "--spice-test-app-stage";
 
+/// Private lifecycle policy standing captured by a Windows install preview.
+///
+/// `Default` covers both no owner and the package-managed loopback owner. A
+/// configured owner is represented only by a digest of its private policy, so
+/// the install plan binds the policy without publishing its bearer token.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LifecycleOwnerStanding {
+    Default,
+    Configured(Digest),
+}
+
 /// Side-effect-free canonical installation plan.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -208,6 +221,9 @@ pub struct InstallPlan {
     hook_activation: Option<HookActivationPlan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     symbols: Option<SymbolProvenance>,
+    /// Windows lifecycle policy preserved while this package is replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -238,6 +254,12 @@ impl InstallPlan {
     #[must_use]
     pub const fn hook_activation(&self) -> Option<&HookActivationPlan> {
         self.hook_activation.as_ref()
+    }
+    /// Windows lifecycle owner effect, absent on platforms whose detached
+    /// residents are not owned by Task Scheduler.
+    #[must_use]
+    pub const fn lifecycle_owner(&self) -> Option<&LifecycleOwnerStanding> {
+        self.lifecycle_owner.as_ref()
     }
 
     /// Number of durable publication stages in this plan.
@@ -435,7 +457,18 @@ pub fn preview(
     spice_binary: Option<&Path>,
     search_path: Option<&OsStr>,
 ) -> Result<InstallPreview, InstallError> {
-    progress::prepare(repository, spice_binary, search_path).and_then(InstallPreview::from_prepared)
+    preview_with_lifecycle(repository, spice_binary, search_path, None)
+}
+
+/// Preview an install while binding the platform lifecycle policy it preserves.
+pub fn preview_with_lifecycle(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
+) -> Result<InstallPreview, InstallError> {
+    progress::prepare(repository, spice_binary, search_path, lifecycle_owner)
+        .and_then(InstallPreview::from_prepared)
 }
 
 /// Derive the exact plan [`apply_prepared`] would execute, keeping it for this
@@ -445,7 +478,17 @@ pub fn prepare(
     spice_binary: Option<&Path>,
     search_path: Option<&OsStr>,
 ) -> Result<PreparedInstall, InstallError> {
-    progress::prepare(repository, spice_binary, search_path)
+    prepare_with_lifecycle(repository, spice_binary, search_path, None)
+}
+
+/// Prepare an install while binding the platform lifecycle policy it preserves.
+pub fn prepare_with_lifecycle(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
+) -> Result<PreparedInstall, InstallError> {
+    progress::prepare(repository, spice_binary, search_path, lifecycle_owner)
 }
 
 /// Apply only the exact current plan named by `expected`.
@@ -459,9 +502,25 @@ pub fn apply(
     expected: &Digest,
     search_path: Option<&OsStr>,
 ) -> Result<InstallReceipt, InstallError> {
-    apply_expected(repository, spice_binary, expected, search_path)
+    apply_with_lifecycle(repository, spice_binary, expected, search_path, None)
 }
 
+/// Apply a digest-bound plan carrying the platform lifecycle policy.
+pub fn apply_with_lifecycle(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    expected: &Digest,
+    search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
+) -> Result<InstallReceipt, InstallError> {
+    apply_expected(
+        repository,
+        spice_binary,
+        expected,
+        search_path,
+        lifecycle_owner,
+    )
+}
 /// Apply a plan this process prepared, without deriving it a second time.
 pub fn apply_prepared(
     repository: &Repository,
@@ -509,8 +568,16 @@ fn build_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 ) -> Result<InstallPlan, InstallError> {
-    build_plan_over(repository, spice_binary, None, None, search_path)
+    build_plan_over(
+        repository,
+        spice_binary,
+        None,
+        None,
+        search_path,
+        lifecycle_owner,
+    )
 }
 
 /// Assemble every planned operation in canonical order: the fixed prefix, the
@@ -564,6 +631,7 @@ fn build_plan_over(
     installed: Option<&InstallPlan>,
     binary_superseded: Option<&GeneratedImage>,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 ) -> Result<InstallPlan, InstallError> {
     ensure_state_root(repository)?;
     let binary = spice_binary
@@ -619,6 +687,7 @@ fn build_plan_over(
         retirements,
         hook_activation,
         symbols: symbols.map(|symbols| symbols.provenance().clone()),
+        lifecycle_owner,
     };
     plan.validate_pristine(repository)?;
     Ok(plan)

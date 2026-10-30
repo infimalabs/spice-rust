@@ -35,6 +35,12 @@ pub(crate) struct KeeperRecord {
     pub(crate) allow_insecure_bind: bool,
     /// Bearer token every kept resident requires, handed over privately.
     pub(crate) auth_token: Option<String>,
+    /// Whether package application created the loopback-default policy.
+    ///
+    /// Its system-selected pinned port may move from zero to a concrete port
+    /// without changing the digest-bound semantic standing.
+    #[serde(default)]
+    pub(crate) managed_default: bool,
 }
 
 impl KeeperRecord {
@@ -95,6 +101,32 @@ impl KeeperRecord {
             || self.listen != next.listen
             || self.allow_insecure_bind != next.allow_insecure_bind
             || self.auth_token != next.auth_token
+    }
+    /// Digest-bound policy standing exposed to install planning without
+    /// publishing the bearer token.
+    pub(crate) fn standing(&self) -> io::Result<spice::install::LifecycleOwnerStanding> {
+        if self.managed_default {
+            return Ok(spice::install::LifecycleOwnerStanding::Default);
+        }
+        #[derive(Serialize)]
+        struct Policy<'a> {
+            listen: SocketAddr,
+            allow_insecure_bind: bool,
+            auth_token: &'a Option<String>,
+        }
+        let policy = Policy {
+            listen: self.listen,
+            allow_insecure_bind: self.allow_insecure_bind,
+            auth_token: &self.auth_token,
+        };
+        let mut bytes = b"spice keeper policy standing v1\0".to_vec();
+        bytes.extend(
+            serde_json::to_vec(&policy)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        );
+        Ok(spice::install::LifecycleOwnerStanding::Configured(
+            wire::Digest::compute(wire::Domain::InstallPlan, &bytes),
+        ))
     }
 }
 

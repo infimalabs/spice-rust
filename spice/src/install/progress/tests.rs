@@ -63,7 +63,7 @@ fn parent_reversals(plan: &InstallPlan) -> Vec<(Location, String)> {
 }
 
 fn install_without_binary(repository: &Repository) -> Vec<(Location, String)> {
-    let prepared = prepare(repository, None, None).expect("install prepares");
+    let prepared = prepare(repository, None, None, None).expect("install prepares");
     let reversals = parent_reversals(prepared.plan());
     apply_prepared_record(repository, None, prepared).expect("install applies");
     reversals
@@ -73,8 +73,8 @@ fn refresh_without_binary(repository: &Repository) -> Vec<(Location, String)> {
     let LoadedRecord { record, generation } = read_record(repository)
         .expect("receipt reads")
         .expect("receipt exists");
-    let plan =
-        refresh_plan(repository, None, &record, None).expect("refresh plan carries ownership");
+    let plan = refresh_plan(repository, None, &record, None, None)
+        .expect("refresh plan carries ownership");
     let reversals = parent_reversals(&plan);
     let prepared = fresh(plan, Some(generation)).expect("refresh prepares");
     apply_prepared_record(repository, None, prepared).expect("refresh applies");
@@ -197,7 +197,7 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     // Start a real apply and stop after the preserved target moved but
     // before its completion reached the receipt: the one admitted
     // ahead-of-record crash frontier.
-    let prepared = prepare(&repository, None, None).expect("install prepares");
+    let prepared = prepare(&repository, None, None, None).expect("install prepares");
     let PreparedInstall {
         mut record,
         receipt,
@@ -251,7 +251,7 @@ fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers(
     assert!(changed);
     drop(record);
 
-    let resumed = prepare(&repository, None, None).expect("interrupted apply reloads");
+    let resumed = prepare(&repository, None, None, None).expect("interrupted apply reloads");
     apply_prepared_record(&repository, None, resumed).expect("interrupted apply completes");
     let record_length = fs::metadata(repository.state_root().join(RECORD_PATH))
         .expect("receipt metadata reads")
@@ -300,7 +300,7 @@ fn previewed_changes(repository: &Repository, binary: &Path) -> Vec<String> {
             self.0.write_text(formatter, &"APPLY")
         }
     }
-    let prepared = prepare(repository, Some(binary), None).expect("install prepares");
+    let prepared = prepare(repository, Some(binary), None, None).expect("install prepares");
     let text = Text(InstallPreview::from_prepared(prepared).expect("plan previews")).to_string();
     assert!(text.ends_with("APPLY"), "{text}");
     text.lines()
@@ -324,7 +324,7 @@ fn a_preview_over_a_complete_install_of_the_same_build_changes_nothing() {
         path
     };
     let (first, second) = (build("first-spice"), build("second-spice"));
-    let prepared = prepare(&repository, Some(&first), None).expect("install prepares");
+    let prepared = prepare(&repository, Some(&first), None, None).expect("install prepares");
     apply_prepared_record(&repository, Some(&first), prepared).expect("install applies");
 
     assert_eq!(
@@ -337,4 +337,39 @@ fn a_preview_over_a_complete_install_of_the_same_build_changes_nothing() {
         ["update .spice-install/bin/spice"],
         "another build updates exactly the installed binary, its hooks path already set"
     );
+}
+
+#[test]
+fn lifecycle_policy_is_part_of_the_digest_bound_plan() {
+    let (_scratch, repository) = repository("lifecycle-policy");
+    let default = prepare(
+        &repository,
+        None,
+        None,
+        Some(LifecycleOwnerStanding::Default),
+    )
+    .expect("default lifecycle plan prepares");
+    let configured_standing = LifecycleOwnerStanding::Configured(Digest::compute(
+        Domain::InstallPlan,
+        b"configured keeper policy",
+    ));
+    let configured = prepare(&repository, None, None, Some(configured_standing.clone()))
+        .expect("configured lifecycle plan prepares");
+
+    assert_ne!(default.digest(), configured.digest());
+    assert_eq!(
+        configured.plan().lifecycle_owner(),
+        Some(&configured_standing)
+    );
+    struct PreviewText(InstallPreview);
+    impl std::fmt::Display for PreviewText {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            self.0.write_text(formatter, &"APPLY")
+        }
+    }
+    let text = PreviewText(
+        InstallPreview::from_prepared(configured).expect("configured lifecycle plan previews"),
+    )
+    .to_string();
+    assert!(text.contains("ensure Windows lifecycle owner"), "{text}");
 }

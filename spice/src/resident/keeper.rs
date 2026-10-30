@@ -31,10 +31,16 @@ mod windows;
 mod tests;
 
 #[cfg(windows)]
-pub(crate) use windows::{hold_stopped, install, keep, uninstall, up_detached};
+pub(crate) use windows::{
+    finish_unapply, hold_stopped, install, install_standing, keep, owner_installed,
+    quiesce_for_install, uninstall, up_detached,
+};
 
 #[cfg(not(windows))]
-pub(crate) use unsupported::{hold_stopped, install, keep, uninstall, up_detached};
+pub(crate) use unsupported::{
+    finish_unapply, hold_stopped, install, install_standing, keep, owner_installed,
+    quiesce_for_install, uninstall, up_detached,
+};
 
 /// Hosts without the facility refuse the owner by name and keep the plain
 /// detached launch.
@@ -63,6 +69,27 @@ mod unsupported {
 
     pub(crate) fn hold_stopped(_repository: &Repository) -> CommandResult<()> {
         Ok(())
+    }
+
+    pub(crate) fn install_standing(
+        _repository: &Repository,
+    ) -> CommandResult<Option<spice::install::LifecycleOwnerStanding>> {
+        Ok(None)
+    }
+
+    pub(crate) fn owner_installed(_repository: &Repository) -> CommandResult<bool> {
+        Ok(false)
+    }
+    pub(crate) fn finish_unapply(_repository: &Repository) -> CommandResult<()> {
+        Ok(())
+    }
+
+    pub(crate) fn quiesce_for_install(
+        _repository: &Repository,
+        _expected: &spice::install::LifecycleOwnerStanding,
+        _ambient: &Ambient,
+    ) -> CommandResult<bool> {
+        Ok(false)
     }
 
     fn refusal<B>() -> Outcome<B> {

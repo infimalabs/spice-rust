@@ -2,10 +2,10 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
+use std::process::{Command, ExitStatus, Stdio};
 
 use spice::ambient::Ambient;
-use spice::install::{InstallError, InstallPreview, InstallReceipt};
+use spice::install::{InstallError, InstallPreview, InstallReceipt, InstallStatus};
 use spice::repository::Repository;
 use spice::repository::StateError;
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
@@ -103,9 +103,18 @@ pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> Answer {
                 Ok(executable) => executable,
                 Err(outcome) => return Answer::Plan(outcome),
             };
+            let lifecycle = match crate::resident::keeper::install_standing(&repository) {
+                Ok(lifecycle) => lifecycle,
+                Err(outcome) => return Answer::Plan(cast_outcome(outcome)),
+            };
             Answer::Plan(result(
-                spice::install::preview(&repository, Some(&executable), ambient.get(PROCESS_PATH))
-                    .map(|preview| PlanPreview::source(preview, &invoked_program())),
+                spice::install::preview_with_lifecycle(
+                    &repository,
+                    Some(&executable),
+                    ambient.get(PROCESS_PATH),
+                    lifecycle,
+                )
+                .map(|preview| PlanPreview::source(preview, &invoked_program())),
             ))
         }
         Request::Apply(spelling) => {
@@ -127,14 +136,144 @@ pub(crate) fn run(matches: &clap::ArgMatches, ambient: &Ambient) -> Answer {
                 Ok(executable) => executable,
                 Err(outcome) => return Answer::Receipt(outcome),
             };
-            Answer::Receipt(result(spice::install::apply(
+            Answer::Receipt(apply_with_keeper(
                 &repository,
-                Some(&executable),
+                &executable,
                 &digest,
                 ambient.get(PROCESS_PATH),
-            )))
+                ambient,
+            ))
         }
-        Request::Unapply => Answer::Receipt(result(spice::install::unapply(&repository))),
+        Request::Unapply => Answer::Receipt(unapply_with_keeper(&repository, ambient)),
+    }
+}
+
+fn apply_with_keeper(
+    repository: &Repository,
+    executable: &Path,
+    expected: &Digest,
+    search_path: Option<&std::ffi::OsStr>,
+    ambient: &Ambient,
+) -> Outcome<InstallReceipt> {
+    let lifecycle = match crate::resident::keeper::install_standing(repository) {
+        Ok(lifecycle) => lifecycle,
+        Err(outcome) => return cast_outcome(outcome),
+    };
+    let prepared = match spice::install::prepare_with_lifecycle(
+        repository,
+        Some(executable),
+        search_path,
+        lifecycle,
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => return failure(error),
+    };
+    if prepared.digest() != expected {
+        return failure(InstallError::DigestMismatch {
+            expected: expected.clone(),
+            observed: prepared.digest().clone(),
+        });
+    }
+    let lifecycle = prepared.plan().lifecycle_owner().cloned();
+    let owned = if prepared.converged() {
+        false
+    } else if let Some(expected) = &lifecycle {
+        match crate::resident::keeper::quiesce_for_install(repository, expected, ambient) {
+            Ok(owned) => owned,
+            Err(outcome) => return cast_outcome(outcome),
+        }
+    } else {
+        false
+    };
+    let applied = spice::install::apply_prepared(repository, Some(executable), prepared);
+    let ensure = if lifecycle.is_some() && (applied.is_ok() || owned) {
+        ensure_keeper(repository)
+    } else {
+        Ok(())
+    };
+    match (applied, ensure) {
+        (Ok(receipt), Ok(())) => result(Ok(receipt)),
+        (Ok(_), Err(outcome)) => cast_outcome(outcome),
+        (Err(error), _) => failure(error),
+    }
+}
+
+fn unapply_with_keeper(repository: &Repository, ambient: &Ambient) -> Outcome<InstallReceipt> {
+    let inspected = match spice::install::inspect(repository) {
+        Ok(inspected) => inspected,
+        Err(error) => return failure(error),
+    };
+    let lifecycle = match crate::resident::keeper::install_standing(repository) {
+        Ok(lifecycle) => lifecycle,
+        Err(outcome) => return cast_outcome(outcome),
+    };
+    let owned = if inspected
+        .as_ref()
+        .is_some_and(|receipt| receipt.status() != InstallStatus::Applying)
+        && let Some(expected) = &lifecycle
+    {
+        match crate::resident::keeper::quiesce_for_install(repository, expected, ambient) {
+            Ok(owned) => owned,
+            Err(outcome) => return cast_outcome(outcome),
+        }
+    } else {
+        false
+    };
+    let unapplied = spice::install::unapply(repository);
+    if unapplied.is_ok()
+        && lifecycle.is_some()
+        && let Err(outcome) = crate::resident::keeper::finish_unapply(repository)
+    {
+        return cast_outcome(outcome);
+    }
+    if unapplied.is_err() && owned {
+        let _ = ensure_keeper(repository);
+    }
+    result(unapplied)
+}
+
+fn ensure_keeper(repository: &Repository) -> Result<(), Outcome<()>> {
+    let executable = spice::install::installed_binary(repository);
+    let installed = crate::resident::keeper::owner_installed(repository)?;
+    let mut command = Command::new(&executable);
+    command.args(["--json", "up"]);
+    if !installed {
+        command.arg("--install");
+    }
+    let status = command
+        .current_dir(repository.worktree_root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| {
+            Outcome::Fault(Fault {
+                class: FaultClass::Environment,
+                reason: "install::keeper-resume-failed".to_owned(),
+                detail: format!("launch {}: {error}", executable.display()),
+            })
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "install::keeper-resume-failed".to_owned(),
+            detail: format!("{} exited with {status}", executable.display()),
+        }))
+    }
+}
+
+fn cast_outcome<B>(outcome: Outcome<()>) -> Outcome<B> {
+    match outcome {
+        Outcome::Reply(_) => Outcome::Fault(Fault {
+            class: FaultClass::Protocol,
+            reason: "install::keeper-outcome-invalid".to_owned(),
+            detail: "lifecycle preparation returned a reply where only failure was possible"
+                .to_owned(),
+        }),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
     }
 }
 

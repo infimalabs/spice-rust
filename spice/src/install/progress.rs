@@ -35,7 +35,8 @@ impl PreparedInstall {
 
     /// Whether apply would find this plan already complete and publish
     /// nothing: a complete install of this same build and hook topology.
-    pub(super) fn converged(&self) -> bool {
+    #[must_use]
+    pub fn converged(&self) -> bool {
         !self.fresh && self.record.status == InstallStatus::Complete
     }
 }
@@ -45,8 +46,9 @@ pub(super) fn apply_expected(
     spice_binary: Option<&Path>,
     expected: &Digest,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 ) -> Result<InstallReceipt, InstallError> {
-    let prepared = prepare(repository, spice_binary, search_path)?;
+    let prepared = prepare(repository, spice_binary, search_path, lifecycle_owner)?;
     if prepared.digest() != expected {
         return Err(InstallError::DigestMismatch {
             expected: expected.clone(),
@@ -265,11 +267,21 @@ pub(super) fn prepare(
     repository: &Repository,
     spice_binary: Option<&Path>,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 ) -> Result<PreparedInstall, InstallError> {
     super::ref_storage::verify_files_storage(repository)?;
     match read_record_for_refresh(repository)? {
-        Some(refresh) => prepare_over(repository, spice_binary, refresh, search_path),
-        None => fresh(build_plan(repository, spice_binary, search_path)?, None),
+        Some(refresh) => prepare_over(
+            repository,
+            spice_binary,
+            refresh,
+            search_path,
+            lifecycle_owner,
+        ),
+        None => fresh(
+            build_plan(repository, spice_binary, search_path, lifecycle_owner)?,
+            None,
+        ),
     }
 }
 
@@ -279,21 +291,35 @@ pub(super) fn prepare_over(
     spice_binary: Option<&Path>,
     refresh: RefreshRecord,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 ) -> Result<PreparedInstall, InstallError> {
     let repair = refresh.is_repairable();
     let LoadedRecord { record, generation } = refresh.into_loaded();
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
         return fresh(
-            build_plan(repository, spice_binary, search_path)?,
+            build_plan(repository, spice_binary, search_path, lifecycle_owner)?,
             Some(generation),
         );
     }
     if record.status == InstallStatus::Complete
-        && (repair || refresh_required(repository, &record.plan, spice_binary, search_path)?)
+        && (repair
+            || refresh_required(
+                repository,
+                &record.plan,
+                spice_binary,
+                search_path,
+                lifecycle_owner.as_ref(),
+            )?)
     {
         return fresh(
-            refresh_plan(repository, spice_binary, &record, search_path)?,
+            refresh_plan(
+                repository,
+                spice_binary,
+                &record,
+                search_path,
+                lifecycle_owner,
+            )?,
             Some(generation),
         );
     }
@@ -323,6 +349,7 @@ fn refresh_plan(
     spice_binary: Option<&Path>,
     record: &InstallRecord,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
 ) -> Result<InstallPlan, InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
@@ -334,6 +361,7 @@ fn refresh_plan(
         Some(&record.plan),
         binary_superseded.as_ref(),
         search_path,
+        lifecycle_owner,
     )
 }
 
@@ -342,11 +370,12 @@ fn refresh_required(
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
     search_path: Option<&OsStr>,
+    lifecycle_owner: Option<&LifecycleOwnerStanding>,
 ) -> Result<bool, InstallError> {
     Ok(current_build_differs(repository, plan, spice_binary)?
-        || hook_activation::topology_changed(repository, plan, search_path)?)
+        || hook_activation::topology_changed(repository, plan, search_path)?
+        || plan.lifecycle_owner() != lifecycle_owner)
 }
-
 fn apply_operation(
     repository: &Repository,
     record: &mut InstallRecord,

@@ -59,6 +59,17 @@ impl Site {
         })
     }
 
+    fn require_repository(&self, repository: &Repository) -> CommandResult<()> {
+        if self.repository.common_dir() == repository.common_dir() {
+            Ok(())
+        } else {
+            Err(environment_fault(
+                "install::keeper-repository-moved",
+                "the lifecycle owner command no longer addresses the admitted install repository",
+            ))
+        }
+    }
+
     fn record(&self) -> CommandResult<Option<KeeperRecord>> {
         record::read(self.state.keeper())
             .map_err(|error| keeper_fault("resident::keeper-record-unavailable", &error))
@@ -80,6 +91,9 @@ fn install_result(leaf: &clap::ArgMatches, ambient: &Ambient) -> CommandResult<w
     let site = Site::admit()?;
     let listen = requested_listen(leaf)?;
     let access = requested_access(leaf, listen, None)?;
+    let managed_default = INSTALL_FLAGS
+        .iter()
+        .all(|flag| leaf.value_source(flag) != Some(clap::parser::ValueSource::CommandLine));
     let mut record = KeeperRecord {
         task: definition::task_path(site.repository.common_dir()),
         executable: site.executable.clone(),
@@ -88,6 +102,7 @@ fn install_result(leaf: &clap::ArgMatches, ambient: &Ambient) -> CommandResult<w
         listen,
         allow_insecure_bind: leaf.get_flag("allow-insecure-bind"),
         auth_token: access.token,
+        managed_default,
     };
     let previous = site.record()?;
     if let Some(previous) = &previous {
@@ -193,10 +208,64 @@ fn uninstall_result(ambient: &Ambient) -> CommandResult<wire::KeeperRemoved> {
             .with_detail("install one with `spice up --install`"),
         )));
     };
+    remove_owner(&site, record, ambient)
+}
+/// Capture the semantic lifecycle policy for a digest-bound package plan.
+pub(crate) fn install_standing(
+    repository: &Repository,
+) -> CommandResult<Option<spice::install::LifecycleOwnerStanding>> {
+    let state = repository
+        .admit_resident_state()
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    let standing = match record::read(state.keeper())
+        .map_err(|error| keeper_fault("resident::keeper-record-unavailable", &error))?
+    {
+        Some(record) => record
+            .standing()
+            .map_err(|error| keeper_fault("resident::keeper-record-unavailable", &error))?,
+        None => spice::install::LifecycleOwnerStanding::Default,
+    };
+    Ok(Some(standing))
+}
+
+/// Whether durable owner policy already exists for this repository.
+pub(crate) fn owner_installed(repository: &Repository) -> CommandResult<bool> {
+    let state = repository
+        .admit_resident_state()
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    record::read(state.keeper())
+        .map(|record| record.is_some())
+        .map_err(|error| keeper_fault("resident::keeper-record-unavailable", &error))
+}
+
+/// Remove the retained private lifecycle artifacts after package reversal.
+///
+/// The task was already released by [`quiesce_for_install`], so this step does
+/// not need the executable the reversal just removed.
+pub(crate) fn finish_unapply(repository: &Repository) -> CommandResult<()> {
+    let state = repository
+        .admit_resident_state()
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    let mut rotated = state.keeper_log().as_os_str().to_owned();
+    rotated.push(LOG_ROTATED_SUFFIX);
+    owner::remove_artifacts(&[
+        state.keeper(),
+        state.keeper_log(),
+        Path::new(&rotated),
+        state.keeper_lock(),
+    ])
+    .map_err(|error| keeper_fault("resident::keeper-record-unavailable", &error))
+}
+
+fn remove_owner(
+    site: &Site,
+    record: KeeperRecord,
+    ambient: &Ambient,
+) -> CommandResult<wire::KeeperRemoved> {
     let mut scheduler = connect()?;
     owner::hold(&mut scheduler, &record.task)
         .map_err(|error| keeper_fault("resident::keeper-registration-failed", &error))?;
-    let drained = drain_live_resident(&site, ambient)?;
+    let drained = drain_live_resident(site, ambient)?;
     owner::release(&mut scheduler, &record.task)
         .map_err(|error| keeper_fault("resident::keeper-registration-failed", &error))?;
     let mut rotated = site.state.keeper_log().as_os_str().to_owned();
@@ -212,6 +281,45 @@ fn uninstall_result(ambient: &Ambient) -> CommandResult<wire::KeeperRemoved> {
         task: record.task,
         drained,
     })
+}
+
+/// Quiesce and unregister an owner while retaining its private policy record
+/// so the newly installed appliance can register and start it again.
+pub(crate) fn quiesce_for_install(
+    repository: &Repository,
+    expected: &spice::install::LifecycleOwnerStanding,
+    ambient: &Ambient,
+) -> CommandResult<bool> {
+    let site = Site::admit()?;
+    site.require_repository(repository)?;
+    let record = site.record()?;
+    let observed = match &record {
+        Some(record) => record
+            .standing()
+            .map_err(|error| keeper_fault("resident::keeper-record-unavailable", &error))?,
+        None => spice::install::LifecycleOwnerStanding::Default,
+    };
+    if &observed != expected {
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "install::keeper-standing-changed".to_owned(),
+                Some("lifecycle-owner".to_owned()),
+                Some(format!("{expected:?}")),
+                Some(format!("{observed:?}")),
+            )
+            .with_detail("preview the package install again before applying it"),
+        )));
+    }
+    let Some(record) = record else {
+        return Ok(false);
+    };
+    let mut scheduler = connect()?;
+    owner::hold(&mut scheduler, &record.task)
+        .map_err(|error| keeper_fault("resident::keeper-registration-failed", &error))?;
+    drain_live_resident(&site, ambient)?;
+    owner::release(&mut scheduler, &record.task)
+        .map_err(|error| keeper_fault("resident::keeper-registration-failed", &error))?;
+    Ok(true)
 }
 
 /// Drain the resident if one is serving; answer whether one was.

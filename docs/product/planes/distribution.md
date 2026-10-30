@@ -158,18 +158,25 @@ release entry point.
 
 ### Windows lifecycle owner
 
-`spice up --install` registers one repository's lifecycle owner: a per-user
-Task Scheduler task under `\Spice`, named by a digest of the Git common
-directory, whose principal is the repository user's own SID with an
-interactive-token logon and least privilege. No password is stored; the task
-runs only while that user is logged on, which is the earliest boundary after a
-reboot at which the user's profile and per-user discovery exist. The Service
-Control Manager is not used: a service under the user's identity needs a stored
-password, and one under another identity would own the discovery file the
-user's app and CLI must read. Its one trigger is that user's logon; its action
-is the installing executable running `spice up --keeper` with the installing
-worktree as working directory, no execution time limit, no battery stop, and a
-scheduler restart only for a keeper that itself exits abnormally.
+On Windows, digest-bound package apply registers one repository's lifecycle
+owner by default. A first install uses loopback with a system-selected port;
+an upgrade preserves the existing private listen, bind-consent,
+authentication, and pinned-port policy. The preview names the lifecycle effect
+and binds an opaque policy standing without publishing bearer material.
+`spice up --install` remains the explicit policy-reconfiguration and repair
+surface.
+
+The owner is a per-user Task Scheduler task under `\Spice`, named by a digest
+of the Git common directory, whose principal is the repository user's own SID
+with an interactive-token logon and least privilege. No password is stored;
+the task runs only while that user is logged on, which is the earliest boundary
+after a reboot at which the user's profile and per-user discovery exist. The
+Service Control Manager is not used: a service under the user's identity needs
+a stored password, and one under another identity would own the discovery file
+the user's app and CLI must read. Its one trigger is that user's logon; its
+action is the installing executable running `spice up --keeper` with the
+installing worktree as working directory, no execution time limit, no battery
+stop, and a scheduler restart only for a keeper that itself exits abnormally.
 
 The keeper holds the `locks/keeper` possession so one runs per repository,
 appends to `.spice/keeper.log` (rotated like the resident log), and relaunches
@@ -805,6 +812,15 @@ group or other access refuses rather than being approximated. The same limit
 binds prior state: a preview refuses, before anything is touched, an existing
 target whose access reaches beyond its owner, because reversal could capture
 its bytes but never restore that access.
+
+**Invariant —** Package preview is lifecycle-effect-free. Apply revalidates
+the previewed private keeper standing before stopping its resident, retains
+that policy while replacing the appliance, then registers and starts exactly
+one owner under the new executable. Reversal unregisters the task and drains
+the resident before removing the executable, then removes the private keeper
+record and logs. An interrupted boundary is derived from the install receipt,
+keeper record, and task standing; rerunning the same direction converges
+without a shell monitor or second installer path.
 
 **Invariant —** A receipt generation is the volume serial and file ID of the
 object a name held. An identifier wider than 64 bits, as ReFS may assign,

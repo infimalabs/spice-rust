@@ -158,6 +158,7 @@ fn record() -> KeeperRecord {
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         allow_insecure_bind: true,
         auth_token: Some("0123456789abcdef".to_owned()),
+        managed_default: false,
     }
 }
 
@@ -382,5 +383,42 @@ fn an_unchanged_reinstall_keeps_the_pinned_port_and_a_changed_one_reconfigures()
     assert!(
         installed.reconfigured_by(&moved_worktree),
         "the task and keeper must agree on their repository working directory"
+    );
+}
+
+#[test]
+fn install_standing_hides_policy_and_ignores_appliance_replacement() {
+    let initial = record();
+    let standing = initial.standing().expect("policy standing derives");
+    let mut rebuilt = initial.clone();
+    rebuilt.binary = wire::Digest::compute(wire::Domain::DistArtifact, b"replacement appliance");
+    rebuilt.executable = PathBuf::from(r"C:\Spice\next\spice.exe");
+    assert_eq!(
+        standing,
+        rebuilt.standing().expect("rebuilt policy standing derives"),
+        "package replacement is not a private policy change"
+    );
+
+    rebuilt.auth_token = Some("another secret".to_owned());
+    assert_ne!(
+        standing,
+        rebuilt.standing().expect("changed policy standing derives"),
+        "bearer changes move the opaque standing without publishing the bearer"
+    );
+}
+
+#[test]
+fn package_default_standing_survives_system_port_pinning() {
+    let mut managed = record();
+    managed.managed_default = true;
+    managed.listen = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    assert_eq!(
+        managed.standing().expect("default standing derives"),
+        spice::install::LifecycleOwnerStanding::Default
+    );
+    managed.listen.set_port(47_778);
+    assert_eq!(
+        managed.standing().expect("pinned standing derives"),
+        spice::install::LifecycleOwnerStanding::Default
     );
 }
