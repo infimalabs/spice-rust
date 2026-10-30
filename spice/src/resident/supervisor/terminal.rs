@@ -452,6 +452,50 @@ fn told(job: &Job, ended: &Ended) -> Report {
     snapshot(job, Some(ended))
 }
 
+/// One blocking wait's right to report a job ending. Reserving that right
+/// while the job still runs prevents its automatic completion notice from
+/// racing the wait. A wait that returns early gives the right back.
+struct EndingClaim<'a> {
+    job: &'a Job,
+    running: bool,
+    owned: bool,
+}
+
+impl<'a> EndingClaim<'a> {
+    fn reserve(job: &'a Job) -> Self {
+        let running = job.ended().is_none();
+        let owned = running && job.claim_heard().unwrap_or(false);
+        Self {
+            job,
+            running,
+            owned,
+        }
+    }
+
+    fn report(mut self, ended: &Ended) -> Report {
+        if !self.running {
+            return told(self.job, ended);
+        }
+        if !self.owned {
+            return Report::answered(format!(
+                "[job {}] {}\ncompletion was already claimed for automatic delivery",
+                self.job.id(),
+                self.job.command()
+            ));
+        }
+        self.owned = false;
+        snapshot(self.job, Some(ended))
+    }
+}
+
+impl Drop for EndingClaim<'_> {
+    fn drop(&mut self) {
+        if self.owned {
+            let _released = self.job.release_heard();
+        }
+    }
+}
+
 /// What a lane is still waiting on, as its row in the lane table lists it.
 pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
     undelivered(jobs)
@@ -549,6 +593,7 @@ fn wait(
     if job.timeout().is_none() && job.ended().is_none() {
         return still(job, SERVICE_WAIT);
     }
+    let ending = EndingClaim::reserve(job);
     let mut previous = String::new();
     let mut looked: Option<Monotonic> = None;
     let mut look = || {
@@ -564,7 +609,7 @@ fn wait(
         }
     };
     match job.observe_with(control, bound, cadence, &mut look) {
-        Ok(Observed::Ended(ended)) => told(job, &ended),
+        Ok(Observed::Ended(ended)) => ending.report(&ended),
         Ok(Observed::Elapsed) => snapshot(job, None),
         Ok(Observed::Interrupted) => still(job, "wait interrupted by an incoming message"),
         Ok(Observed::Cancelled) => still(job, "wait cancelled"),
@@ -591,6 +636,7 @@ fn wait_until(
     cadence: Duration,
     progress: &mut dyn FnMut(&Report),
 ) -> Report {
+    let ending = EndingClaim::reserve(job);
     let mut lines = job.log_lines();
     let mut reported: Option<Monotonic> = None;
     let mut look = || {
@@ -621,7 +667,7 @@ fn wait_until(
     let looked = job.observe_output(control, bound, &mut look);
     match looked {
         Ok(Looked::Found(Ok(line))) => match job.ended() {
-            Some(ended) => ended_until(job, &ended, pattern, Some(&line)),
+            Some(ended) => ended_until(ending, &ended, pattern, Some(&line)),
             None => Report::answered(format!(
                 "[job {}] {}\n{line}\n\nmatched {}; job {} keeps running",
                 job.id(),
@@ -635,7 +681,7 @@ fn wait_until(
         }
         Ok(Looked::Observed(Observed::Ended(ended))) => {
             let last = lines.finish().filter(|line| pattern.is_match(line));
-            ended_until(job, &ended, pattern, last.as_deref())
+            ended_until(ending, &ended, pattern, last.as_deref())
         }
         Ok(Looked::Observed(Observed::Elapsed)) => still(
             job,
@@ -655,8 +701,13 @@ fn wait_until(
 
 /// A pattern wait whose job ended: how it ended, then whether its output
 /// matched.
-fn ended_until(job: &Job, ended: &Ended, pattern: &OutputPattern, line: Option<&str>) -> Report {
-    let mut report = told(job, ended);
+fn ended_until(
+    ending: EndingClaim<'_>,
+    ended: &Ended,
+    pattern: &OutputPattern,
+    line: Option<&str>,
+) -> Report {
+    let mut report = ending.report(ended);
     let verdict = match line {
         Some(line) => format!("matched {}: {line}", pattern.as_str()),
         None => format!("no line matched {} before the job ended", pattern.as_str()),
