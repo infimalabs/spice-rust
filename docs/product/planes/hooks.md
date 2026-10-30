@@ -70,6 +70,13 @@ Shell and job results show a bounded preview. When bytes are omitted the result
 names the complete keeper-owned log, which retains the command's original
 captured bytes; `read` it with a line range.
 
+Fresh steering published after an OMP step starts makes that step stale. A shell
+or blocking `job wait` emitted by the stale step is registered, immediately
+released through its ordinary job result, and followed by the complete current
+unanswered inbox. A later OMP step clears the marker; delivery-cache movement
+does not. Atomic job operations and work from the later step keep their normal
+foreground behavior.
+
 ### Active-work narration
 
 The resident keeps one narration streak per occupant. Assistant prose resets it;

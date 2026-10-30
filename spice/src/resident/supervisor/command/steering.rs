@@ -194,11 +194,25 @@ impl<W: Write + Send + 'static> Driver<W> {
         };
         drop(told);
 
+        let (aside_sent, steer_sent) = self.publish_inbox(&fresh, &reminder, peer_due);
+
+        if aside_sent && steer_sent {
+            *delivered = Some(rendered);
+        }
+    }
+
+    /// Publish one changed inbox while the step guard closes registration
+    /// against steering delivery.
+    fn publish_inbox(&self, fresh: &str, reminder: &str, peer_due: bool) -> (bool, bool) {
+        // The call map is inspected while this guard is held; dispatch never
+        // holds that map while it waits for the step state.
+        let mut step =
+            (!fresh.is_empty()).then(|| self.step.lock().unwrap_or_else(PoisonError::into_inner));
         let (fresh_calls, peer_waits) = self.delivery_calls(!fresh.is_empty(), peer_due);
 
         // Register every background notice before releasing a host call: its
         // result creates the boundary where omp flushes the queued aside.
-        let aside_sent = self.background("inbox", &reminder).is_ok();
+        let aside_sent = self.background("inbox", reminder).is_ok();
         if aside_sent && fresh.is_empty() {
             for handle in peer_waits {
                 handle.interrupt();
@@ -212,19 +226,57 @@ impl<W: Write + Send + 'static> Driver<W> {
                 handle.interrupt();
             }
         }
-        let steer_sent = fresh.is_empty() || self.steer(&fresh).is_ok();
+        let steer_sent = fresh.is_empty() || self.steer(fresh).is_ok();
         if steer_sent && !fresh.is_empty() {
+            step.as_mut()
+                .expect("fresh steering owns the step guard")
+                .mark_stale();
             let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-            told.extend(steer::inbox::keys(&fresh).map(str::to_owned));
-            self.recognize(&fresh);
+            told.extend(steer::inbox::keys(fresh).map(str::to_owned));
+            self.recognize(fresh);
         }
         if aside_sent {
-            self.recognize(&reminder);
+            self.recognize(reminder);
         }
+        (aside_sent, steer_sent)
+    }
 
-        if aside_sent && steer_sent {
-            *delivered = Some(rendered);
+    /// Replay the complete current unanswered inbox after a stale-generation
+    /// blocking tool result. This deliberately bypasses rendering equality:
+    /// the earlier publication made this generation stale, and the tool
+    /// result is the boundary at which OMP can consume the replay next.
+    pub(super) fn replay_inbox(&self) {
+        let Some(rendered) = (self.read_inbox)() else {
+            return;
+        };
+        let mut delivered = self
+            .delivered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let step = self.step.lock().unwrap_or_else(PoisonError::into_inner);
+        if !step.is_stale() {
+            return;
         }
+        let message =
+            std::str::from_utf8(&rendered).expect("the in-memory inbox renderer produces UTF-8");
+        let owed = {
+            let mut answered = self.answered.lock().unwrap_or_else(PoisonError::into_inner);
+            answered.settle(message);
+            steer::inbox::retain(message, |key| !answered.holds(key))
+        };
+        if owed.is_empty() {
+            *delivered = Some(rendered);
+            return;
+        }
+        if self.steer(&owed).is_err() {
+            return;
+        }
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(steer::inbox::keys(&owed).map(str::to_owned));
+        self.recognize(&owed);
+        *delivered = Some(rendered);
     }
     pub(super) fn delivery_calls(
         &self,
