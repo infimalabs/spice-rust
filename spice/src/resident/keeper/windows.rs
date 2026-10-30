@@ -30,6 +30,7 @@ struct Site {
     repository: Repository,
     state: StatePaths,
     executable: PathBuf,
+    binary: wire::Digest,
 }
 
 impl Site {
@@ -45,11 +46,16 @@ impl Site {
             .map_err(|error| keeper_fault("resident::runtime-unavailable", &error))?;
         let executable = std::env::current_exe()
             .map_err(|error| keeper_fault("resident::executable-unavailable", &error))?;
+        let binary = spice::version::running()
+            .map_err(|fault| Outcome::Fault(fault.clone()))?
+            .binary
+            .clone();
         Ok(Self {
             current,
             repository,
             state,
             executable,
+            binary,
         })
     }
 
@@ -77,6 +83,7 @@ fn install_result(leaf: &clap::ArgMatches, ambient: &Ambient) -> CommandResult<w
     let mut record = KeeperRecord {
         task: definition::task_path(site.repository.common_dir()),
         executable: site.executable.clone(),
+        binary: site.binary.clone(),
         working_directory: site.current.clone(),
         listen,
         allow_insecure_bind: leaf.get_flag("allow-insecure-bind"),
@@ -86,13 +93,24 @@ fn install_result(leaf: &clap::ArgMatches, ambient: &Ambient) -> CommandResult<w
     if let Some(previous) = &previous {
         record.inherit_port(previous);
     }
+    let replace_owner = previous
+        .as_ref()
+        .is_some_and(|previous| previous.owner_changed_by(&record));
     site.write_record(&record)?;
-    if previous.is_some_and(|previous| previous.reconfigured_by(&record)) {
-        // The kept resident exits cleanly; the keeper relaunches it from the
-        // record just written.
+    if previous
+        .as_ref()
+        .is_none_or(|previous| previous.reconfigured_by(&record))
+    {
+        // A first install replaces any ordinary detached resident. A changed
+        // install disables and drains the old keeper's child before the task
+        // is refreshed, so that keeper cannot keep launching its own previous
+        // executable or serving the previous listen/access policy.
         drain_live_resident(&site, ambient)?;
     }
-    apply(&site, record, leaf.get_flag("open"))
+    if replace_owner {
+        retire_task(&record.task)?;
+    }
+    apply(&site, record, leaf.get_flag("open"), ambient)
 }
 
 /// Detached `spice up`: an installed owner is applied, otherwise the plain
@@ -110,7 +128,7 @@ pub(crate) fn up_detached(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome
             }) {
                 return installed_refusal(flag, &record.task);
             }
-            reply(apply(&site, record, leaf.get_flag("open")))
+            reply(apply(&site, record, leaf.get_flag("open"), ambient))
         }
         Err(outcome) => typed_outcome(outcome),
     }
@@ -118,10 +136,21 @@ pub(crate) fn up_detached(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome
 
 /// Register or refresh the owner's task from this executable, make sure it
 /// is enabled and running, and answer with the resident it keeps.
-fn apply(site: &Site, mut record: KeeperRecord, open: bool) -> CommandResult<wire::AppOpen> {
-    if record.executable != site.executable {
+fn apply(
+    site: &Site,
+    mut record: KeeperRecord,
+    open: bool,
+    ambient: &Ambient,
+) -> CommandResult<wire::AppOpen> {
+    if record.binary != site.binary || record.executable != site.executable {
+        record.binary.clone_from(&site.binary);
         record.executable.clone_from(&site.executable);
         site.write_record(&record)?;
+        // A bare `up` after package replacement must retire the keeper that
+        // is still running the previous appliance before Task Scheduler can
+        // start the refreshed action.
+        drain_live_resident(site, ambient)?;
+        retire_task(&record.task)?;
     }
     let user_sid = door::current_user_sid()
         .map_err(|error| keeper_fault("resident::keeper-principal-unavailable", &error))?;
@@ -318,6 +347,13 @@ fn await_discovery(serve: &Path) -> CommandResult<wire::AppOpen> {
             Err(_) => std::thread::sleep(ARRIVAL_POLL),
         }
     }
+}
+
+fn retire_task(task: &str) -> CommandResult<()> {
+    let mut scheduler = connect()?;
+    owner::hold(&mut scheduler, task)
+        .and_then(|()| owner::release(&mut scheduler, task))
+        .map_err(|error| keeper_fault("resident::keeper-registration-failed", &error))
 }
 
 fn connect() -> CommandResult<TaskService> {

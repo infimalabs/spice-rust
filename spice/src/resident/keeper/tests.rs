@@ -153,6 +153,7 @@ fn record() -> KeeperRecord {
     KeeperRecord {
         task: "\\Spice\\keeper-0123456789abcdef".to_owned(),
         executable: PathBuf::from(r"C:\Spice\spice.exe"),
+        binary: wire::Digest::compute(wire::Domain::DistArtifact, b"fixture spice"),
         working_directory: PathBuf::from(r"C:\Users\c\devel\repo"),
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         allow_insecure_bind: true,
@@ -361,4 +362,25 @@ fn an_unchanged_reinstall_keeps_the_pinned_port_and_a_changed_one_reconfigures()
     rekeyed.auth_token = Some("fedcba9876543210".to_owned());
     rekeyed.inherit_port(&installed);
     assert!(installed.reconfigured_by(&rekeyed));
+
+    let mut rebuilt = installed.clone();
+    rebuilt.binary = wire::Digest::compute(wire::Domain::DistArtifact, b"next fixture spice");
+    assert!(
+        installed.reconfigured_by(&rebuilt),
+        "replacing the appliance at the same path retires the old keeper"
+    );
+
+    let mut upgraded = installed.clone();
+    upgraded.executable = PathBuf::from(r"C:\Spice\next\spice.exe");
+    assert!(
+        installed.reconfigured_by(&upgraded),
+        "a running keeper can launch only its own executable"
+    );
+
+    let mut moved_worktree = installed.clone();
+    moved_worktree.working_directory = PathBuf::from(r"C:\Users\c\devel\repo-b");
+    assert!(
+        installed.reconfigured_by(&moved_worktree),
+        "the task and keeper must agree on their repository working directory"
+    );
 }
