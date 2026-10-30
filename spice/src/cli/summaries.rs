@@ -350,6 +350,11 @@ const SUMMARIES: &[(&str, &str)] = &[
         "task wake",
         "Clear a task's deferral, optionally claiming it",
     ),
+    ("tape", "Inspect and archive retained lane transcripts"),
+    (
+        "tape archive",
+        "Dry-run or apply verified archival of quiescent historical tapes",
+    ),
     ("taste", "Read tastes and file curation proposals"),
     ("taste add", "File a proposal to add a taste"),
     ("taste drop", "File a proposal to drop a taste"),

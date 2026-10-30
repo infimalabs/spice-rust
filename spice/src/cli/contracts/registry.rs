@@ -1287,6 +1287,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "principal::deauthorize"
     ),
     row!(
+        ["tape", "archive"],
+        "tape archive [--apply]",
+        Operator,
+        None,
+        [],
+        [Daemonless],
+        Reply,
+        "tape::archive"
+    ),
+    row!(
         ["backup"],
         "backup OUTPUT",
         Operator,

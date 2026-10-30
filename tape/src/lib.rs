@@ -41,7 +41,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sill::{Acquisition, LockFile, LockName, Possession};
+use sill::{Acquisition, Availability, LockFile, LockName, Possession};
 
 /// Name of the index within a tape directory.
 const INDEX: &str = "index";
@@ -280,6 +280,23 @@ impl Tape {
             Acquisition::Acquired(possession) => Ok(possession),
             Acquisition::Contended => Err(Error::Refused(Refusal::Contended)),
         }
+    }
+
+    /// Observe whether another process currently holds this tape's writer lock.
+    ///
+    /// Missing lock files are available. This observer never creates or writes
+    /// lock state, so inventorying an inactive tape cannot change it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O failure when an existing lock file cannot be inspected.
+    pub fn writer_contended(&self) -> Result<bool, Error> {
+        let name = LockName::new("tape").map_err(|_| Error::Refused(Refusal::LockNameRejected))?;
+        let path = self.root.join(LOCK);
+        let lock = LockFile::new(name, &path);
+        lock.availability()
+            .map(|availability| availability == Availability::Held)
+            .map_err(|error| Error::io(Operation::Possess, path, error))
     }
 
     /// Synchronize the tape directory itself.
@@ -789,6 +806,10 @@ mod tests {
             tape,
             "reopening a current generation does not compete with capture"
         );
+        assert!(
+            tape.writer_contended()
+                .expect("the held writer lock is observable")
+        );
 
         for refused in [
             tape.tee(b"blocked"),
@@ -804,6 +825,11 @@ mod tests {
         drop(held);
         tape.tee(b"admitted")
             .expect("the lock is released with its possession");
+        assert!(
+            !tape
+                .writer_contended()
+                .expect("the released writer lock is observable")
+        );
 
         scratch.remove();
     }

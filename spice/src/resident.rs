@@ -245,7 +245,7 @@ use shutdown::{current_residency, drive_shutdown};
 
 mod runtime;
 pub(crate) use daemon::*;
-pub(super) use runtime::*;
+pub(crate) use runtime::*;
 mod ingest_surface;
 use ingest_surface::*;
 mod release;

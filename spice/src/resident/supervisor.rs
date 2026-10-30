@@ -18,9 +18,9 @@ use lane::occupant::DetachedProcess;
 use serde::{Deserialize, Serialize};
 use spice::ambient::Ambient;
 use spice::repository::Repository;
-use wire::CanonicalUuid;
+use wire::{CanonicalUuid, Refusal};
 
-mod archival;
+pub(crate) mod archival;
 pub(super) mod command;
 pub(super) mod ending;
 mod entry;
@@ -43,7 +43,7 @@ pub(crate) use entry::entry;
 use events::StateEvents;
 #[cfg(test)]
 use handle::StandInOccupant;
-use handle::{Handle, process_exists, status_from_raw, status_raw};
+use handle::{Handle, process_exists, process_exists_raw, status_from_raw, status_raw};
 use reporter::DurableReporter;
 
 #[cfg(all(unix, not(test)))]
@@ -261,6 +261,25 @@ impl PendingLaunch {
     }
 }
 
+fn maintenance(paths: &RuntimePaths, lane: CanonicalUuid) -> CommandResult<archival::Maintenance> {
+    match archival::acquire_maintenance(&paths.tape, lane) {
+        Ok(archival::MaintenanceAttempt::Acquired(maintenance)) => Ok(maintenance),
+        Ok(archival::MaintenanceAttempt::Contended) => Err(wire::Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "lane::tape-maintenance-active".to_owned(),
+                Some("lane".to_owned()),
+                Some("no historical tape conversion in progress".to_owned()),
+                Some(lane.to_string()),
+            )
+            .with_detail("retry the launch after the bounded archival pass releases this lane"),
+        ))),
+        Err(error) => Err(environment_fault(
+            "lane::tape-maintenance-unavailable",
+            &error.to_string(),
+        )),
+    }
+}
+
 /// Durable supervisor state found for an occupied lane during replacement.
 pub(super) enum Adoption {
     /// The same supervisor and agent remain live.
@@ -282,6 +301,7 @@ pub(super) fn begin_launch(
     // The detached child derives its runtime paths from this worktree, so its
     // own admission cannot tell a foreign repository apart; admit it here.
     admit_worktree(paths, request.worktree)?;
+    let maintenance = maintenance(paths, request.lane)?;
     let directory = supervisor_directory(paths, request.lane, request.occupant);
     fs::create_dir_all(&directory).map_err(|error| {
         environment_fault("lane::supervisor-state-unavailable", &error.to_string())
@@ -323,6 +343,7 @@ pub(super) fn begin_launch(
     let lane = request.lane;
     let occupant = request.occupant;
     Ok(PendingLaunch::new(move || {
+        let _maintenance = maintenance;
         archival::startup(&paths, &encoded).map_err(|error| {
             environment_fault("lane::supervisor-handoff-failed", &error.to_string())
         })?;
@@ -358,6 +379,7 @@ pub(super) fn begin_launch_test(
     reporter: Arc<dyn CaptureReporter>,
 ) -> CommandResult<PendingLaunch> {
     let occupant = request.occupant;
+    let maintenance = maintenance(paths, request.lane)?;
     let launch = occupant_launch(paths, request, reporter, &super::lane_surface::InertProbes)?;
     let stream = super::lane_surface::stand_in_stream(&launch.spec);
     let process = StandInOccupant::new(&launch.spec);
@@ -365,6 +387,7 @@ pub(super) fn begin_launch_test(
     let proof = launch.session;
     let capture = launch.capture;
     Ok(PendingLaunch::new(move || {
+        let _maintenance = maintenance;
         capture.replay(&stream).map_err(|error| {
             environment_fault("lane::supervisor-launch-failed", &error.to_string())
         })?;

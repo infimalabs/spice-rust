@@ -53,26 +53,35 @@ impl Fixture {
 
     fn seat(&mut self, occupied: bool) {
         let request = &self.request;
+        self.residency(vec![wire::LaneResidency {
+            lane: request.lane,
+            team: request.lane,
+            name: None,
+            worktree: request.worktree.clone(),
+            life: "drive".to_owned(),
+            vendor: "omp".parse().expect("vendor"),
+            model: None,
+            effort: None,
+            fast_mode: false,
+            occupant: occupied.then_some(request.occupant),
+            lineage: vec![request.occupant],
+            capabilities: Vec::new(),
+            session: None,
+            disposition: if occupied { "occupied" } else { "vacant" }.to_owned(),
+        }]);
+    }
+
+    fn unseat(&mut self) {
+        self.residency(Vec::new());
+    }
+
+    fn residency(&mut self, lanes: Vec<wire::LaneResidency>) {
+        let request = &self.request;
         let head = ResidencyHead {
             epoch: request.epoch,
             state: wire::ResidentState::Seated,
             topology_revision: 0,
-            lanes: vec![wire::LaneResidency {
-                lane: request.lane,
-                team: request.lane,
-                name: None,
-                worktree: request.worktree.clone(),
-                life: "drive".to_owned(),
-                vendor: "omp".parse().expect("vendor"),
-                model: None,
-                effort: None,
-                fast_mode: false,
-                occupant: occupied.then_some(request.occupant),
-                lineage: vec![request.occupant],
-                capabilities: Vec::new(),
-                session: None,
-                disposition: if occupied { "occupied" } else { "vacant" }.to_owned(),
-            }],
+            lanes,
             subscriptions: Vec::new(),
             renewals: Vec::new(),
         };
@@ -246,4 +255,99 @@ fn even_an_incomplete_job_record_blocks_archival() {
     assert!(shutdown(&fixture.paths, &fixture.request).is_none());
     fs::remove_dir_all(pending).expect("abandoned fixture job removed");
     assert!(shutdown(&fixture.paths, &fixture.request).is_some());
+}
+
+#[test]
+fn unseated_historical_lane_without_supervisors_is_quiescent() {
+    let mut fixture = Fixture::new();
+    fixture.unseat();
+    let state = supervisor_directory(
+        &fixture.paths,
+        fixture.request.lane,
+        fixture.request.occupant,
+    )
+    .join("state.json");
+    fs::create_dir_all(state.parent().expect("state has a parent"))
+        .expect("retained supervisor directory creates");
+    fs::write(&state, br#"{"version":2}"#).expect("retained old state plants");
+
+    assert_eq!(
+        historical_authority(&fixture.paths, fixture.request.lane)
+            .expect("unseated authority reads"),
+        HistoricalAuthority::Eligible
+    );
+}
+
+#[test]
+fn maintenance_exclusion_is_visible_to_launches_and_read_only_observers() {
+    let fixture = Fixture::new();
+    assert!(
+        !maintenance_contended(&fixture.paths.tape, fixture.request.lane)
+            .expect("an absent maintenance lock is available")
+    );
+    let MaintenanceAttempt::Acquired(first) =
+        acquire_maintenance(&fixture.paths.tape, fixture.request.lane)
+            .expect("the first owner acquires maintenance")
+    else {
+        panic!("a fresh maintenance boundary was contended");
+    };
+    assert!(
+        maintenance_contended(&fixture.paths.tape, fixture.request.lane)
+            .expect("the held maintenance lock is observable")
+    );
+    assert!(matches!(
+        acquire_maintenance(&fixture.paths.tape, fixture.request.lane)
+            .expect("contention is typed"),
+        MaintenanceAttempt::Contended
+    ));
+    drop(first);
+    assert!(matches!(
+        acquire_maintenance(&fixture.paths.tape, fixture.request.lane)
+            .expect("the released boundary reacquires"),
+        MaintenanceAttempt::Acquired(_)
+    ));
+}
+
+#[test]
+fn historical_authority_requires_vacancy_jobs_and_drained_supervisors() {
+    let mut fixture = Fixture::new();
+    assert_eq!(
+        historical_authority(&fixture.paths, fixture.request.lane)
+            .expect("occupied authority reads"),
+        HistoricalAuthority::Active
+    );
+
+    fixture.predecessor(true);
+    fixture.seat(false);
+    assert_eq!(
+        historical_authority(&fixture.paths, fixture.request.lane)
+            .expect("drained authority reads"),
+        HistoricalAuthority::Eligible
+    );
+
+    let pending = fixture
+        .paths
+        .supervisors
+        .join(fixture.request.lane.to_string())
+        .join("jobs")
+        .join("partial");
+    fs::create_dir_all(&pending).expect("partial job publication");
+    assert_eq!(
+        historical_authority(&fixture.paths, fixture.request.lane).expect("job authority reads"),
+        HistoricalAuthority::JobHeld
+    );
+    fs::remove_dir_all(pending).expect("partial job removes");
+
+    let state = supervisor_directory(
+        &fixture.paths,
+        fixture.request.lane,
+        fixture.request.occupant,
+    )
+    .join("state.json");
+    fs::write(state, b"not supervisor state").expect("state corrupts");
+    assert!(matches!(
+        historical_authority(&fixture.paths, fixture.request.lane)
+            .expect("uncertain authority is classified"),
+        HistoricalAuthority::Unknown(_)
+    ));
 }

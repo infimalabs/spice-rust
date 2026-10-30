@@ -97,6 +97,8 @@ mod steering_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_read;
 #[cfg(not(target_arch = "wasm32"))]
+mod tape_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod task_artifact_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod task_next_delivery;
@@ -649,6 +651,7 @@ impl NativeInvocation<'_> {
                 &taste_command::drop(leaf, contract, configuration, ambient),
                 form,
             ),
+            ["tape", "archive"] => deliver_display(&tape_command::run(leaf), form),
             _ => {}
         }
     }

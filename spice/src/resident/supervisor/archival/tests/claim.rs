@@ -163,3 +163,17 @@ fn an_authoritative_claim_holds_archival_until_released() {
         .expect("claim releases");
     assert!(shutdown(&fixture.paths, &fixture.request).is_some());
 }
+
+#[test]
+fn historical_conversion_names_a_vacant_lanes_claim() {
+    let mut fixture = Fixture::new();
+    fixture.predecessor(true);
+    fixture.seat(false);
+    claim(&mut fixture);
+
+    assert_eq!(
+        historical_authority(&fixture.paths, fixture.request.lane)
+            .expect("historical authority reads"),
+        HistoricalAuthority::Claimed
+    );
+}

@@ -93,9 +93,24 @@ eligibility skips maintenance; the tape writer lock refuses contention.
 Shutdown publishes the real completion and ending notice before compression,
 so storage failure is diagnostic and cannot change the agent result or delay
 its ending notification. A retained idle agent, renewal alone, and resident
-restart or shutdown with live supervisors do not trigger archival. No global
-scan or historical conversion runs. Policy owner:
-[`supervisor/archival.rs`](../../spice/src/resident/supervisor/archival.rs).
+restart or shutdown with live supervisors do not trigger archival.
+
+`spice tape archive` separately inventories one bounded, sorted snapshot of
+historical lane/vendor roots without changing them. `--apply` handles roots
+sequentially. Before each seal it takes the lane's maintenance exclusion,
+which a new supervisor launch also takes, then re-reads residency, claims,
+retained jobs, and—for a still-admitted vacant lane—every retained supervisor's
+kernel exit and capture-drain proof. Current journal removal is the terminal
+authority for a historical lane: its retained supervisor documents remain
+evidence and older document schemas never select a release-specific execution
+path. Active, claimed, job-held, contended, malformed, unknown, below-floor,
+and already-archived roots remain unchanged with a concrete status. Eligible
+roots call only `Tape::seal`; progress is flushed after each root, and an
+interrupt finishes the current seal then stops before the next root. A rerun
+derives its state from the durable index and files, recovers shared seal
+residue, and does not recompress immutable members. Policy and command owners:
+[`supervisor/archival.rs`](../../spice/src/resident/supervisor/archival.rs) and
+[`tape_command.rs`](../../spice/src/tape_command.rs).
 
 Occupants cooperate under one Unix user. Capabilities bind attribution, lane,
 occupant, and epoch; they are workflow interlocks, not isolation between

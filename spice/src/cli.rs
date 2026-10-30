@@ -375,6 +375,7 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["thread"]
             | ["release", "publish"]
             | ["restore", "verify"]
+            | ["tape", "archive"]
     )
 }
 
