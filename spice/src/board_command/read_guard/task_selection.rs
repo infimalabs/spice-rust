@@ -160,6 +160,7 @@ fn context_tasks(
     if dependencies {
         let mut unaccepted = std::collections::BTreeSet::new();
         let mut open_designs = std::collections::BTreeSet::new();
+        let mut outputs = Vec::new();
         for task in &selected {
             let Ok(index) = observed
                 .tasks()
@@ -168,6 +169,13 @@ fn context_tasks(
                 continue;
             };
             let heads = &observed.tasks()[index];
+            if heads.statement().body().intent == Some(wire::TaskIntent::Plan) {
+                outputs.extend(planning::plan_outputs(
+                    task,
+                    &heads.statement().body().dependencies,
+                    observed.tasks().iter(),
+                ));
+            }
             if !substantive_acceptance(&heads.statement().body().acceptance) {
                 unaccepted.insert(task.clone());
             }
@@ -178,6 +186,12 @@ fn context_tasks(
                 open_designs.insert(task.clone());
             }
         }
+        // A Plan witnesses linked output even when it carries its own AC.
+        selected.extend(
+            outputs
+                .into_iter()
+                .map(|heads| heads.statement().body().born.clone()),
+        );
         // A task without its own acceptance carries the work depending on it
         // that lends it one; an open Design also carries the pending
         // construction roots it released and now waits on as prerequisites.

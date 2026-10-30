@@ -211,7 +211,9 @@ pub(crate) fn plan_outputs<'a, T: AcceptanceRow + 'a>(
     dependencies: &[wire::TaskStamp],
     rows: impl Iterator<Item = &'a T> + Clone,
 ) -> Vec<&'a T> {
-    let output = |row: &T| constructs(row.intent(), row.acceptance(), row.workflow());
+    let output = |row: &T| {
+        row.filing().is_filed() && constructs(row.intent(), row.acceptance(), row.workflow())
+    };
     let mut outputs = Vec::new();
     for dependency in dependencies {
         if let Some(row) = rows.clone().find(|row| row.born() == dependency)

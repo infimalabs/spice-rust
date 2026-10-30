@@ -65,7 +65,25 @@ fn complete(
     task: &TaskHandle,
 ) -> Outcome<CommandAnswer> {
     let lane = Actor::Lane(seat.lane);
-    let held = board(bus, epoch, lane.clone());
+    let held = match issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks: vec![task.born().expect("task identity")],
+            dependencies: true,
+            claims: false,
+            history: false,
+        },
+    ) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Board(answer),
+            ..
+        }) => *answer,
+        outcome => panic!("completion read failed: {outcome:?}"),
+    };
     let expected = progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
         .expect("completion witnesses");
     issue(

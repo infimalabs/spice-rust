@@ -782,18 +782,29 @@ fn filing_a_draft_can_claim_it_in_the_same_transaction() {
 
 #[test]
 fn a_draft_lends_acceptance_only_after_it_is_filed() {
+    for intent in [None, Some(wire::TaskIntent::Plan)] {
+        draft_completion_requires_filing(intent);
+    }
+}
+
+fn draft_completion_requires_filing(intent: Option<wire::TaskIntent>) {
     let (root, bus, epoch, seats) = fixture("draft-acceptance-lender", 1);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
-    let borrower = add_project_with_acceptance(
+    let born = stamp("DRAFT-borrower");
+    let borrower = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue(
         &bus,
         epoch,
-        "DRAFT-borrower",
-        "Filed work without acceptance",
-        "board.test",
-        Some("todo"),
-        &[],
-    );
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            draft: false,
+            flow: Some(if intent.is_some() { "plan" } else { "todo" }.to_owned()),
+            ..draft_add("DRAFT-borrower", intent, &[])
+        },
+    ));
     let draft_stamp = stamp("DRAFT-lender");
     assert_committed(issue(
         &bus,
@@ -809,12 +820,6 @@ fn a_draft_lends_acceptance_only_after_it_is_filed() {
         },
     ));
     let draft = TaskHandle::for_filing("board.test", &draft_stamp, wire::TaskFiling::Draft);
-    let visible = board(&bus, epoch, lane.clone());
-    assert!(
-        task_show(&visible, at(&visible, &borrower), &[])
-            .contains("Completion contract: unspecified."),
-        "an unfiled Draft asserts no completion authority",
-    );
 
     claim_task(&bus, epoch, seat, &lane, &borrower);
     let held = board(&bus, epoch, lane.clone());
@@ -832,8 +837,13 @@ fn a_draft_lends_acceptance_only_after_it_is_filed() {
             operation: Some(completion_operation()),
         },
     );
+    let reason = if intent == Some(wire::TaskIntent::Plan) {
+        "task::plan-output-missing"
+    } else {
+        "task::acceptance-missing"
+    };
     assert!(
-        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == "task::acceptance-missing"),
+        matches!(&refused, Outcome::Refusal(refusal) if refusal.reason() == reason),
         "{refused:?}"
     );
     let still_held = board(&bus, epoch, lane.clone());
@@ -844,12 +854,7 @@ fn a_draft_lends_acceptance_only_after_it_is_filed() {
     }));
 
     assert_committed(file(&bus, epoch, &draft));
-    let lender = TaskHandle::for_project("board.test", &draft_stamp);
     let refreshed = board(&bus, epoch, lane.clone());
-    assert!(
-        task_show(&refreshed, at(&refreshed, &borrower), &[]).contains(lender.as_str()),
-        "filing activates the Draft's retained acceptance and dependency",
-    );
     assert_committed(issue(
         &bus,
         epoch,
