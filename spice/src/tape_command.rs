@@ -303,7 +303,7 @@ fn inspect_storage(path: &Path) -> Result<Storage, tape::Error> {
     let tape = Tape::open_existing(path)?;
     tape.source_id()?;
     let extents = tape.extents_bounded(MAX_INDEX_BYTES, MAX_EXTENTS)?;
-    let plaintext = tape.plaintext_bytes()?;
+    let plaintext = tape.plaintext_bytes_bounded(MAX_INDEX_BYTES, MAX_EXTENTS)?;
     let writer_contended = tape.writer_contended()?;
     Ok(Storage {
         plaintext,
@@ -380,7 +380,7 @@ fn row(
 
 fn snapshot(tape_root: &Path) -> CommandResult<Vec<Root>> {
     let lanes = match fs::read_dir(tape_root) {
-        Ok(entries) => sorted(entries, tape_root)?,
+        Ok(entries) => sorted_bounded(entries, tape_root, MAX_LANES, "lanes", None)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(store_failure(
@@ -390,9 +390,6 @@ fn snapshot(tape_root: &Path) -> CommandResult<Vec<Root>> {
             ));
         }
     };
-    if lanes.len() > MAX_LANES {
-        return Err(limit_refusal("lanes", MAX_LANES, lanes.len()));
-    }
     let mut roots = Vec::new();
     for lane_entry in lanes {
         let lane_name = lane_entry.file_name().to_string_lossy().into_owned();
@@ -422,27 +419,16 @@ fn snapshot(tape_root: &Path) -> CommandResult<Vec<Root>> {
             )?;
             continue;
         }
-        let vendors = sorted(
+        let vendors = sorted_bounded(
             fs::read_dir(lane_entry.path()).map_err(|error| {
                 store_failure("tape::inventory-unreadable", &lane_entry.path(), &error)
             })?,
             &lane_entry.path(),
+            MAX_VENDORS_PER_LANE,
+            "vendors per lane",
+            Some(MAINTENANCE_LOCK),
         )?;
-        let vendor_count = vendors
-            .iter()
-            .filter(|entry| entry.file_name() != MAINTENANCE_LOCK)
-            .count();
-        if vendor_count > MAX_VENDORS_PER_LANE {
-            return Err(limit_refusal(
-                "vendors per lane",
-                MAX_VENDORS_PER_LANE,
-                vendor_count,
-            ));
-        }
         for vendor_entry in vendors {
-            if vendor_entry.file_name() == MAINTENANCE_LOCK {
-                continue;
-            }
             let vendor_name = vendor_entry.file_name().to_string_lossy().into_owned();
             let vendor = vendor_name.parse::<wire::Name>();
             let kind = vendor_entry.file_type().map_err(|error| {
@@ -484,14 +470,27 @@ fn snapshot(tape_root: &Path) -> CommandResult<Vec<Root>> {
     Ok(roots)
 }
 
-fn sorted(entries: fs::ReadDir, root: &Path) -> CommandResult<Vec<fs::DirEntry>> {
-    let mut entries = entries
-        .map(|entry| {
-            entry.map_err(|error| store_failure("tape::inventory-unreadable", root, &error))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(fs::DirEntry::file_name);
-    Ok(entries)
+fn sorted_bounded(
+    entries: fs::ReadDir,
+    root: &Path,
+    limit: usize,
+    unit: &str,
+    excluded: Option<&str>,
+) -> CommandResult<Vec<fs::DirEntry>> {
+    let mut bounded = Vec::with_capacity(limit);
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| store_failure("tape::inventory-unreadable", root, &error))?;
+        if excluded.is_some_and(|name| entry.file_name() == name) {
+            continue;
+        }
+        if bounded.len() == limit {
+            return Err(limit_refusal(unit, limit, limit.saturating_add(1)));
+        }
+        bounded.push(entry);
+    }
+    bounded.sort_by_key(fs::DirEntry::file_name);
+    Ok(bounded)
 }
 
 fn push_root(roots: &mut Vec<Root>, root: Root) -> CommandResult<()> {
@@ -570,6 +569,38 @@ mod tests {
             vendor: "omp".to_owned(),
             path,
         }
+    }
+
+    #[test]
+    fn directory_inventory_refuses_at_its_bound_and_excludes_maintenance() {
+        let root = root();
+        fs::create_dir(root.join("a")).expect("first entry plants");
+        fs::create_dir(root.join("b")).expect("second entry plants");
+        fs::write(root.join(MAINTENANCE_LOCK), b"lock").expect("maintenance entry plants");
+
+        let admitted = sorted_bounded(
+            fs::read_dir(&root).expect("inventory opens"),
+            &root,
+            2,
+            "fixture entries",
+            Some(MAINTENANCE_LOCK),
+        )
+        .expect("maintenance does not consume the bound");
+        assert_eq!(admitted.len(), 2);
+
+        fs::create_dir(root.join("c")).expect("excess entry plants");
+        assert!(matches!(
+            sorted_bounded(
+                fs::read_dir(&root).expect("inventory reopens"),
+                &root,
+                2,
+                "fixture entries",
+                Some(MAINTENANCE_LOCK),
+            ),
+            Err(Outcome::Refusal(_))
+        ));
+
+        fs::remove_dir_all(root).expect("fixture removes");
     }
 
     #[test]

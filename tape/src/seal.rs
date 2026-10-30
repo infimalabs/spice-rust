@@ -274,6 +274,31 @@ impl Tape {
     /// total that cannot be represented. Only missing plaintext is absent.
     pub fn plaintext_bytes(&self) -> Result<u64, Error> {
         let index = self.read_index()?;
+        self.plaintext_bytes_for(&index)
+    }
+
+    /// Plaintext still retained, after bounding the index bytes and extents
+    /// needed to identify every issued member.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed limit refusal or the same index and metadata failures
+    /// as [`Self::plaintext_bytes`].
+    pub fn plaintext_bytes_bounded(
+        &self,
+        max_index_bytes: u64,
+        max_extents: usize,
+    ) -> Result<u64, Error> {
+        let path = self.index_path();
+        let index = match File::open(&path) {
+            Ok(file) => read_bounded_index(file, &path, max_index_bytes, max_extents)?.0,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Index::default(),
+            Err(error) => return Err(Error::io(Operation::ReadIndex, path, error)),
+        };
+        self.plaintext_bytes_for(&index)
+    }
+
+    fn plaintext_bytes_for(&self, index: &Index) -> Result<u64, Error> {
         let mut total = 0_u64;
         for member in index
             .members()
