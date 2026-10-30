@@ -1,13 +1,15 @@
 //! What the occupant hears about pending steering while the journal lags its
 //! own answers.
 
-use std::sync::{Arc, Mutex, PoisonError};
-
-use super::{ActiveCall, Driver};
+use super::{ActiveCall, Driver, Work};
 use crate::resident::supervisor::terminal::Control;
+use std::sync::{Arc, Barrier, Mutex, PoisonError};
+use std::time::Duration;
+use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
 
 const ASKED: &str = "1kJK6M0V";
 const LATER: &str = "1kJK6N3R";
+const CONCURRENT_REPLAYS: usize = 19;
 
 /// The resident's inbox answer, as the test moves it; `None` while no
 /// resident this seat can speak with answers.
@@ -226,6 +228,91 @@ impl Seat {
             .next_back()
             .unwrap_or_default()
     }
+}
+
+#[test]
+fn stale_step_preempts_late_blocking_work_and_replays_only_unanswered_direction() {
+    let seat = Seat::new();
+    seat.hear(&serde_json::json!({"type": "agent_start"}));
+    seat.kick(&[(ASKED, "published"), (LATER, "published")]);
+
+    let shell = Work::Shell(ShellCall {
+        command: "sleep 30".to_owned(),
+        lifetime: Lifetime::Deadline(Duration::from_secs(30)),
+        notices: Vec::new(),
+        events: false,
+    });
+    let shell_control = Control::new();
+    assert!(seat.driver.preempt_stale(&shell, &shell_control));
+    assert!(shell_control.was_interrupted());
+
+    let barrier = Arc::new(Barrier::new(CONCURRENT_REPLAYS));
+    std::thread::scope(|scope| {
+        for _ in 0..CONCURRENT_REPLAYS {
+            let barrier = Arc::clone(&barrier);
+            let driver = Arc::clone(&seat.driver);
+            scope.spawn(move || {
+                barrier.wait();
+                driver.replay_inbox();
+            });
+        }
+    });
+    let steered = seat.steered();
+    assert_eq!(steered.len(), 2, "{steered:?}");
+    assert!(steered[1].contains(ASKED) && steered[1].contains(LATER));
+
+    seat.answer_in_intent(ASKED);
+    seat.driver
+        .step
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .mark_stale();
+    seat.driver.replay_inbox();
+    assert_eq!(seat.steered().len(), 2, "one generation replays once");
+
+    {
+        let mut step = seat
+            .driver
+            .step
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        step.started();
+        step.mark_stale();
+    }
+    seat.driver.replay_inbox();
+    let steered = seat.steered();
+    assert_eq!(steered.len(), 3, "{steered:?}");
+    assert!(!steered[2].contains(ASKED), "{steered:?}");
+    assert!(steered[2].contains(LATER), "{steered:?}");
+
+    let wait = Work::Job(JobCall {
+        op: JobOp::Wait,
+        id: Some("job-1".to_owned()),
+        timeout: Duration::from_secs(30),
+        until: None,
+    });
+    let wait_control = Control::new();
+    assert!(seat.driver.preempt_stale(&wait, &wait_control));
+    assert!(wait_control.was_interrupted());
+
+    let list = Work::Job(JobCall {
+        op: JobOp::List,
+        id: None,
+        timeout: Duration::from_secs(30),
+        until: None,
+    });
+    assert!(!seat.driver.preempt_stale(&list, &Control::new()));
+
+    seat.hear(&serde_json::json!({"type": "agent_start"}));
+    let fresh_control = Control::new();
+    assert!(!seat.driver.preempt_stale(&shell, &fresh_control));
+    assert!(!fresh_control.was_interrupted());
+    seat.driver.replay_inbox();
+    assert_eq!(
+        seat.steered(),
+        steered,
+        "a later step consumes staleness before another replay"
+    );
 }
 
 #[test]

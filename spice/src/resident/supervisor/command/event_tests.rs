@@ -105,6 +105,17 @@ fn seat(sink: &Sink, terminal: &Terminal) -> Arc<Driver<Sink>> {
     )
 }
 
+fn seat_with_inbox(sink: &Sink, terminal: &Terminal, inbox: String) -> Arc<Driver<Sink>> {
+    Driver::with_readers(
+        sink.clone(),
+        move || Some(inbox.clone().into_bytes()),
+        || None,
+        |_| Err("no quotes here".to_owned()),
+        steer::Key::for_identity(crate::resident::new_uuid()),
+        Some(terminal.clone()),
+    )
+}
+
 fn lines(texts: &[&str]) -> JobEvent {
     JobEvent::Lines {
         lines: texts.iter().map(|text| (*text).to_owned()).collect(),
@@ -285,7 +296,9 @@ fn a_blocked_wait_is_restated_after_another_call_settles_until_its_own_answer() 
             timeout: Duration::from_secs(30),
             until: None,
         });
-        std::thread::spawn(move || seated.resolve(&terminal, "wait-1", &call, &Control::new()))
+        std::thread::spawn(move || {
+            seated.resolve(&terminal, "wait-1", &call, &Control::new(), false);
+        })
     };
     let armed = std::time::Instant::now();
     while sink.frames().is_empty() {
@@ -315,4 +328,62 @@ fn a_blocked_wait_is_restated_after_another_call_settles_until_its_own_answer() 
         ]
     );
     assert_eq!(frames[1]["partialResult"], frames[0]["partialResult"]);
+}
+
+#[test]
+fn stale_wait_reports_then_replays_inbox_and_delivers_its_ending_once() {
+    let scratch = Scratch::new("stale-wait");
+    let (jobs, terminal) = terminal(&scratch);
+    let job = jobs.record_for_tests("cargo build", false, Some(60_000));
+    let sink = Sink::default();
+    let inbox = "<1kJK6Q0b>\n\
+                 directive=d-1kJK6M0V key=1kJK6M0V stage=published expires=never\n\
+                 newer direction\n\
+                 </1kJK6Q0b>\n"
+        .to_owned();
+    let seated = seat_with_inbox(&sink, &terminal, inbox);
+    seated.deliver_inbox();
+
+    let call = Work::Job(JobCall {
+        op: JobOp::Wait,
+        id: Some(job.id().to_owned()),
+        timeout: Duration::from_secs(30),
+        until: None,
+    });
+    let control = Control::new();
+    assert!(seated.preempt_stale(&call, &control));
+    seated.resolve(&terminal, "wait-stale", &call, &control, true);
+
+    let frames = sink.frames();
+    assert_eq!(frames.len(), 4, "{frames:?}");
+    assert_eq!(frames[1]["type"], "host_tool_update");
+    assert_eq!(frames[2]["type"], "host_tool_result");
+    assert_eq!(frames[2]["id"], "wait-stale");
+    assert!(
+        frames[2]["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|result| {
+                result.contains(
+                    "Newer steering arrived after this model step began; its inbox follows.",
+                )
+            }),
+        "{frames:?}"
+    );
+    assert_eq!(frames[3]["streamingBehavior"], "steer");
+    assert!(
+        frames[3]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("newer direction")),
+        "{frames:?}"
+    );
+    assert!(
+        job.ended().is_none(),
+        "the interrupted wait leaves the job alive"
+    );
+
+    job.end_for_tests(Ending::Exited { code: 0 });
+    seated.hear(&terminal, &job, &Control::new());
+    assert_eq!(sink.notices().len(), 1);
+    seated.hear(&terminal, &job, &Control::new());
+    assert_eq!(sink.notices().len(), 1, "the ending is delivered once");
 }

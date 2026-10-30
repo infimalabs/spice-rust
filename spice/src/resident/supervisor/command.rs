@@ -27,16 +27,18 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use listen::{Decoded, Dialog, Event, ProseRole};
 use serde::{Deserialize, Serialize};
-use vendor::omp::{JobCall, JobOp, ShellCall};
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
 use super::Phase;
 use super::terminal::{
-    Control, Event as JobEvent, Handle, Job, Report, Run, ServiceAuthority, ServiceClaim, Terminal,
+    Control, Event as JobEvent, Job, Report, ServiceAuthority, ServiceClaim, Terminal,
 };
 use crate::resident::steering::{MessageRecordedNotice, MessageRefusalNotice};
 use steering::{ActivityReminder, InboxDelivery, ReasoningReminder};
+#[cfg(test)]
+use work::Work;
+use work::{ActiveCall, StepState};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 pub(in crate::resident) const KICK_BYTES: usize = 1024;
@@ -95,6 +97,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     read_seated: SeatedReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
+    /// Current OMP step and the step made stale by successfully published
+    /// steering. One later step boundary clears the marker.
+    step: Mutex<StepState>,
     /// Latest queued background notice per purpose. Superseded notices are
     /// coalesced in the extension until omp's next step boundary.
     background: Mutex<BTreeMap<String, String>>,
@@ -163,27 +168,6 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// error. The operator turning fast mode back on re-arms it.
     fast_refused: AtomicBool,
     registration: registration::Registration,
-}
-
-/// What one host tool call asks of the lane.
-enum Work {
-    Shell(ShellCall),
-    Job(JobCall),
-}
-
-#[derive(Clone)]
-struct ActiveCall {
-    handle: Handle,
-    blocking_wait: bool,
-}
-
-impl ActiveCall {
-    fn new(handle: Handle, work: &Work) -> Self {
-        Self {
-            handle,
-            blocking_wait: matches!(work, Work::Job(call) if call.op == JobOp::Wait),
-        }
-    }
 }
 
 /// What one observed record raises to the resident.
@@ -392,6 +376,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             read_seated: seated,
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
+            step: Mutex::new(StepState::default()),
             room_catch_up_sent: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
             room_catch_up: Mutex::new(None),
@@ -742,6 +727,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// for a prompt nobody sends. A turn the vendor failed only because it
     /// refused fast mode instead continues on the same session without it.
     pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Raised> {
+        self.observe_step(decoded);
         self.observe_retune(decoded);
         self.observe_uri_registration(decoded);
         // A telling seen on the transcript is now held verbatim. Ordinary
@@ -772,6 +758,9 @@ impl<W: Write + Send + 'static> Driver<W> {
                     purpose == ROOM_CATCH_UP_PURPOSE || !prose.text.contains(message.as_str())
                 });
         }
+        // Record visible acknowledgements before a host-tool worker can
+        // immediately return and replay the current inbox.
+        self.cancel_answered_reminders(decoded);
         let context = decoded.context();
         let asked = match context.and_then(|context| context.dialog.as_ref()) {
             Some(Dialog::Confirm { id, title, message }) => Some(self.ask(id, title, message)),
@@ -803,7 +792,6 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
         self.restate_waits(decoded);
         let replied = self.observe_visible_reply(decoded);
-        self.cancel_answered_reminders(decoded);
         let compacted = decoded
             .events()
             .iter()
@@ -897,83 +885,6 @@ impl<W: Write + Send + 'static> Driver<W> {
             .remove(&request);
         if let Some(dialog) = dialog {
             let _answered = self.write(&vendor::omp::dialog_confirmed(&dialog, confirmed));
-        }
-    }
-
-    /// Answer one host tool call: a command run in the lane's terminal, or a
-    /// request on the lane's jobs.
-    ///
-    /// The work runs on its own thread, so the stream the call arrived on
-    /// keeps being read: the withdrawal that ends the call early and the
-    /// message that interrupts it arrive there. A tool the lane never
-    /// registered, arguments that name no command, or an occupant with no
-    /// terminal are refused at once.
-    fn run(
-        self: &Arc<Self>,
-        id: &str,
-        tool: &str,
-        arguments: &serde_json::Map<String, serde_json::Value>,
-    ) {
-        let work = match tool {
-            vendor::omp::SHELL_TOOL => ShellCall::parse(arguments).map(Work::Shell),
-            vendor::omp::JOB_TOOL => JobCall::parse(arguments).map(Work::Job),
-            _ => Err(format!("{tool} is not a tool this lane registered")),
-        };
-        let (terminal, work) = match (self.terminal.clone(), work) {
-            (Some(terminal), Ok(work)) => (terminal, work),
-            (_, work) => {
-                let reason = work
-                    .err()
-                    .unwrap_or_else(|| "this lane has no terminal".to_owned());
-                let _refused = self.write(&vendor::omp::host_tool_refused(id, &reason));
-                return;
-            }
-        };
-        let control = Control::new();
-        self.calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(id.to_owned(), ActiveCall::new(control.handle(), &work));
-        let worker = self.worker();
-        let answered = id.to_owned();
-        let started = std::thread::Builder::new()
-            .name("spice-shell".to_owned())
-            .spawn(move || worker.driver.resolve(&terminal, &answered, &work, &control));
-        if let Err(error) = started {
-            self.cancel(id);
-            let _refused = self.write(&vendor::omp::host_tool_refused(
-                id,
-                &format!("shell thread failed: {error}"),
-            ));
-        }
-    }
-
-    /// Answer one call with what its work said, then deliver the ending of a
-    /// command the answer left running.
-    fn resolve(&self, terminal: &Terminal, id: &str, work: &Work, control: &Control) {
-        let (report, kept) = match work {
-            Work::Shell(call) => match terminal.run(call, control) {
-                Run::Ended(report) => (report, None),
-                Run::Backgrounded(report, job) => (report, Some(*job)),
-            },
-            Work::Job(call) => {
-                let mut progress = |report: &Report| self.report_wait(id, report);
-                (terminal.job(call, control, &mut progress), None)
-            }
-        };
-        self.end_wait(id);
-        self.calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(id);
-        let _answered = self.write(&vendor::omp::host_tool_result(
-            id,
-            &report.output,
-            report.exit_code,
-            report.failed,
-        ));
-        if let Some(job) = kept {
-            self.hear(terminal, &job, control);
         }
     }
 
