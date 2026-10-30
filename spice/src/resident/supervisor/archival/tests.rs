@@ -214,6 +214,25 @@ fn startup_requires_both_vacancy_and_proven_capture_drain() {
 }
 
 #[test]
+fn unreadable_predecessor_state_skips_opportunistic_startup_archival() {
+    let mut fixture = Fixture::new();
+    fixture.tape.tee(b"x").expect("one captured byte");
+    fixture.predecessor(true);
+    fixture.seat(false);
+    let state = supervisor_directory(
+        &fixture.paths,
+        fixture.request.lane,
+        fixture.request.occupant,
+    )
+    .join("state.json");
+    fs::write(state, b"not supervisor state").expect("state corrupts");
+
+    startup(&fixture.paths, &fixture.request).expect("archival uncertainty only skips");
+
+    assert!(!fixture.tape.extents().expect("extents")[0].sealed);
+}
+
+#[test]
 fn even_an_incomplete_job_record_blocks_archival() {
     let fixture = Fixture::new();
     fixture.fill(MINIMUM);

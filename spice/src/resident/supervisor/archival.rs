@@ -30,7 +30,7 @@ struct Authority {
 }
 
 /// Before any successor process or launch clock exists, finish its handoff.
-/// An unreadable predecessor cannot authorize overlapping capture.
+/// Unreadable predecessor state cannot authorize optional maintenance.
 pub(super) fn startup(paths: &RuntimePaths, request: &Request) -> io::Result<()> {
     let authority = match authority(paths, request, Boundary::Startup) {
         Ok(Some(authority)) => authority,
@@ -47,7 +47,10 @@ pub(super) fn startup(paths: &RuntimePaths, request: &Request) -> io::Result<()>
     let state = match read_state(&path) {
         Ok(state) => state,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
+        Err(error) => {
+            diagnostic(&error);
+            return Ok(());
+        }
     };
     if state.lane != request.lane || state.occupant != previous || state.vendor != request.vendor {
         return Ok(());
