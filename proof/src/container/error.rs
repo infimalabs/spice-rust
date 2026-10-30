@@ -31,6 +31,12 @@ pub enum ContainerError {
         expected: String,
         observed: String,
     },
+    VendorSet(Box<crate::VendorSetError>),
+    ImageVendorSetDrift {
+        image: String,
+        expected: String,
+        observed: String,
+    },
     InspectWorkspace {
         path: PathBuf,
         source: io::Error,
@@ -73,8 +79,10 @@ impl fmt::Display for ContainerError {
             | Self::RuntimeDialectNotAttested { .. }
             | Self::ImageNotDigestPinned(..)
             | Self::ImageNotResolved { .. }
-            | Self::ImageIdentityDrift { .. } => self.fmt_appliance(formatter),
-            Self::InspectWorkspace { .. }
+            | Self::ImageIdentityDrift { .. }
+            | Self::ImageVendorSetDrift { .. } => self.fmt_appliance(formatter),
+            Self::VendorSet(..)
+            | Self::InspectWorkspace { .. }
             | Self::WorkspaceNotDirectory(..)
             | Self::UnrepresentableWorkspace(..)
             | Self::ZeroOutputLimit
@@ -165,6 +173,16 @@ impl ContainerError {
                 "proof runtime resolved a different appliance: expected {expected:?}, \
                  observed {observed:?}"
             ),
+            Self::ImageVendorSetDrift {
+                image,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "sealed Linux image {image} has a stale vendored package set: expected \
+                 {expected}, observed {observed}. Reseal it with \
+                 `spice dev xtask -- proof-image build`"
+            ),
             _ => unreachable!("appliance admission partition is closed"),
         }
     }
@@ -173,6 +191,9 @@ impl ContainerError {
     /// process contract it is given, and the isolation it must prove.
     fn fmt_execution(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::VendorSet(source) => {
+                write!(formatter, "cannot derive the proof vendor set: {source}")
+            }
             Self::InspectWorkspace { path, source } => write!(
                 formatter,
                 "cannot inspect proof workspace {}: {source}",
@@ -234,6 +255,7 @@ impl Error for ContainerError {
             | Self::CreateAttestationChallenge(source)
             | Self::SpawnRuntimeProbe(source)
             | Self::SpawnRuntime(source) => Some(source),
+            Self::VendorSet(source) => Some(source.as_ref()),
             Self::RuntimeProbeSpec(source) | Self::Spec(source) => Some(source),
             Self::WaitRuntimeProbe(source) | Self::Wait(source) => Some(source),
             Self::RuntimeNotAbsolute(_)
@@ -243,6 +265,7 @@ impl Error for ContainerError {
             | Self::ImageNotDigestPinned(_)
             | Self::ImageNotResolved { .. }
             | Self::ImageIdentityDrift { .. }
+            | Self::ImageVendorSetDrift { .. }
             | Self::WorkspaceNotDirectory(_)
             | Self::UnrepresentableWorkspace(_)
             | Self::ZeroOutputLimit

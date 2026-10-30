@@ -112,6 +112,7 @@ mod proving;
 pub mod rederive;
 pub mod replay;
 pub mod seal;
+mod vendor_set;
 
 pub use config::{Config, DEFAULT_IMAGE, ExecutablePath, Image};
 pub use container::{Container, ContainerError, Limits, OciRuntime, ReleaseStage};
@@ -135,3 +136,4 @@ pub use replay::{
     ReplayFailure, ReplayVerdict, replay,
 };
 pub use seal::{SealError, seal};
+pub use vendor_set::{VENDOR_SET_LABEL, VendorSet, VendorSetError};

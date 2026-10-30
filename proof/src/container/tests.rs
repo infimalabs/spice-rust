@@ -9,6 +9,7 @@ use super::{Attestation, Container, ContainerError, Limits, OciRuntime, RuntimeK
 use crate::container::Execution;
 use crate::launch::{Launch, LaunchError};
 use crate::test_support::{arguments, exited};
+const FIXTURE_LOCK: &str = "version = 4\n";
 
 /// What the runtime's image store answers for the sealed digest.
 #[derive(Clone, Copy, Debug)]
@@ -40,6 +41,7 @@ struct Runtime {
     store: Store,
     starts: bool,
     exec: Exec,
+    vendor_set: String,
     events: Mutex<Vec<String>>,
 }
 
@@ -50,6 +52,9 @@ impl Runtime {
             store: Store::Holds("amd64"),
             starts: true,
             exec: Exec::Unattested,
+            vendor_set: crate::VendorSet::parse(std::path::Path::new("Cargo.lock"), FIXTURE_LOCK)
+                .expect("fixture vendor set")
+                .to_string(),
             events: Mutex::default(),
         }
     }
@@ -78,10 +83,16 @@ impl Launch for Runtime {
         Ok(match argument(0) {
             "--version" => exited(0, self.version, ""),
             "image" => match self.store {
-                Store::Holds(architecture) => {
-                    exited(0, format!("{} {architecture} linux\n", argument(4)), "")
-                }
-                Store::Substitutes => exited(0, format!("sha256:{OWNER} amd64 linux\n"), ""),
+                Store::Holds(architecture) => exited(
+                    0,
+                    format!("{} {architecture} linux {}\n", argument(4), self.vendor_set),
+                    "",
+                ),
+                Store::Substitutes => exited(
+                    0,
+                    format!("sha256:{OWNER} amd64 linux {}\n", self.vendor_set),
+                    "",
+                ),
                 Store::Empty => exited(1, "", "Error: no such image\n"),
             },
             "run" if self.starts => {
@@ -390,6 +401,32 @@ fn a_pruned_image_names_the_loader_and_the_archive_it_takes() {
         );
     }
 }
+#[test]
+fn a_stale_vendor_set_refuses_before_any_container_work() {
+    let fixture = Fixture::with(Runtime {
+        vendor_set: format!("sha256:{}", "9".repeat(64)),
+        ..Runtime::docker()
+    });
+    let error = Container::new(
+        fixture.oci(),
+        format!("registry.example/proof@sha256:{}", "4".repeat(64)),
+        &fixture.workspace,
+        limits(),
+    )
+    .expect_err("a stale package set is not a sealed environment");
+
+    let refusal = error.to_string();
+    assert!(matches!(error, ContainerError::ImageVendorSetDrift { .. }));
+    assert!(refusal.contains("stale vendored package set"), "{refusal}");
+    assert!(
+        refusal.contains("spice dev xtask -- proof-image build"),
+        "{refusal}"
+    );
+    assert!(
+        fixture.runtime.events().is_empty(),
+        "image admission must refuse before a container starts"
+    );
+}
 
 #[test]
 fn an_executable_that_ignores_the_oci_contract_cannot_produce_a_replay_verdict() {
@@ -514,6 +551,7 @@ impl Fixture {
         let workspace = root.join("workspace");
         let executable = root.join("docker");
         fs::create_dir_all(&workspace).expect("fixture workspace");
+        fs::write(workspace.join("Cargo.lock"), FIXTURE_LOCK).expect("fixture lockfile");
         crate::test_support::executable(&executable, b"fixture runtime");
         Self {
             root,

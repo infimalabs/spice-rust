@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 FROM --platform=linux/amd64 docker.io/library/rust@sha256:858f8882676b21c915fb5fab0261fc80d47c21f00faf9f610db89f966978eca6
+ARG spice_vendor_set
+LABEL org.spice.vendor-set="${spice_vendor_set}"
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \

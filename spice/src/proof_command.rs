@@ -532,6 +532,8 @@ fn container_disposition(error: &ContainerError) -> RuntimeDisposition {
         | ContainerError::ImageNotDigestPinned(_)
         | ContainerError::ImageNotResolved { .. }
         | ContainerError::ImageIdentityDrift { .. }
+        | ContainerError::VendorSet(_)
+        | ContainerError::ImageVendorSetDrift { .. }
         | ContainerError::WorkspaceNotDirectory(_)
         | ContainerError::UnrepresentableWorkspace(_)
         | ContainerError::RuntimeControlRefused { .. }
