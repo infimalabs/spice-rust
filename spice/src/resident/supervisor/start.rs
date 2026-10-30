@@ -131,6 +131,7 @@ mod tests {
             grace_millis: None,
             reap_millis: None,
             completion: CompletionField::none(),
+            capture_drained: false,
             failure: None,
         }
     }

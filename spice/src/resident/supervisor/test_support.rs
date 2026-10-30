@@ -64,6 +64,7 @@ fn ended_state(
         reap_millis: Some(20_000),
         completion: CompletionField::none(),
         failure: None,
+        capture_drained: false,
     })
 }
 

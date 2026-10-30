@@ -29,6 +29,19 @@ fn reconcile_with(
     String::from_utf8(diagnostic).expect("diagnostic text")
 }
 
+#[test]
+fn quiescence_waits_for_ending_delivery_not_just_process_completion() {
+    let root = scratch();
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let command = jobs.record_for_tests("build", false, Some(600_000));
+    assert!(!jobs.quiescent().expect("running catalog"));
+    command.end_for_tests(Ending::Exited { code: 0 });
+    assert!(!jobs.quiescent().expect("unheard ending catalog"));
+    assert!(command.claim_heard().expect("ending delivery"));
+    assert!(jobs.quiescent().expect("delivered ending catalog"));
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
 /// An unowned service is asked to stop on every commit until its ending is
 /// observed; only then does it leave the index.
 #[test]

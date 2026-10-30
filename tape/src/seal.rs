@@ -261,6 +261,57 @@ impl Tape {
         self.read_index()
     }
 
+    /// Plaintext still retained by issued members, including interrupted seal
+    /// cleanup. Reads only the current index and file metadata, not tape bytes.
+    ///
+    /// This is a snapshot, not a writer reservation. Callers scheduling
+    /// maintenance must independently establish capture quiescence; `seal`
+    /// still takes the exclusive writer lock and verifies replacement bytes.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an invalid index, non-file member, unreadable metadata, or a
+    /// total that cannot be represented. Only missing plaintext is absent.
+    pub fn plaintext_bytes(&self) -> Result<u64, Error> {
+        let index = self.read_index()?;
+        let mut total = 0_u64;
+        for member in index
+            .members()
+            .iter()
+            .map(|member| member.member)
+            .chain(std::iter::once(index.next_member()))
+        {
+            let path = self.plain_path(member);
+            match fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {
+                    total = total.checked_add(metadata.len()).ok_or_else(|| {
+                        Error::io(
+                            Operation::InspectExtents,
+                            &path,
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "tape plaintext size overflow",
+                            ),
+                        )
+                    })?;
+                }
+                Ok(_) => {
+                    return Err(Error::io(
+                        Operation::InspectExtents,
+                        path,
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "tape plaintext is not a regular file",
+                        ),
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::io(Operation::InspectExtents, path, error)),
+            }
+        }
+        Ok(total)
+    }
+
     /// Snapshot every currently readable member bound in ascending order.
     ///
     /// The snapshot reads only metadata and the index. A seal racing this read

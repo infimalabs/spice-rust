@@ -79,6 +79,16 @@ impl StateEvents {
         Ok(())
     }
 
+    /// Block on the predecessor's kernel exit, not an agent or launch timer.
+    pub(super) fn wait_for_exit(&self) -> io::Result<()> {
+        loop {
+            match self.wait()? {
+                StateSignal::SupervisorExited => return Ok(()),
+                StateSignal::ObserverFailed(error) => return Err(io::Error::other(error)),
+                StateSignal::Changed => {}
+            }
+        }
+    }
     fn wait(&self) -> io::Result<StateSignal> {
         let signal = self.receiver.recv().map_err(|_| disconnected())?;
         self.woken(signal)

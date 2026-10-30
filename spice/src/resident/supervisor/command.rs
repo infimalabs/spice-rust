@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use listen::{Decoded, Dialog, Event, ProseRole};
@@ -81,6 +81,7 @@ impl Default for Readers {
 
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
+    workers: AtomicUsize,
     retention: Mutex<retention::State>,
     retention_io: retention::Io,
     read_inbox: InboxReader,
@@ -384,6 +385,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             retention: Mutex::new(retention::State::Active),
             retention_io,
             stdin: Mutex::new(Some(stdin)),
+            workers: AtomicUsize::new(0),
             read_inbox: inbox,
             read_briefing: briefing,
             read_resume: resume,
@@ -932,11 +934,11 @@ impl<W: Write + Send + 'static> Driver<W> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id.to_owned(), ActiveCall::new(control.handle(), &work));
-        let driver = Arc::clone(self);
+        let worker = self.worker();
         let answered = id.to_owned();
         let started = std::thread::Builder::new()
             .name("spice-shell".to_owned())
-            .spawn(move || driver.resolve(&terminal, &answered, &work, &control));
+            .spawn(move || worker.driver.resolve(&terminal, &answered, &work, &control));
         if let Err(error) = started {
             self.cancel(id);
             let _refused = self.write(&vendor::omp::host_tool_refused(
@@ -1491,3 +1493,4 @@ mod steering_tests;
 mod tests;
 mod uri;
 mod waits;
+mod work;

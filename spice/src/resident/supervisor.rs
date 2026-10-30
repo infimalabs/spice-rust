@@ -20,6 +20,7 @@ use spice::ambient::Ambient;
 use spice::repository::Repository;
 use wire::CanonicalUuid;
 
+mod archival;
 pub(super) mod command;
 pub(super) mod ending;
 mod entry;
@@ -145,6 +146,9 @@ struct State {
     grace_millis: Option<u64>,
     reap_millis: Option<u64>,
     completion: CompletionField,
+    /// Proven by the local SILL wait, never inferred from child exit.
+    #[serde(default)]
+    capture_drained: bool,
     failure: Option<String>,
 }
 
@@ -236,11 +240,11 @@ pub(super) struct Launch {
     pub(super) process: Box<dyn DetachedProcess>,
 }
 
-/// Spawned supervisor whose session authority is not proven yet.
+/// Admitted detached launch whose process and session proof are pending.
 ///
-/// Admission, request publication, and process creation happen before this
-/// value exists. Establishment may block until the supervisor publishes its
-/// session, so only a worker outside the resident writer loop may consume it.
+/// Establishment runs outside the resident writer loop. Predecessor maintenance
+/// finishes before spawning, so it consumes neither the session-proof horizon
+/// nor the detached supervisor's start horizon.
 pub(super) struct PendingLaunch {
     establish: Box<dyn FnOnce() -> CommandResult<Launch> + Send>,
 }
@@ -315,28 +319,31 @@ pub(super) fn begin_launch(
     let events = StateEvents::watch(&state).map_err(|error| {
         environment_fault("lane::supervisor-observer-unavailable", &error.to_string())
     })?;
-    let mut command = ProcessCommand::new(executable);
-    command
-        .arg(ENTRY)
-        .arg(&request_path)
-        .current_dir(request.worktree)
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(log);
-    detach(&mut command);
-    let mut supervisor = command
-        .spawn()
-        .map_err(|error| environment_fault("lane::supervisor-launch-failed", &error.to_string()))?;
-    events.observe_exit(supervisor.id());
-    let _reaper = thread::Builder::new()
-        .name("spice-supervisor-reaper".to_owned())
-        .spawn(move || {
-            let _ = supervisor.wait();
-        });
     let paths = paths.clone();
     let lane = request.lane;
     let occupant = request.occupant;
     Ok(PendingLaunch::new(move || {
+        archival::startup(&paths, &encoded).map_err(|error| {
+            environment_fault("lane::supervisor-handoff-failed", &error.to_string())
+        })?;
+        let mut command = ProcessCommand::new(executable);
+        command
+            .arg(ENTRY)
+            .arg(&request_path)
+            .current_dir(&encoded.worktree)
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(log);
+        detach(&mut command);
+        let mut supervisor = command.spawn().map_err(|error| {
+            environment_fault("lane::supervisor-launch-failed", &error.to_string())
+        })?;
+        events.observe_exit(supervisor.id());
+        let _reaper = thread::Builder::new()
+            .name("spice-supervisor-reaper".to_owned())
+            .spawn(move || {
+                let _ = supervisor.wait();
+            });
         await_running(&paths, &state, lane, occupant, events)
     }))
 }
@@ -543,6 +550,7 @@ fn run(request_path: &Path, ambient: &Ambient) -> io::Result<()> {
         reap_millis: None,
         completion: CompletionField::none(),
         failure: None,
+        capture_drained: false,
     };
     publish_json(&request.state, &starting)?;
     if let Err(error) = run_agent(&request, starting.clone(), ambient) {
@@ -645,10 +653,11 @@ fn run_agent(request: &Request, mut state: State, ambient: &Ambient) -> io::Resu
     state.grace_millis = Some(duration_millis(grace)?);
     state.reap_millis = Some(duration_millis(reap)?);
     publish_json(&request.state, &state)?;
-    finish_agent(request, state, running, reporter.as_ref())
+    finish_agent(&paths, request, state, running, reporter.as_ref())
 }
 
 fn finish_agent(
+    paths: &RuntimePaths,
     request: &Request,
     mut state: State,
     running: sill::Running,
@@ -686,12 +695,21 @@ fn finish_agent(
     }
     state.phase = Phase::Exited;
     state.claim = None;
+    state.capture_drained = outcome.outputs_drained();
     state.completion = CompletionField::some(PersistedCompletion::capture(outcome.completion()));
     publish_json(&request.state, &state)?;
     reporter.send(&Notice::Exited {
         lane: request.lane,
         occupant: request.occupant,
     });
+    // Completion is already public. Successors wait for this supervisor's
+    // kernel exit before opening capture, outside their launch horizons.
+    if state.capture_drained
+        && reporter.quiescent()
+        && let Some(tape) = archival::shutdown(paths, request)
+    {
+        archival::compress(&tape);
+    }
     Ok(())
 }
 

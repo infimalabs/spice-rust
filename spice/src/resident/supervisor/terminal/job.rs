@@ -214,6 +214,15 @@ impl Jobs {
         }
     }
 
+    /// No running, unheard, or incompletely published lane-owned job remains.
+    /// Missing delivery markers and unrecognizable partial records are pending,
+    /// not evidence that their work has ended.
+    pub(in crate::resident::supervisor) fn quiescent(&self) -> io::Result<bool> {
+        Ok(self
+            .ids(|directory| !directory.join(DELIVERED).is_file())?
+            .is_empty())
+    }
+
     /// Start keeping one command.
     ///
     /// # Errors
