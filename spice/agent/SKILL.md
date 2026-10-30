@@ -79,7 +79,9 @@ wake. Design questions: `spice room contribute HANDLE --ask TEXT`.
   An unspecified completion contract permits work, not successful completion:
   add own AC, link existing pending AC-bearing work in either dependency direction,
   or use an applicable `task done --disposition no-work|duplicate|covered|deferred
-  [--cover REF]`. Taste is an independent statement hold; neither changes flow.
+  [--cover REF]`. A Plan-intent task instead needs linked AC-bearing child work
+  (`task depends CHILD PLAN` or `--preparation PLAN`); its own AC never
+  suffices. Taste is an independent statement hold; neither changes flow.
   Positive review releases outputs to dependencies without authorizing them.
   Research readiness opens a pass, not a complete proposal.
   Investigate and charge every Design question before its pass ends with

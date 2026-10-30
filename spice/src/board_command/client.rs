@@ -1184,6 +1184,16 @@ pub(super) fn progress_witnesses(
         });
     }
     acceptance_witnesses(board, heads, &mut expected)?;
+    if heads.statement.body.intent == Some(wire::TaskIntent::Plan) {
+        for output in planning::plan_outputs(
+            &heads.statement.body.born,
+            &heads.statement.body.dependencies,
+            board.tasks.iter(),
+        ) {
+            expected.push(statement_witness(output));
+            expected.push(workflow_witness(output));
+        }
+    }
     Ok(expected)
 }
 

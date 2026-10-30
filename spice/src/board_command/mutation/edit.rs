@@ -340,6 +340,7 @@ fn publish_correction(
             &statement.acceptance,
             &statement.born,
             &statement.dependencies,
+            statement.intent,
             snapshot.entries.iter(),
         )
         .into_boxed_str(),

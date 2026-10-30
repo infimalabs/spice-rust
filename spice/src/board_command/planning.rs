@@ -202,26 +202,68 @@ pub(super) fn correction_preparation(entry: &BoardTask) -> Option<wire::TaskPrep
     })
 }
 
-pub(super) fn accepted_pending_child<'a>(
-    snapshot: &'a ValidatedSnapshot,
-    entry: &Entry,
-) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {
-    let owner = planning::construction_owner(entry.born(), entry.statement().preparation.as_ref());
-    let task = visible_task(snapshot, owner)?;
-    let dependencies = if owner == entry.born() {
-        &entry.statement().dependencies
-    } else {
-        &task.statement.body.dependencies
-    };
+/// Executable work linked to a Plan in either dependency direction that
+/// discharges its construction duty: the Plan's own prerequisites in statement
+/// order, then the tasks depending on it in row order. Whether the work
+/// predates the Plan or was created under it does not matter.
+pub(crate) fn plan_outputs<'a, T: AcceptanceRow + 'a>(
+    born: &wire::TaskStamp,
+    dependencies: &[wire::TaskStamp],
+    rows: impl Iterator<Item = &'a T> + Clone,
+) -> Vec<&'a T> {
+    let output = |row: &T| constructs(row.intent(), row.acceptance(), row.workflow());
+    let mut outputs = Vec::new();
     for dependency in dependencies {
-        let child = visible_task(snapshot, dependency)?;
-        if accepted_construction(child) {
-            return Ok(Some(child));
+        if let Some(row) = rows.clone().find(|row| row.born() == dependency)
+            && output(row)
+        {
+            outputs.push(row);
         }
     }
-    Ok(snapshot.answer.tasks.iter().find(|child| {
-        child.statement.body.dependencies.contains(owner) && accepted_construction(child)
-    }))
+    outputs.extend(rows.filter(|row| row.dependencies().contains(born) && output(row)));
+    outputs
+}
+
+/// Admit a successful completion of a task whose intent is Plan only through
+/// linked executable work whose statement and workflow the command witnessed.
+/// The Plan's own acceptance describes that work; it cannot stand in for it.
+pub(super) fn require_output(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let expected = command.expected();
+    let outputs = plan_outputs(
+        entry.born(),
+        &entry.statement().dependencies,
+        snapshot.answer.tasks.iter(),
+    );
+    if outputs.iter().any(|output| {
+        expected.contains(&statement_witness(output))
+            && expected.contains(&workflow_witness(output))
+    }) {
+        return Ok(());
+    }
+    let handle = entry.handle();
+    if !outputs.is_empty() {
+        return Err(refusal(
+            "task::plan-witness-missing",
+            Some(handle.to_string()),
+            "read the current Plan and the work linked to it, then retry",
+        ));
+    }
+    Err(refusal(
+        "task::plan-output-missing",
+        Some(handle.to_string()),
+        &format!(
+            "Plan {handle} has no linked child output: it completes only through executable work \
+             carrying acceptance, linked in either dependency direction, and its own acceptance \
+             does not substitute. Create one under it with `spice task add TITLE --pitch TEXT \
+             --acceptance TEXT --preparation {handle}`, or link existing work with `spice task \
+             depends CHILD {handle}`; a Plan whose need warrants no work records why with `spice \
+             task done --disposition no-work|duplicate|covered|deferred [--cover HANDLE|COMMIT]`"
+        ),
+    ))
 }
 
 pub(super) fn accepted_construction(task: &BoardTask) -> bool {

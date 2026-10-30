@@ -7,6 +7,8 @@
 //! is pending, whatever its intent. Unfiled Drafts assert no completion
 //! authority. The rule reads current statements and links when the task
 //! completes; no statement, acceptance, filing, or link change rewrites a flow.
+//! A task whose intent is Plan is the one exception: it completes only through
+//! linked executable output (`planning::require_output`), never its own AC.
 
 use super::*;
 
@@ -61,6 +63,7 @@ pub(crate) trait AcceptanceRow {
     fn born(&self) -> &wire::TaskStamp;
     fn dependencies(&self) -> &[wire::TaskStamp];
     fn filing(&self) -> wire::TaskFiling;
+    fn intent(&self) -> Option<wire::TaskIntent>;
     fn workflow(&self) -> &wire::WorkflowHead;
     fn acceptance_handle(&self) -> String;
 }
@@ -77,6 +80,9 @@ impl AcceptanceRow for BoardTask {
     }
     fn filing(&self) -> wire::TaskFiling {
         self.statement.body.filing
+    }
+    fn intent(&self) -> Option<wire::TaskIntent> {
+        self.statement.body.intent
     }
     fn workflow(&self) -> &wire::WorkflowHead {
         &self.workflow.body
@@ -99,6 +105,9 @@ impl AcceptanceRow for Entry {
     fn filing(&self) -> wire::TaskFiling {
         self.statement().filing
     }
+    fn intent(&self) -> Option<wire::TaskIntent> {
+        self.statement().intent
+    }
     fn workflow(&self) -> &wire::WorkflowHead {
         self.workflow()
     }
@@ -119,6 +128,9 @@ impl AcceptanceRow for journal::TaskHeads {
     }
     fn filing(&self) -> wire::TaskFiling {
         self.statement().body().filing
+    }
+    fn intent(&self) -> Option<wire::TaskIntent> {
+        self.statement().body().intent
     }
     fn workflow(&self) -> &wire::WorkflowHead {
         self.workflow().body()
@@ -157,12 +169,30 @@ pub(super) fn project_acceptance<'a, T: AcceptanceRow + 'a>(
 }
 
 /// Current completion contract, independent of taste, possession and flow.
+///
+/// A task whose intent is Plan completes through linked executable work, so
+/// its contract names that work rather than any acceptance.
 pub(crate) fn completion_contract<'a, T: AcceptanceRow + 'a>(
     own: &[String],
     born: &wire::TaskStamp,
     dependencies: &[wire::TaskStamp],
+    intent: Option<wire::TaskIntent>,
     rows: impl Iterator<Item = &'a T> + Clone,
 ) -> String {
+    if intent == Some(wire::TaskIntent::Plan) {
+        let outputs = planning::plan_outputs(born, dependencies, rows);
+        if outputs.is_empty() {
+            return "Completion contract: no linked output. A Plan completes only through executable work carrying acceptance, linked in either dependency direction; its own AC describes that work but does not substitute. Link it with `spice task depends CHILD PLAN` or create it under the Plan, or record a no-work/duplicate/covered/deferred disposition. No allocation hold or phase change.".to_owned();
+        }
+        return format!(
+            "Completion contract: linked output ({}).",
+            outputs
+                .iter()
+                .map(|row| row.acceptance_handle())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
     match project_acceptance(own, born, dependencies, rows) {
         Acceptance::Own => "Completion contract: own AC.".to_owned(),
         Acceptance::Linked(rows) => format!(
@@ -220,12 +250,25 @@ pub(crate) fn manual_claim_contracts(snapshot: &bus::TaskSnapshot) -> Vec<ClaimC
                     heads.workflow().body(),
                     snapshot.facts().design_items(&statement.born),
                 ),
-                contract: completion_contract(
-                    &statement.acceptance,
-                    &statement.born,
-                    &statement.dependencies,
-                    rows.iter().copied(),
-                ),
+                contract: if statement.intent == Some(wire::TaskIntent::Plan) {
+                    // A Plan's output may already have concluded, which the
+                    // live frontier no longer holds.
+                    completion_contract(
+                        &statement.acceptance,
+                        &statement.born,
+                        &statement.dependencies,
+                        statement.intent,
+                        snapshot.tasks().iter(),
+                    )
+                } else {
+                    completion_contract(
+                        &statement.acceptance,
+                        &statement.born,
+                        &statement.dependencies,
+                        statement.intent,
+                        rows.iter().copied(),
+                    )
+                },
             }
         })
         .collect()

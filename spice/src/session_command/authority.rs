@@ -305,6 +305,7 @@ fn read_authorities(
                     &statement.acceptance,
                     &statement.born,
                     &statement.dependencies,
+                    statement.intent,
                     neighbors.iter(),
                 );
                 let research = read_design_research(read, statement, heads.workflow().body())?;
