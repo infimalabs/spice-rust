@@ -100,6 +100,9 @@ pub struct StatePaths {
     resident: PathBuf,
     resident_log: PathBuf,
     serve: PathBuf,
+    keeper: PathBuf,
+    keeper_log: PathBuf,
+    keeper_lock: PathBuf,
     degraded: PathBuf,
     tape: PathBuf,
     rtk: PathBuf,
@@ -154,6 +157,9 @@ impl StatePaths {
             resident: runtime.join("resident"),
             resident_log: runtime.join("resident.log"),
             serve: runtime.join("serve"),
+            keeper: runtime.join("keeper.json"),
+            keeper_log: runtime.join("keeper.log"),
+            keeper_lock: runtime.join("locks").join("keeper"),
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
             rtk: runtime.join("rtk"),
@@ -272,6 +278,24 @@ impl StatePaths {
     #[must_use]
     pub fn serve(&self) -> &Path {
         &self.serve
+    }
+
+    /// Owner-only record of the installed Windows lifecycle owner.
+    #[must_use]
+    pub fn keeper(&self) -> &Path {
+        &self.keeper
+    }
+
+    /// Diagnostics appended by the installed lifecycle owner.
+    #[must_use]
+    pub fn keeper_log(&self) -> &Path {
+        &self.keeper_log
+    }
+
+    /// Possession held by the one running lifecycle owner.
+    #[must_use]
+    pub fn keeper_lock(&self) -> &Path {
+        &self.keeper_lock
     }
 
     /// Parent of degraded lane markers.

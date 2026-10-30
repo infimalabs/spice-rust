@@ -4558,6 +4558,7 @@ dependencies = [
  "tungstenite",
  "uuid",
  "vendor",
+ "windows",
  "windows-sys 0.61.2",
  "wire",
 ]

@@ -150,10 +150,58 @@ native filesystem, process, and local-IPC adapters.
 
 The Windows release executable exposes `--version` and `--json version`, the
 identity surface exercised by sealed proof, the repository installer described
-under Windows installation, and the resident `up` that serves the linked app.
-Unix process supervision commands are not silently emulated: they remain absent
-until they have native Windows contracts. Disposable repository commands run
-through `hosted-windows`, not through this release entry point.
+under Windows installation, the resident `up` that serves the linked app, and
+the repository lifecycle owner below. Unix process supervision commands are not
+silently emulated: they remain absent until they have native Windows contracts.
+Disposable repository commands run through `hosted-windows`, not through this
+release entry point.
+
+### Windows lifecycle owner
+
+`spice up --install` registers one repository's lifecycle owner: a per-user
+Task Scheduler task under `\Spice`, named by a digest of the Git common
+directory, whose principal is the repository user's own SID with an
+interactive-token logon and least privilege. No password is stored; the task
+runs only while that user is logged on, which is the earliest boundary after a
+reboot at which the user's profile and per-user discovery exist. The Service
+Control Manager is not used: a service under the user's identity needs a stored
+password, and one under another identity would own the discovery file the
+user's app and CLI must read. Its one trigger is that user's logon; its action
+is the installing executable running `spice up --keeper` with the installing
+worktree as working directory, no execution time limit, no battery stop, and a
+scheduler restart only for a keeper that itself exits abnormally.
+
+The keeper holds the `locks/keeper` possession so one runs per repository,
+appends to `.spice/keeper.log` (rotated like the resident log), and relaunches
+the resident through the ordinary detached launch after every exit, clean or
+forced, pausing one second after a run that lasted at least a minute and
+doubling from two seconds to one minute while runs keep failing early. Before
+each attempt it asks the scheduler whether the task is still enabled and
+registered and exits when it is not. Listen address, bind consent, and bearer
+token come from the owner-only `.spice/keeper.json` the install wrote; the
+token crosses to each resident over the private launch handoff, never argv or
+the task definition. An install that left the port to the system pins the port
+the first resident bound so relaunches keep the endpoint.
+
+With an owner installed, bare `spice up` applies it: re-registers the task
+from the current executable, enables it, starts the keeper if it is not
+running, and answers with the live endpoint; a detached `up` naming a listen or
+access flag refuses with `resident::keeper-installed` and points at
+`--install`. `spice down` disables the task before draining, so the keeper
+finds it disabled when the resident exits and stops; the resident stays down
+until `spice up`. `spice up --uninstall` disables the task, drains a serving
+resident, stops and deletes the task, and removes the record, log, and lock.
+Install and apply are idempotent: a reinstall with the same flags keeps the
+pinned port and the serving resident; one that changes the listen address,
+bind consent, or token writes the new record, drains the serving resident
+cleanly, and the keeper relaunches from the new record. Uninstall on an absent
+owner refuses with `resident::keeper-not-installed`. The task runs the user's
+unelevated token, so install from an unelevated terminal: an elevated install
+leaves the state directory owned by Administrators, which the kept resident
+and the user's app then fail to admit as their own discovery. `spice app`
+joins a kept resident and leaves it running when the window closes. Every
+other host refuses `--install`, `--uninstall`, and `--keeper` with
+`resident::keeper-unsupported` and keeps the plain detached launch.
 
 The current Mach-O and ELF builds then derive symbols, strip, and sign where
 applicable. No step appends bytes after signing. The final image's section
