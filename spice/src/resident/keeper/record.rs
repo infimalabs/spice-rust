@@ -66,6 +66,22 @@ impl KeeperRecord {
         self.listen.set_port(port);
         true
     }
+
+    /// Keep the port a previous install pinned when this one left the port
+    /// to the system on the same host, so an unchanged install stays put.
+    pub(crate) fn inherit_port(&mut self, previous: &Self) {
+        if self.listen.port() == 0 && self.listen.ip() == previous.listen.ip() {
+            self.listen.set_port(previous.listen.port());
+        }
+    }
+
+    /// Whether a resident relaunched from `next` would serve differently
+    /// than one running from this record.
+    pub(crate) fn reconfigured_by(&self, next: &Self) -> bool {
+        self.listen != next.listen
+            || self.allow_insecure_bind != next.allow_insecure_bind
+            || self.auth_token != next.auth_token
+    }
 }
 
 /// The port of one `scheme://host:port` endpoint.

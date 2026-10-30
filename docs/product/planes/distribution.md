@@ -191,11 +191,17 @@ access flag refuses with `resident::keeper-installed` and points at
 finds it disabled when the resident exits and stops; the resident stays down
 until `spice up`. `spice up --uninstall` disables the task, drains a serving
 resident, stops and deletes the task, and removes the record, log, and lock.
-Install and apply are idempotent; uninstall on an absent owner refuses with
-`resident::keeper-not-installed`. `spice app` joins a kept resident and leaves
-it running when the window closes. Every other host refuses `--install`,
-`--uninstall`, and `--keeper` with `resident::keeper-unsupported` and keeps the
-plain detached launch.
+Install and apply are idempotent: a reinstall with the same flags keeps the
+pinned port and the serving resident; one that changes the listen address,
+bind consent, or token writes the new record, drains the serving resident
+cleanly, and the keeper relaunches from the new record. Uninstall on an absent
+owner refuses with `resident::keeper-not-installed`. The task runs the user's
+unelevated token, so install from an unelevated terminal: an elevated install
+leaves the state directory owned by Administrators, which the kept resident
+and the user's app then fail to admit as their own discovery. `spice app`
+joins a kept resident and leaves it running when the window closes. Every
+other host refuses `--install`, `--uninstall`, and `--keeper` with
+`resident::keeper-unsupported` and keeps the plain detached launch.
 
 The current Mach-O and ELF builds then derive symbols, strip, and sign where
 applicable. No step appends bytes after signing. The final image's section

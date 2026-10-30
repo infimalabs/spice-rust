@@ -2,6 +2,7 @@
 
 use super::super::*;
 
+use std::fs::File;
 use std::io::Write as _;
 use std::time::{Duration, Instant as Monotonic};
 
@@ -66,15 +67,14 @@ impl Site {
 /// `spice up --install`: record the listen address and access, register the
 /// owner for the current user, and wait for the resident it starts.
 pub(crate) fn install(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome<wire::AppOpen> {
-    let _ = ambient;
-    reply(install_result(leaf))
+    reply(install_result(leaf, ambient))
 }
 
-fn install_result(leaf: &clap::ArgMatches) -> CommandResult<wire::AppOpen> {
+fn install_result(leaf: &clap::ArgMatches, ambient: &Ambient) -> CommandResult<wire::AppOpen> {
     let site = Site::admit()?;
     let listen = requested_listen(leaf)?;
     let access = requested_access(leaf, listen, None)?;
-    let record = KeeperRecord {
+    let mut record = KeeperRecord {
         task: definition::task_path(site.repository.common_dir()),
         executable: site.executable.clone(),
         working_directory: site.current.clone(),
@@ -82,7 +82,16 @@ fn install_result(leaf: &clap::ArgMatches) -> CommandResult<wire::AppOpen> {
         allow_insecure_bind: leaf.get_flag("allow-insecure-bind"),
         auth_token: access.token,
     };
+    let previous = site.record()?;
+    if let Some(previous) = &previous {
+        record.inherit_port(previous);
+    }
     site.write_record(&record)?;
+    if previous.is_some_and(|previous| previous.reconfigured_by(&record)) {
+        // The kept resident exits cleanly; the keeper relaunches it from the
+        // record just written.
+        drain_live_resident(&site, ambient)?;
+    }
     apply(&site, record, leaf.get_flag("open"))
 }
 
@@ -96,10 +105,9 @@ pub(crate) fn up_detached(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome
     match site.record() {
         Ok(None) => launch(leaf, None, leaf.get_flag("open"), ambient),
         Ok(Some(record)) => {
-            if let Some(flag) = INSTALL_FLAGS
-                .iter()
-                .find(|flag| leaf.value_source(flag).is_some())
-            {
+            if let Some(flag) = INSTALL_FLAGS.iter().find(|flag| {
+                leaf.value_source(flag) == Some(clap::parser::ValueSource::CommandLine)
+            }) {
                 return installed_refusal(flag, &record.task);
             }
             reply(apply(&site, record, leaf.get_flag("open")))
@@ -222,10 +230,20 @@ fn keep_result(ambient: &Ambient) -> CommandResult<()> {
     let mut log = rotate_log(site.state.keeper_log())
         .and_then(|()| open_log(site.state.keeper_log()))
         .map_err(|error| keeper_fault("resident::log-unavailable", &error))?;
+    let kept = keep_logged(&site, ambient, &mut log);
+    if let Err(outcome) = &kept {
+        let _ = writeln!(log, "keeper failed: {}", outcome_text(outcome));
+    }
+    kept
+}
+
+fn keep_logged(site: &Site, ambient: &Ambient, log: &mut File) -> CommandResult<()> {
     let Some(record) = site.record()? else {
         let _ = writeln!(log, "no lifecycle owner is recorded; keeper exits");
         return Ok(());
     };
+    fs::create_dir_all(site.state.locks())
+        .map_err(|error| keeper_fault("resident::keeper-lock-unavailable", &error))?;
     let name = LockName::new("keeper").expect("keeper is a non-empty lock name");
     let lock = LockFile::new(name, site.state.keeper_lock());
     let possession = match lock.try_acquire() {
@@ -237,16 +255,10 @@ fn keep_result(ambient: &Ambient) -> CommandResult<()> {
         Err(error) => return Err(keeper_fault("resident::keeper-lock-unavailable", &error)),
     };
     let mut scheduler = connect()?;
-    let mut attempt = || attempt_launch(&site, ambient);
+    let mut attempt = || attempt_launch(site, ambient);
     let mut pause = |delay: Duration| std::thread::sleep(delay);
-    let end = policy::keep(
-        &mut scheduler,
-        &record.task,
-        &mut attempt,
-        &mut pause,
-        &mut log,
-    )
-    .map_err(|error| keeper_fault("resident::keeper-failed", &error))?;
+    let end = policy::keep(&mut scheduler, &record.task, &mut attempt, &mut pause, log)
+        .map_err(|error| keeper_fault("resident::keeper-failed", &error))?;
     let _ = writeln!(log, "keeper ended: {end:?}");
     drop(possession);
     Ok(())

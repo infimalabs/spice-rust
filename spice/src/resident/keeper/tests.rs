@@ -333,3 +333,32 @@ fn task_paths_are_stable_per_repository_and_distinct_between_them() {
     assert_ne!(one, other);
     assert!(one.starts_with(&format!("{}\\keeper-", definition::FOLDER)));
 }
+
+#[test]
+fn an_unchanged_reinstall_keeps_the_pinned_port_and_a_changed_one_reconfigures() {
+    let mut installed = record();
+    installed.listen.set_port(47777);
+    let mut same = record();
+    same.inherit_port(&installed);
+    assert_eq!(
+        same.listen.port(),
+        47777,
+        "no port asked keeps the pinned one"
+    );
+    assert!(!installed.reconfigured_by(&same));
+
+    let mut moved = record();
+    moved.listen.set_port(47778);
+    moved.inherit_port(&installed);
+    assert_eq!(
+        moved.listen.port(),
+        47778,
+        "an asked port is never overridden"
+    );
+    assert!(installed.reconfigured_by(&moved));
+
+    let mut rekeyed = record();
+    rekeyed.auth_token = Some("fedcba9876543210".to_owned());
+    rekeyed.inherit_port(&installed);
+    assert!(installed.reconfigured_by(&rekeyed));
+}
