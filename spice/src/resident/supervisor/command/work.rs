@@ -32,20 +32,35 @@ impl Work {
 pub(super) struct StepState {
     current: u64,
     stale: Option<u64>,
+    replayed: bool,
 }
 
 impl StepState {
     pub(super) fn started(&mut self) {
         self.current = self.current.saturating_add(1);
         self.stale = None;
+        self.replayed = false;
     }
 
     pub(super) fn mark_stale(&mut self) {
         self.stale = Some(self.current);
+        self.replayed = false;
     }
 
     pub(super) fn is_stale(&self) -> bool {
         self.stale == Some(self.current)
+    }
+
+    pub(super) fn claim_replay(&mut self) -> bool {
+        if !self.is_stale() || self.replayed {
+            return false;
+        }
+        self.replayed = true;
+        true
+    }
+
+    pub(super) fn release_replay(&mut self) {
+        self.replayed = false;
     }
 }
 

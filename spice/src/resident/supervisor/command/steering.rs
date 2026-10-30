@@ -253,8 +253,8 @@ impl<W: Write + Send + 'static> Driver<W> {
             .delivered
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let step = self.step.lock().unwrap_or_else(PoisonError::into_inner);
-        if !step.is_stale() {
+        let mut step = self.step.lock().unwrap_or_else(PoisonError::into_inner);
+        if !step.claim_replay() {
             return;
         }
         let message =
@@ -269,6 +269,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             return;
         }
         if self.steer(&owed).is_err() {
+            step.release_replay();
             return;
         }
         self.told

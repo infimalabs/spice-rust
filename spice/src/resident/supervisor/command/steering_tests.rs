@@ -3,12 +3,13 @@
 
 use super::{ActiveCall, Driver, Work};
 use crate::resident::supervisor::terminal::Control;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Barrier, Mutex, PoisonError};
 use std::time::Duration;
 use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
 
 const ASKED: &str = "1kJK6M0V";
 const LATER: &str = "1kJK6N3R";
+const CONCURRENT_REPLAYS: usize = 19;
 
 /// The resident's inbox answer, as the test moves it; `None` while no
 /// resident this seat can speak with answers.
@@ -245,12 +246,30 @@ fn stale_step_preempts_late_blocking_work_and_replays_only_unanswered_direction(
     assert!(seat.driver.preempt_stale(&shell, &shell_control));
     assert!(shell_control.was_interrupted());
 
-    seat.driver.replay_inbox();
+    let barrier = Arc::new(Barrier::new(CONCURRENT_REPLAYS));
+    std::thread::scope(|scope| {
+        for _ in 0..CONCURRENT_REPLAYS {
+            let barrier = Arc::clone(&barrier);
+            let driver = Arc::clone(&seat.driver);
+            scope.spawn(move || {
+                barrier.wait();
+                driver.replay_inbox();
+            });
+        }
+    });
     let steered = seat.steered();
     assert_eq!(steered.len(), 2, "{steered:?}");
     assert!(steered[1].contains(ASKED) && steered[1].contains(LATER));
 
     seat.answer_in_intent(ASKED);
+    seat.driver.replay_inbox();
+    assert_eq!(seat.steered().len(), 2, "one generation replays once");
+
+    seat.driver
+        .step
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .mark_stale();
     seat.driver.replay_inbox();
     let steered = seat.steered();
     assert_eq!(steered.len(), 3, "{steered:?}");

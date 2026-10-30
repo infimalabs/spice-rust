@@ -71,11 +71,12 @@ names the complete keeper-owned log, which retains the command's original
 captured bytes; `read` it with a line range.
 
 Fresh steering published after an OMP step starts makes that step stale. A shell
-or blocking `job wait` emitted by the stale step is registered, immediately
-released through its ordinary job result, and followed by the complete current
-unanswered inbox. A later OMP step clears the marker; delivery-cache movement
-does not. Atomic job operations and work from the later step keep their normal
-foreground behavior.
+or blocking `job wait` emitted by the stale step is registered and immediately
+released through its ordinary job result. The first released boundary replays
+the complete current unanswered inbox; concurrent calls from the same stale
+generation do not repeat it. Another fresh publication permits one new replay.
+A later OMP step clears the marker; delivery-cache movement does not. Atomic job
+operations and work from the later step keep their normal foreground behavior.
 
 ### Active-work narration
 
