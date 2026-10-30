@@ -37,15 +37,15 @@ fn validate_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    // Schema 19 closed its fixed prefix with the agent skill copy.
-    let crossed: &[Asset] = if crossing(plan) { &[Asset::Skill] } else { &[] };
-    let fixed = FIXED_ASSETS.len() + crossed.len();
+    // Schema 20 has the current file inventory; schema 21 adds only the
+    // lifecycle effect outside that inventory.
+    let fixed = FIXED_ASSETS.len();
     if plan.operations.len() < fixed
         || plan
             .operations
             .iter()
-            .zip(FIXED_ASSETS.iter().chain(crossed))
-            .any(|(operation, asset)| operation.asset != *asset)
+            .zip(FIXED_ASSETS)
+            .any(|(operation, asset)| operation.asset != asset)
     {
         return Err(InstallError::InvalidRecord(
             "install plan operation order is not canonical".to_owned(),
@@ -98,10 +98,11 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
 
 fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError> {
     let fixed = &plan.retirements;
-    let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
-    if !crossing(plan) {
-        expected.push(RETIRED_SKILL_PATH);
-    }
+    let mut expected = vec![
+        RETIRED_XTASK_PATH,
+        RETIRED_XTASK_GUARD_PATH,
+        RETIRED_SKILL_PATH,
+    ];
     // Only a plan without symbols may discard a retained bundle.
     if plan.symbols.is_none()
         && fixed

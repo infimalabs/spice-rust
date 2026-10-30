@@ -6,7 +6,8 @@ use std::fmt;
 use wire::Digest;
 
 use super::{
-    Asset, GeneratedImage, InstallError, InstallPlan, Location, PreparedInstall, SymbolProvenance,
+    Asset, GeneratedImage, InstallError, InstallPlan, LifecycleOwnerStanding, Location,
+    PreparedInstall, SymbolProvenance,
 };
 
 /// Kind of durable action represented by one ordered public stage.
@@ -225,6 +226,10 @@ pub struct InstallPlanSummary {
     hook_activation: Option<HookActivationSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     symbols: Option<SymbolProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle_owner: Option<LifecycleOwnerStanding>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lifecycle_change: bool,
 }
 
 impl InstallPlanSummary {
@@ -279,13 +284,16 @@ impl InstallPlanSummary {
                         .count(),
                     skipped: activation.skipped().to_vec(),
                 });
+        let lifecycle_owner = plan.lifecycle_owner.clone();
         Self {
             version: plan.version,
-            operation_count: plan.operation_count(),
+            operation_count: plan.operation_count() + usize::from(lifecycle_owner.is_some()),
             operations,
             retirements,
             hook_activation,
             symbols: plan.symbols.clone(),
+            lifecycle_change: lifecycle_owner.is_some(),
+            lifecycle_owner,
         }
     }
 
@@ -318,6 +326,11 @@ impl InstallPlanSummary {
     pub const fn hook_activation(&self) -> Option<&HookActivationSummary> {
         self.hook_activation.as_ref()
     }
+    /// Windows lifecycle policy this package preserves.
+    #[must_use]
+    pub const fn lifecycle_owner(&self) -> Option<&LifecycleOwnerStanding> {
+        self.lifecycle_owner.as_ref()
+    }
 
     /// Provenance of the executable and retained dSYM, when symbols publish.
     #[must_use]
@@ -339,6 +352,7 @@ impl InstallPlanSummary {
         if let Some(activation) = &mut self.hook_activation {
             activation.mutation_count = 0;
         }
+        self.lifecycle_change = false;
     }
 }
 
@@ -402,17 +416,19 @@ impl InstallPreview {
             .hook_activation
             .as_ref()
             .map_or(0, HookActivationSummary::mutation_count);
+        let lifecycle = usize::from(self.plan.lifecycle_change);
 
         writeln!(formatter, "install plan {}", self.digest)?;
-        if files == 0 && retirements == 0 && hooks == 0 {
+        if files == 0 && retirements == 0 && hooks == 0 && lifecycle == 0 {
             writeln!(formatter, "changes: none")?;
         } else {
             writeln!(
                 formatter,
-                "changes: {files} {}, {retirements} {}, {hooks} {}",
+                "changes: {files} {}, {retirements} {}, {hooks} {}, {lifecycle} {}",
                 plural(files, "file", "files"),
                 plural(retirements, "retirement", "retirements"),
                 plural(hooks, "hook setting", "hook settings"),
+                plural(lifecycle, "lifecycle owner", "lifecycle owners"),
             )?;
         }
         for operation in self
@@ -447,6 +463,12 @@ impl InstallPreview {
                 "  set {hooks} {} to {}",
                 plural(hooks, "Git hook setting", "Git hook settings"),
                 activation.hooks_path(),
+            )?;
+        }
+        if self.plan.lifecycle_change {
+            writeln!(
+                formatter,
+                "  ensure Windows lifecycle owner while preserving its private policy",
             )?;
         }
         for worktree in self
