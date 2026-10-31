@@ -309,6 +309,11 @@ fn installation(repository: &Repository) -> DoctorObservation {
                     receipt.completed()
                 ),
             },
+            InstallStatus::Establishing => DoctorObservation::InputRequired {
+                reason: "installation published its files but its lifecycle owner is not \
+                         established; rerun the exact apply"
+                    .to_owned(),
+            },
             InstallStatus::Unapplying => DoctorObservation::InputRequired {
                 reason: format!(
                     "installation stopped while unapplying after {} operations; resume the exact plan",

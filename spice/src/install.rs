@@ -410,11 +410,12 @@ pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, Instal
 
 /// Admit the receipt-owned executable and the canvas generation it links.
 ///
-/// This is the production installed boundary: the current receipt is
-/// complete, every installed destination holds its recorded image, the
-/// selected regular executable is the receipt's own binary, and its linked
-/// archive names the receipt's canvas generation. The executable is the only
-/// canvas carrier; no app file is consulted.
+/// This is the production installed boundary: the current receipt has
+/// published every file (complete, or owed only its lifecycle owner), every
+/// installed destination holds its recorded image, the selected regular
+/// executable is the receipt's own binary, and its linked archive names the
+/// receipt's canvas generation. The executable is the only canvas carrier; no
+/// app file is consulted.
 pub fn admit_installed_executable(
     repository: &Repository,
     executable: &Path,
@@ -422,7 +423,7 @@ pub fn admit_installed_executable(
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let record = loaded.record;
     match record.status {
-        InstallStatus::Complete => {}
+        InstallStatus::Establishing | InstallStatus::Complete => {}
         InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
         InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
         InstallStatus::Uninstalled => return Err(InstallError::RecordMissing),
@@ -521,6 +522,7 @@ pub fn apply_with_lifecycle(
         lifecycle_owner,
     )
 }
+
 /// Apply a plan this process prepared, without deriving it a second time.
 pub fn apply_prepared(
     repository: &Repository,
@@ -528,6 +530,12 @@ pub fn apply_prepared(
     prepared: PreparedInstall,
 ) -> Result<InstallReceipt, InstallError> {
     apply_prepared_record(repository, spice_binary, prepared)
+}
+
+/// Settle a published install whose lifecycle owner now serves under the
+/// installed executable; a complete install answers its receipt unchanged.
+pub fn complete_lifecycle(repository: &Repository) -> Result<InstallReceipt, InstallError> {
+    progress::complete_lifecycle(repository)
 }
 
 /// Create the state root when it does not exist, so the receipt binds below a

@@ -70,7 +70,7 @@ pub(super) fn apply_prepared_record(
     } = prepared;
     reclaim_temporary_records(repository)?;
     match record.status {
-        InstallStatus::Complete => return Ok(record.receipt()),
+        InstallStatus::Complete | InstallStatus::Establishing => return Ok(record.receipt()),
         InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
         InstallStatus::Applying | InstallStatus::Uninstalled => {}
     }
@@ -97,8 +97,36 @@ pub(super) fn apply_prepared_record(
         apply_file_operations(repository, &mut record, &generated, record_generation)?;
     record_generation = apply_retirements(repository, &mut record, record_generation)?;
     record_generation = apply_activation(repository, &mut record, record_generation)?;
-    record.status = InstallStatus::Complete;
+    // A plan naming a lifecycle owner settles only once the command layer has
+    // registered and started that owner under the installed executable.
+    record.status = if record.plan.lifecycle_owner.is_some() {
+        InstallStatus::Establishing
+    } else {
+        InstallStatus::Complete
+    };
     write_record(repository, &record, record_generation)?;
+    Ok(record.receipt())
+}
+
+/// Settle an install whose files are published and whose lifecycle owner now
+/// serves under the installed executable.
+///
+/// A complete record answers its receipt unchanged; an in-flight direction or
+/// an absent install is refused.
+pub(super) fn complete_lifecycle(repository: &Repository) -> Result<InstallReceipt, InstallError> {
+    let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
+    let mut record = loaded.record;
+    record.validate_for_repository(repository)?;
+    match record.status {
+        InstallStatus::Establishing => {}
+        InstallStatus::Complete => return Ok(record.receipt()),
+        InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
+        InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
+        InstallStatus::Uninstalled => return Err(InstallError::RecordMissing),
+    }
+    verify_progress(repository, &record)?;
+    record.status = InstallStatus::Complete;
+    write_record(repository, &record, loaded.generation)?;
     Ok(record.receipt())
 }
 
@@ -451,7 +479,7 @@ pub(super) fn unapply_record(repository: &Repository) -> Result<InstallReceipt, 
             verify_progress(repository, &record)?;
             return Ok(record.receipt());
         }
-        InstallStatus::Complete => {
+        InstallStatus::Establishing | InstallStatus::Complete => {
             verify_progress(repository, &record)?;
             reversal::ensure_payloads(repository, &record.plan)?;
             record.status = InstallStatus::Unapplying;
@@ -680,7 +708,7 @@ fn verify_retirement_progress(
             InstallStatus::Applying if index < applying_completed => absent,
             InstallStatus::Applying if in_flight => planned || absent,
             InstallStatus::Applying => planned,
-            InstallStatus::Complete => observed.is_none(),
+            InstallStatus::Establishing | InstallStatus::Complete => observed.is_none(),
             InstallStatus::Unapplying => {
                 let reverse = record.plan.retirements.len() - 1 - index;
                 if reverse < reversed {
@@ -752,7 +780,7 @@ fn file_progress_valid(
                 )
             },
         ),
-        InstallStatus::Complete => installed_matches(
+        InstallStatus::Establishing | InstallStatus::Complete => installed_matches(
             observed,
             operation,
             record.installed[index],
@@ -815,7 +843,9 @@ fn verify_activation_progress(record: &InstallRecord) -> Result<(), InstallError
                 hook_activation::verify_pristine(activation)?;
             }
             InstallStatus::Applying => hook_activation::verify_transition(activation)?,
-            InstallStatus::Complete => hook_activation::verify(activation, true)?,
+            InstallStatus::Establishing | InstallStatus::Complete => {
+                hook_activation::verify(activation, true)?;
+            }
             InstallStatus::Unapplying if record.completed == 0 => {
                 hook_activation::verify_transition(activation)?;
             }

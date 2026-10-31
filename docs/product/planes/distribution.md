@@ -825,13 +825,19 @@ neither registers, enables, restarts, nor recreates the owner, so an explicit
 `spice down` or `spice down --keeper` survives reapplying the installed
 build. A publishing apply revalidates the previewed private keeper standing
 before stopping its resident, retains that policy while replacing the
-appliance, then registers and starts exactly one owner under the new
-executable; a publication that fails restores the owner it stopped. Reversal
-unregisters the task and drains the resident before removing the executable,
-then removes the private keeper record and logs. An interrupted boundary is
-derived from the install receipt, keeper record, and task standing; rerunning
-the same direction converges without a shell monitor or second installer
-path.
+appliance, publishes every file, retirement, and hook stage, and then holds
+the receipt at `establishing` until exactly one owner is registered and
+serving under the new executable; only then does it settle `complete`. A
+registration or launch failure leaves the `establishing` receipt and reports
+the boundary; the next apply of the same plan resumes owner establishment
+without republishing a file, and `--unapply` reverses an `establishing`
+install like a complete one. A publication that fails restores the owner it
+stopped, and when that restoration also fails the apply reports both failures
+as `install::publication-and-owner-failed`. Reversal unregisters the task and
+drains the resident before removing the executable, then removes the private
+keeper record and logs. An interrupted boundary is derived from the install
+receipt, keeper record, and task standing; rerunning the same direction
+converges without a shell monitor or second installer path.
 
 **Invariant —** A receipt generation is the volume serial and file ID of the
 object a name held. An identifier wider than 64 bits, as ReFS may assign,
@@ -878,10 +884,11 @@ An uninstall that reverts by name destroys operator edits. Reversal restores
 only what it can still recognize as its own.
 
 **Invariant —** `--unapply` is the explicit reversal direction and has no
-preview digest. It advances the exact `complete` receipt generation to
-`unapplying`, runs the exact inverse of the canonical application order, and
-publishes `uninstalled` only after every operation has a recorded outcome. A
-moved generation refuses and preserves the current receipt.
+preview digest. It advances the exact `complete` (or `establishing`) receipt
+generation to `unapplying`, runs the exact inverse of the canonical
+application order, and publishes `uninstalled` only after every operation has
+a recorded outcome. A moved generation refuses and preserves the current
+receipt.
 
 **Invariant —** Identity drift is a typed refusal, not a partial success: it
 overwrites nothing, preserves the changed target and the receipt, and retry
@@ -911,9 +918,9 @@ active modifications with no owner and no path to removal.
 
 **Invariant —** Every receipt is bound to the repository it describes. A
 nonterminal receipt refuses when it names another Git-common owner, as does a
-terminal copy while its original owner still exists. A `complete` or
-`uninstalled` receipt may rebase only after the old owner is gone, moving
-repository, plan, and activation bindings together.
+terminal copy while its original owner still exists. A `complete`,
+`establishing`, or `uninstalled` receipt may rebase only after the old owner is
+gone, moving repository, plan, and activation bindings together.
 
 **Invariant —** The receipt remains after clean terminal directions, retaining
 its plan, prior-image references, status, and progress. Its referenced raw
