@@ -514,12 +514,20 @@ space for the download cache and media, and a working guest needs 10–20 GB.
 | `sync [--artifact PATH]... [--source PATH]...` | Replace `C:\spice\work` with the named artifacts in `bin\` and the named tracked source in `source\`. |
 | `run [--timeout S] [--output-bytes N] -- PROGRAM [ARG...]` | Run one argv in `C:\spice\work`. |
 
-`start`, `stop`, `reset`, `sync`, and `run` acquire the configured
-`lock.windows-guest` pool. A task that declares `--resource windows-guest`
-retains that same shard for its claim; an xtask launched by the owning lane
-recognizes the lane/task owner evidence and uses that retained possession,
-while another lane or an unscheduled process refuses. `provision` and
-read-only `status` do not take the runtime pool.
+When `lock.windows-guest` is configured, `start`, `stop`, `reset`, `sync`, and
+`run` acquire that pool. Without it this optional coordination is disabled and
+those guest commands run directly. A task declaration is strict:
+`--resource windows-guest` refuses unless that pool is configured. Once filed,
+the task retains its configured shard for its claim; an xtask launched by the
+owning lane recognizes the lane/task owner evidence and uses that retained
+possession, while another lane or an unscheduled process refuses. `provision`
+and read-only `status` do not take the runtime pool.
+
+Lock-pool configuration is machine-local in the Git-common
+`.spice/config.toml`, shared by every worktree. Those local bytes participate in
+the executable-configuration trust digest, so adding or changing a pool
+requires the operator to grant the resulting digest before pre-commit gates
+admit it.
 
 The guest persists across `stop` and `start` until `reset`. It reaches the
 host only through loopback forwards: SSH on 22622 (key-only, pinned host key)

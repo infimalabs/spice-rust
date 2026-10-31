@@ -27,38 +27,49 @@ impl ResourceClaims {
     /// Reconstruct claim-held shards before the command surface accepts work.
     pub(crate) fn restore(&self, bus: &bus::Bus) -> Result<(), Outcome<CommandAnswer>> {
         let snapshot = super::read_guard::validated_snapshot(bus, Actor::Operator)?;
-        self.reconcile(&snapshot.entries)
+        self.reconcile(&snapshot.entries);
+        Ok(())
     }
 
-    /// Reconcile retained possessions, then add current availability to the
-    /// environment used by one allocation decision.
+    /// Reconcile retained possessions, then expose every configured pool's
+    /// current availability to one allocation decision.
     pub(crate) fn observe(
         &self,
         base: Environment,
         entries: &[Entry],
     ) -> Result<Environment, Outcome<CommandAnswer>> {
-        self.reconcile(entries)?;
+        self.reconcile(entries);
         let report = self.topology.report().map_err(resource_fault)?;
-        let required = entries
-            .iter()
-            .flat_map(|entry| entry.statement().resources.iter())
-            .map(|(name, _)| name.clone())
-            .collect::<BTreeSet<_>>();
         let mut environment = base;
-        for name in required {
-            let available = report
-                .pools
+        for pool in report.pools {
+            let available = pool
+                .entries
                 .iter()
-                .find(|pool| pool.name == name.as_str())
-                .map_or(0, |pool| {
-                    pool.entries
-                        .iter()
-                        .filter(|entry| entry.availability == LockAvailability::Available)
-                        .count() as u32
-                });
+                .filter(|entry| entry.availability == LockAvailability::Available)
+                .count() as u32;
+            let name: wire::ResourcePoolName =
+                pool.name
+                    .parse()
+                    .map_err(|error: wire::ResourcePoolNameError| {
+                        environment_fault("board::resource-pool-invalid", &error.to_string())
+                    })?;
             environment = environment.with_resource_pool(name, available);
         }
         Ok(environment)
+    }
+
+    /// Refuse an explicit declaration that names no configured pool.
+    pub(crate) fn validate(
+        &self,
+        requirements: &wire::EnvironmentRequirements,
+    ) -> Result<(), Outcome<CommandAnswer>> {
+        let report = self.topology.report().map_err(resource_fault)?;
+        for (name, _) in requirements.resource_pools() {
+            if !report.pools.iter().any(|pool| pool.name == name.as_str()) {
+                return Err(unconfigured_pool(name.as_str()));
+            }
+        }
+        Ok(())
     }
 
     /// Reserve the selected task's requirement before its claim is published.
@@ -68,7 +79,7 @@ impl ResourceClaims {
         actor: &Actor,
         entries: &[Entry],
     ) -> Result<ResourceReservation<'a>, Outcome<CommandAnswer>> {
-        self.reconcile(entries)?;
+        self.reconcile(entries);
         if entry.statement().resources.is_empty() {
             return Ok(ResourceReservation::empty(self));
         }
@@ -86,7 +97,7 @@ impl ResourceClaims {
         Ok(ResourceReservation::acquired(self, task, shards))
     }
 
-    fn reconcile(&self, entries: &[Entry]) -> Result<(), Outcome<CommandAnswer>> {
+    fn reconcile(&self, entries: &[Entry]) {
         let active = entries
             .iter()
             .filter_map(|entry| {
@@ -102,29 +113,20 @@ impl ResourceClaims {
         retained.retain(|task, _| active_tasks.contains(task));
         for (entry, actor) in active {
             let task = entry.born();
-            if retained.contains_key(task) {
+            if retained.contains_key(task) || entry.statement().resources.is_empty() {
                 continue;
             }
-            if entry.statement().resources.is_empty() {
+            let Ok(context) = owner_context(actor, task) else {
                 continue;
-            }
-            let context = owner_context(actor, task)?;
-            match acquire_all(
+            };
+            if let Ok(shards) = acquire_all(
                 &self.topology,
                 &entry.statement().resources,
                 context.as_deref(),
             ) {
-                Ok(shards) => {
-                    retained.insert(task.clone(), shards);
-                }
-                Err(Outcome::Refusal(_)) => {
-                    // Another process still protects the resource. Its kernel
-                    // possession already makes this pool unavailable.
-                }
-                Err(outcome) => return Err(outcome),
+                retained.insert(task.clone(), shards);
             }
         }
-        Ok(())
     }
 }
 
@@ -185,7 +187,18 @@ fn owner_context(
 }
 
 fn resource_fault(error: sill::LockSurfaceError) -> Outcome<CommandAnswer> {
-    environment_fault("board::resource-pool-unavailable", &error.to_string())
+    match error {
+        sill::LockSurfaceError::UnknownName(name) => unconfigured_pool(&name),
+        error => environment_fault("board::resource-pool-unavailable", &error.to_string()),
+    }
+}
+
+fn unconfigured_pool(name: &str) -> Outcome<CommandAnswer> {
+    refusal(
+        "board::resource-pool-unconfigured",
+        Some(name.to_owned()),
+        "configure the named lock pool before declaring it as a task resource",
+    )
 }
 
 /// Shards acquired before the claim commit, transferred to resident retention
