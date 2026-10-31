@@ -23,11 +23,13 @@ mod leave_receipts;
 mod maturity;
 mod oops_design;
 mod oops_generation;
+mod orphan_facts;
 mod pitch;
 mod preparation_edges;
 mod provenance;
 pub(crate) mod residual;
 mod retained_notes;
+mod retire;
 mod review_status;
 mod room_coordination;
 mod room_questions;
@@ -104,7 +106,11 @@ const PREPARED: &str = "prepared";
 /// takes its body's room as a typed indexed column, every retained task review
 /// takes the workflow status its verdict left, and every retained task Git
 /// boundary and review correction enters the release-note projection. Before
-/// any of that, the question-result protocol and required question-result
+/// any of that, every retained fact of a kind no release still produces
+/// (consent floors, vendor arming, commit landings, gate findings and
+/// clearances, graceful-shutdown transitions, and lane catch-up horizons)
+/// retires into inert historical authority and the horizon projection drops,
+/// the question-result protocol and required question-result
 /// evidence retire into inert historical authority, every retained
 /// contribution label with its receipt crosses to its charge, every
 /// retained item-bearing contribution takes its item's text identity,
@@ -143,8 +149,6 @@ const PRINCIPAL_HEADS_SQL: &str = "CREATE TABLE principal_heads (
 pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 /// First schema whose baseline carries per-lane room catch-up cursors.
 pub(crate) const ROOM_CURSOR_SCHEMA: u32 = 41;
-/// First schema whose baseline carries per-lane room catch-up horizons.
-pub(crate) const ROOM_HORIZON_SCHEMA: u32 = 45;
 /// First schema whose baseline carries room conversation publications and
 /// result heads.
 pub(crate) const ROOM_CONVERSATION_SCHEMA: u32 = 46;
@@ -176,10 +180,9 @@ pub(crate) const RELEASE_NOTES_SCHEMA: u32 = 88;
 pub(crate) const DESIGN_SHADOW_SCHEMA: u32 = 102;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
-    (ROOM_HORIZON_SCHEMA, crate::rooms::HORIZON_SCHEMA_SQL),
     (
         ROOM_CONVERSATION_SCHEMA,
         crate::rooms::CONVERSATION_SCHEMA_SQL,
@@ -417,6 +420,7 @@ fn cross_current_rows(
 /// Remove each retired member a current decoder would refuse, before any
 /// later crossing decodes a retained row strictly.
 fn strip_retired_members(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    orphan_facts::cross(transaction)?;
     room_coordination::cross(transaction)?;
     preparation_edges::strip_authorization(transaction)?;
     task_evidence::cross(transaction)?;

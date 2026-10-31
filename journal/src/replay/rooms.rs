@@ -91,12 +91,6 @@ pub(super) fn verify(
         violations,
     );
     compare(
-        "room_horizons",
-        &expected.horizons,
-        &stored.horizons,
-        violations,
-    );
-    compare(
         "room_conversations",
         &expected.conversation.publications,
         &stored.conversation.publications,

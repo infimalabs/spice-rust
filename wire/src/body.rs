@@ -568,8 +568,7 @@ pub struct SteerCanceled {
 
 mod interaction;
 pub use interaction::{
-    ConsentAsked, ConsentDenied, ConsentFloored, ConsentGranted, ConsentLapsed, ConsentQueueCause,
-    ConsentQueued,
+    ConsentAsked, ConsentDenied, ConsentGranted, ConsentLapsed, ConsentQueueCause, ConsentQueued,
 };
 
 #[path = "body/lane.rs"]
@@ -650,15 +649,6 @@ pub struct CanaryContradicted {
     pub decoded: u64,
 }
 
-/// An unproven vendor version first ran with residue measurement armed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VendorArmed {
-    /// Vendor that ran.
-    pub vendor: String,
-    /// Unproven version.
-    pub version: String,
-}
-
 /// An executable surface digest changed and entered quarantine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustPended {
@@ -698,41 +688,6 @@ pub struct TrustRevoked {
     pub surface: String,
     /// Exact digest approval was withdrawn from.
     pub digest: Digest,
-}
-
-/// The resident recognized a repository commit and bound its receipt verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommitLanded {
-    /// Recognized repository commit.
-    pub commit: String,
-    /// Receipt the commit published.
-    pub receipt: Digest,
-    /// Verdict bound to the receipt.
-    pub verdict: Verdict,
-}
-
-/// The resident recognized a new gate finding; the Finding head opened.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GateFound {
-    /// Stable finding identity.
-    pub identity: String,
-    /// Finding severity.
-    pub severity: Severity,
-    /// Evidence locus the finding stands at.
-    pub locus: String,
-    /// Owner the finding is charged to.
-    pub owner: Actor,
-    /// Receipt the finding originated from.
-    pub receipt: Digest,
-}
-
-/// A standing finding resolved at its evidence; the Finding head closed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GateCleared {
-    /// Stable finding identity.
-    pub identity: String,
-    /// Evidence locus the resolution stands at.
-    pub locus: String,
 }
 
 /// A retired fact crossed once into inert current-schema evidence.
@@ -785,47 +740,6 @@ pub struct JournalRestored {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpSeated {
     /// Minted resident epoch.
-    pub epoch: CanonicalUuid,
-}
-
-/// The resident stopped admission and began a graceful end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpQuiescing {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-}
-
-/// The resident began preserving or finishing admitted work and ending occupants.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpDraining {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-    /// Occupants still live at the transition.
-    pub occupants: u32,
-}
-
-/// Grace expired and the resident began ending occupants that had not finished.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpTerminating {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-    /// Occupants that had not finished.
-    pub occupants: u32,
-}
-
-/// Bounded escalation began against occupants that survived termination.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpKilling {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-    /// Occupants that survived termination.
-    pub occupants: u32,
-}
-
-/// Occupants ended; the resident began verifying claims, tape seals, and residue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpVerifying {
-    /// Resident epoch ending.
     pub epoch: CanonicalUuid,
 }
 

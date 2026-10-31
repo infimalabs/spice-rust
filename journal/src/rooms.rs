@@ -19,8 +19,8 @@ use wire::principal::ActingPrincipal;
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateWithdrawn, CoverageAuthority,
     DesignProposed, ExecutionAuthorized, PreparationDecided, ProposalRef, RoomAuthorityStamp,
-    RoomContributed, RoomDelivered, RoomHorizon, RoomLeft, RoomMessaged, RoomPublicationContent,
-    RoomPublished, RoomSource, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
+    RoomContributed, RoomDelivered, RoomLeft, RoomMessaged, RoomPublicationContent, RoomPublished,
+    RoomSource, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
@@ -129,15 +129,6 @@ CREATE TABLE room_cursors (
 ) STRICT;
 "#;
 
-/// Per-lane room catch-up horizons, created with the current schema.
-pub(crate) const HORIZON_SCHEMA_SQL: &str = r#"
-CREATE TABLE room_horizons (
-    lane TEXT PRIMARY KEY,
-    head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
-"#;
-
 /// Why the fold could not admit one fact.
 #[derive(Debug)]
 pub(crate) enum Refusal {
@@ -212,8 +203,6 @@ pub(crate) struct Projection {
     pub(crate) authorizations: BTreeMap<(String, String), AuthorizationRow>,
     /// Logical lane to its catch-up cursor head position and canonical body.
     pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
-    /// Logical lane to its catch-up horizon position and canonical body.
-    pub(crate) horizons: BTreeMap<String, (u64, Vec<u8>)>,
     /// Conversation publications with their operator item heads.
     pub(crate) conversation: conversation::Heads,
     /// Append-only shadow relevance observations and operator assessments.
@@ -274,8 +263,6 @@ pub(crate) trait Authority {
     fn request_at(&self, seq: u64) -> Result<bool, Refusal>;
     /// The canonical body of one lane's current catch-up cursor.
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal>;
-    /// Whether one lane already has a catch-up horizon.
-    fn horizon(&self, lane: &str) -> Result<bool, Refusal>;
     /// The canonical body of the current working-group partition.
     fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal>;
     /// Canonical body of the current repository OOPS generation.
@@ -336,11 +323,6 @@ pub(crate) enum Change {
         row: AuthorizationRow,
     },
     Cursor {
-        lane: String,
-        seq: u64,
-        body: Vec<u8>,
-    },
-    Horizon {
         lane: String,
         seq: u64,
         body: Vec<u8>,
@@ -620,11 +602,8 @@ fn fold_traffic(
                 .and_then(|()| authority.change(Change::MaturityLeave(body))),
         );
     }
-    if let Some(body) = fact.read::<RoomContributed>() {
-        return Some(contribute(authority, seq, actor, &body));
-    }
-    fact.read::<RoomHorizon>()
-        .map(|body| begin(authority, seq, actor, &body))
+    fact.read::<RoomContributed>()
+        .map(|body| contribute(authority, seq, actor, &body))
 }
 
 /// Whether `actor` acts as a born principal. The fold replays immutable
@@ -678,30 +657,6 @@ fn deliver(
         lane,
         seq: seq.get(),
         body: wire::encode(delivered)?,
-    })
-}
-
-/// The resident records one horizon for a lane that no delivery has ever
-/// advanced; a lane with a cursor or an earlier horizon already has its start.
-fn begin(
-    authority: &mut impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    horizon: &RoomHorizon,
-) -> Result<(), Refusal> {
-    if *actor != Actor::Spice {
-        return unsound(format!(
-            "a room catch-up horizon is resident-owned, not written by {actor}"
-        ));
-    }
-    let lane = horizon.lane.to_string();
-    if authority.cursor(&lane)?.is_some() || authority.horizon(&lane)? {
-        return unsound(format!("lane {lane} already has a room catch-up start"));
-    }
-    authority.change(Change::Horizon {
-        lane,
-        seq: seq.get(),
-        body: wire::encode(horizon)?,
     })
 }
 

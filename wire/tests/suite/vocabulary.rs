@@ -77,15 +77,6 @@ const STEER_ACKED: &str = r#"{
   }
 }"#;
 
-const GATE_FOUND: &str = r#"{
-  "kind": "gate::found",
-  "identity": "wire::untyped-body",
-  "severity": "high",
-  "locus": "wire/src/fact.rs:213",
-  "owner": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "receipt": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-}"#;
-
 const TASTE_CONFIRMED: &str = r#"{
   "kind": "taste::confirmed",
   "taste": "polling",
@@ -122,13 +113,6 @@ const TRUST_REVOKED: &str = r#"{
   "kind": "trust::revoked",
   "surface": "spice",
   "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-}"#;
-
-const COMMIT_LANDED: &str = r#"{
-  "kind": "commit::landed",
-  "commit": "9f2b4c7d1e6a08b35c4f9d2e7a1b8c05d6e3f4a2",
-  "receipt": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  "verdict": "clean"
 }"#;
 
 const LANE_KILLED: &str = r#"{
@@ -199,16 +183,6 @@ fn the_ack_scanner_body_matches_the_specified_fields() {
     assert_eq!(fact.body.locus.offset, 8213);
     assert_eq!(fact.body.locus.line, 1);
     assert_eq!(fact.body.locus.column, 5);
-}
-
-#[test]
-fn the_resident_recognition_body_matches_the_specified_fields() {
-    let fact: Fact<body::GateFound> = round_trip(GATE_FOUND);
-
-    assert_eq!(fact.kind(), FactKind::GateFound);
-    assert_eq!(fact.producer(), Producer::ResidentRecognition);
-    assert_eq!(fact.body.severity, body::Severity::High);
-    assert_eq!(fact.body.identity, "wire::untyped-body");
 }
 
 #[test]
@@ -346,8 +320,6 @@ fn every_digest_carrying_fact_refuses_a_noncanonical_spelling() {
     assert_noncanonical_digest_refused::<body::TrustPended>(TRUST_PENDED, "previous");
     assert_noncanonical_digest_refused::<body::TrustGranted>(TRUST_GRANTED, "digest");
     assert_noncanonical_digest_refused::<body::TrustRevoked>(TRUST_REVOKED, "digest");
-    assert_noncanonical_digest_refused::<body::CommitLanded>(COMMIT_LANDED, "receipt");
-    assert_noncanonical_digest_refused::<body::GateFound>(GATE_FOUND, "receipt");
     assert_noncanonical_digest_refused::<body::ProofSealed>(PROOF_SEALED, "manifest");
     assert_noncanonical_digest_refused::<body::ReleasePublished>(RELEASE_PUBLISHED, "manifest");
     assert_noncanonical_digest_refused::<body::ReleasePublished>(RELEASE_PUBLISHED, "notes");

@@ -147,10 +147,6 @@ impl Authority for History {
             .map(|(_, body)| body.clone()))
     }
 
-    fn horizon(&self, lane: &str) -> Result<bool, Refusal> {
-        Ok(self.projection.horizons.contains_key(lane))
-    }
-
     fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal> {
         Ok(self
             .projection

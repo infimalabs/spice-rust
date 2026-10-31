@@ -14,6 +14,7 @@ mod designs;
 mod formations;
 mod hidden_projects;
 mod leave_receipts;
+mod orphan_facts;
 mod pitch;
 mod preparation_edges;
 mod principals;
@@ -67,6 +68,9 @@ const SHAPE_PREDECESSOR_SCHEMA: u32 = 55;
 /// First schema whose baseline carried the retired required-evidence index,
 /// held by every predecessor from it through schema 86.
 const TASK_EVIDENCE_SCHEMA: u32 = 48;
+/// Schemas whose baseline carried the retained-only per-lane room catch-up
+/// horizons.
+const ROOM_HORIZON_SCHEMAS: std::ops::RangeInclusive<u32> = 45..=103;
 
 /// Return a current fixture to a predecessor's shape and identity.
 pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
@@ -82,8 +86,12 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
-    let horizons = if predecessor < crate::migrate::ROOM_HORIZON_SCHEMA {
-        "DROP TABLE room_horizons;"
+    let horizons = if ROOM_HORIZON_SCHEMAS.contains(&predecessor) {
+        "CREATE TABLE IF NOT EXISTS room_horizons (
+             lane TEXT PRIMARY KEY,
+             head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
+             body BLOB NOT NULL
+         ) STRICT;"
     } else {
         ""
     };

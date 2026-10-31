@@ -229,11 +229,23 @@ fn unread_namespace_rows() -> Vec<StaleRow> {
             [false, false, false],
         ),
         (
-            serde_json::json!({"kind": "vendor::armed", "vendor": "omp", "version": "0.1.0"}),
+            serde_json::json!({
+                "kind": "canary::alarmed",
+                "lane": LANE,
+                "expected": "ack",
+                "window": "2026-08-30T09:33:32.262Z",
+            }),
             [false, false, false],
         ),
         (
-            serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
+            serde_json::json!({
+                "kind": "narration::cleared",
+                "lane": LANE,
+                "occupant": REQUEST,
+                "moments": 3,
+                "prods": 1,
+                "relief": "prose",
+            }),
             [false, false, false],
         ),
     ]

@@ -102,9 +102,6 @@ macro_rules! registered_body {
     (RoomDelivered) => {
         crate::rooms::RoomDelivered
     };
-    (RoomHorizon) => {
-        crate::rooms::RoomHorizon
-    };
     (DesignNoticed) => {
         crate::rooms::DesignNoticed
     };
@@ -341,8 +338,6 @@ vocabulary! {
     RoomContributed = "room::contributed" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
-    /// Retained predecessor for lane-global room catch-up; no longer minted.
-    RoomHorizon = "room::horizon" by ResidentRecognition;
     /// The resident told a lane about one open Design matching its claimed work.
     DesignNoticed = "room::noticed" by ResidentRecognition;
     /// The resident recorded the best Design a session's cards fell short of.
@@ -431,8 +426,6 @@ vocabulary! {
     ConsentQueued = "consent::queued" by CommandDoor;
     /// The lane was renewed or removed before anyone ruled on the request.
     ConsentLapsed = "consent::lapsed" by ResidentRecognition;
-    /// A non-ACP lane's consent floor was recorded once for its occupancy.
-    ConsentFloored = "consent::floored" by CommandDoor;
 
     /// A lane and its capability were created.
     LaneSeated = "lane::seated" by ResidentRecognition;
@@ -504,9 +497,6 @@ vocabulary! {
     /// Listening meters disagreed: activity existed without decoded context.
     CanaryContradicted = "canary::contradicted" by ResidentRecognition;
 
-    /// An unproven vendor version first ran with residue measurement armed.
-    VendorArmed = "vendor::armed" by ResidentRecognition;
-
     /// An executable surface digest changed and entered quarantine.
     TrustPended = "trust::pended" by CommandDoor;
     /// The operator approved the exact executable digest.
@@ -525,13 +515,6 @@ vocabulary! {
     /// One principal's issued capability was retired.
     PrincipalDeauthorized = "principal::deauthorized" by CommandDoor;
 
-    /// The resident recognized a repository commit and bound its receipt verdict.
-    CommitLanded = "commit::landed" by ResidentRecognition;
-
-    /// The resident recognized a new gate finding; the Finding head opened.
-    GateFound = "gate::found" by ResidentRecognition;
-    /// A standing finding resolved at its evidence; the Finding head closed.
-    GateCleared = "gate::cleared" by ResidentRecognition;
     /// A retired fact crossed once into inert current-schema evidence.
     JournalRetained = "journal::retained" by ResidentRecognition;
     /// The one forward schema migration finalized before epoch mint.
@@ -545,16 +528,6 @@ vocabulary! {
 
     /// The resident acquired the kernel writer lock and minted its epoch.
     UpSeated = "up::seated" by CommandDoor;
-    /// The resident stopped admission and began a graceful end.
-    UpQuiescing = "up::quiescing" by CommandDoor;
-    /// The resident began preserving admitted work and ending occupants.
-    UpDraining = "up::draining" by CommandDoor;
-    /// Grace expired and the resident began ending unfinished occupants.
-    UpTerminating = "up::terminating" by CommandDoor;
-    /// Bounded escalation began against occupants that survived termination.
-    UpKilling = "up::killing" by CommandDoor;
-    /// Occupants ended; verification of claims, seals, and residue began.
-    UpVerifying = "up::verifying" by CommandDoor;
     /// The verified terminal state committed before releasing authority.
     UpDark = "up::dark" by CommandDoor;
 

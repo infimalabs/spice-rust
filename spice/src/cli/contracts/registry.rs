@@ -449,14 +449,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["down"],
         "down [--keeper]",
         Command,
-        [
-            UpQuiescing,
-            UpDraining,
-            UpTerminating,
-            UpKilling,
-            UpVerifying,
-            UpDark
-        ],
+        [UpDark],
         Reply,
         "spice::down"
     ),

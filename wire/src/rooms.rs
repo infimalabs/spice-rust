@@ -381,20 +381,6 @@ pub struct RoomDelivered {
     pub hunk: TranscriptHunk,
 }
 
-/// Retained predecessor for the former lane-global catch-up start.
-///
-/// Current catch-up derives its lower bound from each current task, Design
-/// request, or stop authority instead. The journal continues to
-/// admit and replay historical horizon facts so an existing repository keeps
-/// one valid history across the cutover; this fact claims no delivery,
-/// participation, or current listening authority.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomHorizon {
-    /// Logical lane the retained predecessor named.
-    pub lane: CanonicalUuid,
-}
-
 /// Native room-only publication command body.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
