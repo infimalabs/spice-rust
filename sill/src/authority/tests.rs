@@ -574,3 +574,25 @@ fn verbatim_and_drive_targets_record_one_form() {
         directory_link_form(&verbatim).expect("verbatim form")
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn created_entries_belong_to_the_token_default_owner() {
+    use super::{owner_sid, token_owners};
+
+    let scratch = Scratch::new("default-owner");
+    let file = scratch.path("file");
+    let directory = scratch.path("directory");
+    fs::write(&file, b"").expect("create file");
+    fs::create_dir(&directory).expect("create directory");
+
+    let owners = token_owners().expect("read token owners");
+    assert!(owners.user.starts_with("S-1-"), "{owners:?}");
+    for path in [&file, &directory] {
+        assert_eq!(
+            owner_sid(path).expect("read owner"),
+            owners.default_owner,
+            "{path:?}"
+        );
+    }
+}

@@ -155,6 +155,9 @@ fn apply_with_keeper(
     search_path: Option<&std::ffi::OsStr>,
     ambient: &Ambient,
 ) -> Outcome<InstallReceipt> {
+    if let Err(outcome) = crate::resident::keeper::admit_owner(repository) {
+        return cast_outcome(outcome);
+    }
     let lifecycle = match crate::resident::keeper::install_standing(repository) {
         Ok(lifecycle) => lifecycle,
         Err(outcome) => return cast_outcome(outcome),
@@ -220,6 +223,9 @@ fn owner_step(converged: bool, lifecycle: bool, applied: bool, owned: bool) -> O
 }
 
 fn unapply_with_keeper(repository: &Repository, ambient: &Ambient) -> Outcome<InstallReceipt> {
+    if let Err(outcome) = crate::resident::keeper::admit_owner(repository) {
+        return cast_outcome(outcome);
+    }
     let inspected = match spice::install::inspect(repository) {
         Ok(inspected) => inspected,
         Err(error) => return failure(error),

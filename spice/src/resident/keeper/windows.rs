@@ -10,6 +10,7 @@ use spice::repository::StatePaths;
 
 use super::definition::{self, Definition};
 use super::owner;
+use super::ownership::{self, Mismatch, Owners};
 use super::policy::{self, Attempt, Exit};
 use super::record::{self, KeeperRecord};
 use super::scheduler::windows::TaskService;
@@ -35,6 +36,16 @@ struct Site {
 
 impl Site {
     fn admit() -> CommandResult<Self> {
+        Self::admit_checked(|_| Ok(()))
+    }
+
+    /// Admit the site for a lifecycle write, refusing before the runtime root
+    /// is created when its state would not belong to the repository user.
+    fn admit_owning() -> CommandResult<Self> {
+        Self::admit_checked(admit_ownership)
+    }
+
+    fn admit_checked(check: fn(&StatePaths) -> CommandResult<()>) -> CommandResult<Self> {
         let current = std::env::current_dir()
             .map_err(|error| keeper_fault("resident::cwd-unavailable", &error))?;
         let repository = Repository::discover(&current)
@@ -42,6 +53,7 @@ impl Site {
         let state = repository
             .admit_resident_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;
+        check(&state)?;
         fs::create_dir_all(state.runtime())
             .map_err(|error| keeper_fault("resident::runtime-unavailable", &error))?;
         let executable = std::env::current_exe()
@@ -88,7 +100,7 @@ pub(crate) fn install(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome<wir
 }
 
 fn install_result(leaf: &clap::ArgMatches, ambient: &Ambient) -> CommandResult<wire::AppOpen> {
-    let site = Site::admit()?;
+    let site = Site::admit_owning()?;
     let listen = requested_listen(leaf)?;
     let access = requested_access(leaf, listen, None)?;
     let managed_default = INSTALL_FLAGS
@@ -143,7 +155,10 @@ pub(crate) fn up_detached(leaf: &clap::ArgMatches, ambient: &Ambient) -> Outcome
             }) {
                 return installed_refusal(flag, &record.task);
             }
-            reply(apply(&site, record, leaf.get_flag("open"), ambient))
+            reply(
+                admit_ownership(&site.state)
+                    .and_then(|()| apply(&site, record, leaf.get_flag("open"), ambient)),
+            )
         }
         Err(outcome) => typed_outcome(outcome),
     }
@@ -210,6 +225,60 @@ fn uninstall_result(ambient: &Ambient) -> CommandResult<wire::KeeperRemoved> {
     };
     remove_owner(&site, record, ambient)
 }
+
+/// Refuse a Windows lifecycle write from this process when the repository's
+/// lifecycle state would not belong to the repository user.
+pub(crate) fn admit_owner(repository: &Repository) -> CommandResult<()> {
+    let state = repository
+        .admit_resident_state()
+        .map_err(|error| crate::state_failure(&error).outcome())?;
+    admit_ownership(&state)
+}
+
+fn admit_ownership(state: &StatePaths) -> CommandResult<()> {
+    let token = sill::authority::token_owners()
+        .map_err(|error| keeper_fault("resident::keeper-principal-unavailable", &error))?;
+    let runtime = match sill::authority::owner_sid(state.runtime()) {
+        Ok(owner) => Some(owner),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(keeper_fault("resident::runtime-unavailable", &error)),
+    };
+    let Some(mismatch) = ownership::mismatch(&Owners {
+        user: &token.user,
+        default_owner: &token.default_owner,
+        runtime: runtime.as_deref(),
+    }) else {
+        return Ok(());
+    };
+    let (subject, observed, detail) = match mismatch {
+        Mismatch::DefaultOwner(owner) => (
+            "default-owner",
+            owner,
+            "this elevated shell would create lifecycle state another principal owns; \
+             rerun from an unelevated shell as the repository user"
+                .to_owned(),
+        ),
+        Mismatch::Runtime(owner) => (
+            "runtime-owner",
+            owner,
+            format!(
+                "{} belongs to another principal and is not taken over; have its owner \
+                 remove it, then rerun from an unelevated shell as the repository user",
+                state.runtime().display()
+            ),
+        ),
+    };
+    Err(Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "install::lifecycle-owner-mismatch".to_owned(),
+            Some(subject.to_owned()),
+            Some(token.user.clone()),
+            Some(observed.to_owned()),
+        )
+        .with_detail(detail),
+    )))
+}
+
 /// Capture the semantic lifecycle policy for a digest-bound package plan.
 pub(crate) fn install_standing(
     repository: &Repository,

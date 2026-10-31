@@ -13,7 +13,7 @@ use windows_sys::Win32::Foundation::{
     LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
-    GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo,
+    ConvertSidToStringSidW, GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_FLAGS, ACE_HEADER, ACL, ACL_REVISION, AddAccessAllowedAceEx,
@@ -22,7 +22,8 @@ use windows_sys::Win32::Security::{
     OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
     PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
     SID_AND_ATTRIBUTES, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_GROUPS,
-    TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenGroups, TokenUser,
+    TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER, TokenGroups, TokenOwner,
+    TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_NEW, CreateDirectoryW, CreateFileW, CreateHardLinkW, DELETE, FILE_APPEND_DATA,
@@ -502,6 +503,28 @@ pub(super) fn owned_by_current_user(path: &Path) -> io::Result<bool> {
     Ok(Principal::current()?.controls(descriptor.owner))
 }
 
+pub(super) fn owner_sid(path: &Path) -> io::Result<String> {
+    sid_text(Descriptor::read(&open(path, READ_CONTROL)?)?.owner)
+}
+
+pub(super) fn token_owners() -> io::Result<super::TokenOwners> {
+    let token = process_token()?;
+    let user = token_information(&token, TokenUser)?;
+    let owner = token_information(&token, TokenOwner)?;
+    // SAFETY: each buffer holds the structure its class names, whose SID
+    // points into the same allocation.
+    let (user, owner) = unsafe {
+        (
+            (*user.as_ptr().cast::<TOKEN_USER>()).User.Sid,
+            (*owner.as_ptr().cast::<TOKEN_OWNER>()).Owner,
+        )
+    };
+    Ok(super::TokenOwners {
+        user: sid_text(user)?,
+        default_owner: sid_text(owner)?,
+    })
+}
+
 /// One fixed-size `GetFileInformationByHandleEx` record for `file`.
 fn information<T: Default>(file: &File, class: FILE_INFO_BY_HANDLE_CLASS) -> io::Result<T> {
     let mut record = T::default();
@@ -773,14 +796,7 @@ struct Principal {
 
 impl Principal {
     fn current() -> io::Result<Self> {
-        let mut token: HANDLE = ptr::null_mut();
-        // SAFETY: the pseudo-handle names this process, and `token` receives a
-        // new handle that `OwnedHandle` closes.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: `OpenProcessToken` succeeded, so `token` is owned here.
-        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let token = process_token()?;
         Ok(Self {
             user: token_information(&token, TokenUser)?,
             groups: token_information(&token, TokenGroups)?,
@@ -816,6 +832,36 @@ impl Principal {
                         && unsafe { EqualSid(owner, group.Sid) } != 0
                 }))
     }
+}
+
+/// This process's token, open for query.
+fn process_token() -> io::Result<OwnedHandle> {
+    let mut token: HANDLE = ptr::null_mut();
+    // SAFETY: the pseudo-handle names this process, and `token` receives a
+    // new handle that `OwnedHandle` closes.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `OpenProcessToken` succeeded, so `token` is owned here.
+    Ok(unsafe { OwnedHandle::from_raw_handle(token) })
+}
+
+/// `sid` in its `S-1-…` string form.
+fn sid_text(sid: PSID) -> io::Result<String> {
+    let mut text = ptr::null_mut();
+    // SAFETY: `sid` is a valid SID and `text` receives a `LocalAlloc` string.
+    if unsafe { ConvertSidToStringSidW(sid, &raw mut text) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the system returned a NUL-terminated wide string.
+    let length = (0..)
+        .take_while(|&index| unsafe { *text.add(index) } != 0)
+        .count();
+    // SAFETY: `length` units precede the terminator.
+    let sid = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, length) });
+    // SAFETY: the system allocated `text` with `LocalAlloc`.
+    unsafe { LocalFree(text.cast()) };
+    Ok(sid)
 }
 
 fn token_information(
