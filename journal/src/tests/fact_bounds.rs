@@ -4,10 +4,7 @@ use super::*;
 use crate::{FactCause, JournalWrite};
 
 fn note_envelope_length(note_bytes: usize, position: u64) -> usize {
-    let fact = wire::Fact::new(wire::body::TaskNoted {
-        task: "1kKRRsDP".parse().expect("fixture task"),
-        note: "x".repeat(note_bytes),
-    });
+    let fact = wire::Fact::new(text_fact("x".repeat(note_bytes)));
     let fact_bytes = wire::encode(&fact).expect("fixture fact encodes");
     let fact = wire::decode::<AnyFact>(&fact_bytes).expect("fixture fact erases");
     wire::encode(&Envelope {
@@ -34,14 +31,11 @@ fn note_write(note_bytes: usize) -> JournalWrite {
         Actor::Operator,
         "task:1kKRRsDP".parse().expect("fixture origin"),
         instant(),
-        wire::Producer::CommandDoor,
+        wire::Producer::ResidentRecognition,
     );
     write
         .fact(
-            wire::body::TaskNoted {
-                task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "x".repeat(note_bytes),
-            },
+            text_fact("x".repeat(note_bytes)),
             FactCause::Existing(seq(2)),
         )
         .expect("fixture note builds");
@@ -71,13 +65,10 @@ fn writes_admit_the_exact_limit_and_refuse_a_larger_batch_before_any_effect() {
     let mut batch = note_write(1);
     batch
         .fact(
-            wire::body::TaskNoted {
-                task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "x".repeat(note_bytes_for_envelope(
-                    MAX_DURABLE_FACT_ENVELOPE_BYTES + 1,
-                    4,
-                )),
-            },
+            text_fact("x".repeat(note_bytes_for_envelope(
+                MAX_DURABLE_FACT_ENVELOPE_BYTES + 1,
+                4,
+            ))),
             FactCause::Existing(seq(2)),
         )
         .expect("oversized member remains valid wire");

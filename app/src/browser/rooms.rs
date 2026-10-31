@@ -698,28 +698,6 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
         ));
     }
     for positioned in authority
-        .critiques
-        .values()
-        .filter(|positioned| positioned.value.critique.candidate.controller == *controller)
-    {
-        records.push((
-            positioned.position,
-            "Critique",
-            serde_json::to_string(&positioned.value).expect("critique authority encodes"),
-        ));
-    }
-    for positioned in authority
-        .coverage
-        .values()
-        .filter(|positioned| positioned.value.coverage.candidate.controller == *controller)
-    {
-        records.push((
-            positioned.position,
-            "Review coverage",
-            serde_json::to_string(&positioned.value).expect("coverage authority encodes"),
-        ));
-    }
-    for positioned in authority
         .decisions
         .values()
         .filter(|positioned| positioned.value.decision.controller == *controller)

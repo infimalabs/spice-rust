@@ -4,12 +4,14 @@
 //! A retired release spelled a hold as its plan alone and appended one
 //! `taste-review audit` task note per policy read. The hold now carries the
 //! matches and the count of revisions rechecked since it began, so the
-//! crossing reads them from those notes once. The notes stay as history.
+//! crossing reads them from those notes once. The notes stay as history,
+//! spelled as retained task notes since the orphan-fact crossing.
 
 use std::collections::BTreeMap;
 
 use rusqlite::{Transaction, params};
 use serde_json::{Map, Value};
+use wire::body::RetainedTaskNote;
 use wire::{FactKind, StatementField, TasteFinding, TasteHold, TasteMatch, TastePlan};
 
 use super::{OpenError, residual};
@@ -40,16 +42,21 @@ impl Audits {
         let mut statement = transaction
             .prepare(
                 "SELECT cause, \
-                        json_extract(CAST(envelope AS TEXT), '$.fact.task'), \
-                        json_extract(CAST(envelope AS TEXT), '$.fact.note') \
+                        json_extract(CAST(envelope AS TEXT), '$.fact.fact.task'), \
+                        json_extract(CAST(envelope AS TEXT), '$.fact.fact.note') \
                  FROM fact_envelopes WHERE kind = ?1 \
-                 AND json_extract(CAST(envelope AS TEXT), '$.fact.note') GLOB ?2 \
+                 AND json_extract(CAST(envelope AS TEXT), '$.fact.fact.kind') = ?2 \
+                 AND json_extract(CAST(envelope AS TEXT), '$.fact.fact.note') GLOB ?3 \
                  ORDER BY seq",
             )
             .map_err(OpenError::Sqlite)?;
         let rows = statement
             .query_map(
-                params![FactKind::TaskNoted.as_str(), format!("{AUDIT_PREFIX}*")],
+                params![
+                    FactKind::JournalRetained.as_str(),
+                    RetainedTaskNote::KIND,
+                    format!("{AUDIT_PREFIX}*")
+                ],
                 |row| {
                     Ok((
                         row.get::<_, String>(1)?,

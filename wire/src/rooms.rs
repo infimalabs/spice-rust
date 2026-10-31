@@ -147,17 +147,8 @@ pub struct CandidateRef {
     pub candidate: RoomAuthorityStamp,
 }
 
-/// Stable identity of one critique of an exact Design pass proposal.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CritiqueRef {
-    /// Exact candidate the critique assesses.
-    pub candidate: CandidateRef,
-    /// Minimal-width native sequence within that candidate.
-    pub critique: SequenceCode,
-}
-
-/// Stable identity of one coverage statement over an exact Design pass proposal.
+/// Stable identity of one retained coverage statement over an exact Design
+/// pass proposal, as a predecessor authorization cited it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CoverageRef {
@@ -183,10 +174,6 @@ pub struct DecisionRef {
 pub enum ProposalRef {
     /// One Design pass proposal.
     Candidate { candidate: CandidateRef },
-    /// One critique of an exact candidate.
-    Critique { critique: CritiqueRef },
-    /// One coverage statement over an exact candidate.
-    Coverage { coverage: CoverageRef },
     /// One decision under a controlling task.
     Decision { decision: DecisionRef },
     /// The author's withdrawal of one exact undecided candidate.
@@ -377,20 +364,6 @@ pub struct RoomDelivered {
     pub through: SequenceCode,
     /// The landed catch-up's exact bytes in the lane's transcript.
     pub hunk: TranscriptHunk,
-}
-
-/// Retained predecessor for the former lane-global catch-up start.
-///
-/// Current catch-up derives its lower bound from each current task, Design
-/// request, or stop authority instead. The journal continues to
-/// admit and replay historical horizon facts so an existing repository keeps
-/// one valid history across the cutover; this fact claims no delivery,
-/// participation, or current listening authority.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoomHorizon {
-    /// Logical lane the retained predecessor named.
-    pub lane: CanonicalUuid,
 }
 
 /// Native room-only publication command body.
@@ -724,118 +697,6 @@ pub struct DesignProposed {
     pub candidate: DesignPassProposal,
 }
 
-/// Result of one critique against an exact candidate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CritiqueStanding {
-    /// No material finding remains in this critique.
-    Clean,
-    /// The linked critique records a material finding.
-    MaterialFinding,
-}
-
-/// One source-backed critique of an exact Design pass proposal.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateCritique {
-    /// Stable critique identity.
-    pub critique: CritiqueRef,
-    /// Open category for later critique families.
-    pub category: Name,
-    /// Exact authority owning the critique bytes.
-    pub source: RoomSource,
-    /// Current conclusion of this critique.
-    pub standing: CritiqueStanding,
-}
-
-/// Immutable fact body recording one candidate critique.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateCritiqued {
-    /// Source-backed critique that was recorded.
-    pub critique: CandidateCritique,
-}
-
-/// Exact reviewer authority behind candidate coverage.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum CoverageAuthority {
-    /// Explicit operator review.
-    Operator {},
-    /// Independent lane review, with exact authoring occupant retained.
-    Independent {
-        /// Logical reviewing lane.
-        lane: CanonicalUuid,
-        /// Exact occupant that authored the coverage.
-        occupant: CanonicalUuid,
-    },
-    /// Labeled fallback review by the candidate's own authoring lane.
-    SelfReview {
-        /// Logical reviewing lane.
-        lane: CanonicalUuid,
-        /// Exact occupant that authored the coverage.
-        occupant: CanonicalUuid,
-    },
-}
-
-/// One source-backed coverage statement over an exact candidate.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "CandidateCoverageWire", into = "CandidateCoverageWire")]
-pub struct CandidateCoverage {
-    /// Stable coverage identity.
-    pub coverage: CoverageRef,
-    /// Exact reviewer authority, preserving self-review distinction.
-    pub authority: CoverageAuthority,
-    /// Open, nonempty coverage scopes such as `contracts` or `composition`.
-    pub scopes: Vec<Name>,
-    /// Exact authority owning the review bytes.
-    pub source: RoomSource,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CandidateCoverageWire {
-    coverage: CoverageRef,
-    authority: CoverageAuthority,
-    scopes: Vec<Name>,
-    source: RoomSource,
-}
-
-impl TryFrom<CandidateCoverageWire> for CandidateCoverage {
-    type Error = &'static str;
-
-    fn try_from(value: CandidateCoverageWire) -> Result<Self, Self::Error> {
-        if value.scopes.is_empty() || !all_unique(&value.scopes) {
-            return Err("candidate coverage scopes must be nonempty and unique");
-        }
-        Ok(Self {
-            coverage: value.coverage,
-            authority: value.authority,
-            scopes: value.scopes,
-            source: value.source,
-        })
-    }
-}
-
-impl From<CandidateCoverage> for CandidateCoverageWire {
-    fn from(value: CandidateCoverage) -> Self {
-        Self {
-            coverage: value.coverage,
-            authority: value.authority,
-            scopes: value.scopes,
-            source: value.source,
-        }
-    }
-}
-
-/// Immutable fact body recording one candidate coverage statement.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CandidateCovered {
-    /// Source-backed coverage that was recorded.
-    pub coverage: CandidateCoverage,
-}
-
 /// Exact selected execution authority created by its operator decision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -966,10 +827,6 @@ mod tests {
         text.parse().expect("room authority stamp")
     }
 
-    fn name(text: &str) -> Name {
-        text.parse().expect("open name")
-    }
-
     fn source(sequence: u64) -> RoomSource {
         RoomSource::Journal {
             fact: SequenceCode::new(sequence),
@@ -1018,18 +875,6 @@ mod tests {
         let proposals = [
             ProposalRef::Candidate {
                 candidate: candidate.clone(),
-            },
-            ProposalRef::Critique {
-                critique: CritiqueRef {
-                    candidate: candidate.clone(),
-                    critique: SequenceCode::new(1),
-                },
-            },
-            ProposalRef::Coverage {
-                coverage: CoverageRef {
-                    candidate: candidate.clone(),
-                    coverage: SequenceCode::new(2),
-                },
             },
             ProposalRef::Decision {
                 decision: DecisionRef {
@@ -1264,33 +1109,5 @@ mod tests {
         let document = String::from_utf8(encoded).unwrap();
         assert!(document.contains("unsupported-retained"));
         assert!(document.contains("0.31.0"));
-    }
-
-    #[test]
-    fn critique_and_coverage_categories_remain_open_without_weakening_identity() {
-        let critique = CandidateCritique {
-            critique: CritiqueRef {
-                candidate: candidate(),
-                critique: SequenceCode::new(8),
-            },
-            category: name("composition"),
-            source: source(9),
-            standing: CritiqueStanding::MaterialFinding,
-        };
-        let coverage = CandidateCoverage {
-            coverage: CoverageRef {
-                candidate: candidate(),
-                coverage: SequenceCode::new(10),
-            },
-            authority: CoverageAuthority::Operator {},
-            scopes: vec![name("contracts"), name("composition")],
-            source: source(11),
-        };
-        for encoded in [
-            crate::encode(&critique).unwrap(),
-            crate::encode(&coverage).unwrap(),
-        ] {
-            assert!(!String::from_utf8(encoded).unwrap().contains("018f82d4-"));
-        }
     }
 }

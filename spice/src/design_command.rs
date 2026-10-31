@@ -7,7 +7,6 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::Bounded;
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued,
     CandidateWithdrawal, CandidateWithdrawn, DesignPassProposal, DesignProposed,
     ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
     ProposalRef,
@@ -47,12 +46,6 @@ enum PreparationAuthority {
         candidate: DesignPassProposal,
         #[serde(skip_serializing_if = "Option::is_none")]
         withdrawn: Option<SequenceCode>,
-    },
-    Critique {
-        critique: CandidateCritique,
-    },
-    Coverage {
-        coverage: CandidateCoverage,
     },
     Decision {
         decision: PreparationDecision,
@@ -274,14 +267,6 @@ fn record(
             withdrawal: body.withdrawal,
             author: roles.author(&envelope.actor),
             at: envelope.at,
-        }
-    } else if let Some(body) = envelope.fact.read::<CandidateCritiqued>() {
-        PreparationAuthority::Critique {
-            critique: body.critique,
-        }
-    } else if let Some(body) = envelope.fact.read::<CandidateCovered>() {
-        PreparationAuthority::Coverage {
-            coverage: body.coverage,
         }
     } else if let Some(body) = envelope.fact.read::<PreparationDecided>() {
         PreparationAuthority::Decision {

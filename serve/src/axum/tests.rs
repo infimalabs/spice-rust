@@ -62,7 +62,7 @@ fn seq(value: u64) -> wire::Seq {
     wire::Seq::new(value).expect("non-zero fixture position")
 }
 
-fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
+fn stream_write(trust: bool) -> journal::JournalWrite {
     let mut write = journal::JournalWrite::new(
         wire::Actor::Operator,
         "task:1kKRRsDP".parse().expect("origin"),
@@ -71,13 +71,12 @@ fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
     );
     write
         .fact(
-            wire::body::TaskNoted {
+            wire::body::TaskWoken {
                 task: "1kKRRsDP".parse().expect("task stamp"),
-                note: note.to_owned(),
             },
             journal::FactCause::Root,
         )
-        .expect("note fact builds");
+        .expect("wake fact builds");
     if trust {
         let digest = wire::Digest::compute(wire::Domain::ConfigExecutableSurface, b"surface");
         let fact = write
@@ -100,8 +99,8 @@ fn stream_write(note: &str, trust: bool) -> journal::JournalWrite {
     write
 }
 
-fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit {
-    match bus.commit(stream_write(note, trust)).expect("bus answers") {
+fn commit_stream(bus: &bus::Bus, trust: bool) -> bus::JournalCommit {
+    match bus.commit(stream_write(trust)).expect("bus answers") {
         bus::CommitOutcome::Committed(commit) => commit,
         other => panic!("stream fixture commit failed: {other:?}"),
     }
@@ -404,7 +403,7 @@ async fn assert_live_stream(
     bus: &bus::Bus,
     subscription: wire::CanonicalUuid,
 ) -> u64 {
-    let update = commit_stream(bus, "later", false);
+    let update = commit_stream(bus, false);
     let live = stream_frame(socket).await;
     assert!(matches!(
         live,
@@ -458,7 +457,7 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "initial", true);
+    commit_stream(&bus, true);
     let initial_lane_capability = identity(0xe8);
     commit_lane_stream(&bus, identity(0xe7), initial_lane_capability);
     let capabilities = operator_capabilities();
@@ -532,7 +531,7 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "probe horizon", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -607,7 +606,7 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "concurrent command horizon", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, mut control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -708,7 +707,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "message horizon", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -789,7 +788,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "initial", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -837,7 +836,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
     let app = TestApp::new();
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    commit_stream(&bus, "initial", false);
+    commit_stream(&bus, false);
     let capabilities = operator_capabilities();
     let (server, mut control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
@@ -875,8 +874,8 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
     )
     .await;
     let request = control.recv().await.expect("command enters control queue");
-    for index in 0..70 {
-        commit_stream(&bus, &format!("queued {index}"), false);
+    for _ in 0..70 {
+        commit_stream(&bus, false);
     }
     request
         .respond(wire::Outcome::Refusal(wire::Refusal::bare(

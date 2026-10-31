@@ -87,8 +87,18 @@
 /// older release cannot decode. Schema 106 retires room relevance: each
 /// `room::observed` and `room::assessed` record crosses as inert
 /// `journal::retained` evidence and the relevance tables drop. Schema 107 drops
-/// the task-head project index after its only project reader retired.
-pub const SCHEMA_VERSION: u32 = 107;
+/// the task-head project index after its only project reader retired. Schema
+/// 108 retires fact kinds no release produces, each as inert evidence naming
+/// schema-107: consent floors, vendor arming, commit landings, gate findings
+/// and clearances, the five graceful-shutdown transitions, and lane catch-up
+/// horizons, whose retained-only projection drops; the provenance-less judge
+/// rulings, which keep their place in the standing judgment tally; lease
+/// warnings together with every steering fact, head, and miss of the directive
+/// each opened; Design pass critiques and coverage, whose proposal heads drop,
+/// and operator nudges, which still ready their Design from the retained
+/// evidence; and task notes, which keep their room publications and their
+/// place in their task's generation history.
+pub const SCHEMA_VERSION: u32 = 108;
 
 /// First position assigned by a newly created journal.
 ///

@@ -568,8 +568,7 @@ pub struct SteerCanceled {
 
 mod interaction;
 pub use interaction::{
-    ConsentAsked, ConsentDenied, ConsentFloored, ConsentGranted, ConsentLapsed, ConsentQueueCause,
-    ConsentQueued,
+    ConsentAsked, ConsentDenied, ConsentGranted, ConsentLapsed, ConsentQueueCause, ConsentQueued,
 };
 
 #[path = "body/lane.rs"]
@@ -580,9 +579,8 @@ pub use lane::{
     LaneExited, LaneFastRetuned, LaneHeld, LaneImported, LaneKilled, LaneLaunchIdentity,
     LaneRemoved, LaneRenewalChanged, LaneRenewed, LaneResumed, LaneRetuned, LaneRuntimeRetuned,
     LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted, LaneTimedOut,
-    RtkHealth, RtkHealthState, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt,
-    TasteJudgeReply, TasteJudged, TasteReminded, TeamArranged, TeamConfigured, TeamStanding,
-    VendorFailureInput,
+    RtkHealth, RtkHealthState, TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged,
+    TasteReminded, TeamArranged, TeamConfigured, TeamStanding, VendorFailureInput,
 };
 
 /// A seated occupant exceeded a call-count or active-silence narration bound.
@@ -650,15 +648,6 @@ pub struct CanaryContradicted {
     pub decoded: u64,
 }
 
-/// An unproven vendor version first ran with residue measurement armed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VendorArmed {
-    /// Vendor that ran.
-    pub vendor: String,
-    /// Unproven version.
-    pub version: String,
-}
-
 /// An executable surface digest changed and entered quarantine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustPended {
@@ -700,47 +689,16 @@ pub struct TrustRevoked {
     pub digest: Digest,
 }
 
-/// The resident recognized a repository commit and bound its receipt verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommitLanded {
-    /// Recognized repository commit.
-    pub commit: String,
-    /// Receipt the commit published.
-    pub receipt: Digest,
-    /// Verdict bound to the receipt.
-    pub verdict: Verdict,
-}
-
-/// The resident recognized a new gate finding; the Finding head opened.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GateFound {
-    /// Stable finding identity.
-    pub identity: String,
-    /// Finding severity.
-    pub severity: Severity,
-    /// Evidence locus the finding stands at.
-    pub locus: String,
-    /// Owner the finding is charged to.
-    pub owner: Actor,
-    /// Receipt the finding originated from.
-    pub receipt: Digest,
-}
-
-/// A standing finding resolved at its evidence; the Finding head closed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GateCleared {
-    /// Stable finding identity.
-    pub identity: String,
-    /// Evidence locus the resolution stands at.
-    pub locus: String,
-}
-
 /// A retired fact crossed once into inert current-schema evidence.
 ///
 /// The outer envelope keeps its durable position, attribution, and causal
 /// links. `fact` preserves the retired discriminant and body as opaque JSON:
 /// current readers validate this marker but never decode that nested payload as
-/// an executable fact.
+/// an executable fact. The retained payloads current projections still read
+/// are a judge ruling from before provenance-complete judgments, see
+/// [`JournalRetained::taste_ruling`], a task note from before notes became
+/// room observations, see [`JournalRetained::task_note`], and an operator
+/// Design nudge, see [`crate::rooms::RetainedNudge`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalRetained {
@@ -748,6 +706,84 @@ pub struct JournalRetained {
     pub release: String,
     /// Retired fact discriminant and body, preserved as inert evidence.
     pub fact: serde_json::Value,
+}
+
+impl JournalRetained {
+    /// The judge ruling this evidence retains, when it retains one.
+    ///
+    /// Before a ruling carried its full provenance, the judge recorded only
+    /// the taste, the evidence locus, and the verdict as `taste::confirmed` or
+    /// `taste::cleared`. Those rulings still count toward a taste's standing
+    /// judgment tally and read back in its history, without the provenance a
+    /// current [`TasteJudged`] carries.
+    #[must_use]
+    pub fn taste_ruling(&self) -> Option<RetainedTasteRuling> {
+        let confirmed = match self.fact.get("kind")?.as_str()? {
+            "taste::confirmed" => true,
+            "taste::cleared" => false,
+            _ => return None,
+        };
+        let field = |name: &str| Some(self.fact.get(name)?.as_str()?.to_owned());
+        Some(RetainedTasteRuling {
+            taste: field("taste")?,
+            locus: field("locus")?,
+            confirmed,
+        })
+    }
+
+    /// The task note this evidence retains, when it retains one.
+    ///
+    /// A `task::noted` fact appended free text to its task before notes became
+    /// room observations. A retained note that is no taste-review audit still
+    /// reads as an authored observation in its task's room, and every retained
+    /// note stays a historical change to its task.
+    #[must_use]
+    pub fn task_note(&self) -> Option<RetainedTaskNote> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            #[serde(rename = "kind")]
+            _kind: serde::de::IgnoredAny,
+            task: TaskStamp,
+            note: String,
+        }
+        if self.fact.get("kind")?.as_str()? != RetainedTaskNote::KIND {
+            return None;
+        }
+        let Wire { task, note, .. } = Wire::deserialize(&self.fact).ok()?;
+        Some(RetainedTaskNote { task, note })
+    }
+}
+
+/// A judge ruling retained from before provenance-complete judgments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedTasteRuling {
+    /// Taste the judge ruled on.
+    pub taste: String,
+    /// Evidence locus the judge ruled at.
+    pub locus: String,
+    /// Whether the judge confirmed the taste rather than clearing it.
+    pub confirmed: bool,
+}
+
+/// A task note retained from before notes became room observations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedTaskNote {
+    /// Annotated task.
+    pub task: TaskStamp,
+    /// Note text.
+    pub note: String,
+}
+
+impl RetainedTaskNote {
+    /// Kind the note carried before it crossed into retained evidence.
+    pub const KIND: &'static str = "task::noted";
+
+    /// The note `fact` retains, when it is retained evidence of one.
+    #[must_use]
+    pub fn read(fact: &crate::AnyFact) -> Option<Self> {
+        fact.as_body::<JournalRetained>()?.task_note()
+    }
 }
 
 /// The one forward schema migration finalized before epoch mint.
@@ -785,47 +821,6 @@ pub struct JournalRestored {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpSeated {
     /// Minted resident epoch.
-    pub epoch: CanonicalUuid,
-}
-
-/// The resident stopped admission and began a graceful end.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpQuiescing {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-}
-
-/// The resident began preserving or finishing admitted work and ending occupants.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpDraining {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-    /// Occupants still live at the transition.
-    pub occupants: u32,
-}
-
-/// Grace expired and the resident began ending occupants that had not finished.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpTerminating {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-    /// Occupants that had not finished.
-    pub occupants: u32,
-}
-
-/// Bounded escalation began against occupants that survived termination.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpKilling {
-    /// Resident epoch ending.
-    pub epoch: CanonicalUuid,
-    /// Occupants that survived termination.
-    pub occupants: u32,
-}
-
-/// Occupants ended; the resident began verifying claims, tape seals, and residue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpVerifying {
-    /// Resident epoch ending.
     pub epoch: CanonicalUuid,
 }
 

@@ -27,26 +27,65 @@ use super::{
     ExecutionAuthorized, OutputControlled, OutputVerdict, PreparationDecided, RoomContributed,
     RoomDestination, RoomPosted, RoomPublicationContent, RoomPublished,
 };
+use crate::body::JournalRetained;
 use crate::body::{
     ClaimFreed, ClaimLapsed, ClaimWon, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
     TaskDeleted, TaskDone, TaskReviewed,
 };
 use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
 
-/// The operator asked one open Design to take its next pass.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesignNudged {
+/// An operator nudge of one open Design toward its next pass, retained as
+/// [`JournalRetained`] evidence from before the nudge command retired.
+///
+/// A retained nudge still readies its Design before any pass boundary and
+/// counts as input after one, so the cycle reads it back from that evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetainedNudge {
     /// The nudged Design.
     pub design: TaskStamp,
     /// The operator MSG the same write sent one lane in the Design's room,
     /// carrying the room's unheard operator posts; absent when no lane could
     /// take the Design.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<super::RoomAuthorityStamp>,
     /// The lane the message went to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipient: Option<CanonicalUuid>,
+}
+
+impl RetainedNudge {
+    /// Kind the nudge carried before it crossed into retained evidence.
+    pub const KIND: &'static str = "proposal::nudged";
+
+    /// The nudge `fact` retains, when it is retained evidence of one.
+    #[must_use]
+    pub fn read(fact: &AnyFact) -> Option<Self> {
+        Self::retained(fact.as_body::<JournalRetained>()?)
+    }
+
+    /// The nudge `retained` preserves, when it preserves one.
+    #[must_use]
+    pub fn retained(retained: &JournalRetained) -> Option<Self> {
+        if retained.fact.get("kind")?.as_str()? != Self::KIND {
+            return None;
+        }
+        let wire = RetainedNudgeWire::deserialize(&retained.fact).ok()?;
+        Some(Self {
+            design: wire.design,
+            message: wire.message,
+            recipient: wire.recipient,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedNudgeWire {
+    #[serde(rename = "kind")]
+    _kind: serde::de::IgnoredAny,
+    design: TaskStamp,
+    #[serde(default)]
+    message: Option<super::RoomAuthorityStamp>,
+    #[serde(default)]
+    recipient: Option<CanonicalUuid>,
 }
 
 /// What one open Design's pass cycle waits on.
@@ -520,7 +559,7 @@ impl DesignCycles {
             FactKind::RoomContributed
                 | FactKind::RoomPublished
                 | FactKind::RoomPosted
-                | FactKind::DesignNudged
+                | FactKind::JournalRetained
                 | FactKind::DesignProposed
                 | FactKind::PreparationDecided
                 | FactKind::CandidateWithdrawn
@@ -565,15 +604,21 @@ impl DesignCycles {
     /// task's own preparation, so a caller refreshing cached Designs also
     /// refreshes each changed task's controller.
     #[must_use]
-    pub fn subjects(fact: &AnyFact) -> Vec<&TaskStamp> {
+    pub fn subjects(fact: &AnyFact) -> Vec<TaskStamp> {
+        Self::borrowed_subjects(fact)
+            .into_iter()
+            .cloned()
+            .chain(RetainedNudge::read(fact).map(|nudge| nudge.design))
+            .collect()
+    }
+
+    fn borrowed_subjects(fact: &AnyFact) -> Vec<&TaskStamp> {
         if let Some(contribution) = fact.as_body::<RoomContributed>() {
             vec![&contribution.room]
         } else if let Some(published) = fact.as_body::<RoomPublished>() {
             vec![&published.room]
         } else if let Some(posted) = fact.as_body::<RoomPosted>() {
             posted_rooms(posted)
-        } else if let Some(nudged) = fact.as_body::<DesignNudged>() {
-            vec![&nudged.design]
         } else if let Some(proposed) = fact.as_body::<DesignProposed>() {
             vec![&proposed.candidate.candidate.controller]
         } else if let Some(decided) = fact.as_body::<PreparationDecided>() {
@@ -597,7 +642,7 @@ impl DesignCycles {
             FactKind::RoomContributed
             | FactKind::RoomPublished
             | FactKind::RoomPosted
-            | FactKind::DesignNudged => self.observe_input(seq, actor, fact),
+            | FactKind::JournalRetained => self.observe_input(seq, actor, fact),
             FactKind::DesignProposed
             | FactKind::PreparationDecided
             | FactKind::CandidateWithdrawn
@@ -623,8 +668,8 @@ impl DesignCycles {
         if let Some(contribution) = fact.as_body::<RoomContributed>() {
             self.design(&contribution.room)
                 .contributed(seq, contribution);
-        } else if let Some(nudged) = fact.as_body::<DesignNudged>() {
-            let design = self.design(&nudged.design);
+        } else if let Some(nudge) = RetainedNudge::read(fact) {
+            let design = self.design(&nudge.design);
             design.facts.nudged = true;
             design.input(seq);
         } else if matches!(actor, Actor::Operator | Actor::Human(_)) {

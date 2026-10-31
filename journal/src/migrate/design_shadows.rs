@@ -6,32 +6,25 @@
 //! [`wire::body::JournalRetained`] evidence by the ordinary rule for removed
 //! fact kinds and their per-Design index drops.
 
-use super::room_coordination::{read_rows, retire_row};
-use crate::{MigrationError, OpenError};
+use super::retire::{self, COLUMNS, Retirement};
+use crate::OpenError;
 
-/// Last release whose decoders admitted Design shadows.
-const RELEASE: &str = "6e0121328";
+/// Design shadows and the last release whose decoders admitted them.
+const RETIREMENT: Retirement = Retirement {
+    release: "6e0121328",
+    what: "retired Design shadow",
+};
 
 pub(super) fn cross(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
-    let rows = read_rows(
+    let rows = retire::read_rows(
         transaction,
-        "SELECT seq, wire_version, instant, actor, origin, cause, envelope, kind \
-         FROM fact_envelopes WHERE kind = 'room::shadowed' ORDER BY seq",
+        &format!("SELECT {COLUMNS} FROM fact_envelopes WHERE kind = 'room::shadowed' ORDER BY seq"),
+        [],
     )?;
     for row in rows {
-        retire_row(transaction, row, RELEASE, retained_fact_error)?;
+        retire::retire_row(transaction, row, RETIREMENT)?;
     }
     transaction
         .execute_batch("DROP TABLE IF EXISTS design_shadows;")
         .map_err(OpenError::Sqlite)
-}
-
-fn retained_fact_error(seq: i64, detail: String) -> OpenError {
-    MigrationError::RetiredFact {
-        seq,
-        kind: "retired Design shadow",
-        release: RELEASE,
-        detail,
-    }
-    .into()
 }

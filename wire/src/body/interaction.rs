@@ -86,14 +86,3 @@ pub struct ConsentLapsed {
     /// Lane the request came from.
     pub lane: CanonicalUuid,
 }
-
-/// A non-ACP lane's consent floor was recorded once for its occupancy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsentFloored {
-    /// Lane the floor covers.
-    pub lane: CanonicalUuid,
-    /// Occupancy the floor was recorded for.
-    pub occupant: CanonicalUuid,
-    /// Floor the non-ACP lane runs under.
-    pub floor: String,
-}

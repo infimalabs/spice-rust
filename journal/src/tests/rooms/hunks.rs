@@ -1,8 +1,8 @@
 //! Room authority linked to exact transcript hunks: packets recorded in rooms
-//! and per-lane catch-up cursors and horizons.
+//! and per-lane catch-up cursors.
 
 use wire::body::{SteerMessaged, SteeringStage, TranscriptLocus};
-use wire::rooms::{RoomDelivered, RoomHorizon, RoomMessaged};
+use wire::rooms::{RoomDelivered, RoomMessaged};
 use wire::{Disposition, SteeringHead};
 
 use super::*;
@@ -34,33 +34,6 @@ fn room_cursor(journal: &Journal, lane: CanonicalUuid) -> Option<(Seq, u64)> {
         .read(|read| read.room_cursor(lane))
         .expect("room cursor reads")
         .map(|head| (head.position(), head.body().through.get()))
-}
-
-fn begin(journal: &mut Journal, actor: Actor, lane: CanonicalUuid) -> Commit {
-    let mut write = JournalWrite::new(
-        actor,
-        format!("lane:{lane}").parse().expect("resident origin"),
-        instant(),
-        Producer::ResidentRecognition,
-    );
-    write
-        .fact(RoomHorizon { lane }, FactCause::Root)
-        .expect("horizon builds");
-    journal.apply(write)
-}
-
-fn room_horizon(journal: &Journal, lane: CanonicalUuid) -> Option<Seq> {
-    let position: Option<i64> = journal
-        .connection
-        .query_row(
-            "SELECT (SELECT head_seq FROM room_horizons WHERE lane = ?1)",
-            [lane.to_string()],
-            |row| row.get(0),
-        )
-        .expect("room horizon reads");
-    position
-        .and_then(|position| u64::try_from(position).ok())
-        .and_then(Seq::new)
 }
 
 fn published(journal: &mut Journal, room: &TaskStamp, micros: i64) -> Seq {
@@ -193,52 +166,6 @@ fn retiring_a_cursor_head_restores_the_latest_surviving_delivery() {
     journal
         .verify()
         .expect("the restored cursor agrees with replay");
-}
-
-/// Only the resident starts a lane's catch-up, once, at the horizon fact's own
-/// position; a lane already started or already advanced by a delivery refuses
-/// another start, and replay rebuilds every horizon.
-#[test]
-fn a_lane_without_a_cursor_receives_exactly_one_resident_horizon() {
-    let mut journal = Journal::in_memory().expect("journal");
-    let room = task(&mut journal, 1, None);
-    let origin = TranscriptPosition {
-        member: 1,
-        offset: 0,
-    };
-    let head = transcript_source_head();
-    ingest(&mut journal, head.clone(), origin, None);
-    let mut delivered = head.clone();
-    delivered.lane = uuid("018f82d4-6f59-7d06-92e3-bce913116306");
-    ingest(&mut journal, delivered.clone(), origin, None);
-    let retained = published(&mut journal, &room, 1);
-
-    let result = begin(&mut journal, Actor::Lane(head.lane), head.lane);
-    refused(&journal, result);
-    begin(&mut journal, Actor::Spice, head.lane).expect("the resident starts the lane");
-    let started = cursor(&journal).expect("horizon is the head");
-    assert_eq!(room_horizon(&journal, head.lane), Some(started));
-    let mut renewed = head.clone();
-    renewed.source = uuid("018f82d4-6f59-7d06-92e3-bce913116398");
-    ingest(&mut journal, renewed, origin, Some(head.source));
-    let result = begin(&mut journal, Actor::Spice, head.lane);
-    refused(&journal, result);
-    assert_eq!(
-        room_horizon(&journal, head.lane),
-        Some(started),
-        "a renewed occupant keeps its logical lane's horizon"
-    );
-
-    deliver(&mut journal, &delivered, retained).expect("a delivery starts its own cursor");
-    let result = begin(&mut journal, Actor::Spice, delivered.lane);
-    refused(&journal, result);
-    assert_eq!(room_horizon(&journal, delivered.lane), None);
-
-    let expected = projection(&journal);
-    journal.verify().expect("horizons verify");
-    journal.reindex().expect("horizons rebuild");
-    assert_eq!(projection(&journal), expected);
-    assert_eq!(room_horizon(&journal, head.lane), Some(started));
 }
 
 /// A packet's room record links only its exact decoded-event bytes inside the

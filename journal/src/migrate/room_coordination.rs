@@ -2,7 +2,7 @@
 //!
 //! Schema 96 and earlier recorded `room::directed` and `room::shelved`
 //! publications and answered `room::coordinate`, `room::put-aside`, and
-//! `room::coordination-read`. A Design nudge now selects and messages its
+//! `room::coordination-read`. A Design nudge then selected and messaged its
 //! recipient, so those records cross as [`wire::body::JournalRetained`]
 //! evidence by the ordinary rule for removed fact kinds, their receipts move
 //! to the historical table, and their projection heads drop. A room delivery
@@ -12,24 +12,17 @@
 
 use std::collections::BTreeSet;
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::OptionalExtension;
 
+use super::retire::{self, COLUMNS, Retirement};
 use super::room_questions;
-use crate::{MigrationError, OpenError};
+use crate::OpenError;
 
-/// Last release whose decoders admitted room coordination.
-const RELEASE: &str = "54e357267";
-
-pub(super) struct RetiredRow {
-    seq: i64,
-    wire_version: i64,
-    instant: String,
-    actor: String,
-    origin: String,
-    cause: Option<i64>,
-    envelope: Vec<u8>,
-    kind: String,
-}
+/// The retired coordination records and the last release that admitted them.
+const RETIREMENT: Retirement = Retirement {
+    release: "54e357267",
+    what: "retired room coordination authority",
+};
 
 pub(super) fn cross(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
     crate::historical_receipts::create_schema(transaction)?;
@@ -45,10 +38,13 @@ pub(super) fn cross(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenE
 /// Retire every coordination publication and each delivery that advanced
 /// only to one, answering their positions.
 fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>, OpenError> {
-    let rows = read_rows(
+    let rows = retire::read_rows(
         transaction,
-        "SELECT seq, wire_version, instant, actor, origin, cause, envelope, kind \
-         FROM fact_envelopes WHERE kind IN ('room::directed', 'room::shelved') ORDER BY seq",
+        &format!(
+            "SELECT {COLUMNS} FROM fact_envelopes \
+             WHERE kind IN ('room::directed', 'room::shelved') ORDER BY seq"
+        ),
+        [],
     )?;
     let mut retired = BTreeSet::new();
     let mut positions = BTreeSet::new();
@@ -57,15 +53,17 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>
             positions.insert(wire::SequenceCode::new(seq).to_string());
         }
         retired.insert(row.seq);
-        retire_row(transaction, row, RELEASE, retained_fact_error)?;
+        retire::retire_row(transaction, row, RETIREMENT)?;
     }
     if positions.is_empty() {
         return Ok(retired);
     }
-    let deliveries = read_rows(
+    let deliveries = retire::read_rows(
         transaction,
-        "SELECT seq, wire_version, instant, actor, origin, cause, envelope, kind \
-         FROM fact_envelopes WHERE kind = 'room::delivered' ORDER BY seq",
+        &format!(
+            "SELECT {COLUMNS} FROM fact_envelopes WHERE kind = 'room::delivered' ORDER BY seq"
+        ),
+        [],
     )?;
     for row in deliveries {
         let through = serde_json::from_slice::<wire::Envelope<serde_json::Value>>(&row.envelope)
@@ -79,117 +77,10 @@ fn retire_facts(transaction: &rusqlite::Transaction<'_>) -> Result<BTreeSet<i64>
             });
         if through.is_some_and(|through| positions.contains(&through)) {
             retired.insert(row.seq);
-            retire_row(transaction, row, RELEASE, retained_fact_error)?;
+            retire::retire_row(transaction, row, RETIREMENT)?;
         }
     }
     Ok(retired)
-}
-
-/// Each `fact_envelopes` row `select` names, as `seq, wire_version, instant,
-/// actor, origin, cause, envelope, kind`.
-pub(super) fn read_rows(
-    transaction: &rusqlite::Transaction<'_>,
-    select: &str,
-) -> Result<Vec<RetiredRow>, OpenError> {
-    let mut statement = transaction.prepare(select).map_err(OpenError::Sqlite)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(RetiredRow {
-                seq: row.get(0)?,
-                wire_version: row.get(1)?,
-                instant: row.get(2)?,
-                actor: row.get(3)?,
-                origin: row.get(4)?,
-                cause: row.get(5)?,
-                envelope: row.get(6)?,
-                kind: row.get(7)?,
-            })
-        })
-        .map_err(OpenError::Sqlite)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(OpenError::Sqlite)?;
-    Ok(rows)
-}
-
-/// Replace one retired row in place with inert [`wire::body::JournalRetained`]
-/// evidence naming `release`, the last release whose decoders admitted it,
-/// after proving its envelope agrees with its indexed columns.
-pub(super) fn retire_row(
-    transaction: &rusqlite::Transaction<'_>,
-    row: RetiredRow,
-    release: &str,
-    retained_fact_error: fn(i64, String) -> OpenError,
-) -> Result<(), OpenError> {
-    let envelope: wire::Envelope<serde_json::Value> = serde_json::from_slice(&row.envelope)
-        .map_err(|error| {
-            retained_fact_error(
-                row.seq,
-                format!("retired fact envelope does not decode: {error}"),
-            )
-        })?;
-    let indexed_cause = row.cause.and_then(|cause| u64::try_from(cause).ok());
-    if !envelope.v.is_current()
-        || Some(envelope.seq.get()) != u64::try_from(row.seq).ok()
-        || i64::from(envelope.v.0) != row.wire_version
-        || envelope.at.to_string() != row.instant
-        || envelope.actor.to_string() != row.actor
-        || envelope.origin.as_str() != row.origin
-        || envelope.cause.map(wire::Seq::get) != indexed_cause
-    {
-        return Err(retained_fact_error(
-            row.seq,
-            "retired fact envelope disagrees with its indexed columns".to_owned(),
-        ));
-    }
-    let encoded = wire::encode(&wire::Fact::new(wire::body::JournalRetained {
-        release: release.to_owned(),
-        fact: envelope.fact,
-    }))
-    .map_err(|error| {
-        retained_fact_error(
-            row.seq,
-            format!("retired fact cannot become inert authority: {error}"),
-        )
-    })?;
-    let fact: wire::AnyFact = wire::decode(&encoded).map_err(|error| {
-        retained_fact_error(
-            row.seq,
-            format!("inert replacement does not decode: {error}"),
-        )
-    })?;
-    let replacement = wire::Envelope {
-        v: envelope.v,
-        seq: envelope.seq,
-        at: envelope.at,
-        actor: envelope.actor,
-        origin: envelope.origin,
-        cause: envelope.cause,
-        fact,
-    };
-    let bytes = wire::encode(&replacement).map_err(|error| {
-        retained_fact_error(
-            row.seq,
-            format!("inert replacement does not encode: {error}"),
-        )
-    })?;
-    let changed = transaction
-        .execute(
-            "UPDATE fact_envelopes SET kind = ?1, envelope = ?2 WHERE seq = ?3 AND kind = ?4",
-            params![
-                wire::FactKind::JournalRetained.as_str(),
-                bytes,
-                row.seq,
-                row.kind
-            ],
-        )
-        .map_err(OpenError::Sqlite)?;
-    if changed != 1 {
-        return Err(retained_fact_error(
-            row.seq,
-            "retired fact changed during exclusive migration".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn repair_projections(
@@ -214,18 +105,10 @@ fn repair_projections(
             .optional()
             .map_err(OpenError::Sqlite)?;
         if let Some(lane) = cursor {
-            room_questions::restore_cursor(transaction, &lane, seq, retained_fact_error)?;
+            room_questions::restore_cursor(transaction, &lane, seq, |seq, detail| {
+                RETIREMENT.error(seq, detail)
+            })?;
         }
     }
     Ok(())
-}
-
-fn retained_fact_error(seq: i64, detail: String) -> OpenError {
-    MigrationError::RetiredFact {
-        seq,
-        kind: "retired room coordination authority",
-        release: RELEASE,
-        detail,
-    }
-    .into()
 }

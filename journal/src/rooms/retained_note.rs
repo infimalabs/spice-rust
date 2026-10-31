@@ -1,15 +1,16 @@
 //! Task notes retained from before notes became room observations: each
-//! `task::noted` fact that is not a taste-review audit is an authored
+//! retained `task::noted` fact that is not a taste-review audit is an authored
 //! observation in its task's room.
 //!
-//! Facts are immutable, so a retained note stays the fact it was. The fold
-//! indexes it into its task's room at its own position, under the publication
-//! identity its millisecond instant and position mint, and every room read
-//! presents it as that authored publication. A taste-review audit was
-//! policy-read noise, so it joins no room. Nothing else decodes a note;
-//! schema 76 crosses every retained one through this fold once.
+//! Schema 107 and earlier stored a note as its own fact; schema 108 crossed
+//! each into [`wire::body::JournalRetained`] evidence in place. The fold
+//! indexes a retained note into its task's room at its own position, under the
+//! publication identity its millisecond instant and position mint, and every
+//! room read presents it as that authored publication. A taste-review audit was
+//! policy-read noise, so it joins no room. Schema 76 first indexed every
+//! retained note through this fold once.
 
-use wire::body::TaskNoted;
+use wire::body::RetainedTaskNote;
 use wire::rooms::{RoomAuthorityStamp, RoomPublicationContent, RoomPublished};
 use wire::{AnyFact, Envelope, Instant, Seq};
 
@@ -22,7 +23,11 @@ pub(crate) const AUDIT_PREFIX: &str = "taste-review audit ";
 /// task's room; `None` for a taste-review audit. An instant is whole
 /// milliseconds, so the position's last three digits fill its microseconds:
 /// notes one transaction committed together stay distinct and in order.
-fn observation(note: TaskNoted, seq: Seq, at: Instant) -> Option<Result<RoomPublished, String>> {
+fn observation(
+    note: RetainedTaskNote,
+    seq: Seq,
+    at: Instant,
+) -> Option<Result<RoomPublished, String>> {
     if note.note.starts_with(AUDIT_PREFIX) {
         return None;
     }
@@ -48,7 +53,7 @@ pub(super) fn fold(
     at: Instant,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
-    let note = fact.read::<TaskNoted>()?;
+    let note = RetainedTaskNote::read(fact)?;
     Some(index(authority, seq, at, note))
 }
 
@@ -56,7 +61,7 @@ fn index(
     authority: &mut impl Authority,
     seq: Seq,
     at: Instant,
-    note: TaskNoted,
+    note: RetainedTaskNote,
 ) -> Result<(), Refusal> {
     if authority.task(&note.task)?.is_none() {
         return Ok(());
@@ -71,7 +76,7 @@ fn index(
 /// `envelope`, indexed in a room, as a room read presents it: a retained note
 /// as the authored publication the fold indexed, any other unchanged.
 pub(crate) fn presented(envelope: Envelope<AnyFact>) -> Result<Envelope<AnyFact>, String> {
-    let Some(note) = envelope.fact.read::<TaskNoted>() else {
+    let Some(note) = RetainedTaskNote::read(&envelope.fact) else {
         return Ok(envelope);
     };
     let published = observation(note, envelope.seq, envelope.at)

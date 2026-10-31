@@ -224,10 +224,6 @@ impl Authority for Stored<'_> {
             .optional()?)
     }
 
-    fn horizon(&self, lane: &str) -> Result<bool, Refusal> {
-        self.exists("SELECT 1 FROM room_horizons WHERE lane = ?1", [lane])
-    }
-
     fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal> {
         Ok(self
             .connection
@@ -361,12 +357,6 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
             connection.execute(
                 "INSERT INTO room_cursors(lane, head_seq, body) VALUES (?1, ?2, ?3) \
                  ON CONFLICT(lane) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
-                params![lane, sql(seq), body],
-            )?;
-        }
-        Change::Horizon { lane, seq, body } => {
-            connection.execute(
-                "INSERT INTO room_horizons(lane, head_seq, body) VALUES (?1, ?2, ?3)",
                 params![lane, sql(seq), body],
             )?;
         }
@@ -567,7 +557,6 @@ impl Projection {
                 },
             )?,
             cursors: heads(connection, "SELECT lane, head_seq, body FROM room_cursors")?,
-            horizons: heads(connection, "SELECT lane, head_seq, body FROM room_horizons")?,
             conversation: conversation::Heads::load(connection)?,
         })
     }
@@ -600,7 +589,7 @@ pub(crate) fn write_projection(
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_maturity; \
          DELETE FROM oops_generation_head; DELETE FROM group_partition; DELETE FROM proposal_heads; \
-         DELETE FROM authorization_heads; DELETE FROM room_cursors; DELETE FROM room_horizons;",
+         DELETE FROM authorization_heads; DELETE FROM room_cursors;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -635,12 +624,6 @@ pub(crate) fn write_projection(
     for (lane, (seq, body)) in &projection.cursors {
         connection.execute(
             "INSERT INTO room_cursors(lane, head_seq, body) VALUES (?1, ?2, ?3)",
-            params![lane, sql(*seq), body],
-        )?;
-    }
-    for (lane, (seq, body)) in &projection.horizons {
-        connection.execute(
-            "INSERT INTO room_horizons(lane, head_seq, body) VALUES (?1, ?2, ?3)",
             params![lane, sql(*seq), body],
         )?;
     }

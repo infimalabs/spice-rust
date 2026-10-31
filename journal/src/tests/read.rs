@@ -70,7 +70,7 @@ fn measured_taste_page(journal: &Journal) -> crate::guard::IndexedReadMetrics {
             read.taste_evidence_page("target", horizon, horizon, 3)
         })
         .expect("bounded taste page reads");
-    assert_eq!((page.population, page.confirmed, page.cleared), (3, 3, 0));
+    assert_eq!((page.population, page.confirmed, page.cleared), (3, 0, 3));
     assert_eq!(page.rows.len(), 3);
     indexed_read_metrics()
 }
@@ -84,14 +84,31 @@ fn append_taste_judgment(journal: &mut Journal, taste: &str, offset: u64) {
         instant(),
         wire::Producer::Judge,
     );
+    let judged: wire::body::TasteJudged = serde_json::from_value(json!({
+        "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+        "compaction": 1,
+        "taste": taste,
+        "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bag": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "trigger": taste,
+        "vendor": "omp",
+        "source": format!("fixture prose {offset}"),
+        "locus": {
+            "source": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+            "member": 0,
+            "offset": offset,
+            "length": 1,
+            "event": 0,
+            "line": 1,
+            "column": 1
+        },
+        "attempts": [],
+        "decision": {"verdict": "cleared"}
+    }))
+    .expect("cleared judgment fixture decodes");
     write
-        .fact(
-            wire::body::TasteConfirmed {
-                taste: taste.to_owned(),
-                locus: format!("fixture:{offset}"),
-            },
-            FactCause::Root,
-        )
+        .fact(judged, FactCause::Root)
         .expect("taste judgment builds");
     journal.apply(write).expect("taste judgment commits");
 }
@@ -323,8 +340,8 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
             fact(
                 position,
                 Some(cause),
-                FactKind::TaskNoted,
-                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+                FactKind::CanaryAlarmed,
+                text_body("x".repeat(600_000)),
             ),
         );
         journal
@@ -352,7 +369,7 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
     assert_bounded(&|| {
         journal.read(|read| {
             read.selected_fact_page(
-                &[FactKind::TaskNoted],
+                &[FactKind::CanaryAlarmed],
                 Some(seq(2)),
                 None,
                 FactReadBudget::RETAINED,
@@ -362,16 +379,16 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
     });
     assert_bounded(&|| {
         journal.read(|read| {
-            read.recent_fact_page(FactKind::TaskNoted, None, FactReadBudget::RETAINED)
+            read.recent_fact_page(FactKind::CanaryAlarmed, None, FactReadBudget::RETAINED)
                 .map(drop)
         })
     });
-    assert_bounded(&|| journal.read(|read| read.latest_fact(FactKind::TaskNoted).map(drop)));
+    assert_bounded(&|| journal.read(|read| read.latest_fact(FactKind::CanaryAlarmed).map(drop)));
     assert_bounded(&|| {
         journal.read(|read| {
             read.recent_origin_facts(
                 &"task:1kKRRsDP".parse().expect("fixture origin"),
-                FactKind::TaskNoted,
+                FactKind::CanaryAlarmed,
                 None,
                 fact_budget(2),
             )
@@ -396,8 +413,8 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
             fact(
                 position,
                 None,
-                FactKind::TaskNoted,
-                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+                FactKind::CanaryAlarmed,
+                text_body("x".repeat(600_000)),
             ),
         );
     }
@@ -409,7 +426,9 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
 
     reset_indexed_read_metrics();
     let first = journal
-        .read(|read| read.recent_origin_facts(&origin, FactKind::TaskNoted, None, fact_budget(2)))
+        .read(|read| {
+            read.recent_origin_facts(&origin, FactKind::CanaryAlarmed, None, fact_budget(2))
+        })
         .expect("first byte-bounded recent-origin page");
     assert_eq!(
         first.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
@@ -423,7 +442,7 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
         .read(|read| {
             read.recent_origin_facts(
                 &origin,
-                FactKind::TaskNoted,
+                FactKind::CanaryAlarmed,
                 first.continuation,
                 fact_budget(2),
             )

@@ -15,6 +15,7 @@ mod designs;
 mod formations;
 mod hidden_projects;
 mod leave_receipts;
+mod orphan_facts;
 mod pitch;
 mod preparation_edges;
 mod principals;
@@ -70,26 +71,35 @@ const SHAPE_PREDECESSOR_SCHEMA: u32 = 55;
 /// First schema whose baseline carried the retired required-evidence index,
 /// held by every predecessor from it through schema 86.
 const TASK_EVIDENCE_SCHEMA: u32 = 48;
+/// Schemas whose baseline carried the retained-only per-lane room catch-up
+/// horizons.
+const ROOM_HORIZON_SCHEMAS: std::ops::RangeInclusive<u32> = 45..=107;
 /// First schema whose baseline carried room relevance observations and
 /// assessments, held by every predecessor from it through schema 105.
 const ROOM_RELEVANCE_PREDECESSOR: u32 = 49;
 
 /// Return a current fixture to a predecessor's shape and identity.
 pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
-    // Every predecessor's rooms held no retained task note.
+    // A predecessor before schema 76 indexed no retained task note.
     let rooms = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
         "DROP TABLE room_publications; DROP TABLE proposal_heads; DROP TABLE authorization_heads;"
-    } else {
+    } else if predecessor < crate::migrate::RETAINED_NOTES_SCHEMA {
         "DELETE FROM room_publications WHERE seq IN \
          (SELECT seq FROM fact_envelopes WHERE kind = 'task::noted');"
+    } else {
+        ""
     };
     let cursors = if predecessor < crate::migrate::ROOM_CURSOR_SCHEMA {
         "DROP TABLE room_cursors;"
     } else {
         ""
     };
-    let horizons = if predecessor < crate::migrate::ROOM_HORIZON_SCHEMA {
-        "DROP TABLE room_horizons;"
+    let horizons = if ROOM_HORIZON_SCHEMAS.contains(&predecessor) {
+        "CREATE TABLE IF NOT EXISTS room_horizons (
+             lane TEXT PRIMARY KEY,
+             head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
+             body BLOB NOT NULL
+         ) STRICT;"
     } else {
         ""
     };
@@ -177,6 +187,70 @@ pub(super) fn restore_predecessor(journal: &Journal, predecessor: u32) {
              PRAGMA user_version = {predecessor};",
         ))
         .expect("restore predecessor shape");
+}
+
+/// A `task::noted` envelope, a kind schema 107 last admitted: the operator
+/// noted `text` on `task` at `position`.
+fn retired_note(position: u64, task: &str, text: &str) -> wire::Envelope<serde_json::Value> {
+    wire::Envelope {
+        v: WireVersion::CURRENT,
+        seq: seq(position),
+        at: instant(),
+        actor: Actor::Operator,
+        origin: format!("task:{task}")
+            .parse::<Origin>()
+            .expect("fixture origin"),
+        cause: None,
+        fact: json!({"kind": "task::noted", "task": task, "note": text}),
+    }
+}
+
+/// Insert `envelope`, whose fact is a kind no current release writes, as the
+/// row a predecessor committed.
+fn plant_retired(journal: &Journal, envelope: &wire::Envelope<serde_json::Value>) {
+    journal
+        .connection
+        .execute(
+            "INSERT INTO fact_envelopes \
+             (seq, wire_version, instant, actor, origin, cause, kind, envelope) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                i64::try_from(envelope.seq.get()).expect("fixture seq fits SQLite"),
+                envelope.v.0,
+                envelope.at.to_string(),
+                envelope.actor.to_string(),
+                envelope.origin.as_str(),
+                envelope
+                    .cause
+                    .map(|cause| i64::try_from(cause.get()).expect("fixture cause fits SQLite")),
+                envelope.fact["kind"]
+                    .as_str()
+                    .expect("a fact names its kind"),
+                wire::encode(envelope).expect("planted fact encodes"),
+            ],
+        )
+        .expect("plant retired fact");
+}
+
+/// Plant `envelope` as a root, indexing its thread and advancing the cursor
+/// to it.
+fn plant_root(journal: &Journal, envelope: &wire::Envelope<serde_json::Value>) {
+    plant_retired(journal, envelope);
+    let position = envelope.seq.get();
+    journal
+        .connection
+        .execute_batch(&format!(
+            "UPDATE cursor_head SET seq = {position}, wake = {position} WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = {position} WHERE singleton = 1;"
+        ))
+        .expect("advance past the planted fact");
+    journal
+        .connection
+        .execute(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (?1, ?2, NULL, ?1, 0)",
+            params![position as i64, envelope.origin.as_str()],
+        )
+        .expect("index planted fact");
 }
 
 #[test]

@@ -92,16 +92,25 @@ fn historical_corruption_is_reported_without_weakening_current_receipts() {
 
 #[test]
 fn retired_in_place_receipts_verify_but_unregistered_kinds_do_not() {
-    for kind in [
-        "preparation::authorize",
-        "preparation::critique",
-        "preparation::cover",
-        "preparation::nudge",
+    // Witness bytes as their writer encoded them: tag first, then fields in
+    // declaration order.
+    let retired_witness = |kind: &str| {
+        format!(
+            r#"[{{"kind":"proposal","proposal":{{"kind":"{kind}","{kind}":{{"candidate":{{"controller":"dVxHkZhQY","candidate":"dVxJC0000"}},"{kind}":"1"}}}}}}]"#
+        )
+    };
+    for (kind, witnesses) in [
+        ("preparation::authorize", "[]".to_owned()),
+        ("preparation::critique", retired_witness("critique")),
+        ("preparation::cover", retired_witness("coverage")),
+        ("preparation::nudge", "[]".to_owned()),
     ] {
+        let expected: serde_json::Value =
+            serde_json::from_str(&witnesses).expect("fixture witnesses parse");
         let scratch = Scratch::new();
         let path = scratch.path().join("retired.sqlite3");
         let current = historical_fixture(&path);
-        let request = retired_request(AUTHORIZATION, kind);
+        let request = retired_request(AUTHORIZATION, kind, &expected);
         assert!(
             wire::decode::<Command<serde_json::Value>>(&request).is_err(),
             "a retained {kind} receipt must not restore its command to the live registry"
@@ -112,6 +121,7 @@ fn retired_in_place_receipts_verify_but_unregistered_kinds_do_not() {
             AUTHORIZATION,
             kind,
             &request,
+            witnesses.as_bytes(),
         );
         let before = receipt(&current.connection, "command_receipts", AUTHORIZATION);
         drop(current);
@@ -134,13 +144,14 @@ fn retired_in_place_receipts_verify_but_unregistered_kinds_do_not() {
     let scratch = Scratch::new();
     let path = scratch.path().join("unknown.sqlite3");
     let current = historical_fixture(&path);
-    let unknown = retired_request(AUTHORIZATION, "preparation::never-registered");
+    let unknown = retired_request(AUTHORIZATION, "preparation::never-registered", &json!([]));
     insert_in_place(
         &current.connection,
         "command_receipts",
         AUTHORIZATION,
         "preparation::never-registered",
         &unknown,
+        b"[]",
     );
     drop(current);
     let journal = Journal::open(&path).expect("unknown evidence reopens");
@@ -163,6 +174,7 @@ fn a_retired_tell_receipt_verifies_in_place_with_its_exact_request() {
         RETIRED,
         "steer::tell",
         &tell_request(),
+        b"[]",
     );
     drop(current);
     let journal = Journal::open(&path).expect("tell evidence reopens");
@@ -181,7 +193,14 @@ fn a_retired_tell_receipt_verifies_in_place_with_its_exact_request() {
         let scratch = Scratch::new();
         let path = scratch.path().join("tell-corruption.sqlite3");
         let current = historical_fixture(&path);
-        insert_in_place(&current.connection, table, RETIRED, "steer::tell", &request);
+        insert_in_place(
+            &current.connection,
+            table,
+            RETIRED,
+            "steer::tell",
+            &request,
+            b"[]",
+        );
         drop(current);
         let journal = Journal::open(&path).expect("current authority reopens");
         assert!(
@@ -284,15 +303,22 @@ fn tell_request() -> Vec<u8> {
     .expect("request encodes")
 }
 
-fn retired_request(id: &str, kind: &str) -> Vec<u8> {
+fn retired_request(id: &str, kind: &str, expected: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "v": 1, "id": id, "epoch": EPOCH, "kind": kind, "expected": [],
+        "v": 1, "id": id, "epoch": EPOCH, "kind": kind, "expected": expected,
         "body": {"authorization": {"candidate": "dW4zAAAAA", "outputs": ["retained"]}},
     }))
     .expect("request encodes")
 }
 
-fn insert_in_place(connection: &Connection, table: &str, id: &str, kind: &str, request: &[u8]) {
+fn insert_in_place(
+    connection: &Connection,
+    table: &str,
+    id: &str,
+    kind: &str,
+    request: &[u8],
+    witnesses: &[u8],
+) {
     let response = Response {
         v: WireVersion::CURRENT,
         id: uuid(id),
@@ -312,7 +338,7 @@ fn insert_in_place(connection: &Connection, table: &str, id: &str, kind: &str, r
                 id,
                 kind,
                 request,
-                b"[]".as_slice(),
+                witnesses,
                 wire::encode(&response).expect("response encodes"),
                 EPOCH
             ],

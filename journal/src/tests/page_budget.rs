@@ -11,8 +11,8 @@ fn remaining_page_apis_bound_row_and_byte_probes_independently() {
             fact(
                 position,
                 Some(cause),
-                FactKind::TaskNoted,
-                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+                FactKind::CanaryAlarmed,
+                text_body("x".repeat(600_000)),
             ),
         );
         journal
@@ -38,7 +38,7 @@ fn remaining_page_apis_bound_row_and_byte_probes_independently() {
     for budget in budgets {
         reset_indexed_read_metrics();
         let recent = journal
-            .read(|read| read.recent_origin_facts(&origin, FactKind::TaskNoted, None, budget))
+            .read(|read| read.recent_origin_facts(&origin, FactKind::CanaryAlarmed, None, budget))
             .expect("recent-origin page is bounded");
         assert_eq!(recent.rows.len(), 1);
         assert!(recent.continuation.is_some());

@@ -287,62 +287,6 @@ fn expired_automatic_claim_lapses_without_arming_a_renewal_loop() {
 }
 
 #[test]
-fn manual_claims_never_create_resident_warning_protocol() {
-    let fixture = fixture_with_expiry(60);
-    let initial_fact_count = fixture
-        .bus
-        .fact_snapshot()
-        .expect("initial facts read")
-        .facts()
-        .len();
-    let mut timers = start_timers().expect("timer runtime starts");
-
-    timers
-        .synchronize(&fixture.bus)
-        .expect("manual claim lapse arms without warning protocol");
-
-    assert_eq!(timers.claims.len(), 1);
-    assert_eq!(timers.renewals.len(), 1, "the live lease rolls instead");
-    assert!(timers.directives.is_empty());
-    let facts = fixture.bus.fact_snapshot().expect("facts read");
-    assert_eq!(facts.facts().len(), initial_fact_count);
-    assert!(
-        facts
-            .facts()
-            .iter()
-            .all(|envelope| envelope.fact.kind() != wire::FactKind::ClaimLeaseWarned)
-    );
-    assert!(
-        fixture
-            .bus
-            .read({
-                let lane = fixture.authority.lane;
-                move |read| crate::steering_read::pending(read, Some(lane))
-            })
-            .expect("lane inbox reads")
-            .is_empty()
-    );
-
-    renew_claim(&fixture, shifted(fixture.authority.expiry, 60));
-    timers
-        .synchronize(&fixture.bus)
-        .expect("renewed manual claim remains outside warning protocol");
-    assert!(timers.directives.is_empty());
-    assert!(
-        fixture
-            .bus
-            .fact_snapshot()
-            .expect("renewed facts read")
-            .facts()
-            .iter()
-            .all(|envelope| envelope.fact.kind() != wire::FactKind::ClaimLeaseWarned)
-    );
-
-    drop(timers);
-    fixture.bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
 fn expired_commit_bearing_claim_lapses_and_returns_to_allocation() {
     let fixture = fixture();
     let commits = fixture

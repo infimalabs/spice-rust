@@ -88,18 +88,14 @@ fn audit(journal: &Journal, seq: u64, cause: u64, matches: &[wire::TasteMatch]) 
         })
         .collect::<Vec<_>>()
         .join("; ");
-    insert_fact(
-        journal,
-        fact(
-            seq,
-            Some(cause),
-            FactKind::TaskNoted,
-            json!({
-                "task": "1kKRRsDP",
-                "note": format!("taste-review audit policy=abc123 outcome={outcome} matches=[{matches}]"),
-            }),
-        ),
+    let mut envelope = retired_note(
+        seq,
+        "1kKRRsDP",
+        &format!("taste-review audit policy=abc123 outcome={outcome} matches=[{matches}]"),
     );
+    envelope.actor = Actor::Spice;
+    envelope.cause = Some(super::seq(cause));
+    plant_retired(journal, &envelope);
 }
 
 fn statements(journal: &Journal) -> (TaskHead, wire::body::TaskAdded) {

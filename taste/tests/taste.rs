@@ -189,12 +189,7 @@ fn a_harmless_mention_still_selects_a_candidate_the_runtime_must_weigh() {
 
 #[test]
 fn direct_reminders_and_judgments_have_distinct_producer_contracts() {
-    let expected = [
-        FactKind::TasteConfirmed,
-        FactKind::TasteCleared,
-        FactKind::TasteJudged,
-        FactKind::TasteReminded,
-    ];
+    let expected = [FactKind::TasteJudged, FactKind::TasteReminded];
     assert!(
         expected
             .iter()
@@ -205,15 +200,9 @@ fn direct_reminders_and_judgments_have_distinct_producer_contracts() {
         wire::Producer::ResidentRecognition,
         "the disabled path remains resident recognition"
     );
-    for judged in [
-        FactKind::TasteConfirmed,
-        FactKind::TasteCleared,
-        FactKind::TasteJudged,
-    ] {
-        assert_eq!(
-            judged.producer(),
-            wire::Producer::Judge,
-            "all durable verdicts belong to the judge producer"
-        );
-    }
+    assert_eq!(
+        FactKind::TasteJudged.producer(),
+        wire::Producer::Judge,
+        "every durable verdict belongs to the judge producer"
+    );
 }

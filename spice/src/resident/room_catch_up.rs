@@ -326,11 +326,7 @@ pub(in crate::resident) fn changes(
 /// Whether `fact` can change what a lane listens to or what its claimed
 /// Design is owed; a decision names its Design only through its candidate.
 fn changes_task_attention(fact: &AnyFact) -> bool {
-    (fact.task_subject().is_some()
-        && !matches!(
-            fact.kind(),
-            wire::FactKind::ClaimRenewed | wire::FactKind::ClaimLeaseWarned
-        ))
+    (fact.task_subject().is_some() && fact.kind() != wire::FactKind::ClaimRenewed)
         || fact.kind() == wire::FactKind::PreparationDecided
 }
 

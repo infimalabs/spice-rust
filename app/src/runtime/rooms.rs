@@ -320,10 +320,6 @@ pub struct PreparationProjection {
         BTreeMap<authority::CandidateRef, RoomPositioned<authority::DesignPassProposal>>,
     /// Authenticated journal provenance of each proposal.
     pub proposal_records: BTreeMap<authority::CandidateRef, ProposalRecord>,
-    /// Critiques by stable critique identity.
-    pub critiques: BTreeMap<authority::CritiqueRef, RoomPositioned<authority::CandidateCritique>>,
-    /// Coverage by stable coverage identity.
-    pub coverage: BTreeMap<authority::CoverageRef, RoomPositioned<authority::CandidateCoverage>>,
     /// Decisions by stable decision identity.
     pub decisions: BTreeMap<authority::DecisionRef, RoomPositioned<authority::PreparationDecision>>,
     /// Historical positive authorizations by their selected decision identity.
@@ -748,9 +744,10 @@ impl RoomProjection {
                 fact.read::<authority::DesignNoticed>()
                     .is_some_and(|body| self.apply_noticed(fact.seq(), &body)),
             ),
-            FactKind::DesignNudged => Some(
-                fact.read::<authority::DesignNudged>()
-                    .is_some_and(|body| self.apply_nudged(fact.seq(), body)),
+            FactKind::JournalRetained => Some(
+                fact.read::<wire::body::JournalRetained>()
+                    .and_then(|retained| authority::RetainedNudge::retained(&retained))
+                    .is_some_and(|nudge| self.apply_nudged(fact.seq(), nudge)),
             ),
             _ => None,
         }
@@ -777,9 +774,9 @@ impl RoomProjection {
         true
     }
 
-    /// Retain a nudge's message, whose acknowledgement hears every earlier
-    /// operator post in its Design's room.
-    fn apply_nudged(&mut self, position: Seq, body: authority::DesignNudged) -> bool {
+    /// Retain a retained nudge's message, whose acknowledgement hears every
+    /// earlier operator post in its Design's room.
+    fn apply_nudged(&mut self, position: Seq, body: authority::RetainedNudge) -> bool {
         body.message.is_some_and(|message| {
             self.rooms
                 .entry(body.design)
@@ -909,28 +906,6 @@ impl RoomProjection {
                     ) | provenance
                 },
             )),
-            FactKind::CandidateCritiqued => Some(
-                fact.read::<authority::CandidateCritiqued>()
-                    .is_some_and(|body| {
-                        replace(
-                            &mut self.preparation.critiques,
-                            body.critique.critique.clone(),
-                            fact.seq(),
-                            body.critique,
-                        )
-                    }),
-            ),
-            FactKind::CandidateCovered => Some(
-                fact.read::<authority::CandidateCovered>()
-                    .is_some_and(|body| {
-                        replace(
-                            &mut self.preparation.coverage,
-                            body.coverage.coverage.clone(),
-                            fact.seq(),
-                            body.coverage,
-                        )
-                    }),
-            ),
             FactKind::PreparationDecided => Some(
                 fact.read::<authority::PreparationDecided>()
                     .is_some_and(|body| {

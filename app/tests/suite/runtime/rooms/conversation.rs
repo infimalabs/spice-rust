@@ -492,11 +492,14 @@ fn a_nudge_message_its_lane_acknowledges_hears_the_posts_before_it() {
     );
     let nudged = envelope(
         4,
-        "proposal::nudged",
-        &wire::rooms::DesignNudged {
-            design: room(),
-            message: Some(authority(NUDGE)),
-            recipient: None,
+        "journal::retained",
+        &wire::body::JournalRetained {
+            release: "schema-107".to_owned(),
+            fact: serde_json::json!({
+                "kind": wire::rooms::RetainedNudge::KIND,
+                "design": room(),
+                "message": authority(NUDGE),
+            }),
         },
     );
     let mut runtime = conversation_runtime(&session, &[room_post(1), sent, posted, nudged]);

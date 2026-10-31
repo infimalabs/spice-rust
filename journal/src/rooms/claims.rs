@@ -78,7 +78,9 @@ impl Acknowledgements {
             self.claims.remove(task.as_str());
             return None;
         }
-        for task in fact.mutated_tasks() {
+        // A retained task note stays the historical change to its task it was.
+        let retained = wire::body::RetainedTaskNote::read(fact).map(|note| note.task);
+        for task in fact.mutated_tasks().chain(retained.as_ref()) {
             if self.won.contains(task.as_str()) {
                 continue;
             }

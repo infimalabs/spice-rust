@@ -35,14 +35,11 @@ fn a_read_only_reader_follows_commits_the_writer_has_not_checkpointed() {
         Actor::Operator,
         "task:1kKRRsDP".parse().expect("fixture origin"),
         instant(),
-        wire::Producer::CommandDoor,
+        wire::Producer::ResidentRecognition,
     );
     write
         .fact(
-            wire::body::TaskNoted {
-                task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "landed only in the write-ahead log".to_owned(),
-            },
+            text_fact("landed only in the write-ahead log".to_owned()),
             crate::FactCause::Existing(seq(2)),
         )
         .expect("fact builds");
@@ -92,14 +89,11 @@ fn an_immutable_open_cannot_see_a_live_log_so_it_is_reserved_for_captured_genera
         Actor::Operator,
         "task:1kKRRsDP".parse().expect("fixture origin"),
         instant(),
-        wire::Producer::CommandDoor,
+        wire::Producer::ResidentRecognition,
     );
     write
         .fact(
-            wire::body::TaskNoted {
-                task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "waiting in the write-ahead log".to_owned(),
-            },
+            text_fact("waiting in the write-ahead log".to_owned()),
             crate::FactCause::Existing(seq(2)),
         )
         .expect("fact builds");

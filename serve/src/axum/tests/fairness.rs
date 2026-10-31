@@ -30,8 +30,8 @@ fn every_source_ready() -> ReadySources {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     let broadcasts = bus.reader().subscribe();
-    for index in 0..8 {
-        commit_stream(&bus, &format!("ready commit {index}"), false);
+    for _ in 0..8 {
+        commit_stream(&bus, false);
     }
     let (publisher, transcript) = tokio::sync::broadcast::channel(16);
     for offset in 0..8 {

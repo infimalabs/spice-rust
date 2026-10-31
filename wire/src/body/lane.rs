@@ -802,24 +802,6 @@ pub struct LaneResumed {
     pub release: Release,
 }
 
-/// The judge confirmed a taste at an evidence locus.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TasteConfirmed {
-    /// Confirmed taste.
-    pub taste: String,
-    /// Evidence locus the judge ruled at.
-    pub locus: String,
-}
-
-/// The judge cleared a taste at an evidence locus.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TasteCleared {
-    /// Cleared taste.
-    pub taste: String,
-    /// Evidence locus the judge ruled at.
-    pub locus: String,
-}
-
 /// How one bounded judge invocation classified its reply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
