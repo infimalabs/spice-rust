@@ -34,58 +34,6 @@ fn state(remaining: Option<u64>) -> WorkingState {
 }
 
 #[test]
-fn only_the_running_process_environment_names_the_current_actor() {
-    let claims = [
-        ClaimObservation {
-            vendor: &crate::extension::OMP,
-            actor: "stale-tree-thread".to_owned(),
-            state: ClaimState {
-                handle: "STALE-00000001".to_owned(),
-                ..ClaimState::default()
-            },
-        },
-        ClaimObservation {
-            vendor: &crate::extension::OMP,
-            actor: "live-omp-session".to_owned(),
-            state: ClaimState {
-                handle: "LIVE-00000001".to_owned(),
-                ..ClaimState::default()
-            },
-        },
-    ];
-    let absent = collect_working_state(ProcessEnvironment::default(), 0, &claims, String::new());
-    let current_identities = [(&crate::extension::OMP, Some("live-omp-session"))];
-    let current = collect_working_state(
-        ProcessEnvironment {
-            identities: &current_identities,
-        },
-        0,
-        &claims,
-        String::new(),
-    );
-
-    assert_eq!(
-        absent.claim, None,
-        "a tree identity without a current environment is not current"
-    );
-    assert_eq!(
-        current.claim.as_ref().map(|claim| claim.handle.as_str()),
-        Some("LIVE-00000001")
-    );
-    assert_eq!(
-        ProcessEnvironment {
-            identities: &[
-                (&crate::extension::OMP, Some("first")),
-                (&crate::extension::OMP, Some("second")),
-            ],
-        }
-        .current_actor(),
-        None,
-        "two ambient identities are ambiguous rather than guessed"
-    );
-}
-
-#[test]
 fn announcement_identity_survives_exit_and_boundary_changes_speak() {
     let root = fixture("durable");
     let path = root.join("working-state.json");
@@ -250,22 +198,6 @@ fn no_claim_keeps_durable_suppression_for_same_key_reacquisition() {
     assert_eq!(fs::read(&path).expect("state remains"), stored);
     assert_eq!(reacquired.announcement, None);
     assert_eq!(reacquired.refresh_after, Some(Duration::from_secs(299)));
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
-#[test]
-fn collection_failure_is_silent_and_cannot_change_the_command_outcome() {
-    let root = fixture("failure");
-    let meter = Meter::new(root.join("working-state.json"));
-    let decorated = decorate(
-        &meter,
-        Duration::from_secs(1),
-        || Err::<WorkingState, _>("board unavailable"),
-        || 73,
-    );
-
-    assert_eq!(decorated.outcome, 73);
-    assert_eq!(decorated.meter, Decision::default());
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 

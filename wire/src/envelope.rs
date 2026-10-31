@@ -310,11 +310,3 @@ pub struct Envelope<T> {
     /// Discriminant and body, typed or opaque per the parameter.
     pub fact: T,
 }
-
-impl<T> Envelope<T> {
-    /// True when this envelope begins a causal chain.
-    #[must_use]
-    pub const fn is_root(&self) -> bool {
-        self.cause.is_none()
-    }
-}

@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use bus::timer::{TimerKind, TimerWorker};
 use jiff::{SignedDuration, Timestamp};
-use journal::crossing::{CanonicalUuid, LeaseHead};
 
 #[test]
 fn blocking_worker_orders_reverse_armed_deadlines_and_skips_cancellation() {
@@ -12,10 +11,10 @@ fn blocking_worker_orders_reverse_armed_deadlines_and_skips_cancellation() {
     let late = worker
         .arm("late", TimerKind::LaneResume, late_deadline)
         .expect("late timer arms first");
-    let lease = lease_head(150);
+    let lease_deadline = instant_after(150);
     let lease_id = worker
-        .arm_lease("BUS-a1", &lease)
-        .expect("lease timer arms");
+        .arm("BUS-a1", TimerKind::ClaimLapse, lease_deadline)
+        .expect("claim-lapse timer arms");
     let first_deadline = instant_after(50);
     let first = worker
         .arm("first", TimerKind::TaskWake, first_deadline)
@@ -41,7 +40,7 @@ fn blocking_worker_orders_reverse_armed_deadlines_and_skips_cancellation() {
     assert_eq!(lease_event.id(), lease_id);
     assert_eq!(lease_event.owner(), "BUS-a1");
     assert_eq!(lease_event.kind(), TimerKind::ClaimLapse);
-    assert_eq!(lease_event.deadline(), lease.expiry);
+    assert_eq!(lease_event.deadline(), lease_deadline);
 
     let late_event = events
         .recv_timeout(Duration::from_secs(2))
@@ -81,17 +80,6 @@ fn a_past_durable_deadline_fires_promptly_without_a_caller_duration() {
     assert_eq!(worker.shutdown().expect("worker shuts down"), 0);
 }
 
-fn lease_head(expiry_after_millis: i64) -> LeaseHead {
-    let now = Timestamp::now();
-    LeaseHead {
-        start: shifted(now, -1_000),
-        renewal: shifted(now, -500),
-        maximum: shifted(now, 60_000),
-        expiry: shifted(now, expiry_after_millis),
-        epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
-    }
-}
-
 fn instant_after(milliseconds: i64) -> journal::crossing::Instant {
     shifted(Timestamp::now(), milliseconds)
 }
@@ -101,8 +89,4 @@ fn shifted(timestamp: Timestamp, milliseconds: i64) -> journal::crossing::Instan
         .checked_add(SignedDuration::from_millis(milliseconds))
         .expect("fixture timestamp is in range");
     journal::crossing::Instant::new(shifted).expect("fixture timestamp has a wire spelling")
-}
-
-fn uuid(value: &str) -> CanonicalUuid {
-    value.parse().expect("canonical uuid")
 }

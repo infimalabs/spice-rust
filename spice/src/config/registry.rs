@@ -210,12 +210,6 @@ impl PathTemplate {
         }
         at == path.len()
     }
-
-    /// Whether the template contains a named or indexed row.
-    #[must_use]
-    pub const fn is_dynamic(self) -> bool {
-        !matches!(self.shape, TemplateShape::Fixed)
-    }
 }
 
 /// Metadata and routing policy for one leaf template.

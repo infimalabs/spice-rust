@@ -1069,12 +1069,6 @@ pub fn installed_binary(repository: &Repository) -> PathBuf {
     repository.common_dir().join(BINARY_PATH)
 }
 
-/// Complete authoritative agent skill compiled into this release.
-#[must_use]
-pub const fn skill_document() -> &'static str {
-    SKILL
-}
-
 /// Minimal system-prompt bootstrap that loads the skill through its
 /// installed-release resource instead of copying the document into every
 /// prompt.

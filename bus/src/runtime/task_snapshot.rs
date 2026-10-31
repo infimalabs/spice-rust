@@ -176,23 +176,13 @@ impl TerminalIndex {
         task: &journal::crossing::TaskStamp,
         operation: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::Seq> {
-        self.get_with_probes(task, operation).0
-    }
-
-    fn get_with_probes(
-        &self,
-        task: &journal::crossing::TaskStamp,
-        operation: journal::crossing::CanonicalUuid,
-    ) -> (Option<journal::crossing::Seq>, usize) {
         let key = TerminalKey::new(task, operation);
-        let mut probes = 0;
-        for level in self.levels.iter() {
-            probes += 1;
-            if let Some(found) = level.as_ref().and_then(|entries| entries.get(&key)) {
-                return (Some(*found), probes);
-            }
-        }
-        (None, probes)
+        self.levels.iter().find_map(|level| {
+            level
+                .as_ref()
+                .and_then(|entries| entries.get(&key))
+                .copied()
+        })
     }
 }
 
@@ -800,19 +790,6 @@ impl TaskFacts {
         output: &journal::crossing::TaskStamp,
     ) -> Option<&journal::crossing::rooms::DecisionRef> {
         self.indexes.candidate_selection.decision(output)
-    }
-
-    /// Immutable terminal-index levels probed by the same lookup.
-    ///
-    /// This deterministic work metric protects completion replay from silently
-    /// returning to a retained-history scan.
-    #[must_use]
-    pub fn completion_terminal_lookup_probes(
-        &self,
-        task: &journal::crossing::TaskStamp,
-        operation: journal::crossing::CanonicalUuid,
-    ) -> usize {
-        self.indexes.terminals.get_with_probes(task, operation).1
     }
 
     /// The newest claim one actor won: its position and claim-time cell.

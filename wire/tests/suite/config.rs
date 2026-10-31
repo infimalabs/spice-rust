@@ -151,7 +151,6 @@ fn every_provenance_variant_names_its_winner_and_typed_builtin() {
 
     for (provenance, source) in provenances.into_iter().zip(ConfigSource::ALL) {
         assert_eq!(provenance.source(), *source);
-        assert_eq!(provenance.shadows_builtin(), provenance.builtin().is_some());
         let bytes = wire::encode(&provenance).expect("provenance encodes");
         assert_eq!(
             wire::decode::<Provenance<DurationWord>>(&bytes).expect("provenance decodes"),

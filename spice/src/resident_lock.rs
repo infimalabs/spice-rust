@@ -190,19 +190,6 @@ pub fn holder_epoch(record: &[u8]) -> Option<CanonicalUuid> {
         .ok()
 }
 
-/// The process a holder record names, read the same way as its generation.
-#[must_use]
-pub fn holder_pid(record: &[u8]) -> Option<u32> {
-    std::str::from_utf8(record)
-        .ok()?
-        .lines()
-        .next()?
-        .split(';')
-        .find_map(|field| field.trim().strip_prefix("pid="))?
-        .parse()
-        .ok()
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};

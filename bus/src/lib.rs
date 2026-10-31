@@ -303,13 +303,6 @@ mod runtime {
         pub const fn task_head_update_visits(&self) -> usize {
             self.task_head_update_visits
         }
-
-        /// Current-head bundles visited by this generation's one shared lazy
-        /// complete-board materialization.
-        #[must_use]
-        pub fn task_head_materialization_visits(&self) -> usize {
-            self.tasks.materialization_visits()
-        }
     }
 
     impl SteeringSnapshot {

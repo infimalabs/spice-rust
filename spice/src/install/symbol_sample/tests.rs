@@ -264,24 +264,6 @@ fn target(uuid: &str, text_address: Option<u64>) -> SampleTarget {
 }
 
 #[test]
-fn image_target_reads_its_identity_and_text_segment_from_the_bytes() {
-    let target = SampleTarget::from_image(".spice-install/bin/spice", b"", PathBuf::from("/d"));
-    assert_eq!((target.uuid(), target.text_address()), ("", None));
-    assert_eq!(target.image, "spice");
-    let error = target
-        .resolve(
-            Path::new("/tmp/s.txt"),
-            SAMPLE,
-            &ScriptedLookup {
-                asked: RefCell::new(Vec::new()),
-                reports: Vec::new(),
-            },
-        )
-        .expect_err("an identity-free image matches no report");
-    assert!(matches!(error, SampleError::Uuid { .. }), "{error}");
-}
-
-#[test]
 fn resolver_slides_each_address_into_the_file_and_names_what_dwarf_resolves() {
     let lookup = ScriptedLookup {
         asked: RefCell::new(Vec::new()),

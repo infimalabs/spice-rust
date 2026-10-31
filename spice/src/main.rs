@@ -469,7 +469,6 @@ impl NativeInvocation<'_> {
             }
             ["room", "history"]
             | ["room", "inbox"]
-            | ["room", "result"]
             | ["room", "relevance"]
             | ["room", "awareness"]
             | ["design", "show"] => {
@@ -540,12 +539,9 @@ impl NativeInvocation<'_> {
             | ["room", "contribute"]
             | ["room", "ack"]
             | ["room", "nak"]
-            | ["room", "answer"]
             | ["room", "reply"]
             | ["room", "recover"]
             | ["room", "assess"]
-            | ["room", "decline"]
-            | ["room", "cancel"]
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]

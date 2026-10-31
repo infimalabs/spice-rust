@@ -1,11 +1,8 @@
-//! Current-process working state without wrapper-owned policy.
+//! Durable current-process working-state announcements.
 //!
-//! A command wrapper may collect live facts and hand them here, but this module
-//! owns how those facts become one working-state announcement. The boundary is
-//! deliberately narrow: process identity comes only from values captured from
-//! the current environment, clocks arrive as arguments, and a collection or
-//! persistence failure can be turned into silence without changing the command
-//! being decorated.
+//! Live facts are collected by the resident-facing [`LiveMeter`]. This module
+//! owns announcement reduction and durable suppression; clocks remain explicit
+//! inputs so reducer behavior stays deterministic.
 
 use std::fmt;
 use std::fs;
@@ -29,38 +26,6 @@ pub const CLAIM_CRITICAL_BOUNDARY: Duration = Duration::from_secs(60);
 /// No scheduled refresh may collapse to a zero-delay loop.
 pub const MINIMUM_REFRESH: Duration = Duration::from_millis(50);
 
-/// One actor identity proven by the running process environment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CurrentActor<'a> {
-    /// Declared vendor whose environment variable carried the identity.
-    pub vendor: &'static crate::extension::Vendor,
-    /// Non-empty vendor thread or session identity.
-    pub identity: &'a str,
-}
-
-/// Vendor identities captured at the binary rim from this process only.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ProcessEnvironment<'a> {
-    /// Vendor values paired with the ambient values captured for their
-    /// vendor-owned identity variables.
-    pub identities: &'a [(&'static crate::extension::Vendor, Option<&'a str>)],
-}
-
-impl<'a> ProcessEnvironment<'a> {
-    /// Return the one unambiguous actor the current process proves.
-    ///
-    /// An absent identity and two simultaneous vendor identities both return
-    /// `None`; persisted tree state is intentionally not an input.
-    #[must_use]
-    pub fn current_actor(self) -> Option<CurrentActor<'a>> {
-        let mut current = self.identities.iter().filter_map(|(vendor, value)| {
-            nonempty(*value).map(|identity| CurrentActor { vendor, identity })
-        });
-        let selected = current.next()?;
-        current.next().is_none().then_some(selected)
-    }
-}
-
 /// Live claim fields included in one working-state snapshot.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClaimState {
@@ -74,17 +39,6 @@ pub struct ClaimState {
     pub remaining: Option<Duration>,
     /// Whether the resident rolls this lease while the occupant holds the lane.
     pub rolling: bool,
-}
-
-/// One active-claim observation read from the command boundary's live board.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaimObservation {
-    /// Declared vendor whose live actor owns the claim.
-    pub vendor: &'static crate::extension::Vendor,
-    /// Claim holder identity.
-    pub actor: String,
-    /// Fields eligible for the working-state line.
-    pub state: ClaimState,
 }
 
 /// Live facts a command-boundary collector observed.
@@ -126,34 +80,6 @@ pub struct NarrationState {
     pub count: u32,
 }
 
-/// Select one snapshot for the actor proven by the current process.
-///
-/// Persisted identities are not accepted by this boundary. An absent or
-/// ambiguous environment, or duplicate live claims for one actor, yields no
-/// claim while retaining the independently observed inbox and taste signals.
-#[must_use]
-pub fn collect_working_state(
-    environment: ProcessEnvironment<'_>,
-    pending_inbox_count: usize,
-    claims: &[ClaimObservation],
-    last_taste: impl Into<String>,
-) -> WorkingState {
-    let claim = environment.current_actor().and_then(|current| {
-        let mut matching = claims.iter().filter(|observation| {
-            observation.vendor == current.vendor && observation.actor == current.identity
-        });
-        let selected = matching.next()?;
-        matching.next().is_none().then(|| selected.state.clone())
-    });
-    WorkingState {
-        pending_inbox_count,
-        drain_queue: false,
-        claim,
-        last_taste: last_taste.into(),
-        narration: None,
-    }
-}
-
 /// One meter evaluation at a command or timer boundary.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Decision {
@@ -161,15 +87,6 @@ pub struct Decision {
     pub announcement: Option<String>,
     /// Bound for the next scheduled state observation, if one exists.
     pub refresh_after: Option<Duration>,
-}
-
-/// The decorated command outcome and its optional meter decision.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decorated<O> {
-    /// Command outcome, independent of meter success or failure.
-    pub outcome: O,
-    /// Meter output; empty when collection or persistence failed.
-    pub meter: Decision,
 }
 
 /// Durable change-announcement reducer for one command surface.
@@ -264,27 +181,6 @@ impl Meter {
         destination
             .publish(|staged| staged.write_all(&bytes))
             .map_err(MeterError::Publish)
-    }
-}
-
-/// Decorate a command while making all meter failures non-authoritative.
-///
-/// Collection and meter persistence run before the command, matching the shell
-/// boundary. The command still runs exactly once and its outcome is returned
-/// unchanged when either operation fails.
-pub fn decorate<O, E>(
-    meter: &Meter,
-    now: Duration,
-    collect: impl FnOnce() -> Result<WorkingState, E>,
-    command: impl FnOnce() -> O,
-) -> Decorated<O> {
-    let decision = collect()
-        .ok()
-        .and_then(|snapshot| meter.evaluate(&snapshot, now).ok())
-        .unwrap_or_default();
-    Decorated {
-        outcome: command(),
-        meter: decision,
     }
 }
 
@@ -545,10 +441,6 @@ fn next_refresh(snapshot: &WorkingState, tier: LeaseTier) -> Option<Duration> {
 
 fn clean(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn nonempty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 mod duration_millis {

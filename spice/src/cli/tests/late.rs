@@ -246,31 +246,6 @@ fn bootstrap_renderer_selection_stops_at_the_child_command_delimiter() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn bootstrap_doctor_selection_names_only_the_top_level_leaf() {
-    for argv in [
-        &["spice", "doctor"][..],
-        &["spice", "--json", "doctor"][..],
-        &["spice", "doctor", "--json"][..],
-    ] {
-        assert!(
-            bootstrap_doctor_selected(argv.iter().map(|argument| OsString::from(*argument))),
-            "{argv:?} selects the top-level Doctor leaf",
-        );
-    }
-    for argv in [
-        &["spice", "task", "doctor"][..],
-        &["spice", "run", "--", "doctor"][..],
-        &["spice", "--json", "task", "doctor"][..],
-    ] {
-        assert!(
-            !bootstrap_doctor_selected(argv.iter().map(|argument| OsString::from(*argument))),
-            "{argv:?} must not borrow Doctor's configuration refusal path",
-        );
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
 fn bootstrap_lock_selection_names_only_the_top_level_leaf() {
     for argv in [
         &["spice", "lock"][..],

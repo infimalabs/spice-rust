@@ -4,8 +4,8 @@ use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, CandidateWithdrawal, DesignPassProposal,
     ExecutionAuthorization, PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomDelivered,
-    RoomDestination, RoomHorizon, RoomLeft, RoomMessaged, RoomPublication, RoomPublished,
-    RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
+    RoomDestination, RoomLeft, RoomMessaged, RoomPublication, RoomPublished, RoomReceiptHead,
+    RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
 };
 
 use super::{
@@ -374,25 +374,6 @@ impl JournalRead<'_> {
             return Err(GuardError::Invalid(format!(
                 "room cursor indexed as {key} lands in lane {}",
                 head.body.hunk.head.lane
-            )));
-        }
-        Ok(head)
-    }
-
-    /// One logical lane's retained predecessor catch-up horizon, present only
-    /// in journals written before authority-bounded room selection.
-    pub fn room_catch_up_horizon(
-        &self,
-        lane: wire::CanonicalUuid,
-    ) -> Result<Option<JournalHead<RoomHorizon>>, GuardError> {
-        let key = lane.to_string();
-        let head = self.text_head::<RoomHorizon>("room_horizons", "lane", &key)?;
-        if let Some(head) = &head
-            && head.body.lane != lane
-        {
-            return Err(GuardError::Invalid(format!(
-                "room horizon indexed as {key} names lane {}",
-                head.body.lane
             )));
         }
         Ok(head)

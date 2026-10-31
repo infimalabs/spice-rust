@@ -412,17 +412,13 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["room", "leave"]
             | ["room", "contribute"]
             | ["room", "inbox"]
-            | ["room", "result"]
             | ["room", "ack"]
             | ["room", "nak"]
-            | ["room", "answer"]
             | ["room", "reply"]
             | ["room", "recover"]
             | ["room", "assess"]
             | ["room", "relevance"]
             | ["room", "awareness"]
-            | ["room", "decline"]
-            | ["room", "cancel"]
             | ["group", "list"]
             | ["group", "move"]
             | ["group", "arrange"]
@@ -775,12 +771,6 @@ pub fn bootstrap_configuration_owner_selected(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> bool {
     bootstrap_leaf_selected(arguments, &["config", "doctor"])
-}
-
-/// Whether the raw native invocation selects the top-level Doctor command.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn bootstrap_doctor_selected(arguments: impl IntoIterator<Item = OsString>) -> bool {
-    bootstrap_leaf_selected(arguments, &["doctor"])
 }
 
 /// Whether the raw native invocation selects the top-level Lock command.

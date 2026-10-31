@@ -115,34 +115,6 @@ pub struct StatePaths {
     rack: PathBuf,
 }
 
-/// Worktree-local files admitted for one steering hook delivery decision.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SteeringDeliveryPaths {
-    state: PathBuf,
-    lock: PathBuf,
-    projections: PathBuf,
-}
-
-impl SteeringDeliveryPaths {
-    /// Durable exact-output suppression record.
-    #[must_use]
-    pub fn state(&self) -> &Path {
-        &self.state
-    }
-
-    /// Cross-process possession serializing delivery decisions.
-    #[must_use]
-    pub fn lock(&self) -> &Path {
-        &self.lock
-    }
-
-    /// Stable, lane-private media projections for agent hooks.
-    #[must_use]
-    pub fn projections(&self) -> &Path {
-        &self.projections
-    }
-}
-
 impl StatePaths {
     fn new(runtime: PathBuf, worktree_runtime: PathBuf) -> Self {
         let data = runtime.join("data");
@@ -588,29 +560,6 @@ impl Repository {
             admit(path, StateShape::RegularFile)?;
         }
         Ok(paths.serve().to_path_buf())
-    }
-
-    /// Admit only the state components needed to suppress duplicate hook output.
-    ///
-    /// # Errors
-    ///
-    /// Returns the exact malformed or unavailable delivery-state component.
-    pub fn admit_steering_delivery(&self) -> Result<SteeringDeliveryPaths, StateError> {
-        let paths = self.state_paths();
-        for path in [
-            paths.runtime(),
-            paths.worktree_runtime(),
-            paths.worktree_locks(),
-        ] {
-            admit(path, StateShape::Directory)?;
-        }
-        admit(paths.steering_media(), StateShape::Directory)?;
-        admit(paths.steering_delivery(), StateShape::RegularFile)?;
-        Ok(SteeringDeliveryPaths {
-            state: paths.steering_delivery().to_path_buf(),
-            lock: paths.steering_delivery_lock().to_path_buf(),
-            projections: paths.steering_media().to_path_buf(),
-        })
     }
 
     /// Admit the complete resident state surface.
