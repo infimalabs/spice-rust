@@ -83,8 +83,9 @@
 /// naming the last schema that wrote it, since replay cannot recover a score
 /// never kept. Schema 104 retires Design shadows: each `room::shadowed` record
 /// crosses as inert `journal::retained` evidence and the per-Design shadow index
-/// drops.
-pub const SCHEMA_VERSION: u32 = 104;
+/// drops. Schema 105 drops the task-head project index after its only project
+/// reader retired.
+pub const SCHEMA_VERSION: u32 = 105;
 
 /// First position assigned by a newly created journal.
 ///
