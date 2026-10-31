@@ -168,6 +168,9 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
 fn bootstrap_invocation() -> (Ambient, cli::MountRegistry, clap::ArgMatches, bool) {
     let _ = PROCESS_STARTED.set(Instant::now());
     let ambient = spice::ambient::capture();
+    if resident::keeper::worker_selected(std::env::args_os()) {
+        deliver(&resident::keeper::keep(&ambient), Form::Json);
+    }
     if let Some(code) = resident::supervisor::entry(std::env::args_os(), &ambient) {
         terminate_code(code);
     }
@@ -283,12 +286,11 @@ fn main() {
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let outcome = match contract.path {
-        ["down"] => resident::down(contract, &ambient),
-        _ => not_landed(contract),
-    };
+    if contract.path == ["down"] {
+        resident_down(leaf, contract, form, &ambient);
+    }
     #[cfg(not(target_arch = "wasm32"))]
-    deliver_display(&outcome, form);
+    deliver_display(&not_landed::<wire::AppClosed>(contract), form);
 }
 
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
@@ -330,7 +332,7 @@ mod main_native_runtime;
 #[cfg(not(target_arch = "wasm32"))]
 use main_native_runtime::{
     deliver_mount_refusal, load_mounted_registry, mount_error_is_ignorable, mounted_registry,
-    resident_up, run_mounted,
+    resident_down, resident_up, run_mounted,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

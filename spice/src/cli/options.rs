@@ -28,18 +28,13 @@ const OPTIONS: &[(&str, &str, &str)] = &[
     ("up", "open", "Open the app in the default browser"),
     (
         "up",
-        "install",
-        "Windows: register this repository's per-user lifecycle owner, which starts the resident at logon and relaunches it after any exit",
-    ),
-    (
-        "up",
-        "uninstall",
-        "Windows: stop the lifecycle owner, remove its registration, and delete its record and log",
-    ),
-    (
-        "up",
         "keeper",
-        "Run as the installed lifecycle owner: relaunch the resident until stopped",
+        "Windows: install or reconfigure this repository's per-user lifecycle owner",
+    ),
+    (
+        "down",
+        "keeper",
+        "Windows: remove the lifecycle owner after draining its resident",
     ),
     (
         "app",

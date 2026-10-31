@@ -107,6 +107,19 @@ pub(super) fn run_mounted(selection: cli::MountSelection<'_>) -> ! {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(super) fn resident_down(
+    leaf: &clap::ArgMatches,
+    contract: &cli::Contract,
+    form: Form,
+    ambient: &spice::ambient::Ambient,
+) -> ! {
+    if leaf.get_flag("keeper") {
+        deliver_display(&resident::keeper::uninstall(ambient), form);
+    }
+    deliver_display(&resident::down(contract, ambient), form);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn resident_up(
     leaf: &clap::ArgMatches,
     form: Form,
@@ -114,13 +127,7 @@ pub(super) fn resident_up(
     ambient: &spice::ambient::Ambient,
 ) -> ! {
     if leaf.get_flag("keeper") {
-        deliver(&resident::keeper::keep(ambient), form);
-    }
-    if leaf.get_flag("install") {
         deliver_display(&resident::keeper::install(leaf, ambient), form);
-    }
-    if leaf.get_flag("uninstall") {
-        deliver_display(&resident::keeper::uninstall(ambient), form);
     }
     if !leaf.get_flag("foreground") {
         deliver_display(&resident::keeper::up_detached(leaf, ambient), form);

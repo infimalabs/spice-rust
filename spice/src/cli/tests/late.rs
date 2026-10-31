@@ -115,6 +115,29 @@ fn every_first_run_option_has_help() {
     }
 }
 
+#[test]
+fn lifecycle_owner_controls_are_symmetric() {
+    for argv in [["spice", "up", "--keeper"], ["spice", "down", "--keeper"]] {
+        let parsed = command()
+            .try_get_matches_from(argv)
+            .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
+        assert!(
+            selected_matches(&parsed).get_flag("keeper"),
+            "{argv:?} retains its lifecycle-owner request"
+        );
+    }
+    for argv in [
+        ["spice", "up", "--install"],
+        ["spice", "up", "--uninstall"],
+        ["spice", "down", "--uninstall"],
+    ] {
+        assert!(
+            command().try_get_matches_from(argv).is_err(),
+            "{argv:?} is retired"
+        );
+    }
+}
+
 /// Help rows are part of the syntax contract, not best-effort decorations.
 #[test]
 #[should_panic(expected = "names unregistered --foreground")]

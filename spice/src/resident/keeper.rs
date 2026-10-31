@@ -5,13 +5,25 @@
 //! identity would own the discovery file that user's app and CLI must read.
 //! The owner is therefore a per-user Task Scheduler task: triggered by the
 //! repository user's own logon, logging on with that user's interactive
-//! token, and running this executable as `spice up --keeper`. The keeper
-//! holds one possession per repository and relaunches the resident after
-//! every exit, clean or not, until `spice down` disables the task or
-//! `spice up --uninstall` deletes it.
+//! token, and running this executable through its private keeper-worker entry
+//! point. The keeper holds one possession per repository and relaunches the
+//! resident after every exit, clean or not, until `spice down` disables the
+//! task or `spice down --keeper` deletes it.
 //!
 //! Everything that decides is cross-platform and exercised in process; only
 //! the Task Scheduler binding and the process-level entry points are Windows.
+
+/// Exact private argument used only by the native lifecycle registration.
+pub(crate) const WORKER_ARGUMENT: &str = "--spice-keeper-worker";
+
+/// Whether this process invocation is exactly the private keeper worker.
+pub(crate) fn worker_selected(mut arguments: impl Iterator<Item = std::ffi::OsString>) -> bool {
+    let _program = arguments.next();
+    arguments
+        .next()
+        .is_some_and(|argument| argument == WORKER_ARGUMENT)
+        && arguments.next().is_none()
+}
 
 #[cfg(any(windows, test))]
 mod definition;

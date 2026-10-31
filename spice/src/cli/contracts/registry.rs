@@ -430,7 +430,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["up"],
-        "up [--foreground] [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open] [--install|--uninstall|--keeper]",
+        "up [--foreground] [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open] [--keeper]",
         Local,
         Resident,
         [
@@ -447,7 +447,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["down"],
-        "down",
+        "down [--keeper]",
         Command,
         [
             UpQuiescing,

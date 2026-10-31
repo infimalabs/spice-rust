@@ -163,7 +163,7 @@ owner by default. A first install uses loopback with a system-selected port;
 an upgrade preserves the existing private listen, bind-consent,
 authentication, and pinned-port policy. The preview names the lifecycle effect
 and binds an opaque policy standing without publishing bearer material.
-`spice up --install` remains the explicit policy-reconfiguration and repair
+`spice up --keeper` remains the explicit policy-reconfiguration and repair
 surface.
 
 The owner is a per-user Task Scheduler task under `\Spice`, named by a digest
@@ -174,9 +174,10 @@ after a reboot at which the user's profile and per-user discovery exist. The
 Service Control Manager is not used: a service under the user's identity needs
 a stored password, and one under another identity would own the discovery file
 the user's app and CLI must read. Its one trigger is that user's logon; its
-action is the installing executable running `spice up --keeper` with the
-installing worktree as working directory, no execution time limit, no battery
-stop, and a scheduler restart only for a keeper that itself exits abnormally.
+action is the installing executable's private keeper-worker entry point with
+the installing worktree as working directory, no execution time limit, no
+battery stop, and a scheduler restart only for a keeper that itself exits
+abnormally.
 
 The keeper holds the `locks/keeper` possession so one runs per repository,
 appends to `.spice/keeper.log` (rotated like the resident log), and relaunches
@@ -194,10 +195,10 @@ With an owner installed, bare `spice up` applies it: re-registers the task
 from the current executable, enables it, starts the keeper if it is not
 running, and answers with the live endpoint; a detached `up` naming a listen or
 access flag refuses with `resident::keeper-installed` and points at
-`--install`. `spice down` disables the task before draining, so the keeper
+`--keeper`. `spice down` disables the task before draining, so the keeper
 finds it disabled when the resident exits and stops; the resident stays down
-until `spice up`. `spice up --uninstall` disables the task, drains a serving
-resident, stops and deletes the task, and removes the record, log, and lock.
+until `spice up`. `spice down --keeper` disables and deletes the task, drains
+a serving resident, and removes the record, log, and lock.
 Install and apply are idempotent. A first install drains any ordinary detached
 resident before the keeper takes ownership. A reinstall with the same
 executable, working directory, and flags keeps the pinned port and serving
@@ -209,7 +210,7 @@ unelevated token, so install from an unelevated terminal: an elevated install
 leaves the state directory owned by Administrators, which the kept resident
 and the user's app then fail to admit as their own discovery. `spice app`
 joins a kept resident and leaves it running when the window closes. Every
-other host refuses `--install`, `--uninstall`, and `--keeper` with
+other host refuses `up --keeper` and `down --keeper` with
 `resident::keeper-unsupported` and keeps the plain detached launch.
 
 The current Mach-O and ELF builds then derive symbols, strip, and sign where
@@ -816,7 +817,7 @@ its bytes but never restore that access.
 **Invariant —** Package preview is lifecycle-effect-free, and a converged
 plan — one the preview reports as no change — stays so under apply: it
 neither registers, enables, restarts, nor recreates the owner, so an explicit
-`spice down` or `spice up --uninstall` survives reapplying the installed
+`spice down` or `spice down --keeper` survives reapplying the installed
 build. A publishing apply revalidates the previewed private keeper standing
 before stopping its resident, retains that policy while replacing the
 appliance, then registers and starts exactly one owner under the new

@@ -23,8 +23,8 @@ const RESTART_COUNT: u32 = 999;
 /// Below-normal thread priority is the scheduler's default; the keeper
 /// launches the interactive resident and runs at normal priority instead.
 const NORMAL_PRIORITY: u32 = 4;
-/// The one argument vector the keeper runs with.
-const ARGUMENTS: &str = "--json up --keeper";
+/// The one private argument vector the keeper runs with.
+const ARGUMENTS: &str = super::WORKER_ARGUMENT;
 
 /// What one owner's definition is rendered from.
 pub(crate) struct Definition<'a> {

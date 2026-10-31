@@ -282,7 +282,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Windows package apply starts the repository's per-user lifecycle owner under
 the newly installed executable. The owner survives app closure and relaunches
 the resident after clean or forced exit; no separate restart is needed.
-`spice up --install` explicitly changes its listen or authentication policy.
+`spice up --keeper` explicitly changes its listen or authentication policy.
 
 After a source refresh run with `--no-resident`, restart explicitly:
 
