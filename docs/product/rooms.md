@@ -111,7 +111,7 @@ owns each rule summarized here.
   conversation is counted only when the statement corpus refits, so a new
   message never re-weights anything on its own. A short list of common English
   filler is never a term. Each candidate's cosine floor follows its maturity
-  alone, never its working group: an unsteeped Design invites at the wide 0.10
+  alone, never its working group: an unsteeped Design invites at the wide 0.08
   floor, and a steeped one at the narrow 0.16 floor, once enough of its
   questions have been heard and it is close, so it asks only closely matched lanes. The reach
   widens again as soon as a later charge contests an item or a statement edit
