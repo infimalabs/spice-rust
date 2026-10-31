@@ -88,8 +88,11 @@
 /// drops. Schema 105 retires the provenance-less judge rulings, which keep
 /// their place in the standing judgment tally, and lease warnings together
 /// with every steering fact, head, and miss of the directive each opened, as
-/// inert evidence naming schema-104.
-pub const SCHEMA_VERSION: u32 = 105;
+/// inert evidence naming schema-104. Schema 106 retires Design pass critiques
+/// and coverage, whose proposal heads drop, and operator nudges, which still
+/// ready their Design from the retained evidence, as inert evidence naming
+/// schema-105.
+pub const SCHEMA_VERSION: u32 = 106;
 
 /// First position assigned by a newly created journal.
 ///

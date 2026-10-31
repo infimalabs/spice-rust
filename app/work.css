@@ -947,10 +947,8 @@
 
 .room-approval-outputs label > span,
 .room-approval-acceptance,
-.room-approval-coverage,
 .room-approval-inputs,
 .room-approval-references,
-.room-approval-critiques,
 .room-approval-history {
   color: var(--muted);
   font-size: var(--app-type-detail);

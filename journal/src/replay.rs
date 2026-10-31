@@ -1287,12 +1287,16 @@ fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
     verify_response(row, violations);
 }
 
-pub(crate) fn verify_receipt_witnesses(
+/// Verify `row`'s evaluated witnesses equal its request's `expected` ones,
+/// each decoded as `W`: a current witness, or a historical request's raw one.
+pub(crate) fn verify_receipt_witnesses<W>(
     row: &ReceiptRow,
-    expected: &[wire::Witness],
+    expected: &[W],
     violations: &mut Vec<Violation>,
-) {
-    match decode_canonical::<Vec<wire::Witness>>(&row.witnesses) {
+) where
+    W: DeserializeOwned + Serialize + PartialEq,
+{
+    match decode_canonical::<Vec<W>>(&row.witnesses) {
         Ok(witnesses) if witnesses == expected => {}
         Ok(_) => receipt_violation(
             row,

@@ -109,9 +109,11 @@ const PREPARED: &str = "prepared";
 /// any of that, every retained fact of a kind no release still produces
 /// (consent floors, vendor arming, commit landings, gate findings and
 /// clearances, graceful-shutdown transitions, lane catch-up horizons,
-/// provenance-less judge rulings, and lease warnings with every steering fact
-/// of the directives they opened) retires into inert historical authority, the
-/// horizon projection drops, and so do those directives' heads and misses;
+/// provenance-less judge rulings, lease warnings with every steering fact
+/// of the directives they opened, Design pass critiques and coverage, and
+/// operator nudges) retires into inert historical authority, the horizon
+/// projection drops, and so do those directives' heads and misses and those
+/// critiques' and coverage statements' proposal heads;
 /// the question-result protocol and required question-result
 /// evidence retire into inert historical authority, every retained
 /// contribution label with its receipt crosses to its charge, every

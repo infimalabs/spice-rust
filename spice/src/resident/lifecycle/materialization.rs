@@ -245,8 +245,8 @@ impl Projection {
                     .task_subject()
                     .into_iter()
                     .chain(fact.fact.mutated_tasks())
-                    .chain(wire::rooms::DesignCycles::subjects(&fact.fact))
                     .cloned()
+                    .chain(wire::rooms::DesignCycles::subjects(&fact.fact))
                     .chain(
                         fact.fact
                             .read::<wire::rooms::WorkingGroupMoved>()

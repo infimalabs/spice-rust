@@ -1,11 +1,9 @@
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRef,
-    CandidateReference, CoverageAuthority, CoverageRef, CritiqueRef, CritiqueStanding,
-    DecisionOutcome, DecisionRef, DesignPassProposal, DesignProposed, ExecutionAuthorization,
-    ExecutionAuthorized, OutputControlled, OutputDecision, OutputVerdict, PreparationDecided,
-    PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomPublicationContent, RoomPublished,
-    RoomSource, TextRange, TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
-    WorkingGroupsArranged,
+    CandidateRef, CandidateReference, CoverageRef, DecisionOutcome, DecisionRef,
+    DesignPassProposal, DesignProposed, ExecutionAuthorization, ExecutionAuthorized,
+    OutputControlled, OutputDecision, OutputVerdict, PreparationDecided, PreparationDecision,
+    ProposalRef, RoomAuthorityStamp, RoomPublicationContent, RoomPublished, RoomSource, TextRange,
+    TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{Producer, SequenceCode, TaskPreparation};
 
@@ -529,20 +527,6 @@ impl Preparation {
         }
     }
 
-    fn coverage(&self, micros: i64, sequence: u64) -> CandidateCovered {
-        CandidateCovered {
-            coverage: CandidateCoverage {
-                coverage: CoverageRef {
-                    candidate: self.candidate(micros),
-                    coverage: SequenceCode::new(sequence),
-                },
-                authority: CoverageAuthority::Operator {},
-                scopes: vec![name("contracts")],
-                source: journal_source(1),
-            },
-        }
-    }
-
     fn decision(&self, sequence: u64, outcome: DecisionOutcome) -> PreparationDecided {
         PreparationDecided {
             decision: PreparationDecision {
@@ -686,7 +670,6 @@ fn authorized(journal: &mut Journal) -> Preparation {
         preparation.retained(1, vec![preparation.output.clone()]),
     )
     .expect("candidate retained");
-    commit(journal, preparation.coverage(1, 1)).expect("coverage recorded");
     commit(
         journal,
         preparation.decision(
@@ -735,21 +718,6 @@ fn one_write_maintains_the_projection_that_rebuild_reproduces_without_touching_f
         ),
     )
     .expect("linked publication");
-    commit(
-        &mut journal,
-        CandidateCritiqued {
-            critique: CandidateCritique {
-                critique: CritiqueRef {
-                    candidate: preparation.candidate(1),
-                    critique: SequenceCode::new(1),
-                },
-                category: name("composition"),
-                source: journal_source(2),
-                standing: CritiqueStanding::Clean,
-            },
-        },
-    )
-    .expect("critique recorded");
     journal.verify().expect("committed projection verifies");
 
     let (decision, granted, page) = journal
@@ -881,21 +849,6 @@ fn publication_reads_start_after_the_cursor_without_decoding_older_room_history(
 fn preparation_authority_pages_one_controller_in_journal_order() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = authorized(&mut journal);
-    commit(
-        &mut journal,
-        CandidateCritiqued {
-            critique: CandidateCritique {
-                critique: CritiqueRef {
-                    candidate: preparation.candidate(1),
-                    critique: SequenceCode::new(1),
-                },
-                category: name("composition"),
-                source: journal_source(1),
-                standing: CritiqueStanding::Clean,
-            },
-        },
-    )
-    .expect("critique recorded");
 
     let controller = preparation.controller.clone();
     let (first, population) = journal
@@ -906,7 +859,7 @@ fn preparation_authority_pages_one_controller_in_journal_order() {
             ))
         })
         .expect("first preparation page reads");
-    assert_eq!(population, 5);
+    assert_eq!(population, 3);
     assert_eq!(first.rows.len(), 2);
     let continuation = first.continuation.expect("first page continues");
     let rest = journal
@@ -914,7 +867,7 @@ fn preparation_authority_pages_one_controller_in_journal_order() {
             read.preparation_authority_page(&controller, Some(continuation), fact_budget(8))
         })
         .expect("preparation continuation reads");
-    assert_eq!(rest.rows.len(), 3);
+    assert_eq!(rest.rows.len(), 1);
     assert_eq!(rest.continuation, None);
     let kinds = first
         .rows
@@ -926,10 +879,8 @@ fn preparation_authority_pages_one_controller_in_journal_order() {
         kinds,
         vec![
             FactKind::DesignProposed,
-            FactKind::CandidateCovered,
             FactKind::PreparationDecided,
             FactKind::ExecutionAuthorized,
-            FactKind::CandidateCritiqued,
         ]
     );
     assert!(
@@ -963,8 +914,6 @@ fn duplicate_recordings_refuse_and_a_duplicated_history_fails_verification() {
         &mut journal,
         preparation.retained(1, vec![preparation.output.clone()]),
     );
-    refused(&journal, result);
-    let result = commit(&mut journal, preparation.coverage(1, 1));
     refused(&journal, result);
 
     // Replaying one fact twice inside a single write refuses the whole write.
@@ -1147,8 +1096,6 @@ fn links_must_name_existing_authority() {
             },
         ),
     );
-    refused(&journal, result);
-    let result = commit(&mut journal, preparation.coverage(1, 1));
     refused(&journal, result);
     let result = commit(
         &mut journal,

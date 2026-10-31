@@ -15,6 +15,7 @@ const CANCELED_KEY: &str = "1kR2YwYV";
 const RECEIPT: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const SHUTDOWN_PREDECESSOR: u32 = 103;
 const WARNING_PREDECESSOR: u32 = 104;
+const PROPOSAL_EVIDENCE_PREDECESSOR: u32 = 105;
 
 fn shutdown_era_orphans() -> Vec<serde_json::Value> {
     vec![
@@ -257,5 +258,95 @@ fn retained_rulings_keep_their_tally_and_warnings_take_their_whole_directive() {
         })
         .expect("crossed taste page reads");
     assert_eq!((page.population, page.confirmed, page.cleared), (2, 1, 1));
+    verify_and_reopen(journal, &path);
+}
+
+/// A critique and a coverage statement over one candidate, and an operator
+/// nudge of its Design that messaged a lane.
+fn proposal_evidence_orphans(design: wire::TaskStamp) -> Vec<serde_json::Value> {
+    let stamp = |micros| wire::rooms::RoomAuthorityStamp::for_micros(micros).unwrap();
+    let candidate =
+        serde_json::json!({ "controller": design, "candidate": stamp(1_700_000_000_000_001) });
+    let source = serde_json::json!({ "kind": "journal", "fact": "6f22" });
+    vec![
+        serde_json::json!({
+            "kind": "proposal::critiqued",
+            "critique": {
+                "critique": { "candidate": candidate, "critique": "1" },
+                "category": "composition",
+                "source": source,
+                "standing": "clean",
+            },
+        }),
+        serde_json::json!({
+            "kind": "proposal::covered",
+            "coverage": {
+                "coverage": { "candidate": candidate, "coverage": "1" },
+                "authority": { "kind": "operator" },
+                "scopes": ["outputs"],
+                "source": source,
+            },
+        }),
+        serde_json::json!({
+            "kind": "proposal::nudged",
+            "design": design,
+            "message": stamp(1_700_000_000_000_002),
+            "recipient": LANE,
+        }),
+    ]
+}
+
+#[test]
+fn retained_proposal_evidence_drops_its_heads_and_a_nudge_stays_room_authority() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("proposal-evidence.sqlite3");
+    let journal = authority_file_fixture(&path);
+    let design = wire::TaskStamp::for_micros(1_700_000_000_000_000).unwrap();
+    let orphans = proposal_evidence_orphans(design.clone());
+    let positions = plant_all(&journal, &orphans);
+    let last = *positions.last().unwrap();
+    restore_predecessor(&journal, PROPOSAL_EVIDENCE_PREDECESSOR);
+    journal
+        .connection
+        .execute_batch(&format!(
+            "INSERT INTO proposal_heads(subject, controller, head_seq, body) VALUES \
+                 ('critique', '{design}', {}, X'7b7d'), ('coverage', '{design}', {}, X'7b7d');",
+            positions[0], positions[1],
+        ))
+        .unwrap();
+    advance_cursor(&journal, last);
+    drop(journal);
+
+    let journal = cross(&path, PROPOSAL_EVIDENCE_PREDECESSOR, &orphans, "schema-105");
+    let heads = journal
+        .connection
+        .query_row(
+            "SELECT count(*) FROM proposal_heads WHERE head_seq IN (?1, ?2)",
+            params![positions[0], positions[1]],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(heads, 0, "no proposal head outlives its retired evidence");
+    let page = journal
+        .read(|read| {
+            let horizon = read.cursor()?.expect("crossed journal has a cursor");
+            read.room_authority_page(
+                crate::FactPageStart::After(None),
+                horizon,
+                crate::FactReadBudget::RETAINED,
+            )
+        })
+        .expect("crossed room authority reads");
+    let nudges = page
+        .rows
+        .iter()
+        .filter_map(|envelope| {
+            wire::rooms::RetainedNudge::read(&envelope.fact).map(|nudge| (envelope.seq, nudge))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(nudges.len(), 1, "the retained nudge stays room authority");
+    assert_eq!(nudges[0].0, seq(u64::try_from(last).unwrap()));
+    assert_eq!(nudges[0].1.design, design);
+    assert_eq!(nudges[0].1.recipient, Some(LANE.parse().unwrap()));
     verify_and_reopen(journal, &path);
 }

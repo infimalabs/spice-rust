@@ -694,9 +694,10 @@ pub struct TrustRevoked {
 /// The outer envelope keeps its durable position, attribution, and causal
 /// links. `fact` preserves the retired discriminant and body as opaque JSON:
 /// current readers validate this marker but never decode that nested payload as
-/// an executable fact. The one retained payload a current projection still
-/// reads is a judge ruling from before provenance-complete judgments; see
-/// [`JournalRetained::taste_ruling`].
+/// an executable fact. The retained payloads current projections still read
+/// are a judge ruling from before provenance-complete judgments, see
+/// [`JournalRetained::taste_ruling`], and an operator Design nudge, see
+/// [`crate::rooms::RetainedNudge`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalRetained {

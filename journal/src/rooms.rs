@@ -17,10 +17,10 @@ use std::collections::BTreeMap;
 
 use wire::principal::ActingPrincipal;
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateWithdrawn, CoverageAuthority,
-    DesignProposed, ExecutionAuthorized, PreparationDecided, ProposalRef, RoomAuthorityStamp,
-    RoomContributed, RoomDelivered, RoomLeft, RoomMessaged, RoomPublicationContent, RoomPublished,
-    RoomSource, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
+    CandidateWithdrawn, DesignProposed, ExecutionAuthorized, PreparationDecided, ProposalRef,
+    RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomLeft, RoomMessaged,
+    RoomPublicationContent, RoomPublished, RoomSource, WorkingGroupMoved, WorkingGroupPartition,
+    WorkingGroupsArranged,
 };
 use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
@@ -507,8 +507,8 @@ fn advance_oops_generation(
     })
 }
 
-/// Admit one candidate, critique, coverage, decision, withdrawal, or
-/// authorization fact, or `None` when `fact` is none of them.
+/// Admit one candidate, decision, withdrawal, or authorization fact, or
+/// `None` when `fact` is none of them.
 fn fold_preparation(
     authority: &mut impl Authority,
     seq: Seq,
@@ -517,12 +517,6 @@ fn fold_preparation(
 ) -> Option<Result<(), Refusal>> {
     if let Some(DesignProposed { candidate }) = fact.read() {
         return Some(preparation::retain(authority, seq, candidate));
-    }
-    if let Some(CandidateCritiqued { critique }) = fact.read() {
-        return Some(critique_candidate(authority, seq, &critique));
-    }
-    if let Some(CandidateCovered { coverage }) = fact.read() {
-        return Some(cover(authority, seq, actor, coverage));
     }
     if let Some(PreparationDecided { decision }) = fact.read() {
         return Some(
@@ -539,28 +533,7 @@ fn fold_preparation(
                 .and_then(|()| preparation::authorize(authority, seq, authorization)),
         );
     }
-    if fact.kind() == wire::FactKind::DesignNudged {
-        return Some(require_operator(actor, "a Design nudge"));
-    }
     None
-}
-
-/// Admit one critique of an existing candidate citing an admissible source.
-fn critique_candidate(
-    authority: &mut impl Authority,
-    seq: Seq,
-    critique: &wire::rooms::CandidateCritique,
-) -> Result<(), Refusal> {
-    let assessed = ProposalRef::Candidate {
-        candidate: critique.critique.candidate.clone(),
-    };
-    require_proposal(authority, &assessed)?;
-    require_source(authority, seq, &critique.source)?;
-    let controller = critique.critique.candidate.controller.to_string();
-    let proposal = ProposalRef::Critique {
-        critique: critique.critique.clone(),
-    };
-    record(authority, seq, &proposal, controller, critique)
 }
 
 /// Admit one steering, catch-up, conversation, or leave fact, or `None`
@@ -713,42 +686,6 @@ fn contribute(
         }
     }
     authority.change(Change::MaturityContribution(body.clone()))
-}
-
-/// Coverage authority is the principal that wrote it: the operator, an
-/// independent lane, or the candidate's own authoring lane labeled as
-/// self-review.
-fn cover(
-    authority: &mut impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    coverage: CandidateCoverage,
-) -> Result<(), Refusal> {
-    let assessed = ProposalRef::Candidate {
-        candidate: coverage.coverage.candidate.clone(),
-    };
-    require_proposal(authority, &assessed)?;
-    let author = authority.proposal_author(&subject(&assessed)?)?;
-    let admitted = match &coverage.authority {
-        CoverageAuthority::Operator {} => is_principal(actor),
-        CoverageAuthority::Independent { lane, .. } => {
-            *actor == Actor::Lane(*lane) && author.as_ref() != Some(actor)
-        }
-        CoverageAuthority::SelfReview { lane, .. } => {
-            *actor == Actor::Lane(*lane) && author.as_ref() == Some(actor)
-        }
-    };
-    if !admitted {
-        return unsound(format!(
-            "coverage authority disagrees with its writer {actor} and the candidate's author"
-        ));
-    }
-    require_source(authority, seq, &coverage.source)?;
-    let controller = coverage.coverage.candidate.controller.to_string();
-    let proposal = ProposalRef::Coverage {
-        coverage: coverage.coverage.clone(),
-    };
-    record(authority, seq, &proposal, controller, &coverage)
 }
 
 fn control(

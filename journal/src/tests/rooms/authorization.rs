@@ -1,4 +1,4 @@
-//! Preparation decisions, coverage authority, and execution authorization.
+//! Preparation decisions and execution authorization.
 
 use super::*;
 
@@ -18,7 +18,6 @@ fn authorization_matches_one_exact_selected_candidate() {
         preparation.retained(1, vec![preparation.output.clone()]),
     )
     .expect("candidate retained");
-    commit(&mut journal, preparation.coverage(1, 1)).expect("coverage");
     let input = vec![preparation.input.clone()];
     let output = vec![preparation.output.clone()];
     let result = authorize(
@@ -161,33 +160,11 @@ fn a_collapse_request_authorizes_nothing() {
     journal.verify().expect("collapse authority verifies");
 }
 
-fn covered_by(
-    preparation: &Preparation,
-    sequence: u64,
-    authority: CoverageAuthority,
-) -> CandidateCovered {
-    CandidateCovered {
-        coverage: CandidateCoverage {
-            authority,
-            ..preparation.coverage(1, sequence).coverage
-        },
-    }
-}
-
 #[test]
-fn coverage_authority_is_its_writer_and_never_gates_selection() {
+fn only_the_operator_selects_and_authorizes_a_lane_proposal() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = Preparation::new(&mut journal);
     let author = uuid("019fe57c-a453-7ec1-a400-26e6901aaeb1");
-    let reviewer = uuid("019fe57c-a453-7ec1-a400-26e6901aaeb2");
-    let independent = |lane| CoverageAuthority::Independent {
-        lane,
-        occupant: lane,
-    };
-    let self_review = |lane| CoverageAuthority::SelfReview {
-        lane,
-        occupant: lane,
-    };
     commit_as(
         &mut journal,
         Actor::Lane(author),
@@ -195,28 +172,11 @@ fn coverage_authority_is_its_writer_and_never_gates_selection() {
     )
     .expect("a lane retains the candidate");
 
-    for (writer, authority) in [
-        (Actor::Lane(author), CoverageAuthority::Operator {}),
-        (Actor::Lane(author), independent(author)),
-        (Actor::Lane(reviewer), self_review(reviewer)),
-        (Actor::Lane(author), independent(reviewer)),
-        (Actor::Operator, independent(reviewer)),
-    ] {
-        let result = commit_as(&mut journal, writer, covered_by(&preparation, 1, authority));
-        refused(&journal, result);
-    }
-    commit_as(
-        &mut journal,
-        Actor::Lane(author),
-        covered_by(&preparation, 1, self_review(author)),
-    )
-    .expect("the author labels its own review");
-
     let selected = preparation.decision(
         1,
         selected(preparation.candidate(1), vec![preparation.output.clone()]),
     );
-    let result = commit_as(&mut journal, Actor::Lane(reviewer), selected.clone());
+    let result = commit_as(&mut journal, Actor::Lane(author), selected.clone());
     refused(&journal, result);
     commit(&mut journal, selected).expect("the operator decides");
 
@@ -228,22 +188,18 @@ fn coverage_authority_is_its_writer_and_never_gates_selection() {
     );
     let write = authorization_write(
         &journal,
-        Actor::Lane(reviewer),
+        Actor::Lane(author),
         exact.clone(),
         Conclusion::Untouched,
         true,
     );
     let result = journal.apply(write);
     refused(&journal, result);
-    authorize(&mut journal, exact).expect("coverage does not gate exact selection");
+    authorize(&mut journal, exact).expect("the operator authorizes the exact selection");
 
-    commit_as(
-        &mut journal,
-        Actor::Lane(reviewer),
-        covered_by(&preparation, 2, independent(reviewer)),
-    )
-    .expect("independent coverage remains readable evidence");
-    journal.verify().expect("principal-bound coverage verifies");
+    journal
+        .verify()
+        .expect("principal-bound selection verifies");
 }
 
 #[test]
@@ -255,7 +211,6 @@ fn authorization_releases_its_output_and_leaves_its_controller_open() {
         preparation.retained(1, vec![preparation.output.clone()]),
     )
     .expect("candidate retained");
-    commit(&mut journal, preparation.coverage(1, 1)).expect("coverage");
     commit(
         &mut journal,
         preparation.decision(
@@ -528,7 +483,6 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
         preparation.retained(1, vec![preparation.output.clone()]),
     )
     .expect("candidate retained");
-    commit(&mut journal, preparation.coverage(1, 1)).expect("coverage");
     commit(
         &mut journal,
         preparation.decision(

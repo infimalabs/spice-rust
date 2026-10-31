@@ -141,17 +141,8 @@ macro_rules! registered_body {
     (DesignProposed) => {
         crate::rooms::DesignProposed
     };
-    (CandidateCritiqued) => {
-        crate::rooms::CandidateCritiqued
-    };
-    (CandidateCovered) => {
-        crate::rooms::CandidateCovered
-    };
     (PreparationDecided) => {
         crate::rooms::PreparationDecided
-    };
-    (DesignNudged) => {
-        crate::rooms::DesignNudged
     };
     (CandidateWithdrawn) => {
         crate::rooms::CandidateWithdrawn
@@ -364,21 +355,12 @@ vocabulary! {
 
     /// One exact completed Design pass was proposed under its controlling task.
     DesignProposed = "proposal::retained" by CommandDoor;
-    /// Retained source-backed critique of an exact Design pass proposal; no
-    /// longer minted.
-    CandidateCritiqued = "proposal::critiqued" by CommandDoor;
-    /// Retained source-backed coverage statement over an exact proposal; no
-    /// longer minted.
-    CandidateCovered = "proposal::covered" by CommandDoor;
     /// The operator decided one exact proposal.
     PreparationDecided = "proposal::decided" by CommandDoor;
     /// The author withdrew one exact undecided proposal from operator choice.
     CandidateWithdrawn = "proposal::withdrawn" by CommandDoor;
     /// A work decision made its exact accepted outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
-    /// Retained operator nudge of one open Design toward its next pass; no
-    /// longer minted.
-    DesignNudged = "proposal::nudged" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.
     DocApplied = "doc::applied" by CommandDoor;
@@ -903,8 +885,6 @@ impl AnyFact {
         use sealed::RegisteredBody as Decoded;
         match &self.decoded {
             Decoded::DesignProposed(body) => Some(&body.candidate.candidate.controller),
-            Decoded::CandidateCritiqued(body) => Some(&body.critique.critique.candidate.controller),
-            Decoded::CandidateCovered(body) => Some(&body.coverage.coverage.candidate.controller),
             Decoded::PreparationDecided(body) => Some(&body.decision.decision.controller),
             Decoded::CandidateWithdrawn(body) => Some(&body.withdrawal.candidate.controller),
             Decoded::ExecutionAuthorized(body) => Some(&body.authorization.decision.controller),

@@ -2,7 +2,7 @@
 //!
 //! Schema 96 and earlier recorded `room::directed` and `room::shelved`
 //! publications and answered `room::coordinate`, `room::put-aside`, and
-//! `room::coordination-read`. A Design nudge now selects and messages its
+//! `room::coordination-read`. A Design nudge then selected and messaged its
 //! recipient, so those records cross as [`wire::body::JournalRetained`]
 //! evidence by the ordinary rule for removed fact kinds, their receipts move
 //! to the historical table, and their projection heads drop. A room delivery
