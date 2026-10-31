@@ -1000,7 +1000,6 @@
 .room-standing-lane { font-weight: 600; }
 .room-standing-availability { color: var(--muted); }
 .room-standing-availability[data-availability="seated"] { color: var(--app-semantic-live); }
-.room-standing-observation p { overflow-wrap: anywhere; }
 
 .room-reason {
   padding: 0 5px;

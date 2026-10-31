@@ -6,7 +6,7 @@
 
 | Authority | Owns |
 | --- | --- |
-| Journal | tasks, claims, steering dispositions, inbox heads, topology, command receipts, room publications and their receipts, room relevance records, preparation and execution-authorization records, the working-group partition |
+| Journal | tasks, claims, steering dispositions, inbox heads, topology, command receipts, room publications and their receipts, preparation and execution-authorization records, the working-group partition |
 | Transcript tape | vendor bytes and evidence of what the occupant produced, including the exact body of every room packet |
 | Admitted target registry | worktree identity |
 | Lifecycle authority | launch and succession decisions |

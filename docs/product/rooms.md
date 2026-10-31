@@ -59,9 +59,7 @@ owns each rule summarized here.
   of the owed request and nothing else. A lane owing none there is refused with
   `room::leave-nothing-owed`, naming each native duty that keeps it listening,
   and nothing is written. A leave never frees a claim or settles a delivery,
-  and its reply names each native duty that still holds the lane. Relevance is
-  [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
-  the operator assesses with `spice room assess`.
+  and its reply names each native duty that still holds the lane.
 - **Contribution.** A lane records its reasoning on an open Design with
   `spice room contribute HANDLE --charge=C --question N [--cite KEY...] TEXT`
   or `spice room contribute HANDLE --ask [--question N] TEXT`: a
@@ -393,7 +391,7 @@ owns each rule summarized here.
   intent and project cannot be edited; its statement text can. The operator
   may collapse the Design; the next report then opens a new generation.
 
-Every read — `spice room history|inbox|relevance|status`,
+Every read — `spice room history|inbox|status`,
 `spice design show`, `spice group list`, and their `spice://` resources —
 joins, acknowledges, delivers, settles, and wakes nothing.
 
@@ -404,8 +402,7 @@ refusals and repairs, are
 ## Deliberate non-capabilities
 
 - No room event wakes a lane. Only operator-directed steering wakes its named
-  lane; a peer packet, room post, invitation, or relevance observation never
-  does.
+  lane; a peer packet, room post, or invitation never does.
 - No fallback respondent: a vacant respondent's delivery waits unheard for that
   lane's next start.
 - Reads, invitations, ACK-only traffic, compaction, and renewal make no

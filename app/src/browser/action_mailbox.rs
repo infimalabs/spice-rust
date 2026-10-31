@@ -645,11 +645,6 @@ fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usi
                 item.to_string().len().saturating_add(text.len())
             }
             wire::intent::RoomControl::Recover { .. } => 0,
-            wire::intent::RoomControl::Assess {
-                observation,
-                explanation,
-                ..
-            } => observation.as_str().len().saturating_add(explanation.len()),
         },
     }
 }

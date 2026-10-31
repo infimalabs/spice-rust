@@ -24,9 +24,8 @@ pub(crate) use commit::{
 #[cfg(test)]
 pub(crate) use indexed_read::verify_task_page_plan;
 pub use indexed_read::{
-    CurrentHeadWitness, OpenRoomItemPage, ProposalAuthority, RoomRelevanceMetrics,
-    RoomRelevancePage, RoomRelevanceRecord, TaskHeadPage, TasteEvidenceFact, TasteEvidencePage,
-    TasteEvidenceSummary, ThreadError, TrustHeadPage,
+    CurrentHeadWitness, OpenRoomItemPage, ProposalAuthority, TaskHeadPage, TasteEvidenceFact,
+    TasteEvidencePage, TasteEvidenceSummary, ThreadError, TrustHeadPage,
 };
 #[cfg(test)]
 pub(crate) use read_metrics::{

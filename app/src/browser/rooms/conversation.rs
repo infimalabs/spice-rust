@@ -615,12 +615,6 @@ fn control_notice(answer: &RoomControlAnswer) -> String {
     if let Some(returned) = &answer.returned {
         moves.push(format!("returned as {returned}"));
     }
-    if let Some((publication, verdict)) = &answer.assessed {
-        moves.push(format!(
-            "publication {publication} assessed {}",
-            verdict.name()
-        ));
-    }
     if moves.is_empty() {
         "Room control recorded.".to_owned()
     } else {

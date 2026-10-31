@@ -20,7 +20,6 @@ pub(crate) mod awareness;
 mod conversation;
 pub(crate) mod inbox;
 mod newest;
-pub(crate) mod relevance;
 pub(crate) mod sections;
 mod sources;
 

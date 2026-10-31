@@ -111,12 +111,6 @@ macro_rules! registered_body {
     (DesignReturnDelivered) => {
         crate::rooms::DesignReturnDelivered
     };
-    (RoomRelevanceObserved) => {
-        crate::rooms::RoomRelevanceObserved
-    };
-    (RoomRelevanceAssessed) => {
-        crate::rooms::RoomRelevanceAssessed
-    };
     (RoomConversed) => {
         crate::rooms::RoomConversed
     };
@@ -344,10 +338,6 @@ vocabulary! {
     DesignNoticed = "room::noticed" by ResidentRecognition;
     /// The resident handed an active Design's holder its newest return decision.
     DesignReturnDelivered = "room::relayed" by ResidentRecognition;
-    /// The resident recorded one source-backed shadow relevance observation.
-    RoomRelevanceObserved = "room::observed" by ResidentRecognition;
-    /// The operator assessed one shadow observation for quality measurement.
-    RoomRelevanceAssessed = "room::assessed" by CommandDoor;
     /// A lane's authored MSG bound its native lane deliveries and opened its
     /// operator item.
     RoomConversed = "room::conversed" by AckScanner;

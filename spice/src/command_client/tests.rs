@@ -868,7 +868,6 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["room", "nak"][..], CommandKind::RoomControl),
         (&["room", "reply"][..], CommandKind::RoomControl),
         (&["room", "recover"][..], CommandKind::RoomControl),
-        (&["room", "assess"][..], CommandKind::RoomControl),
         (&["design", "propose"][..], CommandKind::DesignPropose),
         (&["design", "decide"][..], CommandKind::PreparationDecide),
         (&["design", "withdraw"][..], CommandKind::CandidateWithdraw),

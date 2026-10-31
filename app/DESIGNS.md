@@ -173,15 +173,12 @@ the room snapshot, its live facts, the board, and lane topology on every render:
   lane owing no request has nothing to leave. Authored messages and
   contributions never create listening; only a later Design request restores
   it. History and native duties stay.
-- **Relevance**: the resident's shadow relevance observations, each with its
-  classification, progress standing, explanation, exceptions, uncertainty,
-  source coverage, and operator verdict.
 
 Agreement, silence, message count, elapsed time, ACK, and ANS never read as
 progress or approval; the section states only what moves the Design. It only
-renders inside an explicitly opened menu or read view: a status or relevance
-update changes its text in place and never mounts a room, moves a console, or
-wakes a lane.
+renders inside an explicitly opened menu or read view: a status update
+changes its text in place and never mounts a room, moves a console, or wakes a
+lane.
 
 ## Design contributions
 
