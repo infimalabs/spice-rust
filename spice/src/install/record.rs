@@ -131,7 +131,7 @@ impl InstallRecord {
     fn rebase_repository(&mut self, repository: &Repository) -> Result<(), InstallError> {
         if !matches!(
             self.status,
-            InstallStatus::Complete | InstallStatus::Uninstalled
+            InstallStatus::Establishing | InstallStatus::Complete | InstallStatus::Uninstalled
         ) {
             return Err(InstallError::InvalidRecord(
                 "an interrupted install cannot be relocated".to_owned(),
@@ -349,11 +349,16 @@ impl InstallRecord {
         }
         if matches!(
             self.status,
-            InstallStatus::Complete | InstallStatus::Uninstalled
+            InstallStatus::Establishing | InstallStatus::Complete | InstallStatus::Uninstalled
         ) && self.completed != operation_count
         {
             return Err(InstallError::InvalidRecord(
                 "terminal install record has incomplete progress".to_owned(),
+            ));
+        }
+        if self.status == InstallStatus::Establishing && self.plan.lifecycle_owner.is_none() {
+            return Err(InstallError::InvalidRecord(
+                "establishing record names no lifecycle owner".to_owned(),
             ));
         }
         if self.status == InstallStatus::Applying && self.restored.iter().any(Option::is_some) {
@@ -370,7 +375,7 @@ impl InstallRecord {
         }
         if matches!(
             self.status,
-            InstallStatus::Complete | InstallStatus::Unapplying
+            InstallStatus::Establishing | InstallStatus::Complete | InstallStatus::Unapplying
         ) && (self.installed.iter().any(Option::is_none)
             || self.installed_parents.iter().any(Option::is_none))
         {
@@ -388,7 +393,7 @@ impl InstallRecord {
         self.validate()?;
         self.repository.validate(repository)?;
         self.plan
-            .validate_repository_binding(repository, self.settled())
+            .validate_repository_binding(repository, self.discards_done())
     }
 
     /// Whether this record's transaction is finished either way.
@@ -396,6 +401,15 @@ impl InstallRecord {
         matches!(
             self.status,
             InstallStatus::Complete | InstallStatus::Uninstalled
+        )
+    }
+
+    /// Whether every retirement has already discarded its payload: any state
+    /// other than an in-flight direction.
+    pub(super) const fn discards_done(&self) -> bool {
+        !matches!(
+            self.status,
+            InstallStatus::Applying | InstallStatus::Unapplying
         )
     }
 
@@ -437,15 +451,18 @@ impl InstallRecord {
         self.validate_loaded()?;
         self.repository.validate(repository)?;
         self.plan
-            .validate_repository_binding(repository, self.settled())
+            .validate_repository_binding(repository, self.discards_done())
     }
 
+    /// The public receipt. The lifecycle owner is the summary's last stage, so
+    /// a settled record with one counts it as acknowledged.
     pub(super) fn receipt(&self) -> InstallReceipt {
+        let lifecycle_settled = self.settled() && self.plan.lifecycle_owner.is_some();
         InstallReceipt {
             plan: InstallPlanSummary::from_plan(&self.plan),
             digest: self.plan_digest.clone(),
             status: self.status,
-            completed: self.completed,
+            completed: self.completed + usize::from(lifecycle_settled),
         }
     }
 }

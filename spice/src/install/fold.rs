@@ -491,10 +491,16 @@ const fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str
 }
 
 /// Durable progress state for apply and reversal.
+///
+/// `Establishing` is the Windows boundary between published files and a
+/// serving lifecycle owner: every file, retirement, and hook stage is
+/// complete, and only the owner the plan names remains to be registered and
+/// started under the installed executable.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InstallStatus {
     Applying,
+    Establishing,
     Complete,
     Unapplying,
     Uninstalled,
@@ -540,6 +546,7 @@ impl fmt::Display for InstallReceipt {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let state = match self.status {
             InstallStatus::Applying => "installation applying",
+            InstallStatus::Establishing => "installation published; lifecycle owner pending",
             InstallStatus::Complete => "installation complete",
             InstallStatus::Unapplying => "installation removal in progress",
             InstallStatus::Uninstalled => "installation removed",
@@ -552,6 +559,9 @@ impl fmt::Display for InstallReceipt {
             self.completed, self.plan.operation_count
         )?;
         match self.status {
+            InstallStatus::Establishing => {
+                write!(formatter, "\napply: spice install --apply={}", self.digest)
+            }
             InstallStatus::Complete => write!(formatter, "\nunapply: spice install --unapply"),
             InstallStatus::Uninstalled => write!(formatter, "\npreview: spice install"),
             InstallStatus::Applying | InstallStatus::Unapplying => Ok(()),

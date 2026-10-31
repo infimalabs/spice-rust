@@ -373,3 +373,90 @@ fn lifecycle_policy_is_part_of_the_digest_bound_plan() {
     .to_string();
     assert!(text.contains("ensure Windows lifecycle owner"), "{text}");
 }
+
+fn installed_generations(repository: &Repository) -> Vec<Option<Generation>> {
+    read_record(repository)
+        .expect("receipt reads")
+        .expect("receipt exists")
+        .record
+        .installed
+}
+
+#[test]
+fn a_lifecycle_plan_publishes_to_the_establishing_boundary_and_settles_once_owned() {
+    let (_scratch, repository) = repository("lifecycle-boundary");
+    let standing = Some(LifecycleOwnerStanding::Default);
+    let prepared =
+        prepare(&repository, None, None, standing.clone()).expect("lifecycle plan prepares");
+    let file_stages = prepared.plan().operation_count();
+    let receipt = apply_prepared_record(&repository, None, prepared).expect("publication applies");
+    assert_eq!(receipt.status(), InstallStatus::Establishing);
+    assert_eq!(receipt.completed(), file_stages);
+    assert_eq!(receipt.plan().operation_count(), file_stages + 1);
+    let published = installed_generations(&repository);
+    assert!(published.iter().all(Option::is_some));
+
+    // Owner establishment failed after publication: the next apply resumes
+    // at the boundary rather than converging or republishing.
+    let resumed =
+        prepare(&repository, None, None, standing.clone()).expect("establishing record reloads");
+    assert!(!resumed.converged());
+    assert_eq!(
+        apply_prepared_record(&repository, None, resumed)
+            .expect("resume stops at the boundary")
+            .status(),
+        InstallStatus::Establishing
+    );
+    assert_eq!(installed_generations(&repository), published);
+
+    let settled = complete_lifecycle(&repository).expect("owned install settles");
+    assert_eq!(settled.status(), InstallStatus::Complete);
+    assert_eq!(settled.completed(), file_stages + 1);
+    assert_eq!(
+        complete_lifecycle(&repository)
+            .expect("settling twice is harmless")
+            .status(),
+        InstallStatus::Complete
+    );
+    assert!(
+        prepare(&repository, None, None, standing)
+            .expect("settled install reloads")
+            .converged()
+    );
+}
+
+#[test]
+fn a_plan_without_a_lifecycle_owner_settles_complete_directly() {
+    let (_scratch, repository) = repository("no-lifecycle");
+    assert!(matches!(
+        complete_lifecycle(&repository),
+        Err(InstallError::RecordMissing)
+    ));
+    let prepared = prepare(&repository, None, None, None).expect("install prepares");
+    let receipt = apply_prepared_record(&repository, None, prepared).expect("install applies");
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert_eq!(receipt.completed(), receipt.plan().operation_count());
+}
+
+#[test]
+fn an_establishing_install_reverses_like_a_complete_one() {
+    let (_scratch, repository) = repository("lifecycle-reversal");
+    let prepared = prepare(
+        &repository,
+        None,
+        None,
+        Some(LifecycleOwnerStanding::Default),
+    )
+    .expect("lifecycle plan prepares");
+    let wrapper = repository.common_dir().join(WRAPPER_SPICE_PATH);
+    assert_eq!(
+        apply_prepared_record(&repository, None, prepared)
+            .expect("publication applies")
+            .status(),
+        InstallStatus::Establishing
+    );
+    assert!(wrapper.exists());
+    let receipt = unapply_record(&repository).expect("establishing install reverses");
+    assert_eq!(receipt.status(), InstallStatus::Uninstalled);
+    assert!(!wrapper.exists());
+}

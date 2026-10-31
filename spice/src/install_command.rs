@@ -187,14 +187,16 @@ fn apply_with_keeper(
         false
     };
     let applied = spice::install::apply_prepared(repository, Some(executable), prepared);
-    let ensure = match owner_step(converged, lifecycle.is_some(), applied.is_ok(), owned) {
-        OwnerStep::Ensure => ensure_keeper(repository),
-        OwnerStep::Leave => Ok(()),
-    };
-    match (applied, ensure) {
-        (Ok(receipt), Ok(())) => result(Ok(receipt)),
-        (Ok(_), Err(outcome)) => cast_outcome(outcome),
-        (Err(error), _) => failure(error),
+    match owner_step(applied.as_ref().map(InstallReceipt::status), owned) {
+        OwnerStep::Establish => match ensure_keeper(repository) {
+            Ok(()) => result(spice::install::complete_lifecycle(repository)),
+            Err(outcome) => cast_outcome(outcome),
+        },
+        OwnerStep::Restore => match ensure_keeper(repository) {
+            Ok(()) => result(applied),
+            Err(owner) => both_failed(result(applied), owner),
+        },
+        OwnerStep::Leave => result(applied),
     }
 }
 
@@ -204,18 +206,24 @@ fn apply_with_keeper(
 enum OwnerStep {
     /// Touch nothing: the owner keeps whatever standing it had.
     Leave,
-    /// Register and start the owner under the installed executable.
-    Ensure,
+    /// Register and start the owner under the installed executable, then
+    /// settle the receipt.
+    Establish,
+    /// Publication failed after the prior owner was quiesced: start it again
+    /// so the repository keeps the service it had.
+    Restore,
 }
 
-/// A converged plan previews as no change and so performs none, preserving an
-/// explicit `down` or `up --uninstall`. A publication that ran ensures the
-/// owner when it succeeded, or restores the owner it quiesced when it failed.
-fn owner_step(converged: bool, lifecycle: bool, applied: bool, owned: bool) -> OwnerStep {
-    if lifecycle && !converged && (applied || owned) {
-        OwnerStep::Ensure
-    } else {
-        OwnerStep::Leave
+/// A publication that stopped at the lifecycle boundary is established; a
+/// converged or non-Windows plan settles complete and performs no owner
+/// effect, preserving an explicit `down` or `up --uninstall`; a failed
+/// publication restores only an owner this apply stopped.
+fn owner_step(applied: Result<InstallStatus, &InstallError>, owned: bool) -> OwnerStep {
+    match applied {
+        Ok(InstallStatus::Establishing) => OwnerStep::Establish,
+        Ok(_) => OwnerStep::Leave,
+        Err(_) if owned => OwnerStep::Restore,
+        Err(_) => OwnerStep::Leave,
     }
 }
 
@@ -247,10 +255,38 @@ fn unapply_with_keeper(repository: &Repository, ambient: &Ambient) -> Outcome<In
     {
         return cast_outcome(outcome);
     }
-    if unapplied.is_err() && owned {
-        let _ = ensure_keeper(repository);
+    if unapplied.is_err()
+        && owned
+        && let Err(owner) = ensure_keeper(repository)
+    {
+        return both_failed(result(unapplied), owner);
     }
     result(unapplied)
+}
+
+/// Report a publication failure together with the owner restoration failure
+/// that followed it, so neither boundary is discarded.
+fn both_failed<B: serde::Serialize>(publication: Outcome<B>, owner: Outcome<()>) -> Outcome<B> {
+    Outcome::Fault(Fault {
+        class: FaultClass::Environment,
+        reason: "install::publication-and-owner-failed".to_owned(),
+        detail: format!(
+            "{}; restoring the lifecycle owner also failed: {}",
+            describe(&publication),
+            describe(&owner)
+        ),
+    })
+}
+
+fn describe<B: serde::Serialize>(outcome: &Outcome<B>) -> String {
+    match outcome {
+        Outcome::Reply(_) => "the command replied".to_owned(),
+        Outcome::Refusal(refusal) => match refusal.diagnostic().and_then(|d| d.detail()) {
+            Some(detail) => format!("{} ({detail})", refusal.reason()),
+            None => refusal.reason().to_owned(),
+        },
+        Outcome::Fault(fault) => format!("{} ({})", fault.reason, fault.detail),
+    }
 }
 
 fn ensure_keeper(repository: &Repository) -> Result<(), Outcome<()>> {
