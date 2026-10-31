@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use super::definition::{self, Definition};
 use super::owner;
+use super::ownership::{self, Mismatch, Owners};
 use super::policy::{self, Attempt, End, Exit, MAX_PAUSE, RELAUNCH_PAUSE, STABLE_RUN};
 use super::record::{self, KeeperRecord};
 use super::scheduler::{Scheduler, Status};
@@ -421,4 +422,38 @@ fn package_default_standing_survives_system_port_pinning() {
         managed.standing().expect("pinned standing derives"),
         spice::install::LifecycleOwnerStanding::Default
     );
+}
+
+const USER: &str = "S-1-5-21-1-2-3-1001";
+const OTHER_USER: &str = "S-1-5-21-1-2-3-1002";
+const ADMINISTRATORS: &str = "S-1-5-32-544";
+
+#[test]
+fn lifecycle_owners_admit_only_state_the_token_user_owns() {
+    let owners = |default_owner, runtime| Owners {
+        user: USER,
+        default_owner,
+        runtime,
+    };
+    // An unelevated administrator or ordinary user creates objects it owns,
+    // whether or not the runtime root exists yet.
+    for runtime in [None, Some(USER)] {
+        assert_eq!(ownership::mismatch(&owners(USER, runtime)), None);
+    }
+    // An elevated token defaulting to Administrators is refused before it can
+    // create anything, even though it could take the runtime over.
+    for runtime in [None, Some(USER), Some(ADMINISTRATORS)] {
+        assert_eq!(
+            ownership::mismatch(&owners(ADMINISTRATORS, runtime)),
+            Some(Mismatch::DefaultOwner(ADMINISTRATORS)),
+            "{runtime:?}"
+        );
+    }
+    // A matching token never reuses a runtime root another principal owns.
+    for foreign in [ADMINISTRATORS, OTHER_USER] {
+        assert_eq!(
+            ownership::mismatch(&owners(USER, Some(foreign))),
+            Some(Mismatch::Runtime(foreign))
+        );
+    }
 }

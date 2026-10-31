@@ -18,6 +18,8 @@ mod definition;
 #[cfg(any(windows, test))]
 mod owner;
 #[cfg(any(windows, test))]
+mod ownership;
+#[cfg(any(windows, test))]
 mod policy;
 #[cfg(any(windows, test))]
 mod record;
@@ -32,13 +34,13 @@ mod tests;
 
 #[cfg(windows)]
 pub(crate) use windows::{
-    finish_unapply, hold_stopped, install, install_standing, keep, owner_installed,
+    admit_owner, finish_unapply, hold_stopped, install, install_standing, keep, owner_installed,
     quiesce_for_install, uninstall, up_detached,
 };
 
 #[cfg(not(windows))]
 pub(crate) use unsupported::{
-    finish_unapply, hold_stopped, install, install_standing, keep, owner_installed,
+    admit_owner, finish_unapply, hold_stopped, install, install_standing, keep, owner_installed,
     quiesce_for_install, uninstall, up_detached,
 };
 
@@ -68,6 +70,10 @@ mod unsupported {
     }
 
     pub(crate) fn hold_stopped(_repository: &Repository) -> CommandResult<()> {
+        Ok(())
+    }
+
+    pub(crate) fn admit_owner(_repository: &Repository) -> CommandResult<()> {
         Ok(())
     }
 

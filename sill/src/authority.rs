@@ -309,6 +309,39 @@ pub fn owned_by_current_user(path: &Path) -> io::Result<bool> {
     platform::owned_by_current_user(path)
 }
 
+/// The current process token's user and the owner it assigns by default to
+/// every object it creates, as `S-1-…` SIDs. An elevated administrator token
+/// whose policy names Administrators as the default owner has the two differ.
+#[cfg(windows)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenOwners {
+    /// The token's user.
+    pub user: String,
+    /// The owner of objects this process creates without naming one.
+    pub default_owner: String,
+}
+
+/// Read the current process token's [`TokenOwners`].
+///
+/// # Errors
+///
+/// Returns the operating-system refusal opening or reading the token.
+#[cfg(windows)]
+pub fn token_owners() -> io::Result<TokenOwners> {
+    platform::token_owners()
+}
+
+/// The `S-1-…` owner SID of the object at `path`, without following a final
+/// link.
+///
+/// # Errors
+///
+/// Returns an operating-system refusal reading the object's owner.
+#[cfg(windows)]
+pub fn owner_sid(path: &Path) -> io::Result<String> {
+    platform::owner_sid(path)
+}
+
 /// Open `path` for reading without following a final link or reparse point.
 ///
 /// A final link opens as itself or is refused, so the opened object's

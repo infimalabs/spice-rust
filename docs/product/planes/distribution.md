@@ -205,9 +205,14 @@ resident; one that changes the executable, worktree, listen address, bind
 consent, or token writes the new record, drains the serving resident cleanly,
 retires the previous keeper, and starts the refreshed task. Uninstall on an
 absent owner refuses with `resident::keeper-not-installed`. The task runs the
-unelevated token, so install from an unelevated terminal: an elevated install
-leaves the state directory owned by Administrators, which the kept resident
-and the user's app then fail to admit as their own discovery. `spice app`
+unelevated token, so its state must belong to the repository user: before
+`up --install`, an applying detached `up`, or package apply or unapply writes
+anything, a process whose token's default owner is not its own user, such as
+an elevated shell defaulting to Administrators, refuses with
+`install::lifecycle-owner-mismatch` (`default-owner`), and an existing
+runtime root another principal owns refuses the same way (`runtime-owner`)
+rather than being taken over. Administrators membership alone is no refusal:
+an unelevated administrator's token defaults to its own user. `spice app`
 joins a kept resident and leaves it running when the window closes. Every
 other host refuses `--install`, `--uninstall`, and `--keeper` with
 `resident::keeper-unsupported` and keeps the plain detached launch.
